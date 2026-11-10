@@ -60,7 +60,7 @@ from .protocol import (
     passive_result,
     positive_integer,
 )
-from .scopes import DiscoveryLimits
+from .scopes import DiscoveryContext, DiscoveryLimits, NetworkScope
 from .transport import ParamikoDriver
 
 _STOP_REASONS = frozenset(
@@ -416,7 +416,7 @@ class DiscoveryService:
         _, scope, _, outer, authority = self.store._scope(control, current, row["scope_id"])
         sources = tuple(json.loads(row["intake"])["sources"])
         binding = self._binding(conn, scope, outer, authority, sources)
-        if canonical(binding).decode() != row["binding"] or lease.epoch != row["authority_epoch"]:
+        if canonical(binding).decode() != row["binding"]:
             raise StoreError("authority_changed", 409)
         if not publishing and (
             row["cancel_requested"]
@@ -663,7 +663,7 @@ class DiscoveryService:
         except Exception:
             return True
 
-    def _validate_response(self, response, request, scope):
+    def _validate_response(self, response, request, scope, *, scope_time=None):
         fields = {
             "v",
             "kind",
@@ -738,7 +738,9 @@ class DiscoveryService:
             }:
                 raise ValueError
             observation = PassiveObservation(**item)
-            if observation in seen or not _in_scope(scope, request.context, observation, now):
+            if observation in seen or not _in_scope(
+                scope, request.context, observation, now if scope_time is None else scope_time
+            ):
                 raise ValueError
             seen.add(observation)
             hosts.add((observation.interface, observation.address))
@@ -762,36 +764,55 @@ class DiscoveryService:
                         "uncertain",
                     ):
                         return
+                    attempt = conn.execute(
+                        "SELECT * FROM discovery_attempts WHERE discovery_id=?",
+                        (request.discovery,),
+                    ).fetchone()
+                    if (
+                        attempt is None
+                        or attempt["worker"] != self._worker
+                        or attempt["request"] != canonical(request.message()).decode()
+                    ):
+                        raise StoreError("authority_changed", 409)
+                    record = conn.execute(
+                        "SELECT permit FROM discovery_permits WHERE discovery_id=?",
+                        (request.discovery,),
+                    ).fetchone()
                     known, observations, measured, partial = False, [], {}, None
-                    reason = outcome.reason
+                    reason, publish = outcome.reason, False
                     try:
-                        # Validate even after cancellation. A valid final exchange
-                        # proves that helper invocation ended, not host liveness.
-                        scope, _ = self._fresh(control, conn, row, lease, publishing=True)
+                        self._fresh(control, conn, row, lease, publishing=True)
+                        publish = True
+                    except Exception:
+                        pass
+                    try:
+                        # Settlement authenticates the durable attempt/permit,
+                        # independently of permission to publish remote data.
                         if outcome.response is not None:
                             response = outcome.response
                             if request.passive_admission_mode is not None:
-                                record = conn.execute(
-                                    "SELECT permit FROM discovery_permits WHERE discovery_id=?",
-                                    (request.discovery,),
-                                ).fetchone()
                                 if record is None:
                                     raise ValueError
                                 challenge = PassiveAdmissionChallenge.from_message(
                                     json.loads(record["permit"]), request, kind="passive_permit"
                                 )
                                 response = passive_result(response, challenge)
+                            raw = json.loads(row["binding"])["scope"]
+                            scope = NetworkScope(
+                                **{
+                                    **raw,
+                                    "context": DiscoveryContext(**raw["context"]),
+                                    "limits": DiscoveryLimits(**raw["limits"]),
+                                    "methods": frozenset(raw["methods"]),
+                                }
+                            )
                             observations, measured, partial = self._validate_response(
-                                response, request, scope
+                                response, request, scope, scope_time=attempt["created_at"]
                             )
                             known = True
                     except Exception:
-                        reason = (
-                            "invalid_helper_response"
-                            if outcome.response is not None
-                            else "authority_changed"
-                        )
-                    if not known:
+                        reason = "invalid_helper_response"
+                    if not known or not publish:
                         observations = []
                     cancelled = row["cancel_requested"] or self._stop.is_set()
                     if known and cancelled:
@@ -802,15 +823,11 @@ class DiscoveryService:
                             if partial
                             else ("completed", "collection_complete")
                         )
-                    elif (
-                        outcome.dispatched
-                        or row["state"] in ("dispatching", "uncertain")
-                        or conn.execute(
-                            "SELECT 1 FROM discovery_permits WHERE discovery_id=?",
-                            (request.discovery,),
-                        ).fetchone()
-                        is not None
-                    ):
+                    elif request.passive_admission_mode is not None:
+                        # In wire mode go alone cannot collect. An absent
+                        # durable permit proves this invocation never started.
+                        state = "uncertain" if record is not None else "failed"
+                    elif outcome.dispatched or row["state"] in ("dispatching", "uncertain"):
                         state = "uncertain"
                     else:
                         state = "failed"

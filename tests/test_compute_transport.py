@@ -431,7 +431,7 @@ def test_helper_relay_enforces_combined_bytes_and_deadline(setup):
         helper._relay(source, target, 1000, 100, lambda sources, timeout: sources)
 
 
-def test_helper_full_session_relays_one_route_then_keeps_uncertain_reservation(setup):
+def test_helper_full_session_relays_one_route_then_releases_closed_tunnel(setup):
     helper, journal, opened = make_helper(setup)
     target = BytesChannel(b"SSH-2.0-synthetic-target\r\n")
 
@@ -457,8 +457,10 @@ def test_helper_full_session_relays_one_route_then_keeps_uncertain_reservation(s
     helper.serve(wire, wait_readable=lambda sources, timeout: [target])
     assert opened == [setup.route]
     assert wire.sent.endswith(b"SSH-2.0-synthetic-target\r\n")
-    assert journal.state(setup.request) == "uncertain"
+    assert journal.state(setup.request) == "closed"
     assert wire.closed and target.closed
+    with pytest.raises(ProtocolDenied, match="replayed_execution"):
+        journal.consume(setup.request, "f" * 64)
 
 
 def test_helper_control_overhead_counts_before_target_open(setup):

@@ -63,6 +63,36 @@ enabling fixed-operation execution alone does not enable collection. Scope ceili
 charged permanently at intake, including unused or cancelled reservations.
 Unknown attempts retain their slots and never automatically recollect.
 
+## Reconcile an uncertain execution
+
+After independently confirming termination or a non-run on the target, the
+trusted service operator can release one uncertain execution's reservation:
+
+```sh
+uv run python -m commonplace.compute.operator \
+  --control-db /absolute/data/control.sqlite3 \
+  --authority-directory /absolute/private/authority \
+  --workspace-directory /absolute/data/workspaces/WORKSPACE_ID \
+  --workspace WORKSPACE_ID \
+  --note 'Operator checked target evidence and confirmed termination' EXECUTION_ID
+```
+
+Use the existing provisioned paths, service UID and workspace crypto context.
+The command opens no wrapping key or credential contents, creates no replacement
+control plane, and sends no remote commands. It requires an uncertain row and a
+nonblank note of at most 1000 characters. The private journal stores the note
+(no secrets), an audit event and terminal reason operator_settled. It preserves
+replay denial and does not publish withheld output or assert an observed exit.
+Elapsed time alone is not external evidence. There is no browser or HTTP settle
+operation. Stage-zero recovery and confirmed non-runs release automatically;
+real unknown outcomes keep their reservation until this reconciliation.
+
+A normally ended, closed gateway tunnel releases helper concurrency while
+preserving its replay tombstone. Crash-orphaned consumed rows and abnormal
+endings remain counted. A valid permit-bound discovery completion releases its
+slot even if current authority forbids publishing the observations; an invocation
+without a durable permit is a failed non-run. Scope quotas remain charged.
+
 ## Verification
 
 Run focused checks with pytest. Custody and concrete fence fixtures require

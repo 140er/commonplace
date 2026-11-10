@@ -401,7 +401,7 @@ def test_replay_does_not_redispatch_after_response_loss_or_scope_expiry(discover
 
 
 @pytest.mark.parametrize(
-    "change", ["expired", "revoked", "session", "gateway", "task", "epoch", "receipt", "owner"]
+    "change", ["expired", "revoked", "session", "gateway", "task", "receipt", "owner"]
 )
 def test_fresh_authority_denies_before_network(discovery_env, change):
     state, env = discovery_env, discovery_env.env
@@ -430,8 +430,6 @@ def test_fresh_authority_denies_before_network(discovery_env, change):
                 "UPDATE tasks SET board_id=(SELECT id FROM boards WHERE slug='elsewhere') WHERE id=?",
                 (env.task,),
             )
-    elif change == "epoch":
-        state.fence.advance()
     elif change == "receipt":
         with state.store._journal() as conn:
             conn.execute("DELETE FROM discovery_receipts")
@@ -586,7 +584,9 @@ def test_authority_lost_before_publication_withholds_all_results(discovery_env):
     )
     state.service._run_once()
     result = state.get(item["id"])
-    assert result["state"] == "uncertain" and result["observations"] == []
+    assert result["state"] == "completed" and result["observations"] == []
+    with state.store._journal() as conn:
+        assert state.store._row(conn, item["id"])["slot"] == 0
 
 
 def test_current_scope_context_mismatch_cannot_admit(discovery_env):

@@ -42,10 +42,31 @@ transport fallback. Credential handles must be exact bound/version references,
 short-lived and only converted internally after fresh checks. Missing keys,
 verification, transport or authority produces a safe local reason.
 
-Persist admission/approval consumption before first remote effect. Lost ack,
-crash after admission and unknown outcomes become uncertain/interrupted; never
-blindly repeat an execution. Retain uncertain capacity until reconciliation with
-external evidence. Expose cancel requested separately from confirmed pre-dispatch
+Persist admission/approval consumption before first remote effect. Never blindly
+repeat an execution. Stage zero precedes any socket: recovery records a known
+non-run and releases its reservation. A missing durable gateway permit, or a
+failure before target authentication, likewise settles as known. Permission
+changes still invalidate admission; bookkeeping timestamps and progress counters
+do not advance the authority epoch. Existing guarded databases receive the exact
+narrowed triggers under the coordinator, without clearing replay identities.
+
+Authenticated target script results in denied/cancelled state with confirmed
+termination are known non-runs. The target's pre-claim script_error codes
+runtime_digest_mismatch, binding_mismatch, replay_denied, target_capacity and
+sandbox_unavailable are also known non-runs, with their specific reason retained.
+An unlisted error or helper_unavailable does not prove a non-run.
+
+Unknown outcomes after target authentication retain uncertain capacity until
+reconciliation with external evidence. The trusted service operator can use
+python -m commonplace.compute.operator (see RUNNING.md) to settle only an
+uncertain execution, supplying its id and a nonempty note of at most 1000
+characters describing the evidence. This operation participates in the local
+fence, atomically stores operator_note and an execution.operator_settled audit
+action, and records terminal/known with reason operator_settled and reserved=0.
+It works after worker restart, preserves the immutable attempt and never retries
+or republishes withheld output. It is not an HTTP route or owner-browser action.
+Notes belong in the private workspace journal and must contain no secrets.
+ Expose cancel requested separately from confirmed pre-dispatch
 cancellation/observed exit. Finite concurrency/time/byte/output limits apply.
 No locks may span network/model work. Do not claim Python force-stops a thread.
 

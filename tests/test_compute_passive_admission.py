@@ -430,13 +430,14 @@ def test_outer_pin_precedes_auth_and_no_permit_or_cache_on_mismatch(passive_stat
         "wrong_result",
     ],
 )
-def test_actual_bad_or_lost_exchange_retains_unknown_and_never_recollects(passive_state, fault):
+def test_actual_bad_or_lost_exchange_retains_only_issued_permits_and_never_recollects(
+    passive_state, fault
+):
     state = passive_state
     fixture = state.ssh(fault=fault)
     item = _submit(state)
     assert state.discovery._run_once()
     row = _row(state, item["id"])
-    assert row["state"] == "uncertain" and row["slot"] == 1, row
     issued = fault in {
         "missing_permit",
         "partial_permit",
@@ -448,6 +449,7 @@ def test_actual_bad_or_lost_exchange_retains_unknown_and_never_recollects(passiv
         "wrong_result",
     }
     assert _permits(state) == int(issued)
+    assert (row["state"], row["slot"]) == (("uncertain", 1) if issued else ("failed", 0)), row
     assert fixture.calls == (
         ["linux_arp"]
         if fault
@@ -462,7 +464,7 @@ def test_actual_bad_or_lost_exchange_retains_unknown_and_never_recollects(passiv
     state.env.clock.now += 20
     with state.discovery.store._journal() as conn:
         state.discovery._recover(conn)
-    assert _row(state, item["id"])["slot"] == 1
+    assert _row(state, item["id"])["slot"] == int(issued)
     assert _submit(state)["id"] == item["id"]
     assert not state.discovery._run_once()
 
@@ -538,7 +540,8 @@ def test_actual_revocation_order_and_io_outside_authority_locks(passive_state, w
         # An already issued permit may finish; revoked audience receives no text.
         assert fixture.calls == (["linux_arp"] if when == "after" else [])
         row = _row(state, item["id"])
-        assert row["slot"] == 1 and row["observations"] == "[]"
+        assert row["slot"] == 0 and row["observations"] == "[]"
+        assert row["state"] == ("failed" if when == "before" else "completed")
     finally:
         child.close()
 

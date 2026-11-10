@@ -80,3 +80,18 @@ The optional compute extra resolves Paramiko 5.1.0, checked against the primary
 The dependency is lazy and never enables transports on installation. Parent
 socketpair fixtures exercise the actual library and encrypted synthetic keys,
 not just an injected fake driver. No live network/device acceptance is claimed.
+
+## Tunnel concurrency and settlement
+
+The helper's tunnels limit bounds concurrent tunnels. A relay that ends normally
+and whose target socket closes is journaled closed, excluded from the concurrent
+count, and remains denied on replay. Abnormal endings and crash-orphaned consumed
+rows retain capacity. Closing a tunnel does not prove target process termination.
+In wire mode go cannot open a route: uncertainty starts immediately before the
+permit send. A denied issuance sends no permit and remains not_started.
+
+Discovery validates its final response against the immutable attempt and durable
+permit independently of current publication authority. A verified final exchange
+settles its slot even after scope/session revocation, withholding observations.
+No durable permit means a known failed non-run. Current exact authority and the
+fresh request epoch still gate dispatch; intake epoch is not a publication gate.

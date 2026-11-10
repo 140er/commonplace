@@ -209,7 +209,8 @@ def _child_with_filesystem(control_path, config, action, data, channel):
             with service._guard():
                 with db._lock, db._tx() as conn:
                     conn.execute(
-                        "UPDATE users SET name='uncommitted fixture' WHERE id=?", (data["owner"],)
+                        "UPDATE users SET disabled_at='2026-11-10T00:00:00Z' WHERE id=?",
+                        (data["owner"],),
                     )
                     channel.send("uncommitted")
                     os._exit(27)
@@ -538,7 +539,7 @@ def test_crash_rollback_preserves_guards_and_durable_epoch(local_state, action, 
         finally:
             independent.close()
         if action == "crash":
-            assert state.env.db.user(state.env.owner)["name"] != "uncommitted fixture"
+            assert state.env.db.user(state.env.owner)["disabled_at"] is None
         else:
             with sqlite3.connect(state.env.path.parent / "compute-credentials.sqlite3") as conn:
                 with pytest.raises(sqlite3.IntegrityError, match="authority_writer_unavailable"):
@@ -569,8 +570,8 @@ def test_legacy_or_unconfigured_connections_cannot_write_guarded_authority(local
 
 def test_writer_outside_central_control_lock_is_denied_even_with_registered_function(local_state):
     with pytest.raises(sqlite3.Error):
-        local_state.env.db._conn.execute("UPDATE users SET name='unguarded fixture'")
-    assert local_state.env.db.user(local_state.env.owner)["name"] != "unguarded fixture"
+        local_state.env.db._conn.execute("UPDATE users SET disabled_at='2026-11-10T00:00:00Z'")
+    assert local_state.env.db.user(local_state.env.owner)["disabled_at"] is None
 
 
 def test_missing_guard_unknown_workspace_and_new_control_plane_deny(local_state, tmp_path):

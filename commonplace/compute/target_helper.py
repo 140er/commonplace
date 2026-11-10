@@ -159,13 +159,17 @@ def cancel_frame(request):
     return {"v": 1, "kind": "script_cancel", "digest": request.digest}
 
 
+class ScriptRemoteError(ScriptDenied):
+    """A fixed script_error frame from the independently authenticated target."""
+
+
 def _receive(wire):
     value = wire.receive()
     if value.get("kind") == "script_error":
         _message(value, "script_error", {"code"})
         if type(value["code"]) is not str or value["code"] not in _CODES:
             raise ScriptDenied("invalid_frame")
-        raise ScriptDenied(value["code"])
+        raise ScriptRemoteError(value["code"])
     return value
 
 

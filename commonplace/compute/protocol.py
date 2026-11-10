@@ -782,8 +782,9 @@ def passive_result(response, challenge):
 class ReplayJournal:
     """Durable local consumption, using a parent-supplied protected connection.
 
-    Supply a fresh connection outside any existing transaction. No pruning,
-    implicit retry or automatic uncertain-reservation release is provided.
+    Supply a fresh connection outside any existing transaction. Closed tunnels
+    release concurrency, preserving replay tombstones. Crash-orphaned consumed
+    and uncertain rows retain capacity; there is no automatic retry or pruning.
     """
 
     def __init__(self, connection):
@@ -863,6 +864,16 @@ class ReplayJournal:
             self.connection.execute(
                 "UPDATE compute_transport_journal SET state='uncertain' WHERE workspace=? AND gateway=? AND execution=?",
                 (request.workspace, request.gateway, request.execution),
+            )
+
+    def closed(self, request):
+        if self.connection.in_transaction:
+            raise ProtocolDenied("journal_transaction_active")
+        with self.connection:
+            self.connection.execute(
+                "UPDATE compute_transport_journal SET state='closed' "
+                "WHERE workspace=? AND gateway=? AND execution=? AND attempt=? AND state='consumed'",
+                (request.workspace, request.gateway, request.execution, request.attempt),
             )
 
     def state(self, request):
@@ -1311,8 +1322,9 @@ class GatewayHelper:
     def serve(self, channel, *, wait_readable=None):
         """Serve exactly one control exchange, then relay bounded nested SSH bytes.
 
-        The returned connection is never retried. Any routed session ending is
-        journaled uncertain: encrypted traffic cannot prove target termination.
+        The returned connection is never retried. A normally ended, closed tunnel
+        releases helper concurrency, without claiming target termination.
+        Abnormal endings retain uncertain capacity.
         ``wait_readable`` is an isolated synthetic-test seam.
         """
         try:
@@ -1380,6 +1392,7 @@ class GatewayHelper:
             target = self.admit_permit(request, challenge, permit)
         else:
             target = self.admit(request, ready, go)
+        clean = False
         try:
             io.send({**ready, "kind": "opened"})
             runtime = min(request.limits.runtime_seconds, request.run_until - self.wall())
@@ -1391,11 +1404,18 @@ class GatewayHelper:
                 wait_readable,
                 used=io.used,
             )
+            clean = True
         finally:
             try:
                 target.close()
-            finally:
+            except BaseException:
                 self.journal.uncertain(request)
+                raise
+            else:
+                if clean:
+                    self.journal.closed(request)
+                else:
+                    self.journal.uncertain(request)
 
     def _relay(self, channel, target, deadline, ceiling, wait_readable, *, used=0):
         wait = wait_readable or (

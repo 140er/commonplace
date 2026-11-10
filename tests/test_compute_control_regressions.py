@@ -191,6 +191,7 @@ def test_a2_uncertain_reservation_has_trusted_operator_release(local_state):
     for phase in ("connect", "dispatch"):
         assert state.service._authorize(request, phase)
     assert state.service._gateway_admission(request, "admit")
+    assert state.service._authorize(request, "target_auth")
     state.service._finish(request, ExecutionResult("uncertain", "ssh_transport_failed"))
     assert run_row(state, state.proposal)["reserved"] == 1
     with sqlite3.connect(state.env.path) as conn:
@@ -245,9 +246,7 @@ def test_b2_permit_bound_discovery_settles_despite_lost_publication_authority(
     row = _row(state, item["id"])
     assert row["slot"] == 0
     assert row["state"] == "completed"
-    assert json.loads(row["observations"]) == ([] if revoked else json.loads(row["observations"]))
-    if not revoked:
-        assert len(json.loads(row["observations"])) == 1
+    assert len(json.loads(row["observations"])) == (0 if revoked else 1)
 
 
 def test_b2_queued_discovery_uses_fresh_epoch_at_admission(discovery_env):

@@ -504,12 +504,13 @@ def test_actual_both_hop_pins_precede_their_authentication(admission_state, hop)
         "expired_permit",
     ],
 )
-def test_actual_wire_failures_never_retry_or_free_unknown_reservation(admission_state, fault):
+def test_actual_wire_failures_before_target_auth_settle_without_retry(admission_state, fault):
     state = admission_state
     fixture = state.ssh(fault=fault)
     assert state.service._run_once()
     run = run_row(state, state.proposal)
-    assert run["phase"] == "uncertain" and run["reserved"] == 1, dict(run)
+    assert run["stage"] < 3
+    assert run["phase"] == "terminal" and run["reserved"] == 0, dict(run)
     assert fixture.commands == []
     expected = 1 if fault == "lost_opened" else 0
     issued = fault in {
@@ -545,6 +546,7 @@ def test_actual_wire_revocation_ordering_has_no_network_under_lock(admission_sta
         assert _admissions(state) == (0 if when == "before" else 1)
         assert len(fixture.opened) == (0 if when == "before" else 1)
         assert fixture.commands == []  # current target auth still refuses
-        assert run_row(state, state.proposal)["reserved"] == 1
+        assert run_row(state, state.proposal)["stage"] < 3
+        assert run_row(state, state.proposal)["reserved"] == 0
     finally:
         child.close()

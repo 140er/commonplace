@@ -217,7 +217,10 @@ persisted SQL guards for central local authority writers. Private registered
 functions reject unparticipating legacy connections; missing/replaced participant
 files, changed guards or unknown workspaces deny. ControlDB locks/transactions,
 BoardStore connections/transactions, Compute journals/enrollment and custody
-transactions participate. These local domains exclude gateway_admission. Explicit trusted
+transactions participate. UPDATE guards cover permission-relevant columns;
+connection last-used timestamps, session creation timestamps, task heartbeats,
+progress counters and display text do not invalidate attempts. Exact legacy
+guards are migrated under the coordinator; unknown guards still fail closed. These local domains exclude gateway_admission. Explicit trusted
 admission_mode=controller-ssh-permit-v1 installs a separate wire adapter:
 request/ready/go/challenge, fresh fenced durable one-use permit issuance,
 lock release before send, independent helper validation/replay consumption,
@@ -232,8 +235,13 @@ remote revocation or filesystem rollback guarantee is claimed.
 Approved actions are consumed once into append-only identity-bound execution_runs
 before keys or network are opened. Exact origin/approver sessions, fresh canonical
 authority, pinned enrollment, credential versions and expiries are rechecked at
-stages. Claims cannot be deleted/rebound; uncertain or interrupted runs retain
-capacity and never automatically replay. Pre-effect cancellation can be confirmed;
+stages. Claims cannot be deleted/rebound or automatically replayed. Stage-zero
+recovery, missing gateway permits and failures before target authentication settle
+known and release capacity; authenticated confirmed script non-runs do too.
+Real uncertain outcomes retain capacity until the trusted local operator CLI
+records external reconciliation, its private note and an audit event through the
+fence (terminal reason operator_settled). No HTTP settlement route is exposed.
+Pre-effect cancellation can be confirmed;
 later cancellation is intent until exact exit evidence arrives. Canonical tasks
 are not marked complete by probe completion. Shutdown requests cancellation and
 reports thread completion; it cannot force-stop Python threads or prove remote kill.
@@ -269,7 +277,10 @@ select the separate purpose-bound passive adapter: ready, durable collection
 intent, challenge, fresh fenced one-use permit, helper validation and durable
 replay consumption before any cache supplier call. Exact scope, request digest,
 attempt, epochs, source configuration and short expiry are bound on both peers.
-Discovery attempts/permits use immutable durable journals; helper replay records
+Discovery completion validates the durable permit independently of publication
+freshness, releasing its slot while withholding observations after authority loss.
+No issued permit means failed with slot=0; intake epoch is not reused after
+admission. Discovery attempts/permits use immutable durable journals; helper replay records
 have a separate passive namespace and preserve existing execution records.
 Discovery-only startup installs the same required local authority participation
 without enabling execution. Central shutdown signals and joins configured workers.
@@ -344,7 +355,9 @@ literal system.info.v1 probe is compiled. Bounded exact JSON control frames
 (maximum 8KiB), five-second admission challenges and durable replay consumption
 precede route opening. Defaults/ceilings: 30-second runtime, five-second connect,
 64KiB combined output, 1MiB tunnel bytes and two active tunnels per gateway.
-Uncertain routes retain journal reservations; closure alone does not prove kill.
+Normally ended, closed tunnels release helper concurrency and retain replay
+tombstones. Crash-orphaned consumed rows and abnormal endings stay counted;
+closure alone does not prove target termination.
 Remote output is raw bounded bytes and must pass redaction/audience checks before
 publication. Passive observation sources and scripts are deliberately unavailable.
 

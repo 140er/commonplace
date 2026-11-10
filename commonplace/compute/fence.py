@@ -136,18 +136,42 @@ def _attach_connection(conn, path, domain):
         coordinator.attach(conn, path, domain)
 
 
-def _guards(domain, identity):
+# Match the authority/session/connection reads, excluding timestamps, display
+# text and progress counters. INSERT/DELETE still change authority membership.
+_UPDATE_COLUMNS = {
+    "users": "id,email,is_admin,disabled_at",
+    "workspaces": "id,personal_of",
+    "memberships": "workspace_id,user_id,role",
+    "connections": "id,workspace_id,user_id,name,client,auth,token_hash,policy,expires_at,revoked_at,parent_id,started_by",
+    "sessions": "id_hash,user_id,workspace_id,expires_at,revoked_at",
+    "boards": "id,slug,wing,archived,coordinator",
+    "tasks": (
+        "id,board_id,status,assignee,claim_until,claim_expired_at,agent_parent,"
+        "proposal_status,proposed_to,approved_by,restricted_origin,ask,ask_to,return_to,"
+        "task_type,review_kind,escalated_to,created_by,parent_number,labels"
+    ),
+    "task_blockers": "task_id,blocker_id",
+    "gateways": "id,board,board_id,metadata",
+    "nodes": "id,gateway_id,metadata",
+    "scopes": "id,gateway_id,user_id,task_number,agent_id,metadata,revoked",
+    "enrollment_verifications": "node_id,gateway_id,enrollment,receipt_digest,verified_at,expires_at",
+    "executions": (
+        "node_id,user_id,request,session_hash,binding,digest,state,"
+        "proposal_expires_at,approval_expires_at,approved_by,approval_session_hash"
+    ),
+}
+
+
+def _guards(domain, identity, *, legacy=False):
     for table in PARTICIPATION[domain][1]:
         for operation in ("INSERT", "UPDATE", "DELETE"):
             name = f"{_PREFIX}{table}_{operation.lower()}"
             # Stage/result/audit writes are deliberately outside this list.
             # Consent changes invalidate permits; progress bookkeeping does not.
             verb = operation
-            if table == "executions" and operation == "UPDATE":
-                verb += (
-                    " OF node_id,user_id,request,session_hash,binding,digest,state,"
-                    "proposal_expires_at,approval_expires_at,approved_by,approval_session_hash"
-                )
+            if operation == "UPDATE" and table in _UPDATE_COLUMNS:
+                if not legacy or table == "executions":
+                    verb += " OF " + _UPDATE_COLUMNS[table]
             function = (
                 "compute_authority_current_v1"
                 if table in ("execution_runs", "gateway_admissions")
@@ -360,13 +384,26 @@ class _Coordinator:
             )
         conn.execute("PRAGMA busy_timeout=250")
         existing = dict(conn.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger'"))
-        for name, sql in _guards(domain, self.identity):
-            if name not in existing:
-                if old is not None:
-                    raise FenceDenied("authority_guard_missing")
-                conn.execute(sql)
-            elif existing[name] != sql:
-                raise FenceDenied("authority_guard_mismatch")
+        legacy = dict(_guards(domain, self.identity, legacy=True))
+        # Upgrade only the exact earlier guards, atomically under the same
+        # coordinator. Unknown/missing guards still fail closed on reattach.
+        conn.execute("SAVEPOINT compute_guard_upgrade")
+        try:
+            for name, sql in _guards(domain, self.identity):
+                if name not in existing:
+                    if old is not None:
+                        raise FenceDenied("authority_guard_missing")
+                    conn.execute(sql)
+                elif existing[name] != sql:
+                    if existing[name] != legacy[name]:
+                        raise FenceDenied("authority_guard_mismatch")
+                    conn.execute(f"DROP TRIGGER {name}")
+                    conn.execute(sql)
+            conn.execute("RELEASE compute_guard_upgrade")
+        except BaseException:
+            conn.execute("ROLLBACK TO compute_guard_upgrade")
+            conn.execute("RELEASE compute_guard_upgrade")
+            raise
         self._participants[path] = (domain, current)
 
     def seal(self, workspace, paths):

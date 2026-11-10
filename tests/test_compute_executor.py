@@ -94,8 +94,12 @@ class Helper(BytesChannel):
         if message["kind"] == "open_enrolled_ssh":
             request = ExecutionRequest.from_message(message)
             self.ready = admission_message("ready", request, "c" * 64, "a" * 64, request.start_by)
+            self.request = request
             self.incoming.extend(encode_frame(self.ready))
         elif message["kind"] == "go":
+            # Model durable admission, as the real helper adapter does. A
+            # dropped open acknowledgement still cannot start target auth.
+            assert self.driver.service._gateway_admission(self.request, "admit")
             self.driver.hit("go")
             if not self.driver.lost_open_ack:
                 self.incoming.extend(encode_frame({**self.ready, "kind": "opened"}))
@@ -231,6 +235,7 @@ def execution_env(compute_env, tmp_path, compute_private_filesystem):
         provisioning_keys={"fixture-provisioner": provisioner_public},
         driver=driver,
     )
+    driver.service = service
     state = SimpleNamespace(
         env=env,
         fence=fence,
@@ -579,7 +584,7 @@ def test_double_claim_uses_independent_connections_and_one_durable_attempt(execu
 
 
 @pytest.mark.parametrize("crash_stage", [0, 1, 2, 3, 4])
-def test_crash_reopen_never_reclaims_and_expiry_preserves_uncertain_capacity(
+def test_crash_reopen_never_reexecutes_and_retains_only_dispatched_capacity(
     execution_env, crash_stage
 ):
     state = execution_env
@@ -591,18 +596,22 @@ def test_crash_reopen_never_reclaims_and_expiry_preserves_uncertain_capacity(
     reopened = ExecutionService(state.env.store, enabled=True, fence=state.fence)
     assert not reopened._run_once()
     run = view(state, proposal)["run"]
-    assert run["phase"] == "uncertain" and run["capacity_reserved"]
-    assert run["certainty"] == "unknown" and run["reason"] == "interrupted"
+    if crash_stage == 0:
+        assert run["phase"] == "terminal" and not run["capacity_reserved"]
+        assert run["certainty"] == "known" and run["reason"] == "interrupted_before_start"
+    else:
+        assert run["phase"] == "uncertain" and run["capacity_reserved"]
+        assert run["certainty"] == "unknown" and run["reason"] == "interrupted"
     assert state.driver.calls == []
 
 
-def test_lost_ack_never_reexecutes_and_reserves_capacity(execution_env):
+def test_lost_open_ack_before_target_auth_settles_without_reexecution(execution_env):
     state = execution_env
     proposal = prepare(state)
     state.driver.lost_open_ack = True
     assert state.service._run_once()
-    assert view(state, proposal)["run"]["phase"] == "uncertain"
-    assert view(state, proposal)["run"]["capacity_reserved"]
+    assert view(state, proposal)["run"]["phase"] == "terminal"
+    assert not view(state, proposal)["run"]["capacity_reserved"]
     assert state.driver.calls.count("connect") == 1
     assert "exec" not in state.driver.calls
     assert not state.service._run_once()
@@ -612,7 +621,11 @@ def test_uncertain_capacity_never_expires_into_free_slots(execution_env):
     state = execution_env
     for number in range(2):
         prepare(state, request_id=str(number))
-        assert state.service._claim() is not None
+        request, _, _ = state.service._claim()
+        for phase in ("connect", "dispatch"):
+            assert state.service._authorize(request, phase)
+        assert state.service._gateway_admission(request, "admit")
+        assert state.service._authorize(request, "target_auth")
     state.env.clock.now += 31
     proposal = prepare(state, request_id="third")
     assert not state.service._run_once()
@@ -676,7 +689,7 @@ def test_late_cancel_preserves_observed_exit(execution_env):
     assert row["run"]["cancel_requested_at"] is not None
 
 
-@pytest.mark.parametrize("boundary,known", [("helper", True), ("go", False)])
+@pytest.mark.parametrize("boundary,known", [("helper", True), ("go", True)])
 def test_cancel_around_helper_admission_does_not_claim_remote_kill(execution_env, boundary, known):
     state = execution_env
     proposal = prepare(state)

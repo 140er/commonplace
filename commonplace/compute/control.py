@@ -312,6 +312,9 @@ class Store:
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=FULL")
                     conn.executescript(_SCHEMA)
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(execution_runs)")}
+                    if "operator_note" not in columns:
+                        conn.execute("ALTER TABLE execution_runs ADD COLUMN operator_note TEXT")
                     from .script_control import schema
 
                     schema(conn)

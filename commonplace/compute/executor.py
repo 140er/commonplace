@@ -53,7 +53,7 @@ from .protocol import (
     finite,
     identifier,
 )
-from .transport import EphemeralKey, ExecutionResult, SSHTransport
+from .transport import SCRIPT_NONRUN_CODES, EphemeralKey, ExecutionResult, SSHTransport
 
 MAX_RESULT_BYTES = 8192
 MAX_VERIFICATION_SECONDS = 3600
@@ -77,6 +77,8 @@ _REASONS = frozenset(
         "admission_mismatch",
         "credential_unavailable",
         "ssh_dependency_unavailable",
+        "cancelled_before_start",
+        *SCRIPT_NONRUN_CODES,
     }
 )
 
@@ -394,7 +396,14 @@ class ExecutionService:
         return row, fresh, outer, inner, origin
 
     def _recover(self, conn):
-        # An elapsed local deadline is no proof of remote death. Preserve slots.
+        # Stage zero precedes any socket and is a confirmed non-run on recovery.
+        conn.execute(
+            "UPDATE execution_runs SET phase='terminal',reason='interrupted_before_start',"
+            "certainty='known',reserved=0,updated_at=? "
+            "WHERE phase='admitted' AND stage=0 AND run_until<=?",
+            (self.store._now(), self.store._now()),
+        )
+        # An elapsed deadline after dispatch is no proof of remote death.
         conn.execute(
             "UPDATE execution_runs SET phase='uncertain',reason='interrupted',updated_at=? "
             "WHERE phase IN ('admitted','dispatching','running') AND run_until<=?",
@@ -918,7 +927,9 @@ class ExecutionService:
         issued = conn.execute(
             "SELECT 1 FROM gateway_admissions WHERE execution_id=?", (request.execution,)
         ).fetchone()
-        not_started = valid and result.state == "not_started" and run["stage"] < 3 and not issued
+        # Before target authentication there can be no target operation. The
+        # absence of a durable permit independently proves a non-run.
+        not_started = run["stage"] < 3 or not issued
         known = known_exit or not_started
         reason = result.reason if valid and result.reason in _REASONS else "transport_unavailable"
         if not_started and run["cancel_requested_at"] is not None:
@@ -938,7 +949,19 @@ class ExecutionService:
                     and script_result.exit_code == result.exit_code
                 )
             )
-            known = known_exit or not_started
+            confirmed_nonrun = (
+                run["stage"] == 4
+                and valid
+                and (
+                    (result.state == "not_run" and result.reason in SCRIPT_NONRUN_CODES)
+                    or (
+                        type(script_result) is ScriptResult
+                        and script_result.state in ("denied", "cancelled")
+                        and script_result.termination_confirmed
+                    )
+                )
+            )
+            known = known_exit or not_started or confirmed_nonrun
             evidence = (
                 project_result(script_result)
                 if publish and type(script_result) is ScriptResult
@@ -960,6 +983,33 @@ class ExecutionService:
                 request.execution,
             ),
         )
+
+    def settle_uncertain(self, execution_id, note):
+        """Trusted operator reconciliation; deliberately absent from HTTP routes.
+
+        Independent external evidence is the operator's responsibility. The
+        original attempt identity remains a tombstone and cannot be retried.
+        This does not grant permission to publish withheld remote output.
+        """
+        identifier(execution_id)
+        if type(note) is not str or not note.strip() or len(note) > 1000:
+            raise StoreError("invalid_operator_note", 400)
+        with self._guard():
+            with self.store._journal() as conn:
+                row = conn.execute(
+                    "SELECT phase FROM execution_runs WHERE execution_id=?", (execution_id,)
+                ).fetchone()
+                if row is None or row["phase"] != "uncertain":
+                    raise StoreError("uncertain_execution_required", 409)
+                conn.execute(
+                    "UPDATE execution_runs SET phase='terminal',reason='operator_settled',"
+                    "certainty='known',reserved=0,operator_note=?,updated_at=? WHERE execution_id=?",
+                    (note, self.store._now(), execution_id),
+                )
+                conn.execute(
+                    "INSERT INTO audit(object_id,action,user_id,created_at) VALUES (?,?,?,?)",
+                    (execution_id, "execution.operator_settled", "operator", self.store._now()),
+                )
 
     def _run_once(self):
         """Internal background iteration; a fixture may drive it synchronously."""

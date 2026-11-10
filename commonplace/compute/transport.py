@@ -47,6 +47,18 @@ from .protocol import (
     validate_admission,
 )
 
+# Only authenticated target script_error frames with these pre-claim codes
+# prove a non-run. Local validation errors and helper_unavailable never do.
+SCRIPT_NONRUN_CODES = frozenset(
+    {
+        "runtime_digest_mismatch",
+        "binding_mismatch",
+        "replay_denied",
+        "target_capacity",
+        "sandbox_unavailable",
+    }
+)
+
 
 class EphemeralKey:
     """One-use in-memory Ed25519 PEM, obtained explicitly from trusted custody.
@@ -450,7 +462,8 @@ class SSHTransport:
             control.deadline = min(
                 control.deadline, self.monotonic() + ready["start_by"] - self.wall()
             )
-            routed = True  # A lost/partial go send is ambiguous, never retry it.
+            # Legacy go opens the route; wire go cannot act without a permit.
+            routed = self.admission_mode is None
             control.send({**ready, "kind": "go"})
             if self.admission_mode == ADMISSION_MODE:
                 challenge = AdmissionChallenge.from_message(control.receive(), request, ready)
@@ -469,6 +482,7 @@ class SSHTransport:
                     raise ProtocolDenied("admission_mismatch")
                 challenge.validate_time(self.wall())
                 self._authorize_cancel(cancelled)
+                routed = True  # A lost/partial permit send is ambiguous.
                 control.send(permit)
             opened = control.receive()
             validate_admission(opened, "opened", request)
@@ -487,11 +501,27 @@ class SSHTransport:
 
                 process = self.driver.script_command(inner, remaining())
                 resources.append(process)
-                outcome = exchange(process, request, script_request, script, deadline, cancelled)
+                from .target_helper import ScriptRemoteError
+
+                try:
+                    outcome = exchange(
+                        process, request, script_request, script, deadline, cancelled
+                    )
+                except ScriptRemoteError as exc:
+                    return ExecutionResult(
+                        "not_run" if str(exc) in SCRIPT_NONRUN_CODES else "uncertain",
+                        str(exc),
+                        tunnel_bytes=tunnel.used,
+                    )
                 observed = outcome.state == "observed_exit" and outcome.termination_confirmed
+                nonrun = outcome.state in ("denied", "cancelled") and outcome.termination_confirmed
                 return ExecutionResult(
                     "completed" if observed else "uncertain",
-                    "exit_observed" if observed else "exit_evidence_missing",
+                    "exit_observed"
+                    if observed
+                    else outcome.code
+                    if nonrun
+                    else "exit_evidence_missing",
                     outcome.exit_code if observed else None,
                     cancellation_requested=outcome.cancel_requested,
                     tunnel_bytes=tunnel.used,
