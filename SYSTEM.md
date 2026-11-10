@@ -327,6 +327,10 @@ After confirmed termination, iterative cleanup restores directory permissions
 and removes up to4096 entries without a depth cutoff or descriptors per ancestor.
 Cleanup I/O errors preserve observed results; later admissions still require
 resource headroom.
+Lost control-channel receives become target cancellation intent, including before
+spawn. Running groups must be observed empty before scratch cleanup; failures
+with no spawned process are confirmed non-runs. Target result persistence/cleanup
+does not settle a controller run whose result acknowledgement was lost.
 
 Execution defaults off. It requires a non-root capability-free host identity,
 mandatory namespaces, no network, a digest-bound read-only root-owned runtime,

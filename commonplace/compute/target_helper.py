@@ -490,9 +490,15 @@ class TargetHelper:
                 try:
                     # A partial cancellation frame must not stall wall/CPU checks.
                     wire.io.deadline = min(previous_deadline, time.monotonic() + 0.05)
-                    value = _message(wire.receive(), "script_cancel", {"digest"})
+                    value = wire.receive()
+                except (ProtocolDenied, OSError) as error:
+                    if str(error) == "binding_mismatch":
+                        raise
+                    requested = True
+                    return True
                 finally:
                     wire.io.deadline = previous_deadline
+                value = _message(value, "script_cancel", {"digest"})
                 if value["digest"] != request.digest:
                     raise ScriptDenied("binding_mismatch")
                 requested = True

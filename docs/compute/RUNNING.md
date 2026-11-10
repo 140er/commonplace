@@ -172,6 +172,14 @@ and releases the reservation. The check does not reserve space against concurren
 jobs. After confirmed termination, iterative cleanup removes trees within the
 4096-entry ceiling without a depth cutoff or descriptors per ancestor.
 
+A lost control channel is cancellation intent at the target. The target kills
+the process group and cleans scratch only after confirming emptiness; before
+spawn it records confirmed cancellation without starting a process. Setup/spawn
+failures with no process record confirmed non-runs. These confirmed target claims
+can be pruned after expiry/grace. A lost result acknowledgement still leaves the
+controller uncertain and requires the reconciliation procedure above; inspect
+target evidence before it expires. Cancellation binding mismatches remain errors.
+
 If scratch remains occupied after an actual filesystem error or unconfirmed
 termination, stop admissions and independently confirm the relevant processes
 have ended before removing their scratch data. Preserve claim/result evidence

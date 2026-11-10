@@ -471,7 +471,11 @@ class BubblewrapSandbox:
             process = self._spawn(request, script_path, job_path, group)
             return self._collect(request, process, group, cancelled)
         except (OSError, ValueError, subprocess.SubprocessError):
-            return ScriptResult("uncertain" if process else "denied", "sandbox_unavailable")
+            return ScriptResult(
+                "uncertain" if process else "denied",
+                "sandbox_unavailable",
+                termination_confirmed=process is None,
+            )
         finally:
             if group is not None:
                 try:

@@ -67,6 +67,14 @@ and no depth cutoff. Deep trees within the supported tmpfs inode ceiling are
 removed. Cleanup I/O errors cannot replace observed exit/output or stored result
 metadata; the free-resource admission check still applies to subsequent requests.
 
+Control-channel EOF or receive I/O failure becomes cancellation intent on the
+target, including before spawn. During execution the target kills the group,
+confirms emptiness and persists its terminal result before cleaning scratch.
+Lost delivery still leaves the controller uncertain; target cleanup alone does
+not settle that controller reservation. Cancellation digest mismatches remain
+binding errors. Setup/spawn failures with no process are confirmed non-runs,
+so their scratch is cleaned and their claims become eligible for expiry pruning.
+
 Synthetic signed receipts and the WireOnlyTarget socketpair fixture prove
 controller/API/transport wiring. They never launch host scripts and do not prove
 actual confinement. A disposable operator-provisioned non-root namespace/cgroup/
