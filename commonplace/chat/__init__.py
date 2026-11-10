@@ -3,7 +3,7 @@
 import os
 import time
 
-from commonplace.chat import front, handoff, routes, settings, store, worker
+from commonplace.chat import coworkers, front, handoff, routes, settings, store, worker
 
 
 def install(gateway):
@@ -22,4 +22,5 @@ def install(gateway):
         gateway, start=os.environ.get("COMMONPLACE_CHAT_WORKER", "on") != "off"
     )
     db.add_pre_close_callback(gateway.chat_worker.stop)
+    coworkers.install(gateway)
     gateway.chat_installed = True

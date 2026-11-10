@@ -219,7 +219,7 @@ class Principal:
 
 
 class ControlDB:
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, compute_config=None):
         self.path = path
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
@@ -278,6 +278,12 @@ class ControlDB:
             os.chmod(path, 0o600)
         except OSError:
             pass
+        # Explicit service startup configuration only. Ordinary constructors,
+        # requests and imports neither provision keys nor enable execution.
+        if compute_config is not None:
+            from .compute import _configure_control
+
+            _configure_control(self, compute_config)
 
     def add_pre_close_callback(self, callback: Callable[[], None]) -> None:
         """Register an owned resource to stop before SQLite closes."""
@@ -300,20 +306,32 @@ class ControlDB:
             with self._lock:
                 self._conn.close()
                 self._closed = True
+            coordinator = getattr(self, "_compute_coordinator", None)
+            if coordinator is not None and getattr(self, "_compute_shutdown_complete", True):
+                coordinator.close()
             self._pre_close.clear()
             if error is not None:
                 raise error
 
     def _tx(self):
         conn = self._conn
+        lock = self._lock
 
         class _Tx:
             def __enter__(self_inner):
-                conn.execute("BEGIN IMMEDIATE")
+                lock.__enter__()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                except BaseException:
+                    lock.__exit__(None, None, None)
+                    raise
                 return conn
 
             def __exit__(self_inner, exc_type, exc, tb):
-                conn.execute("ROLLBACK" if exc_type else "COMMIT")
+                try:
+                    conn.execute("ROLLBACK" if exc_type else "COMMIT")
+                finally:
+                    lock.__exit__(exc_type, exc, tb)
                 return False
 
         return _Tx()

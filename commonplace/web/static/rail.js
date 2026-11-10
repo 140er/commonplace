@@ -32,6 +32,8 @@ export function renderRail({ workspace = 'Commonplace', user = '', boards = [], 
     <button class="cmdk" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K">${icon('search')}<span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
     <a class="nav" href="#/needs" data-nav="needs"${current(view === 'needs')}>${icon('needs')}Needs me ${badge(needs, 'items')}</a>
     <a class="nav" href="#/memory" data-nav="memory"${current(view === 'memory')}>${icon('memory')}Memory</a>
+    <a class="nav" href="#/coworkers" data-nav="coworkers"${current(view === 'coworkers')}>${icon('chat')}Coworkers</a>
+    ${can_admin === true ? `<a class="nav" href="#/compute" data-nav="compute"${current(view === 'compute')}>${icon('settings')}Compute</a>` : ''}
     <div class="rail-h"><span id="ph">Projects</span><button class="iconbtn" id="new-project" data-action="new-board" aria-label="New project">+</button></div>
     <div role="list" aria-labelledby="ph">${boards.map((b) => `<div role="listitem"><a class="proj" href="${boardHref(b)}"${current(['board', 'chat', 'settings', 'space'].includes(view) && b.slug === board?.slug)}><span class="sw" aria-hidden="true"></span><span class="pn"><b>${e(b.name || b.slug)}</b><small>${projectSubline(b)}</small></span>${badge(needsByBoard[b.slug], 'need you')}</a></div>`).join('')}</div>
     <div class="rail-foot"><button class="nav" id="shortcuts-link" data-action="shortcuts">${icon('keys')}Shortcuts <kbd>?</kbd></button>

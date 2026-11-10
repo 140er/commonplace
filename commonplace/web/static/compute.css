@@ -1,0 +1,46 @@
+/* Existing Workbench palette and type. Two equal columns plus 16px = canvas;
+   one column below 1000px. No independent shell or decorative status totals. */
+.compute { color: var(--text); display: grid; gap: 16px; min-width: 0; }
+.compute h2 { font-size: 16px; line-height: 24px; letter-spacing: 0; font-weight: 600; }
+.compute p { line-height: 1.5; overflow-wrap: anywhere; }
+.compute-intro, .compute-inventory > header, .compute-editor > header, .compute-row > header { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+.compute-intro p { flex: 1; min-width: 200px; max-width: 72ch; }
+.compute-inventories { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.compute-inventory, .compute-editor, .compute-capabilities { padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); min-width: 0; }
+.compute-empty, .compute-quiet, .compute-notice, .compute small { color: var(--text-2); font-size: 13px; }
+.compute-empty { margin-top: 12px; }
+.compute-notice:empty, .compute-editor [role="alert"]:empty { display: none; }
+.compute-error, .compute [role="alert"] { color: var(--block); }
+.compute-list { list-style: none; margin: 12px 0 0; padding: 0; max-height: 340px; overflow: auto; overscroll-behavior: contain; }
+.compute-row { padding: 12px 0; overflow-wrap: anywhere; border-top: 1px solid var(--line); }
+.compute-row p, .compute-row details { margin: 6px 0; font-size: 13px; }
+.compute-row summary { cursor: pointer; min-height: 28px; }
+.compute-row a, .compute-snapshot a { text-decoration: underline; text-underline-offset: 3px; }
+.compute-state { font-size: 13px; color: var(--text-2); }
+.compute [data-state="awaiting_approval"] .compute-state { color: var(--wait); }
+.compute-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.compute-digest code { overflow-wrap: anywhere; }
+.compute pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--mono); padding: 12px; background: var(--well); max-height: 160px; overflow: auto; }
+.compute dl { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(0, 2fr); gap: 6px 12px; font-size: 13px; margin: 12px 0; }
+.compute dt { color: var(--text-2); }
+.compute dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.compute fieldset { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.compute-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.compute label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
+.compute label small { line-height: 1.5; }
+.compute input:not([type="checkbox"]), .compute textarea, .compute select { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 8px 10px; font: inherit; box-shadow: none; }
+.compute input[type="checkbox"] { width: 18px; height: 18px; margin: 2px 0; flex: none; accent-color: var(--accent); }
+.compute .compute-check { flex-direction: row; align-items: start; gap: 10px; }
+.compute-wide { grid-column: 1 / -1; }
+.compute-snapshot { padding: 12px; background: var(--pane); }
+.compute-capabilities > div { display: flex; align-items: baseline; gap: 12px; margin-top: 12px; }
+.compute-capabilities p { font-size: 13px; color: var(--text-2); flex: 1; }
+.compute button:disabled { cursor: default; }
+.compute :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 999px) { .compute-inventories { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 599px) {
+  .compute-fields { grid-template-columns: minmax(0, 1fr); }
+  .compute-inventory, .compute-editor, .compute-capabilities { padding: 12px; }
+  .compute .btn, .compute summary, .compute input, .compute select { min-height: 44px; }
+  .compute-capabilities > div { align-items: start; flex-direction: column; gap: 6px; }
+}

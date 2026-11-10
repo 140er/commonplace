@@ -19,6 +19,9 @@ from commonplace.workers import WorkerSupervisor
 # A new registered route must be deliberately classified here. Prefix entries
 # include methods without an implemented action: authentication still runs first.
 EXACT = {
+    **{(method, "/api/compute"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/compute/discoveries"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/coworkers"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/github"): "authenticated",
     ("POST", "/api/github/connect"): "authenticated",
     ("POST", "/api/github/confirm"): "authenticated",
@@ -85,6 +88,9 @@ EXACT = {
     ("PUT", "/api/chat-settings"): "authenticated",
 }
 PREFIX = {
+    **{(method, "/api/compute/"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/compute/discoveries/"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/coworkers/"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/admin/instance/"): "authenticated",
     ("GET", "/api/admin/workspaces/"): "authenticated",
     ("GET", "/api/task-types/connections/"): "authenticated",
