@@ -1497,6 +1497,27 @@ def test_a_failed_account_deletion_keeps_keys_until_the_sweep_revokes_the_candid
     assert not rows(s, "github_confirmations") and not rows(s, "github_keys")
 
 
+def test_a_failed_exchange_release_is_retried_by_the_next_heartbeat(merging, monkeypatch):
+    import sqlite3
+
+    s = merging
+    candidate = pending_merge_consent(s)
+    worker = s.gateway.github
+    real = worker._settle_exchange
+
+    def locked(conn, uid):
+        raise sqlite3.OperationalError("database is locked (synthetic)")
+
+    monkeypatch.setattr(worker, "_settle_exchange", locked)
+    post_confirm(s, False)
+    monkeypatch.setattr(worker, "_settle_exchange", real)
+    # The decline revoked its candidate but could not release its marker.
+    assert revoked_tokens(s).count(candidate) == 1 and marker(s)[0] == 1
+    tick(worker, monkeypatch)
+    assert marker(s)[0] == 0 and not worker._owed
+    assert status(s)["state"] == "connected" and not status(s)["pending"]
+
+
 def test_a_restart_drops_releases_still_owed(merging, monkeypatch):
     import sqlite3
 
