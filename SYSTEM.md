@@ -225,6 +225,11 @@ Subagents still need an existing approved and released card before asking. If a
 routed coordinator becomes unavailable or is replaced, the pending ask appears
 in the owner's queue without changing its stored words or audit log.
 
+The shipped agent skill teaches the same routing and withdrawal boundaries. The
+pinned MCP contract adds only optional `person_reason` to `ask` and `task_update`,
+with matching descriptions for `ask`, `task_update` and `decide`; tool names and
+visibility for slim, standard and full profiles remain unchanged.
+
 
 ### Project seat wake recommendations
 
