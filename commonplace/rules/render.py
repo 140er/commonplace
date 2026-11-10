@@ -7,6 +7,10 @@ import unicodedata
 REPLY_BYTES = 24_000
 RULE_BYTES = 6_000
 INSTRUCTIONS_BUDGET = 3_600
+UNAVAILABLE = (
+    "Workspace rules may apply but could not be loaded in time. "
+    "Before you plan or write, call rules_get format=md effective=true."
+)
 TOO_LARGE = "rules_seq too_large: the rule set is too large for one reply; ask the owner to trim it"
 HEADINGS = (
     ("limit", "Hard limits"),

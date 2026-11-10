@@ -119,6 +119,8 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 ### Rules initialization deadline
 
+- When the rules injection budget runs out at session start (or a read gives up on a lock), an agent that can read `rules_get` gets a fixed pointer sentence from `rules/service.py` (`unavailable_pointer`, text in `rules/render.py`) in place of empty instructions, in both the gateway's startup context and `instructions_for`. It is built without a store read and carries no rule text, count or version; the 80 ms budgets, other failures and the normal path are unchanged.
+
 - Owner summary-edit checks use a fixed injection clock and a forced-expiry regression, retaining verbatim injection and acceptance assertions without changing the production deadline.
 
 - Shared-proposal acceptance is checked with a fixed injection clock; scheduler-delay regression coverage retains exact rule text and spacing for both agents without changing the production fail-open deadline.

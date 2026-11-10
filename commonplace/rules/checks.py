@@ -36,6 +36,15 @@ def remaining(timeout):
     return min(timeout, left)
 
 
+def out_of_time(exc):
+    """The deadline expired, or a read gave up on a lock or was interrupted by it (either driver)."""
+    if isinstance(exc, TimeoutError):
+        return True
+    return type(exc).__name__ == "OperationalError" and any(
+        word in str(exc).lower() for word in ("locked", "busy", "interrupt")
+    )
+
+
 @contextmanager
 def deadline(timeout):
     """Nested readers may shorten a caller's deadline, never extend it."""

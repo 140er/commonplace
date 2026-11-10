@@ -814,15 +814,32 @@ class RuleService:
         return result
 
 
-def instructions_for(ctx, *, budget=render.INSTRUCTIONS_BUDGET):
-    """Fail open without binding, serving, creating stores or emitting events."""
+def _injectable(ctx, budget):
+    return not (
+        ctx.principal.person
+        or budget <= 0
+        or getattr(ctx.gateway, "rules_inject_off", False)
+        or not ctx.principal.policy.tool_visible("rules_get")
+    )
+
+
+def unavailable_pointer(ctx, budget=render.INSTRUCTIONS_BUDGET):
+    """Fixed pointer for when injection could not finish: no store read, no rule data."""
     try:
-        if (
-            ctx.principal.person
-            or budget <= 0
-            or getattr(ctx.gateway, "rules_inject_off", False)
-            or not ctx.principal.policy.tool_visible("rules_get")
-        ):
+        ok = _injectable(ctx, budget) and render.length(render.UNAVAILABLE) <= budget
+    except Exception:
+        return ""
+    return render.UNAVAILABLE if ok else ""
+
+
+def instructions_for(ctx, *, budget=render.INSTRUCTIONS_BUDGET):
+    """Fail open without binding, serving, creating stores or emitting events.
+
+    When the time budget runs out (or a locked read gives up), the result is a fixed
+    pointer to rules_get rather than nothing: it is built without touching a store.
+    """
+    try:
+        if not _injectable(ctx, budget):
             return ""
         with checks.deadline(INSTRUCTIONS_TIMEOUT):
             try:
@@ -846,7 +863,7 @@ def instructions_for(ctx, *, budget=render.INSTRUCTIONS_BUDGET):
             return text if render.length(text) <= budget else ""
     except Exception as exc:
         log_failure(logger, "rules instruction injection failed", exc)
-        return ""
+        return unavailable_pointer(ctx, budget) if checks.out_of_time(exc) else ""
 
 
 def effective_rules(ctx, *, bind=False, emit=False, timeout=0.1):

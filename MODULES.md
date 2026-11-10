@@ -732,7 +732,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Privacy near-miss correctness runs without a clock; its unchanged 20 ms average budget runs separately under the `timing` marker.
 
-  - The 500-rule initialization checks separate deterministic truncation behavior from the unchanged informational p95 budget; a fake-clock regression covers empty injection after deadline expiry.
+  - `tests/test_commonplace_rules_inject_budget.py` runs exhausted-budget initialization with burning and jumping clocks: the reply carries only the fixed rules pointer (no rule content, no store read), the normal path and silent cases (kill switch, no `rules_get`, unrelated failure) are unchanged.
+
+  - The 500-rule initialization checks separate deterministic truncation behavior from the unchanged informational p95 budget; a fake-clock regression covers the fixed pointer (not empty text) after deadline expiry.
 
   - Imported startup recall freezes logical expiry and uses the functional worker allowance; a delayed real search regression retains ACL filtering and exact JSON-quoted imported text.
 

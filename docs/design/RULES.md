@@ -281,7 +281,14 @@ Off or unknown checking modes show no version.
 Rule reads and reconciliation share an 80 ms overall deadline. Each
 SQLite operation uses the remaining time, with long statements interrupted
 at expiry. Failures log once and leave the original worker reply intact;
-an incomplete authorized snapshot never reaches the client. A lost bound
+an incomplete authorized snapshot never reaches the client. When the deadline
+expires, or a read gives up on a lock, an agent that can read `rules_get`
+receives one fixed sentence instead of silence: workspace rules may apply, were
+not loaded in time, and must be fetched with `rules_get format=md effective=true`.
+It is a constant built without any store read, so it cannot itself time out, and
+it carries no rule text, count or version. Other failures, the kill switch,
+person connections and agents without `rules_get` still get nothing, and the
+budgets are unchanged. A lost bound
 store produces only a header and the owner-confirmation pointer, without
 rule text. Injection never creates a store, binds its identity or emits an
 event. Only reconciliation may migrate or bump the existing rules store.

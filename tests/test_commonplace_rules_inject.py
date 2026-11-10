@@ -43,6 +43,17 @@ INCOMPLETE_READ = (
     "to pass on write tools (if it gives one)."
 )
 CURRENT_READ = "Call rules_get format=md effective=true when you need the current set."
+POINTER = (
+    "Workspace rules may apply but could not be loaded in time. "
+    "Before you plan or write, call rules_get format=md effective=true."
+)
+
+
+def assert_pointer_only(response):
+    """Budget expiry: the legacy reply plus the fixed pointer, nothing from the store."""
+    expected = copy.deepcopy(LEGACY)
+    expected["result"]["instructions"] = POINTER
+    assert response == expected
 
 
 @pytest.fixture(autouse=True)
@@ -434,7 +445,7 @@ def test_rendering_stops_at_deadline_without_processing_the_rest(local, monkeypa
         return quote(text)
 
     monkeypatch.setattr(render, "quote", costly)
-    assert initialize(local) == LEGACY
+    assert_pointer_only(initialize(local))
     assert 1 <= len(quoted) <= 4
     assert not (local.directory / "rules.sqlite3").exists()
 
@@ -451,7 +462,7 @@ def test_completed_render_is_discarded_after_deadline(local, monkeypatch):
         return result
 
     monkeypatch.setattr(render, "instructions", expired)
-    assert initialize(local) == LEGACY
+    assert_pointer_only(initialize(local))
 
 
 def test_each_connection_and_statement_uses_remaining_time(local, monkeypatch):
@@ -548,7 +559,7 @@ def test_locked_store_uses_remaining_deadline(local, store, monkeypatch):
         blocker.execute("BEGIN EXCLUSIVE")
         monkeypatch.setattr(checks.sqlite3, "connect", tracked)
         monkeypatch.setattr(checks, "connection", delayed)
-        assert initialize(local) == LEGACY
+        assert_pointer_only(initialize(local))
         blocker.rollback()
 
     assert any(path.as_uri() in database for database in opened)
@@ -572,7 +583,7 @@ def test_locked_store_stays_inside_overall_deadline(local, store):
     elapsed = perf_counter() - start
     blocker.rollback()
     blocker.close()
-    assert result == LEGACY
+    assert_pointer_only(result)
     assert elapsed < 0.1
 
 
@@ -608,7 +619,7 @@ def test_reconciliation_writer_also_uses_remaining_deadline(local, monkeypatch):
     with closing(connect(local.directory / "rules.sqlite3", isolation_level=None)) as blocker:
         blocker.execute("PRAGMA journal_mode=WAL")
         blocker.execute("BEGIN IMMEDIATE")
-        assert initialize(local) == LEGACY
+        assert_pointer_only(initialize(local))
         blocker.rollback()
     assert waits == [pytest.approx(0.04)]
     begin = statements.index("BEGIN IMMEDIATE")

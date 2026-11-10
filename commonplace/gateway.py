@@ -363,7 +363,7 @@ class Mediator:
 
     def _initialize_context(self, principal, response):
         from .rules import checks, render
-        from .rules.service import instructions_for
+        from .rules.service import instructions_for, unavailable_pointer
 
         previous = response["result"].get("instructions", "")
         if principal.person or not isinstance(previous, str):
@@ -373,13 +373,13 @@ class Mediator:
         if budget < render.length(pointer):
             return response
         ctx = extensions.ToolContext(principal, self.gateway)
-        rules, context = "", pointer
+        rules, context, rules_done = "", pointer, False
+        rules_budget = budget - render.length(pointer) - (2 if pointer else 0)
         try:
             with checks.deadline(STARTUP_TIMEOUT_S):
                 # Whole rules have priority; reserve only the mandatory pointer.
-                rules = instructions_for(
-                    ctx, budget=budget - render.length(pointer) - (2 if pointer else 0)
-                )
+                rules = instructions_for(ctx, budget=rules_budget)
+                rules_done = True
                 context_budget = budget - render.length(rules) - (2 if rules else 0)
                 checks.remaining(STARTUP_TIMEOUT_S)
                 from .session import initialize_context
@@ -394,6 +394,8 @@ class Mediator:
                     context = candidate
         except Exception as exc:
             log_failure(logger, "startup context unavailable", exc)
+            if not rules_done and checks.out_of_time(exc):
+                rules = unavailable_pointer(ctx, rules_budget)
         instructions = "\n\n".join(part for part in (rules, context, previous) if part)
         if instructions:
             response = copy.copy(response)
