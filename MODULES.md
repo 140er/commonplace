@@ -1609,7 +1609,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
-  - The A4 scan covers string literals, f-strings, `+` chains and `%`-formatted literals case-insensitively, including CTE- and `;`-prefixed statements; a fixed snippet list keeps every form an earlier scan caught, and prose cases stay out.
+  - The A4 scan is a best-effort lint: the union of a per-piece rule (each literal and f-string, upper-case dynamic match) and a joined, anchored, case-insensitive rule over f-strings and `+` chains, so it never catches less than the per-piece rule (a test checks this on the corpus). A committed positive corpus must stay flagged and a negative corpus must stay clean; three prose lines ending in a placeholder are accepted false positives, and the forms neither rule catches are listed as known limits.
 
   - `tests/test_eval_guards.py` and `tests/test_eval_lifecycle_guards.py` hold the base guards eval relies on (read-only opener, continuity invariants, identity-rewrite scan, import-view scope and auth, backup, encryption and switch carriage) without importing eval.
 

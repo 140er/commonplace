@@ -899,6 +899,14 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 ## Residuals
 
+- **Eval guard A4 is a lint:** the scan that no code rewrites thread
+  identity or deletes thread rows reads SQL string literals, f-strings, `+`
+  chains and `%`-formatted literals, schema-qualified and quoted names
+  included. It cannot see SQL built with `str.join` or `+=`, `%(name)s`
+  formatting, comments inside keywords, `TRUNCATE`, `ALTER TABLE … DROP
+  COLUMN` or Postgres `DELETE FROM ONLY`. It flags prose that ends in a
+  placeholder; such a hit would be allowlisted (`docs/evals.md`).
+
 - **Eval archives:** slice 1 covers handoff transcripts and ACL imports only:
   0% of live captures and grant imports, the automatic high-volume trace path;
   the share by count is unmeasured. Purge does not erase retired store

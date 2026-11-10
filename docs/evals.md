@@ -34,7 +34,8 @@ fresh data directory. This is a deliberate deviation from the slice-1 plan,
 which routes every eval command through the backup fence and data lock:
 preflight only stats paths and reads `workspace.json`, so the locks protect
 nothing there, while taking them would create lock files. Every other eval
-command still waits for a running backup.
+command waits for a running backup up to the CLI fence wait
+(`COMMONPLACE_FENCE_WAIT_S`, 30 s by default), then refuses.
 
 ## Eligibility
 
@@ -123,3 +124,23 @@ names each fix, for example `chmod 0700 <workspace>/evals` and
 elsewhere). Backups, encryption conversion and store switches carry the eval DB
 like every other workspace SQLite file; online backups refuse encrypted ones.
 Artifacts redirected from a plaintext file stay outside encryption and purge.
+
+## Guard limits
+
+The test suite guards the base behaviour eval relies on. One guard, A4, is a
+best-effort lint over SQL string literals in `commonplace/` and `mempalace/`.
+It must flag any statement that rewrites a thread's `wing` or
+`source_thread_id`, deletes or replaces thread-store rows, or uses a dynamic
+table name that is not on its reviewed allowlist. It reads literals,
+f-strings, `+` chains and `%`-formatted literals, including schema-qualified
+and quoted table names, `REPLACE INTO` and `INSERT OR REPLACE INTO`. It cannot
+see:
+- SQL built with `str.join` or `+=`;
+- `%(name)s` dictionary formatting;
+- comments inside keywords (`DELETE/**/FROM`);
+- `TRUNCATE`;
+- `ALTER TABLE … DROP COLUMN`;
+- Postgres `DELETE FROM ONLY`.
+
+Prose that ends in a placeholder, such as `"Delete from {path}"`, is flagged
+as a false positive. A real hit of that kind would be allowlisted.

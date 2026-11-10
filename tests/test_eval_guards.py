@@ -190,32 +190,53 @@ def test_a3_threads_wing_collision_raises_and_adds_no_sync_row(env):
 
 
 # ── A4: nothing rewrites wing/source_thread_id or deletes thread rows ──
+# A best-effort lint over SQL string literals. Its rule is the union of the
+# per-piece rule (every literal and f-string on its own, upper-case dynamic
+# match) and the joined, anchored rule (f-strings and ``+`` chains rendered
+# whole, case-insensitive), so it never catches less than the per-piece rule.
+_TABLE = r"(?:\w+\s*\.\s*)?[\"'\[`]?"  # optional schema, optional quote
 _CONTENT_TABLES = r"(threads|messages|line|message|block|blob|dict)"
-_SET_TARGET = re.compile(r"\b(wing|source_thread_id)\s*=", re.I)
-_UPDATE_THREADS = re.compile(r"\bUPDATE\s+[\"\[`]?threads\b[\"\]`]?\s+SET\s+(.*)", re.I | re.S)
+_SET_TARGET = re.compile(r"[\"'\[`]?\b(wing|source_thread_id)\b[\"'\]`]?\s*=", re.I)
+_UPDATE_THREADS = re.compile(
+    r"\bUPDATE\s+(?:OR\s+\w+\s+)?" + _TABLE + r"threads\b[\"'\]`]?"
+    r"(?:\s+AS\s+\w+)?\s+SET\s+(.*)",
+    re.I | re.S,
+)
 _UPSERT_THREADS = re.compile(
-    r"\bINSERT\s+(OR\s+\w+\s+)?INTO\s+[\"\[`]?threads\b.*\bDO\s+UPDATE\s+SET\s+(.*)", re.I | re.S
+    r"\bINSERT\s+(OR\s+\w+\s+)?INTO\s+" + _TABLE + r"threads\b.*\bDO\s+UPDATE\s+SET\s+(.*)",
+    re.I | re.S,
 )
 _DESTRUCTIVE = re.compile(
     r"\b(DELETE\s+FROM|DROP\s+TABLE(\s+IF\s+EXISTS)?|REPLACE\s+INTO|INSERT\s+OR\s+REPLACE\s+INTO)"
-    r"\s+[\"\[`]?" + _CONTENT_TABLES + r"\b",
+    r"\s+" + _TABLE + _CONTENT_TABLES + r"\b",
     re.I,
 )
-# Clause (iii), case-insensitive. A statement keyword must open the string or
-# follow ``;``, a newline, ``(`` or ``)`` (a CTE: ``WITH c AS (...) DELETE``).
-# A placeholder table name (f-string or ``+`` part, ``%s``, ``{…}``) or the end
-# of the string must follow, and then a SQL-shaped tail: ``UPDATE <t> SET``,
-# ``DELETE FROM <t>`` before the end, ``;``, ``)``, ``WHERE`` or ``RETURNING``,
-# and ``DROP TABLE <t>`` before the end, ``;`` or ``)``. Prose that opens with a
-# keyword and a brace ("Delete from {path} failed", "Update {name} to retry")
-# therefore stays out.
+# Per-piece dynamic rule (upper-case keywords, a placeholder or the string end).
+_PIECE_DYNAMIC = re.compile(
+    r"\b(DELETE\s+FROM|DROP\s+TABLE(\s+IF\s+EXISTS)?)\s*(\x00|%s|\{|$)|\bUPDATE\s*(\x00|%s|\{)"
+)
+# Joined dynamic rule, case-insensitive: a statement keyword opens the string or
+# follows ``;``, a newline, ``(`` or ``)``; a placeholder name (or the string
+# end) follows; then a SQL-shaped tail. Prose that ends in a placeholder
+# ("Delete from {path}") is still flagged: an accepted false positive of a lint
+# that must not miss SQL; allowlist only a real repo hit.
 _ANCHOR = r"(?:^|[;\n()])\s*"
 _NAME = r"(?:\x00|%s|\{[^{}]*\})"
-_DYNAMIC = re.compile(
+_UPDATE_TAIL = r"(?:\s+(?:AS\s+\w+|INDEXED\s+BY\s+\w+|NOT\s+INDEXED|/\*.*?\*/))*\s+SET\b"
+_JOINED_DYNAMIC = re.compile(
     _ANCHOR + r"DELETE\s+FROM\s*(?:$|" + _NAME + r"\s*(?=$|[;)]|WHERE\b|RETURNING\b))"
     r"|" + _ANCHOR + r"DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s*(?:$|" + _NAME + r"\s*(?=$|[;)]))"
-    r"|" + _ANCHOR + r"UPDATE\s+(?:OR\s+\w+\s+)?" + _NAME + r"\s+SET\b",
-    re.I,
+    r"|"
+    + _ANCHOR
+    + r"UPDATE\s+(?:OR\s+\w+\s+)?"
+    + _NAME
+    + _UPDATE_TAIL
+    + r"|"
+    + _ANCHOR
+    + r"(?:INSERT\s+OR\s+)?REPLACE\s+INTO\s*(?:$|"
+    + _NAME
+    + r")",
+    re.I | re.S,
 )
 # Dynamic table names that are reviewed and touch no thread-store table.
 ALLOWED_DYNAMIC = {
@@ -223,6 +244,7 @@ ALLOWED_DYNAMIC = {
     ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE \x00"): "pgvector drawers",
     ("mempalace/backends/pgvector.py", "DROP TABLE IF EXISTS \x00"): "pgvector drop_table",
     ("mempalace/fact_index.py", "DROP TABLE IF EXISTS \x00"): "three literal fact_search tables",
+    ("mempalace/fact_index.py", "DROP TABLE IF EXISTS "): "the same loop, per-piece form",
 }
 
 
@@ -245,22 +267,38 @@ def _is_string(node):
     )
 
 
-def _statements(tree):
-    """String constants, f-strings and ``+`` chains that contain a string.
+def _pieces(tree):
+    """Per-piece strings: every literal outside an f-string, and each f-string."""
+    parts = {
+        id(p) for node in ast.walk(tree) if isinstance(node, ast.JoinedStr) for p in node.values
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in parts:
+            yield node.lineno, node.value
+        elif isinstance(node, ast.JoinedStr):
+            yield node.lineno, _render(node)
 
-    Only parts of an f-string or a ``+`` chain are nested; the literal of a
-    ``%``-formatted string is scanned on its own (``"... %s" % value``).
-    """
+
+def _joined(tree):
+    """Whole ``+`` chains that contain a string, rendered."""
     nested = {
         id(child)
         for node in ast.walk(tree)
-        if isinstance(node, ast.JoinedStr)
-        or (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add))
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add)
         for child in ast.iter_child_nodes(node)
     }
     for node in ast.walk(tree):
-        if id(node) not in nested and _is_string(node):
+        if (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.Add)
+            and id(node) not in nested
+            and _is_string(node)
+        ):
             yield node.lineno, _render(node)
+
+
+def _statements(tree):
+    yield from dict.fromkeys([*_pieces(tree), *_joined(tree)])
 
 
 def _findings(relative, source):
@@ -271,8 +309,33 @@ def _findings(relative, source):
                 found.append((relative, line, "rewrites wing or source_thread_id"))
         if _DESTRUCTIVE.search(text):
             found.append((relative, line, "destructive thread-store statement"))
-        if _DYNAMIC.search(text) and (relative, text) not in ALLOWED_DYNAMIC:
+        dynamic = _PIECE_DYNAMIC.search(text) or _JOINED_DYNAMIC.search(text)
+        if dynamic and (relative, text) not in ALLOWED_DYNAMIC:
             found.append((relative, line, "dynamic table name not on the allowlist"))
+    return found
+
+
+def _piece_rule(source):
+    """The original per-piece rule alone (upper-case dynamic, unqualified tables)."""
+    found = []
+    for _, text in _pieces(ast.parse(source)):
+        update = re.search(r"\bUPDATE\s+[\"\[`]?threads\b[\"\]`]?\s+SET\s+(.*)", text, re.I | re.S)
+        upsert = re.search(
+            r"\bINSERT\s+(OR\s+\w+\s+)?INTO\s+[\"\[`]?threads\b.*\bDO\s+UPDATE\s+SET\s+(.*)",
+            text,
+            re.I | re.S,
+        )
+        for match in (update, upsert):
+            if match and re.search(
+                r"\b(wing|source_thread_id)\s*=", match.group(match.lastindex), re.I
+            ):
+                found.append(text)
+        destructive = (
+            r"\b(DELETE\s+FROM|DROP\s+TABLE(\s+IF\s+EXISTS)?|REPLACE\s+INTO|"
+            r"INSERT\s+OR\s+REPLACE\s+INTO)\s+[\"\[`]?" + _CONTENT_TABLES + r"\b"
+        )
+        if re.search(destructive, text, re.I) or _PIECE_DYNAMIC.search(text):
+            found.append(text)
     return found
 
 
@@ -287,8 +350,8 @@ def _scan():
     return found
 
 
-# Every snippet the earlier upper-case-only scan caught must stay caught, so the
-# scan can never fall below it; plus the case and concatenation forms it missed.
+# Positive corpus: SQL with a thread-identity rewrite, a thread-content delete or
+# a dynamic table name. Must always be flagged.
 CAUGHT = [
     'conn.execute("update threads set wing=? where id=?", args)',
     'conn.execute("UPDATE threads " + "SET wing=? WHERE id=?", args)',
@@ -306,6 +369,83 @@ CAUGHT = [
     'conn.execute("UPDATE %s SET x=1" % table)',
     'conn.execute("DROP TABLE IF EXISTS " + name)',
     'conn.execute(f"DELETE FROM {table} WHERE id=?", args)',
+    'conn.execute("/* audit */ DELETE FROM " + name)',
+    'conn.execute("/* audit */ DELETE FROM %s WHERE id=?" % name, args)',
+    'conn.execute(cte + "DELETE FROM " + name)',
+    'conn.execute(cte + " DELETE FROM " + name + " WHERE id=?")',
+    'conn.execute(f"{cte} DELETE FROM {name}")',
+    'conn.execute("%s DELETE FROM %s" % (cte, name))',
+    'conn.execute("/* x */ UPDATE %s SET wing=? WHERE id=?" % name, args)',
+    'conn.execute(f"{cte} UPDATE {name} SET x=1")',
+    'conn.execute(prefix + "DROP TABLE " + name)',
+    'conn.execute("DELETE FROM " + name + " AS d WHERE d.id=?", args)',
+    'conn.execute("DELETE FROM " + name + " INDEXED BY ix WHERE id=?", args)',
+    'conn.execute("DELETE FROM " + name + " /* scoped */ WHERE id=?", args)',
+    'conn.execute("DELETE FROM %s USING other WHERE other.id = %s.id" % (name, name))',
+    'conn.execute("DELETE FROM " + name + " " + where)',
+    'conn.execute(f"DELETE FROM {name}{where}")',
+    'conn.execute(f"DELETE FROM {name} {where}")',
+    'conn.execute("DELETE FROM %s %s" % (name, where))',
+    'conn.execute("DELETE FROM " + name + "\\n-- note\\nWHERE id=?", args)',
+    'conn.execute("DELETE FROM " + name + " LIMIT 10")',
+    'conn.execute("DROP TABLE IF EXISTS " + name + " CASCADE")',
+    'conn.execute("DROP TABLE IF EXISTS %s CASCADE" % name)',
+    'conn.execute(f"DROP TABLE IF EXISTS {name} CASCADE")',
+    'conn.execute("DROP TABLE IF EXISTS " + name + " /* x */")',
+    'conn.execute("DROP TABLE IF EXISTS " + name + suffix)',
+    'conn.execute(f"UPDATE{name} SET x=1")',
+    'conn.executescript("/* x */ DELETE FROM %s;" % name)',
+    'conn.executescript("""/*\n x\n*/ DELETE FROM %s;""" % name)',
+    'conn.executescript("BEGIN;\\nDELETE FROM " + name + "\\nLIMIT 1;")',
+    'conn.execute("DELETE FROM %s AS d WHERE d.id=?" % name, args)',
+    'conn.execute(f"DELETE FROM {name} AS d WHERE d.id=?", args)',
+    'conn.execute(f"DROP TABLE IF EXISTS {name} /* x */")',
+    'conn.execute("UPDATE %s AS u SET wing=?" % name, args)',
+    'conn.execute(f"UPDATE {name} AS u SET wing=?", args)',
+    'conn.execute(f"UPDATE {name} INDEXED BY ix SET x=1")',
+    'conn.execute("REPLACE INTO " + name + " (id) VALUES (?)", args)',
+    'conn.execute("INSERT OR REPLACE INTO " + name + " (id) VALUES (?)", args)',
+    'conn.execute("DELETE FROM main.messages WHERE thread_id=?", args)',
+    "conn.execute(\"DELETE FROM 'messages' WHERE thread_id=?\", args)",
+    'conn.execute("UPDATE main.threads SET wing=?", args)',
+    'conn.execute("UPDATE threads AS t SET wing=?", args)',
+    'conn.execute("UPDATE OR REPLACE threads SET wing=?", args)',
+    "conn.execute('UPDATE threads SET \"wing\"=?', args)",
+    'conn.execute("UPDATE " + name + " AS u SET wing=?", args)',
+    'conn.execute("UPDATE " + name + " INDEXED BY ix SET x=1")',
+    'conn.execute("UPDATE " + name + " /* c */ SET x=1")',
+]
+
+# Negative corpus: prose and unrelated tables. Must never be flagged.
+PROSE = [
+    'conn.execute("DELETE FROM drawers WHERE id=?", args)',
+    'conn.execute("UPDATE boards SET wing=? WHERE id=?", args)',
+    'note = f"please update {name} when you delete from the list"',
+    'msg = f"Delete from {path} failed"',
+    'msg = "Update {name} to retry"',
+    'log.info("Drop table {name} skipped")',
+    'msg = f"(retry) Delete from {path} failed"',
+    'msg = f"drop table if exists {name} first"',
+    'msg = f"Update {name} as needed"',
+    'msg = f"Delete from {path} as a fallback"',
+]
+
+# Known false positives, accepted: prose that ends in a placeholder.
+KNOWN_FALSE_POSITIVES = [
+    'log.info("Delete from {path}")',
+    'log.info("Drop table {name}")',
+    'log.info("Delete from {path} where possible")',
+]
+
+# Known limits, caught by neither rule (documented in docs/evals.md and SYSTEM.md):
+KNOWN_LIMITS = [
+    'conn.execute("TRUNCATE TABLE messages")',
+    'conn.execute("DELETE/**/FROM messages WHERE thread_id=?", args)',
+    'conn.execute("DELETE FROM ONLY " + name + " WHERE id=?", args)',
+    'conn.execute("DELETE FROM %(t)s WHERE id=%(i)s" % {"t": name, "i": i})',
+    'conn.execute("ALTER TABLE threads DROP COLUMN wing")',
+    'conn.execute("".join(["UPDATE threads ", "SET wing=?"]), args)',
+    'sql = "UPDATE threads "\nsql += "SET wing=?"',
 ]
 
 
@@ -314,19 +454,26 @@ def test_a4_scan_catches_lower_case_and_concatenated_sql(snippet):
     assert _findings("synthetic.py", snippet), f"A4 scan missed: {snippet}"
 
 
-@pytest.mark.parametrize(
-    "snippet",
-    [
-        'note = f"please update {name} when you delete from the list"',
-        'msg = f"Delete from {path} failed"',
-        'msg = "Update {name} to retry"',
-        'log.info("Drop table {name} skipped")',
-        'conn.execute("UPDATE boards SET wing=? WHERE id=?", args)',
-        'conn.execute("DELETE FROM drawers WHERE id=?", args)',
-    ],
-)
+@pytest.mark.parametrize("snippet", PROSE)
 def test_a4_scan_ignores_prose_and_unrelated_tables(snippet):
     assert _findings("synthetic.py", snippet) == [], snippet
+
+
+def test_a4_scan_catches_everything_the_per_piece_rule_catches():
+    corpus = CAUGHT + PROSE + KNOWN_LIMITS
+    missed = [s for s in corpus if _piece_rule(s) and not _findings("synthetic.py", s)]
+    assert missed == [], f"A4 scan fell below the per-piece rule: {missed}"
+
+
+def test_a4_known_false_positives_are_recorded():
+    # The accepted trade-off, stated as behaviour: if a rule change stops flagging
+    # one of these, move it into PROSE.
+    assert all(_findings("synthetic.py", s) for s in KNOWN_FALSE_POSITIVES)
+
+
+def test_a4_known_limits_are_still_limits():
+    # If a rule change starts catching one of these, move it into CAUGHT.
+    assert [s for s in KNOWN_LIMITS if _findings("synthetic.py", s)] == []
 
 
 def test_a4_no_statement_rewrites_identity_or_deletes_thread_rows():
