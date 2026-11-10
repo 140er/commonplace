@@ -1419,3 +1419,30 @@ def test_an_ordinary_failure_revoking_the_replaced_token_leaves_the_settlement_f
     tick(s.gateway.github, monkeypatch)
     assert not rows(s, "github_confirmations")
     assert revoked_tokens(s).count(first) == 2
+
+
+def test_a_failing_release_keeps_the_original_error_and_is_cleared_by_the_next_claim(
+    merging, monkeypatch, caplog
+):
+    import sqlite3
+
+    s = merging
+    candidate = pending_merge_consent(s)
+    worker = s.gateway.github
+    real = worker._settle_exchange
+
+    def broken(conn, uid):
+        raise sqlite3.OperationalError("database is locked (synthetic)")
+
+    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the candidate revoke"))
+    monkeypatch.setattr(worker, "_settle_exchange", broken)
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(RuntimeError):
+        worker.disconnect(s.uid, s.workspace)
+    monkeypatch.setattr(worker, "_settle_exchange", real)
+    s.remote.on_revoke = None
+    # The release itself failed: the marker stays (a documented window) and the log names no token.
+    assert marker(s)[0] == 1
+    assert s.uid in caplog.text and candidate not in caplog.text
+    worker.recover()
+    assert marker(s)[0] == 0
