@@ -1431,19 +1431,16 @@ class Mediator:
 
     # ── helpers that ask the worker ──
     def _check_thread_room(self, principal, wing, room):
-        from .handoff.mirror_access import _THREAD_ROOM
-        from .handoff.models import MIRROR_WING
+        from .handoff.mirror_access import unreadable_room
 
-        mirror = isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING
-        if mirror or (isinstance(room, str) and _THREAD_ROOM.fullmatch(room)):
+        def can_read(thread):
             try:
-                allowed = isinstance(room, str) and self.gateway.handoff.recall.can_read(
-                    principal, room
-                )
+                return self.gateway.handoff.recall.can_read(principal, thread)
             except Exception:
-                allowed = False
-            if not allowed:
-                raise Hidden({"success": False, "error": "Room not found"})
+                return False
+
+        if unreadable_room(can_read, wing, room):
+            raise Hidden({"success": False, "error": "Room not found"})
 
     def _drawer_wings(self, principal, ids: list) -> dict:
         if not ids:

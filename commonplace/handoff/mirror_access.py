@@ -163,10 +163,31 @@ def reader(gateway, principal):
     return _ResponseAccess(gateway, principal)
 
 
+def thread_ids(value):
+    """Thread IDs a room, topic or link names; empty when it names no thread.
+
+    Every route that returns a room or topic shares this check. Bare thread
+    IDs, /app/threads/ paths and URLs, t3-thread://v1/ links, mcp: forms and
+    IDs embedded anywhere else count alike; percent-encoded copies are decoded
+    and undecodable values are scanned raw.
+    """
+    if not isinstance(value, str):
+        return ()
+    parsed = provenance_refs.refs(value)
+    decoded = () if parsed is provenance_refs.REFUSE else parsed.tokens
+    tokens = (*decoded, *provenance_refs.label_tokens(value))
+    return tuple(dict.fromkeys(t for t in tokens if t[:4].lower() == "thr_"))
+
+
+def private_thread_reference(can_read, value):
+    """A value naming any thread this reader cannot read is not shown to them."""
+    return any(not can_read(thread) for thread in thread_ids(value))
+
+
 def unreadable_room(can_read, wing, room):
-    mirror = isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING
-    thread = isinstance(room, str) and _THREAD_ROOM.fullmatch(room)
-    return bool((mirror or thread) and (not isinstance(room, str) or not can_read(room)))
+    if isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING:
+        return not isinstance(room, str) or not can_read(room)
+    return private_thread_reference(can_read, room)
 
 
 def fact_visible(candidate, can_read):
@@ -223,7 +244,7 @@ def filter_room_keys(rule, result, can_read):
         rooms = {
             r: count
             for r, count in result["rooms"].items()
-            if not (_THREAD_ROOM.fullmatch(r) and not can_read(r))
+            if not private_thread_reference(can_read, r)
         }
         return result if rooms == result["rooms"] else {**result, "rooms": rooms}
     return result
