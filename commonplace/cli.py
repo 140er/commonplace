@@ -1116,6 +1116,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dest_dir")
     s.set_defaults(func=cmd_restore)
     orch_cli.add_parsers(sub)
+    from .evals.cli import add_parsers as add_eval_parsers
+
+    add_eval_parsers(sub)
     return p
 
 
