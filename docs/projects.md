@@ -50,6 +50,13 @@ used them; it reads “connected” only after an agent has. Private status stay
 supervision with the existing people; a seat takes those duties only after its
 agent has used the connection within the last 24 hours.
 
+Project settings show the orchestrator and enable **Connect agent** as soon as
+the project loads. Chat settings and the agent list load separately with visible
+loading states; if either initial read fails or exceeds ten seconds, its section
+shows an error while the orchestrator card remains usable. The connection list's
+optional memory-section lookup waits at most one second, then returns connections
+with an empty section list if memory is slow or unavailable.
+
 ## Model choices
 
 Owners pick the model for the main orchestrator and for workers in project
