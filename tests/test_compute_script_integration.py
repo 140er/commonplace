@@ -733,3 +733,38 @@ def test_exact_upload_envelope_detects_tamper(script_state, change):
         )
     with pytest.raises(ProtocolDenied):
         validate_envelope(request, upload, script)
+
+
+@pytest.mark.parametrize("resource", ["inodes", "blocks"])
+def test_low_scratch_resources_settle_authenticated_nonrun(
+    script_state, script_ssh, tmp_path, monkeypatch, resource
+):
+    from tests.test_compute_script_sandbox import config
+
+    state = script_state
+    proposal = propose_script(state)
+    target = tmp_path / "resource-target"
+    target.mkdir(mode=0o700)
+    settings = config(target)
+    scratch = target / "workspace" / "scratch"
+    usage = os.statvfs(scratch)
+    fields = list(usage)
+    fields[7 if resource == "inodes" else 4] = 0
+    monkeypatch.setattr(os, "fstatvfs", lambda fd: os.statvfs_result(fields))
+
+    def execute(self, request, script, **kwargs):
+        # Real target claim/admission path behind the fixture's authenticated
+        # wire validation; no host qualification or actual script execution.
+        self.config = settings
+        self.sandbox.run = lambda *a, **kw: ScriptResult("uncertain", "termination_unconfirmed")
+        return TargetHelper.execute_verified(self, request, script, **kwargs)
+
+    monkeypatch.setattr(WireOnlyTarget, "execute_verified", execute)
+    fixture = script_ssh()
+    assert state.service._run_once()
+    assert fixture.authenticated == ["gateway", "target"]
+    row = run_row(state, proposal)
+    assert (row["phase"], row["certainty"], row["reserved"]) == ("terminal", "known", 0)
+    assert row["reason"] == "sandbox_unavailable"
+    assert list((target / "workspace" / "attempts").iterdir()) == []
+    assert list(scratch.iterdir()) == []

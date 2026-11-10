@@ -524,6 +524,126 @@ def test_target_keeps_claims_without_result_and_recent_or_live_claims(
         assert claim.exists() is (not finished or elapsed == 61)
 
 
+@pytest.mark.parametrize("count", [1, 64])
+def test_expired_unconfirmed_claims_remain_and_count_toward_capacity(tmp_path, monkeypatch, count):
+    import commonplace.compute.target_helper as module
+
+    helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
+    value = request()
+    now = value.expires_at - 60
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    monkeypatch.setattr(
+        helper.sandbox,
+        "run",
+        lambda *a, **kw: ScriptResult("uncertain", "termination_unconfirmed"),
+    )
+    for n in range(count):
+        old = replace(value, execution=f"unknown-{n}", attempt=f"unknown-{n}")
+        helper.execute_verified(old, b"print('fixture')\n")
+    claims = set((root / "attempts").iterdir())
+    assert all(
+        json.loads((claim / "result.json").read_bytes())["termination_confirmed"] is False
+        for claim in claims
+    )
+    monkeypatch.setattr(module.time, "time", lambda: now + 3600)
+    current = replace(value, execution="new", attempt="new", expires_at=now + 3660)
+    if count == 64:
+        with pytest.raises(ScriptDenied, match="target_capacity"):
+            helper.execute_verified(current, b"print('fixture')\n")
+    else:
+        helper.execute_verified(current, b"print('fixture')\n")
+    assert all(claim.exists() for claim in claims)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        b"{not json",
+        b"[]",
+        b"null",
+        b'{"termination_confirmed": true}',
+        b'{"state":"observed_exit","termination_confirmed":1}',
+        b'{"state":"observed_exit","termination_confirmed":"true"}',
+        b'{"state":"uncertain","termination_confirmed":true}',
+        None,
+    ],
+)
+def test_expired_claim_with_untrusted_result_metadata_is_kept(tmp_path, monkeypatch, document):
+    import commonplace.compute.target_helper as module
+
+    helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
+    value = request()
+    helper.execute_verified(value, b"print('fixture')\n", cancelled=lambda: True)
+    claim = next((root / "attempts").iterdir())
+    result = claim / "result.json"
+    if document is None:
+        result.chmod(0)
+    else:
+        result.write_bytes(document)
+    later = value.expires_at + 3600
+    monkeypatch.setattr(module.time, "time", lambda: later)
+    current = replace(value, execution="new", attempt="new", expires_at=later + 60)
+    helper.execute_verified(current, b"print('fixture')\n", cancelled=lambda: True)
+    assert claim.exists()
+
+
+def test_cleanup_removes_real_deep_tree_with_constant_descriptors(tmp_path):
+    import resource
+
+    from commonplace.compute.target_helper import _remove_owned_job
+
+    job = tmp_path / "job"
+    job.mkdir(mode=0o700)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    (outside / "keep").write_bytes(b"outside evidence")
+    (job / "link").symlink_to(outside, target_is_directory=True)
+    os.link(outside / "keep", job / "hardlink")
+    root = os.open(job, os.O_RDONLY | os.O_DIRECTORY)
+    deepest = os.dup(root)
+    limits = resource.getrlimit(resource.RLIMIT_NOFILE)
+    try:
+        # A real tree, not a patched sandbox/tree builder; names stay short and
+        # creation itself needs only two descriptors, independent of depth.
+        for _ in range(1100):
+            os.mkdir("d", mode=0o700, dir_fd=deepest)
+            child = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=deepest)
+            os.close(deepest)
+            deepest = child
+        atomic_file(deepest, "file", b"deep content")
+        resource.setrlimit(resource.RLIMIT_NOFILE, (min(128, limits[0]), limits[1]))
+        _remove_owned_job(root)
+        assert list(job.iterdir()) == []
+        assert (outside / "keep").read_bytes() == b"outside evidence"
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, limits)
+        if os.fstat(deepest).st_nlink:
+            os.unlink("file", dir_fd=deepest)
+            for _ in range(1100):
+                parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=deepest)
+                os.close(deepest)
+                deepest = parent
+                os.rmdir("d", dir_fd=deepest)
+        os.close(deepest)
+        os.close(root)
+
+
+@pytest.mark.parametrize("resource", ["inodes", "blocks"])
+def test_low_scratch_resources_deny_before_claim(tmp_path, monkeypatch, resource):
+    helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
+    usage = os.statvfs(root / "scratch")
+    fields = list(usage)
+    if resource == "inodes":
+        fields[7] = 15  # f_favail: below the 16-inode admission margin.
+    else:
+        fields[4] = (1024 * 1024 - 1) // usage.f_frsize  # f_bavail: below1MiB.
+    monkeypatch.setattr(os, "fstatvfs", lambda fd: os.statvfs_result(fields))
+    with pytest.raises(ScriptDenied, match="sandbox_unavailable"):
+        helper.execute_verified(request(), b"print('fixture')\n", cancelled=lambda: True)
+    assert list((root / "attempts").iterdir()) == []
+    assert list((root / "scratch").iterdir()) == []
+
+
 @pytest.mark.parametrize("tree", ["mode_zero", "read_only", "deep"])
 def test_script_owned_cleanup_cannot_destroy_observed_result(tmp_path, monkeypatch, tree):
     helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
@@ -558,8 +678,7 @@ def test_script_owned_cleanup_cannot_destroy_observed_result(tmp_path, monkeypat
     try:
         result = helper.execute_verified(request(), b"print('fixture')\n")
         assert result == observed
-        if tree != "deep":
-            assert list((root / "scratch").iterdir()) == []
+        assert list((root / "scratch").iterdir()) == []
         stored = json.loads(
             next((root / "attempts").iterdir()).joinpath("result.json").read_bytes()
         )
