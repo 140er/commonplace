@@ -264,9 +264,7 @@ class CoworkerWorker:
 
     def _context(self, store, job, snapshot, message):
         uid, cid, mid = job["user_id"], job["conversation_id"], job["message_id"]
-        rows = store.list_messages(
-            uid, cid, after=max(0, mid - CONTEXT_MESSAGES - 1), limit=CONTEXT_MESSAGES
-        )
+        rows = store.list_messages(uid, cid, before=mid, limit=CONTEXT_MESSAGES)
         bot = snapshot["bot"]
         system = SYSTEM + bot.get("instructions", "")[:2000]
         data = {

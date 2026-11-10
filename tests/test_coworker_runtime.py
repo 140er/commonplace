@@ -348,6 +348,35 @@ def test_two_dms_and_group_recall_only_exact_visible_memory(env, monkeypatch):
     assert not worker.run_once(env.wid), "Bot replies must not open new turns"
 
 
+def test_history_uses_latest_conversation_messages_despite_interleaved_global_ids(env, monkeypatch):
+    cid = env.conversation()["id"]
+    foreign = env.conversation(user=env.other)["id"]
+    history = []
+    for i in range(runtime.CONTEXT_MESSAGES + 3):
+        receipt = env.post(cid, f"own exact words {i}")
+        history.append(receipt["message"])
+        env.store.cancel_job(env.uid, receipt["job"]["id"])
+        for j in range(runtime.CONTEXT_MESSAGES + 1):
+            other = env.post(foreign, f"foreign {i}/{j}", user=env.other)
+            env.store.cancel_job(env.other, other["job"]["id"])
+    current = env.post(cid, "current question")
+    future = env.post(cid, "future words must not enter context")
+    env.store.cancel_job(env.uid, future["job"]["id"])
+    calls = []
+
+    def complete(config, key, system, turns, **kwargs):
+        calls.append(json.loads(turns[0]["content"]))
+        return "answer from bounded conversation history"
+
+    monkeypatch.setattr(runtime.model, "complete", complete)
+    assert env.worker().run_once(env.wid)
+    expected = history[-runtime.CONTEXT_MESSAGES :]
+    assert [row["id"] for row in calls[0]["history"]] == [row["id"] for row in expected]
+    assert [row["text"] for row in calls[0]["history"]] == [row["text"] for row in expected]
+    assert calls[0]["message"]["id"] == current["message"]["id"]
+    assert all(row["id"] < current["message"]["id"] for row in calls[0]["history"])
+
+
 def test_history_and_memory_context_are_bounded_without_summaries(env, monkeypatch):
     cid = env.conversation()["id"]
     env.store.add_memory(env.uid, cid, "old permitted canary DM_A_COBALT_47")

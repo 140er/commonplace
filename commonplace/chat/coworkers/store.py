@@ -374,19 +374,25 @@ class Store:
         with self._transaction() as conn:
             return self._conversation_view(conn, self._conversation(conn, user_id, conversation_id))
 
-    def list_messages(self, user_id, conversation_id, after=0, limit=100):
+    def list_messages(self, user_id, conversation_id, after=0, limit=100, *, before=None):
         _number(after, zero=True)
+        if before is not None:
+            _number(before)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise StoreError()
         with self._transaction() as conn:
             self._conversation(conn, user_id, conversation_id)
-            return [
-                self._message(r)
-                for r in conn.execute(
+            if before is None:
+                rows = conn.execute(
                     "SELECT * FROM messages WHERE conversation_id=? AND id>? ORDER BY id LIMIT ?",
                     (conversation_id, after, limit),
-                )
-            ]
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM messages WHERE conversation_id=? AND id>? AND id<? ORDER BY id DESC LIMIT ?",
+                    (conversation_id, after, before, limit),
+                ).fetchall()[::-1]
+            return [self._message(r) for r in rows]
 
     def _target(self, conn, conversation_id, text, bot_id):
         bots = conn.execute(

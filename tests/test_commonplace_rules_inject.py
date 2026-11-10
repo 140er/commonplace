@@ -139,7 +139,10 @@ def test_no_file_no_effective_rules_and_unusable_supervisor_keep_legacy(local, m
     assert initialize(local) == LEGACY
 
 
-def test_authorized_text_scopes_and_owner_edits(local):
+def test_authorized_text_scopes_and_owner_edits(local, monkeypatch):
+    # This tests authorization on local snapshots, not elapsed startup time.
+    # Deadline expiry and real performance budgets have separate coverage below.
+    monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
     boards = BoardService(local.owner.ctx)
     for slug, wing in (("open", "shared"), ("secret", "private.notes"), ("old", "shared")):
         boards.board_add(slug=slug, wing=wing, repo=f"https://example.test/org/{slug}")
