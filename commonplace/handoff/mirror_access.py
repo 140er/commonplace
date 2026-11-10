@@ -378,23 +378,23 @@ def _proved_thread(value, access):
     )
 
 
+_ACQUISITION_COUNTS = frozenset(
+    {
+        "total_before_filter",
+        "filtered_by_max_distance",
+        "date_filter_pool_truncated",
+        "candidates_truncated",
+        "distinct_results_truncated",
+    }
+)
+
+
 def _without_search_acquisition_counts(principal, rule, result):
-    if rule == "search" and isinstance(result, dict):
-        # Candidate acquisition precedes drawer and thread authorization, for
-        # every principal: even a see-all reader may lack a thread a room names.
-        # Neither its counts nor its truncation flags describe the visible set.
-        result = {
-            key: value
-            for key, value in result.items()
-            if key
-            not in {
-                "total_before_filter",
-                "filtered_by_max_distance",
-                "date_filter_pool_truncated",
-                "candidates_truncated",
-                "distinct_results_truncated",
-            }
-        }
+    # Candidate acquisition precedes drawer and thread authorization, for every
+    # principal: even a see-all reader may lack a thread a room names. Neither
+    # its counts nor its truncation flags describe the visible set.
+    if rule == "search" and isinstance(result, dict) and _ACQUISITION_COUNTS & set(result):
+        result = {key: value for key, value in result.items() if key not in _ACQUISITION_COUNTS}
     return result
 
 

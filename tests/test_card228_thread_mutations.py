@@ -189,7 +189,7 @@ def test_cli_search_hides_protected_shared_copy(case, wing, query):
 
 
 @pytest.mark.parametrize("wing", [None, "shared"])
-def test_cli_search_owner_keeps_existing_renderer(case, wing, monkeypatch):
+def test_cli_search_owner_renders_from_gated_rows(case, wing, monkeypatch):
     seen = []
     original = case.w.gateway.mediator.workers.post
 
@@ -209,7 +209,9 @@ def test_cli_search_owner_keeps_existing_renderer(case, wing, monkeypatch):
         **({"wing": wing} if wing else {}),
     )
     assert "zqmutationfixture synthetic verbatim words" in result.get("cli_output", "")
-    assert seen and all(seen), "Every-wing principal no longer uses the worker CLI renderer"
+    # A see-all owner may still lack a thread a room names: the worker never
+    # renders CLI text; the gateway renders it after the drawer gate.
+    assert seen and not any(seen), "Every-wing principal received worker-rendered CLI text"
 
 
 def save(c, obj="old", actor=None, wing="shared", **kwargs):

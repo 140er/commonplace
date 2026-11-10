@@ -768,7 +768,9 @@ def test_fact_search_is_gated_before_cli_rendering(world, monkeypatch):
     )
     result = _tool_result(response)
     assert result.get("facts", []) == []
-    assert result["cli_output"] == "No drawers"
+    # CLI text is rendered by the gateway from gated rows, never by the worker.
+    assert "hidden words" not in result["cli_output"]
+    assert result["cli_output"] == '\n  No results found for: "Sample"\n'
 
 
 def test_memory_map_uses_same_fact_source_rule(world, tmp_path):
