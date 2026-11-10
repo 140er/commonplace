@@ -586,7 +586,9 @@ def test_script_both_pins_precede_auth_and_no_upload_on_mismatch(script_state, s
 
 
 @pytest.mark.parametrize("fault", ["lost_result", "missing_permit", "partial_permit"])
-def test_lost_script_or_permit_ack_is_reserved_and_never_repeated(script_state, script_ssh, fault):
+def test_lost_script_or_permit_ack_settles_by_authenticated_stage_without_retry(
+    script_state, script_ssh, fault
+):
     state = script_state
     propose_script(state)
     fixture = script_ssh(
@@ -595,7 +597,12 @@ def test_lost_script_or_permit_ack_is_reserved_and_never_repeated(script_state, 
     )
     assert state.service._run_once()
     run = run_row(state, state.proposal)
-    assert run["phase"] == "uncertain" and run["reserved"] == 1
+    if fault == "lost_result":
+        assert run["stage"] == 4
+        assert run["phase"] == "uncertain" and run["reserved"] == 1
+    else:
+        assert run["stage"] < 3
+        assert run["phase"] == "terminal" and run["reserved"] == 0
     assert not state.service._run_once()
     restarted = ExecutionService(
         state.env.store,
