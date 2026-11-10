@@ -140,3 +140,16 @@ def test_guard_g8_hub_never_splits(hub):
             == 0
         )
         assert conn.execute("SELECT count(*) FROM card_splits").fetchone()[0] == 0
+
+
+def test_no_todo_trigger_skips_split_reconciliation(hub):
+    from tests.test_orch_runner import config_text
+
+    w = world(hub, runner=True)
+    w.write(config_text(w.machine_id).split("[[triggers]]")[0])
+    card = w.card()
+    age(w, card)
+    later = "2030-01-01T00:10:00Z"
+    assert triggers._reconcile(w.js, w.st, "acme", later) == []
+    assert triggers.run(w.js, now=later)["acme"] == []
+    assert not w.jobs_for(card) and not w.misses()

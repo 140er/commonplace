@@ -565,6 +565,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
+  - Session board-loss regressions cover archived/missing boards during live and replayed completion, pre-start fencing, returned bindings, status and committed control responses; triggerless configs skip split reconciliation.
+
   - Session gate regressions pin unknown-effect stop/resume, foreign and same-machine unavailable boards, corrupt journals, session transport isolation, visible local refusals and owner-only session card details.
 
   - Persistent runner session base/head regressions and independent authority, launch/stop race, duplicate lease and uncertainty checks.
@@ -1177,6 +1179,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Missing/archived boards retire session commands and acknowledge results without replaying host effects. Potentially running threads retain their binding and uncertainty; storage failures remain retryable, and status/control handle board loss explicitly.
+
   - Owner stop never clears an unknown-effect marker. Session leasing filters by machine and skips bad boards, session failures leave per-card leasing available, and fenced local refusals expose their code without host effects.
 
   - Persistent board sessions use accepted runner authority without todo triggers, retain thread bindings and durable owner stops, continue actionable boards and leave clear boards idle. Ambiguous effects and changed bindings fail closed; per-card worker slots remain separate.
@@ -1211,6 +1215,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - `tests/test_runner_session_board_loss.py` pairs board-loss behavior against the rejected head, including journal clearance during active turns.
+
   - `tests/test_runner_session_regressions.py` runs unchanged on the rejected head and the fixes, alongside the six lifecycle cases and twelve existing fence checks.
 
   - `tests/test_orch_sessions.py` proves the six base/head lifecycle contracts; `tests/test_runner_session_guards.py` covers authority, races, duplicate leases and uncertain recovery.
@@ -1227,6 +1233,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_docs_obligations.py`
 - **Owns:**
 
+  - The session guide specifies board-loss acknowledgement and distinguishes unavailable boards from storage failures; triggerless configs explicitly skip bounded split-root reconciliation as well as event sweeps.
+
   - The session guide documents durable uncertainty across owner stop, board and journal failure isolation, local refusal reporting and owner-only session details.
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
@@ -1235,7 +1243,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Per-card trigger sweeps require an explicit card.todo trigger; persistent session watches are independent of those triggers and role leases.
+  - Per-card event sweeps and bounded split-root reconciliation require an explicit card.todo trigger; persistent session watches are independent of those triggers and role leases.
 
   - Up to eight distinct area sub-orchestrators sit directly under one parentless orchestrator; areas remain preview-only across live and experiment accept/write paths. No-area graph rules and main/worker model slots remain unchanged.
 

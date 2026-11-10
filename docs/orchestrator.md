@@ -183,12 +183,16 @@ and recent-start guards still apply. These are existing limits of admission.
 
 ## Triggers
 
-Per-card starts require an accepted live `[runner]` config with a `card.todo`
+Automatic per-card starts require an accepted live `[runner]` config with a `card.todo`
 trigger. Those boards are swept on each wake-up
 and on each runner lease. The sweep reads committed `task_events` after the
 board's cursor and fires when a card moves into `todo` from another status
 (`add`, `move`, `decide`) and on the plan-approval row. An event emission that
 failed after commit is still found.
+
+Without that trigger, both the per-card event sweep and bounded split-root
+reconciliation are skipped: no automatic per-card starts or split retries are
+created. The persistent board session still watches and continues independently.
 
 - **Cursor.** Accepting a config that adds `[runner]` commits the board's
   cursor as unset with a new generation; arming then sets it to the current
@@ -249,7 +253,15 @@ including for a subsequent resume. Config/binding/model changes also fail closed
 
 A lease pass filters configs by the requesting machine before reading board
 cards, and skips unavailable boards individually. Archived or missing boards
-cannot starve another board or machine. Invalid local session journals are
+cannot starve another board or machine. If a board disappears before a command
+starts, the command closes without a host effect. If it disappears during a
+turn, the result is still acknowledged and the local journal is cleared. An
+observed finished/stopped thread becomes idle/stopped; a possibly running thread
+retains its binding and becomes uncertain. Prior uncertainty and owner stop
+remain durable. Status reports `unavailable` without thread or card details;
+control refuses an already missing board but acknowledges a stop committed
+before its disappearance. Storage failures still fail closed and retain results
+for retry. Invalid local session journals are
 quarantined. Session journal, transport or command failures are isolated from
 per-card leasing in the same runner pass.
 

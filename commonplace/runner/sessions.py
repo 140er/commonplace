@@ -54,11 +54,14 @@ def _open(gateway, ws):
 
 
 def board_state(gateway, ws, board):
-    """All unfinished cards count unless an explicit dependency or person ask blocks them."""
+    """Return no board for missing/archived slugs; storage failures still propagate.
+
+    All unfinished cards count unless an explicit dependency or person ask blocks them.
+    """
     with orchestration.board_read(gateway.workspace_dir(ws)) as conn:
         b = conn.execute("SELECT * FROM boards WHERE slug=? AND archived=0", (board,)).fetchone()
         if b is None:
-            raise ToolError("no: board not found")
+            return None, {"actionable": [], "blocked": []}
         actionable, blocked = [], []
         for row in conn.execute(
             "SELECT * FROM tasks WHERE board_id=? AND status!='done'", (b["id"],)
@@ -169,8 +172,27 @@ def _uncertain(row):
     return row is not None and (row["state"] == "uncertain" or row["code"] == "effect_unknown")
 
 
+def _retire_unavailable(conn, row, *, uncertain=False, thread_id=None):
+    """Acknowledge board loss without forgetting a possible host effect or binding."""
+    unknown = _uncertain(row) or uncertain
+    state = "uncertain" if unknown else "stopped" if row["paused"] else "idle"
+    conn.execute(
+        "UPDATE runner_sessions SET state=?,thread_id=?,action=NULL,phase=NULL,lease_token=NULL,lease_until=NULL,code=?,updated_at=? WHERE board=?",
+        (
+            state,
+            thread_id or row["thread_id"],
+            "effect_unknown" if unknown else "board_unavailable",
+            jobs._now(),
+            row["board"],
+        ),
+    )
+    return {"state": state}
+
+
 def status(gateway, ws, board):
     b, work = board_state(gateway, ws, board)
+    if b is None:
+        return {"state": "unavailable", "reason": "board unavailable", "pending": None, **work}
     with split.runner_read(gateway.workspace_dir(ws)) as conn:
         if (
             conn is None
@@ -219,7 +241,7 @@ def control(gateway, principal, board, action):
         raise ToolError("no: owner only")
     st = _open(gateway, principal.workspace_id)
     b, _ = board_state(gateway, principal.workspace_id, board)
-    if not principal.policy.can_read_wing(b["wing"]):
+    if b is None or not principal.policy.can_read_wing(b["wing"]):
         raise ToolError("no: board not found")
     with ExitStack() as locks, st.transaction() as conn:
         locks.enter_context(gateway.db._lock)
@@ -289,6 +311,8 @@ def lease(gateway, ws, machine_id):
                 if version is None or version.config().runner.machine != machine_id:
                     continue
             b, work = board_state(gateway, ws, name)
+            if b is None:
+                continue
             with ExitStack() as locks, st.transaction() as conn:
                 locks.enter_context(gateway.db._lock)
                 version = _host(conn, name)
@@ -372,11 +396,14 @@ def starting(gateway, ws, machine_id, token):
         b, work = board_state(gateway, ws, name)
         locks.enter_context(gateway.db._lock)
         row = _fenced(conn, machine_id, token)
+        if row["phase"] != "leased":
+            raise jobs.Conflict("session command already started")
+        if b is None:
+            _retire_unavailable(conn, row, uncertain=bool(row["thread_id"]))
+            return False
         version = _host(conn, name)
         if version is None or _authority(gateway, ws, conn, version, b, row):
             raise jobs.Conflict("session authority changed")
-        if row["phase"] != "leased":
-            raise jobs.Conflict("session command already started")
         # A board that cleared after leasing must not spend a model turn.
         if row["action"] in ("launch", "continue") and not work["actionable"]:
             conn.execute(
@@ -432,9 +459,13 @@ def result(gateway, ws, machine_id, token, outcome, thread_id=None, code=None):
             raise ValueError("thread id required")
         if outcome == "stopped" and row["action"] != "stop":
             raise ValueError("not a stop command")
+        b, work = board_state(gateway, ws, name)
+        if b is None:
+            return _retire_unavailable(
+                conn, row, uncertain=outcome in ("running", "uncertain"), thread_id=thread_id
+            )
         state, action = outcome, None
         if outcome == "finished":
-            _, work = board_state(gateway, ws, name)
             if work["actionable"]:  # Finish guard: no actionable card may be forgotten.
                 state, action = "running", "continue"
             else:

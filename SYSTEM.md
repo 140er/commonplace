@@ -579,13 +579,21 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Owner stop preserves unknown-effect state and markers, so stop followed by
   resume cannot relaunch an ambiguous effect. Session leasing filters by machine
   before board reads and skips each unavailable board independently.
+- Missing/archived boards close leased commands without host effects and
+  acknowledge results so the machine journal can clear. Observed completion
+  retires idle/stopped; possibly running threads retain their binding and become
+  uncertain. Existing uncertainty and owner stop survive. Status safely reports
+  unavailable; a stop committed before board loss remains acknowledged. Storage
+  errors still fail closed rather than count as an empty board.
 - Invalid session journals are quarantined, and session-pass failures do not
   prevent per-card leasing in that pass. Before starting, a machine can report a
   fenced `refused` result with an allowlisted code; status shows `unavailable`
   and the reason without making a host call.
 - Migration only adds `runner_sessions`; existing card jobs and their grants,
   leases and history are untouched. Read-only project status does not create
-  an absent runner database. Existing per-card triggers require `card.todo`.
+  an absent runner database. Existing per-card event sweeps and bounded
+  split-root reconciliation require `card.todo`; neither runs for a triggerless
+  runner config. Persistent session watches remain independent.
 
 ### Durable orchestrator
 
@@ -650,7 +658,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
   the selected `launch_role` in an additive runner column, so later switch
   changes cannot change a queued job's launch instructions. Messages include
   inbox context; the agent creates missing stable keys and marks completion.
-- Each runner sweep reconciles eligible roots older than 10 minutes with no
+- Each trigger-enabled runner sweep reconciles eligible roots older than 10 minutes with no
   active/started job. Retry keys are `split-retry:<card>:<n>`; gaps are 10, 30,
   90 minutes and n is bounded to 3. Attempts (including refusals) use the existing
   `orch_misses` log with negative event ids. Eligibility and attempt number are
