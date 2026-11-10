@@ -175,3 +175,15 @@ The `dev` extra and dev dependency group include both `cryptography>=42` and
 `paramiko>=5.1,<6`, matching the unchanged opt-in `compute` extra. This ensures
 normal `.[dev]` check installs collect the Compute SSH suites. The dependency
 regression reads pyproject.toml and requires every compute requirement in dev.
+
+
+Sealing portability: `_seal_snapshot` prefers the fcntl module constants. On
+Linux only, missing names use the fixed kernel ABI: F_ADD_SEALS=1033,
+F_GET_SEALS=1034, F_SEAL_SEAL=1, F_SEAL_SHRINK=2, F_SEAL_GROW=4,
+F_SEAL_WRITE=8. All required seals must be applied and read back before Popen.
+An unavailable memfd API, refused sealing operation, failed seal query or missing
+required seal yields a confirmed `denied/sandbox_unavailable` result and no
+process launch. There is no unsealed fallback. Each rename-to-execute variant
+also runs with the fcntl constants removed, checking actual kernel seal bits and
+rejecting writes to the snapshot. The unavailability regression uses a synthetic
+cgroup and forbids Popen; it does not claim production confinement.

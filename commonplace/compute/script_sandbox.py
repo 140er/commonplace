@@ -19,6 +19,7 @@ private transport data, never safe logs or public output.
 from __future__ import annotations
 
 import ctypes
+import errno
 import hashlib
 import os
 import platform
@@ -26,6 +27,7 @@ import selectors
 import signal
 import stat
 import subprocess
+import sys
 import time
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -57,19 +59,46 @@ class AnchoredPath(os.PathLike):
         return self.__fspath__()
 
 
-def _sealed_bytes(stack, raw):
+def _seal_snapshot(fd):
+    """Apply and verify all seals; Linux ABI constants cover lean Python builds."""
     import fcntl
 
-    fd = os.memfd_create("compute-approved", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+    # F_GET_SEALS is required to verify that the kernel applied every seal.
+    abi = {
+        "F_ADD_SEALS": 1033,
+        "F_GET_SEALS": 1034,
+        "F_SEAL_SEAL": 1,
+        "F_SEAL_SHRINK": 2,
+        "F_SEAL_GROW": 4,
+        "F_SEAL_WRITE": 8,
+    }
+    values = {
+        name: getattr(fcntl, name, value if sys.platform == "linux" else None)
+        for name, value in abi.items()
+    }
+    if any(value is None for value in values.values()):
+        raise OSError(errno.ENOTSUP, "sealing_unavailable")
+    seals = (
+        values["F_SEAL_WRITE"]
+        | values["F_SEAL_GROW"]
+        | values["F_SEAL_SHRINK"]
+        | values["F_SEAL_SEAL"]
+    )
+    fcntl.fcntl(fd, values["F_ADD_SEALS"], seals)
+    if fcntl.fcntl(fd, values["F_GET_SEALS"]) & seals != seals:
+        raise OSError(errno.ENOTSUP, "sealing_unavailable")
+
+
+def _sealed_bytes(stack, raw):
+    try:
+        fd = os.memfd_create("compute-approved", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+    except AttributeError:
+        raise OSError(errno.ENOTSUP, "sealing_unavailable") from None
     stack.callback(os.close, fd)
     with os.fdopen(os.dup(fd), "wb") as stream:
         stream.write(raw)
     os.lseek(fd, 0, os.SEEK_SET)
-    fcntl.fcntl(
-        fd,
-        fcntl.F_ADD_SEALS,
-        fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL,
-    )
+    _seal_snapshot(fd)
     return fd
 
 

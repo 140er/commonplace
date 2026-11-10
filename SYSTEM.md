@@ -155,7 +155,10 @@ and observed exit codes) enter the private audit journal in the same transaction
 no output or exception text is included. Target execution reads uploads and
 staged inputs relative to held directory handles, verifies their approved digests
 and gives bwrap sealed memfd snapshots via `--ro-bind-data`. The writable job bind
-also uses its held directory descriptor. Synthetic barrier tests prove substitution
+also uses its held directory descriptor. Sealing uses Python constants when present
+and Linux kernel ABI constants otherwise; all four seals must be read back before
+launch. Unsupported or unverifiable sealing returns a confirmed denied
+`sandbox_unavailable` outcome without spawning a process. Synthetic barrier tests prove substitution
 refusal or approved-byte use; they do not prove real-host confinement.
 
 `/api/compute` is installed with the gateway and admits only cookie-person current

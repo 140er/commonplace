@@ -1,5 +1,6 @@
 """Acceptance reconcile regressions; synthetic stores/files and no device or LAN."""
 
+import errno
 import hashlib
 import os
 import sqlite3
@@ -134,8 +135,21 @@ def test_execution_outcome_and_exit_are_durably_audited(execution_env, outcome):
     assert not any("Linux" in action for action in audit)
 
 
+@pytest.mark.parametrize("missing_constants", [False, True])
 @pytest.mark.parametrize("swap", ["claim_directory", "script", "input", "after_check"])
-def test_rename_to_execute_uses_only_approved_bytes(tmp_path, monkeypatch, swap):
+def test_rename_to_execute_uses_only_approved_bytes(tmp_path, monkeypatch, swap, missing_constants):
+    import fcntl
+
+    if missing_constants:
+        for name in (
+            "F_ADD_SEALS",
+            "F_GET_SEALS",
+            "F_SEAL_SEAL",
+            "F_SEAL_SHRINK",
+            "F_SEAL_GROW",
+            "F_SEAL_WRITE",
+        ):
+            monkeypatch.delattr(fcntl, name, raising=False)
     helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
     script = b"print('fixture')\n"
     value = request(script)
@@ -164,6 +178,9 @@ def test_rename_to_execute_uses_only_approved_bytes(tmp_path, monkeypatch, swap)
             if arg == "--ro-bind-data":
                 fd = int(args[index + 1])
                 assert fd in kwargs["pass_fds"]
+                assert fcntl.fcntl(fd, getattr(fcntl, "F_GET_SEALS", 1034)) & 15 == 15
+                with pytest.raises(OSError):
+                    os.pwrite(fd, b"substituted", 0)
                 data[args[index + 2]] = os.pread(fd, 65536, 0)
             elif arg == "--ro-bind" and args[index + 2].startswith("/job/"):
                 data[args[index + 2]] = Path(args[index + 1]).read_bytes()
@@ -217,3 +234,50 @@ def test_preclaim_credential_denial_is_durably_audited(admission_state):
     assert state.service._claim() is None
     assert run_row(state, state.proposal) is None
     assert "execution.admission_denied" in actions(state.env, state.proposal["id"])
+
+
+@pytest.mark.parametrize("failure", ["add_error", "get_error", "missing_bits", "memfd_absent"])
+def test_unavailable_sealing_denies_before_any_script_launch(tmp_path, monkeypatch, failure):
+    """Exercise real run/_spawn with a synthetic cgroup, never a process."""
+    import fcntl
+
+    from commonplace.compute import script_sandbox as module
+
+    helper, _ = cancelled_storage_helper(tmp_path, monkeypatch)
+    real_fcntl = fcntl.fcntl
+    add_seals, get_seals = getattr(fcntl, "F_ADD_SEALS", 1033), getattr(fcntl, "F_GET_SEALS", 1034)
+
+    def unavailable(fd, command, *args):
+        if (command == add_seals and failure == "add_error") or (
+            command == get_seals and failure == "get_error"
+        ):
+            raise OSError(errno.ENOTSUP, "synthetic sealing refusal")
+        if command == get_seals and failure == "missing_bits":
+            return 1  # F_SEAL_SEAL alone does not prevent content writes.
+        return real_fcntl(fd, command, *args)
+
+    monkeypatch.setattr(fcntl, "fcntl", unavailable)
+    if failure == "memfd_absent":
+        monkeypatch.delattr(os, "memfd_create", raising=False)
+
+    class Group:
+        procs = 999
+
+        def write(self, *args):
+            pass
+
+        def empty(self):
+            return True
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module, "_Cgroup", lambda *args: Group())
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("unsealed script bytes reached process launch"),
+    )
+    result = helper.execute_verified(request(), b"print('fixture')\n")
+    assert (result.state, result.code) == ("denied", "sandbox_unavailable")
+    assert result.termination_confirmed and result.exit_code is None
