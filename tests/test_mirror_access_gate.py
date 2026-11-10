@@ -256,11 +256,45 @@ def test_ordinary_source_path_keeps_control_character_refusal(world, source_path
             }
         ]
     }
+    # A plain raw path needs complete local proof; the display basename follows it.
+    calls = []
+
+    def call_tool(_principal, name, args):
+        calls.append((name, args))
+        return {"associations": [{"wing": "shared", "room": "notes"}]}
+
+    world.gateway.mediator = SimpleNamespace(workers=SimpleNamespace(call_tool=call_tool))
     row = gate(world.gateway, principal, "search", payload)["results"][0]
-    assert row["text"] == "Ordinary words" and row["source_file"] == "note.md"
+    assert row["text"] == "Ordinary words"
     assert ("source_path" in row) is visible
+    assert ("source_file" in row) is visible
     if visible:
-        assert row["source_path"] == source_path
+        assert row["source_path"] == source_path and row["source_file"] == "note.md"
+    else:
+        assert not calls, "a refused path must not reach the proof worker"
+
+
+def test_ordinary_source_path_without_local_proof_is_omitted(world):
+    principal = replace(
+        world.principal,
+        policy=replace(world.principal.policy, scopes=("memory:read",), read_wings=("shared",)),
+    )
+    payload = {
+        "results": [
+            {
+                "wing": "shared",
+                "room": "notes",
+                "text": "Ordinary words",
+                "source_file": "note.md",
+                "source_path": "/home/x/ordinary/note.md",
+            }
+        ]
+    }
+    world.gateway.mediator = SimpleNamespace(
+        workers=SimpleNamespace(call_tool=lambda *args: {"associations": []})
+    )
+    row = gate(world.gateway, principal, "search", payload)["results"][0]
+    assert row == {"wing": "shared", "room": "notes", "text": "Ordinary words"}
 
 
 @pytest.mark.parametrize("value", [None, "unexpected words", 42, True])
