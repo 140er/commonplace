@@ -30,7 +30,11 @@ permission checks below run before any payload (stdin artifacts or source rows)
 is read. A failed source or continuity lookup refuses the whole response with
 `eval_lookup_failed` (or `eval_busy`); `list` never omits a run because of one.
 `preflight` takes no data-directory lock, so it creates nothing, even on a
-fresh data directory.
+fresh data directory. This is a deliberate deviation from the slice-1 plan,
+which routes every eval command through the backup fence and data lock:
+preflight only stats paths and reads `workspace.json`, so the locks protect
+nothing there, while taking them would create lock files. Every other eval
+command still waits for a running backup.
 
 ## Eligibility
 

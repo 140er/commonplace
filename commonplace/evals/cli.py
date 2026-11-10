@@ -57,7 +57,7 @@ file stays outside the workspace's encryption and purge.
 Storage: runs count against the workspace's plan storage. With plans enabled an
 archive needs roughly twice the eval DB's size in headroom. The bound holds only
 against writers that measure under the thread-store lock; single-part imports,
-palace writers and handoff filing can still exceed the plan limit. Limits:
+palace and drawer writers and handoff filing can still exceed the plan limit. Limits:
 16 MiB per run, 256 KiB chunks and pages, 1 GiB per workspace.
 
 After a scanner change, list/show/read rescan whole runs (read: on every page).

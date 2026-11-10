@@ -201,11 +201,20 @@ _DESTRUCTIVE = re.compile(
     r"\s+[\"\[`]?" + _CONTENT_TABLES + r"\b",
     re.I,
 )
-# Case-insensitive. A statement keyword must open the string or follow ``;``,
-# a newline or ``(``, which keeps prose ("... delete from {x} ...") out.
+# Clause (iii), case-insensitive. A statement keyword must open the string or
+# follow ``;``, a newline, ``(`` or ``)`` (a CTE: ``WITH c AS (...) DELETE``).
+# A placeholder table name (f-string or ``+`` part, ``%s``, ``{…}``) or the end
+# of the string must follow, and then a SQL-shaped tail: ``UPDATE <t> SET``,
+# ``DELETE FROM <t>`` before the end, ``;``, ``)``, ``WHERE`` or ``RETURNING``,
+# and ``DROP TABLE <t>`` before the end, ``;`` or ``)``. Prose that opens with a
+# keyword and a brace ("Delete from {path} failed", "Update {name} to retry")
+# therefore stays out.
+_ANCHOR = r"(?:^|[;\n()])\s*"
+_NAME = r"(?:\x00|%s|\{[^{}]*\})"
 _DYNAMIC = re.compile(
-    r"(?:^|[;\n(])\s*(?:DELETE\s+FROM|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s*(?:\x00|%s|\{|$)"
-    r"|(?:^|[;\n(])\s*UPDATE\s*(?:\x00|%s|\{)",
+    _ANCHOR + r"DELETE\s+FROM\s*(?:$|" + _NAME + r"\s*(?=$|[;)]|WHERE\b|RETURNING\b))"
+    r"|" + _ANCHOR + r"DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s*(?:$|" + _NAME + r"\s*(?=$|[;)]))"
+    r"|" + _ANCHOR + r"UPDATE\s+(?:OR\s+\w+\s+)?" + _NAME + r"\s+SET\b",
     re.I,
 )
 # Dynamic table names that are reviewed and touch no thread-store table.
@@ -237,11 +246,16 @@ def _is_string(node):
 
 
 def _statements(tree):
-    """String constants, f-strings and ``+`` chains that contain a string."""
+    """String constants, f-strings and ``+`` chains that contain a string.
+
+    Only parts of an f-string or a ``+`` chain are nested; the literal of a
+    ``%``-formatted string is scanned on its own (``"... %s" % value``).
+    """
     nested = {
         id(child)
         for node in ast.walk(tree)
-        if isinstance(node, (ast.JoinedStr, ast.BinOp))
+        if isinstance(node, ast.JoinedStr)
+        or (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add))
         for child in ast.iter_child_nodes(node)
     }
     for node in ast.walk(tree):
@@ -273,28 +287,46 @@ def _scan():
     return found
 
 
-@pytest.mark.parametrize(
-    "snippet",
-    [
-        'conn.execute("update threads set wing=? where id=?", args)',
-        'conn.execute("UPDATE threads " + "SET wing=? WHERE id=?", args)',
-        'conn.execute("delete from " + name)',
-        'conn.execute(f"drop table if exists {name}")',
-        'conn.execute("delete from messages where thread_id=?", args)',
-        'conn.execute(("DELETE FROM " + "messages") + " WHERE 1")',
-    ],
-)
+# Every snippet the earlier upper-case-only scan caught must stay caught, so the
+# scan can never fall below it; plus the case and concatenation forms it missed.
+CAUGHT = [
+    'conn.execute("update threads set wing=? where id=?", args)',
+    'conn.execute("UPDATE threads " + "SET wing=? WHERE id=?", args)',
+    'conn.execute("delete from " + name)',
+    'conn.execute(f"drop table if exists {name}")',
+    'conn.execute("delete from messages where thread_id=?", args)',
+    'conn.execute(("DELETE FROM " + "messages") + " WHERE 1")',
+    'conn.execute("DELETE FROM %s WHERE id=?" % name, args)',
+    'conn.execute("DELETE FROM messages WHERE thread_id=%s" % tid)',
+    'conn.execute("UPDATE threads SET wing=%s WHERE id=%s" % (w, i))',
+    'conn.execute("WITH c AS (SELECT 1) DELETE FROM " + name)',
+    'conn.execute("BEGIN; DELETE FROM " + name)',
+    'conn.execute("delete from {}".format(name))',
+    'conn.execute(f"UPDATE threads SET wing={w} WHERE id={i}")',
+    'conn.execute("UPDATE %s SET x=1" % table)',
+    'conn.execute("DROP TABLE IF EXISTS " + name)',
+    'conn.execute(f"DELETE FROM {table} WHERE id=?", args)',
+]
+
+
+@pytest.mark.parametrize("snippet", CAUGHT)
 def test_a4_scan_catches_lower_case_and_concatenated_sql(snippet):
     assert _findings("synthetic.py", snippet), f"A4 scan missed: {snippet}"
 
 
-def test_a4_scan_ignores_prose_and_unrelated_tables():
-    for snippet in (
+@pytest.mark.parametrize(
+    "snippet",
+    [
         'note = f"please update {name} when you delete from the list"',
+        'msg = f"Delete from {path} failed"',
+        'msg = "Update {name} to retry"',
+        'log.info("Drop table {name} skipped")',
         'conn.execute("UPDATE boards SET wing=? WHERE id=?", args)',
         'conn.execute("DELETE FROM drawers WHERE id=?", args)',
-    ):
-        assert _findings("synthetic.py", snippet) == [], snippet
+    ],
+)
+def test_a4_scan_ignores_prose_and_unrelated_tables(snippet):
+    assert _findings("synthetic.py", snippet) == [], snippet
 
 
 def test_a4_no_statement_rewrites_identity_or_deletes_thread_rows():

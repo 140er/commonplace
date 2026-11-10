@@ -1609,6 +1609,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
+  - The A4 scan covers string literals, f-strings, `+` chains and `%`-formatted literals case-insensitively, including CTE- and `;`-prefixed statements; a fixed snippet list keeps every form an earlier scan caught, and prose cases stay out.
+
   - `tests/test_eval_guards.py` and `tests/test_eval_lifecycle_guards.py` hold the base guards eval relies on (read-only opener, continuity invariants, identity-rewrite scan, import-view scope and auth, backup, encryption and switch carriage) without importing eval.
 
   - `tests/test_eval_archive.py`, `tests/test_eval_access.py` and `tests/test_eval_storage.py` cover content fidelity, caps, keys, retention, quota, flags, eligibility fixtures, races, authorization, purge, permissions, refusals, plan storage, atomicity, WAL mode and encryption.
