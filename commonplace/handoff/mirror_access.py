@@ -1,7 +1,6 @@
 """Apply thread read boundaries to every outgoing mirror drawer."""
 
 import math
-import re
 from pathlib import Path
 
 from commonplace.policy import canonical_wing
@@ -13,9 +12,6 @@ from .models import MIRROR_WING
 from .recall import Recall
 
 _DROP = object()
-_THREAD_ROOM = re.compile(r"thr_[0-9a-f]+\Z")
-# A whole thread ID: ordinary names such as thr_deadline name no thread.
-_THREAD_REFERENCE = re.compile(r"(?<![0-9a-z_])thr_[0-9a-f]+(?![0-9a-z_])", re.IGNORECASE)
 
 
 class _ResponseAccess:
@@ -93,10 +89,20 @@ class _ResponseAccess:
     def reference(self, token):
         if token.lower().startswith("thr_"):
             return self(token)
+        rows = self._source_rows(token)
+        return bool(rows) and any(self(row.id) for row in rows)
+
+    def source_readable(self, token):
+        """A source ID naming no stored thread reveals none; lookup faults hide it."""
+        rows = self._source_rows(token)
+        return rows is not None and (not rows or any(self(row.id) for row in rows))
+
+    def _source_rows(self, token):
+        """Stored threads filed under a source ID in this workspace; None on fault."""
         mode = "exact" if "#sha256:" in token.lower() else "family"
         key = (self.principal.workspace_id, mode, token)
         if key not in self.private:
-            self.private[key] = False
+            self.private[key] = None
             try:
                 ctx = self.gateway.handoff
                 checks.remaining(0)
@@ -106,13 +112,13 @@ class _ResponseAccess:
                     else ctx.store_for(self.principal.workspace_id)
                 )
                 if store is None:
-                    return False
+                    return None
                 if mode == "exact":
                     found = store.by_source(self.principal.workspace_id, token)
                     rows = [found] if found is not None else []
                 else:
                     rows = store.by_source_family(self.principal.workspace_id, token)
-                self.private[key] = any(self(row.id) for row in rows)
+                self.private[key] = rows
             except Exception:
                 pass
         return self.private[key]
@@ -165,32 +171,34 @@ def reader(gateway, principal):
     return _ResponseAccess(gateway, principal)
 
 
-def thread_ids(value):
-    """Thread IDs a room, topic or link names; empty when it names no thread.
-
-    Every route that returns a room or topic shares this check. Bare thread
-    IDs, /app/threads/ paths and URLs, t3-thread://v1/ links, mcp: forms and
-    whole IDs embedded anywhere else count alike. Both the raw value and its
-    percent-decoded copy are scanned.
-    """
-    if not isinstance(value, str):
-        return ()
-    parsed = provenance_refs.refs(value)
-    texts = [value]
-    if parsed is not provenance_refs.REFUSE and parsed.text:
-        texts.append(parsed.text)
-    return tuple(dict.fromkeys(m[0] for text in texts for m in _THREAD_REFERENCE.finditer(text)))
+thread_ids = provenance_refs.room_references
 
 
-def private_thread_reference(can_read, value):
+def private_thread_reference(access, value):
     """A value naming any thread this reader cannot read is not shown to them."""
-    return any(not can_read(thread) for thread in thread_ids(value))
+    names = provenance_refs.room_references(value)
+    if names is None:
+        return True
+    source = getattr(access, "source_readable", None)
+    return any(
+        not access(name) if name[:4].lower() == "thr_" else source is None or not source(name)
+        for name in names
+    )
 
 
 def unreadable_room(can_read, wing, room):
     if isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING:
         return not isinstance(room, str) or not can_read(room)
     return private_thread_reference(can_read, room)
+
+
+def _hidden_place(can_read, node, fact, import_row):
+    """Rooms and diary topics name threads alike; a proved import row keeps its room."""
+    wing = None if fact else node.get("wing")
+    if not import_row and unreadable_room(can_read, wing, node.get("room")):
+        return True
+    # Diary entries and their drawer metadata carry a topic beside the room.
+    return "topic" in node and private_thread_reference(can_read, node["topic"])
 
 
 def fact_visible(candidate, can_read):
@@ -430,9 +438,7 @@ def gate(gateway, principal, rule, result, *, access=None):
                 if node is _DROP:
                     return _DROP
             node = scrub_provenance(node, access)
-            if not import_row and unreadable_room(
-                can_read, None if fact else node.get("wing"), node.get("room")
-            ):
+            if _hidden_place(can_read, node, fact, import_row):
                 return _DROP
             if "connected_wing" in node and unreadable_room(
                 can_read, node.get("connected_wing"), node.get("connected_room")
@@ -565,8 +571,7 @@ def _is_fact(node):
     return bool({"predicate", "object", "fact", "triple_id"}.intersection(node))
 
 
-def _thread_id(value):
-    return isinstance(value, str) and _THREAD_ROOM.fullmatch(value) is not None
+_thread_id = provenance_refs.is_thread_id
 
 
 def _fact_sources(node):

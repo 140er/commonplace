@@ -1,39 +1,69 @@
-"""Thread-valued rooms reveal a thread ID only to readers of that thread."""
+"""Rooms and topics naming a thread reveal it only to readers of that thread."""
 
 import json
+import secrets
 
 import pytest
 
 from commonplace import sessions
-from commonplace.handoff import mirror_access
+from commonplace.handoff import mirror_access, provenance_refs
 from commonplace.handoff.models import ThreadMessage
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
-from tests.test_commonplace_memory import _scoped
 
+FULLWIDTH_THR = "ｔｈｒ"
 FORMS = {
-    "bare": "{}",
-    "app_path": "/app/threads/{}",
-    "app_url": "https://example.test/app/threads/{}/messages/3",
-    "t3_link": "t3-thread://v1/{}",
-    "mcp_prefix": "mcp:{}",
+    "bare": lambda t: t.id,
+    "app_path": lambda t: f"/app/threads/{t.id}",
+    "app_url": lambda t: f"https://example.test/app/threads/{t.id}/messages/3",
+    "t3_link": lambda t: f"t3-thread://v1/{t.id}",
+    "mcp_prefix": lambda t: f"mcp:{t.id}",
+    "percent": lambda t: "/app/threads/" + t.id.replace("_", "%5F"),
+    "underscore_suffix": lambda t: f"{t.id}_notes",
+    "underscore_prefix": lambda t: f"notes_{t.id}",
+    "letter_suffix": lambda t: f"{t.id}g",
+    "letter_prefix": lambda t: f"x{t.id}",
+    "fullwidth": lambda t: FULLWIDTH_THR + t.id[3:],
+    "mcp_source": lambda t: t.source_thread_id,
+    # Undecodable values are hidden from every reader: no thread can be proved.
+    "undecodable": lambda t: f"/app/threads/%FF{t.id}",
 }
+# Room-name validation refuses slashes, colons and percent signs on write.
+WRITABLE = [
+    "bare",
+    "underscore_suffix",
+    "underscore_prefix",
+    "letter_suffix",
+    "letter_prefix",
+    "fullwidth",
+]
 DRAWER = "thread-room-probe"
+TEXT = "Shared exact words about the plan"
 
 
-def private_thread(hub, wing="private_chats"):
+def secret(thread, form):
+    """The identity that must not reach a non-reader, in any spelling."""
+    return thread.source_thread_id[4:] if form == "mcp_source" else thread.id[4:]
+
+
+def store_thread(hub, form, *, actor, wing):
+    source = (
+        f"mcp:probe-{secrets.token_hex(6)}"
+        if form == "mcp_source"
+        else f"capture:{actor}:room-{secrets.token_hex(6)}"
+    )
     return hub.gateway.handoff.store_for(hub.workspace).store(
         hub.workspace,
-        f"capture:{hub.admin}:thread-room-{wing}",
+        source,
         [ThreadMessage(0, "user", "message", "Thread exact words", "Thread exact words")],
-        actor=hub.admin,
+        actor=actor,
         wing=wing,
     )
 
 
 def member(hub):
-    uid = hub.db.create_user("thread-room-reader@example.test")
+    uid = hub.db.create_user("thread-room-member@example.test")
     hub.db.add_member(hub.workspace, uid, "member", actor=hub.admin)
-    link = sessions.create_login_link(hub.db, "thread-room-reader@example.test", hub.workspace)
+    link = sessions.create_login_link(hub.db, "thread-room-member@example.test", hub.workspace)
     return {"Cookie": f"{sessions.COOKIE}={sessions.redeem_login_link(hub.db, link)}"}
 
 
@@ -42,20 +72,112 @@ def owner(hub):
     return {"Cookie": f"{sessions.COOKIE}={sessions.redeem_login_link(hub.db, link)}"}
 
 
-def seed(hub, collection, form, wing="private_chats"):
-    thread = private_thread(hub, wing)
-    room = FORMS[form].format(thread.id)
-    collection.add(
-        ids=[DRAWER],
-        documents=["Shared exact words about the plan"],
-        metadatas=[{"wing": "shared", "room": room}],
+@pytest.fixture(autouse=True)
+def palace_files(config, monkeypatch, tmp_path):
+    """Tunnels and hallways resolve their files from the test palace."""
+    from mempalace import hallways, palace_graph
+
+    monkeypatch.setattr(palace_graph, "MempalaceConfig", lambda: config)
+    monkeypatch.setattr(hallways, "_get_hallway_file", lambda *a, **k: str(tmp_path / "h.json"))
+    monkeypatch.setattr(hallways, "_legacy_hallway_file", lambda: str(tmp_path / "legacy.json"))
+
+
+SCOPES = ["memory:read", "memory:write", "memory:delete", "private:read", "private:write"]
+
+
+def agent(hub, name, scopes):
+    """A see-all owner-role agent; thread reads depend only on its scopes and filer."""
+    uid = hub.db.create_user(f"{name}@example.test")
+    hub.db.add_member(hub.workspace, uid, "owner", actor=hub.admin)
+    token = hub.token(
+        name,
+        user=uid,
+        profile="full",
+        scopes=scopes,
+        read_wings=["*"],
+        write_wings=["*"],
+        trust="trusted",
     )
-    return thread, room
+    principal = hub.db.authenticate_token(token)
+    assert principal.policy.sees_all_wings
+    return uid, token, principal
+
+
+@pytest.fixture
+def blind(hub):
+    """Sees every wing but cannot read any thread."""
+    return agent(hub, "thread-blind", SCOPES)
+
+
+@pytest.fixture
+def reader(hub):
+    """Sees every wing and reads its own threads."""
+    return agent(hub, "thread-reader", [*SCOPES, "threads:read"])
+
+
+def hidden_thread(hub, blind, form):
+    thread = store_thread(hub, form, actor=hub.admin, wing="private_chats")
+    assert not hub.gateway.handoff.recall.can_read(blind[2], thread.id)
+    return thread
+
+
+def readable_thread(hub, reader, form):
+    thread = store_thread(hub, form, actor=reader[0], wing="shared")
+    assert hub.gateway.handoff.recall.can_read(reader[2], thread.id)
+    return thread
+
+
+def seed(collection, config, room):
+    """One room value in drawers, a diary topic, a tunnel and a hallway."""
+    from mempalace import hallways, palace_graph
+
+    collection.add(
+        ids=[DRAWER, "probe-other", "probe-general", "probe-other-general", "probe-diary"],
+        documents=[TEXT, "Other plan words", "General words", "Other general words", TEXT],
+        metadatas=[
+            {"wing": "shared", "room": room},
+            {"wing": "other", "room": room},
+            {"wing": "shared", "room": "general"},
+            {"wing": "other", "room": "general"},
+            {
+                "wing": "shared",
+                "room": "diary",
+                "hall": "hall_diary",
+                "topic": room,
+                "type": "diary_entry",
+                "agent": "probe",
+                "filed_at": "2026-11-10T00:00:00Z",
+                "date": "2026-11-10",
+            },
+        ],
+    )
+    palace_graph._save_tunnels(
+        [
+            {
+                "id": "probe-tunnel",
+                "source": {"wing": "shared", "room": room},
+                "target": {"wing": "other", "room": "general"},
+                "label": "probe",
+            }
+        ],
+        config,
+    )
+    hallways._save_hallways(
+        [
+            {
+                "id": "probe-hallway",
+                "wing": "shared",
+                "rooms": [room],
+                "label": "probe",
+                "co_occurrence_count": 2,
+            }
+        ],
+        config,
+    )
 
 
 def rest(hub, headers, path):
-    status, raw = hub.raw(None, b"", method="GET", path=path, headers=headers)
-    return status, raw
+    return hub.raw(None, b"", method="GET", path=path, headers=headers)
 
 
 def mcp(hub, token, name, **args):
@@ -63,73 +185,145 @@ def mcp(hub, token, name, **args):
     return json.dumps(response, ensure_ascii=False)
 
 
-ROUTES = {
-    "rest_get": lambda hub, h, t: rest(hub, h, f"/api/memory/{DRAWER}")[1],
-    "rest_search": lambda hub, h, t: rest(hub, h, "/api/memory/search?q=plan")[1],
-    "mcp_get_drawer": lambda hub, h, t: mcp(hub, t, "mempalace_get_drawer", drawer_id=DRAWER),
-    "mcp_get_drawers": lambda hub, h, t: mcp(hub, t, "mempalace_get_drawers", drawer_ids=[DRAWER]),
-    "mcp_search": lambda hub, h, t: mcp(hub, t, "mempalace_search", query="plan"),
-    "mcp_list_drawers": lambda hub, h, t: mcp(hub, t, "mempalace_list_drawers", wing="shared"),
-    "mcp_list_rooms": lambda hub, h, t: mcp(hub, t, "mempalace_list_rooms", wing="shared"),
-    "mcp_taxonomy": lambda hub, h, t: mcp(hub, t, "mempalace_get_taxonomy"),
+READS = {
+    "get_drawer": ("mempalace_get_drawer", {"drawer_id": DRAWER}),
+    "get_drawers": ("mempalace_get_drawers", {"drawer_ids": [DRAWER]}),
+    "search": ("mempalace_search", {"query": "plan"}),
+    "list_drawers": ("mempalace_list_drawers", {"wing": "shared"}),
+    "list_rooms": ("mempalace_list_rooms", {"wing": "shared"}),
+    "taxonomy": ("mempalace_get_taxonomy", {}),
+    "status": ("mempalace_status", {}),
+    "list_tunnels": ("mempalace_list_tunnels", {}),
+    "follow_tunnels": ("mempalace_follow_tunnels", {"wing": "other", "room": "general"}),
+    "traverse": ("mempalace_traverse", {"start_room": "general"}),
+    "find_tunnels": ("mempalace_find_tunnels", {}),
+    "graph_stats": ("mempalace_graph_stats", {}),
+    "list_hallways": ("mempalace_list_hallways", {}),
+    "check_duplicate": ("mempalace_check_duplicate", {"content": TEXT, "threshold": 0.1}),
+    "diary_read": ("mempalace_diary_read", {"agent_name": "probe", "wing": "shared"}),
 }
 
 
-@pytest.mark.parametrize("route", sorted(ROUTES))
+@pytest.mark.parametrize("route", sorted(READS))
 @pytest.mark.parametrize("form", sorted(FORMS))
-def test_member_never_receives_unreadable_thread_id(hub, collection, form, route):
-    headers, token = member(hub), _scoped(hub)
-    thread, _ = seed(hub, collection, form)
-    raw = ROUTES[route](hub, headers, token)
-    assert thread.id not in raw, raw
+def test_thread_blind_reader_never_receives_thread_identity(
+    hub, collection, config, blind, form, route
+):
+    thread = hidden_thread(hub, blind, form)
+    seed(collection, config, FORMS[form](thread))
+    name, args = READS[route]
+    raw = mcp(hub, blind[1], name, **args)
+    assert secret(thread, form) not in raw, raw
 
 
-# Room-name validation already refuses the slashed forms on write.
-@pytest.mark.parametrize("form", ["bare", "mcp_prefix"])
-def test_member_cannot_file_into_unreadable_thread_room(hub, form):
-    thread = private_thread(hub)
-    room = FORMS[form].format(thread.id)
-    raw = mcp(hub, _scoped(hub), "mempalace_add_drawer", wing="shared", room=room, content="x")
+@pytest.mark.parametrize("route", sorted(READS))
+@pytest.mark.parametrize(
+    "form", ["bare", "app_path", "underscore_suffix", "fullwidth", "mcp_source"]
+)
+def test_thread_reader_keeps_room_on_every_route(hub, collection, config, reader, form, route):
+    thread = readable_thread(hub, reader, form)
+    seed(collection, config, FORMS[form](thread))
+    name, args = READS[route]
+    raw = mcp(hub, reader[1], name, **args)
+    assert secret(thread, form) in raw, raw
+
+
+@pytest.mark.parametrize("route", ["/api/memory/" + DRAWER, "/api/memory/search?q=plan"])
+@pytest.mark.parametrize("form", sorted(FORMS))
+def test_member_rest_never_receives_thread_identity(hub, collection, config, blind, form, route):
+    headers = member(hub)
+    thread = hidden_thread(hub, blind, form)
+    seed(collection, config, FORMS[form](thread))
+    _, raw = rest(hub, headers, route)
+    assert secret(thread, form) not in raw, raw
+
+
+WRITES = {
+    "add_drawer": lambda r: ("mempalace_add_drawer", {"wing": "shared", "room": r, "content": "x"}),
+    "update_drawer": lambda r: (
+        "mempalace_update_drawer",
+        {"drawer_id": "probe-general", "room": r},
+    ),
+    "checkpoint_item": lambda r: (
+        "mempalace_checkpoint",
+        {"items": [{"wing": "shared", "room": r, "content": "Checkpoint words"}]},
+    ),
+    "checkpoint_diary": lambda r: (
+        "mempalace_checkpoint",
+        {"items": [], "diary": {"agent_name": "probe", "entry": "x", "topic": r}},
+    ),
+    "create_tunnel": lambda r: (
+        "mempalace_create_tunnel",
+        {"source_wing": "shared", "source_room": r, "target_wing": "other", "target_room": "x"},
+    ),
+    "diary_write": lambda r: (
+        "mempalace_diary_write",
+        {"agent_name": "probe", "entry": "x", "topic": r, "wing": "shared"},
+    ),
+}
+
+
+@pytest.mark.parametrize("route", sorted(WRITES))
+@pytest.mark.parametrize("form", WRITABLE)
+def test_thread_blind_writer_cannot_file_into_thread_room(
+    hub, collection, config, blind, form, route
+):
+    thread = hidden_thread(hub, blind, form)
+    seed(collection, config, "general")
+    name, args = WRITES[route](FORMS[form](thread))
+    raw = mcp(hub, blind[1], name, **args)
     assert "Room not found" in raw, raw
 
 
 @pytest.mark.parametrize("form", sorted(FORMS))
-def test_owner_reads_thread_room_unchanged(hub, collection, form):
-    _, room = seed(hub, collection, form)
+def test_thread_blind_writer_cannot_delete_thread_room_drawer(hub, collection, config, blind, form):
+    thread = hidden_thread(hub, blind, form)
+    seed(collection, config, FORMS[form](thread))
+    raw = mcp(hub, blind[1], "mempalace_delete_drawer", drawer_id=DRAWER)
+    assert collection.get(ids=[DRAWER])["ids"] == [DRAWER], raw
+
+
+@pytest.mark.parametrize("form", sorted(set(FORMS) - {"undecodable"}))
+def test_owner_session_reads_thread_room_unchanged(hub, collection, config, form):
+    thread = store_thread(hub, form, actor=hub.admin, wing="private_chats")
+    room = FORMS[form](thread)
+    seed(collection, config, room)
     headers = owner(hub)
     status, raw = rest(hub, headers, f"/api/memory/{DRAWER}")
     assert status == 200, raw
     assert json.loads(raw)["topic"] == room
     status, raw = rest(hub, headers, "/api/memory/search?q=plan")
     assert status == 200, raw
-    assert [hit["topic"] for hit in json.loads(raw)["results"]] == [room]
+    assert room in [hit["topic"] for hit in json.loads(raw)["results"]]
 
 
-@pytest.mark.parametrize("form", sorted(FORMS))
-def test_member_reads_room_naming_readable_thread(hub, collection, form):
-    headers = member(hub)
-    _, room = seed(hub, collection, form, wing="shared")
-    status, raw = rest(hub, headers, f"/api/memory/{DRAWER}")
-    assert status == 200, raw
-    assert json.loads(raw)["topic"] == room
-
-
-def test_thread_ids_names_every_reference_form():
-    for form, pattern in FORMS.items():
-        assert mirror_access.thread_ids(pattern.format("thr_ab12")) == ("thr_ab12",), form
-    assert mirror_access.thread_ids("/app/threads/thr%5Fab12") == ("thr_ab12",)
-    for ordinary in ("general", "thr_notes", "thr_deadline", "path_thr_ab12"):
-        assert mirror_access.thread_ids(ordinary) == (), ordinary
-    assert mirror_access.thread_ids(None) == ()
-
-
-@pytest.mark.parametrize("room", ["general", "thr_deadline"])
-def test_member_ordinary_room_unchanged(hub, collection, room):
-    collection.add(
-        ids=[DRAWER],
-        documents=["Shared exact words about the plan"],
-        metadatas=[{"wing": "shared", "room": room}],
-    )
+@pytest.mark.parametrize("room", ["general", "thr_notes", "thr_deadline", "mcp-notes"])
+def test_ordinary_rooms_unchanged(hub, collection, config, blind, room):
+    seed(collection, config, room)
     status, raw = rest(hub, member(hub), f"/api/memory/{DRAWER}")
     assert status == 200, raw
     assert json.loads(raw)["topic"] == room
+    got = mcp(hub, blind[1], "mempalace_get_drawer", drawer_id=DRAWER)
+    assert json.loads(json.loads(got)["result"]["content"][0]["text"])["room"] == room
+
+
+def test_room_references_names_every_form():
+    class Thread:
+        id = "thr_" + "ab12" * 4
+        source_thread_id = "mcp:probe-1"
+
+    for form, make in FORMS.items():
+        if form == "undecodable":
+            continue
+        expected = Thread.source_thread_id if form == "mcp_source" else Thread.id
+        assert expected in provenance_refs.room_references(make(Thread)), form
+    for ordinary in ("general", "thr_notes", "thr_deadline", "thr_abcdefg", None):
+        assert provenance_refs.room_references(ordinary) == (), ordinary
+    # Values that cannot be decoded name a thread nobody can prove readable.
+    for undecodable in (
+        "%FF" + Thread.id,
+        "thr%252525255Fab12",
+        "thr​_ab12",
+    ):
+        assert provenance_refs.room_references(undecodable) is None, undecodable
+    assert mirror_access.thread_ids is provenance_refs.room_references

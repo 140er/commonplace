@@ -751,6 +751,9 @@ class Mediator:
             for item in items if isinstance(items, list) else ():
                 if isinstance(item, dict):
                     self._check_thread_room(principal, item.get("wing"), item.get("room"))
+            diary = args.get("diary")
+            if isinstance(diary, dict):
+                self._check_thread_room(principal, None, diary.get("topic"))
         return None  # Policy.refusal already required every wing.
 
     def _before_wing_list(self, principal, name, args, notes):
@@ -1055,6 +1058,7 @@ class Mediator:
         return None
 
     def _before_diary_write(self, principal, name, args, notes):
+        self._check_thread_room(principal, None, args.get("topic"))
         wing = args.get("wing") or _agent_wing(args.get("agent_name"))
         self._pin_write_wing(principal.policy, args, wing, notes)
         return None
@@ -1431,15 +1435,9 @@ class Mediator:
 
     # ── helpers that ask the worker ──
     def _check_thread_room(self, principal, wing, room):
-        from .handoff.mirror_access import unreadable_room
+        from .handoff.mirror_access import reader, unreadable_room
 
-        def can_read(thread):
-            try:
-                return self.gateway.handoff.recall.can_read(principal, thread)
-            except Exception:
-                return False
-
-        if unreadable_room(can_read, wing, room):
+        if unreadable_room(reader(self.gateway, principal), wing, room):
             raise Hidden({"success": False, "error": "Room not found"})
 
     def _drawer_wings(self, principal, ids: list) -> dict:

@@ -796,9 +796,10 @@ old thread and the successor reference or URL.
   the same response. Mirror copies do not count as duplicates for anyone. Similarity
   dedup exclusion (D5) is verified on compact, sqlite_exact and chroma. Adding,
   updating, deleting or linking drawers in a stored-thread room requires permission to
-  read that thread. A room naming a thread through an `/app/threads/` path,
-  `t3-thread://v1/` link, `mcp:` form or embedded ID counts as that thread's room,
-  for reads and writes alike. Known exceptions: `delete_by_source`, `delete_tunnel` and
+  read that thread. A room or diary topic naming a thread through an
+  `/app/threads/` path, `t3-thread://v1/` link, `mcp:` form, embedded or
+  fullwidth ID, or a T3 source ID that resolves to a stored thread, counts as
+  that thread's room, for reads and writes alike. Known exceptions: `delete_by_source`, `delete_tunnel` and
   `delete_hallway` take no room and are not checked yet. Fact mutations
   (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived facts are not
   room-checked. A member with fact-write permissions but no source-thread read access

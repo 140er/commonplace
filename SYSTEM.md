@@ -1719,16 +1719,36 @@ shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
 labels, ranks or counts. Wildcard policies can reach those projections without
 private scope; literal-wing policies keep their existing tool visibility.
 
-A room or topic names a thread when it contains a whole thread ID in any form:
-a bare ID, an `/app/threads/` path or URL, a `t3-thread://v1/` link, an `mcp:`
-form or an ID embedded elsewhere, raw or percent-encoded. One shared check
-(`mirror_access.thread_ids`) applies to every route that returns or writes a
-room: drawer reads, search, drawer listings, room lists, taxonomy, tunnels,
-graph and overview pairs, and the write-side room check. A reader who cannot
-read every thread the value names receives the drawer as not found and the room
-is omitted from listings, exactly as for a bare thread-ID room. Readers of the
-thread, including owners, keep the room verbatim. Ordinary names that only
-start like an ID, such as `thr_notes` or `thr_deadline`, name no thread.
+A room, or a diary topic, names a thread when its raw value, its percent-decoded
+copy or the NFKC form of either contains a thread ID or a T3 source ID. The thread
+ID may appear as a bare ID, in an `/app/threads/` path or URL, in a
+`t3-thread://v1/` link, after `mcp:`, or next to letters, digits or underscores
+(`notes_thr_…`, `thr_…_notes`); fullwidth spellings count after NFKC. A T3
+source ID (`mcp:<source>`) is resolved through the workspace thread store's
+source lookup. One definition of a thread ID (`provenance_refs.THREAD_ID`) and
+one room check (`provenance_refs.room_references`, used through
+`mirror_access.private_thread_reference`) cover every route that returns or
+writes a room or topic. Reads: drawer reads, search, drawer listings, room
+lists and status (overview projection), taxonomy, tunnels, graph traversal and
+statistics, hallways, duplicate checks and diary reads, including drawer
+`metadata.topic`. Writes: add, update, delete, checkpoint items and diary,
+tunnel creation and diary writes. A reader who cannot read every named thread
+receives the drawer or entry as not found, and the room is omitted from
+listings, exactly as for a bare thread-ID room. Readers of the thread,
+including owners, keep the room verbatim. A source ID naming no stored thread
+names nothing; a source lookup failure hides the value.
+
+Residual costs of failing closed. A hex run shorter than 16 digits directly
+followed by an ASCII letter is an ordinary word (`thr_deadline`, `thr_notes`).
+Any other `thr_<hex>` run counts as an ID, so hex-looking ordinary names such
+as `thr_cafe` or `notes thr_add` resolve to no thread and are hidden from every
+reader, owners included. Room-name validation already refuses `/`, `:`, `%`
+and control characters in new rooms, so link, `mcp:` and undecodable forms
+reach storage only through older or imported data. Values that
+cannot be decoded (control or format characters, invalid percent-encoded
+UTF-8, more than four encoding levels or over the citation length limit) are
+also hidden from every reader. Wing names are outside this check: a wing named
+like a thread ID is filtered by wing policy alone.
 
 For principals without every-wing access, CLI-compatible search acquires structured
 hits and renders only after the same drawer gate as structured search: room and

@@ -47,7 +47,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Thread-valued rooms: one shared thread-reference check covers bare IDs, app paths and URLs, t3-thread links, mcp: forms and embedded IDs on every room-returning route.
+  - Thread-valued rooms and diary topics: one thread-ID definition and one room check cover link, mcp:, embedded, fullwidth and source-ID forms on every room- or topic-returning route and write, with the fail-closed residuals for hex-looking names, undecodable values and unchecked wing names.
 
   - Private-read containment includes event cursor projection, indistinguishable unreadable write retries, readable tunnel endpoints, current-role token caps and explicit private-save notices.
 
@@ -257,7 +257,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - The handoff guide counts rooms naming a thread through a link, mcp: form or embedded ID as that thread's room.
+  - The handoff guide counts rooms and diary topics naming a thread through a link, mcp: form, embedded or fullwidth ID, or a resolving T3 source ID as that thread's room.
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
@@ -561,7 +561,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
-  - Thread-reference room regressions run each reference form against REST get/search and MCP drawer, listing, room and taxonomy reads as a member, with owner, readable-thread and ordinary-room controls.
+  - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
@@ -906,7 +906,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - The write-side room check shares the handoff thread-reference check, so a room naming an unreadable thread in any form is refused as not found.
+  - The write-side room check shares the handoff thread-reference check, including diary and checkpoint diary topics, so a room or topic naming an unreadable thread in any form is refused as not found.
 
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
@@ -1350,7 +1350,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - `thread_ids` names the whole thread IDs in a room, topic or link in any reference form, raw or percent-decoded; `unreadable_room` and read_wing room filtering hide a room naming any thread the reader cannot read. Ordinary names such as `thr_deadline` name no thread.
+  - `provenance_refs.THREAD_ID` is the one thread-ID definition (stores, recall and scans). `room_references` names the thread and T3 source IDs in a room, topic or link across raw, percent-decoded and NFKC copies, and returns None for undecodable values; `private_thread_reference` resolves source IDs through the store and hides any value naming a thread the reader cannot read, in rooms, diary topics and read_wing room filtering. Ordinary words such as `thr_deadline` name no thread.
 
   - The final search gate proves source_path like source_file, including nested folded copies and media path/title aliases, and omits acquisition counts and truncation flags for restricted readers. Body text and arbitrary provenance labels are not scanned for private words.
 

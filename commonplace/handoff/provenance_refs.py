@@ -58,7 +58,15 @@ REFUSE = object()
 # Four decoding rounds remain O(input length); scanning is bounded by this cap.
 MAX_REFERENCE_CHARS = 16_384
 _MAX_REFERENCE_CHARS = MAX_REFERENCE_CHARS
-_THREAD = re.compile(r"thr_[0-9a-f]+", re.IGNORECASE)
+# The one definition of a thread ID. Stored IDs fullmatch THREAD_ID; scans
+# also accept an upper-case prefix, so no spelling escapes the check.
+THREAD_ID = re.compile(r"thr_[0-9a-fA-F]+")
+_THREAD = re.compile(THREAD_ID.pattern, re.IGNORECASE)
+# Stored threads keep their caller's source ID; T3 source IDs carry this prefix.
+_SOURCE = re.compile(r"mcp:[^\s/?#&\"'<>\\]+")
+# Real thread IDs have 16 hex digits. A shorter run directly followed by an
+# ASCII letter is an ordinary word such as thr_deadline, not an ID.
+_ID_DIGITS = 16
 _PRIVATE = re.compile(r"(?:capture-fork|capture|import-private):[^\s?]+", re.IGNORECASE)
 _PERCENT = re.compile(r"%[0-9a-f]{2}", re.IGNORECASE)
 
@@ -219,6 +227,40 @@ def _tokens(text):
         for match in _THREAD.finditer(token):
             tokens[match[0]] = None
     return tuple(tokens)
+
+
+def is_thread_id(value):
+    """A stored thread ID exactly, as thread stores issue and accept them."""
+    return isinstance(value, str) and THREAD_ID.fullmatch(value) is not None
+
+
+def _named_threads(text):
+    for match in _THREAD.finditer(text):
+        after = text[match.end() : match.end() + 1]
+        if len(match[0]) - 4 < _ID_DIGITS and after.isascii() and after.isalpha():
+            continue
+        yield match[0]
+    yield from (match[0] for match in _SOURCE.finditer(text))
+
+
+def room_references(value):
+    """Thread IDs and T3 source IDs a room, topic or link names.
+
+    Every route that returns or writes a room or topic shares this check. The
+    raw value, its percent-decoded copy and their NFKC forms are all scanned,
+    so link forms, mcp: forms, IDs next to letters or underscores and
+    fullwidth spellings count. Returns None when the value cannot be decoded:
+    callers treat that as naming a thread nobody can prove readable.
+    """
+    if not isinstance(value, str):
+        return ()
+    texts = []
+    for text in dict.fromkeys((value, unicodedata.normalize("NFKC", value))):
+        parsed = refs(text)
+        if parsed is REFUSE:
+            return None
+        texts.extend((text, parsed.text or "", unicodedata.normalize("NFKC", parsed.text or "")))
+    return tuple(dict.fromkeys(token for text in texts for token in _named_threads(text)))
 
 
 def refs(value, *, raise_on_limit=False):
