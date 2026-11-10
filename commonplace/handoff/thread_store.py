@@ -737,6 +737,30 @@ class ThreadStore:
             ).fetchall()
             return [_stored_thread(row) for row in rows]
 
+    def by_source_prefix(self, workspace_id: str, value: str) -> list[StoredThread]:
+        """Threads whose source ID, or its hash-variant base, begins ``value``.
+
+        Literal binary comparison within the value's ``<namespace>:`` range, so
+        ``mcp:<source>_notes`` finds the threads filed under ``mcp:<source>``.
+        """
+        namespace = value[: value.find(":") + 1] if ":" in value else ""
+        if not namespace:
+            return []
+        base = (
+            "CASE WHEN instr(source_thread_id, '#sha256:') > 0 "
+            "THEN substr(source_thread_id, 1, instr(source_thread_id, '#sha256:') - 1) "
+            "ELSE source_thread_id END"
+        )
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM threads WHERE workspace_id=? AND source_thread_id>=? "
+                "AND source_thread_id<? AND length(" + base + ") > length(?) "
+                "AND substr(?, 1, length(" + base + ")) = " + base + " COLLATE BINARY "
+                "ORDER BY id",
+                (workspace_id, namespace, namespace[:-1] + ";", namespace, value),
+            ).fetchall()
+            return [_stored_thread(row) for row in rows]
+
     def list_source_range(self, workspace_id, prefix, *, after=None, limit):
         """Page a literal source namespace in binary identity order."""
         if not prefix.endswith(":"):

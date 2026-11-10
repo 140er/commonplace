@@ -10,6 +10,16 @@ from commonplace.handoff import mirror_access, provenance_refs
 from commonplace.handoff.models import ThreadMessage
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 
+
+def deep_encoded(identifier, layers=4):
+    """Each layer hides a fullwidth percent sign behind one more decode/NFKC round."""
+    value = "\uff05" + "74" + identifier[1:]
+    for _ in range(layers):
+        value = value.replace("\uff05", "\uff05EF\uff05BC\uff0585")
+    return value
+
+
+UNPROVABLE = {"undecodable", "deep_encoded"}
 FULLWIDTH_THR = "ｔｈｒ"
 FORMS = {
     "bare": lambda t: t.id,
@@ -24,6 +34,12 @@ FORMS = {
     "letter_prefix": lambda t: f"x{t.id}",
     "fullwidth": lambda t: FULLWIDTH_THR + t.id[3:],
     "mcp_source": lambda t: t.source_thread_id,
+    "mcp_source_underscore": lambda t: f"{t.source_thread_id}_notes",
+    "mcp_source_letter": lambda t: f"{t.source_thread_id}x",
+    # A percent sign behind NFKC: decoding must repeat until the value is stable.
+    "double_encoded": lambda t: "%EF%BC%85" + "74" + t.id[1:],
+    # Still changing after the decode/NFKC round bound: hidden from every reader.
+    "deep_encoded": lambda t: deep_encoded(t.id),
     # Undecodable values are hidden from every reader: no thread can be proved.
     "undecodable": lambda t: f"/app/threads/%FF{t.id}",
 }
@@ -42,13 +58,13 @@ TEXT = "Shared exact words about the plan"
 
 def secret(thread, form):
     """The identity that must not reach a non-reader, in any spelling."""
-    return thread.source_thread_id[4:] if form == "mcp_source" else thread.id[4:]
+    return thread.source_thread_id[4:] if form.startswith("mcp_source") else thread.id[4:]
 
 
-def store_thread(hub, form, *, actor, wing):
-    source = (
+def store_thread(hub, form, *, actor, wing, source=None):
+    source = source or (
         f"mcp:probe-{secrets.token_hex(6)}"
-        if form == "mcp_source"
+        if form.startswith("mcp_source")
         else f"capture:{actor}:room-{secrets.token_hex(6)}"
     )
     return hub.gateway.handoff.store_for(hub.workspace).store(
@@ -85,8 +101,8 @@ def palace_files(config, monkeypatch, tmp_path):
 SCOPES = ["memory:read", "memory:write", "memory:delete", "private:read", "private:write"]
 
 
-def agent(hub, name, scopes):
-    """A see-all owner-role agent; thread reads depend only on its scopes and filer."""
+def agent(hub, name, scopes, wings=("*",)):
+    """An owner-role agent; thread reads depend only on its scopes, wings and filer."""
     uid = hub.db.create_user(f"{name}@example.test")
     hub.db.add_member(hub.workspace, uid, "owner", actor=hub.admin)
     token = hub.token(
@@ -94,12 +110,12 @@ def agent(hub, name, scopes):
         user=uid,
         profile="full",
         scopes=scopes,
-        read_wings=["*"],
-        write_wings=["*"],
+        read_wings=list(wings),
+        write_wings=list(wings),
         trust="trusted",
     )
     principal = hub.db.authenticate_token(token)
-    assert principal.policy.sees_all_wings
+    assert principal.policy.sees_all_wings is (list(wings) == ["*"])
     return uid, token, principal
 
 
@@ -133,7 +149,13 @@ def seed(collection, config, room):
 
     collection.add(
         ids=[DRAWER, "probe-other", "probe-general", "probe-other-general", "probe-diary"],
-        documents=[TEXT, "Other plan words", "General words", "Other general words", TEXT],
+        documents=[
+            TEXT,
+            "Other plan words",
+            "General words",
+            "Other general words",
+            "Diary words about the plan",
+        ],
         metadatas=[
             {"wing": "shared", "room": room},
             {"wing": "other", "room": room},
@@ -189,6 +211,7 @@ READS = {
     "get_drawer": ("mempalace_get_drawer", {"drawer_id": DRAWER}),
     "get_drawers": ("mempalace_get_drawers", {"drawer_ids": [DRAWER]}),
     "search": ("mempalace_search", {"query": "plan"}),
+    "search_cli": ("mempalace_search", {"query": "plan", "cli_compatible": True}),
     "list_drawers": ("mempalace_list_drawers", {"wing": "shared"}),
     "list_rooms": ("mempalace_list_rooms", {"wing": "shared"}),
     "taxonomy": ("mempalace_get_taxonomy", {}),
@@ -218,7 +241,8 @@ def test_thread_blind_reader_never_receives_thread_identity(
 
 @pytest.mark.parametrize("route", sorted(READS))
 @pytest.mark.parametrize(
-    "form", ["bare", "app_path", "underscore_suffix", "fullwidth", "mcp_source"]
+    "form",
+    ["bare", "app_path", "underscore_suffix", "fullwidth", "mcp_source", "double_encoded"],
 )
 def test_thread_reader_keeps_room_on_every_route(hub, collection, config, reader, form, route):
     thread = readable_thread(hub, reader, form)
@@ -283,7 +307,7 @@ def test_thread_blind_writer_cannot_delete_thread_room_drawer(hub, collection, c
     assert collection.get(ids=[DRAWER])["ids"] == [DRAWER], raw
 
 
-@pytest.mark.parametrize("form", sorted(set(FORMS) - {"undecodable"}))
+@pytest.mark.parametrize("form", sorted(set(FORMS) - UNPROVABLE))
 def test_owner_session_reads_thread_room_unchanged(hub, collection, config, form):
     thread = store_thread(hub, form, actor=hub.admin, wing="private_chats")
     room = FORMS[form](thread)
@@ -313,10 +337,14 @@ def test_room_references_names_every_form():
         source_thread_id = "mcp:probe-1"
 
     for form, make in FORMS.items():
-        if form == "undecodable":
+        if form in UNPROVABLE:
+            assert provenance_refs.room_references(make(Thread)) is None, form
             continue
-        expected = Thread.source_thread_id if form == "mcp_source" else Thread.id
-        assert expected in provenance_refs.room_references(make(Thread)), form
+        names = provenance_refs.room_references(make(Thread))
+        if form.startswith("mcp_source"):
+            assert any(n.startswith(Thread.source_thread_id) for n in names), form
+        else:
+            assert Thread.id in names, form
     for ordinary in ("general", "thr_notes", "thr_deadline", "thr_abcdefg", None):
         assert provenance_refs.room_references(ordinary) == (), ordinary
     # Values that cannot be decoded name a thread nobody can prove readable.
@@ -326,4 +354,101 @@ def test_room_references_names_every_form():
         "thr​_ab12",
     ):
         assert provenance_refs.room_references(undecodable) is None, undecodable
-    assert mirror_access.thread_ids is provenance_refs.room_references
+    # A list cannot say "undecodable"; callers decide through private_thread_reference.
+    assert not hasattr(mirror_access, "thread_ids")
+
+
+@pytest.mark.parametrize("route", sorted(READS))
+def test_partial_source_family_reader_never_receives_source(hub, collection, config, reader, route):
+    """An mcp: room is shown only to readers of every thread filed under its source."""
+    source = f"mcp:probe-{secrets.token_hex(6)}"
+    uid, token, principal = partial = agent(
+        hub, "family-reader", ["memory:read", "threads:read"], wings=["shared", "other"]
+    )
+    readable = store_thread(hub, "mcp_source", actor=uid, wing="shared", source=source)
+    private = store_thread(
+        hub,
+        "mcp_source",
+        actor=hub.admin,
+        wing="private_chats",
+        source=source + "#sha256:" + "0" * 64,
+    )
+    recall = hub.gateway.handoff.recall
+    assert recall.can_read(principal, readable.id)
+    assert not recall.can_read(principal, private.id)
+    seed(collection, config, source)
+    name, args = READS[route]
+    raw = mcp(hub, partial[1], name, **args)
+    assert source[4:] not in raw, raw
+
+
+def visible_diary_entry(collection):
+    collection.add(
+        ids=["probe-diary-visible"],
+        documents=["Visible diary words"],
+        metadatas=[
+            {
+                "wing": "shared",
+                "room": "diary",
+                "hall": "hall_diary",
+                "topic": "general",
+                "type": "diary_entry",
+                "agent": "probe",
+                "filed_at": "2026-11-10T01:00:00Z",
+                "date": "2026-11-10",
+            }
+        ],
+    )
+
+
+def payload(raw):
+    return json.loads(json.loads(raw)["result"]["content"][0]["text"])
+
+
+SEARCH_COUNTERS = {
+    "total_before_filter",
+    "filtered_by_max_distance",
+    "date_filter_pool_truncated",
+    "candidates_truncated",
+    "distinct_results_truncated",
+}
+
+
+@pytest.mark.parametrize("signal", ["diary", "diary_window", "search", "duplicate"])
+@pytest.mark.parametrize("form", sorted(FORMS))
+def test_counts_describe_only_visible_rows(hub, collection, config, blind, form, signal):
+    thread = hidden_thread(hub, blind, form)
+    seed(collection, config, FORMS[form](thread))
+    if signal.startswith("diary"):
+        visible_diary_entry(collection)
+        args = {"agent_name": "probe", "wing": "shared"}
+        if signal == "diary_window":
+            args["last_n"] = 1  # The hidden entry is older than the window.
+        body = payload(mcp(hub, blind[1], "mempalace_diary_read", **args))
+        assert [entry["topic"] for entry in body["entries"]] == ["general"], body
+        assert body["total"] == 1 and body["showing"] == 1, body
+    elif signal == "search":
+        body = payload(mcp(hub, blind[1], "mempalace_search", query="plan"))
+        assert not SEARCH_COUNTERS & set(body), body
+    else:
+        # The only exact matches sit in the hidden room and the hidden diary topic.
+        body = payload(
+            mcp(hub, blind[1], "mempalace_check_duplicate", content=TEXT, threshold=0.95)
+        )
+        assert body["matches"] == [] and body["is_duplicate"] is False, body
+
+
+def test_gate_recounts_diary_entries_it_drops(hub, blind):
+    thread = hidden_thread(hub, blind, "bare")
+    entry = {"date": "2026-11-10", "timestamp": "t", "content": "words"}
+    page = {
+        "agent": "probe",
+        "entries": [{**entry, "topic": thread.id}, {**entry, "topic": "general"}],
+        "total": 5,
+        "showing": 2,
+    }
+    gated = mirror_access.gate(hub.gateway, blind[2], "diary_read", page)
+    assert gated == {**page, "entries": [page["entries"][1]], "total": 4, "showing": 1}
+    only_hidden = {**page, "entries": page["entries"][:1], "total": 1, "showing": 1}
+    gated = mirror_access.gate(hub.gateway, blind[2], "diary_read", only_hidden)
+    assert gated == {"agent": "probe", "entries": [], "message": "No diary entries yet."}

@@ -93,13 +93,14 @@ class _ResponseAccess:
         return bool(rows) and any(self(row.id) for row in rows)
 
     def source_readable(self, token):
-        """A source ID naming no stored thread reveals none; lookup faults hide it."""
-        rows = self._source_rows(token)
-        return rows is not None and (not rows or any(self(row.id) for row in rows))
+        """A room naming source IDs is shown only to readers of every thread filed
+        under any of them; naming no stored thread reveals none; faults hide it."""
+        rows = self._source_rows(token, "prefix")
+        return rows is not None and all(self(row.id) for row in rows)
 
-    def _source_rows(self, token):
+    def _source_rows(self, token, mode=None):
         """Stored threads filed under a source ID in this workspace; None on fault."""
-        mode = "exact" if "#sha256:" in token.lower() else "family"
+        mode = mode or ("exact" if "#sha256:" in token.lower() else "family")
         key = (self.principal.workspace_id, mode, token)
         if key not in self.private:
             self.private[key] = None
@@ -116,6 +117,8 @@ class _ResponseAccess:
                 if mode == "exact":
                     found = store.by_source(self.principal.workspace_id, token)
                     rows = [found] if found is not None else []
+                elif mode == "prefix":
+                    rows = store.by_source_prefix(self.principal.workspace_id, token)
                 else:
                     rows = store.by_source_family(self.principal.workspace_id, token)
                 self.private[key] = rows
@@ -169,9 +172,6 @@ class _ResponseAccess:
 def reader(gateway, principal):
     """Access and provenance caches live for one request/response only."""
     return _ResponseAccess(gateway, principal)
-
-
-thread_ids = provenance_refs.room_references
 
 
 def private_thread_reference(access, value):
@@ -379,9 +379,10 @@ def _proved_thread(value, access):
 
 
 def _without_search_acquisition_counts(principal, rule, result):
-    if rule == "search" and isinstance(result, dict) and not principal.policy.sees_all_wings:
-        # Candidate acquisition precedes drawer authorization. Neither its
-        # counts nor its truncation flags describe this reader's visible set.
+    if rule == "search" and isinstance(result, dict):
+        # Candidate acquisition precedes drawer and thread authorization, for
+        # every principal: even a see-all reader may lack a thread a room names.
+        # Neither its counts nor its truncation flags describe the visible set.
         result = {
             key: value
             for key, value in result.items()
@@ -560,11 +561,34 @@ def _reader_fact(node, reader_recall, principal):
 
 
 def _recount(original, cleaned):
+    """Counts and flags in a gated reply describe only what the reader receives."""
     for key in ("drawers", "results"):
         if isinstance(cleaned.get(key), list) and cleaned[key] is not original.get(key):
             cleaned.pop("total", None)
             if "count" in cleaned:
                 cleaned["count"] = len(cleaned[key])
+    matches = cleaned.get("matches")
+    if isinstance(matches, list) and matches is not original.get("matches"):
+        if "is_duplicate" in cleaned:
+            cleaned["is_duplicate"] = bool(matches)
+    entries, before = cleaned.get("entries"), original.get("entries")
+    if (
+        "showing" in original
+        and isinstance(entries, list)
+        and isinstance(before, list)
+        and entries is not before
+    ):
+        # A diary page. The worker already excluded hidden topics outside this
+        # window before counting, so only the entries dropped here remain.
+        total = original.get("total")
+        cleaned["total"] = max(
+            0, (total if type(total) is int else 0) - (len(before) - len(entries))
+        )
+        cleaned["showing"] = len(entries)
+        if not entries and cleaned["total"] == 0:
+            for key in ("total", "showing"):
+                cleaned.pop(key)
+            cleaned["message"] = "No diary entries yet."
 
 
 def _is_fact(node):

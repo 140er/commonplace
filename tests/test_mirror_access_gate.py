@@ -220,7 +220,8 @@ def test_restricted_search_omits_acquisition_diagnostics(world):
         "candidates_truncated": True,
         "distinct_results_truncated": True,
     }
-    assert gate(world.gateway, world.principal, "search", payload) == payload
+    # Acquisition precedes thread authorization even for see-all readers.
+    assert gate(world.gateway, world.principal, "search", payload) == {"results": []}
     principal = replace(
         world.principal, policy=replace(world.principal.policy, scopes=("memory:read",))
     )

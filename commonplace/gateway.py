@@ -634,11 +634,11 @@ class Mediator:
                 rule,
                 req_id,
                 response,
+                # CLI text is rendered only from gated rows, for every principal:
+                # a see-all reader may still lack a thread that a room names.
                 cli_args=(
                     import_filters
-                    if name == "mempalace_search"
-                    and import_filters.get("cli_compatible")
-                    and not principal.policy.sees_all_wings
+                    if name == "mempalace_search" and import_filters.get("cli_compatible")
                     else None
                 ),
             )
@@ -916,7 +916,7 @@ class Mediator:
             return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
         if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
             raise Denied(f"this connection can't read wing {wing!r}")
-        if cli and not policy.sees_all_wings:
+        if cli:
             error = _scoped_cli_search_error(args)
             if error:
                 return {"respond": {"error": error}}
@@ -933,7 +933,7 @@ class Mediator:
                 canonical_wing(wing) == canonical_wing(w) for w in requested
             ):
                 return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
-            if cli and not policy.sees_all_wings:
+            if cli:
                 args["cli_compatible"] = False
             return fact_result
         return {
@@ -1065,12 +1065,38 @@ class Mediator:
 
     def _before_diary_read(self, principal, name, args, notes):
         policy = principal.policy
-        if policy.sees_all_wings:
-            return None
-        wing = args.get("wing") or _agent_wing(args.get("agent_name"))
-        if not wing or not policy.can_read_wing(wing):
-            raise Denied(f"this connection can't read wing {wing!r}")
-        args["wing"] = wing
+        if not policy.sees_all_wings:
+            wing = args.get("wing") or _agent_wing(args.get("agent_name"))
+            if not wing or not policy.can_read_wing(wing):
+                raise Denied(f"this connection can't read wing {wing!r}")
+            args["wing"] = wing
+        return self._scope_diary_topics(principal, name, args)
+
+    def _scope_diary_topics(self, principal, name, args):
+        """Exclude entries whose topic names an unreadable thread before the
+        worker counts or windows them, so totals describe only visible entries."""
+        from .handoff.mirror_access import private_thread_reference, reader
+
+        empty = {
+            "agent": str(args.get("agent_name") or "").lower(),
+            "entries": [],
+            "message": "No diary entries yet.",
+        }
+        try:
+            probe = self.workers.call_tool(
+                principal, name, {**args, "thread_scope": {"probe": True}}
+            )
+        except Exception:
+            return {"respond": empty}
+        if isinstance(probe, dict) and set(probe) == {"error"}:
+            return None  # The worker answers the same validation error unscoped.
+        topics = probe.get("topics") if isinstance(probe, dict) else None
+        if not isinstance(probe, dict) or set(probe) != {"topics"} or not isinstance(topics, list):
+            return {"respond": empty}
+        access = reader(self.gateway, principal)
+        hidden = [topic for topic in topics if private_thread_reference(access, topic)]
+        if hidden:
+            args["thread_scope"] = {"exclude_topics": hidden}
         return None
 
     def _before_tunnel_write(self, principal, name, args, notes):
@@ -1492,7 +1518,7 @@ class Mediator:
         if not wings:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
         worker_args = {**args, "wings": wings}
-        if args.get("cli_compatible") and not principal.policy.sees_all_wings:
+        if args.get("cli_compatible"):
             worker_args["cli_compatible"] = False
         result = self.workers.call_tool(principal, name, worker_args)
         if not isinstance(result, dict):

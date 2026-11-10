@@ -210,7 +210,19 @@ def _sqlite_diary_read(agent_name: str, last_n: int, wing: str):
         return None
 
 
-def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = ""):
+def _diary_scope(thread_scope):
+    """Server-set read scope: ``probe`` lists entry topics, ``exclude_topics`` skips them."""
+    if not isinstance(thread_scope, dict):
+        return None
+    if set(thread_scope) == {"probe"} and thread_scope["probe"] is True:
+        return thread_scope
+    excluded = thread_scope.get("exclude_topics")
+    if set(thread_scope) == {"exclude_topics"} and isinstance(excluded, list):
+        return thread_scope
+    return None
+
+
+def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = "", thread_scope: dict = None):
     """
     Read an agent's recent diary entries. Returns the last N entries
     in chronological order — the agent's personal journal.
@@ -234,10 +246,15 @@ def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = ""):
             wing = sanitize_name(wing)
     except ValueError as e:
         return {"error": str(e)}
+    if thread_scope is not None and _diary_scope(thread_scope) is None:
+        return {"error": "invalid thread_scope"}
+    probe = thread_scope is not None and "probe" in thread_scope
+    excluded = (thread_scope or {}).get("exclude_topics") or []
     last_n = max(1, min(last_n, 100))
-    result = _sqlite_diary_read(agent_name, last_n, wing)
-    if result is not None:
-        return result
+    if thread_scope is None:
+        result = _sqlite_diary_read(agent_name, last_n, wing)
+        if result is not None:
+            return result
     col = _get_collection()
     if not col:
         return _collection_error_or_no_palace()
@@ -255,10 +272,12 @@ def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = ""):
         total = 0
         offset = 0
 
+        topics = []
+
         while True:
             results = col.get(
                 where=where,
-                include=["documents", "metadatas"],
+                include=["metadatas"] if probe else ["documents", "metadatas"],
                 limit=_DIARY_READ_PAGE_SIZE,
                 offset=offset,
             )
@@ -268,11 +287,17 @@ def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = ""):
 
             documents = _chroma_field(results, "documents", []) or []
             metadatas = _chroma_field(results, "metadatas", []) or []
-            total += len(batch_ids)
 
             for index in range(len(batch_ids)):
                 doc = documents[index] if index < len(documents) else ""
                 meta = _safe_meta(metadatas[index] if index < len(metadatas) else None)
+                if probe:
+                    if meta.get("topic", "") not in topics:
+                        topics.append(meta.get("topic", ""))
+                    continue
+                if meta.get("topic", "") in excluded:
+                    continue
+                total += 1
                 entries.append(
                     {
                         "date": meta.get("date", ""),
@@ -291,6 +316,8 @@ def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = ""):
             if len(batch_ids) < _DIARY_READ_PAGE_SIZE:
                 break
 
+        if probe:
+            return {"topics": topics}
         return _diary_read_response(agent_name, entries, total)
     except Exception:
         logger.exception("diary_read failed")

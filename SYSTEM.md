@@ -1719,48 +1719,64 @@ shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
 labels, ranks or counts. Wildcard policies can reach those projections without
 private scope; literal-wing policies keep their existing tool visibility.
 
-A room, or a diary topic, names a thread when its raw value, its percent-decoded
-copy or the NFKC form of either contains a thread ID or a T3 source ID. The thread
-ID may appear as a bare ID, in an `/app/threads/` path or URL, in a
-`t3-thread://v1/` link, after `mcp:`, or next to letters, digits or underscores
-(`notes_thr_…`, `thr_…_notes`); fullwidth spellings count after NFKC. A T3
-source ID (`mcp:<source>`) is resolved through the workspace thread store's
-source lookup. One definition of a thread ID (`provenance_refs.THREAD_ID`) and
-one room check (`provenance_refs.room_references`, used through
+A room, or a diary topic, names a thread when any copy of its value contains a
+thread ID or a T3 source ID. The copies are the raw value and every result of
+percent-decoding followed by NFKC normalisation, repeated until the value stops
+changing (at most four rounds). The thread ID may appear as a bare ID, in an
+`/app/threads/` path or URL, in a `t3-thread://v1/` link, after `mcp:`, or next
+to letters, digits or underscores (`notes_thr_…`, `thr_…_notes`); fullwidth
+spellings count after NFKC. A T3 source ID (`mcp:<source>`, possibly followed by
+more characters such as `mcp:<source>_notes`) is resolved through the workspace
+thread store: every stored source ID, or hash-variant base, that begins the value
+counts. One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
+check (`provenance_refs.room_references`, used through
 `mirror_access.private_thread_reference`) cover every route that returns or
-writes a room or topic. Reads: drawer reads, search, drawer listings, room
-lists and status (overview projection), taxonomy, tunnels, graph traversal and
-statistics, hallways, duplicate checks and diary reads, including drawer
-`metadata.topic`. Writes: add, update, delete, checkpoint items and diary,
-tunnel creation and diary writes. A reader who cannot read every named thread
-receives the drawer or entry as not found, and the room is omitted from
-listings, exactly as for a bare thread-ID room. Readers of the thread,
-including owners, keep the room verbatim. A source ID naming no stored thread
-names nothing; a source lookup failure hides the value.
+writes a room or topic. Reads: drawer reads, search (structured and
+CLI-compatible), drawer listings, room lists and status (overview projection),
+taxonomy, tunnels, graph traversal and statistics, hallways, duplicate checks and
+diary reads, including drawer `metadata.topic`. Writes: add, update, delete,
+checkpoint items and diary, tunnel creation and diary writes. A reader who cannot
+read every named thread, including every thread filed under a named source ID,
+receives the drawer or entry as not found, and the room is omitted from listings,
+exactly as for a bare thread-ID room. Readers of all those threads, including
+owners, keep the room verbatim. A source ID naming no stored thread names
+nothing; a source lookup failure hides the value.
+
+Counts and flags describe only what the reader receives. Diary reads probe the
+entry topics first, and the worker excludes entries whose topic names an
+unreadable thread before it counts or windows them, so `total` and `showing`
+cover visible entries; the final gate recounts any entry it still drops, and an
+unreadable probe answers as an empty diary. `check_duplicate` recomputes
+`is_duplicate` from the matches that pass the gate. Search acquisition counters
+and truncation flags (`total_before_filter`, `filtered_by_max_distance`,
+`date_filter_pool_truncated`, `candidates_truncated`,
+`distinct_results_truncated`) precede authorization and are omitted for every
+principal.
 
 Residual costs of failing closed. A hex run shorter than 16 digits directly
 followed by an ASCII letter is an ordinary word (`thr_deadline`, `thr_notes`).
 Any other `thr_<hex>` run counts as an ID, so hex-looking ordinary names such
 as `thr_cafe` or `notes thr_add` resolve to no thread and are hidden from every
-reader, owners included. Room-name validation already refuses `/`, `:`, `%`
-and control characters in new rooms, so link, `mcp:` and undecodable forms
-reach storage only through older or imported data. Values that
-cannot be decoded (control or format characters, invalid percent-encoded
-UTF-8, more than four encoding levels or over the citation length limit) are
-also hidden from every reader. Wing names are outside this check: a wing named
-like a thread ID is filtered by wing policy alone.
+reader, owners included. Room-name validation refuses `/`, `:`, `%` and control
+characters in rooms written through the tools, so link, `mcp:` and undecodable
+forms reach storage through older or imported data and through owner
+configuration: the project miner files drawers under room names taken from the
+project's `mempalace.yml` without that validation. Values that cannot be decoded
+(control or format characters, invalid percent-encoded UTF-8, more than four
+percent levels in one round, still changing after four decode/NFKC rounds, or
+over the citation length limit) are also hidden from every reader. Wing names
+are outside this check: a wing named like a thread ID is filtered by wing policy
+alone. A diary entry hidden by its topic can still appear as a `check_duplicate`
+match in a readable room; the match carries no topic.
 
-For principals without every-wing access, CLI-compatible search acquires structured
-hits and renders only after the same drawer gate as structured search: room and
-provenance checks; body text is not scanned. This applies with a literal wing and
-with no wing. Both CLI paths use the same pure formatter. The gateway explicitly
-renders flat rows, so import-authorization metadata cannot replace a
-readable row's wing, room or source; the owner renderer retains its metadata mode.
-Restricted CLI responses contain only query, CLI text, an empty results array,
-optional searched wings and
-non-empty facts; structured search also omits acquisition counts and truncation
-flags that could include hidden candidates. Every-wing policies retain those
-diagnostics and their existing CLI output.
+CLI-compatible search, for every principal, acquires structured hits and renders
+only after the same drawer gate as structured search: room, topic and provenance
+checks; body text is not scanned. A see-all reader may still lack a thread that a
+room names, so no principal receives worker-rendered CLI text. This applies with
+a literal wing and with no wing. Both CLI paths use the same pure formatter. The
+gateway explicitly renders flat rows, so import-authorization metadata cannot
+replace a readable row's wing, room or source. CLI responses contain only query,
+CLI text, an empty results array, optional searched wings and non-empty facts.
 
 Content placed in an ordinary shared room is visible on every route. Body text
 and arbitrary provenance labels are not scanned for private words or fingerprinted;

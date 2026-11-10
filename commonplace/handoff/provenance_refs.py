@@ -67,6 +67,9 @@ _SOURCE = re.compile(r"mcp:[^\s/?#&\"'<>\\]+")
 # Real thread IDs have 16 hex digits. A shorter run directly followed by an
 # ASCII letter is an ordinary word such as thr_deadline, not an ID.
 _ID_DIGITS = 16
+# Decode/NFKC rounds before a room value must be stable (each refs() call
+# already decodes up to four percent levels).
+_NORMALISE_ROUNDS = 4
 _PRIVATE = re.compile(r"(?:capture-fork|capture|import-private):[^\s?]+", re.IGNORECASE)
 _PERCENT = re.compile(r"%[0-9a-f]{2}", re.IGNORECASE)
 
@@ -246,20 +249,30 @@ def _named_threads(text):
 def room_references(value):
     """Thread IDs and T3 source IDs a room, topic or link names.
 
-    Every route that returns or writes a room or topic shares this check. The
-    raw value, its percent-decoded copy and their NFKC forms are all scanned,
-    so link forms, mcp: forms, IDs next to letters or underscores and
-    fullwidth spellings count. Returns None when the value cannot be decoded:
+    Every route that returns or writes a room or topic shares this check.
+    Percent-decoding and NFKC normalisation repeat until the value stops
+    changing, and every intermediate copy is scanned, so link forms, mcp:
+    forms, IDs next to letters or underscores, fullwidth spellings and
+    encodings hidden behind normalisation all count. Returns None when the
+    value cannot be decoded or is still changing after the round bound:
     callers treat that as naming a thread nobody can prove readable.
     """
     if not isinstance(value, str):
         return ()
-    texts = []
-    for text in dict.fromkeys((value, unicodedata.normalize("NFKC", value))):
-        parsed = refs(text)
+    texts = [value, unicodedata.normalize("NFKC", value)]
+    current = value
+    for _ in range(_NORMALISE_ROUNDS):
+        parsed = refs(current)
         if parsed is REFUSE:
             return None
-        texts.extend((text, parsed.text or "", unicodedata.normalize("NFKC", parsed.text or "")))
+        decoded = parsed.text or ""
+        normal = unicodedata.normalize("NFKC", decoded)
+        texts.extend((decoded, normal))
+        if normal == current:
+            break
+        current = normal
+    else:
+        return None
     return tuple(dict.fromkeys(token for text in texts for token in _named_threads(text)))
 
 

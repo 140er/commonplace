@@ -986,6 +986,7 @@ TOOLS = {
                     "type": "string",
                     "description": "Wing to read diary entries from (optional). If omitted, reads from wing_{agent_name}.",
                 },
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
             },
             "required": ["agent_name"],
         },

@@ -141,7 +141,8 @@ def test_search_hides_candidate_counts(case, wing, cli):
         **({"wing": wing} if wing else {}),
     }
     owner = call(case.w, case.owner, "search", **args)
-    assert owner.get("total_before_filter", 0) > 0 and owner.get("results")
+    assert owner.get("results")
+    assert "total_before_filter" not in owner, "Pre-gate counts are never returned"
     result = call(case.w, case.actor, "search", cli_compatible=cli, **args)
     assert result.get("results") == []
     assert "total_before_filter" not in result, "Hidden-candidate count leaked"
