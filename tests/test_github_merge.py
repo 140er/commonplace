@@ -43,6 +43,8 @@ class MergeRemote(Remote):
         self.mergeable_state = "clean"
         self.merge_status = 200
         self.methods = {"squash": True, "merge": True, "rebase": True}
+        self.pull_status = 200
+        self.on_revoke = None
 
     def request(self, method, url, **kwargs):
         if url.endswith("access_token"):
@@ -66,6 +68,8 @@ class MergeRemote(Remote):
             )
         if url == API + "/pulls/7" and method == "GET":
             self.calls.append((method, url, kwargs))
+            if self.pull_status != 200:
+                return self.pull_status, {}, {}
             return (
                 200,
                 {},
@@ -82,6 +86,10 @@ class MergeRemote(Remote):
             if self.merge_status != 200:
                 return self.merge_status, {}, {}
             return 200, {}, {"merged": True, "sha": "c" * 40}
+        if method == "DELETE" and self.on_revoke:
+            self.calls.append((method, url, kwargs))
+            self.on_revoke()
+            return self.status, {}, {}
         return super().request(method, url, **kwargs)
 
     def merges(self):
@@ -783,3 +791,151 @@ def test_real_lease_loss_still_stops_the_heartbeat(merging, monkeypatch, caplog)
     caplog.set_level(logging.WARNING)
     assert sweep_ticks(worker, monkeypatch, [False, False, True]) == 1
     assert "lost its lease" in caplog.text
+
+
+class Crash(BaseException):
+    """A synthetic process death: unwinds without any handler treating it as an error."""
+
+
+def test_a_pull_request_token_rejection_asks_to_connect_again(merging):
+    s = merging
+    connect(s)
+    consent(s)
+    s.remote.pull_status = 401
+    assert reason(merge(s)) == "github_not_connected"
+    assert not s.remote.merges()
+
+
+def test_an_accepted_candidate_is_never_revoked_by_the_sweep(merging, monkeypatch):
+    s = merging
+    connect(s)
+    first = s.remote.issued[0]
+    consent(s)
+    accepted = s.remote.issued[-1]
+    assert not rows(s, "github_confirmations")
+    tick(s.gateway.github, monkeypatch)
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [first]
+    assert stored_token(s) == accepted
+    assert merge(s)[0] == 200
+
+
+def test_the_lapsed_record_outlives_the_revoke_it_guards(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    during = []
+    s.remote.on_revoke = lambda: during.append(len(rows(s, "github_confirmations")))
+    tick(s.gateway.github, monkeypatch)
+    assert during == [1] and revoked_tokens(s) == [candidate]
+    assert not rows(s, "github_confirmations")
+
+
+def test_a_crash_during_the_sweep_revoke_leaves_the_record_for_the_next_sweep(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+
+    def die():
+        raise Crash
+
+    s.remote.on_revoke = die
+    with pytest.raises(Crash):
+        tick(s.gateway.github, monkeypatch)
+    assert len(rows(s, "github_confirmations")) == 1
+    s.remote.on_revoke = None
+    s.gateway.github.recover()
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [candidate, candidate]
+    assert not rows(s, "github_confirmations")
+
+
+def test_a_declined_candidate_record_outlives_its_revoke(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    during = []
+    s.remote.on_revoke = lambda: during.append(len(rows(s, "github_confirmations")))
+    assert write(s, "/api/github/confirm", payload={"accept": False})[0] == 200
+    assert during == [1] and revoked_tokens(s) == [candidate]
+    assert not rows(s, "github_confirmations")
+
+
+def test_a_lease_lost_while_accepting_leaves_the_candidate_recorded(merging, monkeypatch):
+    import threading
+
+    s = merging
+    candidate = pending_merge_consent(s)
+    worker = s.gateway.github
+    real, fences = worker._fence, {"n": 0}
+
+    def fence(conn):
+        if threading.current_thread() is worker._heartbeat_thread:
+            return real(conn)
+        fences["n"] += 1
+        if fences["n"] >= 2:
+            raise providers.SignInError("github_pending")
+        return real(conn)
+
+    csrf = status(s)["csrf"]
+    monkeypatch.setattr(worker, "_fence", fence)
+    try:
+        request(
+            s,
+            "/api/github/confirm",
+            "POST",
+            cookie=s.cookie,
+            raw=json.dumps({"csrf": csrf, "card": s.card, "accept": True}).encode(),
+            headers={"Content-Type": "application/json", "Origin": urls.APP_URL},
+        )
+    except Exception:  # noqa: BLE001 - the fenced worker may close the connection
+        pass
+    monkeypatch.setattr(worker, "_fence", real)
+    assert revoked_tokens(s) == []
+    # No accepted swap and no revoke happened, yet the live token is still recorded.
+    assert len(rows(s, "github_confirmations")) == 1
+    s.gateway.github.recover()
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [candidate]
+    assert not rows(s, "github_confirmations")
+
+
+def test_a_recovered_pending_candidate_needs_no_acknowledgement_once_revoked(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.gateway.github.recover()
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [candidate]
+    assert status(s).get("acknowledge_required") is False
+
+
+def test_a_failed_sweep_revoke_still_requires_acknowledgement(merging, monkeypatch):
+    s = merging
+    pending_merge_consent(s)
+    s.remote.status = 500
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    tick(s.gateway.github, monkeypatch)
+    assert not rows(s, "github_confirmations")
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 1
+    assert status(s).get("acknowledge_required") is True
+
+
+def test_a_lapsed_candidate_that_is_the_live_grant_is_neither_revoked_nor_flagged(
+    merging, monkeypatch
+):
+    s = merging
+    pending_merge_consent(s)
+    live = stored_token(s)
+    with s.db._lock, s.db._tx() as conn:
+        row = conn.execute("SELECT * FROM github_confirmations").fetchone()
+        value = s.gateway.github.store.decrypt(conn, s.uid, "confirmation", row["secret"])
+        value["token"] = live
+        conn.execute(
+            "UPDATE github_confirmations SET expires_at=1, secret=?",
+            (s.gateway.github.store.encrypt(conn, s.uid, "confirmation", value),),
+        )
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == []
+    assert not rows(s, "github_confirmations")
+    assert stored_token(s) == live
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0

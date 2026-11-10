@@ -243,6 +243,8 @@ function asked(card) {
 export function createNeeds({ mount, detailMount, api = request, onAction, onAsk = () => {}, onSelect = () => {}, onClose = () => {}, onChange = () => {}, onError = () => {}, onRender = () => {}, singleKeys = () => true,
   isPhone = () => globalThis.matchMedia?.("(max-width:699px)").matches || false, now = Date.now, document: doc = globalThis.document, setInterval: schedule = globalThis.setInterval, clearInterval: unschedule = globalThis.clearInterval } = {}) {
   let data = { needs: {}, boards: [] }, holds = [], selected = null, filter = "all", current = null;
+  // Cards merged this session, keyed by number with the head merged: re-selecting must not offer Merge again.
+  const mergedHeads = new Map();
   let holdsLoaded = false, github = null;
   let stopped = false, paused = false, revision = 0, busy = false, confirming = false, chatOpen = false, error = "", lastPoll = 0, holdRead = null;
   const cards = new Map(), notes = new Map(), tooLate = new Set();
@@ -269,7 +271,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (!detailMount || stopped || paused) return;
     const restoreFocus = savedFocus(detailMount);
     detailMount.innerHTML = current ? renderNeedDetail(current, { board: boardFor(data.boards, current), hold: currentHold(), now: now(), confirm: confirming, note: notes.get(current.number) || "", error, busy: busy || !holdsLoaded, chatOpen, phone: isPhone(),
-      github, kind: needsItems(data.needs).find((item) => item.card.number === current.number)?.kind }) : '<p class="empty">Choose an item to see its exact words.</p>';
+      github: github && mergedHeads.get(current.number) === current.pr_head ? { ...github, merged: current.pr_head } : github, kind: needsItems(data.needs).find((item) => item.card.number === current.number)?.kind }) : '<p class="empty">Choose an item to see its exact words.</p>';
     const dialog = detailMount.querySelector('dialog.confirm');
     if (dialog && !dialog.open) dialog.showModal();
     restoreFocus();
@@ -473,7 +475,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       if (result.authorize_url) { globalThis.location.assign(result.authorize_url); return; }
       github = await api("/api/github");
       if (stopped || token !== revision) { github = null; return; }
-      if (action === "merge") github = { ...github, merged: result.sha || true };
+      if (action === "merge") { mergedHeads.set(card.number, card.pr_head); github = { ...github, merged: result.sha || true }; }
       error = result.message || ""; drawDetail();
     } catch (failure) {
       const code = failure?.payload?.error;
@@ -561,7 +563,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     pause(on) { if (paused === Boolean(on)) return; paused = Boolean(on); if (!paused) drawDetail(); },
     paused: () => paused,
     stop() {
-      stopped = true; github = null; revision++; unschedule(timer);
+      stopped = true; github = null; mergedHeads.clear(); revision++; unschedule(timer);
       detailMount?.querySelector("dialog.confirm")?.close(); if (detailMount && current?.need === "merge") detailMount.innerHTML = ""; cards.clear(); notes.clear(); holds = []; current = null;
       for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); }
       doc?.removeEventListener("visibilitychange", visibility);

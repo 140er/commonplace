@@ -114,3 +114,25 @@ assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connec
   assert.ok(!detail2.innerHTML.includes('Confirm merge'));
   ui2.stop();
 }
+
+// A merged PR stays merged across a Needs re-select (the panel re-reads status each time).
+{
+  const detail3 = root();
+  let clickHandler;
+  detail3.addEventListener = (name, fn) => { if (name === 'click') clickHandler = fn; };
+  const api3 = async (path, options = {}) => {
+    if (path.startsWith('/api/cards/')) return {...ready, number: Number(path.split('/').at(-1))};
+    if (path === '/api/github' && !options.method) return {state: 'connected', merge: true, csrf: 'synthetic-csrf', login: 'test-person'};
+    if (path === '/api/github/merge') return {merged: true, sha: ready.pr_head};
+    return {holds: []};
+  };
+  const ui3 = createNeeds({mount: root(), detailMount: detail3, document: doc, setInterval: () => 1, clearInterval() {}, api: api3});
+  await ui3.select(7);
+  const press = async (name) => clickHandler({target: {closest: () => ({disabled: false, hasAttribute: (a) => a === 'data-needs-github', dataset: {needsGithub: name}})}, preventDefault() {}, stopPropagation() {}});
+  await press('arm-merge');
+  await press('merge');
+  assert.ok(detail3.innerHTML.includes('Merged') && !detail3.innerHTML.includes('arm-merge'));
+  await ui3.select(7);
+  assert.ok(detail3.innerHTML.includes('Merged') && !detail3.innerHTML.includes('arm-merge') && !detail3.innerHTML.includes('data-needs-github="merge"'), 'merge controls stay gone after a re-select');
+  ui3.stop();
+}

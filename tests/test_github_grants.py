@@ -1095,7 +1095,8 @@ def test_confirm_fence_rechecked_after_consumption(setup, monkeypatch):
         nonlocal count
         count += 1
         if count == 2:
-            assert not rows(s, "github_confirmations")
+            # The record outlives consumption until the candidate is accepted or revoked.
+            assert len(rows(s, "github_confirmations")) == 1
             s.gateway.github.disconnect(s.uid, s.workspace)
         return original_tx()
 

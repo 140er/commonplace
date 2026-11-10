@@ -133,7 +133,8 @@ class GitHub:
         """
         with self.db._lock:
             row = self.db._conn.execute(
-                "SELECT user_id FROM github_confirmations WHERE expires_at<=? LIMIT 1",
+                "SELECT user_id FROM github_confirmations WHERE expires_at<=? AND user_id NOT IN "
+                "(SELECT user_id FROM github_lifecycle WHERE active_exchanges>0) LIMIT 1",
                 (time.time(),),
             ).fetchone()
         if row is None:
@@ -624,8 +625,10 @@ class GitHub:
                     or row["workspace_id"] != principal.workspace_id
                 ):
                     raise SignInError("github_expired")
+                if self.store.lifecycle(conn, uid)["active_exchanges"]:
+                    raise SignInError("github_pending")
                 candidate = self.store.decrypt(conn, uid, "confirmation", row["secret"])
-                conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+                # The record outlives every outcome until the candidate is accepted or revoked.
                 conn.execute(
                     "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
                     (uid,),
@@ -640,13 +643,16 @@ class GitHub:
                         previous = self.upgrade(conn, uid, row, candidate)
                     else:
                         self.commit(conn, uid, row, candidate)
+                    conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
             # Only a committed swap counts: a failed COMMIT must revoke the candidate, not the stored token.
             accepted = accept
         finally:
             if candidate:
                 try:
-                    if not accepted:
+                    # A disconnect that already took the record owns its revocation.
+                    if not accepted and self.holds_confirmation(uid, row["secret"]):
                         self.cleanup_token(uid, candidate["token"])
+                        self.drop_confirmation(uid, row["secret"])
                     elif previous:
                         self.revoke_token(uid, previous)
                 finally:
@@ -713,7 +719,8 @@ class GitHub:
                         self.store.decrypt(self.db._conn, uid, "grant", grant["secret"])["token"]
                         == token
                     ):
-                        return False
+                        # The live grant itself: nothing to revoke, nothing unconfirmed.
+                        return True
                 except SignInError:
                     self.db._conn.execute(
                         "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
@@ -746,7 +753,7 @@ class GitHub:
             return False
 
     def expire(self, uid):
-        candidate = None
+        candidate = row = None
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
             conn.execute(
@@ -757,6 +764,9 @@ class GitHub:
                 "SELECT * FROM github_confirmations WHERE user_id=? AND expires_at<=?",
                 (uid, time.time()),
             ).fetchone()
+            if row and self.store.lifecycle(conn, uid)["active_exchanges"]:
+                # Another consumer of this record is mid-flight and settles it.
+                row = None
             if row:
                 try:
                     candidate = self.store.decrypt(conn, uid, "confirmation", row["secret"])
@@ -765,8 +775,10 @@ class GitHub:
                     conn.execute(
                         "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
                     )
-                conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
-                if candidate:
+                    conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+                else:
+                    # The record stays until the revoke has an outcome, so a crash or lease
+                    # loss in between leaves it for the next sweep instead of an unrecorded token.
                     conn.execute(
                         "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
                         (uid,),
@@ -774,15 +786,28 @@ class GitHub:
                     self._live += 1
         if candidate:
             try:
-                ok = self.cleanup_token(uid, candidate["token"])
+                # A failed revocation marks revocation unconfirmed inside revoke_token.
+                self.cleanup_token(uid, candidate["token"])
+                self.drop_confirmation(uid, row["secret"])
             finally:
                 self.finish_exchange(uid)
-            if not ok:
-                with self.db._lock, self.db._tx() as conn:
-                    self._fence(conn)
-                    conn.execute(
-                        "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
-                    )
+
+    def holds_confirmation(self, uid, secret):
+        with self.db._lock:
+            return (
+                self.db._conn.execute(
+                    "SELECT 1 FROM github_confirmations WHERE user_id=? AND secret=?",
+                    (uid, secret),
+                ).fetchone()
+                is not None
+            )
+
+    def drop_confirmation(self, uid, secret):
+        with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
+            conn.execute(
+                "DELETE FROM github_confirmations WHERE user_id=? AND secret=?", (uid, secret)
+            )
 
     def disconnect(self, uid, workspace=None, *, deleting=False):
         tokens = []
@@ -884,7 +909,12 @@ class GitHub:
 
     def _recover_rows(self, conn):
         conn.execute(
-            "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
+            "UPDATE github_lifecycle SET generation=generation+1,"
+            # A pending candidate alone is revoked by the sweep, which flags a failed revoke itself.
+            "unconfirmed=CASE WHEN user_id IN (SELECT user_id FROM github_confirmations) "
+            "AND user_id NOT IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_grants WHERE disabled=1) "
+            "AND disconnect_pending=0 AND active_exchanges=0 AND remote_work=0 THEN unconfirmed ELSE 1 END "
+            "WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
         )
         conn.execute("DELETE FROM github_connect_flows")
         # A pending candidate token is still live at GitHub: keep its encrypted record, lapsed,
