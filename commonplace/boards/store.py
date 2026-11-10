@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS card_splits (
  state TEXT NOT NULL CHECK(state IN ('split','kept')),
  by TEXT NOT NULL, at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chat_task_origins (
+ actor TEXT NOT NULL,
+ origin_key TEXT NOT NULL,
+ request_digest TEXT NOT NULL,
+ task_id INTEGER NOT NULL REFERENCES tasks(id),
+ PRIMARY KEY(actor, origin_key)
+);
 """
 
 
@@ -440,6 +447,16 @@ class BoardStore:
 
     @contextmanager
     def connection(self):
+        from commonplace.compute.fence import _attach_connection, _mutation
+
+        # Acquire before SQLite and before any callback into ControlDB._lock.
+        with _mutation(self.path):
+            with self._connection() as conn:
+                _attach_connection(conn, self.path, "boards")
+                yield conn
+
+    @contextmanager
+    def _connection(self):
         target = self.path if self.create else Path(self.path).resolve().as_uri() + "?mode=rw"
         with GATE.creating(self.path):
             conn = connect(
