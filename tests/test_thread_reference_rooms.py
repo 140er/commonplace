@@ -67,6 +67,8 @@ ROUTES = {
     "rest_get": lambda hub, h, t: rest(hub, h, f"/api/memory/{DRAWER}")[1],
     "rest_search": lambda hub, h, t: rest(hub, h, "/api/memory/search?q=plan")[1],
     "mcp_get_drawer": lambda hub, h, t: mcp(hub, t, "mempalace_get_drawer", drawer_id=DRAWER),
+    "mcp_get_drawers": lambda hub, h, t: mcp(hub, t, "mempalace_get_drawers", drawer_ids=[DRAWER]),
+    "mcp_search": lambda hub, h, t: mcp(hub, t, "mempalace_search", query="plan"),
     "mcp_list_drawers": lambda hub, h, t: mcp(hub, t, "mempalace_list_drawers", wing="shared"),
     "mcp_list_rooms": lambda hub, h, t: mcp(hub, t, "mempalace_list_rooms", wing="shared"),
     "mcp_taxonomy": lambda hub, h, t: mcp(hub, t, "mempalace_get_taxonomy"),
