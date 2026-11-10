@@ -110,19 +110,22 @@ def merging(setup, monkeypatch):  # noqa: F811
     return s
 
 
-def consent(s):
-    """Run the separate opt-in to completion for the signed-in person."""
-    s.remote.scope = "public_repo"
+def begin_consent(s):
     code, headers, raw = write(s, "/api/github/merge-consent")
     assert code == 200, (code, raw)
     params = parse_qs(urlsplit(json.loads(raw)["authorize_url"]).query, keep_blank_values=True)
     assert params["scope"] == ["public_repo"] and params["code_challenge_method"] == ["S256"]
-    flow = params["state"][0], headers["Set-Cookie"].split(";", 1)[0]
-    assert finish(s, flow)[0] == 303
+    return params["state"][0], headers["Set-Cookie"].split(";", 1)[0]
+
+
+def consent(s):
+    """Run the separate opt-in to completion for the signed-in person."""
+    s.remote.scope = "public_repo"
+    assert finish(s, begin_consent(s))[0] == 303
     assert status(s)["state"] == "merge_confirm"
     assert write(s, "/api/github/confirm", payload={"accept": True})[0] == 200
     s.remote.scope = ""
-    assert status(s)["state"] == "connected" and status(s)["merge"] is True
+    assert status(s)["state"] == "connected" and status(s).get("merge") is True
 
 
 def merge(s, **payload):
@@ -145,7 +148,7 @@ def other_person(s, subject):
 def test_connect_alone_keeps_empty_scope_and_no_merge_consent(merging):
     s = merging
     connect(s)
-    assert status(s)["merge"] is False
+    assert status(s).get("merge") is False
     grant = rows(s, "github_grants")[0]
     stored = s.gateway.github.store.decrypt(s.db._conn, s.uid, "grant", grant["secret"])
     assert stored == {"token": s.remote.issued[0]}
@@ -166,13 +169,9 @@ def test_merge_consent_requests_public_repo_and_replaces_the_token_after_confirm
     connect(s)
     first = s.remote.issued[0]
     s.remote.scope = "public_repo"
-    code, headers, raw = write(s, "/api/github/merge-consent")
-    assert code == 200
-    url = json.loads(raw)["authorize_url"]
-    assert parse_qs(urlsplit(url).query, keep_blank_values=True)["scope"] == ["public_repo"]
+    flow = begin_consent(s)
     assert rows(s, "github_connect_flows")[0]["purpose"] == "merge"
-    params = parse_qs(urlsplit(url).query)
-    finish(s, (params["state"][0], headers["Set-Cookie"].split(";", 1)[0]))
+    finish(s, flow)
     pending = status(s)
     assert pending["state"] == "merge_confirm" and pending["scopes"] == ["public_repo"]
     # Nothing is granted until the person accepts.
@@ -183,7 +182,7 @@ def test_merge_consent_requests_public_repo_and_replaces_the_token_after_confirm
     assert reason(merge(s)) == "github_merge_consent"
     assert write(s, "/api/github/confirm", payload={"accept": True})[0] == 200
     after = status(s)
-    assert after["state"] == "connected" and after["merge"] is True
+    assert after["state"] == "connected" and after.get("merge") is True
     grant = rows(s, "github_grants")[0]
     stored = s.gateway.github.store.decrypt(s.db._conn, s.uid, "grant", grant["secret"])
     assert stored["scopes"] == ["public_repo"] and stored["token"] == s.remote.issued[-1]
@@ -195,12 +194,9 @@ def test_declined_merge_consent_leaves_the_empty_scope_grant(merging):
     s = merging
     connect(s)
     s.remote.scope = "public_repo"
-    code, headers, raw = write(s, "/api/github/merge-consent")
-    assert code == 200
-    params = parse_qs(urlsplit(json.loads(raw)["authorize_url"]).query)
-    finish(s, (params["state"][0], headers["Set-Cookie"].split(";", 1)[0]))
+    finish(s, begin_consent(s))
     assert write(s, "/api/github/confirm", payload={"accept": False})[0] == 200
-    assert status(s)["state"] == "connected" and status(s)["merge"] is False
+    assert status(s)["state"] == "connected" and status(s).get("merge") is False
     new = s.remote.issued[-1]
     assert [
         c for c in s.remote.calls if c[0] == "DELETE" and c[2]["json_body"]["access_token"] == new
@@ -213,11 +209,8 @@ def test_merge_consent_callback_accepts_only_public_repo_and_revokes_the_rest(me
     s = merging
     connect(s)
     s.remote.scope = scope
-    code, headers, raw = write(s, "/api/github/merge-consent")
-    assert code == 200
-    params = parse_qs(urlsplit(json.loads(raw)["authorize_url"]).query)
-    finish(s, (params["state"][0], headers["Set-Cookie"].split(";", 1)[0]))
-    assert status(s)["state"] == "connected" and status(s)["merge"] is False
+    finish(s, begin_consent(s))
+    assert status(s)["state"] == "connected" and status(s).get("merge") is False
     new = s.remote.issued[-1]
     assert [
         c for c in s.remote.calls if c[0] == "DELETE" and c[2]["json_body"]["access_token"] == new
@@ -229,10 +222,8 @@ def test_merge_consent_for_a_different_github_account_is_refused(merging):
     s = merging
     connect(s)
     s.remote.scope, s.remote.subject = "public_repo", 999
-    code, headers, raw = write(s, "/api/github/merge-consent")
-    params = parse_qs(urlsplit(json.loads(raw)["authorize_url"]).query)
-    finish(s, (params["state"][0], headers["Set-Cookie"].split(";", 1)[0]))
-    assert status(s)["state"] == "connected" and status(s)["merge"] is False
+    finish(s, begin_consent(s))
+    assert status(s)["state"] == "connected" and status(s).get("merge") is False
     assert not rows(s, "github_confirmations")
 
 
