@@ -1,16 +1,16 @@
 # Compute implementation boundaries
 
-2026-11-09. Reversible isolated development, not a review or live enrollment.
-Council transport/custody rationale is in decisions.md and the source handoffs.
+2026-11-09. This document describes isolated transport and credential custody.
+Design rationale is in decisions.md; synthetic checks do not certify live enrollment.
 
-## Concurrent ownership
+## Components
 
-Credential builder owns `commonplace/compute/credentials.py` and
-`tests/test_compute_credentials.py`. Transport builder owns
-`commonplace/compute/protocol.py`, `transport.py` and
-`tests/test_compute_transport.py`. Parent owns public integration, schema/authority
-coordination, dependency declarations, SYSTEM.md and MODULES.md. No live remote
-endpoints, secrets or operator key files are used in development or testing.
+Credential custody is implemented in `commonplace/compute/credentials.py` and
+covered by `tests/test_compute_credentials.py`. The transport components are
+`commonplace/compute/protocol.py` and `transport.py`, covered by
+`tests/test_compute_transport.py`. Changes must preserve public integration,
+schema/authority coordination, dependency declarations, SYSTEM.md and MODULES.md.
+Use no live remote endpoints, secrets or operator key files in development or testing.
 
 ## Custody seam
 
@@ -35,7 +35,7 @@ keys. Rotation may issue distinct pending versions; activation must remain
 explicit rather than silently replacing an enrolled binding.
 
 Constructor/operation signatures may follow source conventions; document actual
-public symbols precisely in module docstrings for parent integration. Tests must
+public symbols precisely in module docstrings for integration. Tests must
 exercise real crypto with synthetic generated keys, binding/ciphertext tamper,
 wrong/missing/unsafe wrapping keys, expiry/revocation/reopen and no plaintext on
 disk. No provider may auto-initialize production key material during requests.
@@ -54,9 +54,9 @@ Outer SSH must verify the complete pinned host key before authenticating. Inner
 SSH on the helper-provided channel independently verifies the target key before
 its separate authentication. No TOFU, agent forwarding, SSH config, ambient
 keys, passwords, keyboard-interactive or direct-target fallback. Lazily import a
-maintained optional SSH library (Paramiko is acceptable); parent declares extra.
+maintained optional SSH library (Paramiko is acceptable), declared in the compute extra.
 Transport receives short-lived explicit key material/handle; no credential store
-or privileged HTTP integration is implemented by the transport builder.
+or privileged HTTP integration belongs in the transport adapter.
 
 Use a narrow helper handshake: describe/collect_passive/open_enrolled_ssh,
 8KiB control frames, fresh challenge nonce and exact request/digest/binding-epoch
@@ -69,7 +69,7 @@ states; missing exit evidence is uncertain. Helper/channel abstraction tests
 must prove gateway and target key rejection before authentication, enrolled-only
 routing, replay denial, unknown/oversize field rejection and no silent fallback.
 
-These modules are disabled until parent adds authenticated persistent enrollment,
+Enable these modules only with authenticated persistent enrollment,
 approvals, current-authority fencing and deployment prerequisites. A domain
 binding, callback or passing synthetic fixture grants no live execution right.
 
@@ -77,7 +77,7 @@ binding, callback or passing synthetic fixture grants no live execution right.
 
 The optional compute extra resolves Paramiko 5.1.0, checked against the primary
 [changelog](https://www.paramiko.org/changelog.html) (5.1.0 dated2026-10-17).
-The dependency is lazy and never enables transports on installation. Parent
+The dependency is lazy and never enables transports on installation. Synthetic
 socketpair fixtures exercise the actual library and encrypted synthetic keys,
 not just an injected fake driver. No live network/device acceptance is claimed.
 
