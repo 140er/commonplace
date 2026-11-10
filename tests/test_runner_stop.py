@@ -31,13 +31,10 @@ def host():
                 return
             if self.path == "/launch":
                 script = (
-                    "import signal,sys; "
-                    + (
-                        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-                        if request["ignore"]
-                        else ""
-                    )
-                    + "print('ready', flush=True); sys.stdin.read()"
+                    "import sys\nprint('ready', flush=True)\n"
+                    "for line in sys.stdin:\n"
+                    f"    if line.strip() == 'stop' and not {request['ignore']!r}:\n"
+                    "        break\n"
                 )
                 state.worker = subprocess.Popen(
                     [sys.executable, "-c", script],
@@ -58,7 +55,8 @@ def host():
                             .isoformat(timespec="microseconds")
                             .replace("+00:00", "Z")
                         )
-                        state.worker.terminate()
+                        state.worker.stdin.write(b"stop\n")
+                        state.worker.stdin.flush()
                         try:
                             state.worker.wait(timeout=0.15)
                         except subprocess.TimeoutExpired:
