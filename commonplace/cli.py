@@ -1172,6 +1172,9 @@ def main(argv=None) -> int:
             args.command == "workspace" and args.action in {"store", "prune-stores", "encrypt"}
         ):
             return args.func(args)
+        if args.command == "eval" and args.eval_action == "preflight":
+            # Stat-only: no lock file is created, so a fresh data dir stays untouched.
+            return args.func(args)
         if args.func is cmd_serve:
             # Serve never takes the backup fence; an online backup runs beside it.
             with data_lock(_data_dir(args)):

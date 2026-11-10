@@ -756,7 +756,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Live captures, grant imports, private chats and continuity threads refuse
   (`eval_source_gap: unsupported_in_slice1`). Owner role, eligibility, the read
   policy and the continuity probe are rechecked inside every archive commit and
-  every list/show/read response; a hidden run keeps its quota.
+  every list/show/read response; a hidden run keeps its quota. A lookup error
+  refuses the response rather than hiding a run. The probe covers every control
+  table that records stored IDs (`sync_streams`, `sync_groups`,
+  `sync_backfill`, `capture_ops`).
 
 - Eval uses local OS trust like every CLI command, never constructs
   `ControlDB`, and reads the control database `?mode=ro` behind a write-denying

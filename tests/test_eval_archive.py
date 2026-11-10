@@ -150,6 +150,19 @@ def test_b3_fidelity_proof_catches_a_corrupted_at(env, monkeypatch):
     assert db_rows(env) == [] and db_rows(env, "chunks") == []
 
 
+def test_minor4_commit_rehashes_stored_rows_bytes(env, monkeypatch):
+    stored = store_thread(env)
+    original = store._insert_chunk
+
+    def padded(conn, run_id, name, idx, data):
+        # Same JSON values, different bytes: only a byte digest can tell.
+        return original(conn, run_id, name, idx, b" " + data if name == "rows" else data)
+
+    monkeypatch.setattr(store, "_insert_chunk", padded)
+    refused(archive(env, stored.id), "eval_fidelity")
+    assert db_rows(env) == [], "MINOR-4: rows bytes differing from rows_sha256 were committed"
+
+
 # ── B4: one snapshot ──
 def test_b4_append_after_snapshot_is_excluded(env, monkeypatch):
     messages = conversation(n=400)

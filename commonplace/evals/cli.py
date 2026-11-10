@@ -55,8 +55,12 @@ Artifacts read from stdin are stored as given; plaintext you redirected from a
 file stays outside the workspace's encryption and purge.
 
 Storage: runs count against the workspace's plan storage. With plans enabled an
-archive needs roughly twice the eval DB's size in headroom. Limits: 16 MiB per
-run, 256 KiB chunks and pages, 1 GiB per workspace.
+archive needs roughly twice the eval DB's size in headroom. The bound holds only
+against writers that measure under the thread-store lock; single-part imports,
+palace writers and handoff filing can still exceed the plan limit. Limits:
+16 MiB per run, 256 KiB chunks and pages, 1 GiB per workspace.
+
+After a scanner change, list/show/read rescan whole runs (read: on every page).
 
 Permissions: evals/ must be 0700 and runs.sqlite3* 0600, owned by you. Fix with
 `chmod 0700 <workspace>/evals` and `chmod 0600 <workspace>/evals/runs.sqlite3*`.
@@ -216,8 +220,10 @@ def _check(store, control, principal, stored_id):
         return source.check(store, control, principal, stored_id)
     except EvalError:
         raise
-    except Exception:
-        return None, source.UNSUPPORTED
+    except Exception as exc:
+        # A failed lookup is neither "unsupported" nor "absent": refuse the
+        # whole response so no run silently disappears from a listing.
+        raise EvalError("eval_busy" if _busy(exc) else "eval_lookup_failed") from None
 
 
 def _recheck(data, directory, workspace_id, by, stored_id):
@@ -240,6 +246,7 @@ def _reading(args):
 
     data = _data(args)
     directory = _directory(data, args.workspace)
+    store.check_permissions(data, directory)
     with ExitStack() as stack:
         control = stack.enter_context(source.control_snapshot(data))
         principal = source.owner_principal(control, args.workspace, args.by)
@@ -281,10 +288,11 @@ def _archive(args) -> int:
     digest = key_digest(workspace_id, args.key)
     if STORED_ID_PATTERN.fullmatch(args.thread) is None:
         raise EvalError("eval_not_found")
-    artifacts = read_artifacts(sys.stdin.buffer) if args.artifacts_stdin else None
-    scanner = flags.load()
     data = _data(args)
     directory = _directory(data, workspace_id)
+    store.check_permissions(data, directory)
+    artifacts = read_artifacts(sys.stdin.buffer) if args.artifacts_stdin else None
+    scanner = flags.load()
     supplied = artifacts or []
     artifact_bytes = sum(len(encoded) for _, _, encoded in supplied)
     estimate = _MANIFEST_SLACK + sum(len(name.encode()) + 160 for name, _, _ in supplied)
@@ -364,11 +372,16 @@ def _archive(args) -> int:
 
     def verify(conn):
         _recheck(data, directory, workspace_id, args.by, stored.id)
-        copied = json.loads(store.object_bytes(conn, run["run_id"], "rows").decode("utf-8"))
-        if copied != snapshot or any(
-            store.object_bytes(conn, run["run_id"], name) != value
-            for name, value in objects.items()
-            if name != "rows"
+        stored_rows = store.object_bytes(conn, run["run_id"], "rows")
+        copied = json.loads(stored_rows.decode("utf-8"))
+        if (
+            copied != snapshot
+            or _sha(stored_rows) != run["rows_sha256"]
+            or any(
+                store.object_bytes(conn, run["run_id"], name) != value
+                for name, value in objects.items()
+                if name != "rows"
+            )
         ):
             raise EvalError("eval_fidelity")
 

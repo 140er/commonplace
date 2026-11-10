@@ -1055,6 +1055,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `eval preflight` is dispatched without the backup fence or data lock, so a stat-only report creates no lock file on a fresh data directory.
+
   - `commonplace eval` is registered by the parser and dispatched like other one-shot commands (backup fence, shared data lock); its module loads no scanner or store until an eval command runs.
 
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
@@ -1583,6 +1585,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The continuity probe covers `sync_streams`, `sync_groups`, `sync_backfill.after_id` and `capture_ops.response`, each absent table proven by `sqlite_master`; the commit re-hashes the stored `rows` bytes against `rows_sha256`; `preflight` takes no lock and creates nothing.
+
   - A run is the exact rows of one eligible stored thread (`threads` wing, no capture, fork or grant-import prefix, no continuity marker) at one read snapshot, proven dense, digest-equal and re-read field by field before commit; appends after the snapshot are excluded.
 
   - The control database is read `?mode=ro` with a write-denying authorizer and the thread store through `read_store`; no `ControlDB`, wiring, continuity writer, network, model or subprocess is used. Owner role, the eligibility rule, the read policy and the continuity probe are rechecked inside every archive commit and every list/show/read response.
@@ -1594,6 +1598,8 @@ Format (read by `commonplace orch docs-check`):
   - Privacy flags come from `commonplace.privacy.scan` per string (plus decoded JSON leaves of `text` and `raw`), never gate or redact, and are versioned by the scanner file's digest; rescans write nothing.
 
 - **How it fails:**
+
+  - A failed source or continuity lookup refuses the whole response (`eval_lookup_failed` or `eval_busy`); `list` never omits a run because of one. The permission gate runs before stdin artifacts or source rows are read.
 
   - Any scanner failure is `eval_scan_failed` for archive/list/show/read before the eval DB is opened; purge and preflight never load the scanner.
 

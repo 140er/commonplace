@@ -201,34 +201,65 @@ _DESTRUCTIVE = re.compile(
     r"\s+[\"\[`]?" + _CONTENT_TABLES + r"\b",
     re.I,
 )
-# SQL keywords are upper case throughout the code base; prose is not matched.
+# Case-insensitive. A statement keyword must open the string or follow ``;``,
+# a newline or ``(``, which keeps prose ("... delete from {x} ...") out.
 _DYNAMIC = re.compile(
-    r"\b(DELETE\s+FROM|DROP\s+TABLE(\s+IF\s+EXISTS)?)\s*(\x00|%s|\{|$)|\bUPDATE\s*(\x00|%s|\{)"
+    r"(?:^|[;\n(])\s*(?:DELETE\s+FROM|DROP\s+TABLE(?:\s+IF\s+EXISTS)?)\s*(?:\x00|%s|\{|$)"
+    r"|(?:^|[;\n(])\s*UPDATE\s*(?:\x00|%s|\{)",
+    re.I,
 )
 # Dynamic table names that are reviewed and touch no thread-store table.
 ALLOWED_DYNAMIC = {
     ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE id = ANY(%s)"): "pgvector drawers",
     ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE \x00"): "pgvector drawers",
     ("mempalace/backends/pgvector.py", "DROP TABLE IF EXISTS \x00"): "pgvector drop_table",
-    ("mempalace/fact_index.py", "DROP TABLE IF EXISTS "): "three literal fact_search tables",
+    ("mempalace/fact_index.py", "DROP TABLE IF EXISTS \x00"): "three literal fact_search tables",
 }
 
 
+def _render(node):
+    """Text of a string expression; non-string parts become ``\x00``."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(_render(part) for part in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _render(node.left) + _render(node.right)
+    return "\x00"
+
+
+def _is_string(node):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _is_string(node.left) or _is_string(node.right)
+    return isinstance(node, ast.JoinedStr) or (
+        isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
+
+
 def _statements(tree):
-    parts = {
-        id(part)
+    """String constants, f-strings and ``+`` chains that contain a string."""
+    nested = {
+        id(child)
         for node in ast.walk(tree)
-        if isinstance(node, ast.JoinedStr)
-        for part in node.values
+        if isinstance(node, (ast.JoinedStr, ast.BinOp))
+        for child in ast.iter_child_nodes(node)
     }
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in parts:
-            yield node.lineno, node.value
-        elif isinstance(node, ast.JoinedStr):
-            text = "".join(
-                part.value if isinstance(part, ast.Constant) else "\x00" for part in node.values
-            )
-            yield node.lineno, text
+        if id(node) not in nested and _is_string(node):
+            yield node.lineno, _render(node)
+
+
+def _findings(relative, source):
+    found = []
+    for line, text in _statements(ast.parse(source)):
+        for match in (_UPDATE_THREADS.search(text), _UPSERT_THREADS.search(text)):
+            if match and _SET_TARGET.search(match.group(match.lastindex)):
+                found.append((relative, line, "rewrites wing or source_thread_id"))
+        if _DESTRUCTIVE.search(text):
+            found.append((relative, line, "destructive thread-store statement"))
+        if _DYNAMIC.search(text) and (relative, text) not in ALLOWED_DYNAMIC:
+            found.append((relative, line, "dynamic table name not on the allowlist"))
+    return found
 
 
 def _scan():
@@ -238,15 +269,32 @@ def _scan():
             relative = path.relative_to(ROOT).as_posix()
             if "/tests/" in relative or path.name.startswith("test_"):
                 continue
-            for line, text in _statements(ast.parse(path.read_text(encoding="utf-8"))):
-                for match in (_UPDATE_THREADS.search(text), _UPSERT_THREADS.search(text)):
-                    if match and _SET_TARGET.search(match.group(match.lastindex)):
-                        found.append((relative, line, "rewrites wing or source_thread_id"))
-                if _DESTRUCTIVE.search(text):
-                    found.append((relative, line, "destructive thread-store statement"))
-                if _DYNAMIC.search(text) and (relative, text) not in ALLOWED_DYNAMIC:
-                    found.append((relative, line, "dynamic table name not on the allowlist"))
+            found += _findings(relative, path.read_text(encoding="utf-8"))
     return found
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        'conn.execute("update threads set wing=? where id=?", args)',
+        'conn.execute("UPDATE threads " + "SET wing=? WHERE id=?", args)',
+        'conn.execute("delete from " + name)',
+        'conn.execute(f"drop table if exists {name}")',
+        'conn.execute("delete from messages where thread_id=?", args)',
+        'conn.execute(("DELETE FROM " + "messages") + " WHERE 1")',
+    ],
+)
+def test_a4_scan_catches_lower_case_and_concatenated_sql(snippet):
+    assert _findings("synthetic.py", snippet), f"A4 scan missed: {snippet}"
+
+
+def test_a4_scan_ignores_prose_and_unrelated_tables():
+    for snippet in (
+        'note = f"please update {name} when you delete from the list"',
+        'conn.execute("UPDATE boards SET wing=? WHERE id=?", args)',
+        'conn.execute("DELETE FROM drawers WHERE id=?", args)',
+    ):
+        assert _findings("synthetic.py", snippet) == [], snippet
 
 
 def test_a4_no_statement_rewrites_identity_or_deletes_thread_rows():

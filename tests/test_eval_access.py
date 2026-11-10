@@ -240,9 +240,49 @@ def test_b9_probe_lookup_error_refuses_and_absence_needs_proof(env):
         conn.execute("CREATE TABLE sync_groups (unrelated TEXT)")
         conn.commit()
     other = store_thread(env, source="t3:other")
-    refused(archive(env, other.id, key="Other_eval-key-00002"), UNSUPPORTED)
-    assert listed(env)["runs"] == []
+    refused(archive(env, other.id, key="Other_eval-key-00002"), "eval_lookup_failed")
+    refused(run(env, "list", "--workspace", env.ws), "eval_lookup_failed")
+    refused(run(env, "show", run_id, "--workspace", env.ws), "eval_lookup_failed")
+    refused(
+        run(env, "read", run_id, "--workspace", env.ws, "--object", "rows"), "eval_lookup_failed"
+    )
+
+
+def test_minor1_transient_lookup_lock_refuses_list_instead_of_omitting(env, monkeypatch):
+    run_id = archived(env, store_thread(env).id)
+
+    def locked(*_args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(source, "related", locked)
+    code, out, err = run(env, "list", "--workspace", env.ws)
+    assert (code, out) == (2, ""), "MINOR-1: a lookup error omitted the run and exited 0"
+    assert err.startswith("commonplace: eval_busy")
+    refused(run(env, "show", run_id, "--workspace", env.ws), "eval_busy")
+
+
+# ── MINOR-2: every control table that records stored IDs is probed ──
+@pytest.mark.parametrize("table", ["sync_backfill", "capture_ops"])
+def test_minor2_backfill_cursor_and_capture_response_hide_the_run(env, table):
+    stored = store_thread(env)
+    run_id = archived(env, stored.id)
+    with closing(control(env)) as db:
+        schema.ensure_schema(db)
+        if table == "sync_backfill":
+            db._conn.execute(
+                "INSERT INTO sync_backfill VALUES (?,?,?,?,?,?)",
+                (env.ws, env.owner, 0, "capture:x", stored.id, 0),
+            )
+        else:
+            response = json.dumps({"status": "appended", "stored_thread_id": stored.id})
+            db._conn.execute(
+                "INSERT INTO capture_ops VALUES (?,?,?,?,?,?)",
+                (env.ws, env.owner, "op-1", "0" * 64, response, "2026-11-10T00:00:00+00:00"),
+            )
+    assert listed(env)["runs"] == [], f"MINOR-2: a {table} reference left the run listed"
     refused(run(env, "show", run_id, "--workspace", env.ws), "eval_not_found")
+    other = store_thread(env, source="t3:other")
+    archived(env, other.id, key="Other_eval-key-00002")
 
 
 def _demote(env):
@@ -447,6 +487,47 @@ def test_b23_unsafe_paths_refuse_before_payload_without_chmod(env, monkeypatch, 
         assert run_id not in out
     assert chmods == [], "B23: eval changed a mode"
     assert modes == {p: p.lstat().st_mode for p in modes}
+
+
+def test_minor3_permission_gate_runs_before_any_payload(env, monkeypatch):
+    stored = store_thread(env)
+    archived(env, stored.id)
+    (env.directory / "evals").chmod(0o750)
+    read = []
+
+    class Stdin:
+        def read(self, size=-1):
+            read.append(size)
+            return b"[]"
+
+    snapshots = []
+    original = source.snapshot_rows
+    monkeypatch.setattr(source, "snapshot_rows", lambda *a: snapshots.append(a) or original(*a))
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=Stdin()))
+    argv = [
+        "archive",
+        "--workspace",
+        env.ws,
+        "--thread",
+        stored.id,
+        "--key",
+        "Other_eval-key-00002",
+    ]
+    code = main(["--data", str(env.data), "eval", *argv, "--artifacts-stdin"])
+    assert code == 2
+    assert read == [] and snapshots == [], "MINOR-3: payload read before the permission gate"
+
+
+# ── MINOR-6: preflight on a fresh data dir ──
+@pytest.mark.parametrize("fresh", ["empty", "missing"])
+def test_minor6_preflight_creates_nothing_on_a_fresh_data_dir(tmp_path, fresh):
+    data = tmp_path / "fresh"
+    if fresh == "empty":
+        data.mkdir(mode=0o700)
+    code = main(["--data", str(data), "eval", "preflight", "--workspace", "ws_abc123"])
+    assert code == 0
+    created = sorted(p.name for p in data.rglob("*")) if data.exists() else None
+    assert created == ([] if fresh == "empty" else None), f"MINOR-6: preflight created {created}"
 
 
 # ── B24: backup fence ──

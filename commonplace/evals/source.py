@@ -112,18 +112,44 @@ def storage_limit(conn, workspace_id):
     return plans.PLANS[plan["plan"]].storage_bytes if plan else None
 
 
+# Control tables that can hold a stored thread ID, and the probe for each.
+# ``capture_ops.response`` is the JSON result of a capture, so the quoted ID
+# is searched in it. A table counts as "no reference" only when
+# ``sqlite_master`` in the same snapshot proves it absent.
+_PROBES = {
+    "sync_streams": (
+        "SELECT 1 FROM sync_streams WHERE workspace_id=? AND own_stored_id=? UNION ALL "
+        "SELECT 1 FROM sync_streams WHERE workspace_id=? AND fork_stored_id=? LIMIT 1"
+    ),
+    "sync_groups": "SELECT 1 FROM sync_groups WHERE workspace_id=? AND holder_stored_id=? LIMIT 1",
+    "sync_backfill": "SELECT 1 FROM sync_backfill WHERE workspace_id=? AND after_id=? LIMIT 1",
+    "capture_ops": (
+        "SELECT 1 FROM capture_ops WHERE workspace_id=? AND instr(response, ?) > 0 LIMIT 1"
+    ),
+}
+
+
 def related(conn, workspace_id, stored_id) -> bool:
     """Whether any continuity row references ``stored_id``; errors propagate."""
     from ..continuity import _CONTROLLED_PROBE
 
-    present = conn.execute(
-        "SELECT count(*) FROM sqlite_master WHERE type='table' "
-        "AND name IN ('sync_streams', 'sync_groups')"
-    ).fetchone()[0]
-    if present == 0:
-        return False
-    args = (workspace_id, stored_id) * 3
-    return conn.execute(_CONTROLLED_PROBE, args).fetchone() is not None
+    present = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?, ?, ?)",
+            tuple(_PROBES),
+        )
+    }
+    if {"sync_streams", "sync_groups"} <= present:
+        if conn.execute(_CONTROLLED_PROBE, (workspace_id, stored_id) * 3).fetchone():
+            return True
+        present -= {"sync_streams", "sync_groups"}
+    for table in sorted(present):
+        value = json.dumps(stored_id) if table == "capture_ops" else stored_id
+        args = (workspace_id, value) * (2 if table == "sync_streams" else 1)
+        if conn.execute(_PROBES[table], args).fetchone():
+            return True
+    return False
 
 
 @contextmanager

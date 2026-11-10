@@ -25,13 +25,20 @@ or the first admin, as for other CLI commands, and must be a live owner of W.
 | `eval preflight` | Stat-only report of the eval paths, modes, owners and plain/encrypted classification. Opens no SQLite file. |
 
 Refusals print `commonplace: <code>` with exit 2, never payload, key or source
-metadata. Unknown flags refuse before anything is read or created.
+metadata. Unknown flags refuse before anything is read or created, and the
+permission checks below run before any payload (stdin artifacts or source rows)
+is read. A failed source or continuity lookup refuses the whole response with
+`eval_lookup_failed` (or `eval_busy`); `list` never omits a run because of one.
+`preflight` takes no data-directory lock, so it creates nothing, even on a
+fresh data directory.
 
 ## Eligibility
 
 A thread is eligible only if it is in W, in the `threads` wing, its source ID
 starts with none of `capture:`, `capture-fork:` or `import-private:`, and its
-first row is not a continuity marker. That covers handoff transcripts and ACL
+first row is not a continuity marker. The continuity probe looks for the
+stored ID in `sync_streams`, `sync_groups`, `sync_backfill` and the recorded
+capture responses. That covers handoff transcripts and ACL
 imports (single-part and multipart). Live captures, grant imports, private
 chats and every continuity thread refuse with
 `eval_source_gap: unsupported_in_slice1`. The rule, the read policy and the
@@ -69,6 +76,13 @@ lock, measures the workspace and refuses (`eval_storage`) past the limit, so an
 archive needs roughly twice the eval DB's size in headroom. Refusals carry no
 totals.
 
+The plan-storage bound holds only against writers that also measure their
+allowance under that lock (captures, multipart imports and other budgeted
+thread writes). It does not cover single-part imports, which compute their
+allowance before taking the lock, palace and drawer writers, or handoff
+filing, which passes no maximum; those can still take a workspace past its plan
+limit next to an eval archive.
+
 ## Privacy flags
 
 Archive scans every string of every row, the decoded JSON string leaves of
@@ -76,7 +90,10 @@ Archive scans every string of every row, the decoded JSON string leaves of
 and stores the sorted codes with the scanner's version (the first 16 hex
 characters of the SHA-256 of the loaded `privacy.py`). Flags are signals: bytes
 are always kept, never redacted. After a scanner change, list, show and read
-report the union with a rescan and write nothing. A scanner that cannot load or
+report the union with a rescan and write nothing. The rescan reads the whole
+run each time: `list` rescans every listed run whose version differs, and `read`
+rescans the run on every page, so paging a 16 MiB run in 256 KiB pages rescans
+it up to 64 times. Nothing is cached, because a cache would have to be written. A scanner that cannot load or
 run makes archive, list, show and read refuse with `eval_scan_failed`; purge and
 preflight never load it.
 
@@ -94,8 +111,9 @@ free pages, WAL, retired generations or backups.
 Runs live in `<workspace>/evals/runs.sqlite3` (WAL), created through the
 workspace's SQLite opener, so an encrypted workspace encrypts it before the file
 exists. `evals/` must be 0700 and `runs.sqlite3*` 0600, owned by the CLI user,
-with no symlinks and no group- or other-writable ancestor up to the data
-directory. Eval never changes modes; it refuses with `eval_permissions` and
+with no symlinks (the data directory itself included: point `--data` at the
+real directory) and no group- or other-writable ancestor up to and including the
+data directory. Eval never changes modes; it refuses with `eval_permissions` and
 names each fix, for example `chmod 0700 <workspace>/evals` and
 `chmod 0600 <workspace>/evals/runs.sqlite3*`. Linux only (`eval_platform`
 elsewhere). Backups, encryption conversion and store switches carry the eval DB
