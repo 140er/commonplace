@@ -65,6 +65,8 @@ bound card preserves agent-bound discovery dispatch and observations. A holder
 change, status change or recorded lease expiry still denies. Older immutable
 bindings compare without `claim_until`, retaining their original consent digests,
 attempts and permits through upgrade.
+A task-less fixed-probe proposal may still be approved; dispatch requires a
+startable card. Task-snapshot presence must match on both sides of comparison.
 Permits and their lookup retain the request's epoch. Current-fence exclusion and
 checks for writes during a single fenced operation remain intact.
 

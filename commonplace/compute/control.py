@@ -237,8 +237,10 @@ def _same_binding(fresh, stored):
     comparable = []
     for binding in (fresh, stored):
         authority = binding["authority"]
-        task = {k: v for k, v in authority["task"].items() if k != "claim_until"}
-        comparable.append({**binding, "authority": {**authority, "task": task}})
+        if "task" in authority:
+            task = {k: v for k, v in authority["task"].items() if k != "claim_until"}
+            binding = {**binding, "authority": {**authority, "task": task}}
+        comparable.append(binding)
     return canonical(comparable[0]) == canonical(comparable[1])
 
 

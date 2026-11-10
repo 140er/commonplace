@@ -226,6 +226,7 @@ Task snapshots exclude the renewable claim_until, so a holder's heartbeat or
 comment on the bound card preserves agent-bound discovery evidence. Assignee,
 status and the canonical claim_expired_at marker remain bound. Older bindings
 compare without claim_until while preserving original consent and permit bytes.
+Task-snapshot presence must match; task-less approval grants no dispatch.
 Permits retain the request epoch; session/connection/membership/consent/task/origin
 release or credential revocation still denies effects and publication. Exact legacy
 guards are migrated under the coordinator; unknown guards still fail closed. These local domains exclude gateway_admission. Explicit trusted
