@@ -367,6 +367,9 @@ def test_permit_is_durable_one_use_and_wrong_result_cannot_release_it(admission_
         for sql in ("DELETE FROM gateway_admissions", "UPDATE gateway_admissions SET issued_at=1"):
             with pytest.raises(sqlite3.DatabaseError):
                 conn.execute(sql)
+    # The reservation is genuinely uncertain only once target authentication
+    # was reached. A misleading not_started result cannot override that stage.
+    assert state.service._authorize(request, "target_auth")
     state.service._finish(request, ExecutionResult("not_started", "ssh_transport_failed"))
     assert run_row(state, state.proposal)["reserved"] == 1
     # Reopened controller identity cannot mint another attempt or permit.
