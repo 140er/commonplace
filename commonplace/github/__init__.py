@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import logging
@@ -60,6 +61,8 @@ class GitHub:
         self._closed = False
         self._heartbeat_thread = None
         self._owns_lease = False
+        # Release transactions that failed, as (user id, settle) pairs; the heartbeat retries them.
+        self._owed = []
         self.db.add_pre_close_callback(self.close)
         self._claim()
         if not self._owns_lease:
@@ -118,12 +121,46 @@ class GitHub:
                 else:
                     with self.db._lock, self.db._tx() as conn:
                         self._fence(conn)
+                    self._retry_releases()
                     self._sweep()
             except SignInError:
                 logging.getLogger(__name__).warning("GitHub worker lost its lease; writes fenced")
                 return
             except sqlite3.Error:
                 # Retry on the next tick; an expired lease still fails closed.
+                continue
+            except Exception as exc:  # noqa: BLE001 - a dead heartbeat lets the lease lapse
+                # Keep ticking: without renewals every write would answer github_pending until a
+                # restart. Only the type is logged; a message could carry a token.
+                logging.getLogger(__name__).warning(
+                    "GitHub worker tick failed: %s", type(exc).__name__
+                )
+
+    def _release(self, uid, settle):
+        """Run a release transaction; one that fails is owed to the next heartbeat, then raised."""
+        try:
+            with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
+                settle(conn)
+        except Exception:
+            with self.db._lock:
+                self._owed.append((uid, settle))
+            logging.getLogger(__name__).warning(
+                "GitHub in-flight state not released for %s; retried on the next heartbeat", uid
+            )
+            raise
+
+    def _retry_releases(self):
+        """Retry this process's failed releases before the sweep reads the markers they hold."""
+        with self.db._lock:
+            owed, self._owed = self._owed, []
+        for uid, settle in owed:
+            try:
+                self._release(uid, settle)
+            except SignInError:
+                # Lease loss: the worker stops, and the next claim resets every marker.
+                raise
+            except Exception:  # noqa: BLE001 - owed again by _release
                 continue
 
     def _sweep(self):
@@ -445,9 +482,11 @@ class GitHub:
                     "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
                     (uid,),
                 )
-                active = True
-                self._live += 1
                 landing = row["next"]
+            # Only a committed marker is ours to release: a failed COMMIT must not settle another's.
+            active = True
+            with self.db._lock:
+                self._live += 1
             provider = self.provider()
             status, _, value = client.request(
                 "POST",
@@ -632,7 +671,7 @@ class GitHub:
     def confirm(self, h, principal, session, data):
         uid = principal.user_id
         candidate = None
-        accepted = False
+        accepted = marked = False
         previous = settlement = None
         try:
             with self.db._lock, self.db._tx() as conn:
@@ -656,6 +695,9 @@ class GitHub:
                     "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
                     (uid,),
                 )
+            # Without a committed marker the record is not ours: leave it, revoke and release nothing.
+            marked = True
+            with self.db._lock:
                 self._live += 1
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
@@ -670,7 +712,7 @@ class GitHub:
             # Only a committed swap counts: a failed COMMIT must revoke the candidate, not the stored token.
             accepted = accept
         finally:
-            if candidate:
+            if marked:
                 try:
                     # A disconnect that already took the record owns its revocation.
                     if not accepted and self.holds_confirmation(uid, row["secret"]):
@@ -806,8 +848,9 @@ class GitHub:
                         "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
                         (uid,),
                     )
-                    self._live += 1
         if candidate:
+            with self.db._lock:
+                self._live += 1
             try:
                 # A failed revocation marks revocation unconfirmed inside revoke_token.
                 self.cleanup_token(uid, candidate["token"])
@@ -886,35 +929,27 @@ class GitHub:
         # whole grant first would also remove the app's tokens, so the candidate's own revoke
         # would answer already gone and read as unconfirmed.
         ok = readable
+        revoked = False
+        secret = pending["secret"] if pending else None
         try:
             for token in tokens:
                 if token != grant_token:
                     ok = self.revoke(token, grant=False) and ok
             ok = (self.revoke(grant_token, grant=True) if grant_token else grant is None) and ok
+            revoked = True
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
-                # The record outlives its revoke: a death before this point leaves it for the sweep.
-                if pending:
-                    conn.execute(
-                        "DELETE FROM github_confirmations WHERE user_id=? AND secret=?",
-                        (uid, pending["secret"]),
-                    )
-                conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
-                conn.execute(
-                    "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
-                    (int(not ok), uid),
-                )
-                life = self.store.lifecycle(conn, uid)
-                if deleting and not life["active_exchanges"] and not life["remote_work"]:
-                    self.release_owner(conn, uid)
-                if marked:
-                    self._settle_exchange(conn, uid)
+                self._close_disconnect(conn, uid, secret, True, ok, marked, deleting)
         except Exception:
-            # Any failure before the closing transaction commits releases the in-flight marker
-            # and keeps the record, as expire and confirm do, so the sweep and a decline still
-            # revoke the candidate in this process. The revoke outcome is unknown: flag it.
-            if marked:
-                self._release_failed_disconnect(uid)
+            # Any failure before the closing transaction commits runs it again as a release, and
+            # a release that fails too is owed to the next heartbeat. The original error is raised.
+            with contextlib.suppress(Exception):
+                self._release(
+                    uid,
+                    lambda conn: self._close_disconnect(
+                        conn, uid, secret, revoked, ok, marked, deleting
+                    ),
+                )
             raise
         return {
             "state": "absent",
@@ -924,13 +959,43 @@ class GitHub:
             "app_access_url": ACCESS,
         }
 
-    def _release_failed_disconnect(self, uid):
-        try:
-            with self.db._lock, self.db._tx() as conn:
-                conn.execute("UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,))
-                self._settle_exchange(conn, uid)
-        except Exception:  # noqa: BLE001 - a fenced or failing release is cleared by the next claim
-            logging.getLogger(__name__).warning("GitHub disconnect marker not released for %s", uid)
+    def _close_disconnect(self, conn, uid, secret, revoked, ok, marked, deleting):
+        """End a Disconnect: its closing transaction, and the same release after a failure.
+
+        ``revoked`` says whether every revoke returned. If one raised, the taken record is lapsed
+        instead of deleted, so the sweep revokes its candidate on its next tick, and the grant is
+        purged unrevoked and flagged, as a restart does; nothing is replayed at GitHub.
+        """
+        if secret is not None:
+            # The record outlives its revoke: a death before this point leaves it for the sweep.
+            conn.execute(
+                "DELETE FROM github_confirmations WHERE user_id=? AND secret=?"
+                if revoked
+                else "UPDATE github_confirmations SET expires_at=0 WHERE user_id=? AND secret=?",
+                (uid, secret),
+            )
+        conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
+        conn.execute(
+            "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
+            (int(not (revoked and ok)), uid),
+        )
+        life = self.store.lifecycle(conn, uid)
+        if (
+            deleting
+            and not life["active_exchanges"]
+            and not life["remote_work"]
+            and not self._holds_record(conn, uid)
+        ):
+            self.release_owner(conn, uid)
+        if marked:
+            self._settle_exchange(conn, uid)
+
+    def _holds_record(self, conn, uid):
+        # Keys outlive every record: the sweep must still decrypt a candidate to revoke it.
+        return (
+            conn.execute("SELECT 1 FROM github_confirmations WHERE user_id=?", (uid,)).fetchone()
+            is not None
+        )
 
     def release_owner(self, conn, uid):
         conn.execute("DELETE FROM user_identities WHERE provider='github' AND user_id=?", (uid,))
@@ -944,8 +1009,7 @@ class GitHub:
     def finish_exchange(self, uid):
         with self.db._lock:
             self._live -= 1
-        with self.db._lock, self.db._tx() as conn:
-            self._settle_exchange(conn, uid)
+        self._release(uid, lambda conn: self._settle_exchange(conn, uid))
 
     def _settle_exchange(self, conn, uid):
         """Release one in-flight exchange; callers may do this in the transaction that ends it."""
@@ -963,7 +1027,7 @@ class GitHub:
             ).fetchone()
         ):
             conn.execute("UPDATE github_lifecycle SET disconnect_pending=0 WHERE user_id=?", (uid,))
-            if life["deleting"]:
+            if life["deleting"] and not self._holds_record(conn, uid):
                 self.release_owner(conn, uid)
 
     def recover(self):
@@ -974,6 +1038,8 @@ class GitHub:
             self._recover_rows(conn)
 
     def _recover_rows(self, conn):
+        # Every marker is reset below, so no release of this process is still owed.
+        self._owed = []
         conn.execute(
             "UPDATE github_lifecycle SET generation=generation+1,"
             # A pending candidate alone is revoked by the sweep, which flags a failed revoke itself.

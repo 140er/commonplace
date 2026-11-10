@@ -154,12 +154,12 @@ def merge(s, **payload):
     return write(s, "/api/github/merge", payload={"head": HEAD, **payload})
 
 
-def tick(worker, monkeypatch):
-    """One real worker heartbeat iteration, without sleeps or background scheduling."""
+def tick(worker, monkeypatch, count=1):
+    """Real worker heartbeat iterations, without sleeps or background scheduling."""
     worker._stopped.set()
     worker._heartbeat_thread.join()
     worker._stopped.clear()
-    turns = iter([False, True])
+    turns = iter([False] * count + [True])
     with monkeypatch.context() as patch:
         patch.setattr(worker._stopped, "wait", lambda timeout: next(turns))
         worker._heartbeat()
@@ -1297,10 +1297,16 @@ def test_a_failed_candidate_revoke_in_disconnect_releases_its_marker_for_the_swe
         s.gateway.github.disconnect(s.uid, s.workspace)
     s.remote.on_revoke = None
     assert marker(s) == (0, 1)
-    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    # Nothing of the failed Disconnect stays in flight: the grant is purged unrevoked and
+    # flagged, as a restart does, and the record is lapsed so the very next sweep revokes it.
+    life = rows(s, "github_lifecycle")[0]
+    assert life["disconnect_pending"] == life["remote_work"] == 0
+    assert not rows(s, "github_grants")
+    assert status(s)["state"] == "absent" and not status(s)["pending"]
     tick(s.gateway.github, monkeypatch)
     assert not rows(s, "github_confirmations")
     assert revoked_tokens(s).count(candidate) == 2
+    assert reason(write(s)) == "github_acknowledge"
 
 
 def test_a_decline_after_a_failed_disconnect_revoke_still_revokes_the_candidate(merging):
@@ -1317,7 +1323,9 @@ def test_a_decline_after_a_failed_disconnect_revoke_still_revokes_the_candidate(
     assert not rows(s, "github_confirmations")
 
 
-def test_a_failed_closing_transaction_in_disconnect_releases_its_marker(merging, monkeypatch):
+def test_a_failed_closing_transaction_in_disconnect_is_retried_without_a_second_revoke(
+    merging, monkeypatch
+):
     import sqlite3
 
     s = merging
@@ -1338,14 +1346,15 @@ def test_a_failed_closing_transaction_in_disconnect_releases_its_marker(merging,
         worker.disconnect(s.uid, s.workspace)
     s.remote.on_revoke = None
     monkeypatch.setattr(worker.store, "lifecycle", real)
-    assert marker(s) == (0, 1)
-    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    # Every revoke returned, so the release is the closing transaction itself: the record goes,
+    # nothing is flagged and the sweep has nothing to revoke a second time.
+    assert marker(s) == (0, 0)
+    assert not rows(s, "github_confirmations") and not rows(s, "github_grants")
     tick(worker, monkeypatch)
-    assert not rows(s, "github_confirmations")
-    assert revoked_tokens(s).count(candidate) == 2
+    assert revoked_tokens(s).count(candidate) == 1
 
 
-def test_a_lease_lost_in_disconnects_closing_transaction_is_cleared_by_the_next_claim(
+def test_a_lease_lost_in_disconnects_closing_transaction_is_recovered_at_restart(
     merging, monkeypatch
 ):
     import threading
@@ -1366,7 +1375,8 @@ def test_a_lease_lost_in_disconnects_closing_transaction_is_cleared_by_the_next_
         worker.disconnect(s.uid, s.workspace)
     s.remote.on_revoke = None
     monkeypatch.setattr(worker, "_fence", real)
-    # A fenced worker cannot release its marker; the next claim does, and the sweep then revokes.
+    # A fenced worker cannot release its marker; the restart's claim does (recover() runs the
+    # same recovery), and the sweep then revokes.
     assert marker(s)[0] == 1 and len(rows(s, "github_confirmations")) == 1
     worker.recover()
     assert marker(s)[0] == 0
@@ -1375,18 +1385,19 @@ def test_a_lease_lost_in_disconnects_closing_transaction_is_cleared_by_the_next_
     assert revoked_tokens(s).count(candidate) == 2
 
 
-def test_an_ordinary_failure_in_the_sweep_revoke_is_retried_in_process(merging, monkeypatch):
+def test_an_ordinary_failure_in_the_sweep_revoke_is_retried_in_process(
+    merging, monkeypatch, caplog
+):
     s = merging
     candidate = pending_merge_consent(s)
     s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
-    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the sweep revoke"))
-    with pytest.raises(RuntimeError):
-        tick(s.gateway.github, monkeypatch)
-    s.remote.on_revoke = None
-    assert marker(s)[0] == 0 and len(rows(s, "github_confirmations")) == 1
-    tick(s.gateway.github, monkeypatch)
-    assert not rows(s, "github_confirmations")
+    s.remote.on_revoke = failing_once(RuntimeError(f"synthetic failure revoking {candidate}"))
+    caplog.set_level(logging.WARNING)
+    # The heartbeat keeps ticking: the failing sweep is followed by one that revokes.
+    tick(s.gateway.github, monkeypatch, count=2)
+    assert not rows(s, "github_confirmations") and marker(s)[0] == 0
     assert revoked_tokens(s).count(candidate) == 2
+    assert "RuntimeError" in caplog.text and candidate not in caplog.text
 
 
 def test_an_ordinary_failure_in_a_decline_revoke_releases_its_marker_and_can_be_retried(merging):
@@ -1421,28 +1432,153 @@ def test_an_ordinary_failure_revoking_the_replaced_token_leaves_the_settlement_f
     assert revoked_tokens(s).count(first) == 2
 
 
-def test_a_failing_release_keeps_the_original_error_and_is_cleared_by_the_next_claim(
-    merging, monkeypatch, caplog
-):
+@pytest.mark.parametrize("failure", ["candidate revoke", "closing transaction"])
+def test_a_failing_release_is_retried_by_the_next_heartbeat(merging, monkeypatch, caplog, failure):
     import sqlite3
 
     s = merging
     candidate = pending_merge_consent(s)
     worker = s.gateway.github
-    real = worker._settle_exchange
+    real_settle, real_lifecycle, armed = worker._settle_exchange, worker.store.lifecycle, []
 
-    def broken(conn, uid):
+    def locked(*args):
         raise sqlite3.OperationalError("database is locked (synthetic)")
 
-    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the candidate revoke"))
-    monkeypatch.setattr(worker, "_settle_exchange", broken)
+    def lifecycle(conn, uid):
+        # Armed by the candidate revoke: the next lifecycle read is in the closing transaction.
+        if armed:
+            armed.clear()
+            locked()
+        return real_lifecycle(conn, uid)
+
+    if failure == "candidate revoke":
+        s.remote.on_revoke = failing_once(RuntimeError(f"synthetic failure revoking {candidate}"))
+    else:
+        s.remote.on_revoke = lambda: armed.append(True)
+        monkeypatch.setattr(worker.store, "lifecycle", lifecycle)
+    # The release that follows fails too, as a lock that outlasts the busy timeout would.
+    monkeypatch.setattr(worker, "_settle_exchange", locked)
     caplog.set_level(logging.WARNING)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError if failure == "candidate revoke" else sqlite3.OperationalError):
         worker.disconnect(s.uid, s.workspace)
-    monkeypatch.setattr(worker, "_settle_exchange", real)
     s.remote.on_revoke = None
-    # The release itself failed: the marker stays (a documented window) and the log names no token.
+    monkeypatch.setattr(worker, "_settle_exchange", real_settle)
+    monkeypatch.setattr(worker.store, "lifecycle", real_lifecycle)
     assert marker(s)[0] == 1
     assert s.uid in caplog.text and candidate not in caplog.text
+    # The database is free again: the next heartbeat releases what the Disconnect still held, and
+    # its sweep revokes a candidate whose revoke had raised.
+    tick(worker, monkeypatch)
+    life = rows(s, "github_lifecycle")[0]
+    assert life["active_exchanges"] == life["disconnect_pending"] == life["remote_work"] == 0
+    assert not rows(s, "github_confirmations") and not rows(s, "github_grants")
+    if failure == "candidate revoke":
+        assert revoked_tokens(s).count(candidate) == 2 and life["unconfirmed"] == 1
+        assert reason(write(s)) == "github_acknowledge"
+    else:
+        assert revoked_tokens(s).count(candidate) == 1 and life["unconfirmed"] == 0
+        assert write(s)[0] == 200
+    assert not worker._owed
+
+
+def test_a_failed_account_deletion_keeps_keys_until_the_sweep_revokes_the_candidate(
+    merging, monkeypatch
+):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.remote.on_revoke = failing_once(RuntimeError("synthetic failure in the candidate revoke"))
+    with pytest.raises(RuntimeError):
+        s.gateway.github.delete_user(s.uid)
+    s.remote.on_revoke = None
+    # The lapsed record still needs the keys; the owner is released once it is revoked.
+    assert rows(s, "github_keys") and len(rows(s, "github_confirmations")) == 1
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s).count(candidate) == 2
+    assert not rows(s, "github_confirmations") and not rows(s, "github_keys")
+
+
+def test_a_restart_drops_releases_still_owed(merging, monkeypatch):
+    import sqlite3
+
+    s = merging
+    pending_merge_consent(s)
+    worker = s.gateway.github
+    real = worker._settle_exchange
+
+    def locked(conn, uid):
+        raise sqlite3.OperationalError("database is locked (synthetic)")
+
+    monkeypatch.setattr(worker, "_settle_exchange", locked)
+    post_confirm(s, False)
+    monkeypatch.setattr(worker, "_settle_exchange", real)
+    assert len(worker._owed) == 1
+    # recover() runs a restart's recovery, which resets every marker; a later owner's marker
+    # must not be released by a retry that recovery already settled.
     worker.recover()
-    assert marker(s)[0] == 0
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,))
+    tick(worker, monkeypatch)
+    assert marker(s)[0] == 1 and not worker._owed
+
+
+def test_a_failed_confirm_marking_revokes_and_releases_nothing(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute(
+        "CREATE TRIGGER fail_marking BEFORE UPDATE OF active_exchanges ON github_lifecycle "
+        "WHEN NEW.active_exchanges > OLD.active_exchanges "
+        "BEGIN SELECT RAISE(ABORT, 'synthetic'); END"
+    )
+    post_confirm(s, False)
+    s.db._conn.execute("DROP TRIGGER fail_marking")
+    # Without its marker the decline does not hold the record, so it must not revoke the
+    # candidate: a concurrent Disconnect could be revoking it at that moment.
+    assert revoked_tokens(s).count(candidate) == 0
+    assert len(rows(s, "github_confirmations")) == 1 and marker(s) == (0, 0)
+    declined = post_confirm(s, False)
+    assert declined and declined[0] == 200
+    assert revoked_tokens(s).count(candidate) == 1 and not rows(s, "github_confirmations")
+
+
+def test_a_failed_callback_commit_releases_no_other_owners_marker(merging, monkeypatch):
+    import sqlite3
+
+    s = merging
+    connect(s)
+    s.remote.scope = "public_repo"
+    flow = begin_consent(s)
+    # Another exchange is in flight when the COMMIT of this callback's own marking fails.
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,))
+    real_tx, fired = s.db._tx, []
+
+    def markers():
+        return s.db._conn.execute(
+            "SELECT active_exchanges FROM github_lifecycle WHERE user_id=?", (s.uid,)
+        ).fetchone()[0]
+
+    def tx():
+        inner = real_tx()
+
+        class FailingCommit:
+            def __enter__(self):
+                conn = inner.__enter__()
+                self.before = markers()
+                return conn
+
+            def __exit__(self, kind, exc, tb):
+                if kind is None and not fired and markers() > self.before:
+                    fired.append(True)
+                    inner.__exit__(RuntimeError, None, None)
+                    raise sqlite3.OperationalError("synthetic commit failure")
+                return inner.__exit__(kind, exc, tb)
+
+        return FailingCommit()
+
+    monkeypatch.setattr(s.db, "_tx", tx)
+    try:
+        finish(s, flow)
+    except Exception:  # noqa: BLE001 - a synthetic failure may close the connection
+        pass
+    monkeypatch.setattr(s.db, "_tx", real_tx)
+    assert fired
+    assert rows(s, "github_lifecycle")[0]["active_exchanges"] == 1
+    assert len(s.remote.issued) == 1 and not rows(s, "github_confirmations")
