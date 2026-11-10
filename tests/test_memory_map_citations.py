@@ -112,12 +112,31 @@ def test_private_thread_topic_is_null_in_map_only(hub, collection, monkeypatch):
     assert json.loads(raw)["topic"] is None and json.loads(raw)["source"] is None
 
 
-ROOMS = {
-    "app_threads": "/app/threads/{}",
-    "app_deep": "/app/threads/{}/messages/3",
-    "t3_link": "t3-thread://v1/{}",
-    "mcp_prefix": "mcp:{}",
+ZERO_WIDTH = chr(0x200B)
+# {t} is the private thread id (thr_<16 hex>), {h} its hex part, {z} a zero-width space.
+FORMS = {
+    "plain_thr": "{t}",
+    "app_threads": "/app/threads/{t}",
+    "app_deep": "/app/threads/{t}/messages/3",
+    "app_slash": "/app/threads/{t}/",
+    "app_query": "/app/threads/{t}?x=1",
+    "app_frag": "/app/threads/{t}#m",
+    "url_app": "https://example.test/app/threads/{t}",
+    "t3_link": "t3-thread://v1/{t}",
+    "t3_deep": "t3-thread://v1/{t}/messages/3",
+    "mcp_prefix": "mcp:{t}",
+    "mcp_tail": "mcp:{t}:tail",
+    "upper_prefix": "THR_{h}",
+    "pct_prefix": "%74hr_{h}",
+    "ctrl_plain": "{t}{z}",
+    "ctrl_app": "/app/threads/{t}{z}",
 }
+# Forms a member's map selection must serve with a null topic (others may also be refused).
+SERVED = ["app_threads", "app_deep", "t3_link", "mcp_prefix"]
+
+
+def room_for(form, thread):
+    return FORMS[form].format(t=thread.id, h=thread.id[4:], z=ZERO_WIDTH)
 
 
 def select(hub, headers, identifier, suffix):
@@ -126,12 +145,12 @@ def select(hub, headers, identifier, suffix):
     )
 
 
-@pytest.mark.parametrize("form", [*ROOMS, "plain_thr"])
+@pytest.mark.parametrize("form", FORMS)
 def test_unproved_owner_map_selection_nulls_thread_reference_topic(
     hub, collection, monkeypatch, form
 ):
     thread = private_thread(hub, hub.admin)
-    room = thread.id if form == "plain_thr" else ROOMS[form].format(thread.id)
+    room = room_for(form, thread)
     collection.add(
         ids=["probe"],
         documents=["Public exact words"],
@@ -144,23 +163,27 @@ def test_unproved_owner_map_selection_nulls_thread_reference_topic(
     status, raw = select(hub, owner, "probe", "?view=map")
     assert status == 200, raw
     assert json.loads(raw)["text"] == "Public exact words" and json.loads(raw)["topic"] is None
-    assert thread.id not in raw
+    assert thread.id[4:] not in raw
 
 
-@pytest.mark.parametrize("form", ROOMS)
+@pytest.mark.parametrize("form", FORMS)
 def test_member_map_selection_nulls_thread_reference_topic(hub, collection, form):
     _, headers = person(hub)
     thread = private_thread(hub, hub.admin)
     collection.add(
         ids=["probe"],
         documents=["Public exact words"],
-        metadatas=[{"wing": "shared", "room": ROOMS[form].format(thread.id)}],
+        metadatas=[{"wing": "shared", "room": room_for(form, thread)}],
     )
     status, raw = select(hub, headers, "probe", "?view=map")
-    assert status == 200, raw
-    body = json.loads(raw)
-    assert body["text"] == "Public exact words" and "topic" in body and body["topic"] is None
-    assert thread.id not in raw
+    assert thread.id[4:] not in raw
+    if form in SERVED:
+        assert status == 200, raw
+    else:  # the gateway may already refuse these spellings for members
+        assert status in (200, 404), raw
+    if status == 200:
+        body = json.loads(raw)
+        assert body["text"] == "Public exact words" and "topic" in body and body["topic"] is None
 
 
 def test_member_map_selection_keeps_an_ordinary_topic(hub, collection):
