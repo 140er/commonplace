@@ -57,13 +57,14 @@ export function createHost({ reply } = {}) {
   }
 }
 
-function fakeHandle(spec, { exitCode = 0, stdout = '', stderr = '', delayMs = 0, hang = false }) {
+function fakeHandle(spec, { exitCode = 0, stdout = '', stderr = '', delayMs = 0, hang = false, completion }) {
   const reader = (text) => ({ readFrom: (from) => ({ text: text.slice(from), nextOffset: text.length, lossy: false }) })
   const done = new Promise((resolve) => {
     const aborted = () => resolve({ exitCode: null, signal: 'SIGTERM' })
     if (spec.signal?.aborted) return aborted()
     spec.signal?.addEventListener('abort', aborted, { once: true })
-    if (!hang) setTimeout(() => resolve({ exitCode, signal: null }), delayMs)
+    if (completion) completion.then(() => resolve({ exitCode, signal: null }))
+    else if (!hang) setTimeout(() => resolve({ exitCode, signal: null }), delayMs)
   })
   return {
     stdin: undefined,

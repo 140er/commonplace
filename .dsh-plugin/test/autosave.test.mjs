@@ -134,19 +134,32 @@ test('a disposed session gets its session-end hook', async () => {
   assert.equal(JSON.parse(call.stdio.stdin.data).hook_event_name, 'SessionEnd')
 })
 
-test('hooks run one at a time per session, and repeats already queued collapse', async () => {
-  const host = createHost({ reply: () => ({ delayMs: 40, stdout: '{}' }) })
+test('hooks run one at a time per session, and repeats already queued collapse', { timeout: 10_000 }, async () => {
+  let release, started
+  const completion = new Promise((resolve) => { release = resolve })
+  const firstStarted = new Promise((resolve) => { started = resolve })
+  let calls = 0
+  const host = createHost({ reply: () => {
+    calls += 1
+    if (calls === 1) {
+      started()
+      return { completion, stdout: '{}' }
+    }
+    return { stdout: '{}' }
+  } })
   autosave.apply(host.ctx, { transcriptDir: dir })
   const { agent, session } = createAgent()
   host.emit('session/event', session, userSaid(1, 'hello'))
 
-  host.emit('agent/turn-stopping', { agent, turn: 1 })
-  await tick(10)
-  for (let turn = 2; turn <= 5; turn += 1) host.emit('agent/turn-stopping', { agent, turn })
-  await tick(10)
-  assert.equal(hookCalls(host).length, 1, 'the second run waits for the first')
-
-  await tick(150)
+  try {
+    host.emit('agent/turn-stopping', { agent, turn: 1 })
+    await firstStarted
+    for (let turn = 2; turn <= 5; turn += 1) host.emit('agent/turn-stopping', { agent, turn })
+    assert.equal(hookCalls(host).length, 1, 'the second run waits for the first')
+  } finally {
+    release()
+    await host.unload()
+  }
   assert.equal(hookCalls(host).length, 2, 'four queued stops ran as one')
 })
 
