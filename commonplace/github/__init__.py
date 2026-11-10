@@ -835,6 +835,7 @@ class GitHub:
     def disconnect(self, uid, workspace=None, *, deleting=False):
         tokens = []
         pending = None
+        marked = False
         grant = None
         grant_token = None
         readable = True
@@ -858,6 +859,13 @@ class GitHub:
                 ).fetchone()
             )
             if pending:
+                # Mark the taken record in flight, as expire and confirm do, so the sweep, expiry
+                # and a decline leave it alone while this disconnect revokes its candidate.
+                conn.execute(
+                    "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
+                    (uid,),
+                )
+                marked = True
                 try:
                     tokens.append(
                         self.store.decrypt(conn, uid, "confirmation", pending["secret"])["token"]
@@ -897,6 +905,8 @@ class GitHub:
             life = self.store.lifecycle(conn, uid)
             if deleting and not life["active_exchanges"] and not life["remote_work"]:
                 self.release_owner(conn, uid)
+            if marked:
+                self._settle_exchange(conn, uid)
         return {
             "state": "absent",
             "message": "Disconnected"

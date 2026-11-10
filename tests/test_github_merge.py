@@ -1207,3 +1207,65 @@ def test_a_disconnect_right_after_the_callback_records_a_candidate_still_revokes
     assert revoked_tokens(s) == [candidate]
     assert not rows(s, "github_confirmations")
     assert rows(s, "github_lifecycle")[0]["active_exchanges"] == 0
+
+
+def once(action):
+    fired = []
+
+    def hook():
+        if not fired:
+            fired.append(True)
+            action()
+
+    return hook
+
+
+def test_a_sweep_during_disconnects_candidate_revoke_does_not_revoke_it_again(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    # Lapsed, as after a TTL or a restart: the sweep could take this record.
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    s.remote.on_revoke = once(lambda: s.gateway.github._sweep())
+    result = s.gateway.github.disconnect(s.uid, s.workspace)
+    assert revoked_tokens(s).count(candidate) == 1
+    assert result["message"] == "Disconnected"
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+    assert not rows(s, "github_confirmations") and not rows(s, "github_grants")
+    assert rows(s, "github_lifecycle")[0]["active_exchanges"] == 0
+
+
+def test_a_decline_during_disconnects_candidate_revoke_does_not_revoke_it_again(merging):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.remote.on_revoke = once(lambda: post_confirm(s, False))
+    result = s.gateway.github.disconnect(s.uid, s.workspace)
+    assert revoked_tokens(s).count(candidate) == 1
+    assert result["message"] == "Disconnected"
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 0
+    assert not rows(s, "github_confirmations") and not rows(s, "github_grants")
+    assert rows(s, "github_lifecycle")[0]["active_exchanges"] == 0
+
+
+def test_disconnect_deletes_only_the_record_it_revoked(merging):
+    import time
+
+    s = merging
+    pending_merge_consent(s)
+
+    def successor():
+        # Stands in for any other record that took this one's place mid-revoke.
+        value = {
+            "token": "successor-token",
+            "scopes": ["public_repo"],
+            "subject": "123",
+            "login": "test-person",
+            "expires_at": time.time() + 600,
+            "purpose": "merge",
+        }
+        with s.db._lock, s.db._tx() as conn:
+            secret = s.gateway.github.store.encrypt(conn, s.uid, "confirmation", value)
+            conn.execute("UPDATE github_confirmations SET secret=?", (secret,))
+
+    s.remote.on_revoke = once(successor)
+    s.gateway.github.disconnect(s.uid, s.workspace)
+    assert len(rows(s, "github_confirmations")) == 1
