@@ -3,7 +3,6 @@
 import hashlib
 import json
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +13,7 @@ from commonplace.handoff import search_index
 from commonplace.handoff.models import ThreadMessage
 from commonplace.handoff.service import HandoffService
 from commonplace.handoff.thread_store import ThreadStore, ThreadStoreV2
+from tests._mirror_drain import drain_service
 
 
 class Worker:
@@ -66,21 +66,8 @@ def world(tmp_path, monkeypatch, request):
     db.close()
 
 
-def drain(world, limit=300):
-    """Wait until every sweep has finished, however slow the host is.
-
-    `wait_for_mirrors` returns silently once its timeout runs out, so a loaded
-    host turned a fixed budget into half-finished sweeps and failing bounds.
-    Poll the real condition instead; `limit` only stops a genuinely stuck sweep.
-    """
-    service = world.service
-    end = time.monotonic() + limit
-    while time.monotonic() < end:
-        service.wait_for_mirrors(1)
-        with service._mirror_condition:
-            if not service._index_active and all(f.done() for f in service._mirror_jobs):
-                return
-    pytest.fail("search-index sweep did not drain")
+def drain(world):
+    drain_service(world.service)
 
 
 def put(world, source="import:synthetic", count=1, text="synthetic words"):

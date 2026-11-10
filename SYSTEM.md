@@ -119,8 +119,6 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 ### Rules initialization deadline
 
-- Search-index sweep tests drain on the actual completion condition rather than a fixed wait budget, and a slow-host regression re-runs them with late sweeps and a wait that expires at once; the production sweep, its 20-thread and unit bounds and `wait_for_mirrors` are unchanged.
-
 - Owner summary-edit checks use a fixed injection clock and a forced-expiry regression, retaining verbatim injection and acceptance assertions without changing the production deadline.
 
 - Rules-injection functional tests run on a frozen deadline clock and a slow-host regression re-runs them with a clock that exhausts the budget on every read; the production 80 ms budget and its fail-open empty text are unchanged.
@@ -196,6 +194,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 ### Rules initialization timing checks
 
 - Rules initialization tests check remaining SQLite wait budgets with a fake clock; wall-clock budgets stay in separate timing-marked tests.
+
+### Mirror and search-index test waits
+
+- Tests that wait for background mirror or search-index work drain on the actual completion condition (no sweep active, no mirror job pending) through one shared test helper, with a 120 s stuck-job limit, rather than one fixed `wait_for_mirrors` budget that returns silently when it runs out.
+
+- A slow-host regression re-runs the converted selections with late-starting jobs and a wait that returns at once; the production sweep, its 20-thread and unit bounds and `wait_for_mirrors` are unchanged.
 
 ### Console activity query checks
 
