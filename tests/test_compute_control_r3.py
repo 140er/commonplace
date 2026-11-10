@@ -66,12 +66,23 @@ def bound(passive_state, request):
     return state
 
 
-def _submit_bound(state, monkeypatch):
+def _submit_bound(state, monkeypatch, window):
     with _old_authority(state.env, monkeypatch) if state.old_binding else nullcontext():
         item = _submit(state)
+        claimed = state.discovery._claim() if state.old_binding and window != "queued" else None
+        if state.old_binding and window != "queued":
+            assert claimed is not None
     if state.old_binding:
         assert "claim_until" in json.loads(_row(state, item["id"])["binding"])["authority"]["task"]
-    return item
+    return item, claimed
+
+
+def _run_once(state, monkeypatch, claimed):
+    # Resume an immutable attempt claimed before the simulated upgrade.
+    with monkeypatch.context() as patch:
+        if claimed is not None:
+            patch.setattr(state.discovery, "_claim", lambda: claimed)
+        return state.discovery._run_once()
 
 
 def _renew(state, kind):
@@ -93,7 +104,7 @@ def _renew(state, kind):
 @pytest.mark.parametrize("kind", ["heartbeat", "comment"])
 def test_holder_renewal_on_bound_card_keeps_dispatch_and_evidence(bound, monkeypatch, window, kind):
     state = bound
-    item = _submit_bound(state, monkeypatch)
+    item, claimed = _submit_bound(state, monkeypatch, window)
     binding = _row(state, item["id"])["binding"]
     fired = []
 
@@ -109,7 +120,7 @@ def test_holder_renewal_on_bound_card_keeps_dispatch_and_evidence(bound, monkeyp
             write()
 
     fixture = state.ssh(hook=hook)
-    assert state.discovery._run_once()
+    assert _run_once(state, monkeypatch, claimed)
     row = _row(state, item["id"])
     assert fired == [window]
     assert (row["state"], row["reason"], row["slot"]) == ("completed", "collection_complete", 0)
@@ -153,7 +164,7 @@ def _revoke(state, kind):
 @pytest.mark.parametrize("kind", ["holder", "status", "expired_lease"])
 def test_bound_card_revocation_still_denies(bound, monkeypatch, window, kind):
     state = bound
-    item = _submit_bound(state, monkeypatch)
+    item, claimed = _submit_bound(state, monkeypatch, window)
     fired = []
 
     def revoke():
@@ -168,7 +179,7 @@ def test_bound_card_revocation_still_denies(bound, monkeypatch, window, kind):
             revoke()
 
     fixture = state.ssh(hook=hook)
-    assert state.discovery._run_once() is (window != "queued")
+    assert _run_once(state, monkeypatch, claimed) is (window != "queued")
     row = _row(state, item["id"])
     assert fired == [window]
     assert row["slot"] == 0 and json.loads(row["observations"]) == []
