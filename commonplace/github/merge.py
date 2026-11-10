@@ -23,6 +23,7 @@ METHODS = (
     ("rebase", "allow_rebase_merge"),
 )
 REFUSALS = {
+    401: "github_not_connected",
     405: "github_not_mergeable",
     409: "github_head_moved",
     403: "github_merge_refused",
@@ -44,6 +45,8 @@ def merge(token, owner, repo, number, head):
     """Merge only a clean, open, public-repository PR still at ``head``."""
     base = API + quote(owner, safe="") + "/" + quote(repo, safe="")
     status, _, repository = client.request("GET", base, token=token)
+    if status == 401:
+        raise SignInError("github_not_connected")
     if status == 404 or (
         status == 200 and isinstance(repository, dict) and repository.get("private") is not False
     ):
@@ -54,6 +57,8 @@ def merge(token, owner, repo, number, head):
     if method is None:
         raise SignInError("github_merge_refused")
     status, _, pull = client.request("GET", f"{base}/pulls/{number}", token=token)
+    if status == 401:
+        raise SignInError("github_not_connected")
     if status != 200 or not isinstance(pull, dict):
         raise SignInError("github_merge_failed")
     seen = pull.get("head")

@@ -163,7 +163,7 @@ export function githubPrUrl(value) {
   } catch { return null; }
 }
 const mergeReasons = {
-  github_private_repo: "This repository is private, so Commonplace will not merge it. Use Open PR to merge it on GitHub.",
+  github_private_repo: "This repository is private, or not visible to your GitHub account, so Commonplace will not merge it. Use Open PR to merge it on GitHub.",
   github_head_moved: "The PR changed after the agent reported it. Use Open PR to review the new commits.",
   github_not_mergeable: "GitHub does not report this PR as ready to merge (checks, reviews, conflicts or draft). Use Open PR.",
   github_not_merge_ready: "This card no longer reports a merge-ready PR on GitHub.",
@@ -172,6 +172,8 @@ const mergeReasons = {
   github_not_connected: "Your GitHub connection is not available. Connect GitHub again.",
 };
 export const mergeReason = (code) => mergeReasons[code] || "Could not merge this PR. Use Open PR to merge it on GitHub.";
+// The server merges only this exact raw form (no case folding, no port); show Merge only for it.
+const mergeUrl = (value) => githubPrUrl(value) && /^https:\/\/github\.com\/(?!\.+\/)[A-Za-z0-9_.-]+\/(?!\.+\/)[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(value) ? value : null;
 const prLabel = (url) => url.replace(/^https:\/\/github\.com\//, "").replace("/pull/", "#");
 function githubControls(card, github, busy) {
   if (card.need !== "merge") return "";
@@ -181,16 +183,19 @@ function githubControls(card, github, busy) {
   if (state === "other_workspace") return `<p>This GitHub account is connected in another workspace. Disconnect it before connecting here.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
   if (state === "confirm" && github.connect_enabled === false) return `<p>New GitHub connections are disabled.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
   if (state === "merge_confirm" && github.connect_enabled === false) return `<p>New GitHub permissions are disabled.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
-  if (state === "merge_confirm") return `<p>Allow merging with GitHub account ${e(github.login)}? GitHub will be asked for ${e((github.scopes || []).join(", "))}, which is write access to all of your public repositories, not only this one. Commonplace merges only when you press Merge, with your own permissions; private repositories are merged on GitHub.</p><button class="btn" data-needs-github="confirm"${disabled}>Allow merging</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>${access}`;
+  if (state === "merge_confirm") return `<p>Allow merging with GitHub account ${e(github.login)}? GitHub will be asked for ${e((github.scopes || []).join(", "))}, which lets Commonplace write to every public repository your GitHub account can write to, including organisation repositories, within your own permissions, not only this one. Commonplace merges only when you press Merge, with your own permissions; private repositories are merged on GitHub.</p><button class="btn" data-needs-github="confirm"${disabled}>Allow merging</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>${access}`;
   if (state === "unconfigured") return '<p>GitHub connection setup is required.</p>';
   if (state === "loading") return '<button class="btn" disabled>Loading GitHub…</button>';
   if (state === "confirm") return `<p>Connect GitHub account ${e(github.login)} (${e(github.subject)})?${github.inherited_scopes?.length ? " This includes inherited sign-in permissions: " + e(github.inherited_scopes.join(", ")) : ""}</p><button class="btn" data-needs-github="confirm"${disabled}>Connect this account</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>`;
   if (state === "connected") {
     const url = githubPrUrl(card.pr_url);
+    const target = mergeUrl(card.pr_url), head = /^[0-9a-f]{40,64}$/.test(card.pr_head || "") ? card.pr_head : null;
     let merge = "";
-    if (url && github.merge && github.armed) merge = `<p>Merge ${e(prLabel(url))}${/^[0-9a-f]{7,}$/.test(card.pr_head?.slice(0, 7) || "") ? ` at ${e(card.pr_head.slice(0, 7))}` : ""} with your GitHub permissions? GitHub still applies the repository's branch protection and required checks.</p><button class="btn primary" data-needs-github="merge"${disabled}>Confirm merge</button><button class="btn" data-needs-github="disarm"${disabled}>Cancel</button>`;
-    else if (url && github.merge) merge = `<button class="btn primary" data-needs-github="arm-merge"${disabled}>Merge</button>`;
-    else if (url) merge = `<button class="btn" data-needs-github="allow-merge"${disabled}>Allow merging</button>`;
+    // Nothing to merge once it has merged; Allow merging is offered only where Merge would be.
+    if (github.merged || !target || !head) merge = "";
+    else if (github.merge && github.armed) merge = `<p>Merge ${e(prLabel(target))} at ${e(head.slice(0, 7))} with your GitHub permissions? GitHub chooses how it merges: squash if the repository allows it, otherwise a merge commit, otherwise rebase. Commonplace merges only a PR GitHub reports as clean at exactly this commit; GitHub's own rules still apply.</p><button class="btn primary" data-needs-github="merge"${disabled}>Confirm merge</button><button class="btn" data-needs-github="disarm"${disabled}>Cancel</button>`;
+    else if (github.merge) merge = `<button class="btn primary" data-needs-github="arm-merge"${disabled}>Merge</button>`;
+    else merge = `<button class="btn" data-needs-github="allow-merge"${disabled}>Allow merging</button>`;
     const notice = github.merged ? `<p role="status">Merged${github.merged === true ? "" : " at " + e(String(github.merged).slice(0, 7))}.</p>` : github.notice ? `<p role="alert">${e(github.notice)}</p>` : "";
     return `${notice}${merge}${url ? `<a class="btn" href="${e(url)}" target="_blank" rel="noopener noreferrer">Open PR</a>` : ""}<button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button><p>PR reports are unverified. A connection alone proves no merge permissions: merging needs your separate Allow merging consent for public repositories. Private repositories are merged on GitHub. Disconnect also revokes GitHub authorization for this app, including merging; your current session survives.</p>`;
   }
@@ -462,7 +467,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     try {
       const method = action === "disconnect" ? "DELETE" : "POST";
       const path = { disconnect: "/api/github", connect: "/api/github/connect", "allow-merge": "/api/github/merge-consent", merge: "/api/github/merge" }[action] || "/api/github/confirm";
-      const result = await api(path, { method, body: { csrf: github.csrf, card: card.number, accept: action === "confirm", acknowledge } });
+      const result = await api(path, { method, body: { csrf: github.csrf, card: card.number, accept: action === "confirm", acknowledge, ...(action === "merge" ? { head: card.pr_head } : {}) } });
       if (stopped || token !== revision) return;
       github = null;
       if (result.authorize_url) { globalThis.location.assign(result.authorize_url); return; }

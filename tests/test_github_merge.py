@@ -129,7 +129,36 @@ def consent(s):
 
 
 def merge(s, **payload):
-    return write(s, "/api/github/merge", payload=payload)
+    return write(s, "/api/github/merge", payload={"head": HEAD, **payload})
+
+
+def tick(worker, monkeypatch):
+    """One real worker heartbeat iteration, without sleeps or background scheduling."""
+    worker._stopped.set()
+    worker._heartbeat_thread.join()
+    worker._stopped.clear()
+    turns = iter([False, True])
+    with monkeypatch.context() as patch:
+        patch.setattr(worker._stopped, "wait", lambda timeout: next(turns))
+        worker._heartbeat()
+
+
+def revoked_tokens(s):
+    return [c[2]["json_body"]["access_token"] for c in s.remote.calls if c[0] == "DELETE"]
+
+
+def stored_token(s):
+    grant = rows(s, "github_grants")[0]
+    return s.gateway.github.store.decrypt(s.db._conn, s.uid, "grant", grant["secret"])["token"]
+
+
+def pending_merge_consent(s):
+    """Connected, then stopped at the Allow merging confirmation; returns the candidate token."""
+    connect(s)
+    s.remote.scope = "public_repo"
+    finish(s, begin_consent(s))
+    assert status(s)["state"] == "merge_confirm"
+    return s.remote.issued[-1]
 
 
 def reason(response):
@@ -318,7 +347,7 @@ def test_each_person_merges_with_their_own_token(merging):
     assert s.remote.merges()[0][2]["token"] == mine
 
 
-def test_a_grant_from_another_workspace_is_not_used(merging):
+def test_a_grant_connected_in_another_workspace_is_never_used(merging):
     s = merging
     connect(s)
     consent(s)
@@ -326,8 +355,25 @@ def test_a_grant_from_another_workspace_is_not_used(merging):
     s.db._conn.execute(
         "UPDATE sessions SET workspace_id=? WHERE id_hash=?", (wid, sessions._hash(s.session))
     )
-    assert merge(s)[0] in (404, 409)
-    assert not s.remote.merges()
+    # A merge-ready card is visible here, so only the grant's own workspace can refuse.
+    principal = sessions.session_principal(s.db, s.session)
+    service = BoardService(ToolContext(principal=principal, gateway=s.gateway))
+    service.board_add(slug="work", name="Work")
+    card = service.task_add(board="work", title="Ready")["number"]
+    service.task_update(
+        card,
+        status="doing",
+        repo="example/project",
+        pr=7,
+        pr_state="open",
+        pr_head=HEAD,
+        checks="passing",
+    )
+    assert status(s)["state"] == "other_workspace"
+    assert reason(write(s, "/api/github/merge", payload={"card": card, "head": HEAD})) == (
+        "github_not_connected"
+    )
+    assert not [c for c in s.remote.calls if c[1].startswith(API)]
 
 
 @pytest.mark.parametrize("problem", ["disconnected", "expired", "disabled", "pending", "key"])
@@ -351,7 +397,7 @@ def test_unusable_grants_fail_closed(merging, problem, monkeypatch):
         "/api/github/merge",
         "POST",
         cookie=s.cookie,
-        raw=json.dumps({"csrf": csrf, "card": s.card}).encode(),
+        raw=json.dumps({"csrf": csrf, "card": s.card, "head": HEAD}).encode(),
         headers={"Content-Type": "application/json", "Origin": urls.APP_URL},
     )
     assert code == 409, raw
@@ -384,6 +430,7 @@ def test_github_rejecting_the_pinned_sha_is_reported_as_a_moved_head(merging):
         (405, "github_not_mergeable"),
         (403, "github_merge_refused"),
         (404, "github_merge_refused"),
+        (401, "github_not_connected"),
         (500, "github_merge_failed"),
     ],
 )
@@ -449,7 +496,6 @@ def test_the_pr_comes_from_the_card_never_the_request(merging):
         "owner": "evil",
         "number": 9,
         "sha": MOVED,
-        "head": MOVED,
         "token": "attacker-token",
     }
     assert merge(s, **hostile)[0] == 200
@@ -532,3 +578,134 @@ def test_tokens_never_reach_responses_logs_or_storage(merging, caplog):
     )
     for token in (*s.remote.issued, "synthetic-app-secret"):
         assert token not in raw
+
+
+def test_a_lapsed_unanswered_consent_token_is_revoked_by_the_worker(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    first = s.remote.issued[0]
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    assert status(s)["state"] == "connected"
+    assert revoked_tokens(s) == []
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s) == [candidate]
+    assert not rows(s, "github_confirmations")
+    assert stored_token(s) == first
+    assert status(s).get("merge") is False
+
+
+def test_a_restart_cannot_forget_a_pending_consent_token(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    worker = s.gateway.github
+    worker.recover()
+    assert status(s)["state"] == "connected"
+    tick(worker, monkeypatch)
+    assert revoked_tokens(s) == [candidate]
+    assert not rows(s, "github_confirmations")
+    assert status(s).get("merge") is False
+
+
+def test_an_unreadable_lapsed_consent_is_purged_and_needs_acknowledgement(merging, monkeypatch):
+    s = merging
+    pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1, secret=x'00'")
+    tick(s.gateway.github, monkeypatch)
+    assert not rows(s, "github_confirmations")
+    assert rows(s, "github_lifecycle")[0]["unconfirmed"] == 1
+
+
+def test_a_failed_commit_revokes_the_candidate_and_keeps_the_stored_token(merging, monkeypatch):
+    import threading
+
+    s = merging
+    candidate = pending_merge_consent(s)
+    first = s.remote.issued[0]
+    worker = s.gateway.github
+    real, entered = s.db._tx, {"n": 0}
+
+    class Failing:
+        def __init__(self):
+            self.inner = real()
+
+        def __enter__(self):
+            return self.inner.__enter__()
+
+        def __exit__(self, kind, exc, tb):
+            if threading.current_thread() is not worker._heartbeat_thread:
+                entered["n"] += 1
+                if entered["n"] == 2 and exc is None:
+                    failure = RuntimeError("commit failed")
+                    self.inner.__exit__(RuntimeError, failure, None)
+                    raise failure
+            return self.inner.__exit__(kind, exc, tb)
+
+    csrf = status(s)["csrf"]
+    monkeypatch.setattr(s.db, "_tx", Failing)
+    try:
+        request(
+            s,
+            "/api/github/confirm",
+            "POST",
+            cookie=s.cookie,
+            raw=json.dumps({"csrf": csrf, "card": s.card, "accept": True}).encode(),
+            headers={"Content-Type": "application/json", "Origin": urls.APP_URL},
+        )
+    except Exception:  # noqa: BLE001 - the synthetic failure may close the connection
+        pass
+    monkeypatch.setattr(s.db, "_tx", real)
+    assert entered["n"] >= 2
+    assert stored_token(s) == first
+    assert revoked_tokens(s) == [candidate]
+    assert status(s).get("merge") is False
+
+
+def test_a_head_the_person_did_not_confirm_is_refused_before_github(merging):
+    s = merging
+    connect(s)
+    consent(s)
+    assert reason(merge(s, head=MOVED)) == "github_head_moved"
+    assert reason(write(s, "/api/github/merge")) == "github_head_moved"
+    assert not [c for c in s.remote.calls if c[1].startswith(API)]
+
+
+def test_a_card_with_an_open_question_is_not_merged_even_if_merge_ready(merging):
+    s = merging
+    connect(s)
+    consent(s)
+    s.service.task_handoff(
+        s.card,
+        to="owner",
+        note="Ship this change to the main branch now?",
+        context="Everything is ready and checks passed on the head.",
+        options=["yes", "no"],
+    )
+    # Still a fresh passing report, but Needs shows a question, not Merge.
+    assert reason(merge(s)) == "github_not_merge_ready"
+    assert not [c for c in s.remote.calls if c[1].startswith(API)]
+
+
+def test_a_token_rejected_at_github_asks_to_connect_again(merging):
+    s = merging
+    connect(s)
+    consent(s)
+    s.remote.repo_status = 401
+    assert reason(merge(s)) == "github_not_connected"
+    assert not s.remote.merges()
+
+
+def test_an_unexpected_failure_is_audited_as_an_error_not_an_allow(merging, monkeypatch):
+    s = merging
+    connect(s)
+    consent(s)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(importlib.import_module("commonplace.github.merge"), "merge", explode)
+    try:
+        merge(s)
+    except Exception:  # noqa: BLE001 - the unhandled failure may close the connection
+        pass
+    entry = [e for e in s.db.audit_entries() if e["action"] == "github.merge"][0]
+    assert entry["decision"] == "error" and entry["reason"]

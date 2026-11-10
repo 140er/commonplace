@@ -67,13 +67,20 @@ const consented = renderNeedDetail(ready, {github: {state: 'connected', merge: t
 assert.ok(consented.includes('data-needs-github="arm-merge"') && consented.includes('Open PR'));
 assert.ok(!consented.includes('data-needs-github="merge"'), 'merging asks for a second confirmation first');
 const armed = renderNeedDetail(ready, {github: {state: 'connected', merge: true, armed: true}});
-assert.ok(armed.includes('data-needs-github="merge"') && armed.includes('aaaaaaa') && armed.includes('example/project#1') && armed.includes('branch protection'));
+assert.ok(armed.includes('data-needs-github="merge"') && armed.includes('aaaaaaa') && armed.includes('example/project#1') && armed.includes('squash') && armed.includes('merge commit') && armed.includes('rebase'), 'Confirm names the head and how GitHub merges');
+for (const pr_url of ['https://GitHub.com/example/project/pull/1', 'https://github.com:443/example/project/pull/1']) {
+  const odd = renderNeedDetail({...ready, pr_url}, {github: {state: 'connected', merge: true}});
+  assert.ok(odd.includes('Open PR') && !odd.includes('arm-merge') && !odd.includes('allow-merge'), 'a URL form the server would refuse offers no merge controls: ' + pr_url);
+}
+const done = renderNeedDetail(ready, {github: {state: 'connected', merge: true, merged: 'a'.repeat(40)}});
+assert.ok(done.includes('Merged') && !done.includes('arm-merge') && !done.includes('data-needs-github="merge"') && !done.includes('allow-merge'), 'no merge controls after a successful merge');
+assert.ok(!renderNeedDetail({...ready, pr_head: undefined}, {github: {state: 'connected', merge: true}}).includes('arm-merge'));
 const unsafe = renderNeedDetail({...ready, pr_url: 'https://evil.example/a/b/pull/1'}, {github: {state: 'connected', merge: true}});
 assert.ok(!unsafe.includes('arm-merge') && !unsafe.includes('allow-merge'), 'no merge controls without a safe github.com PR URL');
 const refused = renderNeedDetail(ready, {github: {state: 'connected', merge: true, notice: 'This repository is private, so Commonplace will not merge it. Use Open PR to merge it on GitHub.'}});
 assert.ok(refused.includes('role="alert"') && refused.includes('private') && refused.includes('Open PR'));
 const asking = renderNeedDetail(ready, {github: {state: 'merge_confirm', login: 'test-person', scopes: ['public_repo'], connect_enabled: true}});
-assert.ok(asking.includes('public_repo') && asking.includes('all of your public repositories') && asking.includes('data-needs-github="confirm"') && asking.includes('Allow merging'));
+assert.ok(asking.includes('public_repo') && asking.includes('every public repository your GitHub account can write to') && asking.includes('organisation') && asking.includes('data-needs-github="confirm"') && asking.includes('Allow merging'));
 assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connected', merge: true}}).includes('arm-merge'));
 
 // The controller sends the card number only; the server resolves the PR and refuses by code.
@@ -100,7 +107,8 @@ assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connec
   assert.ok(detail2.innerHTML.includes('Confirm merge') && !calls.some(([path]) => path === '/api/github/merge'), 'arming never calls the server');
   await press('merge');
   const sent = calls.find(([path]) => path === '/api/github/merge');
-  assert.deepEqual(Object.keys(sent[2]).sort(), ['accept', 'acknowledge', 'card', 'csrf'].sort());
+  assert.deepEqual(Object.keys(sent[2]).sort(), ['accept', 'acknowledge', 'card', 'csrf', 'head'].sort());
+  assert.equal(sent[2].head, 'a'.repeat(40), 'the confirmed head travels with the request');
   assert.equal(sent[2].card, 7);
   assert.ok(detail2.innerHTML.includes('This repository is private') && detail2.innerHTML.includes('Open PR'), 'a private repository leaves Open PR with a plain reason');
   assert.ok(!detail2.innerHTML.includes('Confirm merge'));

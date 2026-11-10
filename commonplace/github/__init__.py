@@ -118,12 +118,31 @@ class GitHub:
                 else:
                     with self.db._lock, self.db._tx() as conn:
                         self._fence(conn)
+                    self._sweep()
             except SignInError:
                 logging.getLogger(__name__).warning("GitHub worker lost its lease; writes fenced")
                 return
             except sqlite3.Error:
                 # Retry on the next tick; an expired lease still fails closed.
                 continue
+
+    def _sweep(self):
+        """Revoke one lapsed, unanswered consent token per tick, outside the database lock.
+
+        One per tick keeps a slow revocation well inside the lease; the rest wait for the next tick.
+        """
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT user_id FROM github_confirmations WHERE expires_at<=? LIMIT 1",
+                (time.time(),),
+            ).fetchone()
+        if row is None:
+            return
+        try:
+            self.expire(row["user_id"])
+        except SignInError as exc:
+            if exc.code == "github_pending":
+                raise
 
     def close(self):
         # Server and database teardown can both close us, including concurrently.
@@ -612,12 +631,14 @@ class GitHub:
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
                 self.binding(conn, row, session, principal)
-                if data.get("accept") is True:
+                accept = data.get("accept") is True
+                if accept:
                     if candidate.get("purpose") == "merge":
                         previous = self.upgrade(conn, uid, row, candidate)
                     else:
                         self.commit(conn, uid, row, candidate)
-                    accepted = True
+            # Only a committed swap counts: a failed COMMIT must revoke the candidate, not the stored token.
+            accepted = accept
         finally:
             if candidate:
                 try:
@@ -635,23 +656,28 @@ class GitHub:
         """Merge the card's own reported PR with the caller's grant; never the body's."""
         card = self.visible(principal, data.get("card"))
         target = pr_merge.pull_request(card.get("pr_url"))
-        if target is None or not display.merge_ready(card, display.stale_before()):
+        # The same gate the panel uses to offer Merge: a card with an open ask or plan is not ready.
+        if target is None or display.need_for(card, principal) != "merge":
             raise SignInError("github_not_merge_ready")
+        # The head the person confirmed must still be the head the card reports.
+        if data.get("head") != card["pr_head"]:
+            raise SignInError("github_head_moved")
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
             _, payload = self.own_grant(conn, principal)
         if pr_merge.SCOPE not in (payload.get("scopes") or ()):
             raise SignInError("github_merge_consent")
-        outcome = ""
+        decision, outcome = "error", "unexpected"
         try:
             result = pr_merge.merge(payload["token"], *target, card["pr_head"])
+            decision, outcome = "allow", ""
         except SignInError as exc:
-            outcome = exc.code
+            decision, outcome = "deny", exc.code
             raise
         finally:
             self.db.audit(
                 action="github.merge",
-                decision="deny" if outcome else "allow",
+                decision=decision,
                 workspace_id=principal.workspace_id,
                 user_id=principal.user_id,
                 auth="session",
@@ -729,13 +755,20 @@ class GitHub:
                 (uid, time.time()),
             ).fetchone()
             if row:
-                candidate = self.store.decrypt(conn, uid, "confirmation", row["secret"])
+                try:
+                    candidate = self.store.decrypt(conn, uid, "confirmation", row["secret"])
+                except SignInError:
+                    # Unreadable ciphertext cannot be revoked; purge it and require acknowledgement.
+                    conn.execute(
+                        "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
+                    )
                 conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
-                conn.execute(
-                    "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
-                    (uid,),
-                )
-                self._live += 1
+                if candidate:
+                    conn.execute(
+                        "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
+                        (uid,),
+                    )
+                    self._live += 1
         if candidate:
             try:
                 ok = self.cleanup_token(uid, candidate["token"])
@@ -851,7 +884,9 @@ class GitHub:
             "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
         )
         conn.execute("DELETE FROM github_connect_flows")
-        conn.execute("DELETE FROM github_confirmations")
+        # A pending candidate token is still live at GitHub: keep its encrypted record, lapsed,
+        # so the sweep revokes it instead of this process forgetting it.
+        conn.execute("UPDATE github_confirmations SET expires_at=0")
         conn.execute("DELETE FROM github_grants WHERE disabled=1")
         conn.execute(
             "UPDATE github_lifecycle SET disconnect_pending=0,active_exchanges=0,remote_work=0"
