@@ -115,9 +115,9 @@ def scope():
     )
 
 
-def collect(scope, supplier=None, *, clock=None, **kwargs):
+def collect(scope, supplier=None, *, clock=None, monotonic=None, **kwargs):
     clock = clock or Clock()
-    collector = PassiveCollector(supplier or Supplier(), wall=clock, monotonic=clock)
+    collector = PassiveCollector(supplier or Supplier(), wall=clock, monotonic=monotonic or clock)
     args = dict(
         context=scope.context,
         limits=scope.limits,
@@ -415,17 +415,18 @@ def test_same_host_different_sources_consumes_results_but_not_two_host_slots(sco
 
 
 def test_rate_budget_is_sliding_and_uses_monotonic_not_wall(scope):
-    clock = Clock()
+    clock, monotonic = Clock(), Clock()
     supplier = Supplier(
         {"ip_neigh": neigh(), "linux_arp": arp("10.77.0.4")},
         before=lambda source: setattr(
-            clock, "now", clock.now + (1 if source == "linux_arp" else 0)
+            monotonic, "now", monotonic.now + (1 if source == "linux_arp" else 0)
         ),
     )
     result = collect(
         scope,
         supplier,
         clock=clock,
+        monotonic=monotonic,
         sources=("ip_neigh", "linux_arp"),
         limits=replace(scope.limits, rate_per_second=1),
     )
