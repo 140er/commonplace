@@ -2,8 +2,8 @@
 
 No endpoints, real devices, installed worker, production fence or release claims.
 The fixture fence serializes participating *test* writers through SQLite; it says
-nothing about unmodified application control/board/gateway writers. Parent runs
-these tests in its grouped verification, not in an implementation worker.
+nothing about unmodified application control/board/gateway writers. The integration
+maintainer runs grouped verification separately from component implementation.
 """
 
 import json
