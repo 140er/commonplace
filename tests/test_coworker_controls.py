@@ -1,6 +1,6 @@
 """Actual synthetic canonical stores/API, without providers or worker launches.
 
-Authored for the parent's grouped run. The start ledger has no running-worker
+Authored for grouped integration verification. The start ledger has no running-worker
 termination protocol: task/front completion is deliberately never such evidence.
 """
 
