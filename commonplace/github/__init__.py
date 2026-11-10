@@ -719,8 +719,7 @@ class GitHub:
                         self.store.decrypt(self.db._conn, uid, "grant", grant["secret"])["token"]
                         == token
                     ):
-                        # The live grant itself: nothing to revoke, nothing unconfirmed.
-                        return True
+                        return False
                 except SignInError:
                     self.db._conn.execute(
                         "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
