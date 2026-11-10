@@ -36,6 +36,28 @@ def unproved(hub, ctx, call=None, *args):
         return (call or memory_tools.memory_map)(ctx, *args)
 
 
+def owner_headers(hub):
+    cookie = sessions.redeem_login_link(
+        hub.db, sessions.create_login_link(hub.db, "owner@example.com", hub.workspace)
+    )
+    return {"Cookie": f"{sessions.COOKIE}={cookie}"}
+
+
+def unproved_route(hub, monkeypatch):
+    """Serve ``?view=map`` selections as an owner whose current role cannot be proved.
+
+    The session principal keeps its owner policy; only the map's own role re-check
+    sees a non-owner, which is the state the map-only guard exists for.
+    """
+    real = getattr(memory_tools, "_map_memory", None)
+    monkeypatch.setattr(
+        memory_tools,
+        "_map_memory",
+        lambda ctx, identifier, theme=None: unproved(hub, ctx, real, identifier, theme),
+        raising=False,
+    )
+
+
 def graph(hub, headers, suffix=""):
     status, raw = hub.raw(None, b"", method="GET", path=f"/api/memory/map{suffix}", headers=headers)
     assert status == 200, raw
@@ -157,11 +179,27 @@ def test_map_selection_obeys_private_boundary_without_changing_other_reads(hub):
     # Hidden must look identical to absent.
     absent = hub.raw(None, b"", method="GET", path="/api/memory/absent?view=map", headers=headers)
     assert (status, raw) == absent
-    owner = owner_ctx(hub)
-    assert memory_tools._map_memory(owner, identifiers[0])["text"] == "PRIVATE_OWNER_PROBE"
-    with pytest.raises(memory_tools.ToolError, match="memory not found"):
-        unproved(hub, owner, memory_tools._map_memory, identifiers[0])
-    assert memory_tools._get(owner, identifiers[0], memory_tools._boards(owner))["id"]
+    owner = owner_headers(hub)
+    for suffix in ("", "?view=map"):
+        status, raw = hub.raw(None, b"", method="GET", path=path + suffix, headers=owner)
+        assert status == 200 and json.loads(raw)["text"] == "PRIVATE_OWNER_PROBE", raw
+
+
+def test_unproved_owner_selection_of_private_drawer_equals_absent(hub, monkeypatch):
+    identifiers = seed_private(hub)
+    owner = owner_headers(hub)
+    unproved_route(hub, monkeypatch)
+    status, raw = hub.raw(
+        None, b"", method="GET", path=f"/api/memory/{identifiers[0]}?view=map", headers=owner
+    )
+    assert status == 404 and json.loads(raw) == {"error": "no: memory not found"}
+    absent = hub.raw(None, b"", method="GET", path="/api/memory/absent?view=map", headers=owner)
+    assert (status, raw) == absent
+    # The guard is map-only: the ordinary route still serves the proved owner.
+    status, raw = hub.raw(
+        None, b"", method="GET", path=f"/api/memory/{identifiers[0]}", headers=owner
+    )
+    assert status == 200 and json.loads(raw)["text"] == "PRIVATE_OWNER_PROBE"
 
 
 def test_private_drawer_metadata_does_not_change_member_counts(hub, collection):

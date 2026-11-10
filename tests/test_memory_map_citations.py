@@ -12,7 +12,14 @@ from mempalace.knowledge_graph import KnowledgeGraph
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_memory import _save
-from tests.test_memory_map_privacy import graph, owner_ctx, person, unproved
+from tests.test_memory_map_privacy import (
+    graph,
+    owner_ctx,
+    owner_headers,
+    person,
+    unproved,
+    unproved_route,
+)
 
 
 def private_thread(hub, uid):
@@ -52,8 +59,7 @@ def test_member_own_private_thread_fact_equals_absent(hub, citation):
     assert graph(hub, headers) == before
 
 
-def test_private_thread_source_is_null_in_map_only(hub, collection):
-    ctx = owner_ctx(hub)
+def test_private_thread_source_is_null_in_map_only(hub, collection, monkeypatch):
     thread = private_thread(hub, hub.admin)
     collection.add(
         ids=["thread-source"],
@@ -68,15 +74,20 @@ def test_private_thread_source_is_null_in_map_only(hub, collection):
             }
         ],
     )
+    owner = owner_headers(hub)
+    path = "/api/memory/thread-source?view=map"
     # A proved owner keeps the citation; without proof only the map drops it.
-    assert memory_tools._map_memory(ctx, "thread-source")["source"]["thread"] == thread.id
-    result = unproved(hub, ctx, memory_tools._map_memory, "thread-source")
-    assert result["text"] == "Public exact words" and result["source"] is None
-    assert thread.id not in json.dumps(result)
+    status, raw = hub.raw(None, b"", method="GET", path=path, headers=owner)
+    assert status == 200 and json.loads(raw)["source"]["thread"] == thread.id
+    unproved_route(hub, monkeypatch)
+    status, raw = hub.raw(None, b"", method="GET", path=path, headers=owner)
+    assert status == 200 and json.loads(raw)["text"] == "Public exact words"
+    assert json.loads(raw)["source"] is None and thread.id not in raw
+    status, raw = hub.raw(None, b"", method="GET", path=path[: -len("?view=map")], headers=owner)
+    assert status == 200 and json.loads(raw)["source"]["thread"] == thread.id
 
 
-def test_private_thread_topic_is_null_in_map_only(hub, collection):
-    ctx = owner_ctx(hub)
+def test_private_thread_topic_is_null_in_map_only(hub, collection, monkeypatch):
     thread = private_thread(hub, hub.admin)
     collection.add(
         ids=["thread-topic"],
@@ -91,9 +102,14 @@ def test_private_thread_topic_is_null_in_map_only(hub, collection):
             }
         ],
     )
-    assert memory_tools._map_memory(ctx, "thread-topic")["topic"] == thread.id
-    result = unproved(hub, ctx, memory_tools._map_memory, "thread-topic")
-    assert result["topic"] is None and result["source"] is None
+    owner = owner_headers(hub)
+    path = "/api/memory/thread-topic?view=map"
+    status, raw = hub.raw(None, b"", method="GET", path=path, headers=owner)
+    assert status == 200 and json.loads(raw)["topic"] == thread.id
+    unproved_route(hub, monkeypatch)
+    status, raw = hub.raw(None, b"", method="GET", path=path, headers=owner)
+    assert status == 200 and thread.id not in raw
+    assert json.loads(raw)["topic"] is None and json.loads(raw)["source"] is None
 
 
 ROOMS = {
@@ -108,6 +124,27 @@ def select(hub, headers, identifier, suffix):
     return hub.raw(
         None, b"", method="GET", path=f"/api/memory/{identifier}{suffix}", headers=headers
     )
+
+
+@pytest.mark.parametrize("form", [*ROOMS, "plain_thr"])
+def test_unproved_owner_map_selection_nulls_thread_reference_topic(
+    hub, collection, monkeypatch, form
+):
+    thread = private_thread(hub, hub.admin)
+    room = thread.id if form == "plain_thr" else ROOMS[form].format(thread.id)
+    collection.add(
+        ids=["probe"],
+        documents=["Public exact words"],
+        metadatas=[{"wing": "shared", "room": room}],
+    )
+    owner = owner_headers(hub)
+    status, raw = select(hub, owner, "probe", "?view=map")
+    assert status == 200 and json.loads(raw)["topic"] == room  # proved owner control
+    unproved_route(hub, monkeypatch)
+    status, raw = select(hub, owner, "probe", "?view=map")
+    assert status == 200, raw
+    assert json.loads(raw)["text"] == "Public exact words" and json.loads(raw)["topic"] is None
+    assert thread.id not in raw
 
 
 @pytest.mark.parametrize("form", ROOMS)
@@ -185,15 +222,11 @@ def test_member_has_no_people_overlay_and_owner_orphans_stay_visible(hub):
     assert "Orphan person" in json.dumps(unproved(hub, ctx))
 
 
+@pytest.mark.parametrize("who", ["member", "unproved_owner"])
 @pytest.mark.parametrize("lookup", ["missing", "error"])
-def test_unresolvable_selection_citations_are_null(hub, monkeypatch, lookup):
-    from commonplace import memory_tools, sessions
-    from commonplace.extensions import ToolContext
+def test_unresolvable_selection_citations_are_null(hub, monkeypatch, lookup, who):
+    from commonplace import memory_tools
 
-    uid, _ = person(hub)
-    ctx = ToolContext(
-        principal=sessions.person_principal(hub.db, uid, hub.workspace), gateway=hub.gateway
-    )
     identifier = "thr_ffffffffffffffff"
     record = {
         "drawer_id": "public",
@@ -214,9 +247,16 @@ def test_unresolvable_selection_citations_are_null(hub, monkeypatch, lookup):
         return None
 
     monkeypatch.setattr(store, "get", get)
-    result = memory_tools._map_memory(ctx, "public")
-    assert result["source"] is None and result["topic"] is None
-    assert calls == [identifier]
+    if who == "member":
+        headers = person(hub)[1]
+    else:
+        headers = owner_headers(hub)
+        unproved_route(hub, monkeypatch)
+    status, raw = select(hub, headers, "public", "?view=map")
+    assert status == 200, raw
+    body = json.loads(raw)
+    assert body["text"] == "Exact words" and body["source"] is None and body["topic"] is None
+    assert identifier not in raw and calls == [identifier]
 
 
 def test_unreadable_theme_matches_absent_for_wildcard_connection(hub):
