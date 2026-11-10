@@ -99,6 +99,7 @@ EXACT = {
     ("PUT", "/api/chat-settings"): "authenticated",
 }
 PREFIX = {
+    ("GET", "/api/instance-admin/"): "authenticated",
     ("GET", "/api/admin/instance/"): "authenticated",
     ("GET", "/api/admin/workspaces/"): "authenticated",
     ("GET", "/api/task-types/connections/"): "authenticated",

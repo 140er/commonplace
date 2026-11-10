@@ -585,6 +585,7 @@ def test_non_session_manage_capability_false(hub, credential):
     headers = negative(hub, credential)
     code, _, raw = request(hub, "/api/me", headers=headers)
     if credential == "machine":
+        assert read(hub, headers=headers)[:2] == (403, DENIED)
         from commonplace import instance_admin
         from commonplace.web import admin
 
@@ -597,7 +598,7 @@ def test_non_session_manage_capability_false(hub, credential):
         )
     else:
         assert code == 200
-        assert json.loads(raw)["can_manage_instance"] is False
+        assert json.loads(raw).get("can_manage_instance") is False
 
 
 @pytest.mark.parametrize(
