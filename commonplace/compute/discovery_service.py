@@ -144,7 +144,7 @@ class DiscoveryService:
         self.driver = driver
         self.policy = policy if policy is not None else DiscoveryPolicy()
         self.job_limits = (
-            job_limits if job_limits is not None else DiscoveryLimits(32, 1, 1, 10, 32)
+            job_limits if job_limits is not None else DiscoveryLimits(32, 1, 32, 10, 32)
         )
         self._worker = uuid.uuid4().hex
         self._stop, self._wake = threading.Event(), threading.Event()
@@ -704,7 +704,6 @@ class DiscoveryService:
         if type(observations) is not list or len(observations) > min(
             request.limits.results,
             response["source_lines"],
-            request.limits.rate_per_second * request.limits.duration_seconds,
         ):
             raise ValueError
         if response["source_bytes"] < response["source_lines"]:

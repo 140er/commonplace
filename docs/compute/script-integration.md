@@ -38,6 +38,19 @@ Cancellation sends intent; lost permit/commit/result acknowledgements reserve
 uncertainty and never automatically repeat work. Canonical tasks are not completed
 by a script result. Only bounded redacted output and artifact metadata persist.
 
+Targets retain at most64 claims at once. New claims record request expiry; under
+the target admission lock, a finished claim can be pruned only after its expiry
+plus a five-minute grace period and only with a protected regular result.json.
+Unexpired, recently expired, unfinished and legacy claims without expiry metadata
+remain, including across restarts. Expired requests are rejected before pruning;
+requests still eligible for acceptance retain replay denial. Unknown claims can
+still exhaust capacity and require independent operator reconciliation.
+
+After confirmed termination, scratch cleanup restores owned directories to0700
+and walks at most64 levels/4096 entries. Cleanup failure cannot replace the
+observed exit, output or stored result metadata. A tree beyond those bounds or a
+filesystem error can leave scratch data in the bounded tmpfs for operator cleanup.
+
 Synthetic signed receipts and the WireOnlyTarget socketpair fixture prove
 controller/API/transport wiring. They never launch host scripts and do not prove
 actual confinement. A disposable operator-provisioned non-root namespace/cgroup/

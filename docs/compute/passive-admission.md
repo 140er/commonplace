@@ -20,6 +20,11 @@ and unknown modes. Partial or lost responses after possible dispatch preserve
 uncertainty and capacity. Restart never automatically recollects. Scope ceilings
 remain permanently charged, including unused/cancelled allocations.
 
+Default jobs reserve up to32 hosts/results over10 seconds and admit up to32
+observations per second. Intake still clamps those limits to the remaining scope
+and configured workspace/gateway ceilings. Response validation allows the full
+configured result count, bounded by actual source lines and the output budget.
+
 Trusted startup explicitly sets discovery_enabled, discovery_sources and
 admission_mode=controller-ssh-permit-v1. A protected helper independently selects
 its passive admission mode and supplies its own scope resolver/ceiling/caches.

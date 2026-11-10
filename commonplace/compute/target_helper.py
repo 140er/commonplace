@@ -41,7 +41,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from .protocol import FrameIO, ProtocolDenied, canonical, exact_fields
+from .protocol import FrameIO, ProtocolDenied, canonical, exact_fields, finite
 from .script_sandbox import (
     BubblewrapSandbox,
     ScriptResult,
@@ -55,6 +55,7 @@ from .scripts import ScriptDenied, ScriptRequest, bounded_integer
 TARGET_HELPER_COMMAND = "/usr/bin/python3 -I -m commonplace.compute.target_helper"
 TARGET_CONFIG_PATH = "/etc/commonplace/compute-script-target-v1.json"
 MAX_TARGET_ATTEMPTS = 64
+CLAIM_EXPIRY_GRACE_SECONDS = 300
 MAX_WIRE_BYTES = 196608
 MAX_WIRE_FRAMES = 64
 CHUNK_BYTES = 3072
@@ -338,25 +339,53 @@ def _write_job_file(job, path, data):
         os.close(directory)
 
 
-def _remove_owned_job(directory, *, remaining=4096):
-    """Only called on the newly-created job after verified cgroup emptiness."""
+def _remove_owned_job(directory, *, remaining=4096, depth=64):
+    """Remove an owned tree after the caller has ruled out a running script."""
+    if depth <= 0:
+        raise ScriptDenied("target_capacity")
+    os.fchmod(directory, 0o700)
     with os.scandir(directory) as entries:
         for entry in entries:
             remaining -= 1
             if remaining < 0:
                 raise ScriptDenied("target_capacity")
             if entry.is_dir(follow_symlinks=False):
+                # The script owns these directories and may have removed every
+                # permission. Restore access before opening, then fchmod the fd.
+                os.chmod(entry.name, 0o700, dir_fd=directory, follow_symlinks=False)
                 child = os.open(
                     entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
                 )
                 try:
-                    remaining = _remove_owned_job(child, remaining=remaining)
+                    remaining = _remove_owned_job(child, remaining=remaining, depth=depth - 1)
                 finally:
                     os.close(child)
                 os.rmdir(entry.name, dir_fd=directory)
             else:
                 os.unlink(entry.name, dir_fd=directory)
     return remaining
+
+
+def _prune_finished_claim(attempts, name, now):
+    """Called under the attempts lock; unknown or unfinished claims stay put."""
+    claim = None
+    try:
+        claim = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=attempts)
+        document = json.loads(read_regular_at(claim, "claim.json", 8192, uid=os.geteuid()))
+        expires_at = finite(document["expires_at"])
+        if now <= expires_at + CLAIM_EXPIRY_GRACE_SECONDS:
+            return False
+        # Read through the same protected regular-file checks, not just exists().
+        read_regular_at(claim, "result.json", 8192, uid=os.geteuid())
+        _remove_owned_job(claim)
+        os.rmdir(name, dir_fd=attempts)
+        os.fsync(attempts)
+        return True
+    except (OSError, ProtocolDenied, ValueError, KeyError, TypeError):
+        return False
+    finally:
+        if claim is not None:
+            os.close(claim)
 
 
 class TargetHelper:
@@ -452,8 +481,8 @@ class TargetHelper:
         """Internal authenticated helper seam, not a public dispatch endpoint.
 
         Also verifies bytes/config here so direct package callers cannot bypass
-        checks. Claims are permanent and survive every partial upload/exception.
-        A restored claim (even incomplete) is never freed or executed again.
+        checks. Claims survive every partial upload/exception. Only finished
+        claims well past request expiry can be freed; unknown work never replays.
         """
         import fcntl
 
@@ -474,10 +503,12 @@ class TargetHelper:
                     raise ScriptDenied("unsafe_workspace")
                 count = 0
                 with os.scandir(attempts) as entries:
-                    for _ in entries:
-                        count += 1
-                        if count >= MAX_TARGET_ATTEMPTS:
-                            raise ScriptDenied("target_capacity")
+                    now = time.time()
+                    for entry in entries:
+                        if not _prune_finished_claim(attempts, entry.name, now):
+                            count += 1
+                if count >= MAX_TARGET_ATTEMPTS:
+                    raise ScriptDenied("target_capacity")
                 claim_name = hashlib.sha256(request.execution.encode("utf-8")).hexdigest()
                 try:
                     claim = _mkdir_at(attempts, claim_name)
@@ -495,6 +526,7 @@ class TargetHelper:
                         "attempt": request.attempt,
                         "digest": request.digest,
                         "script_sha256": request.manifest.script_sha256,
+                        "expires_at": request.expires_at,
                     }
                 ),
             )
@@ -528,14 +560,21 @@ class TargetHelper:
             )
             return result
         finally:
-            if job is not None:
-                if result is not None and result.termination_confirmed:
+            if job is not None and result is not None and result.termination_confirmed:
+                try:
                     _remove_owned_job(job)
                     os.rmdir(job_name, dir_fd=scratch)
-                os.close(job)
-            for fd in (scratch, claim, root):
+                except Exception:
+                    # Script-owned permissions, depth and filesystem errors
+                    # cannot erase the observed result. Leftovers remain in the
+                    # bounded scratch tmpfs for operator cleanup.
+                    pass
+            for fd in (job, scratch, claim, root):
                 if fd is not None:
-                    os.close(fd)
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
 
     @staticmethod
     def _stage_inputs(root, job, request):

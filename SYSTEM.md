@@ -276,6 +276,9 @@ without enabling execution. Central shutdown signals and joins configured worker
 The Compute screen shows collection availability, exact current scope/source forms,
 replay-safe intake, escaped observations/usage and cancellation intent. A passive
 observation never enrolls or authorizes execution on a target.
+Default collection ceilings are32 hosts,32 results,32 observations/second and10
+seconds, further clamped by scope and workspace/gateway policy. Response result
+counts are bounded by the configured results, source lines and output bytes.
 
 ### Immutable script bundles and confined target helper
 
@@ -294,6 +297,12 @@ inner connection. Its strict begin/ready/chunk/commit/result/data/done exchange
 is bounded by64 frames,192KiB and40 seconds, with exact digest checks and a
 separate cancellation frame. Private atomic uploads use protected openat paths;
 durable target claims prevent replay of incomplete or restored attempts.
+The64-claim cap counts retained claims: finished claims with recorded expiry and
+a protected result.json can be pruned only more than300 seconds after expiry.
+Unfinished, unexpired and legacy claims without expiry remain fail closed.
+Scratch cleanup restores directory permissions and is bounded to64 levels/4096
+entries after confirmed termination. Cleanup errors preserve observed results;
+leftovers remain in bounded tmpfs for operator cleanup.
 
 Execution defaults off. It requires a non-root capability-free host identity,
 mandatory namespaces, no network, a digest-bound read-only root-owned runtime,
