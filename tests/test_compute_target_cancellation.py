@@ -138,6 +138,7 @@ def test_control_loss_confirms_empty_target_cleans_and_allows_next_admission(
         else:
             stored = json.loads((claim / "result.json").read_bytes())
             assert stored["state"] == "uncertain" and not stored["cancel_requested"]
+            assert stored["termination_confirmed"] is False
         return
     assert (claim / "result.json").exists(), "control loss before spawn must persist a result"
     stored = json.loads((claim / "result.json").read_bytes())
