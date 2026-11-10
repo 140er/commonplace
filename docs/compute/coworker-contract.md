@@ -1,19 +1,19 @@
 # Coworker vertical-slice integration contract
 
-Implementation coordination, 2026-11-09. Product requirements are in the
-Compute docs workspace. This contract fixes interfaces for concurrent builders;
-it does not certify source or release review.
+2026-11-09. This contract defines coworker storage, runtime and UI interfaces.
+It describes implementation requirements, not source or release approval.
 
-## Ownership
+## Components
 
-- Storage/API builder: `commonplace/chat/coworkers/__init__.py`, `store.py`,
-  `routes.py`, `commonplace/chat/__init__.py` installation glue and
-  `tests/test_coworker_store.py`, `tests/test_coworker_api.py`.
-- Runtime builder: `commonplace/chat/coworkers/runtime.py` and
-  `tests/test_coworker_runtime.py`. Do not edit another builder's files.
-- UI builder: `commonplace/web/static/coworkers.js`, `coworkers.css`, app route
-  and navigation glue, static UI tests. Existing chat remains functional.
-- Parent owns shared SYSTEM.md/MODULES.md changes, integration and grouped checks.
+- Storage/API: `commonplace/chat/coworkers/__init__.py`, `store.py`, `routes.py`,
+  `commonplace/chat/__init__.py` installation glue, `tests/test_coworker_store.py`
+  and `tests/test_coworker_api.py`.
+- Runtime: `commonplace/chat/coworkers/runtime.py` and
+  `tests/test_coworker_runtime.py`.
+- UI: `commonplace/web/static/coworkers.js`, `coworkers.css`, app route and
+  navigation glue, and static UI tests. Existing chat must remain functional.
+- Integration: keep SYSTEM.md/MODULES.md current and run focused checks across
+  the affected components.
 
 ## Identity and storage
 

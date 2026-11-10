@@ -1,8 +1,9 @@
 # Overnight build decisions
 
-2026-11-09. These are implementation choices following a three-adviser design
-discussion. They are not independent review, gate approval or deployment permission.
-Source research is pinned to `18227ce51175dd906479fd1d79aa01c7c85b2660`.
+2026-11-09. These implementation decisions define contributor-facing product,
+runtime and transport boundaries. They do not replace independent review or
+provide deployment permission. The source contract is pinned to
+`18227ce51175dd906479fd1d79aa01c7c85b2660`.
 
 ## Deliver the coworker journey first
 
@@ -75,11 +76,10 @@ can prove that another message completes before its release; it does not require
 a ten-minute test or establish real model latency. Real provider quality/latency
 and two-hop SSH require their own evidence before those capabilities are claimed.
 
-The integration maintainer integrates the storage/API, runtime and UI commits and runs grouped
-checks. Unavailable independent reviewers limit readiness/merge claims; no review by the implementing
-agent is substituted. No deployment, live-device use, protected-branch
-change, GitHub Actions, paid fallback or merge is authorized by this document.
+Validate storage/API, runtime and UI changes together. Independent review is
+required for readiness/merge claims; review by the implementing agent is not a
+substitute. This document authorizes no deployment, live-device use, protected-branch
+change, GitHub Actions, paid fallback or merge.
 
-Separate product, runtime and transport design notes informed these defaults.
-The integration maintainer resolves ordinary integration choices while component
-implementers continue rather than opening another planning round.
+When changing these defaults, consider product, runtime and transport requirements
+together and preserve the shared interfaces described in these contracts.
