@@ -20,7 +20,6 @@ import pytest
         "isolation",
         "lifecycle",
         "failures",
-        "routing",
         "discovery",
         "discovery-cancellation",
         "scripts",

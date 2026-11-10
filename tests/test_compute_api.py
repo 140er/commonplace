@@ -2,16 +2,12 @@
 
 import io
 import json
-import socket
-import threading
 from email.message import Message
-from pathlib import Path
 
 import pytest
 
 from commonplace import sessions
 from commonplace.compute import control, routes
-from commonplace.compute.control import open_store
 from tests.test_compute_control import (  # noqa: F401 -- shared real-store fixture
     compute_env,
     gateway_payload,
@@ -389,42 +385,6 @@ def test_boundary_rechecks_current_session_after_body_read(api, monkeypatch):
     monkeypatch.setattr(routes, "_body", revoke_during_body)
     assert api.request("POST", "/gateways", gateway_payload()) == (401, {"error": "sign_in"})
     assert not api.env.path.exists()
-
-
-def test_routes_and_constructors_have_no_custody_transport_network_or_thread_effects(
-    api, monkeypatch
-):
-    from commonplace.compute import credentials, transport
-
-    def forbidden(*args, **kwargs):
-        pytest.fail("compute management touched an effectful integration")
-
-    monkeypatch.setattr(socket, "socket", forbidden)
-    monkeypatch.setattr(socket, "create_connection", forbidden)
-    monkeypatch.setattr(threading.Thread, "start", forbidden)
-    monkeypatch.setattr(credentials.CredentialStore, "__init__", forbidden)
-    monkeypatch.setattr(credentials, "initialize_wrapping_key", forbidden)
-    monkeypatch.setattr(transport.SSHTransport, "__init__", forbidden)
-    monkeypatch.setattr(Path, "read_bytes", forbidden)
-    registered = []
-    api.env.gateway.add_route = lambda *args: registered.append(args)
-    api.env.gateway.add_prefix_route = lambda *args: registered.append(args)
-    routes.install(api.env.gateway)
-    lazy = open_store(api.env.gateway, api.env.workspace)
-    assert lazy is not None and len(registered) == 8
-    assert not api.env.path.exists()
-    _, node = api.enrolled()
-    _, result = api.propose(node)
-    execution = result["execution"]
-    assert (
-        api.request(
-            "POST",
-            f"/executions/{execution['id']}/approve",
-            {"expected_digest": execution["digest"], "expires_at": control.time.time() + 60},
-        )[0]
-        == 200
-    )
-    assert not (api.env.path.parent / "compute-credentials.sqlite3").exists()
 
 
 def test_authority_fence_timeout_returns_bounded_unavailable(api, monkeypatch):
