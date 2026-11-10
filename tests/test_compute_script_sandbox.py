@@ -22,6 +22,7 @@ import pytest
 from commonplace.compute.protocol import ProtocolDenied
 from commonplace.compute.script_sandbox import (
     BubblewrapSandbox,
+    ScriptResult,
     ScriptTargetConfig,
     atomic_file,
     private_directory,
@@ -462,7 +463,7 @@ def test_finite_process_fixture_observed_exit_cancel_timeout_and_output(
         )
 
 
-def test_target_capacity_is_permanent_and_preexisting_data_is_untouched(tmp_path, monkeypatch):
+def test_target_capacity_keeps_unknown_preexisting_data_untouched(tmp_path, monkeypatch):
     import commonplace.compute.target_helper as module
 
     helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
@@ -473,6 +474,127 @@ def test_target_capacity_is_permanent_and_preexisting_data_is_untouched(tmp_path
     with pytest.raises(ScriptDenied, match="target_capacity"):
         helper.execute_verified(request(), b"print('fixture')\n", cancelled=lambda: True)
     assert (old / "evidence").read_bytes() == b"keep forever"
+
+
+def test_target_reclaims_64_expired_finished_claims(tmp_path, monkeypatch):
+    import commonplace.compute.target_helper as module
+
+    helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
+    value = request()
+    now = value.expires_at - 60
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    for n in range(64):
+        old = replace(value, execution=f"old-{n}", attempt=f"old-attempt-{n}")
+        helper.execute_verified(old, b"print('fixture')\n", cancelled=lambda: True)
+    assert len(list((root / "attempts").iterdir())) == 64
+    monkeypatch.setattr(module.time, "time", lambda: now + 3600)
+    current = replace(value, execution="new", attempt="new", expires_at=now + 3660)
+    result = helper.execute_verified(current, b"print('fixture')\n", cancelled=lambda: True)
+    assert result.state == "cancelled" and result.termination_confirmed
+    assert len(list((root / "attempts").iterdir())) == 1
+    with pytest.raises(ScriptDenied, match="admission_expired"):
+        helper.execute_verified(value, b"print('fixture')\n", cancelled=lambda: True)
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_target_keeps_claims_without_result_and_recent_or_live_claims(
+    tmp_path, monkeypatch, finished
+):
+    import commonplace.compute.target_helper as module
+
+    helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
+    value = request()
+    now = value.expires_at - 60
+    monkeypatch.setattr(module.time, "time", lambda: now)
+    helper.execute_verified(value, b"print('fixture')\n", cancelled=lambda: True)
+    claim = next((root / "attempts").iterdir())
+    if not finished:
+        (claim / "result.json").unlink()
+    with pytest.raises(ScriptDenied, match="replay_denied"):
+        helper.execute_verified(value, b"print('fixture')\n", cancelled=lambda: True)
+    for elapsed in (61, 3600):
+        monkeypatch.setattr(module.time, "time", lambda elapsed=elapsed: now + elapsed)
+        other = replace(
+            value,
+            execution=f"new-{elapsed}",
+            attempt=f"new-{elapsed}",
+            expires_at=now + elapsed + 60,
+        )
+        helper.execute_verified(other, b"print('fixture')\n", cancelled=lambda: True)
+        assert claim.exists() is (not finished or elapsed == 61)
+
+
+@pytest.mark.parametrize("tree", ["mode_zero", "read_only", "deep"])
+def test_script_owned_cleanup_cannot_destroy_observed_result(tmp_path, monkeypatch, tree):
+    helper, root = cancelled_storage_helper(tmp_path, monkeypatch)
+    deepest = None
+    observed = ScriptResult(
+        "observed_exit",
+        "exited",
+        7,
+        termination_confirmed=True,
+        stdout=b"observed stdout",
+        stderr=b"observed stderr",
+    )
+
+    def run(value, script, job, **kwargs):
+        nonlocal deepest
+        directory = os.open(job, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for _ in range(1100 if tree == "deep" else 1):
+                os.mkdir("d", mode=0o700, dir_fd=directory)
+                child = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            atomic_file(directory, "file", b"script-owned")
+            if tree != "deep":
+                os.fchmod(directory, 0 if tree == "mode_zero" else 0o500)
+            deepest = os.dup(directory)
+        finally:
+            os.close(directory)
+        return observed
+
+    monkeypatch.setattr(helper.sandbox, "run", run)
+    try:
+        result = helper.execute_verified(request(), b"print('fixture')\n")
+        assert result == observed
+        stored = json.loads(
+            next((root / "attempts").iterdir()).joinpath("result.json").read_bytes()
+        )
+        assert stored["state"] == "observed_exit" and stored["exit_code"] == 7
+    finally:
+        # Restore/remove a deliberately hostile fixture even when the baseline
+        # loses its result. Walk upwards with bounded descriptors, not recursion.
+        if deepest is not None:
+            try:
+                os.fchmod(deepest, 0o700)
+                try:
+                    os.unlink("file", dir_fd=deepest)
+                except FileNotFoundError:
+                    pass
+                for _ in range(1100 if tree == "deep" else 1):
+                    parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=deepest)
+                    os.close(deepest)
+                    deepest = parent
+                    os.rmdir("d", dir_fd=deepest)
+            except FileNotFoundError:
+                pass
+            finally:
+                os.close(deepest)
+
+
+def test_cleanup_io_failure_preserves_observed_result(tmp_path, monkeypatch):
+    import commonplace.compute.target_helper as module
+
+    helper, _ = cancelled_storage_helper(tmp_path, monkeypatch)
+    observed = ScriptResult("observed_exit", "exited", 0, termination_confirmed=True, stdout=b"ok")
+    monkeypatch.setattr(helper.sandbox, "run", lambda *args, **kwargs: observed)
+
+    def unavailable(*args, **kwargs):
+        raise OSError("synthetic cleanup failure")
+
+    monkeypatch.setattr(module, "_remove_owned_job", unavailable)
+    assert helper.execute_verified(request(), b"print('fixture')\n") == observed
 
 
 def test_cancel_frame_is_intent_without_fabricated_exit(tmp_path, monkeypatch):

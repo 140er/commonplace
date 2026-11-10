@@ -314,6 +314,54 @@ def test_real_helper_roundtrip_exact_public_projection_no_inner_target(discovery
         assert conn.execute("SELECT count(*) FROM nodes").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("host_count", [4, 32])
+def test_default_job_limits_collect_all_in_scope_hosts(discovery_env, monkeypatch, host_count):
+    state = discovery_env
+    state.service.stop()
+    state.scope = state.env.store.create_scope(
+        state.env.principal,
+        **state.env.auth,
+        **scope_payload(
+            state.env,
+            state.gateway["id"],
+            limits={
+                "hosts": 32,
+                "concurrency": 1,
+                "rate_per_second": 32,
+                "duration_seconds": 10,
+                "results": 32,
+            },
+        ),
+    )
+
+    def read(cache, source, **kwargs):
+        kwargs["checkpoint"]()
+        data = b"".join(
+            f"10.20.0.{n} 0x1 0x2 02:00:00:00:00:{n:02x} * eth0\n".encode()
+            for n in range(2, host_count + 2)
+        )
+        return CacheSnapshot(source, data, state.env.clock.now)
+
+    monkeypatch.setattr(SyntheticCache, "read", read)
+    service = configure(
+        state.env.gateway,
+        state.env.workspace,
+        store=state.store,
+        **{**state.settings, "job_limits": None},
+    )
+    assert service.start(background=False)
+    try:
+        item, _ = state.submit()
+        assert service._run_once()
+        result = state.get(item["id"])
+        assert {row["address"] for row in result["observations"]} == {
+            f"10.20.0.{n}" for n in range(2, host_count + 2)
+        }
+        assert result["state"] == "completed" and result["reason"] is None
+    finally:
+        service.stop()
+
+
 def test_exact_intake_replay_conflict_and_durable_charges(discovery_env):
     state = discovery_env
     first, _ = state.submit()
