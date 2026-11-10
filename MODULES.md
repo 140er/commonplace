@@ -1091,7 +1091,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Holders may annotate an inactive status line without activation.
 
-  - Subagent asks on released cards reach the live board coordinator, which may answer or escalate with a reason; absent a live coordinator the owner route remains, including asks already routed before a coordinator becomes unavailable or is replaced.
+  - All agent asks and review questions default to the authorized live board coordinator. Explicit person_reason is audited and routes to the owner; completion reviews and person handoffs retain their route. Missing or unavailable coordinators fall back to the owner without rewriting asks. Only a currently authorized coordinator may withdraw its own agent-directed decision to todo/doing; recipient, requester and current board appointment are checked. Person decisions and other requesters remain protected, and agents cannot answer their own asks. Withdrawal preserves history.
 
 - **How it fails:**
 
@@ -1111,7 +1111,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
-  - `tests/test_commonplace_subagent_asks.py` checks question routing and recipient authority.
+  - `tests/test_commonplace_subagent_asks.py` and `tests/test_commonplace_agent_asks.py` check generic question routing, owner fallback, explicit person reasons, recipient authority and withdrawal guards through MCP and HTTP.
 
 
 ## runner
