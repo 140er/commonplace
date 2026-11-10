@@ -12,6 +12,407 @@ entry was written.
 
 ## Decisions
 
+### Coworker UI lifecycle
+
+`/app/#/coworkers` adds a discoverable private conversation surface without
+replacing existing project chat. Server data drives bot profiles, DM/group
+membership, messages, jobs/task links and scoped memory. Multiple-bot groups
+require an explicit or unambiguous recipient; ordinary group discussion starts
+no bot broadcast. Message receipt and pending work are distinct from answers; canonical task
+admission is labeled Task created, not task completion.
+Conversation controls wait for both the detail and authorized bot directory,
+including when detail arrives first. Input limits match server message/memory
+bounds. The composer remains available during background jobs; ambiguous HTTP retries
+reuse their original request key. Conversation changes, lost access, workspace
+changes and sign-out invalidate older responses and clear private views. No
+worker identity, model response or live execution is fabricated in this UI.
+An addressed human message retains its person author even when `bot_id` names
+the recipient. Bot names, badges and styling require the exact matching bot actor.
+Human group invitations currently use explicit existing workspace user IDs;
+a member directory is not implemented by this slice.
+
+### Coworker background runtime
+
+The worker starts with the chat installation and stops before database close.
+Four bounded front threads rotate registered workspaces and preserve each
+conversation/bot's order; at most two calls enter one configured provider endpoint.
+Model requests have a 3.5 second timeout, bounded input/output and atomic per-day
+attempt accounting. This is a responsiveness limit, not measured real-provider
+latency. An endpoint circuit opens after repeated failures; no silent provider
+fallback or automatic failed-turn replay occurs.
+Board-less conversations use local providers only; inherited workspace hosted
+settings are refused with `needs_configuration` before context preparation,
+credential resolution or provider calls. Hosted conversations associated with
+a board still require the existing project Turn on; no coworker Turn on exists.
+
+The internal Store.runtime_job rechecks the exact originating session, live
+membership, bot binding, running state and memory visibility before context is
+sent and before publication. Its session digest is never in public job views.
+Only the conversation's bounded history and explicit verbatim memory enter model
+context. Recall ranks the at-most-100 visible memories by query word overlap
+with recency as a tie breaker, examines at most 32 ranked candidates, and includes
+at most five whole records totaling 4000 characters; no record is summarized
+or cut to fit. This bounded lexical selection does not promise exhaustive recall. No workspace-wide memory search or tool execution is granted to model
+output. Explicit `/task TITLE` plus optional exact body admits a canonical todo
+card on the conversation's authorized board; task_created acknowledges admission,
+not task completion. When existing orchestration and a runner are configured,
+the internal person-owner start_chat_task checks the opaque canonical origin,
+current card/configuration and caller authority, then uses the canonical fenced
+runner admission with a stable hashed origin key. No broad control/boards lock
+spans admission. Replay reuses the same runner job; configuration changes conflict.
+Unconfigured or refused admission preserves the real card and a typed reason.
+Runner queued/leased/starting/started/uncertain/cancelled facts are distinct from
+the finished front turn; the UI names these admission outcomes and links the
+canonical task for current progress. This retains the existing runner admission
+snapshot/fence semantics, not a new instantaneous revocation guarantee.
+Execution still requires existing accepted runner configuration and actual worker
+launch. These tests exercise durable admission, not a real runner process. A lost acknowledgement does not trigger
+blind replay. Tests use blocked synthetic providers; no production model latency
+or real worker launch is claimed by these checks.
+
+### Coworker conversation storage and REST boundary
+
+The coworker app adds private DM/group audiences alongside existing Space chat;
+it does not mirror private messages into public board timelines. Its
+workspace-local `coworkers.sqlite3` uses the existing workspace crypto connection
+and creation gates; no plaintext-encryption guarantee beyond that configured
+mechanism is implied. Bot presentation/configuration grants no worker connection
+or execution rights. Existing connections, workspace users and canonical cards
+remain authoritative. Bot creation is owner-only.
+
+The person-session `/api/coworkers` routes require a mandatory exact allowed
+Origin and bounded non-simple JSON request for writes. They persist original
+messages and addressed jobs atomically without provider calls. Reads and writes
+require current conversation membership, with foreign/private IDs concealed.
+Jobs retain only the originating session digest, never the cookie, and recheck
+that authority before dispatch/publication. Exact retries return stored intake;
+changed text/recipient under the same key conflicts. Multi-bot group messages
+without a single resolved target do not wake every bot. Explicit conversation
+memories remain verbatim; tombstones hide active recall and fence responses
+created with older visibility. Pending jobs survive restart; uncertain running
+jobs become interrupted instead of blind redispatch. Runtime installation is
+separate; a stored pending job is not evidence of model response or worker launch.
+
+### Coworker task intake idempotency
+
+The internal person-only `BoardService.ensure_chat_task(origin_key, request)`
+creates the canonical card and actor-scoped opaque origin binding in one boards
+transaction. Exact request retries return the same visible card; changed board,
+title or body conflicts. Distinct origin keys preserve legitimately repeated
+requests. No private conversation text is stored in the binding or copied into
+Space chat; the caller must obtain explicit intent before sharing requested task
+text with the selected board. This internal seam adds no public agent tool or
+permission and rechecks existing board write authority on replay.
+
+### Canonical work progress in coworker conversations
+
+Existing conversation GETs add per-viewer job.task_progress snapshots from the
+canonical card, exact originating runner admission, task events and visible
+evidence. Nothing is copied into shared chat messages and no GET launches,
+approves or updates work. The existing card remains the decision/artifact flow.
+Fresh origin and viewer sessions, membership, visibility version, bot binding,
+conversation board and canonical task/origin authority fence source reads and
+publication. Lost front acknowledgements recover the existing origin/card link
+without relaunching its runner. Legacy jobs without a captured binding fail closed.
+
+Each response projects at most20 tasks, selects six events from32 candidates and
+five evidence candidates, and omits whole fields over2000 bytes with an explicit
+notice. Source text remains exact except existing credential redaction. Runner
+admission, task status, comments, recorded decisions and evidence are separate
+facts; snapshots do not prove execution or instantaneous revocation. The composer
+stays available while the conversation refreshes canonical progress.
+
+### Targeted coworker controls
+
+`POST /api/coworkers/jobs/<originating-job-id>/controls` accepts only explicit
+follow_up/stop intents with actor/operation request keys. Same-origin person
+sessions, current conversation/origin/viewer/bot/visibility and exact canonical
+origin/run bindings are rechecked before admission, effect and publication. A
+workspace-crypto-aware task_controls journal commits a conservative uncertain
+receipt before crossing stores; exact retries return that receipt and never
+repeat possibly applied effects. Changed payloads conflict. Limits:4000 instruction
+characters,100 immutable intents per job and10 projected receipts per viewer.
+
+Follow-ups save only the explicit exact words as canonical task comments and
+report that worker application is unsupported. Queued/leased stops use canonical
+runner cancellation to fence launch. Starting stops record intent with termination
+unconfirmed; already-started worker stop is unsupported by current runner APIs.
+No control launches replacement work, approves a decision or treats task/front
+completion as proof of termination. The UI retains stable attempts through lost
+acknowledgements and reconciles receipts on reload while keeping the composer usable.
+
+### Compute management REST and durable authority
+
+`/api/compute` is installed with the gateway and admits only cookie-person current
+workspace owners, including reads. Mutations reuse the mandatory exact Origin and
+bounded JSON boundary. Every store operation rechecks the exact session, current
+owner membership and canonical board/task authority; PATs cannot impersonate
+owners. Workspace-local crypto-aware compute.sqlite3 contains public enrollment
+metadata, scoped grants, proposals, approvals and append-only audit; credential
+custody is separate and is never opened by these routes. Constructors remain lazy.
+
+Gateway/node creation requires explicitly confirmed full public host-key bytes;
+records remain pending_verification with no public verified-state setter. Scopes
+are passive-only and bind exact current owner/optional live connection, project,
+gateway and canonical task. Bounds: lists100, gateways200, nodes/scopes1000,
+executions2000; scope expiry at most one hour, proposal15minutes, approval5minutes
+and no later than proposal expiry. Exhaustion conflicts without deleting history.
+Exact user/request-key/payload replay reuses a proposal; changed payload conflicts.
+Approval recomputes the entire binding/digest and current authority before storing
+consent. Epoch/key/task/session changes invalidate it. An enabled executor may
+consume approval and execute automatically in the background. Management requests
+do not perform network I/O directly. Cancellation can record intent without
+confirming remote termination.
+
+### Compute management interface
+
+The owner-only `#/compute` screen consumes authenticated Compute inventories and
+existing project lists. Gateway/target forms record full public host keys and
+explicit confirmation, never private keys. Enrollment remains pending verification.
+The UI can shape passive scopes, revoke them, propose exact system.info.v1 actions
+or immutable workspace.script.v1 bundles, and confirm an exact SHA256 digest.
+It displays automatic worker availability and labels approval as permission for
+automatic background execution over SSH without another dispatch confirmation.
+Approval does not confirm that execution started or completed. Discovery
+cancellation supports queued, claimed, dispatching and uncertain attempts, with
+intent distinguished from confirmed termination. Server authority, pin verification
+and digest recomputation remain mandatory. Client validation is not authorization.
+
+Every visit binds responses to its exact session object, workspace, actor and
+route. Route departure/sign-out/session expiry abort requests and clear form and
+approval state; stale responses cannot populate another visit. Only proposal
+creation has idempotent retry identity; ambiguous other mutations require inventory
+reload. The management API is installed through the normal extension list;
+service/execution wiring remains separate. Full Chromium integration exercises
+the real gateway, workspace store and proposal approval lifecycle with synthetic
+enrollment data and no remote connections.
+
+### Passive gateway cache discovery component
+
+PassiveCollector reads only explicitly configured trusted cache suppliers under
+fresh exact DiscoveryContext/NetworkScope checks. Active methods, unknown sources,
+foreign actors/tasks/projects/gateways, expired/revoked or expanded grants deny.
+ARP/IPv6 neighbor parsing keeps numeric address/interface and bounded inert
+metadata, preserving gateway/source/time provenance through cautious deduplication.
+Host/rate/result/time/source-byte/line/output ceilings and cancellation are checked
+throughout each collection. Blocking trusted callbacks cannot be forcibly stopped;
+durable cross-job quotas/persistence and controller integration are separate.
+
+OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
+subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
+typed collect_passive only when collector, independent protected ceiling and
+fresh scope resolver are all explicitly configured. Default remains unavailable.
+Synthetic tests inspect no current host/LAN cache. Observations grant no enrollment
+or execution rights and cannot become commands or memory instructions.
+
+### Durable Compute execution component
+
+The default-off ExecutionService uses signed, exact enrollment receipts from
+separately pinned provisioning public keys; a browser owner cannot assert live
+verification. Receipts expire within one hour and rebind proposals on verification
+changes. A participating AuthorityFence must cover control, boards, Compute,
+custody, enrollment and gateway admission. Explicit trusted ExecutionConfig now
+installs bounded cross-process POSIX locking, durable authority epochs and
+persisted SQL guards for central local authority writers. Private registered
+functions reject unparticipating legacy connections; missing/replaced participant
+files, changed guards or unknown workspaces deny. ControlDB locks/transactions,
+BoardStore connections/transactions, Compute journals/enrollment and custody
+transactions participate. UPDATE guards cover permission-relevant columns;
+connection last-used timestamps, progress counters and display text are excluded.
+Real heartbeats renew claim_until, and sign-ins/new cards insert rows, so they can
+still advance the epoch. In-flight attempts re-read exact current authority and
+active custody through _fresh instead of comparing the coordinator-wide epoch.
+Task snapshots exclude the renewable claim_until, so a holder's heartbeat or
+comment on the bound card preserves agent-bound discovery evidence. Assignee,
+status and the canonical claim_expired_at marker remain bound. Older bindings
+compare without claim_until while preserving original consent and permit bytes.
+Task-snapshot presence must match; task-less approval grants no dispatch.
+Permits retain the request epoch; session/connection/membership/consent/task/origin
+release or credential revocation still denies effects and publication. Exact legacy
+guards are migrated under the coordinator; unknown guards still fail closed. These local domains exclude gateway_admission. Explicit trusted
+admission_mode=controller-ssh-permit-v1 installs a separate wire adapter:
+request/ready/go/challenge, fresh fenced durable one-use permit issuance,
+lock release before send, independent helper validation/replay consumption,
+then opened and the independently pinned inner SSH hop. Mode changes alter the
+canonical approval digest. Controller and helper journals preserve earlier
+records through additive migration, and issued-permit uncertainty keeps its
+capacity reservation. Unconfigured execution still stops with
+gateway_admission_unintegrated. The fixed-operation channel does not enable
+passive collection, which needs a separate purpose-bound admission path. No instantaneous
+remote revocation or filesystem rollback guarantee is claimed.
+
+Approved actions are consumed once into append-only identity-bound execution_runs
+before keys or network are opened. Exact origin/approver sessions, fresh canonical
+authority, pinned enrollment, credential versions and expiries are rechecked at
+stages. Claims cannot be deleted/rebound or automatically replayed. Stage 4 commits
+before either exec channel opens. Recovery and returned failures below stage 4
+settle known non-runs. Missing permits prove non-runs only in wire mode; legacy
+stage-4 unknowns retain capacity. Authenticated confirmed script non-runs settle too.
+Real uncertain outcomes retain capacity until the trusted local operator CLI
+records external reconciliation, its private note and an audit event through the
+fence (terminal reason operator_settled). The CLI checks every participant's
+expected guards before attaching; missing guards cannot initialize an unrelated
+workspace. No HTTP settlement route is exposed.
+Pre-effect cancellation can be confirmed;
+later cancellation is intent until exact exit evidence arrives. Canonical tasks
+are not marked complete by probe completion. Shutdown requests cancellation and
+reports thread completion; it cannot force-stop Python threads or prove remote kill.
+
+Custody opens lazily from an already-provisioned private workspace file and
+external wrapping-key path. A handle rechecks current binding at actual SSH auth.
+Results remain workspace-local: at most4096 bytes are considered for UTF-8
+redaction before persistence, binary/oversize output is omitted, serialized
+evidence is at most8192 bytes. Lost audience authority withholds remote text.
+The owner UI displays admitted/running/unknown/observed-exit facts, redacted
+evidence and cancellation intent separately from stored proposal approval.
+Trusted per-workspace startup configuration wires service installation and
+shutdown without key initialization. Host shutdown refuses to report clean if
+worker threads remain. Independent provisioning and
+external reconciliation/restore procedures remain separate requirements.
+Compute management fence timeouts return a bounded503 authority_unavailable.
+
+### Durable passive discovery
+
+The owner-session `/api/compute/discoveries` API records exact scoped intake and
+serves workspace-local observation history. Its crypto-aware
+compute-discovery.sqlite3 ledger permanently charges reserved scope ceilings;
+unused, cancelled and denied allocations are not refunded. Uncertain attempts
+retain concurrency/rate slots and never automatically recollect. Backups require
+independent reconciliation before restoring collection.
+
+Trusted explicit discovery startup reuses the registered workspace authority fence,
+custody and pinned outer SSH helper, with separate signed gateway discovery
+receipts. Imports and HTTP requests never load keys, read host caches or connect.
+A local lease alone does not qualify as remote admission participation. Explicit
+trusted discovery_enabled, discovery_sources and controller-ssh-permit-v1 mode
+select the separate purpose-bound passive adapter: ready, durable collection
+intent, challenge, fresh fenced one-use permit, helper validation and durable
+replay consumption before any cache supplier call. Exact scope, request digest,
+attempt, epochs, source configuration and short expiry are bound on both peers.
+Discovery completion validates the durable permit independently of publication
+freshness, releasing its slot while withholding observations after authority loss.
+No issued permit means failed with slot=0. Uncertain controller discoveries have
+fenced operator recovery after restart, with an audit note and terminal reason
+discovery_operator_settled; quotas, attempts and permits remain intact. Discovery attempts/permits use immutable durable journals; helper replay records
+have a separate passive namespace and preserve existing execution records.
+Discovery-only startup installs the same required local authority participation
+without enabling execution. Central shutdown signals and joins configured workers.
+The Compute screen shows collection availability, exact current scope/source forms,
+replay-safe intake, escaped observations/usage and cancellation intent. A passive
+observation never enrolls or authorizes execution on a target.
+Default collection ceilings are32 hosts,32 results,32 observations/second and10
+seconds, further clamped by scope and workspace/gateway policy. Response result
+counts are bounded by the configured results, source lines and output bytes.
+
+### Immutable script bundles and confined target helper
+
+The workspace.script.v1 component stores exact UTF-8 Python source in a
+crypto-aware immutable bundle store (32KiB/script,256 bundles,100 listed).
+Manifests bind existing identities/enrollment, exact script/runtime digests,
+arguments, input hashes/paths, output paths, unprivileged runtime and finite
+resource limits. Value construction grants no authority. Owner script REST and existing Compute approvals/ExecutionService now consume
+these bundles. Trusted scripts_enabled and ScriptRuntimeConfig bindings require
+an independently signed ScriptRuntimeReceipt, accepted only through the private
+offline verifier seam and stored in guarded enrollment_verifications.script_runtime.
+No public request supplies runtime identity, confinement flags, roots or keys.
+
+A separately provisioned target helper uses a fixed SSH command after the pinned
+inner connection. Its strict begin/ready/chunk/commit/result/data/done exchange
+is bounded by64 frames,192KiB and40 seconds, with exact digest checks and a
+separate cancellation frame. Private atomic uploads use protected openat paths;
+durable target claims prevent replay of incomplete or restored attempts.
+The64-claim cap counts retained claims: finished claims with recorded expiry and
+a protected, parseable terminal result.json with termination_confirmed exactly
+true can be pruned only more than300 seconds after expiry. Unconfirmed/uncertain,
+malformed/unreadable, unfinished, unexpired and legacy claims remain fail closed.
+Before creating a claim, scratch needs16 available inodes and1MiB available block
+space; low resources/statistics failures deny as sandbox_unavailable, an
+authenticated known non-run. This check does not reserve space across jobs.
+After confirmed termination, iterative cleanup restores directory permissions
+and removes up to4096 entries without a depth cutoff or descriptors per ancestor.
+Cleanup I/O errors preserve observed results; later admissions still require
+resource headroom.
+Lost control-channel receives become target cancellation intent, including before
+spawn. After child/pipe exit, group emptiness is polled within the remaining
+original one-second kill bound. One final observation determines state and
+confirmation; populated groups remain uncertain/unconfirmed with scratch
+retained. Running groups must be observed empty before scratch cleanup; failures
+with no spawned process are confirmed non-runs. Target result persistence/cleanup
+does not settle a controller run whose result acknowledgement was lost.
+
+Execution defaults off. It requires a non-root capability-free host identity,
+mandatory namespaces, no network, a digest-bound read-only root-owned runtime,
+bounded tmpfs, delegated cgroup-v2 CPU/memory/pids controls and descendant kill.
+No raw host-shell fallback exists. Missing provisioning or kernel features deny.
+Results distinguish observed exit, cancellation intent and unknown termination;
+controller projections redact bounded output and expose artifact metadata only.
+Actual positive confinement has not been verified without a separately
+provisioned disposable fixture; deterministic wire/storage tests do not prove it.
+The owner script UI follows the frozen REST surface for exact UTF-8 upload,
+source/manifest inspection, replay-safe creation and immutable bundle proposals.
+No runtime roots, verification flags, keys or upload inputs appear in the form;
+real API/browser tests cover upload, source inspection, immutable proposal,
+exact approval and reconnect using signed synthetic runtime metadata. Actual
+outer/inner SSH wire fixtures never execute host scripts. Logical manifest epoch
+is None; the fresh upload request carries authority epoch and approval digest,
+covered by the outer immutable operation and purpose-bound one-use permit.
+Old integer-epoch script documents and the fixed-probe wire remain unchanged.
+
+### Isolated Compute custody and SSH transport
+
+Compute is an opt-in dependency extra (Paramiko >=5.1,<6); installation enables
+no routes, listeners or remote effects. The isolated credential store uses
+service-private POSIX safe-open checks, AES-256-GCM wrapped workspace keys and
+metadata-bound encrypted Ed25519 credentials. Explicit wrapping-key initialization
+is separate from database initialization/open. Missing material never regenerates
+a key over ciphertext; only public enrollment records leave custody. Pending keys
+require explicit activation; exact-bound authority callbacks, expiry and local
+revocation are checked again when a transport handle yields private bytes.
+Python memory zeroization and remote authorized-key removal are not guaranteed.
+Offline wrapping-key rotation/recovery and the OS worker/service isolation remain
+integration prerequisites, not implemented release claims.
+
+The helper/transport modules default disabled and accept only protected enrolled
+numeric routes. Full outer gateway and nested target host keys are compared
+before their separate public-key authentications. No ambient SSH config, agent,
+password, generic forwarding API or direct-target fallback is used. Only the
+literal system.info.v1 probe is compiled. Bounded exact JSON control frames
+(maximum 8KiB), five-second admission challenges and durable replay consumption
+precede route opening. Defaults/ceilings: 30-second runtime, five-second connect,
+64KiB combined output, 1MiB tunnel bytes and two active tunnels per gateway.
+Failed opens and successful target.close release helper concurrency, including
+after abnormal relay endings, while retaining replay tombstones. Close failures
+and crash-orphaned consumed rows stay counted. Named helper tunnel/passive rows
+have operator recovery under the same SQLite admission fence, with private audit
+notes and operator_closed state. Late completion cannot re-reserve them. Closure
+alone does not prove target process termination.
+Remote output is raw bounded bytes and must pass redaction/audience checks before
+publication. Passive observation sources and scripts are deliberately unavailable.
+
+Synthetic socketpair fixtures exercise actual Paramiko handshakes and encrypted
+custody keys through two SSH hops, successful fixed-probe output, and independent
+wrong-pin refusal before the affected authentication. They use no network/device
+endpoint. Public enrollment/approval APIs, controller authority fencing,
+background execution/outbox integration and deployment prerequisites are still
+required before enabling this transport for users. The pure callbacks do not
+claim atomic cross-store revocation. Custody filesystem tests require native
+POSIX ownership semantics. Environments that remap ownership must fail the
+safe-open checks.
+
+### Compute discovery domain boundary
+
+`commonplace.compute.scopes` contains pure, inert validation only. It does not
+register gateway routes, read credentials, scan networks, enroll nodes or execute
+commands. Scope authority must come from authenticated server-side approvals;
+constructing a value is not a grant. At dispatch, workspace, project, gateway,
+user, agent and task must all match; expiry is exclusive and revocation denies.
+CIDRs are canonical, limited to RFC1918/IPv6 ULA, with at most 16 networks and
+interfaces. Only approved passive/active methods are eligible; no active method
+is enabled implicitly. Host/rate/concurrency/time/result ceilings are finite
+positive integers (4096 hosts/results, 64 concurrent, 100 per second, 300 seconds
+maximum); the future dispatch service must account for aggregate consumption.
+No remote transport or execution capability is claimed by this domain module.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck

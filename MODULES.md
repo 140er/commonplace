@@ -236,6 +236,10 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - Compute control narrows and migrates permission UPDATE guards, releases closed helper tunnels and confirmed non-run reservations, and settles permit-bound discovery independently of publication. In-flight _fresh checks cover current authority and custody rather than the global claim epoch; stage 4 commits before exec. `compute/operator.py` requires existing guards before attaching and provides fenced controller execution/discovery and helper tunnel/passive recovery with private audit notes; no HTTP route. Regression and safety coverage: `tests/test_compute_control_regressions.py` and `tests/test_compute_control_settlement.py`.
+  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-agent council decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel builder boundaries and isolated local-running instructions in `docs/compute/`.
+  - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
+
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
@@ -327,6 +331,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Plain pytest excludes the `timing` marker from behavior checks; explicit timing selection remains available for serial informational measurements.
 
+  - The optional compute extra adds Paramiko >=5.1,<6 and cryptography without enabling remote access; uv.lock records its resolved dependency set.
   - `uv sync --extra dev` reproduces the locked environment; `ruff check` and `ruff format --check` define style; the coverage threshold in `pyproject.toml` is the gate.
 
 - **How it fails:**
@@ -401,12 +406,16 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Hooks fail open and stay within the hook time budget; manifests reference files that exist; no integration enables an external provider by default.
+  - Conversation autosave preserves user and assistant transcript text verbatim. Hook work runs outside the turn handler, serializes per session, and coalesces repeated hooks that are already queued.
 
 - **How it fails:**
 
   - A manifest that points at a moved file breaks installation for that agent only; a slow hook delays the user's session.
+  - Serialization tests must control fake subprocess completion explicitly: elapsed sleeps cannot prove that a hook is still running when the scheduler is busy.
 
 - **Tests:**
+
+  - `tests/test_dsh_plugin.py` runs the plugin Node suite; hook serialization uses explicit fake subprocess completion rather than elapsed sleeps, preserving transcript and deduplication assertions.
 
   - `tests/test_claude_plugin_hook_config.py`, `tests/test_claude_plugin_hook_wrappers.py`, `tests/test_antigravity_plugin_manifest.py`, `tests/test_claude_marketplace_skills.py`, `tests/test_hooks_cli.py`.
 
@@ -548,6 +557,12 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
+  - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
+  - Coworker regression witnesses refuse workspace hosted providers for owner/member board-less DMs and render human rows carrying `bot_id` with person authors; matching bot actors retain bot labels and styling.
+
+  - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -872,6 +887,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Canonical Space REST aliases mapped to existing board tool authority.
 
+  - Trusted Compute startup configuration wraps central ControlDB authority access in the bounded cross-process coordinator, with persisted guards and durable epoch invalidation; no configuration leaves existing behavior unchanged.
+  - The gateway installs inert owner Compute management routes alongside chat; this extension setup neither loads credential custody nor starts remote execution.
+
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
@@ -1051,6 +1069,10 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/callstack.py`
 - **Owns:**
+
+  - Atomic, person-authorized chat-task origin bindings in the canonical boards transaction, with opaque actor-scoped dispatch keys and conflicting-intent refusal.
+  - Configured BoardStore connections participate in the concrete Compute authority coordinator before authority writes and attach persisted SQL guards.
+  - Internal start_chat_task validates that canonical origin and requests the existing configured person-owner fenced runner admission with a stable hashed origin key; refusal leaves the card intact.
 
   - Canonical Space REST response projection and typed creation refusals.
 
@@ -1444,14 +1466,76 @@ Format (read by `commonplace orch docs-check`):
   - The `tests/test_handoff_` files, `tests/test_commonplace_continuity_unit.py`.
 
 
+## compute
+
+- **Paths:** `commonplace/compute/`
+- **Owns:**
+
+  - Pure validation of explicitly approved, finite gateway discovery scopes.
+  - Immutable crypto-aware script bundles/manifests, strict chunked target-helper wire and a default-off concrete namespace/cgroup/tmpfs-confined Python runtime; owner script REST, runtime receipts and existing exact approvals/one-use pinned SSH execution integrate those bundles.
+  - Bounded passive ARP/IPv6 cache parsing and typed helper support, plus durable crypto-aware discovery reservations, owner-session REST, pinned outer SSH adapter and explicit default-off lifecycle.
+  - Default-off durable execution attempts, independently signed enrollment receipts, lazy custody handles, exact-stage checks and bounded redacted evidence; a concrete local cross-process fence guards registered authority writers and a separate explicitly configured SSH challenge/one-use permit exchange authorizes fixed-operation admission without upgrading local lease domains.
+  - Owner-session REST and workspace-local durable gateway/node/scoped-grant/action/approval metadata and append-only audit, reusing canonical board/task authority.
+  - Isolated encrypted SSH credential custody and disabled-by-default typed helper protocol, durable replay journal and pinned two-hop SSH transport.
+
+- **Promises:**
+
+  - Inventory reports current automatic executor availability without opening transport or custody. Approval explicitly authorizes automatic background execution over SSH; it is not a no-dispatch promise. Discovery cancellation shares the queued/claimed/dispatching/uncertain state predicate and distinguishes intent from confirmed termination.
+
+  - Script source remains exact and immutable; target uploads reject path/link/digest substitution and durable claims never replay unknown work. Missing mandatory unprivileged containment fails closed, never falls back to host shell.
+  - Target claims are pruned only with a protected, parseable confirmed terminal result and recorded expiry more than300 seconds past; unknown, malformed, legacy and unfinished claims retain replay denial. Before claim creation, scratch requires16 available inodes/1MiB available space or returns sandbox_unavailable as an authenticated non-run. Iterative cleanup restores directory permissions, removes up to4096 entries with constant descriptor use/no depth cutoff and cannot replace observed results on I/O failure.
+  - Lost control-channel receives request target cancellation; after child/pipe exit, emptiness polling uses only the original one-second kill budget. One final observation determines state and confirmation; populated groups remain uncertain/unconfirmed without cleanup. Binding mismatches remain errors. Setup/spawn failures without a process are confirmed non-runs. A lost result acknowledgement still leaves controller execution uncertain.
+  - Exact workspace/project/gateway/user/agent/task context, canonical RFC1918 or IPv6 ULA networks, approved interfaces/methods and unexpired/unrevoked grants are required for destination authorization.
+  - Discovery admissions permanently charge reserved scope ceilings, preserve unknown concurrency slots and never automatically recollect; local-only authority cannot enable remote collection without the separately configured purpose-bound SSH permit adapter.
+  - Bound-card holder heartbeats/comments preserve agent-bound discovery dispatch and evidence: task snapshots exclude renewable claim_until while binding assignee, status and claim_expired_at. Older snapshots remain usable without rewriting consent, attempts or permits.
+  - Task-less fixed-probe proposals may be approved; dispatch still requires a startable card. Binding comparisons reject gaining or losing a task snapshot, including an empty snapshot.
+  - Default discovery jobs allow32 hosts/results and32 observations/second over10 seconds, clamped by the scope and configured policy; response validation accepts the configured result count within source/output bounds.
+  - Scope collections are copied into immutable values; constructing a domain value grants no authority and enables no transport.
+  - Every management operation checks current exact person-owner session and canonical board/task authority; confirmed full public keys remain pending verification, and approval rebinds the exact current action digest. No management request loads keys or performs remote effects.
+  - Custody uses strict protected external wrapping keys, encrypted workspace keys and binding-authenticated private-key ciphertext; only public enrollment data is returned. Acquisition and transport access require current exact authority callbacks.
+  - Helper routing is enrollment-only, one execution is consumed before opening a target, both SSH pins precede authentication, and only the fixed probe or literal confined target-helper command compiles; script bytes travel in the separate strict bounded upload protocol. Budgets bound frames, admission, bytes, time and active tunnels; uncertain reservations persist.
+
+- **How it fails:**
+
+  - Invalid, incomplete, nonfinite, foreign or out-of-scope requests raise ScopeDenied without network or credential access. Aggregate discovery accounting remains the dispatch service's responsibility.
+  - Missing/unsafe credential custody fails closed; transport is inert without explicit enablement. Host-key mismatch, missing approvals, expiry, replay or unknown operations deny; uncertain remote outcomes never imply termination. Public control authority fencing, output redaction and outbox integration remain parent-service prerequisites.
+
+- **Tests:**
+
+  - `tests/test_compute_script_integration.py` covers canonical script proposal/approval/claim, signed runtime binding, logical-vs-dispatch epoch, actual pinned two-hop wire-only target transfer, tampering/revocation/cancellation and reserved uncertainty.
+  - `tests/test_compute_scripts.py` and `tests/test_compute_script_sandbox.py` cover immutable exact bytes/digests, crypto-aware storage, finite strict wire, protected atomic uploads, literal sandbox argv, denial and uncertain retention; the real positive-confinement fixture is separately provisioned and optional.
+  - `tests/test_compute_passive_admission.py` proves actual guarded outer SSH collection, purpose-bound one-use permits, replay/tamper/expiry and revocation ordering, uncertain restart retention and default-off behavior.
+  - `tests/test_compute_control_r3.py` covers real bound-card heartbeat/comment renewal and holder/status/lease revocation before claim, before permit and during collection, including immutable pre-upgrade bindings and already-claimed attempts.
+  - `tests/test_compute_discovery_service.py`, `tests/test_compute_discovery_api.py` and `tests/test_compute_discovery_lifecycle.py` cover durable quotas/replay, current scoped authority, cancellation/recovery, owner boundaries and refusal to upgrade a local-only fence.
+  - `tests/test_compute_discovery.py` covers synthetic cache parsing/provenance, immutable exact scopes, stale/foreign denial, aggregate per-collection limits, cancellation and explicitly configured helper behavior without network/process access.
+  - `tests/test_compute_admission.py` covers explicit digest-bound mode, guarded two-hop SSH permits, tampering/replay/expiry, pre/post-issuance revocation, writer exclusion and uncertainty retention.
+  - `tests/test_compute_fence.py` proves local cross-process writer exclusion, durable epoch invalidation, stale-authority refusal, timeout/crash/restart, persistent unparticipating-writer denial and default-off lifecycle.
+  - `tests/test_compute_executor.py` feeds real enabled-worker inventory into the production UI and verifies that its approval starts the synthetic background transport without a second dispatch action. `tests/test_compute_ui.py` covers each cancellable discovery state and truthful approval wording.
+  - `tests/test_compute_executor.py` covers exact signed enrollment, one-shot approval consumption, stale authority/credentials, replay/recovery, cancellation intent, reserved uncertainty and redacted result publication.
+  - `tests/test_compute_control.py` and `tests/test_compute_api.py` cover persistent/replayed actions, current authority, Origin/framing, typed enrollment/grants and stale digest rejection; `tests/test_compute_browser.py` exercises the full real gateway UI lifecycle.
+  - `tests/test_compute_credentials.py`, `tests/test_compute_transport.py` and the optional actual Paramiko socketpair `tests/test_compute_ssh_fixture.py` cover authenticated custody, lifecycle, safe-open refusals, protocol validation, replay, limits and both SSH pins before authentication.
+  - `tests/test_compute_scopes.py` covers approved IPv4/IPv6, every actor dimension, expiry/revocation, unsupported destinations/methods/interfaces, finite limits and mutation attempts.
+
 ## chat-and-voice
 
 - **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`
 - **Owns:**
 
+  - Workspace-local coworker bot personas, private DM/group conversation membership, append-only original messages, conversation-scoped memories and durable response-job intake.
+
+  - The bounded concurrent coworker front runtime, conversation-local model context, provider admission limits, canonical task intake/progress and durable targeted task follow-up/stop receipts.
+
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
 - **Promises:**
+
+  - Coworker REST writes require a signed-in person and exact same-origin JSON boundary; current workspace/user/connection and conversation audiences are checked before reads, intake and runtime publication.
+  - Task controls journal explicit immutable intents before cross-store mutation; exact replays never repeat effects. Follow-ups preserve exact task comments without claiming worker application; queued stops use canonical cancellation and in-flight requests never imply termination.
+  - Canonical task progress is projected only for freshly authorized origin/viewer/audience bindings, never copied into shared chat history. Lost front acknowledgements recover existing origin links without launching work; exact fields are bounded by whole-field omission with notices.
+  - Explicit coworker task requests can enter the existing configured person-owner runner admission path with stable canonical origin deduplication; refusal preserves the card and does not invent a worker launch.
+  - Internal runtime dispatch rechecks the exact originating session before sending context; bounded lexical recall considers later relevant memories without truncating their words; only explicit task syntax reaches canonical boards and model output never executes tools.
+  - Board-less coworker turns require a local provider; workspace hosted settings yield `needs_configuration` before context, credentials or provider calls. Board-associated hosted turns retain project Turn on consent.
+  - Coworker messages and jobs commit together with actor-scoped retry identity. Memory tombstones suppress future recall and invalidate stale response publication. Cancellation and restart do not silently replay possibly attempted work.
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
   - Opt-in phone needs-you evaluation includes actionable Approvals, so owner origin recovery still notifies after coordinator revocation.
@@ -1463,6 +1547,12 @@ Format (read by `commonplace orch docs-check`):
   - Without a provider or runner the chat shows a receipt and no answer; push delivery failures are recorded, not retried forever.
 
 - **Tests:**
+
+  - `tests/test_coworker_controls.py` covers real canonical cancellation/comments, strict origin/run authority, replay/restart/lost acknowledgements, concurrency, explicit sharing and bounded crypto-aware receipts.
+  - `tests/test_coworker_progress.py` covers real canonical progress/results/decisions/evidence, lost acknowledgement recovery, per-viewer privacy and revocation, bounded read-only snapshots and continued front responsiveness.
+  - `tests/test_coworker_dispatch.py` verifies real canonical runner ledgers with synthetic admission, including configuration, replay/restart/lost acknowledgements, guards, authority changes and responsiveness.
+  - `tests/test_coworker_runtime.py` proves independent conversation progress, bounded scoped memory, configured provider limits, current authority/cancellation fences and atomic task intent without model-driven effects.
+  - `tests/test_coworker_store.py` and `tests/test_coworker_api.py` exercise durable intake/reopen, private/group membership, request conflicts, scoped memory visibility, current session/connection authority, late replies and recovery.
 
   - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
   - Coordinator-revocation recovery verifies the origin approval item and retains notification, priority and duplicate-suppression assertions.
@@ -1607,6 +1697,10 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
+  - The owner Compute route, real-inventory enrollment/scope/proposal/approval/passive collection forms, immutable UTF-8 script upload/source inspection/proposal UI, escaped observations and session/route response fencing; transport capabilities remain server-authoritative.
+
+  - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
+
   - Runtime switch/orchestrator/machine read projectors, effective limits, stuck facts and separate legacy needs-me rendering in the existing Admin lifecycle.
 
 
@@ -1616,6 +1710,11 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer; task creation and runner admission/recorded launch/refusal/uncertainty are labeled separately from completed work.
+  - Compute execution evidence is escaped and distinguishes observed exit from uncertain cancellation or stored consent; control metadata is escaped and responses are fenced to the exact session/workspace/actor/route; ambiguous mutations require reconciliation and approval never implies dispatch.
+  - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
+  - Coworker message authors follow `actor`: a human row's `bot_id` remains its recipient; only the exact matching bot actor receives a bot name, badge and styling.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
