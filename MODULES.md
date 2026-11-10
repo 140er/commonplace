@@ -402,10 +402,12 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Hooks fail open and stay within the hook time budget; manifests reference files that exist; no integration enables an external provider by default.
+  - Conversation autosave preserves user and assistant transcript text verbatim. Hook work runs outside the turn handler, serializes per session, and coalesces repeated hooks that are already queued.
 
 - **How it fails:**
 
   - A manifest that points at a moved file breaks installation for that agent only; a slow hook delays the user's session.
+  - Serialization tests must control fake subprocess completion explicitly: elapsed sleeps cannot prove that a hook is still running when the scheduler is busy.
 
 - **Tests:**
 
