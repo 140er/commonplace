@@ -10,6 +10,7 @@ import pytest
 from commonplace import sessions, urls
 from commonplace.boards.service import BoardService
 from commonplace.extensions import ToolContext
+from commonplace.social import providers
 from tests.test_commonplace_social import request, rows
 from tests.test_github_grants import (
     Remote,
@@ -709,3 +710,76 @@ def test_an_unexpected_failure_is_audited_as_an_error_not_an_allow(merging, monk
         pass
     entry = [e for e in s.db.audit_entries() if e["action"] == "github.merge"][0]
     assert entry["decision"] == "error" and entry["reason"]
+
+
+def sweep_ticks(worker, monkeypatch, turns):
+    """Run heartbeat iterations; returns how many times the loop asked to wait again."""
+    worker._stopped.set()
+    worker._heartbeat_thread.join()
+    worker._stopped.clear()
+    waits = iter(turns)
+    asked = []
+
+    def wait(timeout):
+        asked.append(timeout)
+        return next(waits)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(worker._stopped, "wait", wait)
+        worker._heartbeat()
+    return len(asked)
+
+
+def test_a_sweep_that_hits_pending_is_retried_and_does_not_stop_the_worker(
+    merging, monkeypatch, caplog
+):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    worker = s.gateway.github
+    real, calls = worker.expire, []
+
+    def flaky(uid):
+        calls.append(uid)
+        if len(calls) == 1:
+            raise providers.SignInError("github_pending")
+        return real(uid)
+
+    monkeypatch.setattr(worker, "expire", flaky)
+    caplog.set_level(logging.WARNING)
+    asked = sweep_ticks(worker, monkeypatch, [False, False, True])
+    # The first tick's sweep failed with a pending code; the loop must still reach the next ticks.
+    assert asked == 3 and len(calls) == 2
+    assert revoked_tokens(s) == [candidate]
+    assert worker.ready and "lost its lease" not in caplog.text
+    assert any(
+        s.uid in r.getMessage() and "github_pending" in r.getMessage() for r in caplog.records
+    )
+    # Writes stay unfenced: a later state write is accepted by the same worker.
+    assert write(s, "/api/github", "DELETE")[0] == 200
+
+
+def test_a_failing_sweep_is_logged_with_user_and_code_only(merging, monkeypatch, caplog):
+    s = merging
+    candidate = pending_merge_consent(s)
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=1")
+    worker = s.gateway.github
+
+    def failing(uid):
+        raise providers.SignInError("github_key")
+
+    monkeypatch.setattr(worker, "expire", failing)
+    caplog.set_level(logging.WARNING)
+    sweep_ticks(worker, monkeypatch, [False, True])
+    messages = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("commonplace"))
+    assert s.uid in messages and "github_key" in messages
+    assert candidate not in caplog.text and "synthetic-app-secret" not in caplog.text
+
+
+def test_real_lease_loss_still_stops_the_heartbeat(merging, monkeypatch, caplog):
+    s = merging
+    worker = s.gateway.github
+    s.db._conn.execute("UPDATE github_worker_lease SET expires_at=0")
+    caplog.set_level(logging.WARNING)
+    assert sweep_ticks(worker, monkeypatch, [False, False, True]) == 1
+    assert "lost its lease" in caplog.text

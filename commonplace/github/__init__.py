@@ -141,8 +141,11 @@ class GitHub:
         try:
             self.expire(row["user_id"])
         except SignInError as exc:
-            if exc.code == "github_pending":
-                raise
+            # Never lease loss by itself: the heartbeat's own fence on the next tick decides that,
+            # so a failed or fenced revocation is retried instead of stopping the worker.
+            logging.getLogger(__name__).warning(
+                "GitHub consent sweep failed for %s: %s", row["user_id"], exc.code
+            )
 
     def close(self):
         # Server and database teardown can both close us, including concurrently.
