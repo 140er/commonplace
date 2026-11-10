@@ -1,6 +1,6 @@
 """Real control/board/workspace stores; synthetic enrollment, no remote effects.
 
-Parent runs these with the grouped suite. Fixtures never enroll live devices or
+The integration maintainer runs these with the grouped suite. Fixtures never enroll live devices or
 open custody; public SSH key bytes are deterministic non-secret test material.
 """
 
