@@ -745,6 +745,29 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
 
+### Eval archives (slice 1)
+
+- `commonplace eval` is an owner-only local CLI. It archives immutable runs of
+  eligible stored threads (handoff transcripts and ACL imports in the `threads`
+  wing) and reads them back as exact bytes. No REST, MCP, UI, hook, daemon,
+  network, model, judge, score or replay is part of slice 1; later slices need
+  their own plan.
+
+- Live captures, grant imports, private chats and continuity threads refuse
+  (`eval_source_gap: unsupported_in_slice1`). Owner role, eligibility, the read
+  policy and the continuity probe are rechecked inside every archive commit and
+  every list/show/read response; a hidden run keeps its quota.
+
+- Eval uses local OS trust like every CLI command, never constructs
+  `ControlDB`, and reads the control database `?mode=ro` behind a write-denying
+  authorizer. Its principal has only `threads:read` and `memory:read`.
+
+- Runs live in `<workspace>/evals/runs.sqlite3` (WAL, 0600 in a 0700 `evals/`,
+  encrypted with the workspace). Purge by exact run ID is the only delete; keys
+  are stored only as digests and stay retired for 30 days after purge. With
+  plans enabled, the eval DB counts against plan storage, measured under the
+  thread-store writer lock.
+
 ## Numbers
 
 | Label | Number | Source |
@@ -761,6 +784,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 | M | Machine queue limit 8 queued jobs | `commonplace/runner/jobs.py:16` |
 | M | `request_key` at most 128 characters | `commonplace/runner/tools.py:92,157` |
 | M | T3 launch message at most 120,000 characters | T3 MCP launch schema |
+| M | Eval run at most 16 MiB (rows, artifacts, manifest); 256 KiB chunks and read pages; 1 GiB of active runs per workspace | `commonplace/evals/__init__.py` |
+| M | Eval key retention 30 days after purge; eval lock waits 5 s | `commonplace/evals/__init__.py` |
 | T | A resume is one call; zero duplicate jobs after a lost acknowledgement | acceptance tests |
 | T | Config at most 128 KiB, at most 16 roles, a prompt at most 32 KiB | `commonplace/orch/schema.py` |
 | T | Per board at most 8 experiments and 20 open proposals, at most 5 per principal | `commonplace/orch/store.py` |
@@ -776,6 +801,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 | `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
 | `runner.sqlite3` | workspace | runner jobs; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
+| `evals/runs.sqlite3` | workspace | eval runs, their chunks and payload-free purge tombstones | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
 
 - Backups copy every SQLite file in the data directory (`commonplace/backup.py`).
@@ -862,6 +888,17 @@ playbooks and the original wider orchestration acceptance remain separate work.
   are unchanged.
 
 ## Residuals
+
+- **Eval archives:** slice 1 covers handoff transcripts and ACL imports only:
+  0% of live captures and grant imports, the automatic high-volume trace path;
+  the share by count is unmeasured. Purge does not erase retired store
+  generations, backups, WAL or free pages, and restoring an older generation can
+  bring runs back. Anyone who can read `runs.sqlite3` or its backup can confirm
+  a guessed key. A run whose source disappears stays unlisted until purged by
+  its retained ID. Single-part imports, palace writers and handoff filing do not
+  measure plan storage under the thread-store lock, so eval's plan-storage bound
+  holds only against writers that do. Privacy flags miss doubly escaped JSON and
+  health hints split across strings; they are signals, not gates.
 
 - **Admin observations:** All seven sections are implemented; operational sections
   request data only with instance eligibility. Health validates the existing public
