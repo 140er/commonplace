@@ -205,6 +205,26 @@ def test_cw_a02_supersede_in_x_leaves_y_fact_open(two_workspaces):
     assert any(f["object"] == "old" and f["current"] for f in yfacts(c))
 
 
+@pytest.mark.parametrize("tool", ["kg_invalidate", "kg_supersede"])
+def test_cw_a01_a02_y_thread_citation_stays_in_y(two_workspaces, tool):
+    c = two_workspaces
+    cited = call(
+        c.y,
+        c.owner,
+        "kg_save",
+        subject="WorkspaceFact",
+        predicate="port",
+        object="old",
+        wing="shared",
+        source_thread=c.room,
+        valid_from="2026-01-01",
+    )
+    assert cited.get("success") and c.room in json.dumps(yfacts(c))
+    mutation(c, tool)
+    assert any(f["object"] == "old" and f["current"] for f in yfacts(c))
+    assert c.room in json.dumps(yfacts(c))
+
+
 @pytest.mark.parametrize("mode", ["same_value", "single_valued"])
 def test_cw_a03_kg_save_in_x_does_not_merge_y_fact(two_workspaces, mode):
     c = two_workspaces

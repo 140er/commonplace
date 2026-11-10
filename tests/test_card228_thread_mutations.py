@@ -109,6 +109,47 @@ def case(world, config, kg, tmp_path, monkeypatch):  # noqa: F811
     )
 
 
+@pytest.mark.parametrize("wing", [None, "shared"])
+@pytest.mark.parametrize("query", ["zqmutationfixture", "synthetic", "verbatim", "words"])
+def test_cli_search_hides_protected_shared_copy(case, wing, query):
+    args = {"cli_compatible": True, **({"wing": wing} if wing else {})}
+    visible = call(case.w, case.actor, "search", query="Public fixture", **args)
+    assert "Public fixture independently readable control" in visible.get("cli_output", "")
+    structured = call(case.w, case.actor, "search", query=query, **({"wing": wing} if wing else {}))
+    assert case.room not in json.dumps(structured)
+    result = call(case.w, case.actor, "search", query=query, **args)
+    output = result.get("cli_output", "")
+    assert "zqmutationfixture synthetic verbatim words" not in output, (
+        "Protected-room body leaked into CLI output"
+    )
+    assert case.room not in output, "Protected thread room leaked into CLI output"
+    assert "handoff:" not in output, "Protected mirror source leaked into CLI output"
+
+
+@pytest.mark.parametrize("wing", [None, "shared"])
+def test_cli_search_owner_keeps_existing_renderer(case, wing, monkeypatch):
+    seen = []
+    original = case.w.gateway.mediator.workers.post
+
+    def post(principal, request):
+        params = request.get("params", {})
+        if params.get("name") == "mempalace_search":
+            seen.append(params["arguments"].get("cli_compatible"))
+        return original(principal, request)
+
+    monkeypatch.setattr(case.w.gateway.mediator.workers, "post", post)
+    result = call(
+        case.w,
+        case.owner,
+        "search",
+        query="zqmutationfixture",
+        cli_compatible=True,
+        **({"wing": wing} if wing else {}),
+    )
+    assert "zqmutationfixture synthetic verbatim words" in result.get("cli_output", "")
+    assert seen and all(seen), "Every-wing principal no longer uses the worker CLI renderer"
+
+
 def save(c, obj="old", actor=None, wing="shared", **kwargs):
     args = dict(
         subject="SyntheticProject",
@@ -368,6 +409,7 @@ def test_card228_r17_member_cannot_delete_drawer_endpoint_tunnel(case):
 
 
 def test_card228_r18_list_rooms_hides_unreadable_thread_keys(case):
+    assert case.room not in json.dumps(call(case.w, case.actor, "list_rooms"))
     assert case.room not in json.dumps(call(case.w, case.actor, "list_rooms", wing="shared"))  # RED
 
 

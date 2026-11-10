@@ -71,6 +71,46 @@ def _with_search_facts(result, facts):
     return out
 
 
+def _scoped_cli_search_error(args):
+    """Retain the CLI argument contract when acquiring structured drawer hits."""
+    from mempalace.query_sanitizer import sanitize_query
+
+    if args.get("include_media") or args.get("query_task", "search") != "search":
+        return "cli_compatible cannot be combined with media/code task search"
+    if args.get("source_file") is not None:
+        return "cli-compatible search does not support source_file"
+    unsupported = [
+        key for key in ("min_similarity", "max_distance", "context") if args.get(key) is not None
+    ]
+    if unsupported:
+        return "cli-compatible search does not support " + ", ".join(unsupported)
+    query = args.get("query")
+    if isinstance(query, str):
+        sanitized = sanitize_query(query)
+        if sanitized["clean_query"] != query or sanitized["was_sanitized"]:
+            return "cli-compatible search requires an unchanged query"
+    return None
+
+
+def _render_scoped_cli_search(result):
+    """Render only structured hits and facts that passed the final drawer gate."""
+    from mempalace.fact_render import format_facts
+
+    out = dict(result)
+    lines = []
+    for i, hit in enumerate(result.get("results", []), 1):
+        lines.append(f"  [{i}] {hit.get('wing', '?')} / {hit.get('room', '?')}")
+        lines.append(f"      Source: {hit.get('source_file', '?')}")
+        lines.extend(f"      {line}" for line in hit.get("text", "").split("\n"))
+        lines.append("")
+    out["cli_output"] = format_facts(result.get("facts", [])) + (
+        "\n".join(lines) if lines else "No results found.\n"
+    )
+    if not out.get("facts") and not out.get("facts_error"):
+        out.pop("facts", None)
+    return out
+
+
 def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> dict:
     error = {"code": code, "message": message}
     if data is not None:
@@ -581,7 +621,16 @@ class Mediator:
             committed_result = _tool_result(response)
         else:
             response, committed_result = self._gate_response(
-                principal, name, rule, req_id, response
+                principal,
+                name,
+                rule,
+                req_id,
+                response,
+                render_cli=(
+                    name == "mempalace_search"
+                    and import_filters.get("cli_compatible")
+                    and not principal.policy.sees_all_wings
+                ),
             )
 
         if classify_tool(name) != "read":
@@ -597,7 +646,7 @@ class Mediator:
             )
         return response
 
-    def _gate_response(self, principal, name, rule, req_id, response):
+    def _gate_response(self, principal, name, rule, req_id, response, *, render_cli=False):
         """Apply the final read boundary while retaining the committed result for audit."""
         from .handoff.mirror_access import gate
 
@@ -605,6 +654,8 @@ class Mediator:
         if isinstance(response, dict) and "result" in response:
             result = committed_result = _tool_result(response)
             cleaned = gate(self.gateway, principal, rule, result)
+            if render_cli and isinstance(cleaned, dict) and not cleaned.get("error"):
+                cleaned = _render_scoped_cli_search(cleaned)
             if name == "mempalace_list_drawers":
                 from .handoff.drawer_pages import finish_page
 
@@ -852,6 +903,10 @@ class Mediator:
             return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
         if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
             raise Denied(f"this connection can't read wing {wing!r}")
+        if cli and not policy.sees_all_wings:
+            error = _scoped_cli_search_error(args)
+            if error:
+                return {"respond": {"error": error}}
         fact_result = (
             self._search_facts(principal, args)
             if args.get("include_facts", True)
@@ -865,6 +920,8 @@ class Mediator:
                 canonical_wing(wing) == canonical_wing(w) for w in requested
             ):
                 return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
+            if cli and not policy.sees_all_wings:
+                args["cli_compatible"] = False
             return fact_result
         return {
             "respond": _with_search_facts(
@@ -1429,7 +1486,10 @@ class Mediator:
             raise Denied(f"pass a wing: this connection reads {len(wings)} wings")
         if not wings:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
-        result = self.workers.call_tool(principal, name, {**args, "wings": wings})
+        worker_args = {**args, "wings": wings}
+        if args.get("cli_compatible") and not principal.policy.sees_all_wings:
+            worker_args["cli_compatible"] = False
+        result = self.workers.call_tool(principal, name, worker_args)
         if not isinstance(result, dict):
             raise WorkerUnavailable()
         if result.get("error"):

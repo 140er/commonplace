@@ -1702,6 +1702,14 @@ shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
 labels, ranks or counts. Wildcard policies can reach those projections without
 private scope; literal-wing policies keep their existing tool visibility.
 
+For principals without every-wing access, CLI-compatible search acquires structured
+hits and renders only after the same drawer gate as structured search, including
+room, source and body checks. This applies with a literal wing and with no wing;
+every-wing principals retain the existing CLI renderer.
+
+Content placed in an ordinary shared room is visible on every route. The system
+does not fingerprint content to recognize copies of private text.
+
 Unprojected whole-palace operations remain unavailable to members: mesh estate,
 duplicate detection, checkpoint, source-wide deletion, tunnel/hallway deletion,
 memories-filed-away, and low-level coordination event/artifact/patch operations.

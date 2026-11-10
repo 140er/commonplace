@@ -553,6 +553,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
+
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
@@ -887,6 +889,8 @@ Format (read by `commonplace orch docs-check`):
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
 
 - **Promises:**
+
+  - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths; every-wing callers retain the worker CLI renderer and restricted callers keep the CLI argument restrictions.
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
