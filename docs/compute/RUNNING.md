@@ -125,3 +125,25 @@ private provisioning and verification are not browser actions. See
 script-integration.md for the contract and operator prerequisites. No host-shell
 fallback is supported. The actual positive confinement fixture remains unverified
 unless explicitly provisioned; signed synthetic receipts prove wiring only.
+
+The target keeps unconfirmed or uncertain claims as operator evidence, including
+after request expiry. Automatic pruning needs an expiry more than300 seconds
+past and a protected, parseable result.json whose termination_confirmed field is
+the JSON boolean true and whose state is observed_exit, denied or cancelled.
+Malformed/unreadable results and legacy claims without expiry remain counted
+toward the64-claim limit. Elapsed time does not establish termination.
+
+Scratch admission requires at least16 available inodes and1MiB of available block
+space on the protected scratch filesystem, checked before any claim/job creation.
+Low resources or an unreadable filesystem-statistics query return
+sandbox_unavailable; authenticated controller handling records a known non-run
+and releases the reservation. The check does not reserve space against concurrent
+jobs. After confirmed termination, iterative cleanup removes trees within the
+4096-entry ceiling without a depth cutoff or descriptors per ancestor.
+
+If scratch remains occupied after an actual filesystem error or unconfirmed
+termination, stop admissions and independently confirm the relevant processes
+have ended before removing their scratch data. Preserve claim/result evidence
+and reconcile uncertain controller runs with the operator command above. Never
+remove an unconfirmed claim merely to recover capacity; restore adequate scratch
+headroom before resuming admissions.

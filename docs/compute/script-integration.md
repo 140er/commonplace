@@ -45,16 +45,26 @@ script result. Only bounded redacted output and artifact metadata persist.
 
 Targets retain at most64 claims at once. New claims record request expiry; under
 the target admission lock, a finished claim can be pruned only after its expiry
-plus a five-minute grace period and only with a protected regular result.json.
-Unexpired, recently expired, unfinished and legacy claims without expiry metadata
-remain, including across restarts. Expired requests are rejected before pruning;
+plus a five-minute grace period and only with a protected regular result.json
+that parses as a confirmed terminal result (`termination_confirmed is True`).
+Unconfirmed/uncertain, malformed or unreadable results retain their claims and
+count toward capacity. Unexpired, recently expired, unfinished and legacy claims
+without expiry metadata remain, including across restarts. Expired requests are rejected before pruning;
 requests still eligible for acceptance retain replay denial. Unknown claims can
 still exhaust capacity and require independent operator reconciliation.
 
+Before creating a claim, the target checks the protected scratch filesystem for
+at least16 available inodes and1MiB of available blocks. Below either margin, or
+if filesystem statistics cannot be read, it denies with sandbox_unavailable,
+creating no claim or job. The authenticated controller settles that code as a
+known non-run without a reservation. This is an admission check, not a reservation
+of filesystem space against concurrent jobs.
+
 After confirmed termination, scratch cleanup restores owned directories to0700
-and walks at most64 levels/4096 entries. Cleanup failure cannot replace the
-observed exit, output or stored result metadata. A tree beyond those bounds or a
-filesystem error can leave scratch data in the bounded tmpfs for operator cleanup.
+and walks iteratively through at most4096 entries, with constant descriptor use
+and no depth cutoff. Deep trees within the supported tmpfs inode ceiling are
+removed. Cleanup I/O errors cannot replace observed exit/output or stored result
+metadata; the free-resource admission check still applies to subsequent requests.
 
 Synthetic signed receipts and the WireOnlyTarget socketpair fixture prove
 controller/API/transport wiring. They never launch host scripts and do not prove

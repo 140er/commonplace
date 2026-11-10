@@ -309,11 +309,16 @@ is bounded by64 frames,192KiB and40 seconds, with exact digest checks and a
 separate cancellation frame. Private atomic uploads use protected openat paths;
 durable target claims prevent replay of incomplete or restored attempts.
 The64-claim cap counts retained claims: finished claims with recorded expiry and
-a protected result.json can be pruned only more than300 seconds after expiry.
-Unfinished, unexpired and legacy claims without expiry remain fail closed.
-Scratch cleanup restores directory permissions and is bounded to64 levels/4096
-entries after confirmed termination. Cleanup errors preserve observed results;
-leftovers remain in bounded tmpfs for operator cleanup.
+a protected, parseable terminal result.json with termination_confirmed exactly
+true can be pruned only more than300 seconds after expiry. Unconfirmed/uncertain,
+malformed/unreadable, unfinished, unexpired and legacy claims remain fail closed.
+Before creating a claim, scratch needs16 available inodes and1MiB available block
+space; low resources/statistics failures deny as sandbox_unavailable, an
+authenticated known non-run. This check does not reserve space across jobs.
+After confirmed termination, iterative cleanup restores directory permissions
+and removes up to4096 entries without a depth cutoff or descriptors per ancestor.
+Cleanup I/O errors preserve observed results; later admissions still require
+resource headroom.
 
 Execution defaults off. It requires a non-root capability-free host identity,
 mandatory namespaces, no network, a digest-bound read-only root-owned runtime,

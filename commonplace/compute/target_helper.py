@@ -56,6 +56,8 @@ TARGET_HELPER_COMMAND = "/usr/bin/python3 -I -m commonplace.compute.target_helpe
 TARGET_CONFIG_PATH = "/etc/commonplace/compute-script-target-v1.json"
 MAX_TARGET_ATTEMPTS = 64
 CLAIM_EXPIRY_GRACE_SECONDS = 300
+MIN_SCRATCH_FREE_INODES = 16
+MIN_SCRATCH_FREE_BYTES = 1024 * 1024
 MAX_WIRE_BYTES = 196608
 MAX_WIRE_FRAMES = 64
 CHUNK_BYTES = 3072
@@ -343,31 +345,43 @@ def _write_job_file(job, path, data):
         os.close(directory)
 
 
-def _remove_owned_job(directory, *, remaining=4096, depth=64):
+def _remove_owned_job(directory, *, remaining=4096):
     """Remove an owned tree after the caller has ruled out a running script."""
-    if depth <= 0:
-        raise ScriptDenied("target_capacity")
-    os.fchmod(directory, 0o700)
-    with os.scandir(directory) as entries:
-        for entry in entries:
+    current = os.dup(directory)
+    names = []
+    try:
+        while True:
+            os.fchmod(current, 0o700)
+            # Close the iterator before descending: retain names, never one
+            # descriptor/iterator per ancestor. Confirmed termination makes
+            # walking back through '..' safe within this private job tree.
+            with os.scandir(current) as entries:
+                entry = next(entries, None)
+            if entry is None:
+                if not names:
+                    return remaining
+                parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
+                os.close(current)
+                current = parent
+                os.rmdir(names.pop(), dir_fd=current)
+                continue
             remaining -= 1
             if remaining < 0:
                 raise ScriptDenied("target_capacity")
             if entry.is_dir(follow_symlinks=False):
                 # The script owns these directories and may have removed every
                 # permission. Restore access before opening, then fchmod the fd.
-                os.chmod(entry.name, 0o700, dir_fd=directory, follow_symlinks=False)
+                os.chmod(entry.name, 0o700, dir_fd=current, follow_symlinks=False)
                 child = os.open(
-                    entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+                    entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
                 )
-                try:
-                    remaining = _remove_owned_job(child, remaining=remaining, depth=depth - 1)
-                finally:
-                    os.close(child)
-                os.rmdir(entry.name, dir_fd=directory)
+                os.close(current)
+                current = child
+                names.append(entry.name)
             else:
-                os.unlink(entry.name, dir_fd=directory)
-    return remaining
+                os.unlink(entry.name, dir_fd=current)
+    finally:
+        os.close(current)
 
 
 def _prune_finished_claim(attempts, name, now):
@@ -380,12 +394,18 @@ def _prune_finished_claim(attempts, name, now):
         if now <= expires_at + CLAIM_EXPIRY_GRACE_SECONDS:
             return False
         # Read through the same protected regular-file checks, not just exists().
-        read_regular_at(claim, "result.json", 8192, uid=os.geteuid())
+        result = json.loads(read_regular_at(claim, "result.json", 8192, uid=os.geteuid()))
+        if (
+            type(result) is not dict
+            or result.get("termination_confirmed") is not True
+            or result.get("state") not in ("observed_exit", "denied", "cancelled")
+        ):
+            return False
         _remove_owned_job(claim)
         os.rmdir(name, dir_fd=attempts)
         os.fsync(attempts)
         return True
-    except (OSError, ProtocolDenied, ValueError, KeyError, TypeError):
+    except (OSError, ProtocolDenied, ValueError, KeyError, TypeError, RecursionError):
         return False
     finally:
         if claim is not None:
@@ -505,6 +525,16 @@ class TargetHelper:
                 info = os.fstat(attempts)
                 if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
                     raise ScriptDenied("unsafe_workspace")
+                scratch = private_directory(self.config.scratch_root)
+                try:
+                    usage = os.fstatvfs(scratch)
+                except OSError:
+                    raise ScriptDenied("sandbox_unavailable") from None
+                if (
+                    usage.f_favail < MIN_SCRATCH_FREE_INODES
+                    or usage.f_bavail * usage.f_frsize < MIN_SCRATCH_FREE_BYTES
+                ):
+                    raise ScriptDenied("sandbox_unavailable")
                 count = 0
                 with os.scandir(attempts) as entries:
                     now = time.time()
@@ -535,7 +565,6 @@ class TargetHelper:
                 ),
             )
             atomic_file(claim, "script.py", script)
-            scratch = private_directory(self.config.scratch_root)
             job = _mkdir_at(scratch, job_name)
             # bwrap needs an existing empty destination for the read-only script bind.
             atomic_file(job, "script.py", b"")
@@ -569,9 +598,8 @@ class TargetHelper:
                     _remove_owned_job(job)
                     os.rmdir(job_name, dir_fd=scratch)
                 except Exception:
-                    # Script-owned permissions, depth and filesystem errors
-                    # cannot erase the observed result. Leftovers remain in the
-                    # bounded scratch tmpfs for operator cleanup.
+                    # Filesystem errors cannot erase an observed result. Later
+                    # admissions still require scratch resource headroom.
                     pass
             for fd in (job, scratch, claim, root):
                 if fd is not None:
