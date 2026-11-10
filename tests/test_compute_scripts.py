@@ -1,4 +1,4 @@
-"""Synthetic immutable bundle/framing fixtures; parent runs the grouped suite."""
+"""Synthetic immutable bundle/framing fixtures; the integration maintainer runs the grouped suite."""
 
 import base64
 import hashlib
