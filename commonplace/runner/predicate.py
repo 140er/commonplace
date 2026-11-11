@@ -10,12 +10,12 @@ from commonplace.extensions import ToolContext, ToolError
 class Refused(ToolError):
     """A card cannot be started for the given reason."""
 
-    def __init__(self, reason):
+    def __init__(self, reason, detail=None):
         self.reason = reason
         message = (
             "worker unavailable"
             if reason == "worker unavailable"
-            else f"card is not startable: {reason}"
+            else f"card is not startable: {detail + ': ' if detail else ''}{reason}"
         )
         super().__init__(f"no: {message}")
 
@@ -71,10 +71,16 @@ def startable(gateway, machine, row, board) -> None:
         raise Refused("origin_not_released")
     if not task_types.read_eligible(service.ctx.workspace_dir(), row["task_type"], worker):
         raise Refused("task_type_not_allowed")
+    writes = (worker.policy.write_wing, *worker.policy.write_wings)
+    # The code string stays last; the text before it names the board and the grant.
+    outside = (
+        f"board wing '{board['wing']}' is not a granted write wing "
+        f"(write wings: {', '.join(w for w in writes if w)})"
+    )
     try:
         service._write(board, row=row, claiming=True)
     except ToolError:
-        raise Refused("outside_worker_wing") from None
+        raise Refused("outside_worker_wing", outside) from None
     # Exact names only: the first granted wing plus any owner-granted extra write wings.
-    if board["wing"] not in (worker.policy.write_wing, *worker.policy.write_wings):
-        raise Refused("outside_worker_wing")
+    if board["wing"] not in writes:
+        raise Refused("outside_worker_wing", outside)

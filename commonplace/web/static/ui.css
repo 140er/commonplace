@@ -110,10 +110,13 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 .agent-secret h3 { font-size: 16px; overflow-wrap: anywhere; }
 .agent-secret pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
 .agent-secret button, .agents-settings .setting-row button { min-height: 44px; }
-.runners-settings [data-runner-write] { flex-basis: 100%; }
-.runners-settings [data-runner-write] label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
-.runners-settings [data-runner-write] input { width: 18px; height: 18px; min-height: 0; flex-shrink: 0; }
-.runners-settings [data-runner-write] small { display: block; margin: 8px 0; color: var(--muted); font-size: 12px; }
+.runners-settings .setting-row details { flex-basis: 100%; }
+.runners-settings [data-runner-write] label, .runners-settings [data-runner-read] label, .runners-settings fieldset label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.runners-settings [data-runner-write] input, .runners-settings [data-runner-read] input, .runners-settings fieldset input { width: 18px; height: 18px; min-height: 0; flex-shrink: 0; }
+.runners-settings details > small, .runners-settings fieldset small { display: block; margin: 8px 0; color: var(--muted); font-size: 12px; }
+.runners-settings fieldset { flex-basis: 100%; border: 0; padding: 0; }
+.runners-settings .agent-form input[name="label"], .runners-settings .agent-form input[name$="id"] { min-height: 40px; }
+.runners-settings .agent-form input:not([type="checkbox"]), .runners-settings .agent-form select { width: 100%; min-height: 40px; }
 .runners-settings .setting-row button { min-height: 44px; }
 @media (max-width: 640px) {
   .agent-secret { grid-template-columns: minmax(0, 1fr); }

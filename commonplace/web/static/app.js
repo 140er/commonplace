@@ -10,7 +10,7 @@ import { rulesView, rulesHandlers } from "./rules.js";
 import { signinView, signinMessage } from "./signin.js";
 import { childProgress } from "./children.js";
 import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
-import { runnersView, runnerAction } from "./runners.js";
+import { runnersView, runnerAction, enrollRunner, attestRunner, clearRunnerSecret } from "./runners.js";
 import { createAdmin, boundedRequest } from "./admin.js";
 import { createConsole } from "./console.js";
 import { createChat } from "./chat.js";
@@ -1288,7 +1288,7 @@ async function route() {
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
   }
-  if (hash !== state.route) clearAgentSecret(root);
+  if (hash !== state.route) { clearAgentSecret(root); clearRunnerSecret(root); }
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
   state.screen++; state.route = hash; state.underChat = null; state.fromChat = null;
@@ -1578,6 +1578,8 @@ root.addEventListener("submit", async (event) => {
       try { token = new URL(token).searchParams.get("t") || token; } catch { /* A bare token is valid. */ }
       location.assign(`/app/login?t=${enc(token)}`);
     } else if (kind === "agent") await createAgent(form);
+    else if (kind === "runner-enroll") await enrollRunner(form);
+    else if (kind === "runner-attest") await attestRunner(form);
     else if (kind === "email-login") {
       const result = await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext } });
       let status = root.querySelector(".signin [role=status]");
@@ -1762,7 +1764,7 @@ async function poll() {
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
 document.addEventListener("session-expired", () => { adminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pagehide", () => { adminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("pagehide", () => { adminUI?.stop(); clearAgentSecret(root); clearRunnerSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {
