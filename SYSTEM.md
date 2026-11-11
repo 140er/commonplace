@@ -1564,18 +1564,26 @@ the exported interval, not only sequential scratch results.
 
 ### Worker malloc arenas
 
-Each memory worker the gateway launches starts with `MALLOC_ARENA_MAX=2` unless
-the gateway's own environment sets `MALLOC_ARENA_MAX`, which then passes through
-unchanged (a larger value relaxes the cap). A worker serves every request on a
-new thread; glibc otherwise gives concurrent threads their own malloc arenas, up
-to eight per core, and keeps the pages freed into each, so worker RSS climbs with
-concurrency and never returns. On a synthetic 2,500-drawer palace with sixteen
-concurrent clients, anonymous RSS grew from 59 to 908 MiB over 4,800 calls and
-was still rising; with two arenas the same mix stayed near 390 MiB at the same
-wall time. Sequential calls and the Python heap showed no comparable growth.
-Non-glibc platforms ignore the variable. This bounds allocator retention only:
-the native vector index a palace loads on first use still scales with its size,
-and the gateway process keeps its own allocator settings.
+Each memory worker the gateway launches starts with `MALLOC_ARENA_MAX=2`. A
+non-empty `MALLOC_ARENA_MAX` in the gateway's own environment passes through
+unchanged; `0` restores glibc's default and an empty value counts as unset.
+Non-glibc platforms ignore the variable.
+
+The worker serves every request on a new thread. Under concurrent calls glibc
+gives those threads their own malloc arenas, up to its default of eight per core,
+and keeps the pages freed into each until a trim. The cap bounds that allocator
+retention and nothing else. On a synthetic 2,500-drawer palace (MiniLM
+embedder) with sixteen concurrent clients, a worker without the cap grew from
+about 713 to 998 MiB anonymous RSS after warm-up over 4,800 calls and was still
+rising; with the cap the same mix grew from about 385 to 406 MiB. Wall time
+was 0.5 to 5.4% longer with the cap in three measured pairs. These are local
+harness figures, not production measurements.
+
+The cap does not change the memory a worker takes when it first loads a palace's
+index and embedding model, which scales with the palace and the model, and it
+does not touch the gateway process. Whether it resolves production worker OOMs
+is not established: that needs a deploy and a check of the worker's RSS
+afterwards.
 
 ### D1-visible KG pages and aggregates
 

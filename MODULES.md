@@ -912,7 +912,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Only the explicit worker-memory observation opt-out and `MALLOC_ARENA_MAX` are added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
 
-  - Every launched worker gets `MALLOC_ARENA_MAX=2` unless the operator sets it, so glibc arena retention under concurrent calls stays bounded.
+  - Every launched worker gets `MALLOC_ARENA_MAX=2` unless the operator sets a non-empty value, which caps the number of glibc malloc arenas its request threads use. This limits allocator retention under concurrent calls only; first-load memory of the index and model is unchanged.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 

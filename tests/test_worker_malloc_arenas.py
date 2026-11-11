@@ -35,6 +35,12 @@ def test_worker_caps_malloc_arenas_by_default(tmp_path, monkeypatch):
     assert _worker_environ(tmp_path).get("MALLOC_ARENA_MAX") == "2"
 
 
+def test_empty_malloc_arena_max_keeps_the_default_cap(tmp_path, monkeypatch):
+    # glibc reads an empty value as unset, which would mean no cap at all.
+    monkeypatch.setenv("MALLOC_ARENA_MAX", "")
+    assert _worker_environ(tmp_path).get("MALLOC_ARENA_MAX") == "2"
+
+
 def test_operator_malloc_arena_max_passes_through(tmp_path, monkeypatch):
     monkeypatch.setenv("MALLOC_ARENA_MAX", "4")
     assert _worker_environ(tmp_path).get("MALLOC_ARENA_MAX") == "4"

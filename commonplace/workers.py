@@ -54,11 +54,12 @@ _PASSED_ENV = frozenset(
         "MALLOC_ARENA_MAX",
     }
 )
-# glibc gives each request thread of a worker its own malloc arena (up to eight
-# per core) and keeps the pages freed into it, so a worker under concurrent
-# calls grows with every new arena instead of reusing freed memory. Two arenas
-# keep it flat at the same throughput (#275). An operator ``MALLOC_ARENA_MAX``
-# passes through unchanged.
+# Under concurrent calls glibc gives the worker's request threads their own
+# malloc arenas, up to eight per core, and keeps the pages freed into each until
+# a trim. Capping the worker at two arenas bounds that allocator retention only
+# (#275). It does not bound the memory a palace loads on first use. A non-empty
+# operator ``MALLOC_ARENA_MAX`` passes through unchanged; ``0`` restores glibc's
+# default, and an empty value counts as unset.
 DEFAULT_MALLOC_ARENA_MAX = "2"
 DEFAULT_IDLE_STOP_S = 15 * 60
 # A memory call that meets a backup pause waits this long, then is refused
@@ -219,7 +220,8 @@ class SubprocessLauncher:
                 "MEMPALACE_MCP_TRUSTED_IDENTITY": "1",
             }
         )
-        env.setdefault("MALLOC_ARENA_MAX", DEFAULT_MALLOC_ARENA_MAX)
+        if not env.get("MALLOC_ARENA_MAX"):
+            env["MALLOC_ARENA_MAX"] = DEFAULT_MALLOC_ARENA_MAX
         log = open(workspace_dir / "worker.log", "ab")
         try:
             proc = subprocess.Popen(
