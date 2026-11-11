@@ -1,4 +1,5 @@
 import { mountWorkspaceOrchestration } from "./projects.js";
+import { mountProjectPanel } from "./projectpanel.js";
 import { api, escape as e, actor, elapsed, safeLink, pullRequestUrl, setPeople } from "./api.js";
 import { digestSpeech } from "./digest.js";
 import { voiceInput } from "./voice.js";
@@ -518,6 +519,7 @@ function boardView() {
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
   void fillChatTimes(board);
+  void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
 }
 function markOpenCard() {
   root.querySelectorAll(".workbench-board .card[data-card]").forEach((card) => {
