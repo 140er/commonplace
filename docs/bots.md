@@ -53,6 +53,36 @@ with the reader's own permissions. A `work` block shows a task's title, a status
 block shows the open question and its options, or the answer. An item the reader cannot see,
 or that no longer exists, comes back as `gone`. Tasks are always named by their number.
 
+## Updates between turns
+
+When something happens to work a bot filed, or the project's orchestrator answers a message a
+bot forwarded, the person sees it in that bot's thread without asking: one short message with
+the role `event`, and the roster follows (`unread` counts it, `state` changes).
+
+| Happens | The thread gets | Blocks |
+|---|---|---|
+| A question for the person on a task the bot filed | `A question about “<title>” needs you.` | `decision` |
+| The task is ready for review | `“<title>” is ready for you to look at.` | `work` |
+| The task is done | `“<title>” is done.` | `work` |
+| The orchestrator replies to a post the bot forwarded | the reply, word for word | `orchestrator` |
+
+- Only the bot that filed the task or forwarded the post gets the message. Other bots, and
+  other people's bots, get nothing.
+- Only while the person can still see the item: their access is checked again for every
+  event, with the same rules as project chat. No access, no message.
+- Exactly once: a task posts when its status changes into one of the three above, so the
+  same event twice, two events for one change, or events handled out of order add one
+  message each, in order. A forwarded post is
+  answered by the first reply from the project's orchestrator after it (the rule project
+  chat uses); later replies are not attached to it.
+- A title is other people's text: it is redacted and shortened for the message and never
+  interpreted. The `orchestrator` block lets a client label the message as the
+  orchestrator's own words; display redaction applies as for every message.
+- `state` on a bot is `needs_you` while a question waits for the person, else `working` while
+  a task it filed is in progress, else `idle`.
+- Not covered: a start that fails to launch. The hub emits no event for it, and nothing here
+  polls, so the bot says nothing until the person asks.
+
 ## Privacy and storage
 
 - Threads live in the workspace file `bots.sqlite3`, next to the other workspace stores, and
@@ -66,3 +96,64 @@ or that no longer exists, comes back as `gone`. Tasks are always named by their 
 - A memory note is removed with a tombstone: it disappears from the list, the stored row stays.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
+
+## Using bots in the web app
+
+This part describes what the screens do; the server side is in [Routes](#routes),
+[Blocks](#blocks) and [Privacy and storage](#privacy-and-storage).
+
+**Bots** is where you land after signing in (until a first project exists, the first-run screen
+comes first). It is the first entry in the left rail and the first tab on a phone; **Memory** is
+the only other primary entry. The number next to Bots counts the questions waiting on you.
+
+**Where the rest went.** Projects, Needs me and Console sit under **Workspace** in the account
+menu (your name at the bottom of the rail, the menu button at the top left on a phone), next to
+Rules, Workspace settings and, for owners, Admin. Nothing was removed: every project, task,
+chat, Needs me and Console link keeps working, and the project chat dock still opens on a
+project screen.
+
+Every bot you can talk to is listed:
+one per project, a General bot, and any you made yourself. The list is in the order the server
+gives it, most recently used first.
+
+**The roster.** Each row shows the bot's initial, its name, the last line of the conversation (or
+its job before you have said anything), how long ago that was, and the number of messages you have
+not seen. One dot at the right says what needs attention: a solid accent dot means something is
+waiting on you, a green pulsing dot means work is running. No dot means nothing is going on.
+**New bot** asks for a name, what the bot is for, and an optional note on how it should work.
+
+**A thread.** Tap a bot to open its conversation (on a phone it takes the whole screen; the back
+arrow returns to the list). Type and press Enter to send; Shift+Enter starts a new line. Your
+message appears at once and the bot's reply fills in as it is written. While the bot is answering,
+Send turns into **Stop**; stopping keeps what was already written.
+
+Inside the reply you may see:
+
+- a small grey line of **actions** ("Filed “Fix login”", "Told the orchestrator"); several actions
+  share one line, and a refused one is shown in red;
+- a **work** block with the task's title and a status chip (Queued, Working, Needs you, Ready,
+  Blocked, Done). Tap it to read the latest note and open its links;
+- a **question** with a button for each answer and a field for an answer in your own words. Your
+  tap is your own answer and goes straight to the task;
+- a **confirmation** for the few actions that need your tap before they run. Confirm runs what
+  the line says; Cancel drops it;
+- a **message from the orchestrator**, labelled "Orchestrator", when the project's orchestrator
+  replies to something the bot forwarded (see [Updates between turns](#updates-between-turns));
+- a **setup** note when no chat model can answer yet. Workspace owners get a link to the settings;
+  members are told to ask the owner.
+
+Above the message box a single line, **Waiting on you (n)**, collects every open question for this
+bot so you never have to scroll for them. Tap it to answer from there.
+
+**Memory and settings.** Tap the bot's name above the thread. The sheet lets you rename the bot,
+change its job and its working note, read what it remembers, add a note or remove one, and archive
+the bot. Notes are kept word for word.
+
+**If a message does not go through.** Your text stays in the box and a line says why (the bot is
+still busy, too many messages, no connection). Press Send again: the same message is sent under
+the same id (see [Routes](#routes) for what the server does with a repeated message). If the
+connection drops while the bot is answering, the page keeps checking and shows the reply when it
+is stored.
+
+**Refresh rhythm.** The list refreshes every 15 seconds and an open thread every 5 seconds, faster
+while a reply is being written. Nothing refreshes while the tab is hidden.
