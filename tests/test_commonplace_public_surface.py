@@ -115,6 +115,8 @@ PREFIX = {
     ("POST", "/api/orch/"): "authenticated",
     ("POST", "/api/runner/chat/"): "authenticated",
     ("GET", "/api/agent-schedules/"): "authenticated",
+    ("GET", "/api/card-snooze/"): "authenticated",
+    ("POST", "/api/card-snooze/"): "authenticated",
     ("POST", "/api/agent-schedules/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
     **{
