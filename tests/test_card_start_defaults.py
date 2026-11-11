@@ -234,6 +234,6 @@ def test_options_say_when_the_card_cannot_be_started_at_all(world, owner):
     world.configure()
     for board in (PLAIN, BOARD):
         card = world.card(board=board)
-        world.update(card, status="done")
+        world.update(card, status="backlog")
         status, body = options(owner, card)
         assert status == 200 and body["refusal"] == "not_todo", body
