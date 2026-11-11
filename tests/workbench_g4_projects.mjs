@@ -9,6 +9,15 @@ class Text {
   get textContent() { return this.text; }
 }
 
+// A browser's querySelectorAll result: indexable, iterable and with forEach, but no map, filter,
+// some or at. Code that treats it as an array fails here as it does in a browser.
+class NodeList {
+  constructor(items) { items.forEach((item, index) => { this[index] = item; }); this.length = items.length; }
+  item(index) { return this[index] ?? null; }
+  forEach(fn, thisArg) { Array.prototype.forEach.call(this, fn, thisArg); }
+  [Symbol.iterator]() { return Array.prototype[Symbol.iterator].call(this); }
+}
+
 class El {
   constructor(tag, doc) {
     Object.assign(this, { localName: tag.toLowerCase(), doc, attrs: new Map(), children: [], parent: null, listeners: {}, _value: null });
@@ -34,7 +43,7 @@ class El {
   set hidden(value) { this.toggleAttribute("hidden", !!value); }
   get value() {
     if (this._value !== null) return this._value;
-    if (this.localName === "select") { const options = this.querySelectorAll("option"); return (options.find((o) => o.hasAttribute("selected")) || options[0])?.value ?? ""; }
+    if (this.localName === "select") { const options = [...this.querySelectorAll("option")]; return (options.find((o) => o.hasAttribute("selected")) || options[0])?.value ?? ""; }
     return this.getAttribute("value") ?? "";
   }
   set value(value) { this._value = String(value); }
@@ -52,7 +61,7 @@ class El {
   remove() { if (this.parent) { this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; } }
   contains(node) { for (let n = node; n; n = n.parent) if (n === this) return true; return false; }
   elements() { return this.children.filter((c) => c instanceof El).flatMap((c) => [c, ...c.elements()]); }
-  querySelectorAll(selector) { return this.elements().filter((el) => matches(el, selector)); }
+  querySelectorAll(selector) { return new NodeList(this.elements().filter((el) => matches(el, selector))); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   matches(selector) { return matches(this, selector); }
   closest(selector) { for (let n = this; n instanceof El; n = n.parent) if (matches(n, selector)) return n; return null; }
@@ -162,7 +171,7 @@ function opener(label = "opener") {
 }
 
 function assertTrapped(dialog) {
-  const controls = dialog.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary");
+  const controls = [...dialog.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary")];
   assert.ok(controls.length >= 2, "the dialog has controls to cycle");
   controls.at(-1).focus();
   assert.equal(doc.key("Tab").defaultPrevented, true, "Tab on the last control stays in the dialog");
@@ -388,6 +397,98 @@ const cases = {
     const hhmm = (value) => new Date(value).toTimeString().slice(0, 5);
     assert.equal(text, `Not answering since ${hhmm(asked)} · connected · last active ${hhmm(seen)}`);
     assert.match(ui.mainHTML(project, e, { notAnswering: text }), /Not answering since/);
+  },
+  // #404: model fields are a picker of the workspace's models; an unknown id cannot be sent or saved.
+  async model_picker() {
+    const catalog = [{ provider: "claude", model: "claude-haiku-5-5" }, { provider: "codex", model: "gpt-5.5" }];
+    let current = { ...project, models: { main: null, worker: { provider: "legacy", model: "stored-only" } }, model_catalog: catalog };
+    const calls = [];
+    const api = async (path, options = {}) => {
+      calls.push({ path, ...options });
+      if (path.startsWith("/api/chat-settings")) return { front: { provider: "none" }, local_models: [], hosted: [] };
+      if (path === "/api/connections") return { connections: [] };
+      if (path.endsWith("/cards")) return { cards: [], linked: [] };
+      if (path.startsWith("/api/chat/")) return path.endsWith("/status") ? { orchestrator: null } : { messages: [], replies: [] };
+      if (path.endsWith("/models") && options.method === "PUT") {
+        const known = (choice) => !choice || [...current.model_catalog, current.models.worker].some((item) => item && item.provider === choice.provider && item.model === choice.model);
+        if (!Object.values(options.body).every(known)) throw Object.assign(new Error("unknown"), { status: 400, payload: { code: "unknown_model" } });
+        current = { ...current, models: { ...current.models, ...options.body } };
+        return current;
+      }
+      if (path.endsWith("/models/catalog")) { current = { ...current, model_catalog: [...current.model_catalog, options.body] }; return current; }
+      return current;
+    };
+    const host = doc.createElement("div"); doc.body.append(host);
+    let refreshes = 0;
+    await ui.mountProject(host, { slug: "ledger", api, e, settings: true, origin: "#/board/ledger", refresh: () => { refreshes++; } });
+    const form = host.querySelector("[data-project-models]");
+    // No free-text model field: each role is a select, and the stored id stays visible and selectable.
+    assert.equal([...host.querySelectorAll("input")].filter((input) => /_model$/.test(input.getAttribute("name") || "")).length, 0, "no free-text model input");
+    const main = host.querySelector('[data-model-role="main"]'), worker = host.querySelector('[data-model-role="worker"]');
+    assert.deepEqual([...main.querySelectorAll("option")].map((o) => o.getAttribute("value")), ["", "claude claude-haiku-5-5", "codex gpt-5.5"]);
+    assert.equal(worker.querySelectorAll("option").length, 4, "the stored choice is an option beside the list");
+    assert.equal(host.querySelector('[data-model-stored="worker"]').textContent, "legacy/stored-only");
+    // An id outside the list: the server refuses it and the form says why.
+    main.value = "claude made-up-model";
+    await form.onsubmit({ preventDefault() {}, stopPropagation() {} }); await tick();
+    assert.equal(host.querySelector("[data-project-model-status]").textContent, ui.PROJECT_COPY.unknownModel);
+    assert.equal(current.models.main, null, "nothing was saved");
+    assert.equal(refreshes, 0, "a refused save does not refresh the lists");
+    // A listed model saves with its provider and model split back out.
+    host.querySelector('[data-model-role="main"]').value = "codex gpt-5.5";
+    await host.querySelector("[data-project-models]").onsubmit({ preventDefault() {}, stopPropagation() {} }); await tick();
+    const put = calls.filter((c) => c.method === "PUT").at(-1);
+    assert.deepEqual(put.body.main, { provider: "codex", model: "gpt-5.5" });
+    assert.equal(refreshes, 1, "a saved model refreshes Needs me so its row can clear");
+    assert.equal(host.querySelector("[data-project-model-status]").textContent, ui.PROJECT_COPY.saved);
+    assert.equal(host.querySelector('[data-model-stored="main"]').textContent, "codex/gpt-5.5");
+    // Adding a model puts it in the list for both roles and keeps picks that are not saved yet.
+    host.querySelector('[data-model-role="worker"]').value = "claude claude-haiku-5-5";
+    const add = host.querySelector("[data-project-model-add]");
+    add.querySelector('[name="provider"]').value = "claude"; add.querySelector('[name="model"]').value = "claude-new";
+    await add.onsubmit({ preventDefault() {}, stopPropagation() {} }); await tick();
+    assert.deepEqual(calls.filter((c) => c.path.endsWith("/models/catalog")).map((c) => c.body), [{ provider: "claude", model: "claude-new" }]);
+    assert.ok([...host.querySelector('[data-model-role="worker"]').querySelectorAll("option")].some((o) => o.getAttribute("value") === "claude claude-new"));
+    assert.equal(host.querySelector('[data-model-role="worker"]').value, "claude claude-haiku-5-5", "an unsaved pick survives the redraw");
+    assert.equal(host.querySelector('[data-model-role="main"]').value, "codex gpt-5.5", "the saved choice is still selected");
+    host.remove();
+  },
+  // #404: the shell's mapping from a Needs me button to the settings panel, run for real.
+  settings_options() {
+    assert.equal(typeof ui.settingsOptions, "function", "settingsOptions missing");
+    const panel = doc.createElement("div"); doc.body.append(panel);
+    let refreshes = 0;
+    const refresh = () => { refreshes++; };
+    const options = ui.settingsOptions({ action: "project-models", dataset: { role: "worker", board: "atlas" }, needs: {}, panel, refresh });
+    assert.equal(options.focus, "models");
+    assert.equal(options.role, "worker", "the row's role reaches the picker");
+    assert.equal(ui.settingsOptions({ action: "project-models", dataset: { role: "main" }, needs: {}, panel, refresh }).role, "main");
+    assert.equal(options.refresh, refresh);
+    // Back hides the panel and re-reads the lists, so a mapped role's row clears.
+    panel.hidden = false;
+    options.onBack();
+    assert.equal(panel.hidden, true);
+    assert.equal(refreshes, 1, "Back refreshes");
+    // The coordinator button opens settings without a focus target; off Needs me there is no onBack.
+    const plain = ui.settingsOptions({ action: "coordinator", dataset: { board: "atlas" }, needs: null, panel, refresh });
+    assert.equal(plain.focus, undefined);
+    assert.equal(plain.onBack, undefined);
+    panel.remove();
+  },
+  // #404: Needs me opens the exact setting: the models section is open and the role's picker has focus.
+  async model_focus() {
+    const api = async (path) => {
+      if (path.startsWith("/api/chat-settings")) return { front: { provider: "none" }, local_models: [], hosted: [] };
+      if (path === "/api/connections") return { connections: [] };
+      if (path.endsWith("/cards")) return { cards: [], linked: [] };
+      if (path.startsWith("/api/chat/")) return path.endsWith("/status") ? { orchestrator: null } : { messages: [], replies: [] };
+      return { ...project, models: {}, model_catalog: [] };
+    };
+    const host = doc.createElement("div"); doc.body.append(host);
+    await ui.mountProject(host, { slug: "ledger", api, e, settings: true, origin: "#/needs", focus: "models", role: "worker" });
+    assert.ok(host.querySelector("[data-project-models-section]").hasAttribute("open"), "the models section is open");
+    assert.ok(doc.activeElement === host.querySelector('[data-model-role="worker"]'), "the worker picker has focus");
+    host.remove();
   },
   // I1: settings hand Back and Esc to the caller's onBack.
   async on_back() {

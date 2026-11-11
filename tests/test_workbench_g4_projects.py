@@ -19,6 +19,9 @@ CASES = [
     "on_back",
     "setup_clipboard",
     "disconnect_scope",
+    "model_picker",
+    "model_focus",
+    "settings_options",
 ]
 
 

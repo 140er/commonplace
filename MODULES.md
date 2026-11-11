@@ -240,6 +240,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
+
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
@@ -558,6 +560,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
@@ -1090,6 +1094,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/callstack.py`
 - **Owns:**
 
+  - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest.
+
   - Canonical Space REST response projection and typed creation refusals.
 
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
@@ -1221,6 +1227,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
 - **Owns:**
 
+  - A `model_unresolved` start refusal names the role and board and where an owner sets the model (`details.role`, `details.config_role`, `details.board`); `Config.start_roles` and `split_role` give the roles a start can run to `prepare()` and to Needs me.
+
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
 
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
@@ -1287,7 +1295,7 @@ Format (read by `commonplace orch docs-check`):
   - The optional read-only runner input to shared usage accounting.
 
 
-  - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
+  - Project orchestrator seats, project model choices with each board's model list (`models.catalog`, `catalog_add`; board-scoped, a choice outside the list is refused with `unknown_model`), the owner-only Needs me `model_roles` items for the start roles of the accepted config with no model (`models.missing_roles`), project limits, project wings and optional hosted plans.
 
 - **Promises:**
 
@@ -1507,6 +1515,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`
 - **Owns:**
 
+  - The control-database `project_model_catalog` table, created beside the model settings, holds each board's list of models owners can pick for projects.
+
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
 - **Promises:**
@@ -1668,6 +1678,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
+
+  - The Needs me Set up row for a missing model role, and the project settings model picker with its stored id, add-a-model form and role focus.
 
   - Runtime switch/orchestrator/machine read projectors, effective limits, stuck facts and separate legacy needs-me rendering in the existing Admin lifecycle.
 
