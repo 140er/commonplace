@@ -18,7 +18,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from commonplace import http_util, schedule_due, sessions
+from commonplace import http_util, schedule_time, sessions
 from commonplace.boards import priority as priorities
 from commonplace.boards.service import BoardService, validate_text
 from commonplace.control_db import ControlError
@@ -26,6 +26,7 @@ from commonplace.extensions import ToolContext, ToolError
 
 logger = logging.getLogger(__name__)
 
+MIN_INTERVAL_MINUTES = 60
 MAX_ROUTINES = 25  # per workspace, not counting deleted ones
 MAX_CATCH_UP = 3  # due times made up after downtime; older ones become one "skipped" row
 SCAN_LIMIT = 2000  # due times looked at per tick
@@ -36,7 +37,7 @@ TEMPLATE_KEYS = {"board", "title", "body", "labels", "priority", "status"}
 
 
 def stamp(now):
-    return datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds")
+    return schedule_time.stamp(datetime.fromtimestamp(now, timezone.utc))
 
 
 def ensure_schema(db):
@@ -45,6 +46,7 @@ def ensure_schema(db):
         CREATE TABLE IF NOT EXISTS routines (
             id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_user_id TEXT NOT NULL,
             name TEXT NOT NULL, template TEXT NOT NULL, schedule TEXT NOT NULL,
+            timezone TEXT NOT NULL DEFAULT 'UTC',
             state TEXT NOT NULL CHECK(state IN ('active','paused')),
             paused_reason TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
             cursor TEXT NOT NULL, anchor_at TEXT NOT NULL, created_by TEXT NOT NULL,
@@ -93,11 +95,36 @@ def _template(service, value):
     return result
 
 
-def _schedule(value):
+def _schedule(value, tz, now):
     try:
-        return schedule_due.parse(value)
-    except schedule_due.ScheduleError as exc:
+        return schedule_time.validate(
+            value,
+            tz,
+            datetime.fromtimestamp(now, timezone.utc),
+            min_interval=MIN_INTERVAL_MINUTES,
+        )
+    except ValueError as exc:
         raise ToolError(f"no: {exc}") from None
+
+
+def _next(row, after):
+    return schedule_time.next_due(
+        json.loads(row["schedule"]),
+        row["timezone"],
+        after,
+        schedule_time.parse_stamp(row["anchor_at"]),
+    )
+
+
+def due_between(row, after, upto, limit):
+    """Due times in (after, upto], oldest first, at most ``limit``."""
+    result, cursor = [], after
+    while len(result) < limit:
+        cursor = _next(row, cursor)
+        if cursor is None or cursor > upto:
+            break
+        result.append(cursor)
+    return result
 
 
 def _owner(gateway, principal, value):
@@ -113,23 +140,24 @@ def _name(value):
 
 
 def _view(db, row, now, *, runs=0):
-    schedule = json.loads(row["schedule"])
     result = {
         "id": row["id"],
         "name": row["name"],
         "owner": row["owner_user_id"],
         "template": json.loads(row["template"]),
-        "schedule": schedule,
+        "schedule": json.loads(row["schedule"]),
+        "timezone": row["timezone"],
         "state": row["state"],
         "paused_reason": row["paused_reason"],
         "created_at": row["created_at"],
         "next_due": None,
     }
     if row["state"] == "active":
-        cursor = datetime.fromisoformat(row["cursor"])
-        after = max(cursor, datetime.fromtimestamp(now, timezone.utc))
-        anchor = datetime.fromisoformat(row["anchor_at"])
-        result["next_due"] = schedule_due.next_due(schedule, after, anchor=anchor).isoformat()
+        after = max(
+            schedule_time.parse_stamp(row["cursor"]), datetime.fromtimestamp(now, timezone.utc)
+        )
+        due = _next(row, after)
+        result["next_due"] = schedule_time.stamp(due) if due else None
     with db._lock:
         history = db._conn.execute(
             "SELECT due_at,state,board,card,code,detail,created_at FROM routine_runs "
@@ -171,11 +199,18 @@ def show(db, principal, identity, now):
 def create(service, body, now):
     principal = require_owner(service.principal)
     gateway = service.ctx.gateway
-    if not isinstance(body, dict) or set(body) - {"name", "template", "schedule", "owner"}:
+    if not isinstance(body, dict) or set(body) - {
+        "name",
+        "template",
+        "schedule",
+        "timezone",
+        "owner",
+    }:
         raise ValueError("invalid routine")
     name = _name(body.get("name"))
     template = _template(service, body.get("template"))
-    schedule = _schedule(body.get("schedule"))
+    tz = body.get("timezone", "UTC")
+    schedule = _schedule(body.get("schedule"), tz, now)
     owner = _owner(gateway, principal, body.get("owner"))
     identity = uuid.uuid4().hex
     db, at = gateway.db, stamp(now)
@@ -187,8 +222,8 @@ def create(service, body, now):
         if count >= MAX_ROUTINES:
             raise ToolError(f"no: a workspace can have at most {MAX_ROUTINES} routines")
         db._conn.execute(
-            "INSERT INTO routines (id,workspace_id,owner_user_id,name,template,schedule,state,"
-            "cursor,anchor_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,'active',?,?,?,?,?)",
+            "INSERT INTO routines (id,workspace_id,owner_user_id,name,template,schedule,timezone,"
+            "state,cursor,anchor_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'active',?,?,?,?,?)",
             (
                 identity,
                 principal.workspace_id,
@@ -196,6 +231,7 @@ def create(service, body, now):
                 name,
                 json.dumps(template),
                 json.dumps(schedule),
+                tz,
                 at,
                 at,
                 principal.user_id,
@@ -217,6 +253,7 @@ def update(service, identity, body, now):
             "name",
             "template",
             "schedule",
+            "timezone",
             "owner",
             "paused",
         }
@@ -230,8 +267,11 @@ def update(service, identity, body, now):
         changes["template"] = json.dumps(_template(service, body["template"]))
     if "owner" in body:
         changes["owner_user_id"] = _owner(gateway, principal, body["owner"])
-    if "schedule" in body:
-        changes["schedule"] = json.dumps(_schedule(body["schedule"]))
+    if "schedule" in body or "timezone" in body:
+        tz = body.get("timezone", row["timezone"])
+        value = body["schedule"] if "schedule" in body else json.loads(row["schedule"])
+        changes["schedule"] = json.dumps(_schedule(value, tz, now))
+        changes["timezone"] = tz
         changes["anchor_at"] = changes["cursor"] = stamp(now)
     if "paused" in body:
         if not isinstance(body["paused"], bool):
@@ -264,9 +304,8 @@ def delete(service, identity, now):
     return {"deleted": row["id"]}
 
 
-def _fill(text, due, schedule):
-    zone = schedule_due._zone(schedule.get("tz", "UTC"))
-    return text.replace("{date}", due.astimezone(zone).date().isoformat())
+def _fill(text, due, tz):
+    return text.replace("{date}", due.astimezone(schedule_time.zone(tz)).date().isoformat())
 
 
 class RoutineWorker:
@@ -322,19 +361,25 @@ class RoutineWorker:
             made = self.gateway.db._conn.execute(
                 "INSERT OR IGNORE INTO routine_runs (id,routine_id,due_at,state,code,detail,"
                 "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
-                (identity, row["id"], due.isoformat(), state, code, detail, stamp(now), stamp(now)),
+                (
+                    identity,
+                    row["id"],
+                    schedule_time.stamp(due),
+                    state,
+                    code,
+                    detail,
+                    stamp(now),
+                    stamp(now),
+                ),
             ).rowcount
             self.gateway.db._conn.execute(
                 "UPDATE routines SET cursor=? WHERE id=? AND cursor<?",
-                (due.isoformat(), row["id"], due.isoformat()),
+                (schedule_time.stamp(due), row["id"], schedule_time.stamp(due)),
             )
         return identity if made else None
 
     def _advance(self, row, at, now):
-        schedule = json.loads(row["schedule"])
-        cursor = datetime.fromisoformat(row["cursor"])
-        anchor = datetime.fromisoformat(row["anchor_at"])
-        dues = schedule_due.due_between(schedule, cursor, at, anchor=anchor, limit=SCAN_LIMIT)
+        dues = due_between(row, schedule_time.parse_stamp(row["cursor"]), at, SCAN_LIMIT)
         if not dues:
             return 0
         keep = [] if len(dues) == SCAN_LIMIT else dues[-MAX_CATCH_UP:]
@@ -417,13 +462,12 @@ class RoutineWorker:
             marker = MARKER + run["id"]
             number = self._existing(service, marker)
             if number is None:
-                schedule = json.loads(row["schedule"])
-                due = datetime.fromisoformat(run["due_at"])
+                due = schedule_time.parse_stamp(run["due_at"])
                 with service.store.connection() as conn:
                     service._board(conn, template["board"])  # never create a board here
                 card = service.task_add(
-                    _fill(template["title"], due, schedule),
-                    body=_fill(template["body"], due, schedule),
+                    _fill(template["title"], due, row["timezone"]),
+                    body=_fill(template["body"], due, row["timezone"]),
                     board=template["board"],
                     status=template["status"],
                     labels=[*template["labels"], "routine", marker],
@@ -477,7 +521,7 @@ def install(gateway):
                         "routines": listing(gateway.db, principal, now),
                         "limits": {
                             "routines": MAX_ROUTINES,
-                            "min_interval_minutes": schedule_due.MIN_INTERVAL_MINUTES,
+                            "min_interval_minutes": MIN_INTERVAL_MINUTES,
                         },
                     },
                 )

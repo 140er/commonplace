@@ -222,3 +222,26 @@ def test_history_is_bounded(h):
     count = h.db._conn.execute("SELECT count(*) FROM routine_runs").fetchone()[0]
     assert count == routines.RUN_HISTORY
     assert r["id"]
+
+
+def test_cron_in_a_time_zone_and_schedule_update(h):
+    r = make(h, schedule={"cron": "0 9 * * *"}, timezone="Europe/Amsterdam")
+    assert r["timezone"] == "Europe/Amsterdam"
+    assert r["next_due"] == "2026-11-12T08:00:00Z"
+    worker = h.gateway.routine_worker
+    assert worker.run_once(now=ts(timedelta(hours=23))) == 0
+    assert worker.run_once(now=ts(timedelta(hours=24, minutes=1))) == 1
+    assert routine_cards(h)[0]["title"] == "Review 2026-11-12"
+    worker.now = lambda: ts(timedelta(hours=25))
+    status, changed, _ = h.request(
+        h.owner, "PATCH", f"/api/routines/{r['id']}", {"schedule": {"every_minutes": 120}}
+    )
+    assert status == 200 and changed["schedule"] == {"every_minutes": 120}
+    assert changed["timezone"] == "Europe/Amsterdam"
+    assert worker.run_once(now=ts(timedelta(hours=26))) == 0
+    assert worker.run_once(now=ts(timedelta(hours=27, minutes=1))) == 1
+    bad = {"schedule": {"cron": "*/5 * * * *"}}
+    assert h.request(h.owner, "PATCH", f"/api/routines/{r['id']}", bad)[0] == 400
+    assert (
+        h.request(h.owner, "PATCH", f"/api/routines/{r['id']}", {"timezone": "Mars/Base"})[0] == 400
+    )
