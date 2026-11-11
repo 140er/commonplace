@@ -427,8 +427,15 @@ def _decision(turn, args, version=None):
 
 
 def _check_answer(turn, args):
-    """Before a chip exists, and again at the tap (then with the frozen ``version``)."""
-    _decision(turn, args, args.get("version"))
+    """Before a chip exists: the item, the choice and the words. At the tap (the frozen
+    ``version`` is among the arguments) only the text is checked again: a refusal there leaves
+    the chip open, while a changed item must close it, and ``run`` refuses that."""
+    if args.get("version") is None:
+        _decision(turn, args)
+    elif (args.get("choice") is None) == (args.get("reply") is None):
+        raise Plain(CHOICE_OR_REPLY)
+    elif args.get("reply") is not None:
+        turn.words(args["reply"])
 
 
 def _answer_decision_label(turn, args):
@@ -453,9 +460,8 @@ def _answer_decision(turn, args):
 
 
 def _check_approve(turn, args):
-    card = _item(turn, turn.board(args), args["ref"])
-    if args.get("version") is not None and card["version"] != args["version"]:
-        raise Plain(CHANGED)
+    if args.get("version") is None:  # at the tap, ``run`` checks the item and closes the chip
+        _item(turn, turn.board(args), args["ref"])
 
 
 def _approve_work_label(turn, args):
@@ -522,7 +528,7 @@ def _create_project(turn, args):
 
 # Registration
 
-REF = {"type": "integer", "minimum": 1, "description": "The work number"}
+REF = {"type": "integer", "minimum": 1}
 PRIORITY = {"type": "string", "enum": list(priorities.PRIORITIES)}
 
 
@@ -543,8 +549,8 @@ register(
     Tool(
         name="project_status",
         description=(
-            "How the project stands: task counts by status, who is working, what waits and "
-            "why, and whether the orchestrator is connected and will be woken."
+            "Task counts, who is working, what waits and why, and whether the orchestrator "
+            "is connected and woken."
         ),
         schema=_schema(),
         kind="read",
@@ -556,10 +562,7 @@ register(
 register(
     Tool(
         name="list_work",
-        description=(
-            "List up to 20 tasks, open ones unless a status is given. Statuses: queued, "
-            "working, needs_you, ready, blocked, done."
-        ),
+        description=("List up to 20 tasks (open ones unless a status is given)."),
         schema=_schema({"status": {"type": "string", "enum": list(STATUSES)}}),
         kind="read",
         run=_list_work,
@@ -570,7 +573,7 @@ register(
 register(
     Tool(
         name="work_detail",
-        description="One task: status, latest notes and links.",
+        description="One task: status, latest notes, links.",
         schema=_schema({"ref": REF}, ["ref"]),
         kind="read",
         run=_work_detail,
@@ -582,11 +585,10 @@ register(
     Tool(
         name="create_work",
         description=(
-            "File new work as a task, in the person's own words. Only when they clearly ask for "
-            "it. Without arguments the whole current message is filed. `title` and `body` must "
-            "be copied verbatim from the current message; to file only one part of a message, "
-            "pass that part. Filing is the only way to hand over new work: never also call "
-            "tell_orchestrator with the same text. `priority` is for the project owner only."
+            "File new work as a task, in the person's own words, only on a clear request. "
+            "Without arguments the whole message is filed; `title` and `body` must be copied "
+            "verbatim from it (to file one part, pass that part). Never also call "
+            "tell_orchestrator for it. `priority`: project owner only."
         ),
         schema=_schema(
             {
@@ -606,9 +608,8 @@ register(
     Tool(
         name="prioritize_work",
         description=(
-            "Change a task's priority, or move it before or after another task in the same "
-            "column (`before` / `after` name that other task). Priority is for the project "
-            "owner only."
+            "Change a task's priority (project owner only), or move it `before` or `after` "
+            "another task in the same column."
         ),
         schema=_schema(
             {"ref": REF, "priority": PRIORITY, "before": REF, "after": REF},
@@ -624,8 +625,8 @@ register(
     Tool(
         name="comment_work",
         description=(
-            "Add the person's own words as a comment on a task. `text` must be copied verbatim "
-            "from the current message; without it the whole message is the comment."
+            "Comment on a task with the person's own words: `text` copied verbatim from the "
+            "message, or the whole message."
         ),
         schema=_schema(
             {"ref": REF, "text": {"type": "string", "minLength": 1, "maxLength": 8000}}, ["ref"]
@@ -640,11 +641,9 @@ register(
     Tool(
         name="tell_orchestrator",
         description=(
-            "Pass the person's own words to the project's orchestrator, to steer the work. "
-            "`text` must be copied verbatim from the current message; without it the whole "
-            "message is passed on. Not for new work: file that with create_work only. The "
-            "result says whether the orchestrator is connected and will be woken; report that "
-            "honestly, as passed on, never as done."
+            "Pass the person's own words to the orchestrator to steer the work: `text` copied "
+            "verbatim from the message, or the whole message. Not for new work (use "
+            "create_work). Say honestly whether it is woken; it is passed on, not done."
         ),
         schema=_schema({"text": {"type": "string", "minLength": 1, "maxLength": 8000}}),
         kind="routine",
@@ -668,9 +667,8 @@ register(
     Tool(
         name="answer_decision",
         description=(
-            "Answer an open question. Give exactly one of `choice` (one of the offered options, "
-            "exactly as listed) or `reply` (copied verbatim from the current message). It waits "
-            "for the person's tap before anything is sent."
+            "Answer an open question with exactly one of `choice` (an offered option, as "
+            "listed) or `reply` (copied verbatim from the message). Waits for the person's tap."
         ),
         schema=_schema(
             {
@@ -691,8 +689,8 @@ register(
     Tool(
         name="approve_work",
         description=(
-            "Approve a task that waits for approval, or decline it (`approve` false). It waits "
-            "for the person's tap before anything is sent."
+            "Approve a task that waits for approval, or decline it (`approve` false). Waits "
+            "for the person's tap."
         ),
         schema=_schema({"ref": REF, "approve": {"type": "boolean"}}, ["ref", "approve"]),
         kind="confirm",
@@ -706,8 +704,8 @@ register(
     Tool(
         name="create_project",
         description=(
-            "Create a new project. `name` must be copied verbatim from the current message. It "
-            "waits for the person's tap; the project's bot then appears in their list of bots."
+            "Create a new project; `name` copied verbatim from the message. Waits for the "
+            "person's tap."
         ),
         schema=_schema({"name": {"type": "string", "minLength": 1, "maxLength": 80}}, ["name"]),
         kind="confirm",
