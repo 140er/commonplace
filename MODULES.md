@@ -695,7 +695,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Space profile/tool snapshots retain split and inbox visibility and card-schema additions, with current origin-release descriptions. Legacy NULL-origin and untrusted-policy controls isolate each predicate independently.
 
-   - Waiting-reason app tests drive the real `board.js`, `details.js` and `waiting.js` modules through Node against the server sentences.
+  - Waiting-reason app tests drive the real `board.js`, `details.js` and `waiting.js` modules through Node against the server sentences.
+
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Owner rejection of person-targeted restricted proposals with a healthy coordinator preserves origin state; owner fallback still refuses rejection. Existing release, connection, default-client and delayed-approval contracts supply explicit recovery reasons and separate required proposal review.
@@ -1699,6 +1700,7 @@ Format (read by `commonplace orch docs-check`):
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
 
   - `waiting.js` shows the server's waiting sentence as a board tag and in the card details, and a strip of `waiting_notes` above the board; it adds no sentences of its own.
+
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
