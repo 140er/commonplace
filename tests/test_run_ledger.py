@@ -3,7 +3,7 @@
 import pytest
 
 from commonplace.runner import ledger
-from mempalace.sqlite_crypto import connect
+from mempalace.sqlite_crypto import connect, row_factory
 from tests.runner_harness import (
     attest,
     card,
@@ -99,10 +99,12 @@ def _run(hub, owner, task):
 
 
 def _db(hub, owner):
-    return connect(
+    conn = connect(
         str(hub.gateway.workspace_dir(owner["workspace"])) + "/runner.sqlite3",
         isolation_level=None,
     )
+    conn.row_factory = row_factory
+    return conn
 
 
 def test_a_start_writes_one_ledger_row_that_follows_the_run(signup_hub, owners):  # noqa: F811
