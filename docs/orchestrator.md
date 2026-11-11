@@ -176,14 +176,43 @@ Inside it, in this order:
    checked when it starts. Without a runner database there is nothing to lock
    and the change does not create it. Unreadable stored contracts count as `**`. One start spends a budget
    of 2 200 000 work units, calibrated on the development host at about 0.3
-   microseconds per unit: each running card's stored size is billed before its
-   contract is parsed (1, plus 8 per glob, 1 per `/` and 1 per 32 characters),
-   each wildcard segment compiled is billed by what compiling costs (70, plus 2
-   per character, 21 per `*` and 20 per `[`), and a comparison costs pairs times
+   microseconds per unit: each running card costs 16 units to handle plus its
+   stored size (1, plus 8 per glob, 1 per `/` and 1 per 32 characters), billed
+   before its contract is parsed; each wildcard segment compiled is billed by
+   what compiling costs (70, plus 2 per character, 21 per `*` and 20 per `[`),
+   a recompile after a cache clear included; and a comparison costs pairs times
    the shallower side's deepest glob times the heaviest segment of either side.
-   Running into the budget took 0.4 to 0.8 s for each measured shape on that
-   host (the slowest 0.74 s); the measured set is not exhaustive. Beyond the
-   budget it
+   The SQL read of the running cards' contracts is not billed (0.17 s at 220 000
+   rows with contracts, 0.04 s without). Measured on the development host, in
+   seconds to run into the budget (or through all running cards where the shape
+   never reached it), minimum to maximum over the runs made:
+
+   | shape | running cards compared | seconds |
+   |---|---|---|
+   | A 89 segments, `?` against literal | 5 | 0.33 to 0.35 |
+   | B one ~180-character segment, `?` against literal | 85 | 0.22 |
+   | C one star-dense segment against literal | 98 | 0.44 |
+   | D 89 segments, literal against literal | 5 | 0.11 |
+   | E one ~180-character segment, literal against literal | 86 | 0.11 |
+   | G 4 segments of ~53 characters, `?` against literal | 64 | 0.29 |
+   | H one segment of character classes | 84 | 0.21 |
+   | I one `*?` segment | 80 | 0.46 to 0.48 |
+   | J one segment, many stars, end mismatch | 81 | 0.45 |
+   | L 366 or 1000 running cards of 64 globs of 89 segments | 330 | 0.69 to 0.72 |
+   | M new card of 64 globs of 89 segments, 1000 one-glob cards (never reaches the budget) | 1000 | 0.03 |
+   | Q2 64 globs of 8 segments, distinct 20-character wildcard patterns | 41 | 0.55 to 0.57 |
+   | T1 64 tiny literal globs per card | 3 563 | 0.60 to 0.86 |
+   | T2 64 distinct 185-character wildcard globs per card | 74 | 0.65 to 0.68 |
+   | T2s 64 distinct 19-character wildcard globs per card | 291 | 0.69 to 0.78 |
+   | T3 64 distinct 185-character literal globs, 1200 cards (never reaches the budget) | 1200 | 0.34 |
+   | M2 an edit adding 64 long wildcard globs, 64-glob literal cards | 86 | 0.16 |
+   | S1 new card against one literal glob per card | 78 571 | 0.50 to 0.52 |
+   | G64x1 new card of 64 one-segment literal globs, one glob per card | 24 713 | 0.58 |
+   | G64x1W the same with 64 wildcard globs | 24 640 | 0.82 to 0.88 |
+   | G64x64 new card of 64 one-segment literal globs, 64 per card | 473 | 0.54 |
+   | G64x64W the same with 64 wildcard globs | 472 | 0.82 to 0.88 |
+
+   The measured set is not exhaustive. Beyond the budget it
    refuses with `path_contract_too_large` (details `card`, `paths`,
    `other_paths`, `budget`). `card_start` on a board without an orchestrator
    config runs the same check before the job is inserted. Only runner starts

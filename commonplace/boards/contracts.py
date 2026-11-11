@@ -52,6 +52,7 @@ COMPILE_CHAR_UNITS = 2
 COMPILE_STAR_UNITS = 21
 COMPILE_CLASS_UNITS = 20
 GLOB_UNITS = 8  # work units to read, expand and canonicalise one stored glob
+CARD_UNITS = 16  # work units billed for handling one running card (parse, prepare, loop)
 MAX_MATCHERS = 8192  # compiled wildcard segments kept
 _WILDCARDS = frozenset("*?[{}")
 ANY = ("**",)
@@ -204,7 +205,10 @@ def _matcher(pattern: str):
     return found
 
 
-def _overlap(left, right) -> bool:
+def _overlap(left, right, matchers=None) -> bool:
+    """``matchers`` is the call-local table of a budgeted start (every wildcard segment in
+    it was billed when it was compiled); without it the shared cache is used."""
+    lookup = _matcher if matchers is None else matchers.__getitem__
     for (a, a_wild), (b, b_wild) in zip(left, right):
         if a == "**" or b == "**":
             return True
@@ -213,10 +217,10 @@ def _overlap(left, right) -> bool:
         if a_wild and b_wild:
             continue  # two patterns may share a name; assume they do
         if a_wild:
-            if _matcher(a)(b):
+            if lookup(a)(b):
                 continue
         elif b_wild:
-            if _matcher(b)(a):
+            if lookup(b)(a):
                 continue
         return False
     return True
@@ -257,26 +261,30 @@ def _prepare(globs):
     return pairs, depth, weight
 
 
-def _compile_charge(pairs, budget: Budget) -> None:
-    """Bill, and build, the matcher of every wildcard segment not compiled yet."""
+def _compile_charge(pairs, budget: Budget, matchers: dict) -> None:
+    """Bill, and build, the matcher of every wildcard segment this call has not got yet. A
+    segment is billed whenever it has to be compiled, a recompile after the shared cache was
+    cleared included; the call-local ``matchers`` table keeps what was built, so the
+    comparisons never compile (and never clear the shared cache) unbilled."""
     for _, segments in pairs:
         for text, wild in segments:
-            if wild and text != "**" and text not in _MATCHERS:
-                budget.take(_compile_units(text))
-                _matcher(text)
+            if wild and text != "**" and text not in matchers:
+                if text not in _MATCHERS:
+                    budget.take(_compile_units(text))
+                matchers[text] = _matcher(text)
 
 
-def _first(left, right, budget: Budget | None):
+def _first(left, right, budget: Budget | None, matchers: dict | None = None):
     (a_pairs, a_depth, a_weight), (b_pairs, b_depth, b_weight) = left, right
     if not a_pairs or not b_pairs:
         return None
     if budget is not None:
-        _compile_charge(b_pairs, budget)
+        _compile_charge(b_pairs, budget, matchers)
         depth = max(min(a_depth, b_depth), 1)
         budget.take(len(a_pairs) * len(b_pairs) * depth * max(a_weight, b_weight))
     for a, x in a_pairs:
         for b, y in b_pairs:
-            if _overlap(x, y):
+            if _overlap(x, y, matchers):
                 return a, b
     return None
 
@@ -288,27 +296,30 @@ def first_overlap(mine, theirs, budget: Budget | None = None) -> tuple[str, str]
     segment that is not compiled yet (``COMPILE_UNITS``), then the pairs times the shallower
     side's deepest glob times the heaviest segment of either side."""
     left = _prepare(mine)
+    matchers = {} if budget is not None else None
     if budget is not None:
-        _compile_charge(left[0], budget)
-    return _first(left, _prepare(theirs), budget)
+        _compile_charge(left[0], budget, matchers)
+    return _first(left, _prepare(theirs), budget, matchers)
 
 
 def first_overlap_running(mine, running, budget: Budget):
     """Check ``mine`` against the stored contracts of the running cards, ``(key, stored)``
-    each. Every card is billed its stored size (``size_units``) before its contract is
-    parsed or expanded, then its compiles and comparisons. Returns ``(key, globs, pair)``
+    each. Every card is billed ``CARD_UNITS`` for its own handling and its stored size
+    (``size_units``) before its contract is parsed or expanded, then its compiles and
+    comparisons. Returns ``(key, globs, pair)``
     for the first overlap (an unreadable stored contract reads as ``**``) or None; raises
     ``TooLarge`` with the ``key`` of the card the budget ran out on."""
     budget.take(size_units(mine))
     left = _prepare(mine)
-    _compile_charge(left[0], budget)
+    matchers: dict = {}
+    _compile_charge(left[0], budget, matchers)
     for key, stored in running:
         try:
-            budget.take(size_units(stored))
+            budget.take(CARD_UNITS + size_units(stored))
             globs = parse(stored)
             if globs is None:
                 globs = list(ANY)
-            found = _first(left, _prepare(globs), budget)
+            found = _first(left, _prepare(globs), budget, matchers)
         except TooLarge as exc:
             exc.key = key
             raise

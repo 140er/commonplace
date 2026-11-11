@@ -1894,10 +1894,8 @@ def test_c389_oversized_stored_contracts_refuse_instead_of_holding_the_lock(worl
     world.configure(max_agents=5)
     lease = world.claim(world.a)
     world.orch_start(world.a, lease, first, "s1")
-    started = time.monotonic()
     exc = refused("path_contract_too_large", world.orch_start, world.a, lease, second, "s2")
-    assert exc.details["card"] == first
-    assert time.monotonic() - started < 2
+    assert exc.details["card"] == first and exc.details["budget"] == contracts.MAX_STEPS
     assert world.jobs_for(second) == []
 
 

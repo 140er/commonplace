@@ -255,6 +255,38 @@ def test_compile_charge_follows_length_stars_and_classes():
     assert contracts._compile_units("[a-z]" * 35) > contracts._compile_units("?" * 175)
 
 
+def test_many_one_glob_running_cards_are_billed_per_card():
+    """Reviewer shape S1: one literal glob per running card. Handling a card (parse, prepare,
+    loop) has a cost of its own, so about 78 000 of them use up the budget; billing only the
+    stored size let a start go on for about 220 000."""
+    running = [(k, json.dumps([f"d{k}/x.py"])) for k in range(120_000)]
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(["src/a.py"], running, contracts.Budget())
+    assert 60_000 < info.value.key < 100_000
+
+
+def test_every_compile_is_billed_even_after_the_shared_cache_is_cleared(monkeypatch):
+    """With a tiny shared cache the start's 64 wildcard segments overflow it. The start keeps
+    the matchers it built, so it never recompiles one it has billed for or clears the cache
+    in the middle of the comparisons: compiles run == compiles billed."""
+    monkeypatch.setattr(contracts, "MAX_MATCHERS", 16)
+    contracts._MATCHERS.clear()
+    compiled, billed = [], []
+    real_compile, real_units = contracts.re.compile, contracts._compile_units
+    monkeypatch.setattr(
+        contracts.re,
+        "compile",
+        lambda pattern, *a: (compiled.append(pattern), real_compile(pattern, *a))[1],
+    )
+    monkeypatch.setattr(
+        contracts, "_compile_units", lambda text: (billed.append(text), real_units(text))[1]
+    )
+    mine = [f"*a{i}z" for i in range(64)]
+    running = [(k, json.dumps([f"b{k}"])) for k in range(50)]
+    assert contracts.first_overlap_running(mine, running, contracts.Budget(10**9)) is None
+    assert len(compiled) == len(billed) == 64
+
+
 def test_the_new_cards_own_stored_size_is_billed_first():
     mine = [f"src/{i}/*.py" for i in range(8)]
     cost = contracts.size_units(mine)
@@ -291,9 +323,9 @@ def test_distinct_wildcard_patterns_are_charged_for_compiling():
     with pytest.raises(contracts.TooLarge) as info:
         contracts.first_overlap_running(mine, running, contracts.Budget())
     assert info.value.key < 100
-    assert (
-        len(contracts._MATCHERS) <= contracts.MAX_STEPS // contracts.COMPILE_UNITS
-    )  # a loose bound
+    # What was compiled, priced the way it is billed, fits the budget (a start never
+    # compiles more than it paid for).
+    assert sum(contracts._compile_units(p) for p in contracts._MATCHERS) <= contracts.MAX_STEPS
     # A pattern that is already compiled is not billed again.
     first = contracts.Budget()
     contracts.first_overlap(["*.py"], ["a.py"], first)
