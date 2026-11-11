@@ -19,6 +19,10 @@ from commonplace.gateway import Gateway
 from commonplace.workers import WorkerSupervisor
 from tests.test_commonplace_mailer import smtp_env as smtp_env, smtp_server as smtp_server
 
+# Ends a hung request or a wait that never comes true. It is not a budget: a
+# host busy with other work must not count as a hung gateway or mail worker.
+HANG_GUARD_S = 30
+
 
 class Mailbox:
     configured = True
@@ -38,7 +42,7 @@ class Mailbox:
             delivered(self.auth)
         with self.changed:
             count = index + 1 if index >= 0 else -index
-            assert self.changed.wait_for(lambda: len(self.messages) >= count, timeout=3)
+            assert self.changed.wait_for(lambda: len(self.messages) >= count, timeout=HANG_GUARD_S)
         return re.search(r"https?://\S+", self.messages[index][2])[0]
 
 
@@ -46,7 +50,9 @@ def delivered(auth):
     """Wait for processing, including failure cleanup, with a finite watchdog."""
     pending = auth._pending
     with pending.all_tasks_done:
-        assert pending.all_tasks_done.wait_for(lambda: pending.unfinished_tasks == 0, timeout=3)
+        assert pending.all_tasks_done.wait_for(
+            lambda: pending.unfinished_tasks == 0, timeout=HANG_GUARD_S
+        )
 
 
 @contextmanager
@@ -118,7 +124,7 @@ class Client:
             hdrs["Content-Type"] = "application/json"
         if cookie:
             hdrs["Cookie"] = cookie
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=HANG_GUARD_S)
         try:
             conn.request(method, path, body=raw, headers=hdrs)
             response = conn.getresponse()

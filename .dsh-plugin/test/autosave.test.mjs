@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test'
 
 import * as autosave from '../lib/autosave.js'
 import { TranscriptLog, recordFor, transcriptFileName } from '../lib/transcript.js'
-import { createAgent, createHost, tick } from './host.mjs'
+import { createAgent, createHost, tick, waitFor } from './host.mjs'
 
 let dir
 beforeEach(async () => {
@@ -135,18 +135,27 @@ test('a disposed session gets its session-end hook', async () => {
 })
 
 test('hooks run one at a time per session, and repeats already queued collapse', async () => {
-  const host = createHost({ reply: () => ({ delayMs: 40, stdout: '{}' }) })
+  // Only the first run is held open, and the test releases it: how long a run
+  // takes never decides what the second one saw.
+  let release
+  const firstRun = new Promise((resolve) => {
+    release = resolve
+  })
+  let runs = 0
+  const host = createHost({ reply: () => ({ stdout: '{}', ...(runs++ === 0 ? { until: firstRun } : {}) }) })
   autosave.apply(host.ctx, { transcriptDir: dir })
   const { agent, session } = createAgent()
   host.emit('session/event', session, userSaid(1, 'hello'))
 
   host.emit('agent/turn-stopping', { agent, turn: 1 })
-  await tick(10)
+  await waitFor(() => hookCalls(host).length === 1)
   for (let turn = 2; turn <= 5; turn += 1) host.emit('agent/turn-stopping', { agent, turn })
-  await tick(10)
+  await tick(20)
   assert.equal(hookCalls(host).length, 1, 'the second run waits for the first')
 
-  await tick(150)
+  release()
+  // Unloading waits for every queued run, so the count below is final.
+  await host.unload()
   assert.equal(hookCalls(host).length, 2, 'four queued stops ran as one')
 })
 
@@ -266,14 +275,28 @@ test('a relative transcriptDir is resolved once, so the hook reads the file the 
 })
 
 test('unloading waits for a hook still running', async () => {
-  const host = createHost({ reply: () => ({ delayMs: 60, stdout: '{}' }) })
+  // The hook ends when the test says so, not after a delay: no host, however
+  // slow, can finish it before unloading starts.
+  let release
+  const finish = new Promise((resolve) => {
+    release = resolve
+  })
+  const host = createHost({ reply: () => ({ until: finish, stdout: '{}' }) })
   autosave.apply(host.ctx, { transcriptDir: dir })
   const { agent, session } = createAgent()
   host.emit('session/event', session, userSaid(1, 'hello'))
   host.emit('agent/turn-stopping', { agent, turn: 1 })
-  await tick(10)
+  await waitFor(() => hookCalls(host).length === 1)
 
-  const started = Date.now()
-  await host.unload()
-  assert.ok(Date.now() - started >= 30, 'unload joined the in-flight hook')
+  let unloaded = false
+  const unloading = host.unload().then(() => {
+    unloaded = true
+  })
+  // An unload that did not join the hook would already be done after a few turns of the loop.
+  await tick(20)
+  assert.equal(unloaded, false, 'unload joined the in-flight hook')
+
+  release()
+  await unloading
+  assert.equal(unloaded, true)
 })

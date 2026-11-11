@@ -6,7 +6,7 @@ import { test } from 'node:test'
 
 import { projectWing, yamlWing } from '../lib/palace.js'
 import * as recall from '../lib/recall.js'
-import { createAgent, createHost, render, tick } from './host.mjs'
+import { createAgent, createHost, render, tick, waitFor } from './host.mjs'
 
 const WAKEUP = [
   'Wake-up text (~40 tokens):',
@@ -18,6 +18,11 @@ const WAKEUP = [
   '  - chose the append-only transcript (dsh plugin)',
   '',
 ].join('\n')
+
+// These tests assert a wall-clock budget, so a loaded host can fail them.
+// tests/test_dsh_plugin.py runs them as a `timing` test, apart from the
+// functional suite, which sets DSH_SKIP_TIMING=1.
+const timing = { skip: process.env.DSH_SKIP_TIMING === '1' && 'a timing test (tests/test_dsh_plugin.py)' }
 
 const wakeUp = (stdout, extra = {}) => (spec) => (spec.argv.includes('wake-up') ? { stdout, ...extra } : {})
 
@@ -109,7 +114,7 @@ test('session-start re-fired by compact or clear registers nothing twice', async
   assert.equal(host.warnings.length, 0)
 })
 
-test('a slow palace costs the first call at most the budget, then memory lands', async () => {
+test('a slow palace costs the first call at most the budget, then memory lands', timing, async () => {
   const host = createHost({ reply: wakeUp(WAKEUP, { delayMs: 150 }) })
   recall.apply(host.ctx, { firstAssemblyBudgetMs: 20 })
   const { agent, assemble } = createAgent()
@@ -173,6 +178,9 @@ test('a hung CLI is cut off at the timeout', async () => {
   host.emit('agent/session-start', { agent, source: 'startup' })
 
   assert.equal(render(await assemble()), '')
+  // The first-assembly budget can end the wait before the CLI timeout is
+  // reported on a loaded host; the timeout warning still has to come.
+  await waitFor(() => host.warnings.length > 0)
   assert.match(host.warnings[0], /timed out after 30ms/)
 })
 
@@ -232,7 +240,7 @@ test('unloading the plugin removes the section from live agents', async () => {
   assert.equal(render(await assemble()), '')
 })
 
-test('a palace slower than the budget delays only the first assembly, not every step', async () => {
+test('a palace slower than the budget delays only the first assembly, not every step', timing, async () => {
   const host = createHost({ reply: wakeUp(WAKEUP, { delayMs: 1500 }) })
   recall.apply(host.ctx, { firstAssemblyBudgetMs: 300 })
   const { agent, assemble } = createAgent()

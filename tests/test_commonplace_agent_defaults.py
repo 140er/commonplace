@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -25,6 +26,9 @@ RULE = "Keep workspace decisions verbatim.\n  Preserve their whitespace."
 PRIVATE_MEMORY = "workspace decisions PRIVATE_MEMORY_CANARY"
 PRIVATE_RULE = "PRIVATE_RULE_CANARY"
 PROPOSED_RULE = "UNAPPROVED_SHARED_RULE_CANARY"
+# Ends a hung request or hook run. It is never a budget: a loaded host must not
+# turn a slow answer into a failure. Budgets have their own `timing` tests.
+HANG_GUARD_S = 60.0
 
 
 @pytest.fixture
@@ -70,7 +74,7 @@ def fresh(hub, config, monkeypatch):
             token=token,
             token_env=env_name,
             principal=hub.db.authenticate_token(token),
-            client=Client(url=url, token_env=env_name),
+            client=Client(url=url, token_env=env_name, timeout=HANG_GUARD_S),
         )
         connections.append(connection)
         return connection
@@ -86,6 +90,19 @@ def fresh(hub, config, monkeypatch):
         user=user,
         url=url,
     )
+
+
+@pytest.fixture(autouse=True)
+def frozen_deadline_clock(request, monkeypatch):
+    # Startup gives rules and memory 80 ms and fails open to the follow-up
+    # notice when it runs out, so a loaded host turns exact content into that
+    # notice. Functional tests here run on a clock that never advances; tests
+    # that drive the deadline patch their own clock after this one, and the
+    # budgets themselves are `timing` tests.
+    if request.node.get_closest_marker("timing") is None:
+        from commonplace.rules import checks
+
+        monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
 
 
 def _initialize(hub, connection):
@@ -172,13 +189,9 @@ def test_fresh_connections_get_canonical_startup_without_creating_stores(
 
 @pytest.mark.usefixtures("functional_worker_transport")
 def test_warm_initialize_and_session_share_authorized_data_but_only_explicit_read_serves_rules(
-    hub, fresh, monkeypatch
+    hub, fresh
 ):
-    from commonplace.rules import checks
-
-    # This is functional coverage. Shared deadline/late-result behavior has
-    # separate deterministic tests; suite load must not turn this into timing CI.
-    monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
+    # Functional coverage on the frozen deadline clock (frozen_deadline_clock).
     _seed(hub, fresh)
     reader = fresh.connect("new-reader")
     before = _served(fresh)
@@ -287,6 +300,7 @@ def test_composed_startup_cannot_expand_tool_or_scope_grants(hub, fresh, missing
         assert render.quote(RULE) in context
 
 
+@pytest.mark.usefixtures("functional_worker_transport")
 def test_onboarding_import_save_and_owner_approval_remain_one_canonical_flow(hub, fresh, tmp_path):
     from commonplace import onboarding
     from commonplace.client import ClientError
@@ -384,7 +398,27 @@ def _hook_command(config, event):
     return commands[0]
 
 
+def _without_hub_budget(command):
+    """The installed hook command, run without its 0.4 s allowance for the hub.
+
+    That allowance is pinned in tests/test_commonplace_client_hooks.py; here a
+    loaded host must not turn the fetched context into the follow-up notice.
+    Everything else (interpreter, isolation, module arguments) is as installed.
+    """
+    if isinstance(command, str):
+        if os.name == "nt":  # PowerShell-encoded; it cannot be rewritten here
+            return command
+        command = shlex.split(command)
+    assert command[1:4] == ["-I", "-m", "commonplace.client_hooks"], command
+    lifted = (
+        "import sys; from commonplace import client_hooks as hooks; "
+        f"hooks.HUB_TIMEOUT_S = {HANG_GUARD_S!r}; sys.exit(hooks.main())"
+    )
+    return [command[0], "-I", "-c", lifted, *command[4:]]
+
+
 def _run_hook(command, project, *, event="SessionStart"):
+    command = _without_hub_budget(command)
     env = dict(os.environ)
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     process = subprocess.run(
@@ -395,12 +429,13 @@ def _run_hook(command, project, *, event="SessionStart"):
         input=json.dumps({"cwd": str(project), "prompt": QUERY, "hook_event_name": event}),
         text=True,
         capture_output=True,
-        timeout=10,
+        timeout=2 * HANG_GUARD_S,
     )
     assert process.returncode == 0, process.stderr
     return json.loads(process.stdout)
 
 
+@pytest.mark.usefixtures("functional_worker_transport")
 def test_default_cli_onboarding_installs_working_native_startup_and_warns_on_local_edits(
     hub, fresh, tmp_path, monkeypatch, capsys
 ):

@@ -57,13 +57,16 @@ export function createHost({ reply } = {}) {
   }
 }
 
-function fakeHandle(spec, { exitCode = 0, stdout = '', stderr = '', delayMs = 0, hang = false }) {
+// `until` is a promise the test controls: the run ends when it settles, never on
+// a timer, so a test can hold a run open for exactly as long as it needs.
+function fakeHandle(spec, { exitCode = 0, stdout = '', stderr = '', delayMs = 0, hang = false, until }) {
   const reader = (text) => ({ readFrom: (from) => ({ text: text.slice(from), nextOffset: text.length, lossy: false }) })
   const done = new Promise((resolve) => {
     const aborted = () => resolve({ exitCode: null, signal: 'SIGTERM' })
     if (spec.signal?.aborted) return aborted()
     spec.signal?.addEventListener('abort', aborted, { once: true })
-    if (!hang) setTimeout(() => resolve({ exitCode, signal: null }), delayMs)
+    if (until !== undefined) until.then(() => resolve({ exitCode, signal: null }))
+    else if (!hang) setTimeout(() => resolve({ exitCode, signal: null }), delayMs)
   })
   return {
     stdin: undefined,
@@ -140,3 +143,12 @@ export function render(assembly) {
 }
 
 export const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Poll until `condition` holds; the limit only ends a test whose condition never comes true. */
+export async function waitFor(condition, { limitMs = 10_000 } = {}) {
+  const end = Date.now() + limitMs
+  while (!condition()) {
+    if (Date.now() > end) throw new Error('condition never became true')
+    await tick(2)
+  }
+}
