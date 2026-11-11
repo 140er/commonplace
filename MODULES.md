@@ -255,6 +255,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
+
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
   - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
@@ -593,6 +595,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - `tests/spaces_surfaces.json` pins the `decide` description naming owner connections holding `cards:decide`.
 
   - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Authority lookup failures pin one redacted diagnostic and no enqueue. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
 
@@ -1059,6 +1063,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
+
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
   - Opt-in backup reporting records only the final selected mode; check/cleanup/restore never report. Receipt failure preserves backup return/exception; test_backup_status.py covers both outcomes and fallback.
 
@@ -1097,6 +1103,8 @@ Format (read by `commonplace orch docs-check`):
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
 - **Promises:**
+
+  - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, still needs `memory:write` and a readable board, cannot escalate, and writes one `card.decide.delegated` audit row inside the board transaction. Without the scope, refusals are unchanged.
 
   - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill. Subscription lookup exceptions log their type and stack locations while retaining fail-closed authority.
 
@@ -1666,6 +1674,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** on the owner's own top-level PATs; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
 
   - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 
