@@ -578,6 +578,7 @@ Format (read by `commonplace orch docs-check`):
   - Sign-out regression covers null and mounted Admin controllers; slice fixtures supply the module binding. The installed route inventory includes the authenticated Admin workspace prefix. Sign-in and voice boot fixtures load the real bounded request helper.
   - Sign-out regression covers null and mounted Admin controllers; slice fixtures supply the module binding. The installed route inventory includes the authenticated Admin workspace and instance prefixes. Sign-in and voice boot fixtures load the real bounded request helper.
   - The twelve runtime/limits/stuck/owner-queue RED rows, separate pagination/source/authority controls and updated earlier Admin lifecycle acceptance.
+  - `tests/test_commonplace_deploy.py` pins the host compose memory limit at `mem_limit: 20g` with `memswap_limit: 26g`.
 
 
   - Synthetic Admin HTTP inventories and served-asset Node contracts, with assertion-only pinned-base RED evidence and identical selected head GREEN nodes.

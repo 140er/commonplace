@@ -122,6 +122,10 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Owner summary-edit checks use a fixed injection clock and a forced-expiry regression, retaining verbatim injection and acceptance assertions without changing the production deadline.
 
 - Rules-injection functional tests run on a frozen deadline clock and a slow-host regression re-runs them with a clock that exhausts the budget on every read; the production 80 ms budget and its fail-open empty text are unchanged.
+
+### Host container memory
+
+- The host compose example runs the gateway with 20 GiB memory and 6 GiB swap (`mem_limit: 20g`, `memswap_limit: 26g`) as temporary headroom against memory-worker OOM kills (#275); `tests/test_commonplace_deploy.py` pins both values.
 - Shared-proposal acceptance is checked with a fixed injection clock; scheduler-delay regression coverage retains exact rule text and spacing for both agents without changing the production fail-open deadline.
 
 - Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
