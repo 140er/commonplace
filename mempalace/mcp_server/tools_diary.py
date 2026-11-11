@@ -195,14 +195,18 @@ def _sqlite_diary_read(agent_name: str, last_n: int, wing: str, scope=None):
     try:
         from ..backends.chroma_sqlite import sqlite_diary_rows
 
+        scoped = {}
+        if scope.get("probe"):
+            scoped["topics_limit"] = _DIARY_TOPIC_LIMIT
+        elif "exclude_topics" in scope:
+            scoped["exclude_topics"] = scope["exclude_topics"]
         result = sqlite_diary_rows(
             _config.palace_path,
             _config.collection_name,
             agent_name=agent_name,
             wing=_palace_wing_aliases(wing) if wing else "",
             limit=last_n,
-            exclude_topics=scope.get("exclude_topics"),
-            topics_limit=_DIARY_TOPIC_LIMIT if scope.get("probe") else None,
+            **scoped,
         )
         if result is None:
             return None
