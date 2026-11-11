@@ -174,12 +174,24 @@ def install(gateway):
         except ValueError:
             send_json(h, 400, {"error": "Invalid event cursor"})
             return
-        # The snapshot and read share the lock. The contract's seq is the latest
-        # sequence, so return every unread event rather than skipping a batch.
+        if principal.person and principal.role != "owner":
+            send_json(
+                h,
+                200,
+                events.member_page(gateway.db, gateway, principal, seq, query(h).get("epoch", "")),
+            )
+            return
         with gateway.db._lock:
             latest = events.latest_seq(gateway.db, principal.workspace_id)
-            batch = events.after(gateway.db, principal.workspace_id, min(seq, latest), latest or 1)
-        send_json(h, 200, {"events": batch, "seq": latest})
+            if query(h).get("epoch"):
+                # A member-era ordinal is not a raw workspace cursor.
+                response = {"events": [], "seq": latest, "reset": True}
+            else:
+                batch = events.after(
+                    gateway.db, principal.workspace_id, min(seq, latest), latest or 1
+                )
+                response = {"events": batch, "seq": latest}
+        send_json(h, 200, response)
 
     def connections(h):
         principal = require_principal(gateway, h)
@@ -188,12 +200,14 @@ def install(gateway):
         if principal.role != "owner":
             send_json(h, 403, {"error": "Owner access required"})
             return
+        from commonplace import decide_grant
         from commonplace.extensions import ToolError
         from commonplace.policy import canonical_wing, is_private_wing
 
-        from .agents import connection_view
+        from .agents import connection_view, decide_view
 
         rows = gateway.db.connections(principal.workspace_id)
+        view = decide_view(gateway, principal)
         try:
             known = gateway.call_memory_tool(principal, "mempalace_list_wings", {}).get("wings", {})
         except ToolError:
@@ -212,7 +226,8 @@ def install(gateway):
             h,
             200,
             {
-                "connections": [connection_view(row) for row in rows],
+                "connections": [connection_view(row, **view) for row in rows],
+                "decide_consent": decide_grant.SCOPE_TEXT,
                 "wings": wings,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },

@@ -306,7 +306,7 @@ def test_as_metadata_lists_import(journey):
     assert status == 200
     assert b"memory:import" in raw
     assert set(json.loads(raw)["scopes_supported"]) == set(
-        (IMPORT_SCOPES + " memory:import:read").split()
+        (IMPORT_SCOPES + " memory:import:read cards:decide").split()
     )
 
 
@@ -640,7 +640,7 @@ def test_filer_only_read_same_workspace_pure():
         client="web",
         auth="session",
         role="owner",
-        policy=person_policy(),
+        policy=person_policy("owner"),
         person=True,
     )
     member = replace(
@@ -696,7 +696,7 @@ def test_handoff_cannot_squat_private_import_namespace():
         client="web",
         auth="session",
         role="owner",
-        policy=person_policy(),
+        policy=person_policy("owner"),
         person=True,
     )
     service = HandoffService(
