@@ -144,3 +144,43 @@ def test_rotate_and_edit_stay_unavailable_for_oauth_rows(hub, connected, method,
     )
     assert status == 409 and payload["error"]
     assert _live(hub, connected) and _ping(hub, connected.pair["access_token"]) == 200
+
+
+def test_agents_screen_offers_revoke_but_not_rotate_for_oauth_rows():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    script = r"""
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+const url = (text) => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}`;
+const apiSource = await readFile("commonplace/web/static/api.js", "utf8");
+const source = await readFile("commonplace/web/static/agents.js", "utf8");
+const agents = await import(url(source.replace('"./api.js"', JSON.stringify(url(apiSource)))));
+const oauth = { id: "conn-oauth", name: "oauth:claude <x>", auth: "oauth", client: "claude-ai", read_wings: ["shared"], revoked_at: null };
+const pat = { id: "conn-pat", name: "my-agent", auth: "pat", client: "codex", read_wings: ["shared"], revoked_at: null };
+const row = (html, id) => html.split('<div class="setting-row">').find((part) => part.includes(`data-agent-id="${id}"`)) || "";
+const html = agents.agentsView({ connections: [oauth, pat], wings: ["shared"] });
+const live = row(html, "conn-oauth");
+assert.equal(live.split('data-action="agent-revoke"').length - 1, 1, "one Revoke for a live OAuth row");
+assert.ok(!live.includes('data-action="agent-rotate"'), "no Rotate for an OAuth row");
+assert.ok(!live.includes('data-action="agent-wings"'), "no read-access editor for an OAuth row");
+assert.ok(live.includes("Connected through sign-in (OAuth)"));
+assert.ok(live.includes("oauth:claude &lt;x&gt;"));
+const patRow = row(html, "conn-pat");
+assert.ok(patRow.includes('data-action="agent-rotate"') && patRow.includes('data-action="agent-revoke"'));
+assert.ok(!patRow.includes("Connected through sign-in"));
+const revoked = agents.agentsView({ connections: [{ ...oauth, revoked_at: "2026-01-01T00:00:00Z" }], wings: ["shared"] });
+assert.ok(revoked.includes("Revoked"));
+assert.ok(!revoked.includes('data-action="agent-revoke"') && !revoked.includes('data-action="agent-rotate"'));
+assert.ok(!agents.agentsView({ connections: [oauth], wings: [] }).includes('<option value="conn-oauth"'), "an OAuth client is never a parent choice");
+"""
+    result = subprocess.run(
+        [shutil.which("node"), "--input-type=module", "-e", script],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
