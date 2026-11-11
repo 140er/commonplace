@@ -41,6 +41,9 @@ _C = ("connection_id",)
 RULES = {
     "account_deletions": Rule(user=_U),
     "account_plans": Rule(user=_U),
+    "agent_schedule_runs": Rule(parent=("schedule_id", "agent_schedules", "id")),
+    # A schedule runs for the person who made it, so it leaves with them.
+    "agent_schedules": Rule(user=("created_by",), workspace=_W, connection=("agent_id",)),
     "answer_holds": Rule(user=_U, workspace=_W),
     "audit_log": Rule(user=_U, workspace=_W, connection=_C),
     # scope_id is a workspace id or a connection id, by scope.
@@ -95,6 +98,7 @@ RULES = {
     "short_links": Rule(workspace=_W),
     "signin_flows": Rule(),
     "signin_usage": Rule(),
+    "signup_waitlist": Rule(email=("email",)),
     "skill_decks": Rule(workspace=_W),
     "skill_previews": Rule(user=_U, workspace=_W, parent=("deck_id", "skill_decks", "id")),
     "skill_reports": Rule(parent=("deck_id", "skill_decks", "id")),
