@@ -243,7 +243,8 @@ failed after commit is still found.
   checkpoint: open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses,
   and the unstarted `todo` cards of each configured board (a `todo` card with no
   active job and no job started after it last entered `todo`; a start in the
-  same second as that entry cannot be ordered, so the card is listed). Cards are
+  same second as that entry cannot be ordered, so the card is listed; they come
+  most urgent `priority` first). Cards are
   classified read-only as `held`, `expired` or `not_held_by_caller`; only the
   caller's own held cards get a heartbeat.
 - **Builders started outside the runner.** A lead that starts a builder itself
