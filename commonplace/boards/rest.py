@@ -18,6 +18,7 @@ from ._http import (
 )
 from .digest import ssml
 from .display import NEEDS, with_urls
+from .priority import rank
 from .service import BoardService, ParentError, SpaceError, VersionClash
 from .store import CardRefused
 
@@ -131,7 +132,7 @@ def open_cards(cards, limit=None):
         raise HTTPError(400, "limit must be a number") from None
     if not 1 <= limit <= OPEN_LIMIT_MAX:
         raise HTTPError(400, f"limit must be 1 to {OPEN_LIMIT_MAX}")
-    cards = sorted(cards, key=lambda c: (NEEDS.index(c["need"]), c["number"]))
+    cards = sorted(cards, key=lambda c: (NEEDS.index(c["need"]), rank(c["priority"]), c["number"]))
     return {
         "cards": [{k: v for k, v in c.items() if k != "body"} for c in cards[:limit]],
         "total": len(cards),

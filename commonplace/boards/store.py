@@ -13,6 +13,7 @@ from commonplace.extensions import ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
 from .display import need_for, plan_waiting
+from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
@@ -39,6 +40,7 @@ TASK_COLUMNS = {
     "escalated_to": "TEXT",
     "review_kind": "TEXT",
     "review_context": "TEXT",
+    "priority": f"INTEGER NOT NULL DEFAULT {DEFAULT_RANK} CHECK (priority BETWEEN 0 AND {len(PRIORITIES) - 1})",
 }
 
 
@@ -215,8 +217,9 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         **{
             key: row[key] if key in row.keys() else None
             for key in TASK_COLUMNS
-            if key not in ("labels", "parent_number", "pr_repo", "task_type")
+            if key not in ("labels", "parent_number", "pr_repo", "task_type", "priority")
         },
+        "priority": priority_name(row["priority"] if "priority" in row.keys() else None),
         "labels": json.loads(row["labels"] or "[]"),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
@@ -228,6 +231,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         "restricted": "restricted_origin" in row.keys() and bool(row["restricted_origin"]),
     }
     person_owner = bool(principal and principal.person and principal.role == "owner")
+    result["can_prioritize"] = person_owner
     person_release = (
         release(row)
         if release is not None

@@ -53,6 +53,7 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
+from commonplace.boards.priority import name as priority_name
 from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
@@ -1158,16 +1159,16 @@ def unstarted_todo(ctx, st, board_row) -> list[dict]:
     """Cards in ``todo`` with no start for their current todo occurrence: no job in
     ``queued|leased|starting|uncertain`` and no ``started`` job whose ``started_at`` is
     strictly after the card's latest firing event (todo entry or plan approval).
-    ``cancelled`` and ``failed`` jobs never hide a card.
+    ``cancelled`` and ``failed`` jobs never hide a card. Listed by priority, then number.
 
     Both stores stamp whole seconds, so a start and a firing event in the same second
     cannot be ordered; such a tie stays listed (a possible false positive, never a
     hidden unstarted card)."""
     with BoardStore(ctx.workspace_dir()).connection() as conn:
         cards = conn.execute(
-            "SELECT t.id, t.title, (SELECT e.created_at FROM task_events e WHERE e.task_id=t.id "
-            f"AND {FIRING_EVENT} ORDER BY e.id DESC LIMIT 1) AS boundary "
-            "FROM tasks t WHERE t.board_id=? AND t.status='todo' ORDER BY t.id",
+            "SELECT t.id, t.title, t.priority, (SELECT e.created_at FROM task_events e "
+            f"WHERE e.task_id=t.id AND {FIRING_EVENT} ORDER BY e.id DESC LIMIT 1) AS boundary "
+            "FROM tasks t WHERE t.board_id=? AND t.status='todo' ORDER BY t.priority, t.id",
             (board_row["id"],),
         ).fetchall()
     if not cards:
@@ -1195,7 +1196,14 @@ def unstarted_todo(ctx, st, board_row) -> list[dict]:
             ):
                 hidden = True
         if not hidden:
-            listed.append({"card": row["id"], "title": row["title"], "todo_since": row["boundary"]})
+            listed.append(
+                {
+                    "card": row["id"],
+                    "title": row["title"],
+                    "priority": priority_name(row["priority"]),
+                    "todo_since": row["boundary"],
+                }
+            )
     return listed
 
 

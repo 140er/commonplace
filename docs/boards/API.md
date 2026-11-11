@@ -134,7 +134,7 @@ connections reserve new cards for their creator by default, including trusted
 connections that still write to an inbox. Those restricted-origin protections,
 explicit reservations, person decisions and child approvals still apply.
 
-The claim. Without `task`: the caller's reserved `todo` card with the lowest position, else the unassigned one with the lowest position. It never falls back to backlog, so the ready-work queue keeps its priority. With `task`: that card, if it is in `todo` and free or reserved for the caller. An unrestricted connection with policy trust `trusted` and write access to the board may also claim a `backlog` card explicitly by number. The claim moves it to `doing`, assigns the caller, and starts the normal claim expiry. `task_update task=#n status=doing` gives the same explicit backlog pickup and lease. The audit differs: `task_take_next` records `claim` / `card.claimed`; the status update records `move` / `card.moved`.
+The claim. Without `task`: the caller's reserved `todo` card with the highest priority (then the lowest position), else the unassigned one in the same order. It never falls back to backlog, so the ready-work queue keeps its priority. With `task`: that card, if it is in `todo` and free or reserved for the caller. An unrestricted connection with policy trust `trusted` and write access to the board may also claim a `backlog` card explicitly by number. The claim moves it to `doing`, assigns the caller, and starts the normal claim expiry. `task_update task=#n status=doing` gives the same explicit backlog pickup and lease. The audit differs: `task_take_next` records `claim` / `card.claimed`; the status update records `move` / `card.moved`.
 
 Agents cannot claim backlog cards filed by restricted connections, or cards with an open ask or a person in `assignee` or `ask_to`. A person in `return_to` also protects a backlog card. Outside backlog, an answered decision's return marker does not block normal moves or annotations after the person releases the card. Automatic selection skips pending person decisions. Other agents' reservations remain protected. An agent may also promote or claim its own available backlog, including an older inbox submission. Pending/rejected child proposals always require approval first. Expired claims retain the assignee and lane.
 
@@ -148,6 +148,10 @@ The `decision` line appears only on a card that came back from `review`. Empty c
 
 Claims and expiries use `BEGIN IMMEDIATE`, so concurrent agents never take the same ready card. Expiry records an event without releasing it; only a holder heartbeat or write renews it.
 
+### Priority
+
+Every card carries `priority`: `urgent`, `high`, `normal` (the default) or `low`. The owner sets it from the card in the app or with `task_add` / `task_update`; connections cannot, and cards report `can_prioritize` for the caller. `task_list` (todo, backlog or any status), the board and `task_take_next` order by priority first, then board position, so an orchestrator reading the list top-down sees the most urgent work first. Each `task_list` / `task_show` line carries `priority:<name>`, and the orchestrator checkpoint's `unstarted` todo cards are listed in the same order with their `priority`.
+
 ### task_update
 
 Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:example until 14:30Z`.
@@ -157,7 +161,8 @@ Only the holder of a `doing` card, or a person, may change it. Anyone else gets 
 - Completed-card exception for trusted, unrestricted board writers: an update containing only `lesson`, `pr` and/or `link` may annotate a `done` card without reopening it. Optional `status=done` is accepted. Removing links and other edits stay frozen. These annotations emit the normal link history and `card.updated` event, preserving completion time and status.
 - `status: "done"` closes the card. On a board with `done_needs_review`, an agent's `done` moves the card to `review` instead, with a substantive completion question, the card context, and options to accept or return the work.
 - `lesson` (with `status: "done"`, or on an already completed card) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
-- `before` / `after` take a task ID; the server picks a position between the neighbours.
+- `before` / `after` take a task ID; the server picks a position between the neighbours. Position orders cards of equal priority.
+- `priority` (`urgent` \| `high` \| `normal` \| `low`) is set by a signed-in workspace owner only; any other caller gets `no: only a signed-in workspace owner can set a priority`. `task_add` takes it too. Every card has one: without it a new card is `normal`, as are cards that predate the field. Setting the current value changes nothing.
 - `link` / `unlink` take a drawer ID.
 - `callstack` takes the PR's call tree as printed by `python -m commonplace.callstack --base origin/develop` (or `null` to clear; `--card N --hub URL` uploads it directly). The web card shows its head commit, so a stale tree is visible. The server checks its shape and caps it at 64 KB; `task_show` returns it and the web card shows it next to the review. The agent that asked for review may still update this one field while the card waits on a person.
 - Any update by the holder renews the claim.
