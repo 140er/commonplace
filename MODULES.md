@@ -2016,10 +2016,12 @@ Format (read by `commonplace orch docs-check`):
 
 ## bots
 
-- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_store.py`
+- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`
 - **Owns:**
 
   - Per-person chat bots: one workspace file `bots.sqlite3` (opened like `chat.sqlite3`) holding bots, append-only messages, the tool-action journal, pending confirmations, the work a bot filed, the posts it forwarded and memory notes, plus the person-only `/api/bots` read and management routes (`docs/bots.md`).
+
+  - `updates` is the one hub event listener of the bots (installed by `bots.install`): when a card a bot filed needs its owner, is ready for review or is done, or the project's orchestrator answers a post a bot forwarded, it appends one `event` message to that bot's thread. It filters with one indexed lookup before doing anything else (and does nothing in a workspace without a `bots.sqlite3`), checks the owner's fresh person principal with `webhooks.can_receive_event` and the board service, and never raises. `updates.working_bots` feeds the roster `working` state. `store.work_changed` and `store.forward_answered` are the exactly-once writes (`bot_work.last_word`, `bot_forwards.answered_by`, added to an existing file when it is opened).
 
   - `auth.person` is the single gate for `/api/bots*`: a signed-in person session, 404 for any agent token or machine credential, 401 for no credentials.
 
@@ -2046,6 +2048,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_bots_store.py` covers bounds, append-only triggers, idempotent sends and conflicts, one reply, paging, unread, the action journal, pending compare-and-set, forwards and work lookups, memory tombstones, per-user isolation and reopening the store.
+
+  - `tests/test_bots_updates.py` covers each update (needs you, ready, done, an orchestrator reply, verbatim and marked), exactly-once on redelivery and on a repeated transition, only the filing or forwarding bot, no message for another person or for someone who lost access, no store write for a card no bot filed, a failing store never breaking the card write, roster state and unread, redacted titles, log hygiene and the schema upgrade of an existing file.
 
   - `tests/test_bots_api.py` covers defaults per readable project, create/rename/archive and the 50-bot bound, thread paging, block hydration and status words, waiting decisions, read marks, memory, redacted display, and 404 for another person, another workspace and agent tokens.
 
