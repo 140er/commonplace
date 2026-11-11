@@ -175,7 +175,29 @@ Filled by a later slice.
 
 ## Machines
 
-Filled by a later slice.
+A bot can list the machines its person may use and start or cancel an agent on one. It does
+this as the person, through the same checks the runner applies to a person who starts an
+agent from a task: nothing is widened. Today that means workspace owners; a member gets an
+empty list and a short reason.
+
+- **What is listed.** Enrolled machines that are switched on and not revoked: the machine's
+  name, when it was last seen (empty if no contact is recorded), what it may do (start an
+  agent; run a command) and what the owner granted it (projects, topics, areas, the highest
+  run mode). No credential, token or host name is ever shown. A machine that has not been
+  attested yet is listed as `unbound` and cannot start anything.
+- **Attested, not verified.** `owner_attested` means the workspace owner confirmed the machine
+  and its setup. Commonplace does not check the machine itself, so every machine carries
+  `verified: false`.
+- **Starting takes one tap.** Starting an agent is a confirmed action: the bot proposes it with
+  a button and nothing starts until the person taps. Asking twice with the same request key
+  creates one start. A start that has not launched yet can be cancelled the same way; one that
+  has launched cannot be stopped from here.
+- **Refusals** keep the runner's stable code (for example `not_todo`, `outside_worker_wing`,
+  `active_start`) and come with a plain sentence saying what to change.
+- **Running commands is not available** until a provider offers it. Without one the bot does
+  not offer it and says so.
+- **Other providers.** `register_provider` adds a provider; machines from all providers are
+  merged and each machine states its own capabilities.
 
 ## Updates between turns
 
