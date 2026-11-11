@@ -202,14 +202,6 @@ def evaluate(gateway, workspace_id: str, st, board_row: dict, cap, now: str) -> 
                     conn.execute("UPDATE orch_stall SET streak=0 WHERE board=?", (board,))
             return None
         streak = 1 if reset else current["streak"] + 1
-        with st.transaction() as conn:
-            conn.execute(DDL)
-            conn.execute(
-                "INSERT INTO orch_stall(board, minutes, nudged_at, streak) VALUES (?,?,?,?) "
-                "ON CONFLICT(board) DO UPDATE SET nudged_at=excluded.nudged_at, "
-                "streak=excluded.streak",
-                (board, current["minutes"], now, streak),
-            )
         data = {
             "board": board,
             "title": LINE.format(n=current["minutes"]),
@@ -222,6 +214,7 @@ def evaluate(gateway, workspace_id: str, st, board_row: dict, cap, now: str) -> 
         }
         from commonplace import events
 
+        # Emit first: a wake that was never delivered must not count toward escalation.
         events.emit(
             gateway.db,
             workspace_id,
@@ -230,6 +223,14 @@ def evaluate(gateway, workspace_id: str, st, board_row: dict, cap, now: str) -> 
             actor="system",
             data=data,
         )
+        with st.transaction() as conn:
+            conn.execute(DDL)
+            conn.execute(
+                "INSERT INTO orch_stall(board, minutes, nudged_at, streak) VALUES (?,?,?,?) "
+                "ON CONFLICT(board) DO UPDATE SET nudged_at=excluded.nudged_at, "
+                "streak=excluded.streak",
+                (board, current["minutes"], now, streak),
+            )
         return data
     except Exception as exc:
         log_failure(logger, "orchestrator no-progress check failed", exc)
