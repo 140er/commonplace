@@ -460,6 +460,7 @@ class BubblewrapSandbox:
         args = [
             "/usr/bin/bwrap",
             "--unshare-all",
+            "--unshare-user",
             "--die-with-parent",
             "--new-session",
             "--disable-userns",

@@ -330,6 +330,16 @@ def test_literal_argv_clean_environment_and_mandatory_namespace_flags(tmp_path):
     assert all(value not in args for value in ("/home", "/etc", "/run", "/sys"))
 
 
+def test_disable_userns_comes_with_an_explicit_user_namespace(tmp_path):
+    """bubblewrap 0.9 rejects --disable-userns unless --unshare-user is given explicitly."""
+    settings = config(tmp_path)
+    value = request()
+    args = BubblewrapSandbox(settings).argv(value, "/private/script.py", "/private/job")
+    assert "--disable-userns" in args
+    assert "--unshare-user" in args
+    assert args.index("--unshare-user") < args.index("--disable-userns")
+
+
 def test_spawn_has_real_descendant_cgroup_preexec_and_no_shell(tmp_path, monkeypatch):
     settings = config(tmp_path)
     seen = {}
