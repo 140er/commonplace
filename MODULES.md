@@ -1278,6 +1278,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, is refused for seats and board coordinators, needs `memory:write`, read access to the board's wing and the owner's person-level write access to it (not the app's own write wings), cannot escalate, and writes one `card.decide.delegated` audit row inside the board transaction (a failed write fails the answer; a later rollback appends `card.decide.rolled_back`; an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails). Without the scope, refusals are unchanged.
 
+  - `events.is_stored(db, event)` says whether an event dict is exactly the one the log holds under its sequence number; listeners use it before acting on an event.
+
   - A routine creates at most one card per due time, also across restarts (a unique run row per due time plus a marker label on the card); the owner is a workspace owner whose authority applies at run time, runs are bounded (25 routines per workspace, 60-minute minimum interval, 3 catch-up cards after downtime, 200 history rows per routine) and five failed runs in a row pause the routine. Only signed-in workspace owners read or change routines.
 
   - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill. Subscription lookup exceptions log their type and stack locations while retaining fail-closed authority.
@@ -1556,6 +1558,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `seats.held_by` names the board and role of the seat a connection holds; the durable orchestrator uses it so a seat trusted in Project settings holds its own board's lease without a config.
 
+  - The seat-creation listener checks its event with the shared `events.is_stored` before acting.
+
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
   - A project panel (`projects/panel.py`, `panel_routes.py`, format `commonplace.panel/1`, documented in `docs/project-panels.md`): a few highlight lines and http(s) action links per project, stored beside its board and read by anyone who can read the project. Setting or clearing it, over `PUT /api/projects/<slug>/panel`, needs the board-write authority and the rules check; the project view payload is unchanged.
@@ -1796,6 +1800,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - The control-database `project_model_catalog` table, created beside the model settings, holds each board's list of models owners can pick for projects.
+
+  - Person-message and space-created listeners (the chat front, project seats) share `events.is_stored` to confirm an event is the one the log holds.
 
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
