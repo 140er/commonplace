@@ -121,7 +121,7 @@ const cases = {
     // A slow old origin must never replace a newly selected card.
     let resolve;
     const mount = { innerHTML: '', addEventListener() {}, removeEventListener() {}, querySelector: () => null };
-    const component = createDetails({ mount, api: () => new Promise((done) => { resolve = done; }) });
+    const component = createDetails({ mount, api: (path) => path.startsWith('/api/chat/') ? new Promise((done) => { resolve = done; }) : Promise.reject(new Error('links are not under test')) });
     const pending = component.show(card, opts);
     await component.show({ ...card, number: 22, message_id: null, title: 'New selection' }, opts);
     resolve({ board: 'atlas', messages: [{ id: 17, text: 'Stale source' }] });
