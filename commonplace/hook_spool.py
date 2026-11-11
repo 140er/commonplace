@@ -338,6 +338,9 @@ def uploader(url, token):
                 raise Halt(str(error)) from None
             except capture_client.CaptureError as error:
                 raise Transient(str(error)) from None
+        if setting.get("status") == "deferred":
+            setting.clear()  # ask again on the next pass
+            raise Transient("hub asked to retry later")
         if not setting.get("enabled"):
             raise Skipped("capture is off for this workspace")
         path = payload_path(item["payload"])

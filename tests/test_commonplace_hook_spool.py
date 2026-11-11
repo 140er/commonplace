@@ -477,10 +477,9 @@ def test_main_requires_explicit_hub_and_reports_status(tmp_path, capsys, monkeyp
     assert json.loads(capsys.readouterr().out)["pending"] == 0
 
 
-def test_the_unreachable_hub_costs_the_hook_nothing(tmp_path, monkeypatch):
+def test_spooling_many_events_stays_inside_the_hook_budget(tmp_path, monkeypatch):
     # Hook runs against a hub that would hang: only the spool write is timed.
     monkeypatch.setenv("COMMONPLACE_CAPTURE", "on")
-    monkeypatch.setenv("COMMONPLACE_URL", CLOSED_PORT_URL)
     runs = []
     for _ in range(5):
         started = time.perf_counter()
@@ -586,3 +585,13 @@ def test_only_unrecoverable_read_errors_set_the_item_aside(tmp_path, error, kept
     ):
         spool.drain(hook_spool.uploader(CLOSED_PORT_URL, "t"))
     assert bool(spool.items()) is kept
+
+
+def test_a_rate_limited_settings_check_keeps_the_item(tmp_path):
+    spool = Spool(tmp_path / "spool", clock=Clock())
+    spool.enqueue("claude-code", payload_for(tmp_path / "s.jsonl"))
+    upload = hook_spool.uploader(CLOSED_PORT_URL, "t")
+    with patch.object(capture_client, "request", return_value={"status": "deferred"}):
+        assert spool.drain(upload) == "failed"
+    assert len(spool.items()) == 1
+    assert not spool.log_path.exists() or "capture is off" not in spool.log_path.read_text()

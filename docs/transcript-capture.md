@@ -78,6 +78,7 @@ Periodic scans are still needed to catch sessions without a final hook, late
 flushes and retryable failures. With these hook commands, Paid capture runs at
 supplied hook events. The [live-sync daemon](live-sync.md) also checks selected
 files every two seconds.
+
 ### Offline spool and retry
 
 The capture hook does not wait for the hub. It writes the hook JSON, unchanged (session metadata and the
