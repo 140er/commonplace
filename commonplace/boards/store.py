@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -368,21 +369,40 @@ def expire_claims(conn, board_id):
     return expired
 
 
+# Path -> (st_dev, st_ino, PRAGMA schema_version) after this process migrated it.
+# A replaced file or any DDL from elsewhere changes the identity and reruns the migration.
+_MIGRATED: dict[str, tuple] = {}
+
+BUSY_TIMEOUT = 10
+
+
+def _identity(conn, path):
+    stat = os.stat(path)
+    return stat.st_dev, stat.st_ino, conn.execute("PRAGMA schema_version").fetchone()[0]
+
+
 class BoardStore:
     """No shared connection: separate processes compete through SQLite's lock.
 
     The optional principal on memory-link methods is for policy-aware callers.
     Calls without it are the contract's trusted, local workspace API.
+
+    The schema/migration runs once per file per process; later constructions only
+    read, so read-only callers never queue for the write lock. ``timeout`` is the
+    busy timeout; keep the default unless the caller would rather fail fast.
     """
 
-    def __init__(self, workspace_dir, *, legacy_origin=None, create=True):
+    def __init__(self, workspace_dir, *, legacy_origin=None, create=True, timeout=BUSY_TIMEOUT):
         directory = Path(workspace_dir)
         if create:
             with GATE.creating(directory):
                 directory.mkdir(parents=True, exist_ok=True)
         self.create = create
+        self.timeout = timeout
         self.path = str(directory / "boards.sqlite3")
         with self.connection() as conn:
+            if self._migrated(conn, legacy_origin):
+                return
             from .lifecycle import SCHEMA as LIFECYCLE_SCHEMA
 
             conn.executescript(
@@ -465,6 +485,21 @@ class BoardStore:
             except BaseException:
                 conn.rollback()
                 raise
+            _MIGRATED[self.path] = _identity(conn, self.path)
+
+    def _migrated(self, conn, legacy_origin) -> bool:
+        """Read-only: this process already migrated this very file, and no legacy
+        backlog row is still waiting for a ``legacy_origin`` verdict."""
+        known = _MIGRATED.get(self.path)
+        if known is None or known != _identity(conn, self.path):
+            return False
+        return (
+            legacy_origin is None
+            or conn.execute(
+                "SELECT 1 FROM tasks WHERE status='backlog' AND restricted_origin IS NULL LIMIT 1"
+            ).fetchone()
+            is None
+        )
 
     @contextmanager
     def connection(self):
@@ -473,7 +508,7 @@ class BoardStore:
             conn = connect(
                 target,
                 uri=not self.create,
-                timeout=10 if self.create else 0.2,
+                timeout=self.timeout,
                 isolation_level=None,
             )
         conn.row_factory = row_factory
