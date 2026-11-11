@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+from io import StringIO
 
 SOURCE = "agent-log"
 # Native sources keep their own formats, so their names cannot label a log.
@@ -77,6 +78,12 @@ def check(thread_id: str, text: str) -> None:
     """Every record must carry the provenance of the stream it is appended to."""
     if not valid_thread_id(thread_id):
         raise ValueError("Invalid agent-log thread_id")
-    for line in text.splitlines():
-        if line.strip() and identity(json.loads(line)) != thread_id:
+    # Records end at \n, \r or \r\n only, as in the parser. str.splitlines()
+    # would also cut at U+2028 or U+0085, which JSON leaves raw inside strings.
+    for line in StringIO(text, newline=""):
+        try:
+            record = json.loads(line) if line.strip() else None
+        except RecursionError:
+            raise ValueError("Record is nested too deeply") from None
+        if record is not None and identity(record) != thread_id:
             raise ValueError("Record provenance differs from thread_id")

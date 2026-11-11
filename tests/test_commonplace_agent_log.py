@@ -144,6 +144,21 @@ def test_only_the_matching_connection_client_may_use_the_source(surface):
     assert log_send(s, connection(s, agent_log.SOURCE), entry())[0] == 200
 
 
+def test_unicode_line_separators_inside_a_message_do_not_split_the_record(surface):
+    s = surface
+    bearer = connection(s, agent_log.SOURCE)
+    enable(s)
+    words = "a\u2028b\u2029c\x85d"
+    raw = entry(words)
+    assert words in raw  # json.dumps(ensure_ascii=False) keeps them raw
+    status, result = log_send(s, bearer, raw)
+    assert status == 200 and result["status"] == "appended"
+    rows = saved(s, result["stored_thread_id"])
+    assert rows[0]["raw"] == raw and rows[1]["text"] == words
+    deep = '{"agent":"gemini-cli","session_id":"s-42","role":"user","content":' + "[" * 5000 + "\n"
+    assert log_send(s, bearer, deep, session="s-42")[0] == 400  # not a 500
+
+
 def test_capture_stays_off_until_the_owner_opts_in(surface):
     s = surface
     bearer = connection(s, agent_log.SOURCE)
