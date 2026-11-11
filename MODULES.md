@@ -583,6 +583,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
+
   - The encrypted-store budget regression proves a budgeted thread write and its refusal through SQLCipher, whose `page_size` is text.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
