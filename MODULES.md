@@ -1056,7 +1056,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## sessions-and-sign-in
 
-- **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/oauth/`, `commonplace/social/`
+- **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/capacity.py`, `commonplace/oauth/`, `commonplace/social/`
 - **Owns:**
 
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
@@ -1079,15 +1079,17 @@ Format (read by `commonplace orch docs-check`):
 
   - **Browser GitHub connection:** GitHub login reserves subject ownership, and connect-marked callbacks dispatch before login flow lookup without provisioning or replacing sessions.
 
+  - **Account cap and waitlist:** `COMMONPLACE_MAX_ACCOUNTS` unset means unlimited and changes nothing. When set, only the creation of a new account through sign-up is gated: the count (non-disabled users) and the insert share one `BEGIN IMMEDIATE` transaction, so concurrent sign-ups cannot overshoot it, also across processes. A full server records the verified email in `signup_waitlist` and tells the person plainly (`signin=waitlist` for providers, a 200 text page for email). Existing accounts, invited members and people an instance admin admitted are never refused; admitting may exceed the cap. Admins list and admit through `GET`/`POST /api/admin/instance/waitlist` or `commonplace waitlist list|admit`.
+
   - **Connection lifecycle proof:** Connect-marked POST callbacks are refused before login dispatch; a normal login remains independent of an outstanding connect flow.
 
 - **How it fails:**
 
-  - Mail outages block new sign-ins but not existing sessions; a misconfigured provider fails closed.
+  - Mail outages block new sign-ins but not existing sessions; a misconfigured provider fails closed. An invalid `COMMONPLACE_MAX_ACCOUNTS` logs one warning and leaves accounts unlimited.
 
 - **Tests:**
 
-  - `tests/test_commonplace_email_auth.py`, `tests/test_commonplace_oauth.py`, `tests/test_commonplace_agents_oauth_revoke.py`, `tests/test_commonplace_social.py`, `tests/test_commonplace_session.py`.
+  - `tests/test_commonplace_email_auth.py`, `tests/test_commonplace_oauth.py`, `tests/test_commonplace_agents_oauth_revoke.py`, `tests/test_commonplace_social.py`, `tests/test_commonplace_session.py`, `tests/test_commonplace_capacity.py`.
 
 
 ## cli-and-client
