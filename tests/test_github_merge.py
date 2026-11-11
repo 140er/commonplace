@@ -1560,21 +1560,14 @@ def test_a_failed_confirm_marking_revokes_and_releases_nothing(merging):
     assert revoked_tokens(s).count(candidate) == 1 and not rows(s, "github_confirmations")
 
 
-def test_a_failed_callback_commit_releases_no_other_owners_marker(merging, monkeypatch):
+def fail_commit_once(s, monkeypatch, probe):
+    """Fail the first COMMIT whose transaction changed probe(); it rolls back, then raises.
+
+    Returns the list that records the failure and a function that restores the real transaction.
+    """
     import sqlite3
 
-    s = merging
-    connect(s)
-    s.remote.scope = "public_repo"
-    flow = begin_consent(s)
-    # Another exchange is in flight when the COMMIT of this callback's own marking fails.
-    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,))
     real_tx, fired = s.db._tx, []
-
-    def markers():
-        return s.db._conn.execute(
-            "SELECT active_exchanges FROM github_lifecycle WHERE user_id=?", (s.uid,)
-        ).fetchone()[0]
 
     def tx():
         inner = real_tx()
@@ -1582,11 +1575,11 @@ def test_a_failed_callback_commit_releases_no_other_owners_marker(merging, monke
         class FailingCommit:
             def __enter__(self):
                 conn = inner.__enter__()
-                self.before = markers()
+                self.before = probe()
                 return conn
 
             def __exit__(self, kind, exc, tb):
-                if kind is None and not fired and markers() > self.before:
+                if kind is None and not fired and probe() != self.before:
                     fired.append(True)
                     inner.__exit__(RuntimeError, None, None)
                     raise sqlite3.OperationalError("synthetic commit failure")
@@ -1595,11 +1588,85 @@ def test_a_failed_callback_commit_releases_no_other_owners_marker(merging, monke
         return FailingCommit()
 
     monkeypatch.setattr(s.db, "_tx", tx)
+    return fired, lambda: monkeypatch.setattr(s.db, "_tx", real_tx)
+
+
+def test_a_failed_callback_commit_releases_no_other_owners_marker(merging, monkeypatch):
+    s = merging
+    connect(s)
+    s.remote.scope = "public_repo"
+    flow = begin_consent(s)
+    # Another exchange is in flight when the COMMIT of this callback's own marking fails.
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,))
+    fired, restore = fail_commit_once(s, monkeypatch, lambda: marker(s)[0])
     try:
         finish(s, flow)
     except Exception:  # noqa: BLE001 - a synthetic failure may close the connection
         pass
-    monkeypatch.setattr(s.db, "_tx", real_tx)
+    restore()
     assert fired
     assert rows(s, "github_lifecycle")[0]["active_exchanges"] == 1
     assert len(s.remote.issued) == 1 and not rows(s, "github_confirmations")
+
+
+def test_a_failed_commit_of_the_callbacks_record_still_revokes_the_issued_token(
+    merging, monkeypatch
+):
+    s = merging
+    connect(s)
+    s.remote.scope = "public_repo"
+    flow = begin_consent(s)
+    fired, restore = fail_commit_once(s, monkeypatch, lambda: len(rows(s, "github_confirmations")))
+    try:
+        finish(s, flow)
+    except Exception:  # noqa: BLE001 - a synthetic failure may close the connection
+        pass
+    restore()
+    issued = s.remote.issued[-1]
+    # The record never committed, so nothing owns the token: it is revoked, and the marker released.
+    assert fired and len(s.remote.issued) == 2
+    assert revoked_tokens(s).count(issued) == 1
+    assert not rows(s, "github_confirmations") and marker(s) == (0, 0)
+
+
+def test_a_lost_token_exchange_answer_flags_revocation_unconfirmed(merging, monkeypatch):
+    s = merging
+    client = importlib.import_module("commonplace.github.client")
+    real = client.request
+
+    def lost(method, url, **kwargs):
+        if url.endswith("access_token"):
+            # GitHub may have issued a token; its answer never arrives.
+            raise providers.SignInError("github_transport")
+        return real(method, url, **kwargs)
+
+    flow = begin(s)
+    monkeypatch.setattr(client, "request", lost)
+    assert finish(s, flow)[0] == 303
+    monkeypatch.setattr(client, "request", real)
+    assert status(s)["acknowledge_required"] and marker(s) == (0, 1)
+    assert reason(write(s)) == "github_acknowledge"
+
+
+def test_a_disconnect_keeps_keys_while_an_ended_owner_left_its_record(merging, monkeypatch):
+    s = merging
+    candidate = pending_merge_consent(s)
+    worker = s.gateway.github
+    # An owner holds the record in flight at Disconnect's first transaction, so Disconnect does not
+    # take it; the owner ends before the closing transaction and leaves the record behind.
+    s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,))
+    real_revoke = worker.revoke
+
+    def revoke(token, *, grant):
+        if grant:
+            worker.finish_exchange(s.uid)
+        return real_revoke(token, grant=grant)
+
+    monkeypatch.setattr(worker, "revoke", revoke)
+    worker.delete_user(s.uid)
+    monkeypatch.setattr(worker, "revoke", real_revoke)
+    assert rows(s, "github_keys") and len(rows(s, "github_confirmations")) == 1
+    s.db._conn.execute("UPDATE github_confirmations SET expires_at=0")
+    tick(worker, monkeypatch)
+    assert revoked_tokens(s).count(candidate) == 1 and not rows(s, "github_confirmations")
+    assert not rows(s, "github_keys")

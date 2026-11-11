@@ -442,7 +442,7 @@ class GitHub:
     def callback(self, h):
         token = None
         uid = None
-        active = settled = False
+        active = False
         landing = "/app/"
         try:
             if h.command != "GET" or not enabled() or self.provider() is None:
@@ -488,20 +488,26 @@ class GitHub:
             with self.db._lock:
                 self._live += 1
             provider = self.provider()
-            status, _, value = client.request(
-                "POST",
-                provider.token,
-                form={
-                    "grant_type": "authorization_code",
-                    "client_id": provider.credentials["CLIENT_ID"],
-                    "client_secret": provider.client_secret(),
-                    "redirect_uri": provider.redirect_uri(),
-                    "code": code,
-                    "code_verifier": verifier,
-                },
-            )
-            if not isinstance(value, dict):
-                raise SignInError("github_token")
+            try:
+                status, _, value = client.request(
+                    "POST",
+                    provider.token,
+                    form={
+                        "grant_type": "authorization_code",
+                        "client_id": provider.credentials["CLIENT_ID"],
+                        "client_secret": provider.client_secret(),
+                        "redirect_uri": provider.redirect_uri(),
+                        "code": code,
+                        "code_verifier": verifier,
+                    },
+                )
+                if not isinstance(value, dict):
+                    raise SignInError("github_token")
+            except SignInError:
+                # GitHub may have issued a token whose answer was lost or unreadable: there is
+                # nothing to revoke, so revocation is flagged unconfirmed instead.
+                self.flag_unconfirmed(uid)
+                raise
             token = value.get("access_token")
             if not isinstance(token, str) or not token or len(token) > 8192:
                 token = None
@@ -593,12 +599,12 @@ class GitHub:
                 # The record never exists while its exchange still counts as in flight: a
                 # disconnect between the two would skip a candidate that has no owner left.
                 self._settle_exchange(conn, uid)
-                token = None
-                settled = True
-            if settled:
-                active = False
-                with self.db._lock:
-                    self._live -= 1
+            # Only after COMMIT does the record or grant own the token; a failed COMMIT leaves it
+            # to the finally, which revokes it or flags it.
+            token = None
+            active = False
+            with self.db._lock:
+                self._live -= 1
         except (OAuthError, SignInError):
             pass
         finally:
@@ -761,15 +767,16 @@ class GitHub:
             )
         send_json(h, 200, result)
 
+    def flag_unconfirmed(self, uid):
+        with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
+            conn.execute("UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,))
+
     def cleanup_token(self, uid, token):
         try:
             return self.revoke_token(uid, token)
         except Exception:
-            with self.db._lock, self.db._tx() as conn:
-                self._fence(conn)
-                self.db._conn.execute(
-                    "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
-                )
+            self.flag_unconfirmed(uid)
             raise
 
     def revoke_token(self, uid, token):
@@ -793,11 +800,7 @@ class GitHub:
                     return False
         ok = self.revoke(token, grant=False)
         if not ok:
-            with self.db._lock, self.db._tx() as conn:
-                self._fence(conn)
-                self.db._conn.execute(
-                    "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
-                )
+            self.flag_unconfirmed(uid)
         return ok
 
     def revoke(self, token, *, grant):
@@ -980,10 +983,23 @@ class GitHub:
             (int(not (revoked and ok)), uid),
         )
         life = self.store.lifecycle(conn, uid)
-        if deleting and not life["active_exchanges"] and not life["remote_work"]:
+        if (
+            deleting
+            and not life["active_exchanges"]
+            and not life["remote_work"]
+            and not self._holds_record(conn, uid)
+        ):
             self.release_owner(conn, uid)
         if marked:
             self._settle_exchange(conn, uid)
+
+    def _holds_record(self, conn, uid):
+        # Keys outlive every record: the sweep must still decrypt a lapsed candidate to revoke it.
+        # An owner that ended during a Disconnect can leave its record behind.
+        return (
+            conn.execute("SELECT 1 FROM github_confirmations WHERE user_id=?", (uid,)).fetchone()
+            is not None
+        )
 
     def release_owner(self, conn, uid):
         conn.execute("DELETE FROM user_identities WHERE provider='github' AND user_id=?", (uid,))
@@ -1015,13 +1031,7 @@ class GitHub:
             ).fetchone()
         ):
             conn.execute("UPDATE github_lifecycle SET disconnect_pending=0 WHERE user_id=?", (uid,))
-            # Keys outlive every record: the sweep must still decrypt a lapsed candidate to revoke it.
-            if (
-                life["deleting"]
-                and not conn.execute(
-                    "SELECT 1 FROM github_confirmations WHERE user_id=?", (uid,)
-                ).fetchone()
-            ):
+            if life["deleting"] and not self._holds_record(conn, uid):
                 self.release_owner(conn, uid)
 
     def recover(self):
