@@ -304,9 +304,10 @@ def test_member_web_session_cannot_move_another_reservation(hub, fresh, kind, mo
     assert snapshot(fresh.owner, number) == before
 
 
+@pytest.mark.parametrize("kind", ["released", "ordinary", "held"])
 @pytest.mark.parametrize("move", sorted(MEMBER_MOVES))
-def test_member_service_cannot_move_another_reservation(hub, fresh, move):
-    number = reserved_for_agent(hub, fresh, "released")
+def test_member_service_cannot_move_another_reservation(hub, fresh, kind, move):
+    number = reserved_for_agent(hub, fresh, kind)
     member = member_session(hub, fresh)
     version = raw(fresh.owner, number)["version"]
     calls = {
@@ -316,7 +317,16 @@ def test_member_service_cannot_move_another_reservation(hub, fresh, move):
         "complete": lambda: member.task_update(number, status="done", version=version),
         "review": lambda: member.task_update(number, status="review", version=version),
     }
-    refuse(fresh.owner, number, calls[move], match="reserved for another connection")
+    if kind == "held" and move == "take-over":
+        # Doing to doing is not a status change, so the guard does not apply; the holder keeps it.
+        assert calls[move]()["assignee"] == raw(fresh.owner, number)["assignee"]
+        return
+    refuse(
+        fresh.owner,
+        number,
+        calls[move],
+        match="reserved for another connection; the workspace owner can move it",
+    )
 
 
 @pytest.mark.parametrize("move", ["take-over", "drop", "handoff-anyone"])
@@ -380,33 +390,35 @@ def test_same_named_agent_in_another_workspace_is_refused(hub, fresh):
     number = reserved_for_agent(hub, fresh, "released")
     other_user = hub.db.create_user("other-owner@example.test")
     other_ws = hub.db.create_workspace("other-workspace", other_user)
-    service(hub, sessions.person_principal(hub.db, other_user, other_ws)).board_add(
-        slug="work", wing="shared"
-    )
-    # Same actor name ("coordinator") as the released card's coordinator, and a card with the
-    # same number in the other workspace, reserved for another connection there. A refusal from
-    # the reservation check proves authority was decided; "card not found" would prove nothing.
-    twin = other_workspace_agent(hub, "coordinator", other_user, other_ws, trust="standard")
-    holder = other_workspace_agent(hub, "holder", other_user, other_ws)
+    owner = service(hub, sessions.person_principal(hub.db, other_user, other_ws))
+    owner.board_add(slug="work", wing="shared")
+    # Same-numbered cards in both workspaces. The other workspace's card is reserved for a
+    # connection there, and the other workspace's coordinator has the same actor name as ours.
     cards = [
-        twin.task_add(board="work", title="Other workspace work")["number"] for _ in range(number)
+        owner.task_add(board="work", title="Other workspace work")["number"] for _ in range(number)
     ]
     own = cards[-1]
     assert own == number
-    assert twin.task_take_next(task=own)["status"] == "doing"
-    twin.task_handoff(own, holder.principal.actor, NOTE)
+    holder = other_workspace_agent(hub, "holder", other_user, other_ws)
+    edit(owner, own, status="todo", assignee=holder.principal.actor)
+    twin = other_workspace_agent(hub, "coordinator", other_user, other_ws, trust="standard")
+    # The twin reads its own card with that number, never the released card in the first workspace.
+    assert twin.task_show(number)["title"] == "Other workspace work"
+    before_own = snapshot(owner, own)
     refuse(
         fresh.owner,
         number,
         lambda: twin.task_take_next(task=number),
         match="not available to take",
     )
+    assert snapshot(owner, own) == before_own
     refuse(
         fresh.owner,
         number,
-        lambda: twin.task_update(number, status="backlog", version=raw(twin, own)["version"]),
+        lambda: twin.task_update(number, status="backlog", version=raw(owner, own)["version"]),
         match="reserved for another connection",
     )
+    assert snapshot(owner, own) == before_own
 
 
 def test_member_web_session_cannot_drop_work_another_agent_holds(hub, fresh):
