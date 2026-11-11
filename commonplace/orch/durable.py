@@ -718,7 +718,8 @@ def journal_intent(
                 return existing
             raise DurableError("step_exists", 409, "step key already used", step=existing)
         if kind == "merge":
-            _merge_guard(conn, _policy(version), board, card)
+            # _holder parsed this version already (``config_invalid`` otherwise).
+            _merge_guard(conn, version.config().factory if version else None, board, card)
         state = "done" if kind == "next" else "intent"
         conn.execute(
             "INSERT INTO orch_steps(board,role,step_key,kind,card,state,detail,created_epoch,"
@@ -730,7 +731,8 @@ def journal_intent(
 
 
 def _policy(version):
-    """The accepted config's ``[factory]`` policy, or ``None`` (also when it does not parse)."""
+    """The accepted config's ``[factory]`` policy for the read-only checkpoint, or ``None``
+    (also when the stored version does not parse: a read never fails on it)."""
     if version is None:
         return None
     try:

@@ -305,11 +305,11 @@ the board behaves as it did before the section existed.
 [factory.gate]
 required = true                # a merge step needs a passed gate
 name = "merge gate review"     # optional label
-[factory.checks.pr-check]      # one table per check, named [a-z0-9-]{1,32}
+[factory.checks.affected-tests]   # one table per check, named [a-z0-9-]{1,32}
 required = true                # default true
 scope = "affected"             # "affected" (default) or "full": the tests it runs
-pass = ["QUICK-PASS", "PASS"]  # the only outcomes that count
-never_pass = ["QUICK-FALLBACK", "SUPERSEDED"]   # named so nobody argues later
+pass = ["PASS"]                # the only outcomes that count
+never_pass = ["FALLBACK", "SUPERSEDED"]      # named so nobody argues later
 [factory.batch]
 branch = "develop"
 full_suite = "per-batch"       # "per-pr", "per-batch" or "off"

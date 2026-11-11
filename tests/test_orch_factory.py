@@ -26,9 +26,9 @@ FACTORY = """\
 [factory.gate]
 required = true
 name = "merge gate"
-[factory.checks.pr-check]
+[factory.checks.affected-tests]
 pass = ["PASS"]
-never_pass = ["SUPERSEDED", "QUICK-PASS"]
+never_pass = ["SUPERSEDED", "PARTIAL"]
 [factory.checks.lint]
 required = false
 pass = ["ok"]
@@ -41,11 +41,11 @@ POLICY = {
     "gate": {"required": True, "name": "merge gate"},
     "checks": {
         "lint": {"required": False, "scope": "affected", "pass": ["ok"]},
-        "pr-check": {
+        "affected-tests": {
             "required": True,
             "scope": "affected",
             "pass": ["PASS"],
-            "never_pass": ["SUPERSEDED", "QUICK-PASS"],
+            "never_pass": ["SUPERSEDED", "PARTIAL"],
         },
     },
     "batch": {"branch": "develop", "full_suite": "per-batch", "on_red": "hold-merges"},
@@ -77,9 +77,9 @@ def test_summary_and_render_state_the_policy_in_plain_lines():
     config = schema.validate(doc())
     assert config.factory.summary() == [
         "Gate (merge gate): required. Only a pass verdict counts; fail, error and budget never do.",
+        "Check affected-tests (affected tests): required. Passes on PASS. "
+        "Never a pass: SUPERSEDED, PARTIAL, TIMEOUT, SKIP, ERROR.",
         "Check lint (affected tests): optional. Passes on ok. Never a pass: TIMEOUT, SKIP, ERROR.",
-        "Check pr-check (affected tests): required. Passes on PASS. "
-        "Never a pass: SUPERSEDED, QUICK-PASS, TIMEOUT, SKIP, ERROR.",
         "Full suite on develop: once per batch of merges. "
         "A red run holds merges until it is green.",
     ]
@@ -122,11 +122,19 @@ def _with(path, value):
 @pytest.mark.parametrize(
     ("path", "value", "where"),
     [
-        (("checks", "pr-check", "pass"), ["PASS", "timeout"], "factory.checks.pr-check.pass"),
-        (("checks", "pr-check", "pass"), ["Skip"], "factory.checks.pr-check.pass"),
-        (("checks", "pr-check", "pass"), ["ERROR"], "factory.checks.pr-check.pass"),
-        (("checks", "pr-check", "never_pass"), ["pass"], "factory.checks.pr-check.never_pass"),
-        (("checks", "pr-check", "scope"), "full", "factory.checks.pr-check.scope"),
+        (
+            ("checks", "affected-tests", "pass"),
+            ["PASS", "timeout"],
+            "factory.checks.affected-tests.pass",
+        ),
+        (("checks", "affected-tests", "pass"), ["Skip"], "factory.checks.affected-tests.pass"),
+        (("checks", "affected-tests", "pass"), ["ERROR"], "factory.checks.affected-tests.pass"),
+        (
+            ("checks", "affected-tests", "never_pass"),
+            ["pass"],
+            "factory.checks.affected-tests.never_pass",
+        ),
+        (("checks", "affected-tests", "scope"), "full", "factory.checks.affected-tests.scope"),
         (("batch", "full_suite"), "per-pr", "factory.batch.full_suite"),
         (("batch", "full_suite"), "off", "factory.batch.on_red"),
     ],
@@ -137,7 +145,7 @@ def test_contradictions_are_refused(path, value, where):
 
 def test_a_policy_that_requires_nothing_is_refused():
     data = _with(("gate", "required"), False)
-    data["factory"]["checks"]["pr-check"]["required"] = False
+    data["factory"]["checks"]["affected-tests"]["required"] = False
     refused(data, "factory_contradiction", "factory")
 
 
@@ -147,15 +155,30 @@ def test_a_policy_that_requires_nothing_is_refused():
         (("gate", "required"), "yes", "wrong_type", "factory.gate.required"),
         (("gate", "command"), "x", "unknown_key", "factory.gate.command"),
         (("gate", "name"), "bad\nname", "invalid_value", "factory.gate.name"),
-        (("checks", "pr-check", "pass"), [], "invalid_value", "factory.checks.pr-check.pass"),
         (
-            ("checks", "pr-check", "pass"),
+            ("checks", "affected-tests", "pass"),
+            [],
+            "invalid_value",
+            "factory.checks.affected-tests.pass",
+        ),
+        (
+            ("checks", "affected-tests", "pass"),
             ["a b"],
             "invalid_value",
-            "factory.checks.pr-check.pass[0]",
+            "factory.checks.affected-tests.pass[0]",
         ),
-        (("checks", "pr-check", "pass"), ["x"] * 17, "too_many", "factory.checks.pr-check.pass"),
-        (("checks", "pr-check", "scope"), "some", "invalid_value", "factory.checks.pr-check.scope"),
+        (
+            ("checks", "affected-tests", "pass"),
+            ["x"] * 17,
+            "too_many",
+            "factory.checks.affected-tests.pass",
+        ),
+        (
+            ("checks", "affected-tests", "scope"),
+            "some",
+            "invalid_value",
+            "factory.checks.affected-tests.scope",
+        ),
         (("checks", "Bad Name"), {"pass": ["PASS"]}, "invalid_value", "factory.checks.<key>"),
         (("checks",), [], "wrong_type", "factory.checks"),
         (("batch", "branch"), "a b", "invalid_value", "factory.batch.branch"),
@@ -171,7 +194,7 @@ def test_missing_keys_and_wrong_section_type():
     for path, where in (
         (("gate",), "factory.gate"),
         (("gate", "required"), "factory.gate.required"),
-        (("checks", "pr-check", "pass"), "factory.checks.pr-check.pass"),
+        (("checks", "affected-tests", "pass"), "factory.checks.affected-tests.pass"),
         (("batch", "branch"), "factory.batch.branch"),
     ):
         data = doc()
