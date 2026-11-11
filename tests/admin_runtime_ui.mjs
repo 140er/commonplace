@@ -83,6 +83,16 @@ try {
     html=section(host.innerHTML,'runtime');assert.match(html,/Showing 1 of 40 requesters/);assert.match(html,/Showing the first 2 trusted agents/);
     // Fail closed: once the session is no longer an owner, nothing is written.
     me={...me,can_admin:false};const before=writes().length;write('requester-remove','mach_1','conn_a');assert.equal(writes().length,before);
+  } else if(process.argv[2]==='requesters-chain') {
+    find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0},machines:{state:'ready',count:1,has_more:false,requester_candidates:[{id:'conn_a',name:'a'},{id:'conn_b',name:'b'}],items:[{id:'mach_1',label:'M',enabled:true,binding_state:'unbound',max_in_flight:1,max_starts_per_hour:2,grant_version:7,requesters:[]}]}});await flush();
+    const write=(action,requester)=>listeners.get('click')({target:{closest:()=>({dataset:{adminSection:'runtime',adminAction:action,adminMachine:'mach_1',adminRequester:requester}})}});
+    const writes=()=>requests.filter(r=>r.options?.method&&r.options.method!=='GET');
+    write('requester-add','conn_a');assert.equal(writes()[0].options.headers['If-Match'],'7');
+    writes()[0].resolve({changed:true,grant_version:8});await flush();
+    // The reload is still pending; a second edit already carries the version the first one produced.
+    assert.ok(requests.filter(r=>r.path.includes('/runtime')).length===2&&!requests.findLast(r=>r.path.includes('/runtime')).settled);
+    write('requester-add','conn_b');assert.equal(writes().length,2);
+    assert.equal(writes()[1].options.headers['If-Match'],'8','a second edit before the reload must not send the old version');
   } else if(process.argv[2]==='page-error') {
     const payload={workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Existing project'}],count:101,has_more:true,next_cursor:'page-two'},machines:{state:'ready',items:[],count:0}};
     find('runtime').resolve(payload);await flush();

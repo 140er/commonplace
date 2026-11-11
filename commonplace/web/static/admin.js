@@ -87,6 +87,8 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
       const result = await (action === 'requester-add'
         ? api(base, { method: 'POST', body: { requester: ref }, headers, timeoutMs: 10000 })
         : api(`${base}/${encodeURIComponent(ref)}`, { method: 'DELETE', headers, timeoutMs: 10000 }));
+      // The answer carries the machine's new version, so a second edit before the reload is not stale.
+      if (Number.isInteger(result?.grant_version)) row.grant_version = result.grant_version;
       notes.set(machine, result?.changed === false ? (action === 'requester-add' ? 'Already a requester.' : 'Already removed.') : 'Requesters saved.');
     } catch (error) {
       notes.set(machine, error.status === 403 ? 'a signed-in workspace owner is required'

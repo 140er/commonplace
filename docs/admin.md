@@ -134,7 +134,11 @@ add back a requester that owner removed, or remove one they added again. The pag
 then says the machine changed and reads the list again. The version also moves for
 other grant edits, so a 409 can follow an unrelated change. A request that finds
 the list already in the asked state is 200 with `changed:false` (the page says
-"Already a requester."). Each change is audited as `runner.requester_add` or
+"Already a requester." for an add and "Already removed." for a remove). The
+answer carries the machine's new `grant_version`, which the page uses for its next
+edit before it reloads. Projects trust and demotion also change a machine's
+requesters on the server, under the same registry lock and without `If-Match`; they
+bump `grant_version`, so an open page gets a 409 on its next edit and reloads. Each change is audited as `runner.requester_add` or
 `runner.requester_remove` with the machine id and the agent id. A machine may hold
 requesters beyond the 32 listed; the panel says how many it shows, and an edit
 leaves the hidden ones alone. An entry a machine already holds stays even after it

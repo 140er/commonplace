@@ -34,7 +34,11 @@ def test_save_models_while_reads_are_slow_and_after_reload(ui, app):
         ),
     )
     form.get_by_role("button", name="Save models").click()
-    settle(page, 800)
+    # Wait for the save, or for the navigation that replaces it when no handler is bound.
+    for _ in range(100):
+        if saves or "main_provider=" in page.url:
+            break
+        page.wait_for_timeout(100)
     # Without the handler the browser submits a GET and puts the values in the URL.
     assert "main_provider=" not in page.url, "the form must not navigate with its values in the URL"
     assert saves == [200], f"exactly one successful save expected, got {saves}"

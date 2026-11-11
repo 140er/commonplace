@@ -44,3 +44,7 @@ def test_next_page_source_error_keeps_rows_and_retry_cursor(hub):
 
 def test_owner_edits_machine_requesters_and_fails_closed(hub):
     run(hub, "requesters")
+
+
+def test_two_requester_edits_in_a_row_use_the_version_the_first_returned(hub):
+    run(hub, "requesters-chain")
