@@ -254,6 +254,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
+  - `docs/chat.md` and `docs/bots.md` state that bots are the main way to talk to a project, what the project tools do for the person, the your-words rule, which actions wait for a tap, and that a post a bot forwards gets no front receipt or fallback card.
+
   - The card API reference documents the after-Done routes (archive, restore, carry on, Pocket), their person-only authorization and what archiving hides.
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
@@ -266,6 +268,8 @@ Format (read by `commonplace orch docs-check`):
   - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
 
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
+
+  - `docs/chat.md` lists the live delivery states of a chat message, their reasons and timing, and who sees the agent's read time.
 
   - `docs/design/RULES.md` describes the reviewer rules block and its verdict line, the session hook's missing-rules notice, and a table that maps each rule enforcement point to the tests that fail when it is skipped.
 
@@ -613,9 +617,13 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
+
   - `tests/test_commonplace_deck_bots.py` (`commonplace_deck_bots.mjs`) covers draft hand-off in both looks, Deck tile and strip markup, project work status mapping, week-bounded completion groups, escaped text and the read-only project sheet lifecycle.
 
   - The navigation tests follow the bots-first rail: `tests/workbench_shell_wiring.mjs`, `tests/workbench_chat_wiring.mjs`, `tests/commonplace_home_render.mjs`, `tests/commonplace_board_defaults_render.mjs`, `tests/card_log_links.mjs`, `tests/admin_ui.mjs` and the phone scenarios of `tests/workbench_e2e/test_keys.py` no longer expect project rows, a Needs me or Console rail entry or a Chat tab (the phone Chat button is the dock toggle in the header).
+
+  - `tests/conftest.py` refuses a raw pytest run (exit 4 at configure) on a shared test host that opts in with `~/.config/commonplace/require-test-runner` in the real account home; the marker names the environment variable the host's test runner sets for admitted runs. xdist workers pass; `COMMONPLACE_ALLOW_RAW_PYTEST=1` overrides one run. `tests/test_raw_pytest_guard.py` pins the cases.
 
   - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
 
@@ -652,6 +660,8 @@ Format (read by `commonplace orch docs-check`):
   - Chromium project-connect regressions verify visible shared-memory and other conflict statuses, dialog dismissal and unchanged explicit retry bodies.
   - Restricted-search refill regressions cover hidden ranked prefixes, counter suppression, exhaustion, work bounds, unchanged every-wing calls, restricted CLI-compatible search, filters and deadline failures; the same fixture reports information-only latency.
   - `tests/test_runner_start_context.py` is the measurement and the contract of a start prompt's card context; `tests/test_runner_start.py` allows `card_context` beside the identifier keys of a lease.
+
+  - `tests/test_chat_live.py` and `tests/test_chat_live_view.py` (with `tests/chat_live_view.mjs`) pin the live chat delivery states on the server and in the pane.
 
   - OAuth CSP header controls and real Chromium form submissions cover normal consent, login retry and re-rendered error consent.
 
@@ -717,7 +727,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - The pinned handoff baseline in `tests/test_handoff_adversarial_off_perf.py` overlays only leaf or board modules the current board code imports (now including `commonplace/decide_grant.py`); the pinned gateway, policy and handoff sources stay at the baseline commit.
+  - The pinned handoff baseline in `tests/test_handoff_adversarial_off_perf.py` overlays only leaf or board modules the current board code imports (now including `commonplace/decide_grant.py` and `mempalace/deadline.py`); the pinned gateway, policy and handoff sources stay at the baseline commit.
 
   - Browser tests that need Playwright skip at module level when it is missing, so collecting `tests/` never errors; `CP_BROWSER_E2E=1` turns a missing Playwright into a failure (`tests/test_cards_decide_scope_browser.py`, as in `tests/workbench_e2e`).
 
@@ -1322,6 +1332,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Web feeds and webhooks share the current-principal event visibility rule; non-owner person feeds omit boardless/private events and use readable-log sequence numbers.
 
+  - `space_read` by a board's current orchestrator connection advances that board's chat read cursor (`chat/live.py`) after the read; the page it returns is unchanged, and reads by people or other agents record nothing.
+
   - Owner assignments to active agent connections claim the card with a lease and a claim event.
 
   - Immediate assignment claims apply to todo cards; handoffs of doing cards return to todo without starting the replacement worker.
@@ -1432,6 +1444,8 @@ Format (read by `commonplace orch docs-check`):
   - `commonplace/runner/start_context.py`: the card context of a start. `assemble` is the one function that turns a card into launch text; its `SECTIONS` list is the priority order and the place to add a section. A card that points at a goal gets its own goal as an always-present line beside the title and the goals above it (nearest first) as the section after decisions.
 
 - **Promises:**
+
+  - `GET /api/runners/wings` (owner only) returns the wings grant validation accepts; enroll and wing edits validate against the same fast index read, so neither waits on a drawer-by-drawer listing.
 
   - Every start has one ledger row, written in the job's own transaction and following its state; tokens, cost, log pointer and the run's end are only what the run's own enabled machine reported, and an unreported value stays NULL. The end status is set once; jobs from before the ledger are given a row when the store opens.
 
@@ -1862,11 +1876,17 @@ Format (read by `commonplace orch docs-check`):
 
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
+  - The live delivery state of a person's newest chat message (`chat/live.py`, shown by `web/static/chatlive.js`): the control-database tables `chat_live_posts` (the event that carried a message) and `chat_live_reads` (how far a board's orchestrator has read), and the `live` object in the chat page.
+
   - The control-database `bot_model_calls` table (bot model requests per person and day, numbers only); `store.counts_today` adds it to project chat's count so both share one budget, and `store.take_bot_call` checks and counts one bot request in a single transaction.
+
+  - `front.skipping()` is a thread-local context manager: a project-chat post made inside it on the same thread is ignored by the front agent's event handler (no receipt, model job, runner relay or fallback card). Bots wrap their forwarded posts in it.
 
   - `commonplace/chat/model.py` holds the shared connection code (`resolve_endpoint`, `Call`) behind both `complete` and the streaming client `commonplace/chat/model_stream.py`, which yields reply text, complete tool calls and one stop reason as the provider sends them.
 
 - **Promises:**
+
+  - The live state (`idle`, `delivered`, `working`, `answered`, `no_agent`, `no_answer`) is read from stored facts only: the wake delivery row, the orchestrator's own `space_read` and a later agent message. It calls no model or outside service, stores ids and times but no message text, describes only the caller's own message, stays inside the caller's workspace, and gives the agent's read time only to a caller who may see that agent.
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
   - Opt-in phone needs-you evaluation includes actionable Approvals, so owner origin recovery still notifies after coordinator revocation.
@@ -1881,6 +1901,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Without a provider or runner the chat shows a receipt and no answer; push delivery failures are recorded, not retried forever.
 
+  - A message nobody picks up turns into `no_answer` (60 seconds after a successful wake, 5 minutes without a wake hook or after a read without a reply, at once when every wake attempt failed) and a board without a usable orchestrator shows `no_agent`; a failed read-cursor write is logged and never fails the agent's `space_read`.
+
   - A streaming call fails with only the codes `timeout`, `http_error`, `bad_response` and `stopped`, never provider error text; a tool call with a name that was not offered, or arguments that are not a JSON object, is a `bad_response`.
 
   - An empty or invalid voice setting stops startup with a message naming the setting, and a missing model at load time is an error; neither falls back to another model.
@@ -1888,6 +1910,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
+  - `tests/test_chat_live.py` covers delivery to the orchestrator, every live state, a member beside an owner and two workspaces with the same board and message id; `tests/test_chat_live_view.py` (`tests/chat_live_view.mjs`) covers the pane's text per state and role and that states and the answer arrive through the poll.
+
   - `tests/test_chat_model_stream.py` holds the streaming transport against loopback fake Anthropic and OpenAI-compatible servers: events arrive while the server holds the rest back, fragmented and parallel tool calls, wire shapes, caller limits, deadline, cancel, and the key-host and loopback refusals.
   - `tests/test_commonplace_voice.py` covers the instance switch, model settings, invalid-setting errors and the free-plan cap at, over and under its limit.
   - Coordinator-revocation recovery verifies the origin approval item and retains notification, priority and duplicate-suppression assertions.
@@ -2122,7 +2146,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## bots
 
-- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_machines.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tools/bots_overhead.py`
+- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_machines.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tests/test_bots_project_tools.py`, `tools/bots_overhead.py`
 - **Owns:**
 
   - The web-app part of `docs/bots.md` also says where Projects, Needs me and Console moved (the Workspace group of the account menu) and that the Bots count is the number of questions waiting on the person.
@@ -2136,6 +2160,8 @@ Format (read by `commonplace orch docs-check`):
   - `auth.person` is the single gate for `/api/bots*`: a signed-in person session, 404 for any agent token or machine credential, 401 for no credentials.
 
   - The turn engine: `turn.py` runs one turn per bot on its own thread (process-local `limits.REGISTRY`: one per bot, 4 per person, 32 per process), streams through `chat.model_stream.stream` with the `BOT_*` limits in `limits.py`, journals every tool call in `bot_actions`, and stores the reply in one write; `routes.py` relays it as server-sent events and serves stop and confirm. `context.py` builds the fixed system prompt and the quoted, redacted context. `tools.py` holds the `Tool`/`Result`/`Turn` contract, argument validation, the built-in `remember` and `forget`, and `bots.TOOL_MODULES` lists the tool modules imported at install. `tools/bots_overhead.py` is an informational hub-overhead measurement, not a test.
+
+  - `tools_project.py` registers the project tools: `project_status`, `list_work`, `work_detail`, `create_work`, `prioritize_work`, `comment_work`, `tell_orchestrator`, `list_decisions`, `answer_decision`, `approve_work` and `create_project`. Each acts through `BoardService` as the person, gives a confirmed action's outcome a plain sentence (`Result.say`), reads queued work through the work hydrator so a start in flight shows as working, turns a service refusal into one plain sentence (chosen by the refusal's type, with a neutral fallback for anything unrecognised), keeps each result under the engine's cut by adding rows only while the serialised result fits and reporting how many were left out, and never repeats text of work the person cannot see. `answer_decision`, `approve_work` and `create_project` are `confirm` tools whose `check` refuses text that is not the person's own, an item they cannot see and an unoffered choice before any chip exists (and again at the tap), and whose label is built from the frozen arguments and the question or work the person can see.
 
   - `blocks.HYDRATORS` fills stored block references (`work`, `decision`, `action`, `setup`, `confirm`) with the reader's own view through `BoardService`; an invisible or missing item becomes `gone`, an unknown type is returned as stored. `modelcfg.resolve` turns the chat front settings into a model or one of `needs_configuration`, `needs_turn_on`, `key_missing`.
 
@@ -2157,6 +2183,8 @@ Format (read by `commonplace orch docs-check`):
 
   - A person is offered exactly the machines the runner would let them start on (today workspace owners; a member gets an empty list and a plain reason). Revoked and switched-off machines are never listed, an unattested one is listed as `unbound` and cannot start, and `verified` is always false. No credential, token or host name appears in any value `machines` returns.
 
+  - Filed work, comments, forwarded messages, decision replies and project names are the person's own words: a title, body, text, reply or name that is not a verbatim part of the current message is refused (`not_your_words`) and nothing is written; without arguments the whole message is used. `create_work` records `bot_work`; `tell_orchestrator` posts as the person inside `chat.front.skipping()` and records `bot_forwards`, so the post gets no front receipt, model answer, runner relay or fallback card. A confirmed answer or approval runs with the item's frozen `version`; a changed item is refused with a plain sentence.
+
 - **How it fails:**
 
   - Out-of-bound input is 400 `invalid`, the bot limit and conflicts are 409, a busy store is 429; error bodies carry fixed text, never conversation text.
@@ -2174,6 +2202,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_bots_updates.py` covers each update (needs you, ready, done, an orchestrator reply, verbatim and marked), exactly-once on redelivery and on a repeated transition, only the filing or forwarding bot, no message for another person or for someone who lost access, no store write for a card no bot filed, a failing store never breaking the card write, roster state and unread, redacted titles, log hygiene and the schema upgrade of an existing file.
 
   - `tests/test_bots_turn.py` covers a turn over real HTTP with a scripted model and one loopback fake provider: `ack` before model work, a delta while the provider holds back, tool round trips as the person, `not_your_words`, confirm once / decline / expiry / foreign person, replay of finished and running requests, interrupted turns, stop, a dropped client, setup without a model, the shared daily and per-minute budget, the step cap, the turn deadline, caps, a member's refusal, and no conversation text in the control database, audit rows or logs.
+
+  - `tests/test_bots_project_tools.py` covers each project tool with an owner and a member, the your-words rule and span arguments, a bot that cannot reach another project or hidden work, a decision answered end to end, confirm tools running only on the tap with the frozen version, `chat.front.skipping()` (no receipt, model job, relay or fallback card, synchronous listeners, nesting), and no conversation text in audit rows or logs.
 
   - `tests/test_bots_machines.py` covers who sees which machines (owner, member, revoked, unattested, another workspace), one runner job per request key, refusals with the runner's code, cancelling queued and launched starts, `run_command` being unsupported, merged providers and that no credential leaks, plus the tools: a start waits for a tap and runs once, labels are server-built, refusals are plain sentences, stopping a queued start works and a launched one is reported, the machines block hydrates per reader, and `run_command` is not offered without a capable provider.
 
@@ -2218,11 +2248,15 @@ Format (read by `commonplace orch docs-check`):
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
+  - The chat pane's live delivery block (`chatlive.js`, mounted by `chat.js`): one line per server state with owner or member wording, shown in place of the timed "Working on it…" guess whenever the chat page carries `live`.
+
   - Owner REST for the workspace goals tree (`web/goals.py`: GET/POST `/api/goals`, POST `/api/goals/card`), a thin layer over `BoardService`.
 
   - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
 
 - **Promises:**
+
+  - The Admin runner wing editor loads its picker from `GET /api/runners/wings` under a client deadline; on failure it keeps granted wings ticked and accepts typed wing names. `GET /api/connections` gets its wing names from the same index read (`workspace_wing_names` in `web/agents.py`).
 
   - The Runs list shows a run's reported tokens, cost, end and log pointer; an unreported value reads "not reported", never zero, and a log pointer is a link only when it is an http(s) address.
 
