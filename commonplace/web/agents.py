@@ -1,6 +1,6 @@
 """Human-managed agent tokens, sharing the existing connection authority."""
 
-from commonplace import import_grant, urls
+from commonplace import decide_grant, import_grant, urls
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import path_parts, read_json, require_principal, send_json
@@ -52,7 +52,26 @@ def connection_view(row):
     policy = Policy.from_json(row["policy"])
     view["read_wings"] = list(policy.read_wings)
     view["import_read"] = policy.has_scope(import_grant.READER_SCOPE)
+    view["decide"] = policy.has_scope(decide_grant.DECIDE_SCOPE)
     return view
+
+
+def _update_decide(gateway, h, principal, row, data):
+    if set(data) != {"decide"} or type(data["decide"]) is not bool:
+        send_json(h, 400, {"error": "Use decide true or false"})
+        return
+    try:
+        gateway.db.set_connection_decide(
+            row["id"], data["decide"], actor=principal.user_id, workspace_ref=principal.workspace_id
+        )
+    except ControlError:
+        send_json(h, 409, {"error": decide_grant.TOP_LEVEL_TEXT})
+        return
+    send_json(
+        h,
+        200,
+        {"connection": connection_view(gateway.db.connection(row["id"], principal.workspace_id))},
+    )
 
 
 def _update_read_wings(gateway, h, principal, row, data):
@@ -81,12 +100,26 @@ def _update_read_wings(gateway, h, principal, row, data):
 
 
 def _consents(data, db, principal):
-    if any(key in data and type(data[key]) is not bool for key in ("import", "import_read")):
+    if any(
+        key in data and type(data[key]) is not bool for key in ("import", "import_read", "decide")
+    ):
         raise ValueError()
     grants = data.get("import", False), data.get("import_read", False)
     if any(grants) and not import_grant.eligible(db, principal.user_id, principal.workspace_id):
-        raise PermissionError()
-    return grants
+        raise PermissionError(import_grant.OWNER_ONLY_TEXT)
+    # Only a top-level connection may answer Needs-me; create_token rechecks ownership.
+    if data.get("decide", False) and data.get("parent") is not None:
+        raise PermissionError(decide_grant.TOP_LEVEL_TEXT)
+    return (*grants, data.get("decide", False))
+
+
+def _patch(gateway, h, principal, row, data):
+    if "decide" in data:
+        _update_decide(gateway, h, principal, row, data)
+    elif row["auth"] != "pat":
+        send_json(h, 409, {"error": "Manage this connection in its sign-in client"})
+    else:
+        _update_read_wings(gateway, h, principal, row, data)
 
 
 def install(gateway):
@@ -106,7 +139,8 @@ def install(gateway):
             except ValueError:
                 return
             if (
-                set(data) - {"name", "client", "parent", "read_wings", "import", "import_read"}
+                set(data)
+                - {"name", "client", "parent", "read_wings", "import", "import_read", "decide"}
                 or not isinstance(data.get("name"), str)
                 or not isinstance(data.get("client", "generic"), str)
                 or ("parent" in data and not isinstance(data["parent"], str))
@@ -114,12 +148,12 @@ def install(gateway):
                 send_json(h, 400, {"error": "Use an agent name, client and optional parent"})
                 return
             try:
-                grant_import, grant_read = _consents(data, gateway.db, principal)
+                grant_import, grant_read, grant_decide = _consents(data, gateway.db, principal)
             except ValueError:
-                send_json(h, 400, {"error": "Import and reader consent must be booleans"})
+                send_json(h, 400, {"error": "Import, reader and answer consent must be booleans"})
                 return
-            except PermissionError:
-                send_json(h, 403, {"error": import_grant.OWNER_ONLY_TEXT})
+            except PermissionError as exc:
+                send_json(h, 403, {"error": str(exc)})
                 return
             try:
                 read_wings = _read_wings(gateway, principal, data)
@@ -152,6 +186,7 @@ def install(gateway):
                             "memory:write",
                             *((import_grant.IMPORT_SCOPE,) if grant_import else ()),
                             *((import_grant.READER_SCOPE,) if grant_read else ()),
+                            *((decide_grant.DECIDE_SCOPE,) if grant_decide else ()),
                         ),
                         read_wings=read_wings,
                         write_wing="inbox",
@@ -176,7 +211,8 @@ def install(gateway):
         except ControlError:
             send_json(h, 404, {"error": "Agent not found"})
             return
-        if row["auth"] != "pat":
+        # An OAuth client's answer grant can be withdrawn here; the rest is its client's.
+        if row["auth"] != "pat" and not (h.command == "PATCH" and row["auth"] == "oauth"):
             send_json(h, 409, {"error": "Manage this connection in its sign-in client"})
             return
         if h.command == "DELETE":
@@ -194,7 +230,7 @@ def install(gateway):
         except ValueError:
             return
         if h.command == "PATCH":
-            _update_read_wings(gateway, h, principal, row, data)
+            _patch(gateway, h, principal, row, data)
             return
         if data:
             send_json(h, 400, {"error": "Rotation takes an empty object"})

@@ -81,6 +81,41 @@ for HTTP transcripts, Grok facts, accepted responses, multipart and retries.
 The separate existing ACL import accepts signed-in people or connections that
 already have thread read/write authority; it retains its original behavior.
 
+## Let your own app answer your Needs-me questions
+
+By default only you, signed in to the web app, can answer a Needs-me question.
+To let one of your own apps (for example a phone or car app) answer them, grant
+it the separate `cards:decide` scope. The consent text says:
+
+> Allow this app to answer your Needs-me questions as you. It can answer only questions addressed to you, never another person's, and every answer is recorded with this connection. You can stop this at any time under Agents.
+
+- **PAT:** tick that box when you create the connection, or use **Allow
+  answering Needs-me** on an existing top-level connection. Through the API,
+  send `"decide": true` (a JSON boolean) with `POST /api/connections`, or
+  `PATCH /api/connections/<id>` with `{"decide": true}`.
+- **OAuth:** the client requests `memory:read memory:write cards:decide`; you
+  tick the box on the authorization form. An unticked box or an unsolicited
+  tick grants nothing, and requesting `cards:decide` without both memory scopes
+  is refused with `invalid_scope`.
+
+Only a workspace owner can grant it, only to their own top-level connection.
+Members see no consent box, child agents and runner or seat connections cannot
+hold it, and the CLI refuses it. Agent tokens cannot grant it to themselves or
+anyone else: granting needs your signed-in browser session.
+
+With the scope, the app may call `decide` (MCP) or
+`POST /api/cards/<n>/decide` (REST) for asks addressed to you only. Asks
+addressed to another person or to an agent coordinator stay refused, as do
+escalation and boards the connection cannot read or write. Each answer writes an
+audit entry `card.decide.delegated` with the connection id and auth kind, and
+the card history names the connection as the actor.
+
+To stop it, use **Stop answering** under **Settings → Agents** (PAT or OAuth), or
+`PATCH /api/connections/<id>` with `{"decide": false}`. The next request is
+refused, exactly as for a connection that never had the scope. Revoking the
+connection also stops it. An OAuth client regains the scope only through fresh
+consent.
+
 ## Replace or stop a connection
 
 Use **Rotate** in **Settings → Agents** to replace a token. Confirm, copy the new

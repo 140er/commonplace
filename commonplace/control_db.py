@@ -34,6 +34,7 @@ from typing import Callable, Iterable, Optional
 
 from . import tokens
 from .admission import GATE
+from .decide_grant import DECIDE_SCOPE
 from .policy import Policy
 
 SCHEMA_VERSION = 1
@@ -469,6 +470,12 @@ class ControlDB:
             raise ControlError("only an owner's connection can hold the admin scope")
         if "private:read" in policy.scopes and role != "owner":
             raise ControlError("only an owner's connection can hold the private:read scope")
+        if DECIDE_SCOPE in policy.scopes and (
+            role != "owner" or user["id"] != actor_id or parent is not None
+        ):
+            raise ControlError(
+                "only the owner's own top-level connection can hold the cards:decide scope"
+            )
         name = name.strip()
         client = client.strip()
         if not _CONNECTION_NAME.fullmatch(name):
@@ -677,6 +684,43 @@ class ControlDB:
                 user_id=actor_id,
                 connection_id=row["id"],
                 auth="pat",
+            )
+
+    def set_connection_decide(self, ref, allowed, *, actor, workspace_ref):
+        """Grant or withdraw cards:decide on the acting owner's own top-level connection.
+
+        Granting is for personal access tokens; OAuth clients gain it only through
+        consent. Withdrawing works for both and takes effect on the next request.
+        """
+        with self._lock, self._tx():
+            row = self.connection(ref, workspace_ref)
+            actor_id = self.user(actor)["id"]
+            self.require_owner(row["workspace_id"], actor_id)
+            principal = self.authenticate_connection(row["id"])
+            if principal is not None and principal.runner is not None:
+                raise RunnerLinkedError()
+            if (
+                principal is None
+                or row["user_id"] != actor_id
+                or row["parent_id"] is not None
+                or row["auth"] not in ("pat", "oauth")
+                or (allowed and row["auth"] != "pat")
+            ):
+                raise ControlError("only the owner's own active top-level connection can change")
+            policy = json.loads(row["policy"])
+            scopes = set(policy.get("scopes", ())) - {DECIDE_SCOPE}
+            policy["scopes"] = sorted(scopes | ({DECIDE_SCOPE} if allowed else set()))
+            self._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?",
+                (json.dumps(policy, sort_keys=True), row["id"]),
+            )
+            self.audit(
+                action="connection.decide.grant" if allowed else "connection.decide.revoke",
+                decision="ok",
+                workspace_id=row["workspace_id"],
+                user_id=actor_id,
+                connection_id=row["id"],
+                auth=row["auth"],
             )
 
     def authenticate_token(self, token: str) -> Optional[Principal]:

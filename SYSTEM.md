@@ -212,7 +212,9 @@ reviews, person callers and explicit person handoffs keep their owner/person rou
 A status line never hides a person decision or an item needing person release.
 
 Only the addressed, still-authorized coordinator or a signed-in workspace owner
-can answer; agents never answer their own asks. The coordinator may instead use
+can answer, plus an owner's own connection holding the owner-granted
+`cards:decide` scope for asks addressed to that owner; agents never answer their
+own asks. The coordinator may instead use
 `decide(then="escalate", reply=<reason>)` to send the unchanged question, options,
 context and return recipient to the owner; an empty reason is refused. An appointed
 coordinator may withdraw only an agent-directed decision it requested itself,
@@ -480,6 +482,33 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
 
 - The plan is also re-checked when the runner reports `starting`; a refused job ends `cancelled` with outcome `plan_pending`.
+
+### Owner-granted answers from the owner's own apps (`cards:decide`)
+
+- Answering a Needs-me ask stays a signed-in owner action by default. A separate,
+  unticked `cards:decide` consent lets one of the owner's own connections answer
+  asks addressed to that owner, over MCP `decide` or REST
+  `POST /api/cards/<n>/decide`.
+- Granting: the owner's browser session only. PATs get it at creation
+  (`"decide": true`) or through `PATCH /api/connections/<id>`; OAuth clients get it
+  only when the owner ticks the consent box, and the request must also carry
+  `memory:read` and `memory:write`. Members see an owner-only notice and a forged
+  tick grants nothing. `create_token` refuses the scope unless the holder is the
+  acting owner and the connection is top-level; the CLI refuses it; person
+  policies, profile defaults and seat or runner policies never include it.
+- Answering: the connection must be a live PAT or OAuth connection of a current
+  owner, top-level, not a runner, hold the scope, and the ask's recipient must be
+  exactly that owner. It still needs `memory:write` and a readable board wing; the
+  grant replaces only agent write trust (`_restricted`). It cannot escalate or
+  answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
+  tool lists stay unchanged.
+- Audit: every delegated answer writes `audit_log` action `card.decide.delegated`
+  with user, connection id, auth kind, board and card number, inside the board
+  transaction, so no delegated answer commits unaudited. Grants and withdrawals
+  write `connection.decide.grant` and `connection.decide.revoke`.
+- Revocation: `PATCH {"decide": false}` (PAT or OAuth) or revoking the connection
+  takes effect on the next request; policies load on every request and lose the
+  scope when the holder stops being owner.
 
 ### Explicit imported-history reader consent
 

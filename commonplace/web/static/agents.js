@@ -4,6 +4,7 @@ const clients = [["claude-code", "Claude Code"], ["codex", "Codex"], ["cursor", 
 const importConsent = "Import your past AI conversations and memory files into this workspace, word for word. This import permission cannot read stored threads or change existing memories, rules or settings. Sending exactly the same import again adds no duplicates.";
 const readerConsent = "Allow this agent to read and search your past and future conversations and memory files imported through the connection import route in this workspace, including imports from your other connections. Imports through the signed-in/full-ACL route, live session captures and other people's history are excluded. To stop access, revoke this connection.";
 const readerDetail = "Includes multipart conversations, Grok facts and native memory files, regardless of read-wing selection. Revoke the old connection, then reconnect with this box unticked.";
+const decideConsent = "Allow this app to answer your Needs-me questions as you. It can answer only questions addressed to you, never another person's, and every answer is recorded with this connection. You can stop this at any time under Agents.";
 const options = (selected) => clients.map(([id, name]) => `<option value="${id}" ${id === selected ? "selected" : ""}>${name}</option>`).join("");
 const active = (c) => c.auth === "pat" && !c.revoked_at;
 const parents = (rows) => '<option value="">Top-level agent</option>' + rows.filter((c) => active(c) && (!c.expires_at || Date.parse(c.expires_at) > Date.now())).map((c) => `<option value="${e(c.id)}">${e(c.name)}</option>`).join("");
@@ -18,13 +19,19 @@ function readAccess(c, wings) {
   return `<details data-agent-access><summary>Read access</summary>${wings.map((wing) => `<label><input type="checkbox" value="${e(wing)}" ${(c.read_wings || []).some((grant) => grant === "*" || grant === wing) ? "checked" : ""}>${e(wing)}</label>`).join("")}<button type="button" data-action="agent-wings" data-agent-mutation data-agent-id="${e(c.id)}">Save read access</button></details>`;
 }
 
+function decideAccess(c) {
+  if (c.revoked_at || c.parent_id || !["pat", "oauth"].includes(c.auth)) return "";
+  if (c.decide) return `<small data-agent-decide="on">Answers your Needs-me questions (cards:decide)</small><button type="button" data-action="agent-decide" data-decide="false" data-agent-mutation data-agent-id="${e(c.id)}" data-agent-name="${e(c.name)}">Stop answering</button>`;
+  return c.auth === "pat" ? `<button type="button" data-action="agent-decide" data-decide="true" data-agent-mutation data-agent-id="${e(c.id)}" data-agent-name="${e(c.name)}">Allow answering Needs-me</button>` : "";
+}
+
 function agentRows(rows, wings = []) {
-  return rows.map((c) => `<div class="setting-row"><span>${e(c.name)}<br><small>${e(c.client)} · ${c.revoked_at ? "Revoked" : c.expires_at && Date.parse(c.expires_at) <= Date.now() ? "Expired" : c.last_used_at ? usedText(c.last_used_at) : "Unused"}</small></span>${active(c) ? `${readAccess(c, wings)}${c.import_read ? `<small>Imported history: allowed. ${e(readerDetail)}</small>` : ""}<button type="button" data-action="agent-rotate" data-agent-mutation data-agent-id="${e(c.id)}" data-agent-name="${e(c.name)}">Rotate</button><button type="button" data-action="agent-revoke" data-agent-mutation data-agent-id="${e(c.id)}" data-agent-name="${e(c.name)}">Revoke</button>` : ""}</div>`).join("") || '<p class="message">No agents connected</p>';
+  return rows.map((c) => `<div class="setting-row"><span>${e(c.name)}<br><small>${e(c.client)} · ${c.revoked_at ? "Revoked" : c.expires_at && Date.parse(c.expires_at) <= Date.now() ? "Expired" : c.last_used_at ? usedText(c.last_used_at) : "Unused"}</small></span>${decideAccess(c)}${active(c) ? `${readAccess(c, wings)}${c.import_read ? `<small>Imported history: allowed. ${e(readerDetail)}</small>` : ""}<button type="button" data-action="agent-rotate" data-agent-mutation data-agent-id="${e(c.id)}" data-agent-name="${e(c.name)}">Rotate</button><button type="button" data-action="agent-revoke" data-agent-mutation data-agent-id="${e(c.id)}" data-agent-name="${e(c.name)}">Revoke</button>` : ""}</div>`).join("") || '<p class="message">No agents connected</p>';
 }
 
 export function agentsView(payload) {
   const rows = payload.connections || [];
-  return `<section class="settings-section agents-settings"><h2>Agents</h2><div data-agent-reveal></div><form class="agent-form" data-form="agent"><label>Name<input name="name" required maxlength="120" autocomplete="off"></label><label>Client<select name="client">${options("claude-code")}</select></label><label class="agent-consent"><input type="checkbox" name="import">${e(importConsent)}</label><label class="agent-consent"><input type="checkbox" name="import_read">${e(readerConsent)}</label><small>${e(readerDetail)}</small><details><summary>Restrict access or set a parent</summary><label>Read wings (comma separated)<input name="read_wings" autocomplete="off"></label><label>Parent<select name="parent">${parents(rows)}</select></label></details><button class="blockbtn" data-agent-mutation>Create token</button></form><div data-agent-list>${agentRows(rows, payload.wings || [])}</div></section>`;
+  return `<section class="settings-section agents-settings"><h2>Agents</h2><div data-agent-reveal></div><form class="agent-form" data-form="agent"><label>Name<input name="name" required maxlength="120" autocomplete="off"></label><label>Client<select name="client">${options("claude-code")}</select></label><label class="agent-consent"><input type="checkbox" name="import">${e(importConsent)}</label><label class="agent-consent"><input type="checkbox" name="import_read">${e(readerConsent)}</label><small>${e(readerDetail)}</small><label class="agent-consent"><input type="checkbox" name="decide">${e(decideConsent)}</label><details><summary>Restrict access or set a parent</summary><label>Read wings (comma separated)<input name="read_wings" autocomplete="off"></label><label>Parent<select name="parent">${parents(rows)}</select></label></details><button class="blockbtn" data-agent-mutation>Create token</button></form><div data-agent-list>${agentRows(rows, payload.wings || [])}</div></section>`;
 }
 
 export function clientConfig(client, url, token) {
@@ -74,6 +81,7 @@ export async function createAgent(form) {
   const section = form.closest(".agents-settings"), data = Object.fromEntries(new FormData(form));
   data.import = form.elements.namedItem("import").checked;
   data.import_read = form.elements.namedItem("import_read").checked;
+  data.decide = form.elements.namedItem("decide").checked;
   if (!data.parent) delete data.parent;
   if (data.read_wings.trim()) data.read_wings = data.read_wings.split(",").map((wing) => wing.trim());
   else delete data.read_wings;
@@ -101,6 +109,15 @@ export async function agentAction(button) {
     if (!read_wings.length) throw new Error("Choose at least one read wing.");
     await mutation(section, async () => {
       await api(`/api/connections/${encodeURIComponent(button.dataset.agentId)}`, { method: "PATCH", body: { read_wings } });
+      await refresh(section);
+    });
+    return;
+  }
+  if (action === "agent-decide") {
+    const decide = button.dataset.decide === "true";
+    if (!confirm(decide ? `Let ${button.dataset.agentName} answer your Needs-me questions?\n\n${decideConsent}` : `Stop ${button.dataset.agentName} answering your Needs-me questions?`)) return;
+    await mutation(section, async () => {
+      await api(`/api/connections/${encodeURIComponent(button.dataset.agentId)}`, { method: "PATCH", body: { decide } });
       await refresh(section);
     });
     return;

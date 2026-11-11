@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from urllib.parse import urlparse
 
-from commonplace import events, privacy
+from commonplace import decide_grant, events, privacy
 from commonplace.callstack import LIMITS
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
@@ -3710,11 +3710,20 @@ class BoardService:
                 and coordinator.actor == p.actor == row["ask_to"]
                 and row["review_kind"] == "decision"
             )
+            # An owner's own app may answer only asks addressed to that owner.
+            delegated = not addressed and decide_grant.answers_for(p, row)
             if not addressed:
                 _owner(p)
-                if not p.person:
+                if not p.person and not delegated:
                     raise ToolError("no: only a signed-in workspace owner can answer this")
-            self._write(board)
+            if delegated:
+                # The owner's grant replaces agent write trust, never board visibility.
+                if not p.policy.has_scope("memory:write") or not p.policy.can_read_wing(
+                    board["wing"]
+                ):
+                    raise ToolError("no: this connection cannot change this board")
+            else:
+                self._write(board)
             self._version(conn, row, version)
             if row["status"] != "review":
                 raise ToolError("no: card is not in review")
@@ -3792,6 +3801,19 @@ class BoardService:
                     "ask_to": row["ask_to"],
                 },
             )
+            if delegated:
+                # Inside the board transaction: no delegated answer commits unaudited.
+                self.ctx.db.audit(
+                    action=decide_grant.AUDIT_ACTION,
+                    decision="ok",
+                    workspace_id=p.workspace_id,
+                    user_id=p.user_id,
+                    connection_id=p.connection_id,
+                    auth=p.auth,
+                    tool="decide",
+                    reason=f"board={board['slug']}",
+                    target_ids=[str(row["id"])],
+                )
             return self._card(conn, task_row(conn, row["id"]), self.principal)
 
     def needs_me(self, format="list"):
