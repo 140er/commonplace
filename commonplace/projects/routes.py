@@ -8,7 +8,7 @@ from commonplace.boards.store import CardRefused
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, read_json, require_principal, send_json
-from commonplace.projects import connect, limits, models, orchestration, seats, wing
+from commonplace.projects import connect, limits, models, orchestration, panel_routes, seats, wing
 from commonplace.projects.types import ProjectDenied
 from commonplace.rules.enforce import RulesRefresh, rest_write
 from commonplace.runner import registry
@@ -41,6 +41,10 @@ def _view(gateway, principal, board):
             role: choice.public() if choice is not None else None
             for role, choice in choices.items()
         },
+        "model_catalog": [
+            choice.public()
+            for choice in models.catalog(gateway.db, principal.workspace_id, board["slug"])
+        ],
         "can_configure": principal.person and principal.role == "owner",
     }
     if orchestration.enabled(gateway.db, principal.workspace_id):
@@ -150,8 +154,11 @@ def _project_action(method, parts):
         ("GET", ("orchestrator", "inbox")): "inbox",
         ("POST", ("orchestrator", "split")): "split",
         ("PUT", ("models",)): "models",
+        ("POST", ("models", "catalog")): "model_catalog",
         ("PUT", ("limits",)): "limits",
         ("POST", ("wing",)): "wing",
+        ("GET", ("panel",)): "panel_view",
+        ("PUT", ("panel",)): "panel_set",
     }
     return routes.get((method, tuple(parts[1:])))
 
@@ -193,6 +200,8 @@ def _project_result(gateway, principal, service, board, action, body):
             limits.put(conn, board["id"], body)
     if action == "models":
         models.put(gateway.db, principal, slug, body)
+    if action == "model_catalog":
+        models.catalog_add(gateway.db, principal, slug, body)
     return 200, _view(gateway, principal, board)
 
 
@@ -235,6 +244,17 @@ def _project_route(gateway, h, principal, parts, action):
     except orchestration.AdmissionRefused as exc:
         send_json(h, exc.status, {"error": str(exc).removeprefix("no: "), "code": exc.code})
         return
+    except models.UnknownModel:
+        send_json(
+            h,
+            400,
+            {
+                "error": "That model is not in this workspace's list. Pick one from the list "
+                "or add it first.",
+                "code": "unknown_model",
+            },
+        )
+        return
     except ValueError:
         send_json(h, 400, {"error": "Invalid project settings"})
         return
@@ -250,6 +270,9 @@ def _project_route(gateway, h, principal, parts, action):
 def _route(gateway, h):
     parts = path_parts(h, "/api/projects/")
     action = _project_action(h.command, parts)
+    if action in ("panel_view", "panel_set"):
+        panel_routes.handle(gateway, h, parts, action)
+        return
     splitting = action in ("inbox", "split")
     principal = require_principal(gateway, h) if splitting else _person(gateway, h)
     if principal is None:
