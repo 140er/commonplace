@@ -1048,7 +1048,10 @@ class BoardService:
         return creator is None or _restricted(creator)
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, runner_lock=False):
+        """One board transaction. ``runner_lock`` takes the runner write lock first (the
+        order of runner starts: runner, then board) and keeps it until the board
+        transaction has ended."""
         from commonplace.projects import orchestration as orch, reports
 
         self.pending = []
@@ -1074,6 +1077,10 @@ class BoardService:
         self._admission_conn = None
         # Commit/rollback boards before releasing the admission lock.
         with ExitStack() as self._admissions:
+            if runner_lock:
+                self._admission_conn = self._admissions.enter_context(
+                    orch.admission(self.ctx.gateway, self.principal.workspace_id)
+                )
             with self.store.transaction() as conn:
                 self._report_existing_boards = {r[0] for r in conn.execute("SELECT id FROM boards")}
                 try:
@@ -3307,6 +3314,12 @@ class BoardService:
             actor = self._update_acquisition_actor(prospective, args)
         return actor, self._type_holder(actor)
 
+    def _paths_change_by_agent(self, args):
+        """A contract change by anyone but the workspace owner. It takes the runner write
+        lock before the board transaction (runner, then board, like a start), so it cannot
+        land between a start's contract read and its job commit."""
+        return "paths" in args and not (self.principal.person and self.principal.role == "owner")
+
     def _paths_update(self, row, args):
         """Stored ``paths`` for a contract update. A card that has a runner job holds its
         contract: only the workspace owner may clear or narrow it; anyone else who may edit
@@ -3364,7 +3377,7 @@ class BoardService:
             "context",
             "person_reason",
         }
-        with self.transaction() as conn:
+        with self.transaction(runner_lock=self._paths_change_by_agent(args)) as conn:
             row, board = self._get(conn, task)
             # Coordination may refine available work without releasing its origin.
             # Keep this exception limited to title/body edits, never work transitions.

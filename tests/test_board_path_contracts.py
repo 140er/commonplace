@@ -117,6 +117,11 @@ def test_normalize_canonicalises_and_refuses_escapes():
         ["x/{a,../../b}"],
         ["{/a,b}"],
         ["{x,/etc}"],
+        ["x/{/a,b}"],
+        ["src/{/etc,api}"],
+        ["x{/a,b}"],
+        ["x/{,/a}"],
+        ["{a,{/b,c}}"],
         ["src/{a"],
         ["src/{a}/x"],
         ["src/a}"],
@@ -145,8 +150,9 @@ def test_comparison_budget_counts_segment_steps():
 
 
 def test_permitted_deep_wildcard_contracts_exhaust_the_budget_in_a_few_cards():
-    """What ``normalize`` accepts at most, 64 globs of 89 segments, costs 4 096 x 89 steps
-    per running card; the budget is gone after four of them, whatever the wall clock."""
+    """What ``normalize`` accepts at most, 64 globs of 89 segments, costs 4 096 x 89 work
+    units per running card, so the budget is gone after a fixed number of them. (The time
+    that allows was measured separately; see the budget comment in contracts.py.)"""
     deep = "/".join(["?"] * 88)
     mine = contracts.normalize([f"{deep}/{{m{i},n{i}}}" for i in range(32)])
     theirs = contracts.normalize([f"{deep}/{{t{i},u{i}}}" for i in range(32)])
@@ -156,7 +162,25 @@ def test_permitted_deep_wildcard_contracts_exhaust_the_budget_in_a_few_cards():
         while True:
             assert contracts.first_overlap(mine, theirs, budget) is None
             cards += 1
-    assert cards == contracts.MAX_STEPS // (64 * 64 * 89) == 4
+    assert cards == contracts.MAX_STEPS // (64 * 64 * 89) == 6
+
+
+def test_long_single_segment_contracts_are_charged_by_length():
+    """A segment's cost grows with its length: 64 globs of one 173-character segment cost
+    6 units per pair (1 + 173 // 32), not 1, so far fewer running cards fit the budget than
+    the segment count alone would allow."""
+    mine = contracts.normalize(["?" * 170 + f"{{m{i},n{i}}}" for i in range(32)])
+    theirs = contracts.normalize(["x" * 170 + f"{{t{i},u{i}}}" for i in range(32)])
+    assert len(mine) == len(theirs) == 64
+    weight = 1 + len(mine[0]) // contracts.SEGMENT_CHARS
+    assert weight == 6
+    budget, cards = contracts.Budget(), 0
+    with pytest.raises(contracts.TooLarge):
+        while True:
+            assert contracts.first_overlap(mine, theirs, budget) is None
+            cards += 1
+    assert cards == contracts.MAX_STEPS // (64 * 64 * weight) == 101
+    assert cards < contracts.MAX_STEPS // (64 * 64)  # charging segments only would allow 610
 
 
 def test_live_cards_needs_an_explicit_hold():

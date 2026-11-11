@@ -2006,20 +2006,21 @@ def _deep_paths(card_no, deep):
 
 
 def test_c389_deep_contracts_refuse_within_the_step_budget(world):
-    """Permitted contracts (64 globs, 89 segments) cost 4 096 x 89 steps per running card:
-    the budget refuses at the sixth card, however fast the host is."""
+    """Permitted contracts (64 globs, 89 segments) cost 4 096 x 89 work units per running
+    card: each start compares the cards that already run, so the eighth start is the first
+    to run out of budget (the seventh has six to compare, which fits)."""
     deep = "/".join(["?"] * 88)
-    cards = [world.card() for _ in range(6)]
+    cards = [world.card() for _ in range(8)]
     for number, card in enumerate(cards):
         _declare(world, card, *contracts.normalize(_deep_paths(number, deep)))
     world.configure(max_agents=10)
     lease = world.claim(world.a)
-    for number, card in enumerate(cards[:5]):
+    for number, card in enumerate(cards[:7]):
         world.orch_start(world.a, lease, card, f"s{number}")
-    exc = refused("path_contract_too_large", world.orch_start, world.a, lease, cards[5], "s5")
+    exc = refused("path_contract_too_large", world.orch_start, world.a, lease, cards[7], "s7")
     assert exc.details["budget"] == contracts.MAX_STEPS
-    assert f"card #{cards[5]}" in str(exc) and str(contracts.MAX_STEPS) in str(exc)
-    assert world.jobs_for(cards[5]) == []
+    assert f"card #{cards[7]}" in str(exc) and str(contracts.MAX_STEPS) in str(exc)
+    assert world.jobs_for(cards[7]) == []
 
 
 def test_c389_unreadable_stored_paths_show_as_any_and_do_not_break_edits(world):
@@ -2040,3 +2041,95 @@ def test_c389_known_gap_manual_claims_are_not_checked(world):
     BoardService(world.ctx(world.a)).task_take_next(board=BOARD, task=first)
     BoardService(world.ctx(world.b)).task_take_next(board=BOARD, task=second)
     assert [world.boards.task_show(c)["status"] for c in (first, second)] == ["doing", "doing"]
+
+
+def test_c389_a_clear_cannot_land_between_a_start_and_its_job(world, monkeypatch):
+    """The start reads the contract inside the runner transaction and pauses before its job
+    commits; the creator tries to clear the card's paths meanwhile. The clear takes the runner
+    write lock first (runner, then board, like a start), so it waits for the start, sees the
+    job and is refused: the contract survives and the overlapping start is refused."""
+    import threading
+
+    first, second = world.card(by=world.b), world.card()
+    _declare(world, first, "src/**")
+    _declare(world, second, "src/a.py")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    real = runner_bridge.contract_refusal
+    paused, resume = threading.Event(), threading.Event()
+    outcome = {}
+
+    def pausing(*args, **kwargs):
+        result = real(*args, **kwargs)
+        if not paused.is_set() and kwargs.get("card") == first:
+            paused.set()
+            resume.wait(timeout=30)
+        return result
+
+    monkeypatch.setattr(runner_bridge, "contract_refusal", pausing)
+
+    def run(name, fn):
+        def target():
+            try:
+                outcome[name] = fn()
+            except Exception as exc:  # reported by the assertions below
+                outcome[name] = exc
+
+        thread = threading.Thread(target=target)
+        thread.start()
+        return thread
+
+    start = run("start", lambda: world.orch_start(world.a, lease, first, "s1"))
+    assert paused.wait(timeout=30)
+    clear = run("clear", lambda: _as(world, world.b, first, paths=[]))
+    clear.join(timeout=1)  # blocked on the runner write lock the start holds
+    assert clear.is_alive()
+    resume.set()
+    start.join(timeout=30)
+    clear.join(timeout=30)
+    assert isinstance(outcome["start"], dict), outcome["start"]
+    assert isinstance(outcome["clear"], ToolError), outcome["clear"]
+    assert _paths_of(world, first) == ["src/**"]
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+
+
+def test_c389_the_holder_of_a_manual_claim_may_change_or_clear_its_own_contract(world):
+    """Pinned behaviour of this slice: a manual claim is not a job, so the owner-only rule
+    does not apply and the holder releases its own contract. Covering manual claims with the
+    owner rule and the overlap check is a later slice."""
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/**")
+    _declare(world, second, "src/a.py")
+    BoardService(world.ctx(world.a)).task_take_next(board=BOARD, task=first)
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")  # the claim holds
+    assert _as(world, world.a, first, paths=["docs/**"])["paths"] == ["docs/**"]
+    world.orch_start(world.a, lease, second, "s2")  # released by its own holder
+    assert len(world.all_jobs()) == 1
+
+
+def test_c389_a_persons_manual_claim_does_not_hold_a_start(world):
+    """Pinned behaviour of this slice: only a connection's doing claim counts as running."""
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/**")
+    _declare(world, second, "src/a.py")
+    BoardService(world.ctx(world.owner)).task_take_next(board=BOARD, task=first)
+    assert world.boards.task_show(first)["assignee"].startswith("user:")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, second, "s2")
+    assert len(world.all_jobs()) == 1
+
+
+def test_c389_refusal_for_a_manual_claim_does_not_talk_about_a_job(world):
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/**")
+    _declare(world, second, "src/a.py")
+    BoardService(world.ctx(world.a)).task_take_next(board=BOARD, task=first)
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    exc = refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+    text = str(exc)
+    assert f"#{first} is claimed by its holder" in text and "no runner job" in text
+    assert "workspace owner" not in text and "job exists" not in text

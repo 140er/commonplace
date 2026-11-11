@@ -397,8 +397,9 @@ def contract_refusal(
     (``conn``): the jobs, the doing cards and every contract are read there. A running
     card's paths are read as they are now, so clearing them releases the card. An
     unreadable stored contract counts as ``**``. A card with no contract, or running next
-    to cards with none, is never refused; too many glob pairs refuse
-    (``path_contract_too_large``) rather than hold the lock."""
+    to cards with none, is never refused; a comparison past the work budget refuses
+    (``path_contract_too_large``) rather than hold the lock. A ``doing`` claim held by a
+    person (``user:``) does not hold a start."""
     from commonplace.projects import orchestration as orch
 
     live = _live_cards(conn, board_slug, now, hold=False)
@@ -436,7 +437,7 @@ def contract_refusal(
             return StartRefused(
                 "path_contract_too_large",
                 f"comparing card #{card}'s path contract with the running cards' contracts "
-                f"needs more than {contracts.MAX_STEPS} glob-segment steps (stopped at "
+                f"needs more than {contracts.MAX_STEPS} comparison work units (stopped at "
                 f"running card #{other}); narrow the paths of #{card} or of #{other}",
                 card=other,
                 paths=mine,
@@ -444,16 +445,24 @@ def contract_refusal(
                 budget=contracts.MAX_STEPS,
             )
         if pair is not None:
-            return StartRefused(
-                "path_overlap",
+            head = (
                 f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of "
-                f"running card #{other}. #{other} holds its contract while its job exists "
-                f"(a started job never ends): narrow #{card}'s paths, or ask the workspace "
-                f"owner to clear #{other}'s paths (task_update paths=[]) once its work is "
-                f"over; an agent cannot clear them while the job exists",
-                card=other,
-                paths=mine,
-                other_paths=globs,
+                f"running card #{other}. "
+            )
+            if other in live:
+                how = (
+                    f"#{other} holds its contract while its job exists (a started job never "
+                    f"ends): narrow #{card}'s paths, or ask the workspace owner to clear "
+                    f"#{other}'s paths (task_update paths=[]) once its work is over; an agent "
+                    f"cannot clear them while the job exists"
+                )
+            else:
+                how = (
+                    f"#{other} is claimed by its holder (no runner job): start #{card} after "
+                    f"the holder finishes or releases #{other}, or narrow #{card}'s paths"
+                )
+            return StartRefused(
+                "path_overlap", head + how, card=other, paths=mine, other_paths=globs
             )
     return None
 

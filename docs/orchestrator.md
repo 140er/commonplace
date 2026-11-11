@@ -166,12 +166,19 @@ Inside it, in this order:
    an editing field (holder, review editor, creator of an unassigned card, or a
    person), and while the card has a job only the workspace owner may clear or
    narrow it (`task_update(paths=[])`); others can only add globs, so an agent
-   asks the owner to release a card. Unreadable stored contracts count as
-   `**`. One start compares at most 1 500 000 glob-segment steps; beyond that
-   it refuses with `path_contract_too_large` (details `card`, `paths`,
+   asks the owner to release a card. A change by anyone but the owner takes the
+   runner write lock before the board transaction (runner, then board, like a
+   start), so it cannot land between a start's contract read and its job
+   commit. Unreadable stored contracts count as `**`. One start compares at
+   most 2 500 000 work units (a pair is charged its depth times its heaviest
+   segment: one unit per segment plus one per 32 characters; 0.66 s for the
+   slowest of nine permitted shapes on the development host); beyond that it
+   refuses with `path_contract_too_large` (details `card`, `paths`,
    `other_paths`, `budget`). `card_start` on a board without an orchestrator
    config runs the same check before the job is inserted. Only runner starts
-   are checked: a card a connection takes by hand is not. Cards without a
+   are checked: a card a connection takes by hand is not, its holder may
+   change or clear its own contract (the owner-only rule needs a runner job),
+   and a `doing` claim held by a person does not hold a start. Cards without a
    contract never conflict.
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a

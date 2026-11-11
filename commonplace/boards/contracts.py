@@ -19,10 +19,12 @@ this check exists to prevent. So:
   ``..`` that cannot collapse all count as ``**``, so they overlap everything;
 - names compare case-insensitively, because a checkout on a case-insensitive file system
   maps ``Docs/a.md`` and ``docs/a.md`` to one file;
-- one start's comparison is bounded (``MAX_STEPS`` glob-segment steps, about a second).
-  Each glob pair is charged its depth, because the cost of a pair grows with the number
-  of segments; beyond the budget it fails closed (``TooLarge``) instead of holding the
-  runner lock.
+- one start's comparison is bounded by a budget of ``MAX_STEPS`` work units, which was
+  set from timings on one host (the slowest of nine permitted shapes took 0.66 s at the
+  limit there; a slower host takes proportionally longer). A glob pair is charged its depth times its
+  heaviest segment: one unit per segment plus one per ``SEGMENT_CHARS`` characters, because
+  a segment's cost grows with its length. Beyond the budget it fails closed (``TooLarge``)
+  instead of holding the runner lock.
 """
 
 from __future__ import annotations
@@ -37,17 +39,18 @@ MAX_GLOBS = 32  # globs in one update
 MAX_EXPANSIONS = 64  # alternatives one glob may expand to
 MAX_STORED = 64  # globs stored per card, after expansion
 MAX_GLOB_LENGTH = 200
-MAX_STEPS = 1_500_000  # glob-segment steps compared by one start (about a second)
+MAX_STEPS = 2_500_000  # work units one start may compare (about 0.66 s for the slowest of nine measured shapes)
+SEGMENT_CHARS = 32  # characters that add one work unit to a segment
 _WILDCARDS = frozenset("*?[{}")
 ANY = ("**",)
 
 
 class TooLarge(Exception):
-    """A start would compare more glob-segment steps than ``MAX_STEPS``."""
+    """A start would compare more work units than ``MAX_STEPS``."""
 
 
 class Budget:
-    """Glob-segment steps one start may still compare."""
+    """Work units one start may still compare."""
 
     def __init__(self, steps: int = MAX_STEPS):
         self.left = steps
@@ -106,9 +109,10 @@ def _expand(glob: str, *, strict: bool) -> list[str]:
             return _unexpandable("unbalanced or comma-less brace group", strict)
         bounds = [start, *commas, end]
         head, tail = current[:start], current[end + 1 :]
-        pending.extend(
-            reversed([head + current[a + 1 : b] + tail for a, b in zip(bounds, bounds[1:])])
-        )
+        options = [current[a + 1 : b] for a, b in zip(bounds, bounds[1:])]
+        if strict and any(option.startswith("/") for option in options):
+            raise ToolError("no: a path glob is relative to the repo root (no / or \\)")
+        pending.extend(reversed([head + option + tail for option in options]))
         if len(done) + len(pending) > MAX_EXPANSIONS:
             return _unexpandable(f"more than {MAX_EXPANSIONS} brace alternatives", strict)
     if any("}" in alternative for alternative in done):
@@ -138,8 +142,6 @@ def normalize(value) -> list[str]:
         if glob.startswith("/") or "\\" in glob:
             raise ToolError("no: a path glob is relative to the repo root (no / or \\)")
         for alternative in _expand(glob, strict=True):
-            if alternative.startswith("/"):
-                raise ToolError("no: a path glob is relative to the repo root (no / or \\)")
             canonical = "/".join(_canonical(alternative, strict=True)) or "**"  # "." is the root
             if canonical not in globs:
                 globs.append(canonical)
@@ -157,30 +159,38 @@ def column_update(args) -> dict:
 def _alternatives(glob: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """``(alternative, casefolded canonical segments)`` for each way ``glob`` can read."""
     return tuple(
-        (alternative, tuple(s.casefold() for s in _canonical(alternative, strict=False)))
+        (alternative, tuple(_segment(s) for s in _canonical(alternative, strict=False)))
         for alternative in _expand(glob, strict=False)
     )
 
 
-def _segments_overlap(a: str, b: str) -> bool:
-    if a == b:
-        return True
-    a_wild, b_wild = bool(_WILDCARDS & set(a)), bool(_WILDCARDS & set(b))
-    if a_wild and b_wild:
-        return True  # two patterns may share a name; assume they do
-    if a_wild:
-        return fnmatch.fnmatchcase(b, a)
-    if b_wild:
-        return fnmatch.fnmatchcase(a, b)
-    return False
+def _segment(text: str) -> tuple[str, bool]:
+    """A casefolded segment and whether it holds a wildcard, decided once per glob so a
+    comparison builds no sets."""
+    text = text.casefold()
+    return text, bool(_WILDCARDS & set(text))
 
 
-def _overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
-    for x, y in zip(left, right):
-        if x == "**" or y == "**":
+def _heaviest(segments) -> int:
+    """Work units of the longest segment of a glob."""
+    return max((1 + len(text) // SEGMENT_CHARS for text, _ in segments), default=1)
+
+
+def _overlap(left, right) -> bool:
+    for (a, a_wild), (b, b_wild) in zip(left, right):
+        if a == "**" or b == "**":
             return True
-        if not _segments_overlap(x, y):
-            return False
+        if a == b:
+            continue
+        if a_wild and b_wild:
+            continue  # two patterns may share a name; assume they do
+        if a_wild:
+            if fnmatch.fnmatchcase(b, a):
+                continue
+        elif b_wild:
+            if fnmatch.fnmatchcase(a, b):
+                continue
+        return False
     return True
 
 
@@ -194,14 +204,15 @@ def globs_overlap(a: str, b: str) -> bool:
 def first_overlap(mine, theirs, budget: Budget | None = None) -> tuple[str, str] | None:
     """The first ``(my glob, their glob)`` pair that can match the same path, or None.
     Either side empty means no contract, so no overlap. Each glob is expanded once; with a
-    ``budget`` the steps (pairs times the shallower side's deepest glob, which bounds the
-    segments one pair compares) are charged first and ``TooLarge`` is raised when they
-    exceed it."""
+    ``budget`` the work is charged first (pairs, times the shallower side's deepest glob,
+    times the heaviest segment of either side: an upper bound of what one pair costs) and
+    ``TooLarge`` is raised when it exceeds the budget."""
     left = [(g, s) for glob in mine or () for g, s in _alternatives(glob)]
     right = [(g, s) for glob in theirs or () for g, s in _alternatives(glob)]
     if budget is not None and left and right:
         depth = min(max(len(x) for _, x in left), max(len(y) for _, y in right))
-        budget.take(len(left) * len(right) * max(depth, 1))
+        weight = max(_heaviest(x) for _, x in (*left, *right))
+        budget.take(len(left) * len(right) * max(depth, 1) * weight)
     for a, x in left:
         for b, y in right:
             if _overlap(x, y):
