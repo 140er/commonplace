@@ -1662,7 +1662,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Memory tools and routes under the caller's policy, search index progress, workspace store generations and cutovers, and opt-in chat capture.
 
-  - The capture runner classifies hub and transcript failures that a retry can fix (`CaptureUnavailable`: network, 5xx, 408, 409, transcript changed during read) apart from permanent ones, and `sync_file` accepts an idempotency key sent as `client_op_id`.
+  - The capture runner classifies hub and transcript failures that a retry can fix (`CaptureUnavailable`: network, 5xx, 408, 409, transcript changed during read) and refused credentials (`CaptureAuth`, 401/403, which pause the spool without giving items up) apart from permanent ones, and `sync_file` accepts an idempotency key sent as `client_op_id`.
 
 - **Promises:**
 

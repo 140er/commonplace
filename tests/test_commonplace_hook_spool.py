@@ -1,5 +1,6 @@
 """Capture hook spool: offline write, ordered upload, retries and exactly-once."""
 
+import errno
 import io
 import json
 import re
@@ -533,3 +534,55 @@ def test_items_removed_by_a_concurrent_drain_do_not_break_enqueue_or_status(tmp_
     with patch.object(Spool, "items", lambda self: [*sorted(self.root.glob("0*.json")), ghost]):
         assert spool.status()["pending"] == 2
         assert spool.enqueue("codex", "{}") is not None
+
+
+def test_a_refused_credential_keeps_the_queue_and_never_gives_it_up(surface, tmp_path, monkeypatch):
+    s = surface
+    url, bearer = hub(s, monkeypatch)
+    spool = Spool(tmp_path / "spool", clock=Clock())
+    spool.enqueue("claude-code", payload_for(transcript(tmp_path)))
+    spool.enqueue("claude-code", payload_for(transcript(tmp_path, name="two.jsonl")))
+    # The settings request already fails with 401: far more passes than MAX_ATTEMPTS.
+    for _ in range(hook_spool.MAX_ATTEMPTS + 3):
+        assert spool.drain(hook_spool.uploader(url, "revoked-token"), force=True) == "failed"
+    assert len(spool.items()) == 2
+    assert not list((spool.root / "rejected").glob("*.json"))
+    # A fixed token drains everything.
+    assert spool.drain(hook_spool.uploader(url, bearer), force=True) == "done"
+    assert spool.items() == []
+
+
+def test_a_refusal_on_the_chunk_request_halts_instead_of_rejecting(tmp_path):
+    spool = Spool(tmp_path / "spool", clock=Clock())
+    spool.enqueue("claude-code", payload_for(tmp_path / "s.jsonl"))
+
+    def refused(*_a, **_k):
+        raise capture_client.CaptureAuth("Capture request refused (HTTP 401); saved data kept")
+
+    with (
+        patch.object(capture_client, "request", return_value={"enabled": True}),
+        patch.object(capture_client, "sync_file", refused),
+    ):
+        for _ in range(hook_spool.MAX_ATTEMPTS + 2):
+            assert spool.drain(hook_spool.uploader(CLOSED_PORT_URL, "t"), force=True) == "failed"
+    assert len(spool.items()) == 1
+    assert not list((spool.root / "rejected").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "error,kept",
+    [(OSError(errno.EIO, "io"), True), (FileNotFoundError(errno.ENOENT, "gone"), False)],
+)
+def test_only_unrecoverable_read_errors_set_the_item_aside(tmp_path, error, kept):
+    spool = Spool(tmp_path / "spool", clock=Clock())
+    spool.enqueue("claude-code", payload_for(tmp_path / "s.jsonl"))
+
+    def broken(*_a, **_k):
+        raise error
+
+    with (
+        patch.object(capture_client, "request", return_value={"enabled": True}),
+        patch.object(capture_client, "sync_file", broken),
+    ):
+        spool.drain(hook_spool.uploader(CLOSED_PORT_URL, "t"))
+    assert bool(spool.items()) is kept

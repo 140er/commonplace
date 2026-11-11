@@ -20,6 +20,10 @@ class CaptureError(Exception):
     """Fixed diagnostics only: never include paths, credentials or source text."""
 
 
+class CaptureAuth(CaptureError):
+    """The hub refused the credential (401/403); fixing the token fixes the retry."""
+
+
 class CaptureUnavailable(CaptureError):
     """The hub or the transcript was busy or unreachable; the same request can be retried."""
 
@@ -63,6 +67,10 @@ def request(target, token, method, route, body=None):
         if response.status == 429:
             return {"status": "deferred"}
         if response.status != 200 or len(raw) > 65536:
+            if response.status in (401, 403):
+                raise CaptureAuth(
+                    f"Capture request refused (HTTP {response.status}); saved data kept"
+                )
             # 409 is a cursor race (another writer moved the cursor); a fresh cursor read resolves it.
             failure = (
                 CaptureUnavailable

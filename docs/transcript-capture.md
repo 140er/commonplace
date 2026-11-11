@@ -93,7 +93,8 @@ event retries; `python -m commonplace.hook_spool drain --force` retries now and
 
 The spool holds at most 500 items and 8 MiB. When full it drops the oldest items
 first and writes one line per drop (key, reason, size, never text) to
-`spool.log`. An item that can never upload (missing transcript, repeated
+`spool.log`. A refused credential (401/403) pauses the queue with the
+same backoff but never gives items up; fix the token and the queue drains. An item that can never upload (missing transcript, repeated
 failures) moves to `rejected/` (at most 100, logged) so it cannot block later
 items. If the workspace has capture off, items are discarded with a log line;
 the transcript stays local and a later opt-in captures it from the start.

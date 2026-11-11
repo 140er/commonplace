@@ -16,6 +16,7 @@ A hook only writes its payload here, which takes no network time. A detached
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import sys
@@ -43,12 +44,19 @@ class Transient(Exception):
     """The upload failed in a way a later retry can fix; the item stays."""
 
 
+class Halt(Exception):
+    """The hub refused the credential: wait for a fixed token; never give up the items."""
+
+
 class Permanent(Exception):
     """The item can never upload; it is set aside, not deleted."""
 
 
 class Skipped(Exception):
     """The workspace opted out; the transcript stays local and a later opt-in recaptures it."""
+
+
+_GONE = (FileNotFoundError, NotADirectoryError, IsADirectoryError, PermissionError)
 
 
 def default_root(home=None):
@@ -326,6 +334,8 @@ def uploader(url, token):
                 setting.update(
                     capture_client.request(target, token, "GET", "/api/settings/capture")
                 )
+            except capture_client.CaptureAuth as error:
+                raise Halt(str(error)) from None
             except capture_client.CaptureError as error:
                 raise Transient(str(error)) from None
         if not setting.get("enabled"):
@@ -337,14 +347,18 @@ def uploader(url, token):
         while True:
             try:
                 result = capture_client.sync_file(target, token, item["source"], path, item["key"])
+            except capture_client.CaptureAuth as error:
+                raise Halt(str(error)) from None
             except capture_client.CaptureUnavailable as error:
                 raise Transient(str(error)) from None
-            except (capture_client.CaptureError, OSError) as error:
-                raise Permanent(
-                    str(error)
-                    if isinstance(error, capture_client.CaptureError)
-                    else "transcript unreadable"
-                ) from None
+            except capture_client.CaptureError as error:
+                raise Permanent(str(error)) from None
+            except OSError as error:
+                # A missing, unreadable or symlinked transcript never recovers;
+                # anything else (EIO, EAGAIN, ...) may.
+                if isinstance(error, _GONE) or error.errno == errno.ELOOP:
+                    raise Permanent("transcript unreadable") from None
+                raise Transient("transcript read failed") from None
             status = result.get("status")
             if status == "deferred":
                 raise Transient("hub asked to retry later")
