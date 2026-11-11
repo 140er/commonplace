@@ -21,6 +21,7 @@ from commonplace.rules import enforce
 KINDS = ("read", "routine", "confirm")
 SCOPES = ("any", "project")
 NAME = re.compile(r"[a-z][a-z0-9_]{0,47}")
+MIN_SPAN = 2  # a shorter span is in almost any message, so it proves nothing
 
 
 class NotYourWords(Exception):
@@ -112,11 +113,11 @@ class Turn:
         return board
 
     def words(self, text) -> str:
-        """``text`` trimmed, when it is a verbatim span of the stored current message."""
+        """``text`` trimmed, when it is a verbatim span (2+ characters) of the stored message."""
         if not isinstance(text, str):
             raise NotYourWords()
         span = text.strip()
-        if not span or span not in self.message["text"]:
+        if len(span) < MIN_SPAN or span not in self.message["text"]:
             raise NotYourWords()
         return span
 

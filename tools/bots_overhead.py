@@ -41,7 +41,7 @@ def measure_overhead(bots_hub):
 
     results = []
     for n in range(TURNS + 1):
-        script = [Delay(), o_text("Hello"), o_text(" there."), openai_frame(finish="stop")]
+        script = [Delay(), o_text("Hello "), o_text("there."), openai_frame(finish="stop")]
         with fake_server(script) as (origin, _state):
             configure(hub, base_url=origin, user_daily_limit=1000, daily_limit=1000)
             bot = bot_of(hub)

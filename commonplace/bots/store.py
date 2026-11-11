@@ -10,6 +10,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -104,6 +105,12 @@ CREATE TABLE IF NOT EXISTS bot_forwards (
 );
 CREATE INDEX IF NOT EXISTS bot_forwards_by_post ON bot_forwards(board, space_message_id);
 CREATE INDEX IF NOT EXISTS bot_work_by_card ON bot_work(board, card);
+CREATE TABLE IF NOT EXISTS bot_leases (
+    bot_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    beat_at REAL NOT NULL,
+    PRIMARY KEY (bot_id, request_id)
+);
 CREATE TABLE IF NOT EXISTS bot_memory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bot_id TEXT NOT NULL,
@@ -527,6 +534,38 @@ class BotStore:
                     (bot_id, 2**63 - 1 if before is None else before, limit),
                 ).fetchall()[::-1]
         return [_message(row) for row in rows]
+
+    # Running-turn leases: a turn renews its lease while it runs, in whatever process
+
+    def lease_start(self, bot_id, user_id, request_id) -> None:
+        with self._tx() as conn:
+            self._own(conn, bot_id, user_id)
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_leases (bot_id,request_id,beat_at) VALUES (?,?,?)",
+                (bot_id, request_id, time.time()),
+            )
+
+    def lease_beat(self, bot_id, request_id) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE bot_leases SET beat_at=? WHERE bot_id=? AND request_id=?",
+                (time.time(), bot_id, request_id),
+            )
+
+    def lease_end(self, bot_id, request_id) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "DELETE FROM bot_leases WHERE bot_id=? AND request_id=?", (bot_id, request_id)
+            )
+
+    def leased(self, bot_id, request_id, fresh_s) -> bool:
+        """True while a turn for this request renewed its lease within ``fresh_s`` seconds."""
+        with self._tx(write=False) as conn:
+            row = conn.execute(
+                "SELECT beat_at FROM bot_leases WHERE bot_id=? AND request_id=?",
+                (bot_id, request_id),
+            ).fetchone()
+        return row is not None and row["beat_at"] > time.time() - fresh_s
 
     # Action journal
 

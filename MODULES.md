@@ -1810,7 +1810,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
-  - The control-database `bot_model_calls` table (bot model requests per person and day, numbers only); `store.counts_today` adds it to project chat's count so both share one budget.
+  - The control-database `bot_model_calls` table (bot model requests per person and day, numbers only); `store.counts_today` adds it to project chat's count so both share one budget, and `store.take_bot_call` checks and counts one bot request in a single transaction.
 
   - `commonplace/chat/model.py` holds the shared connection code (`resolve_endpoint`, `Call`) behind both `complete` and the streaming client `commonplace/chat/model_stream.py`, which yields reply text, complete tool calls and one stop reason as the provider sends them.
 
@@ -2054,7 +2054,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Text bounds count the raw characters (what is stored), so padding cannot exceed them; text that cannot be stored as UTF-8 is `invalid`. A pending confirmation past its expiry can only become `expired`, whatever the requested state.
 
-  - A turn's `ack` leaves before any model work; text is relayed while the provider still sends; a dropped client never stops a turn. Every tool runs as the person, re-resolved per call, with an audit row `bot:<tool>`; written text must be a verbatim span of the person's message (`not_your_words`). `confirm` tools only create a pending action, run once by compare-and-set on `/confirm`. A request id is never run twice: replay reads the store, a request without reply and without a running turn is stored as `failed:interrupted` with its journal. Bot model requests count in the control table `bot_model_calls` (numbers only) and `chat.store.counts_today` includes them, so bots and project chat share one daily budget and the per-minute `USER_RATE`.
+  - A turn's `ack` leaves before any model work; text is relayed while the provider still sends; a dropped client never stops a turn. Every tool runs as the person, re-resolved per call, with an audit row `bot:<tool>`; written text must be a verbatim span of the person's message (`not_your_words`). `confirm` tools only create a pending action, run once by compare-and-set on `/confirm`. A request id is never run twice: replay reads the store, a request without reply and without a running turn is stored as `failed:interrupted` with its journal. Bot model requests count in the control table `bot_model_calls` (numbers only) and `chat.store.counts_today` includes them, so bots and project chat share one daily budget and the per-minute `USER_RATE`. A turn takes its unit atomically with the daily check just before sending (`chat.store.take_bot_call`) and gives it back if nothing was sent. Running turns hold a renewed lease in `bot_leases`, so a turn in another hub process is never marked interrupted; a late reply is logged (`code=late_reply`), not stored twice. Streamed text is redacted over the whole reply so far and only its settled part is sent; the step cap is its own code `steps`; a confirm whose `ref` cannot be read creates nothing (`unreadable`).
 
 - **How it fails:**
 

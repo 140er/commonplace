@@ -296,8 +296,10 @@ def _send(gateway, h, principal, bot_id, rest):
         # A same-id request may have finished between the first look and admission.
         seen = bots.message_for_request(bot_id, principal.user_id, request_id)
         if seen is None:
+            bots.lease_start(bot_id, principal.user_id, request_id)
             message = bots.add_user_message(bot_id, principal.user_id, text, request_id)
     except BaseException:
+        bots.lease_end(bot_id, request_id)
         limits.REGISTRY.release(run)
         raise
     if seen is not None:

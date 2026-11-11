@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import queue
+import re
 import threading
 import time
 
@@ -37,7 +38,6 @@ SENTENCES = {
     "interrupted": "This reply was interrupted. Check what was done before you ask again.",
     "steps": "That needed too many steps, so I stopped here.",
 }
-CODES = {"steps": "limit"}  # sentence key -> error code, where they differ
 REFUSALS = {
     "not_your_words": "That text is not in your message. Only your own words can be written.",
     "invalid": "That request was not valid.",
@@ -45,7 +45,28 @@ REFUSALS = {
     "steps": "Step limit reached; this was not done.",
     "stopped": "Stopped before this ran.",
     "failed": "That did not work.",
+    "unreadable": "I could not read that item, so nothing is waiting for your OK.",
 }
+LEASE_S = 20  # a turn whose lease is older than this, in any process, is not running
+BEAT_S = 5
+# A line carrying one of these may hold a secret whose value spans spaces (a header, a
+# key assignment, a quoted value, a private key block): it is streamed only once complete.
+_HOLD_LINE = re.compile(
+    r"(?i)-----|[:=]\s{0,4}[\"']|(?:authorization|cookie|x-api-key|x-auth-token|private-token)"
+    r"\s{0,4}:|" + redact.KEY + r"\\?[\"']?\s{0,4}[:=]"
+)
+
+
+def safe_end(text) -> int:
+    """How much of redacted ``text`` can be streamed now without a later change to it.
+
+    Only whole words go out (no redaction pattern crosses a space without a label), and a
+    line with a label is held until its end.
+    """
+    line = text.rfind("\n") + 1
+    if _HOLD_LINE.search(text, line):
+        return line
+    return max(text.rfind(" "), text.rfind("\t"), text.rfind("\n")) + 1
 
 
 def _hash(args) -> str:
@@ -81,6 +102,8 @@ class TurnRun:
         self.reply = None
         self.first_token_ms = None
         self._text = []
+        self._sent = ""  # redacted reply text already streamed
+        self._held = False  # the redacted text changed under what was sent; send no more
         self._blocks = []
         self._model = None
         self._reader = blocks.Reader(gateway, principal)
@@ -99,7 +122,16 @@ class TurnRun:
 
     # The turn
 
+    def _beat(self) -> None:
+        bots = store.open_bots(self.gateway, self.workspace_id)
+        while not self.finished.wait(BEAT_S):
+            try:
+                bots.lease_beat(self.bot_id, self.request_id)
+            except Exception as exc:
+                log_failure(logger, "Bot turn lease not renewed", exc)
+
     def _run(self) -> None:
+        threading.Thread(target=self._beat, name="bot-turn-lease", daemon=True).start()
         outcome = "model_error"
         try:
             outcome = self._turn()
@@ -111,6 +143,12 @@ class TurnRun:
             log_failure(logger, "Bot reply not stored", exc)
             self._put("error", {"code": "model_error", "text": SENTENCES["model_error"]})
         finally:
+            try:
+                store.open_bots(self.gateway, self.workspace_id).lease_end(
+                    self.bot_id, self.request_id
+                )
+            except Exception as exc:
+                log_failure(logger, "Bot turn lease not ended", exc)
             limits.REGISTRY.release(self)
             self.finished.set()
             self.queue.put(None)
@@ -152,11 +190,14 @@ class TurnRun:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return "timeout"
-            refused = limits.check(self.gateway, config, self.workspace_id, self.user_id)
+            refused = limits.take(self.gateway, config, self.workspace_id, self.user_id)
             if refused:
                 return refused
+            sent = []
             try:
-                calls, said = self._model_call(config, key, system, messages, specs, remaining)
+                calls, said = self._model_call(
+                    config, key, system, messages, specs, remaining, sent
+                )
             except ModelError as exc:
                 return {"stopped": "stopped", "timeout": "timeout"}.get(exc.code, "model_error")
             except ChatDenied:
@@ -164,6 +205,9 @@ class TurnRun:
                 return "needs_configuration"
             except ValueError:
                 return "model_error"  # input over the bound, or the provider is unusable
+            finally:
+                if not sent:  # the unit is for a request sent; this one never was
+                    limits.give_back(self.gateway, self.workspace_id, self.user_id)
             if not calls:
                 return ""
             messages.append({"role": "assistant", "content": said, "tool_calls": calls})
@@ -187,7 +231,7 @@ class TurnRun:
             if over:
                 return "steps"
 
-    def _model_call(self, config, key, system, messages, specs, remaining):
+    def _model_call(self, config, key, system, messages, specs, remaining, sent):
         events = model_stream.stream(
             config,
             key,
@@ -198,7 +242,7 @@ class TurnRun:
             max_tokens=limits.BOT_MAX_OUTPUT_TOKENS,
             max_input_chars=limits.BOT_MAX_INPUT_CHARS,
             max_response_bytes=limits.BOT_MAX_RESPONSE_BYTES,
-            on_sent=lambda: limits.count(self.gateway, self.workspace_id, self.user_id),
+            on_sent=lambda: sent.append(True),
             cancel=self.cancel,
         )
         said, calls = [], []
@@ -212,12 +256,32 @@ class TurnRun:
         return calls, "".join(said)
 
     def _delta(self, text) -> None:
-        if not text:
+        if text:
+            self._text.append(text)
+            self._flush()
+
+    def _redacted(self) -> str:
+        return redact.redact("".join(self._text)[: limits.BOT_MAX_REPLY_CHARS])[0]
+
+    def _flush(self, final=False) -> None:
+        """Stream the part of the redacted reply that cannot change any more.
+
+        The whole text is redacted each time, so a secret split across chunks is caught; at
+        the end the client holds exactly the stored reply text.
+        """
+        if self._held:
             return
-        if self.first_token_ms is None:
-            self.first_token_ms = int((time.monotonic() - self.started) * 1000)
-        self._text.append(text)
-        self._put("delta", {"text": redact.redact(text)[0]})
+        text = self._redacted()
+        safe = text if final else text[: safe_end(text)]
+        if not safe.startswith(self._sent):
+            self._held = True
+            logger.warning("Bot reply stream held back (code=redaction_shift)")
+            return
+        if len(safe) > len(self._sent):
+            if self.first_token_ms is None:
+                self.first_token_ms = int((time.monotonic() - self.started) * 1000)
+            self._put("delta", {"text": safe[len(self._sent) :]})
+            self._sent = safe
 
     def _tool(self, turn, tool, args):
         """Run one tool call: journal, events, audit. ``(Result, refusal code or None)``."""
@@ -234,7 +298,7 @@ class TurnRun:
                 "action", {"step": step, "tool": tool.name, "label": label, "state": "running"}
             )
             if tool.kind == "confirm":
-                result = self._pending(turn, tool, args, label)
+                result, code = self._pending(turn, tool, args, label)
             else:
                 result = tool.run(turn, args)
         except tools.NotYourWords:
@@ -282,7 +346,7 @@ class TurnRun:
             try:
                 version = turn.boards().task_show(args["ref"])["version"]
             except ToolError:
-                version = None
+                return tools.Result(False, say=REFUSALS["unreadable"]), "unreadable"
         frozen = {
             "args": args,
             "version": version,
@@ -295,11 +359,12 @@ class TurnRun:
             True,
             {"waiting_for_confirmation": True},
             blocks=({"type": "confirm", "pending": pending["id"]},),
-        )
+        ), None
 
     def _finish(self, outcome) -> None:
-        text = redact.redact("".join(self._text)[: limits.BOT_MAX_REPLY_CHARS])[0]
-        code = CODES.get(outcome, outcome)
+        self._flush(final=True)
+        text = self._redacted()
+        code = outcome
         if outcome and outcome != "stopped":
             text = (text + "\n\n" if text else "") + SENTENCES[outcome]
         state = "ok" if not outcome else "stopped" if outcome == "stopped" else f"failed:{code}"
@@ -315,29 +380,40 @@ class TurnRun:
                 state=state,
             )
         except store.Conflict:
+            # Another process closed this request (as interrupted) first; report what is stored.
+            logger.warning("Bot reply arrived after its request was closed (code=late_reply)")
             self.reply = bots.reply_to(self.bot_id, self.user_id, self.message["id"])
+            if self.reply is None:
+                raise
+            outcome = code = "" if self.reply["state"] == "ok" else code_of(self.reply["state"])
         view = self.view(self.reply)
         if not outcome:
             total = int((time.monotonic() - self.started) * 1000)
             timing = {"first_token_ms": self.first_token_ms, "total_ms": total}
             self._put("done", {"message": view, "timing": timing})
         else:
-            self._put("error", {"code": code, "text": SENTENCES[outcome], "message": view})
+            text = SENTENCES.get(outcome, SENTENCES["model_error"])
+            self._put("error", {"code": code, "text": text, "message": view})
 
 
 # Replay and interrupted turns
 
 
 def interrupted(gateway, workspace_id, user_id, bot_id, message) -> dict | None:
-    """Store ``failed:interrupted`` for a request with no reply and no turn running here.
+    """Store ``failed:interrupted`` for a request with no reply and no running turn.
+
+    A turn is running while this process holds it or its store lease is fresh (another
+    process may be running it).
 
     Never reruns anything: the journaled actions are reported, a ``started`` one as
     "outcome unknown". Returns the reply (an existing one if another writer won), or None
-    while the turn is still running in this process.
+    while the turn is still running.
     """
-    if limits.REGISTRY.holding(workspace_id, bot_id, message["request_id"]):
-        return None
     bots = store.open_bots(gateway, workspace_id)
+    if limits.REGISTRY.holding(workspace_id, bot_id, message["request_id"]) or bots.leased(
+        bot_id, message["request_id"], LEASE_S
+    ):
+        return None  # running here, or in another process that still renews its lease
     shown = []
     for action in bots.actions(bot_id, user_id, message["request_id"]):
         if action["state"] == "started":

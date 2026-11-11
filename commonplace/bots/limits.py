@@ -1,6 +1,7 @@
 """Bot turn limits and the model budget bots share with project chat.
 
-One unit is one model request sent. Bots count theirs in the control table
+One unit is one model request sent (taken just before sending, given back if the request
+never went out). Bots count theirs in the control table
 ``bot_model_calls`` (numbers only); ``chat.store.counts_today`` adds it to project chat's
 count, so both draw on one ``daily_limit`` / ``user_daily_limit``. The per-person
 per-minute rate is project chat's ``USER_RATE`` bucket.
@@ -25,25 +26,25 @@ TURNS_PER_PERSON = 4
 TURNS_PER_PROCESS = 32
 
 
-def check(gateway, config, workspace_id, user_id) -> str:
-    """``""`` when one more model request may be sent, else ``limit`` or ``rate``.
+def take(gateway, config, workspace_id, user_id) -> str:
+    """Take one unit for a model request about to be sent: ``""``, else ``limit`` or ``rate``.
 
-    Charges the shared per-minute bucket on admission.
+    The daily check and count are one atomic step, so concurrent turns cannot overshoot; the
+    shared per-minute bucket is charged too. A request that is then never sent is given back
+    with :func:`give_back`, so a unit stays one request sent.
     """
-    counts = chat_store.counts_today(gateway.db, workspace_id, user_id)
-    if (
-        counts["used_today"] >= config.daily_limit
-        or counts["user_used_today"] >= config.user_daily_limit
+    if not chat_store.take_bot_call(
+        gateway.db, workspace_id, user_id, config.daily_limit, config.user_daily_limit
     ):
         return "limit"
     if gateway.limiter.check([(USER_RATE, f"{workspace_id}:{user_id}")]):
+        chat_store.give_back_bot_call(gateway.db, workspace_id, user_id)
         return "rate"
     return ""
 
 
-def count(gateway, workspace_id, user_id) -> None:
-    """Record one request as sent (called when the request is written)."""
-    chat_store.count_bot_call(gateway.db, workspace_id, user_id)
+def give_back(gateway, workspace_id, user_id) -> None:
+    chat_store.give_back_bot_call(gateway.db, workspace_id, user_id)
 
 
 class Busy(Exception):

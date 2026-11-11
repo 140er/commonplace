@@ -49,9 +49,11 @@ class Fake:
         self.script = []
         self.calls = []
         self.hold_call = None
+        self.entered = threading.Event()
 
     def __call__(self, settings, key, system, messages, *, tools=(), timeout, **kw):
         if self.hold_call is not None:
+            self.entered.set()
             assert self.hold_call.wait(WAIT)
         self.calls.append(
             {"system": system, "messages": copy.deepcopy(messages), "tools": list(tools), **kw}
@@ -213,19 +215,19 @@ def test_ack_leaves_before_any_model_work_and_the_reply_is_stored(bots_hub, fake
 def test_a_delta_reaches_the_client_while_the_provider_still_sends(bots_hub, monkeypatch):
     hub = bots_hub
     gate = threading.Event()
-    script = [o_text("Hel"), gate, o_text("lo"), openai_frame(finish="stop")]
+    script = [o_text("Hello "), gate, o_text("there."), openai_frame(finish="stop")]
     with fake_server(script) as (origin, state):
         configure(hub, base_url=origin)
         bot = bot_of(hub)
         stream = Stream(hub, hub.owner, bot["id"], "Hello there", "request-0001")
         assert stream.next()[0] == "ack"
-        assert stream.next() == ("delta", {"text": "Hel"})
+        assert stream.next() == ("delta", {"text": "Hello "})
         assert not gate.is_set()  # the provider is still holding the rest back
         gate.set()
         events = stream.until_end()
         assert not state["timed_out"]
     assert names(events) == ["delta", "done"]
-    assert events[-1][1]["message"]["text"] == "Hello"
+    assert events[-1][1]["message"]["text"] == "Hello there."
     request = state["requests"][0]["body"]
     assert request["stream"] is True and request["max_tokens"] == limits.BOT_MAX_OUTPUT_TOKENS
     assert {t["function"]["name"] for t in request["tools"]} >= {"remember", "forget"}
@@ -414,7 +416,14 @@ def confirm_tool(extra_tools):
     return runs
 
 
-def pending_turn(hub, fake, request_id="request-0001", ref=7):
+def new_card(hub, title="Ship it"):
+    from tests.test_commonplace_boards import service
+
+    return service(hub.hub, hub.person(hub.admin)).task_add(board="work", title=title)
+
+
+def pending_turn(hub, fake, request_id="request-0001", ref=None):
+    ref = new_card(hub)["number"] if ref is None else ref
     fake.script = [[call("approve_item", ref=ref)], [("text", "Waiting for your OK.")]]
     bot, events = talk(hub, "Approve it", request_id)
     [block] = [data for event, data in events if event == "block"]
@@ -430,8 +439,10 @@ def confirm(hub, bot_id, pending, accept=True, auth=None):
 def test_a_confirm_tool_waits_for_a_tap_and_runs_exactly_once(bots_hub, fake, confirm_tool):
     hub = bots_hub
     configure(hub)
-    bot, events, block = pending_turn(hub, fake)
-    assert block["type"] == "confirm" and block["label"] == "Approve item 7"
+    card = new_card(hub)
+    bot, events, block = pending_turn(hub, fake, ref=card["number"])
+    label = f"Approve item {card['number']}"
+    assert block["type"] == "confirm" and block["label"] == label
     assert block["state"] == "open"
     assert confirm_tool == []  # never run from the tool call
     reply = events[-1][1]["message"]
@@ -441,9 +452,9 @@ def test_a_confirm_tool_waits_for_a_tap_and_runs_exactly_once(bots_hub, fake, co
     message = body["message"]
     assert message["role"] == "event"
     assert message["blocks"] == [
-        {"type": "action", "tool": "approve_item", "label": "Approve item 7", "ok": True}
+        {"type": "action", "tool": "approve_item", "label": label, "ok": True}
     ]
-    assert confirm_tool == [(hub.admin, {"ref": 7})]
+    assert confirm_tool == [(hub.admin, {"ref": card["number"], "version": card["version"]})]
     status, body, _ = confirm(hub, bot["id"], block["pending"])
     assert (status, body["code"]) == (409, "conflict")
     assert len(confirm_tool) == 1
@@ -480,9 +491,7 @@ def test_a_confirm_can_be_declined_expires_and_is_only_the_persons(bots_hub, fak
 def test_a_confirm_freezes_the_items_version(bots_hub, fake, confirm_tool):
     hub = bots_hub
     configure(hub)
-    from tests.test_commonplace_boards import service
-
-    card = service(hub.hub, hub.person(hub.admin)).task_add(board="work", title="Ship it")
+    card = new_card(hub)
     bot, _, block = pending_turn(hub, fake, ref=card["number"])
     assert confirm(hub, bot["id"], block["pending"])[0] == 200
     assert confirm_tool == [(hub.admin, {"ref": card["number"], "version": card["version"]})]
@@ -630,8 +639,9 @@ def test_the_per_minute_rate_is_shared_with_project_chat(bots_hub, fake):
     hub = bots_hub
     configure(hub)
     key = [(USER_RATE, f"{hub.workspace}:{hub.admin}")]
+    end = time.monotonic() + WAIT
     while hub.gateway.limiter.check(key) == 0:
-        pass
+        assert time.monotonic() < end
     _, events = talk(hub)
     assert events[-1][1]["code"] == "rate" and fake.calls == []
 
@@ -645,7 +655,7 @@ def test_the_step_cap_ends_the_turn(bots_hub, fake):
     rows = hub.store().actions(bot["id"], hub.admin, "request-0001")
     assert [r["step"] for r in rows] == list(range(1, limits.BOT_MAX_STEPS + 1))
     error = events[-1][1]
-    assert error["code"] == "limit" and error["text"] == turn.SENTENCES["steps"]
+    assert error["code"] == "steps" and error["text"] == turn.SENTENCES["steps"]
 
 
 def test_a_turn_deadline_ends_a_slow_model(bots_hub, fake, monkeypatch):
@@ -672,7 +682,7 @@ def test_no_conversation_text_reaches_the_control_db_audit_or_logs(
             ("text", "Noting " + SECRET_WORDS),
             call("remember", "c1", text=SECRET_WORDS),
             call("remember", "c2", text=SECRET_WORDS + " and model words"),
-            call("approve_item", "c3", ref=3),
+            call("approve_item", "c3", ref=new_card(hub)["number"]),
         ],
         [("text", "Done " + SECRET_WORDS)],
     ]
@@ -689,3 +699,114 @@ def test_no_conversation_text_reaches_the_control_db_audit_or_logs(
                 assert marker not in repr(tuple(row)), table
     assert all(marker not in record.getMessage() for record in caplog.records)
     assert any(r["tool"] == "bot:remember" for r in hub.db.audit_entries(hub.workspace))
+
+
+# Follow-up regressions
+
+
+def test_the_step_cap_has_its_own_code_live_and_on_replay(bots_hub, fake):
+    hub = bots_hub
+    configure(hub)
+    fake.script = [[call("forget", f"c{n}", id=999)] for n in range(10)]
+    _, live = talk(hub, "Forget everything")
+    _, again = talk(hub, "Forget everything")
+    for events in (live, again):
+        error = events[-1][1]
+        assert (error["code"], error["text"]) == ("steps", turn.SENTENCES["steps"])
+        assert error["message"]["state"] == "failed:steps"
+
+
+def test_a_secret_split_across_chunks_never_streams_raw(bots_hub, fake):
+    hub = bots_hub
+    configure(hub)
+    secret = "sk-ant-" + "Q7" * 15
+    fake.script = [
+        [
+            ("text", "Your key is "),
+            ("text", secret[:12]),
+            ("text", secret[12:] + " and more."),
+            ("text", " Also\nAuthorization: Basic two"),
+            ("text", " words\nend"),
+        ]
+    ]
+    _, events = talk(hub)
+    deltas = "".join(data["text"] for event, data in events if event == "delta")
+    stored = events[-1][1]["message"]["text"]
+    assert secret[:10] not in deltas and "Basic two" not in deltas
+    assert "[redacted:anthropic_key]" in stored
+    assert deltas == stored
+
+
+def test_concurrent_turns_cannot_pass_the_daily_limit_together(bots_hub, fake):
+    hub = bots_hub
+    configure(hub, user_daily_limit=1)
+    fake.hold_call = threading.Event()
+    first = Stream(hub, hub.owner, bot_of(hub)["id"], "Hello there", "request-0001")
+    assert first.next()[0] == "ack"
+    assert fake.entered.wait(WAIT)
+    threading.Timer(0.5, fake.hold_call.set).start()
+    _, second = talk(hub, "Me too", "request-0002", board="general")
+    first.until_end()
+    assert second[-1][1]["code"] == "limit"
+    assert len(fake.calls) == 1
+    counts = chat_store.counts_today(hub.db, hub.workspace, hub.admin)
+    assert counts["user_used_today"] == 1
+
+
+def test_a_confirm_on_an_unreadable_item_creates_nothing(bots_hub, fake, confirm_tool):
+    hub = bots_hub
+    configure(hub)
+    fake.script = [[call("approve_item", ref=999)], [("text", "Could not.")]]
+    bot, events = talk(hub, "Approve item 999")
+    refused = [d for e, d in events if e == "action" and d["state"] != "running"]
+    assert [(d["state"], d["code"]) for d in refused] == [("refused", "unreadable")]
+    assert not [e for e, _ in events if e == "block"]
+    path = hub.store()._path
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM bot_pending").fetchone()[0] == 0
+
+
+def test_a_turn_running_elsewhere_is_not_marked_interrupted(bots_hub, fake):
+    hub = bots_hub
+    configure(hub)
+    gate = threading.Event()
+    fake.script = [[("text", "Still "), gate, ("text", "going.")]]
+    bot = bot_of(hub)
+    stream = Stream(hub, hub.owner, bot["id"], "Hello there", "request-0001")
+    assert names([stream.next(), stream.next()]) == ["ack", "delta"]
+    running = limits.REGISTRY.running(hub.workspace, bot["id"])
+    limits.REGISTRY.release(running)  # as seen from another hub process
+    view = thread(hub, bot["id"])
+    assert [m["role"] for m in view["messages"]] == ["user"]
+    _, again = talk(hub)
+    assert names(again) == ["ack", "running"]
+    gate.set()
+    assert names(stream.until_end()) == ["delta", "done"]
+
+
+def test_a_late_reply_after_an_interrupted_marker_is_reported_not_lost(bots_hub, fake, caplog):
+    hub = bots_hub
+    configure(hub)
+    caplog.set_level(logging.WARNING)
+    gate = threading.Event()
+    fake.script = [[gate, ("text", "Late answer.")]]
+    bot = bot_of(hub)
+    stream = Stream(hub, hub.owner, bot["id"], "Hello there", "request-0001")
+    message = stream.next()[1]["message"]
+    hub.store().add_bot_message(  # another process closed the request meanwhile
+        bot["id"], hub.admin, message["id"], "Interrupted", state="failed:interrupted"
+    )
+    gate.set()
+    events = stream.until_end()
+    assert names(events)[-1] == "error" and events[-1][1]["code"] == "interrupted"
+    assert any("code=late_reply" in r.getMessage() for r in caplog.records)
+
+
+def test_a_one_character_span_is_not_the_persons_words(bots_hub, fake):
+    hub = bots_hub
+    configure(hub)
+    fake.script = [[call("remember", text=" e ")], [("text", "No.")]]
+    bot, events = talk(hub, "Remember the meeting")
+    refused = [d for e, d in events if e == "action" and d["state"] != "running"]
+    assert refused[0]["code"] == "not_your_words"
+    assert hub.store().memory_list(bot["id"], hub.admin) == []
