@@ -887,6 +887,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_chroma_client_lifecycle.py::test_session_evicts_dropped_system_before_opening_missing_database` checks eviction before client construction without depending on SQLite pool scheduling; the external-rebuild probe checks the replacement's exact drawer ids.
   - Thread-search tests pin rank-before-fetch and score/thread/index ordering at the limit boundary, including shuffled rowids and ID batches.
+  - `tests/test_commonplace_owner_403_message.py` and `tests/owner_403_message.mjs` (base red: 6 failures on `origin/develop`) cover the reason and next step of a refused Done move or handoff, and that 404, 409 and other 403 answers keep their status.
 
 
 ## hub-core
@@ -1729,6 +1730,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
+
+  - `api.js` joins a refusal's `error` and `next_step` and words a 403 without a JSON body; `tests/test_commonplace_owner_403_message.py` and `tests/owner_403_message.mjs` cover it.
 
 ## browser-github-grants
 
