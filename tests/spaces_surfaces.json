@@ -1372,6 +1372,13 @@
                 ],
                 "type": "string"
               },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+              },
               "status": {
                 "enum": [
                   "todo",
@@ -1657,6 +1664,13 @@
                   "low"
                 ],
                 "type": "string"
+              },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
               },
               "question": {
                 "type": "string"
@@ -2384,6 +2398,13 @@
                 ],
                 "type": "string"
               },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+              },
               "status": {
                 "enum": [
                   "todo",
@@ -2669,6 +2690,13 @@
                   "low"
                 ],
                 "type": "string"
+              },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
               },
               "question": {
                 "type": "string"
@@ -4128,6 +4156,13 @@
                 ],
                 "type": "string"
               },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+              },
               "status": {
                 "enum": [
                   "todo",
@@ -4413,6 +4448,13 @@
                   "low"
                 ],
                 "type": "string"
+              },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
               },
               "question": {
                 "type": "string"
