@@ -260,6 +260,8 @@ def prepare(
         # a differently named orchestrator never turns every trigger sweep into an error.
         split_role = "main" if "main" in config.roles else config.runner.role
         config = replace(config, runner=replace(config.runner, role=split_role))
+    if config.runner is not None and config.runner.role not in config.roles:
+        raise StartRefused("unknown_role", "the config has no role for this start")
     role = config.runner_role
     if config.runner is None or role is None:
         raise StartRefused("not_configured", "the board has no orchestrator runner config")
@@ -504,11 +506,12 @@ def _advance(conn, plan, trigger) -> None:
 
 
 def trigger_miss(store, board: str, card: int, trigger: TriggerRef, code: str, *, now=None):
-    """Record a coded miss for a trigger event that failed before ``fenced_start`` (its
-    plan could not be prepared) and advance the cursor past it, under the same in-lock
-    ``(cursor, gen)`` re-check. Returns False when the pair moved (nothing written).
+    """Record a coded miss for a trigger start that could not be planned (``prepare``
+    refused) under the same in-lock ``(cursor, gen)`` re-check, and advance the cursor
+    past its event; a split retry (``trigger.retry``) records its miss under ``-retry``
+    and leaves the cursor. Returns False when the pair moved (nothing written).
 
-    One unpreparable card must cost one visible miss, never a stuck cursor that blocks
+    One unplannable card must cost one visible miss, never a stuck cursor that blocks
     every later card on the board."""
     now = now or jobs._now()
     with store.transaction() as conn:
@@ -518,12 +521,21 @@ def trigger_miss(store, board: str, card: int, trigger: TriggerRef, code: str, *
         conn.execute(
             "INSERT INTO orch_misses(board,event_id,card,code,actor,gen,created_at) "
             "VALUES (?,?,?,?,?,?,?)",
-            (board, trigger.event, card, code, trigger.actor, trigger.gen, now),
+            (
+                board,
+                -trigger.retry if trigger.retry else trigger.event,
+                card,
+                code,
+                trigger.actor,
+                trigger.gen,
+                now,
+            ),
         )
-        conn.execute(
-            "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor=?",
-            (trigger.event, board, trigger.gen, trigger.cursor),
-        )
+        if not trigger.retry:
+            conn.execute(
+                "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor=?",
+                (trigger.event, board, trigger.gen, trigger.cursor),
+            )
     return True
 
 

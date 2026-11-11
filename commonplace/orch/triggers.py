@@ -195,12 +195,10 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
                     person=False,
                     split_start=on,
                 )
-            except (runner_bridge.StartRefused, LookupError, schema.ConfigError) as exc:
+            except (runner_bridge.StartRefused, schema.ConfigError) as exc:
                 # A start that cannot even be planned is a coded miss for this event,
                 # not an infrastructure error: leaving the cursor would block the board.
                 code = exc.code if isinstance(exc, runner_bridge.StartRefused) else "config_invalid"
-                if code == "config_invalid":
-                    log_failure(logger, "orchestrator trigger start could not be planned", exc)
                 trigger = runner_bridge.TriggerRef(event["id"], cursor, gen, ref)
                 if not runner_bridge.trigger_miss(
                     js, board, event["task_id"], trigger, code, now=now
@@ -274,8 +272,12 @@ def _reconcile(js, st, board, now):
                     person=False,
                     split_start=True,
                 )
-            except (runner_bridge.StartRefused, LookupError, schema.ConfigError) as exc:
-                log_failure(logger, "orchestrator split retry could not be planned", exc)
+            except (runner_bridge.StartRefused, schema.ConfigError) as exc:
+                # Counted like any refused attempt: three of them end reconciliation.
+                code = exc.code if isinstance(exc, runner_bridge.StartRefused) else "config_invalid"
+                trigger = runner_bridge.TriggerRef(0, pair[0], pair[1], ref, retry=n)
+                runner_bridge.trigger_miss(js, board, row["id"], trigger, code, now=now)
+                results.append({"card": row["id"], "retry": n, "job": None, "miss": code})
                 continue
             outcome = runner_bridge.fenced_start(
                 js,

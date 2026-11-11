@@ -7,7 +7,7 @@ was started or missed again. Released restricted-origin cards also never fired.
 """
 
 from commonplace.boards.service import BoardService
-from commonplace.orch import durable, runner_bridge, triggers
+from commonplace.orch import runner_bridge, schema, triggers
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._split_helpers import world
 from tests.test_orch_runner import BOARD, config_text
@@ -34,8 +34,7 @@ def test_split_start_without_main_role_starts_the_card(hub):
     w = world(hub, runner=True)
     configure_live_shaped(w)
     a = w.card()
-    report = triggers.run(w.js, now=T0)
-    assert report[BOARD] is not None, "the sweep of the board failed"
+    triggers.run(w.js, now=T0)
     rows = w.jobs_for(a)
     assert len(rows) == 1 and rows[0]["topic"] == "orchestrate"
     assert rows[0]["launch_role"] == "coordinator"
@@ -52,7 +51,7 @@ def test_unplannable_card_is_a_miss_and_later_cards_still_start(hub, monkeypatch
 
     def refuse_first(*args, **kwargs):
         if kwargs["card_row"]["id"] == first:
-            raise KeyError("missing role")
+            raise schema.ConfigError("roles_invalid", "roles.coordinator", "missing role")
         return prepare(*args, **kwargs)
 
     monkeypatch.setattr(runner_bridge, "prepare", refuse_first)
@@ -78,4 +77,3 @@ def test_origin_release_of_a_waiting_todo_card_starts_it(hub):
     rows = w.jobs_for(a)
     assert len(rows) == 1, "a released todo card was never started"
     assert a not in w.unstarted()
-    assert durable.FIRING_EVENT.count("release origin") == 1

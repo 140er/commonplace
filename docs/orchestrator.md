@@ -202,9 +202,9 @@ commit is still found.
 - **Misses.** Every refusal (`assigned`, `not_todo`, `started_recently`,
   `busy`, `plan_pending`, …) is recorded as a coded miss and shown on resume;
   the cursor moves past it. A start that cannot be planned is a miss too
-  (`not_configured`, or `config_invalid` when the config lacks the role the
-  start needs), so one card never blocks the board's later cards. Only
-  infrastructure errors leave the cursor for the next sweep. A refused card is not retried automatically, even when the
+  (`not_configured`, `unknown_role`, or `config_invalid`), so one card never
+  blocks the board's later cards. Only infrastructure errors leave the cursor
+  for the next sweep. A refused card is not retried automatically, even when the
   refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
   checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
 
