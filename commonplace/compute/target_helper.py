@@ -369,9 +369,17 @@ def _remove_owned_job(directory, *, remaining=4096):
             if remaining < 0:
                 raise ScriptDenied("target_capacity")
             if entry.is_dir(follow_symlinks=False):
-                child = os.open(
-                    entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
+                # The script may have removed every permission. Pin the exact
+                # directory with O_PATH (needs no access, never a symlink),
+                # restore access through that inode, then open it from the pin.
+                pinned = os.open(
+                    entry.name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
                 )
+                try:
+                    os.chmod(f"/proc/self/fd/{pinned}", 0o700)
+                    child = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=pinned)
+                finally:
+                    os.close(pinned)
                 os.close(current)
                 current = child
                 names.append(entry.name)
