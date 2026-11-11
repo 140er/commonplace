@@ -84,11 +84,9 @@
 
 - **Promises:**
 
-<<<<<<< docs/modules/tests.md
-  - Tests that read the module map read every file in `docs/modules/`, not `MODULES.md`; `tests/test_docs_fragments.py` holds the merge-without-conflict proof for the documentation layout.
-=======
   - Browser tests that need Playwright skip at module level when it is missing, so collecting `tests/` never errors; `CP_BROWSER_E2E=1` turns a missing Playwright into a failure (`tests/test_cards_decide_scope_browser.py`, as in `tests/workbench_e2e`).
->>>>>>> /tmp/tmp49ei0oac/t
+
+  - Tests that read the module map read every file in `docs/modules/`, not `MODULES.md`; `tests/test_docs_fragments.py` holds the merge-without-conflict proof for the documentation layout.
 
   - `tests/spaces_surfaces.json` pins the `decide` description naming owner connections holding `cards:decide`.
 
