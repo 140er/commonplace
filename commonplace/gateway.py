@@ -1859,6 +1859,10 @@ def _rest_tool(method, path):
         return {"GET": "task_list", "POST": "task_add"}.get(method)
     if parts == ["api", "needs-me"] and method == "GET":
         return "needs_me"
+    if parts == ["api", "topology"] and method == "GET":
+        return "topology_get"
+    if parts == ["api", "topology", "route"] and method == "GET":
+        return "topology_route"
     if parts[:2] == ["api", "cards"]:
         if len(parts) == 3:
             return {"GET": "task_show", "PATCH": "task_update"}.get(method)

@@ -53,6 +53,7 @@ MODULES = (
     "commonplace.routines",
     "commonplace.projects",
     "commonplace.bots",
+    "commonplace.topology.extension",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})
