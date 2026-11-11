@@ -73,7 +73,7 @@ is flushed at once; a `: ping` comment goes out every 10 seconds.
 | `action` | `{step, tool, label, state, code?}`: `running`, then `ok` or `refused` |
 | `block` | a hydrated block a tool returned (a work item, a `confirm` chip) |
 | `done` | `{message, timing:{first_token_ms, total_ms}}`: the stored bot message |
-| `error` | `{code, text, message}`: `needs_configuration`, `limit`, `rate`, `steps`, `model_error`, `timeout`, `stopped` or `interrupted`, a fixed sentence and the stored bot message |
+| `error` | `{code, text, message}`: `needs_configuration`, `limit`, `rate`, `steps`, `too_long`, `model_error`, `timeout`, `stopped` or `interrupted`, a fixed sentence and the stored bot message |
 | `running` | `{}`: a replay of a request whose turn is still running; read the thread later |
 
 Before the stream starts, errors are plain HTTP `{error, code}`: 400 `invalid`, 404 for an
@@ -89,7 +89,17 @@ system prompt with the bot's name, job and persona notes (quoted; they grant not
 memory notes, a short snapshot of the bot's project, and the last 20 messages, all redacted and
 quoted as data. A turn takes at most 6 tool steps, 30 seconds per model request, 60 seconds in
 total, 800 output tokens per request and 48,000 input characters; a turn that needs more tool
-steps ends with `error steps`. The reply is stored in one
+steps ends with `error steps`.
+
+**Input budget.** Every model request fits one budget of 48,000 characters, measured the way
+the transport measures it (system prompt, tool schemas and all messages). The system prompt,
+the tool schemas, the new message and the turn's own tool rounds always go in; then, while
+they fit, memory notes newest first (whole notes only; the model is told how many were left
+out), the project snapshot, and earlier messages newest first. A message that cannot fit even
+alone is refused before any request with `error too_long`. Each tool result fed back is cut to
+4,000 characters, and later requests of a turn drop older context first to stay in budget.
+
+The reply is stored in one
 write, redacted, with the model label and a state: `ok`, `stopped` or `failed:<code>`. Partial
 text is kept when a turn stops or fails. Provider error text never reaches the person.
 
@@ -97,14 +107,17 @@ text is kept when a turn stops or fails. Provider error text never reaches the p
 the part that can no longer change is sent: whole words, and a line that carries a label a
 secret may follow (a header, a key with `:` or `=`, a quoted value, a key block) only once the
 line is complete. So a secret split across chunks never reaches the client unredacted, and at
-the end the client holds exactly the stored reply text.
+the end the client normally holds exactly the stored reply text. Should redaction ever change
+text that was already sent, the stream sends no further text for that turn (the hub logs
+`code=redaction_shift`). The reply the client shows is always `done.message.text` (or
+`error.message.text`), which is the stored reply; deltas are a preview of it.
 
 **Replay.** Sending the same `request_id` with the same text again never runs anything twice:
 a finished request answers `ack` and its stored `done` or `error`; a running one answers `ack`
 and `running`. A running turn holds a lease in the workspace store that it renews every 5
 seconds, so a turn running in another hub process counts as running too. A request that has a
-stored message but no reply and no running turn (no fresh lease for 20 seconds: the hub
-is answered with `error interrupted` and a stored `failed:interrupted` reply listing what the
+stored message but no reply and no running turn (no fresh lease for 20 seconds, for example
+because the hub restarted mid-turn) is answered with `error interrupted` and a stored `failed:interrupted` reply listing what the
 turn had journaled; an action that had started but not finished reads "Outcome unknown". The
 same report is written when the thread is next read. It is never rerun. Should a turn still
 finish after its request was closed this way, its reply is not stored a second time: the

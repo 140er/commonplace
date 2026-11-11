@@ -55,8 +55,20 @@ class Fake:
         if self.hold_call is not None:
             self.entered.set()
             assert self.hold_call.wait(WAIT)
+        size = (
+            len(system)
+            + len(json.dumps(messages, ensure_ascii=False))
+            + len(json.dumps(list(tools), ensure_ascii=False))
+        )
         self.calls.append(
-            {"system": system, "messages": copy.deepcopy(messages), "tools": list(tools), **kw}
+            {
+                "system": system,
+                "messages": copy.deepcopy(messages),
+                "tools": list(tools),
+                "timeout": timeout,
+                "size": size,
+                **kw,
+            }
         )
         steps = self.script.pop(0) if self.script else [("text", "Fine.")]
         cancel, on_sent = kw.get("cancel"), kw.get("on_sent")
@@ -663,9 +675,11 @@ def test_a_turn_deadline_ends_a_slow_model(bots_hub, fake, monkeypatch):
     configure(hub)
     monkeypatch.setattr(limits, "BOT_TURN_TIMEOUT_S", 0.3)
     fake.script = [["hang"]]
+    began = time.monotonic()
     _, events = talk(hub)
     assert events[-1][1]["code"] == "timeout"
-    assert fake.calls[0]["cancel"] is not None
+    assert fake.calls[0]["timeout"] <= 0.3  # the call gets what is left of the turn
+    assert time.monotonic() - began < 2
 
 
 # Privacy
@@ -810,3 +824,128 @@ def test_a_one_character_span_is_not_the_persons_words(bots_hub, fake):
     refused = [d for e, d in events if e == "action" and d["state"] != "running"]
     assert refused[0]["code"] == "not_your_words"
     assert hub.store().memory_list(bot["id"], hub.admin) == []
+
+
+# Gate round 2 regressions
+
+
+def test_a_large_context_still_fits_one_budget_with_the_newest_notes(bots_hub, fake):
+    hub = bots_hub
+    configure(hub)
+    bot = bot_of(hub)
+    bots = hub.store()
+    notes = [
+        bots.memory_add(bot["id"], hub.admin, f"note {n:02d} " + "m" * 1990) for n in range(20)
+    ]
+    for n in range(15):
+        new_card(hub, f"open work {n:02d} " + "t" * 990)
+    for n in range(20):
+        ask = bots.add_user_message(bot["id"], hub.admin, "h" * 8000, f"history-{n:04d}")
+        bots.add_bot_message(bot["id"], hub.admin, ask["id"], "r" * 8000)
+    _, events = talk(hub, "What is up?")
+    assert names(events)[-1] == "done"
+    sent = fake.calls[0]
+    assert sent["size"] <= limits.BOT_MAX_INPUT_CHARS
+    content = sent["messages"][0]["content"]
+    assert notes[-1]["text"] in content and notes[-2]["text"] in content
+    assert notes[0]["text"] not in content
+    assert '"memory_left_out": ' in content and '"memory_left_out": 0' not in content
+    assert "What is up?" in content
+
+
+def test_tool_results_that_would_overflow_are_bounded(bots_hub, fake, extra_tools):
+    hub = bots_hub
+    configure(hub)
+    extra_tools(
+        tools.Tool(
+            name="big_read",
+            description="Read a lot",
+            schema={"type": "object", "properties": {}, "additionalProperties": False},
+            kind="read",
+            run=lambda turn, args: tools.Result(True, {"text": "x" * 100_000}),
+            label=lambda turn, args: "Read a lot",
+        )
+    )
+    fake.script = [[call("big_read", f"c{n}")] for n in range(6)] + [[("text", "Done.")]]
+    _, events = talk(hub, "Read everything")
+    assert names(events)[-1] == "done"
+    assert all(c["size"] <= limits.BOT_MAX_INPUT_CHARS for c in fake.calls)
+    fed = [m for m in fake.calls[-1]["messages"] if m["role"] == "tool"]
+    assert len(fed) == 6 and all(len(m["content"]) <= 4000 for m in fed)
+
+
+def test_a_message_that_cannot_fit_is_refused_before_any_request(bots_hub, fake, monkeypatch):
+    hub = bots_hub
+    configure(hub)
+    monkeypatch.setattr(limits, "BOT_MAX_INPUT_CHARS", 6000)
+    _, events = talk(hub, "y" * 7000)
+    assert names(events) == ["ack", "error"] and fake.calls == []
+    assert events[-1][1]["code"] == "too_long"
+    assert chat_store.counts_today(hub.db, hub.workspace, hub.admin)["user_used_today"] == 0
+
+
+def test_a_unit_given_back_across_midnight_returns_to_the_day_it_was_taken(
+    bots_hub, fake, monkeypatch
+):
+    from datetime import datetime, timezone
+
+    hub = bots_hub
+    configure(hub)
+
+    class Clock(datetime):
+        current = datetime(2026, 11, 11, 23, 59, 59, tzinfo=timezone.utc)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    monkeypatch.setattr(chat_store, "datetime", Clock)
+
+    def unsent(*args, **kw):
+        Clock.current = datetime(2026, 11, 12, 0, 0, 1, tzinfo=timezone.utc)
+        raise ModelError("http_error")  # the request never went out
+
+    monkeypatch.setattr(model_stream, "stream", unsent)
+    _, events = talk(hub)
+    assert events[-1][1]["code"] == "model_error"
+    with hub.db._lock:
+        rows = hub.db._conn.execute(
+            "SELECT day, n FROM bot_model_calls WHERE user_id=?", (hub.admin,)
+        ).fetchall()
+    assert [(r[0], r[1]) for r in rows] == [("2026-11-11", 0)]
+
+
+def test_stream_off_answers_a_fixed_error_when_the_reply_cannot_be_stored(
+    bots_hub, fake, monkeypatch
+):
+    from commonplace.bots import store as bots_store
+
+    hub = bots_hub
+    configure(hub)
+    monkeypatch.setattr(
+        bots_store.BotStore,
+        "add_bot_message",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("disk full")),
+    )
+    stream = Stream(hub, hub.owner, bot_of(hub)["id"], "Hello there", "request-0001", "?stream=0")
+    body = stream.json()
+    assert (stream.status, body["code"]) == (500, "model_error")
+    assert body["error"] == turn.SENTENCES["model_error"]
+    assert body["message"]["text"] == "Hello there"
+
+
+def test_after_a_redaction_shift_the_stream_stops_and_done_carries_the_reply(
+    bots_hub, fake, monkeypatch, caplog
+):
+    hub = bots_hub
+    configure(hub)
+    caplog.set_level(logging.WARNING)
+    monkeypatch.setattr(turn, "safe_end", len)  # force a shift: send unsettled text
+    secret = "sk-ant-" + "Q7" * 15
+    fake.script = [[("text", "Key " + secret[:12]), ("text", secret[12:] + " end")]]
+    _, events = talk(hub)
+    deltas = [data["text"] for event, data in events if event == "delta"]
+    stored = events[-1][1]["message"]["text"]
+    assert deltas == ["Key " + secret[:12]]  # nothing more after the shift
+    assert "[redacted:anthropic_key]" in stored and secret not in stored
+    assert any("code=redaction_shift" in r.getMessage() for r in caplog.records)

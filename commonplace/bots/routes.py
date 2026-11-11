@@ -313,6 +313,10 @@ def _send(gateway, h, principal, bot_id, rest):
         _relay(h, run.queue)
         return
     run.finished.wait()
+    if run.reply is None:  # the reply could not be stored; the stream would say the same
+        text = turn.SENTENCES["model_error"]
+        send_json(h, 500, {"error": text, "code": "model_error", "message": run.view(message)})
+        return
     send_json(h, 200, {"message": run.view(message), "reply": run.view(run.reply)})
 
 

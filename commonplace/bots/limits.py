@@ -19,32 +19,33 @@ BOT_MAX_OUTPUT_TOKENS = 800  # per model request
 BOT_MAX_INPUT_CHARS = 48_000  # system + messages + tool specs, per model request
 BOT_MAX_RESPONSE_BYTES = 512 * 1024  # streamed bytes per model request
 BOT_MAX_REPLY_CHARS = 16_000  # stored reply text
-BOT_CONTEXT_CHARS = 36_000  # input budget for the first request; the rest is for tool rounds
 
 TURNS_PER_BOT = 1
 TURNS_PER_PERSON = 4
 TURNS_PER_PROCESS = 32
 
 
-def take(gateway, config, workspace_id, user_id) -> str:
-    """Take one unit for a model request about to be sent: ``""``, else ``limit`` or ``rate``.
+def take(gateway, config, workspace_id, user_id) -> tuple[str, str | None]:
+    """Take one unit for a model request about to be sent.
 
-    The daily check and count are one atomic step, so concurrent turns cannot overshoot; the
-    shared per-minute bucket is charged too. A request that is then never sent is given back
-    with :func:`give_back`, so a unit stays one request sent.
+    ``("", day)`` on admission, else ``("limit" | "rate", None)``. The daily check and count
+    are one atomic step, so concurrent turns cannot overshoot; the shared per-minute bucket is
+    charged too. A request that is then never sent is given back with :func:`give_back` and
+    the ``day`` it was counted on, so a unit stays one request sent.
     """
-    if not chat_store.take_bot_call(
+    day = chat_store.take_bot_call(
         gateway.db, workspace_id, user_id, config.daily_limit, config.user_daily_limit
-    ):
-        return "limit"
+    )
+    if day is None:
+        return "limit", None
     if gateway.limiter.check([(USER_RATE, f"{workspace_id}:{user_id}")]):
-        chat_store.give_back_bot_call(gateway.db, workspace_id, user_id)
-        return "rate"
-    return ""
+        chat_store.give_back_bot_call(gateway.db, workspace_id, user_id, day)
+        return "rate", None
+    return "", day
 
 
-def give_back(gateway, workspace_id, user_id) -> None:
-    chat_store.give_back_bot_call(gateway.db, workspace_id, user_id)
+def give_back(gateway, workspace_id, user_id, day) -> None:
+    chat_store.give_back_bot_call(gateway.db, workspace_id, user_id, day)
 
 
 class Busy(Exception):

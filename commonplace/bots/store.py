@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS bot_messages (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS bot_messages_by_bot ON bot_messages(bot_id, id);
+CREATE INDEX IF NOT EXISTS bot_messages_by_role ON bot_messages(bot_id, role, id);
 CREATE UNIQUE INDEX IF NOT EXISTS bot_messages_request
     ON bot_messages(bot_id, request_id) WHERE role='user';
 CREATE UNIQUE INDEX IF NOT EXISTS bot_messages_reply

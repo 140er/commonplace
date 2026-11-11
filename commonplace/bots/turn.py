@@ -37,6 +37,7 @@ SENTENCES = {
     "stopped": "Stopped.",
     "interrupted": "This reply was interrupted. Check what was done before you ask again.",
     "steps": "That needed too many steps, so I stopped here.",
+    "too_long": "That is too much for the chat model to read at once. Send a shorter message.",
 }
 REFUSALS = {
     "not_your_words": "That text is not in your message. Only your own words can be written.",
@@ -176,7 +177,8 @@ class TurnRun:
         )
         history = bots.messages(self.bot_id, self.user_id, before=self.message["id"])
         memory = bots.memory_list(self.bot_id, self.user_id)
-        system, messages = context.build(turn, principal, service, history, memory)
+        ctx = context.build(turn, principal, service, history, memory)
+        tail = []  # this turn's tool rounds, fed back on later requests
         offered = {tool.name: tool for tool in tools.offered(turn)}
         specs = [
             {"name": t.name, "description": t.description, "schema": tools.schema_for(t, turn)}
@@ -190,13 +192,16 @@ class TurnRun:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return "timeout"
-            refused = limits.take(self.gateway, config, self.workspace_id, self.user_id)
+            messages = ctx.messages(specs, tail)
+            if messages is None:
+                return "too_long"  # before the first request: nothing was sent
+            refused, day = limits.take(self.gateway, config, self.workspace_id, self.user_id)
             if refused:
                 return refused
             sent = []
             try:
                 calls, said = self._model_call(
-                    config, key, system, messages, specs, remaining, sent
+                    config, key, ctx.system, messages, specs, remaining, sent
                 )
             except ModelError as exc:
                 return {"stopped": "stopped", "timeout": "timeout"}.get(exc.code, "model_error")
@@ -207,10 +212,10 @@ class TurnRun:
                 return "model_error"  # input over the bound, or the provider is unusable
             finally:
                 if not sent:  # the unit is for a request sent; this one never was
-                    limits.give_back(self.gateway, self.workspace_id, self.user_id)
+                    limits.give_back(self.gateway, self.workspace_id, self.user_id, day)
             if not calls:
                 return ""
-            messages.append({"role": "assistant", "content": said, "tool_calls": calls})
+            tail.append({"role": "assistant", "content": said, "tool_calls": calls})
             over = False
             for call in calls:
                 if self.cancel.is_set():
@@ -221,7 +226,7 @@ class TurnRun:
                     steps += 1
                     turn.step = steps
                     result, code = self._tool(turn, offered[call["name"]], call["arguments"])
-                messages.append(
+                tail.append(
                     {
                         "role": "tool",
                         "tool_call_id": call["id"],
