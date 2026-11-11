@@ -9,7 +9,10 @@ sshd Match block with ExposeAuthInfo, the exclusive controller key and the prote
 ScriptTargetConfig. A real install must run once as root; that is the only
 elevation. It reads no secrets (only the controller's public ed25519 key, passed in
 and never fetched), contacts no server, scans no network and installs no packages
-(bubblewrap must already be present; preflight refuses otherwise).
+(bubblewrap must already be present; preflight refuses otherwise). It does place the
+commonplace and mempalace python sources the helper imports under /opt/commonplace-compute/lib
+with a root-owned .pth in the system python's dist-packages, and checks the import with only
+the stdlib; uninstall stops the account's sessions and user manager before removing it.
 
 Every artifact is recorded in a root-owned manifest before it is created, so
 uninstall removes exactly what install added and never anything it did not create.
@@ -40,6 +43,7 @@ import stat
 import struct
 import subprocess
 import sys
+import time
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -57,6 +61,7 @@ AUTHORIZED_KEYS_PATH = "/etc/commonplace/compute-authorized-keys"
 MANIFEST_PATH = "/etc/commonplace/compute-install-manifest.json"
 SSHD_DROPIN_PATH = "/etc/ssh/sshd_config.d/60-commonplace-compute.conf"
 SSHD_CONFIG_PATH = "/etc/ssh/sshd_config"
+LIB_ROOT = "/opt/commonplace-compute/lib"
 SYSTEMD_DIR = "/etc/systemd/system"
 SCOPE_UNIT = "commonplace-compute-helper"
 SCRATCH_OPTIONS = "size=32M,nr_inodes=4096,nosuid,nodev"
@@ -282,6 +287,47 @@ def staged_inventory(root):
     return hashlib.sha256(canonical(entries)).hexdigest()
 
 
+def running_packages():
+    """The commonplace and mempalace package directories this installer is running from."""
+    import commonplace
+    import mempalace
+
+    return Path(commonplace.__file__).parent, Path(mempalace.__file__).parent
+
+
+def copy_python_packages(destination, packages):
+    """Copy only .py sources (no bytecode, data or symlinks); the helper needs no third party."""
+    destination = Path(destination)
+    _mkdir(destination)
+    for package in map(Path, packages):
+        for directory, dirs, files in os.walk(package):
+            dirs[:] = sorted(
+                d for d in dirs if d != "__pycache__" and not Path(directory, d).is_symlink()
+            )
+            for name in sorted(files):
+                source = Path(directory, name)
+                if not name.endswith(".py") or source.is_symlink():
+                    continue
+                target = destination / package.name / source.relative_to(package)
+                parent = destination
+                for part in target.parent.relative_to(destination).parts:
+                    parent /= part
+                    if not parent.exists():
+                        _mkdir(parent)
+                _copy(source, target, 0o644)
+
+
+def choose_site_dir(lines):
+    """The administrator-local dist-packages of the system python (never its own packages)."""
+    local = [line for line in lines if line.startswith("/usr/local/")]
+    for line in local:
+        if line.endswith("dist-packages"):
+            return line
+    if local:
+        return local[0]
+    raise InstallError("no system site directory under /usr/local was found")
+
+
 class Host:
     """Everything that touches the live operating system; the staged host only records."""
 
@@ -309,6 +355,15 @@ class Host:
     def sshd_service(self):
         return "ssh.service"
 
+    def sshd_effective_config(self):
+        raise NotImplementedError
+
+    def python_site_dir(self):
+        raise NotImplementedError
+
+    def stop_account(self, name):
+        raise NotImplementedError
+
     def preflight(self, options):
         return []
 
@@ -319,6 +374,18 @@ class StagedHost(Host):
     def __init__(self, uid=STAGED_ID, gid=STAGED_ID):
         self.uid, self.gid = uid, gid
         self.commands = []
+        self.linger = False
+
+    def sshd_effective_config(self):
+        return "permituserenvironment no\n"
+
+    def python_site_dir(self):
+        return "/usr/local/lib/python3.12/dist-packages"
+
+    def stop_account(self, name):
+        if self.linger:
+            self.run(["loginctl", "disable-linger", name])
+        self.run(["loginctl", "terminate-user", name])
 
     def account_exists(self, name):
         return False
@@ -334,6 +401,16 @@ class StagedHost(Host):
 
     def mounted_inventory(self, mountpoint, source):
         return staged_inventory(source)
+
+
+def _has_processes(uid):
+    for entry in os.scandir("/proc"):
+        try:
+            if entry.name.isdigit() and entry.stat().st_uid == uid:
+                return True
+        except OSError:
+            continue  # the process ended while we looked
+    return False
 
 
 class LiveHost(Host):
@@ -359,6 +436,29 @@ class LiveHost(Host):
 
     def mounted_inventory(self, mountpoint, source):
         return runtime_inventory(mountpoint)
+
+    def sshd_effective_config(self):
+        return _host_run(["sshd", "-T"], timeout=60)
+
+    def python_site_dir(self):
+        code = "import site;print('\\n'.join(site.getsitepackages()))"
+        return choose_site_dir(_host_run(["/usr/bin/python3", "-I", "-c", code]).splitlines())
+
+    def stop_account(self, name):
+        """End the account's sessions and user manager so userdel does not find it in use."""
+        try:
+            uid = pwd.getpwnam(name).pw_uid
+        except KeyError:
+            return
+        if Path("/var/lib/systemd/linger", name).exists():
+            self.run(["loginctl", "disable-linger", name])
+        try:
+            self.run(["loginctl", "terminate-user", name])
+        except InstallError:
+            pass  # not logged in
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and _has_processes(uid):
+            time.sleep(0.2)
 
     def sshd_service(self):
         for directory in ("/usr/lib/systemd/system", "/lib/systemd/system"):
@@ -388,10 +488,6 @@ class LiveHost(Host):
         for tool in ("useradd", "userdel", "systemctl", "systemd-run", "sshd"):
             if not any(Path(d, tool).exists() for d in _SYSTEM_PATH.split(":")):
                 problems.append(f"{tool} was not found")
-        try:
-            _host_run(["/usr/bin/python3", "-I", "-c", "import commonplace.compute.target_helper"])
-        except InstallError:
-            problems.append("/usr/bin/python3 cannot import commonplace.compute.target_helper")
         return problems
 
 
@@ -443,8 +539,41 @@ exec /usr/bin/systemd-run --user --scope --quiet --collect --unit={SCOPE_UNIT} -
 """
 
 
+# Keywords sshd_config(5) allows inside a Match block (OpenSSH 9.x). Global-only ones such as
+# PermitUserEnvironment are rejected there ("not allowed within a Match block"); the installer
+# checks those through `sshd -T` instead.
+SSHD_MATCH_KEYWORDS = frozenset(
+    """AcceptEnv AllowAgentForwarding AllowGroups AllowStreamLocalForwarding AllowTcpForwarding
+    AllowUsers AuthenticationMethods AuthorizedKeysCommand AuthorizedKeysCommandUser
+    AuthorizedKeysFile AuthorizedPrincipalsCommand AuthorizedPrincipalsCommandUser
+    AuthorizedPrincipalsFile Banner CASignatureAlgorithms ChannelTimeout ChrootDirectory
+    ClientAliveCountMax ClientAliveInterval DenyGroups DenyUsers DisableForwarding ExposeAuthInfo
+    ForceCommand GatewayPorts GSSAPIAuthentication HostbasedAcceptedAlgorithms
+    HostbasedAuthentication HostbasedUsesNameFromPacketOnly IgnoreRhosts Include IPQoS
+    KbdInteractiveAuthentication KerberosAuthentication LogLevel MaxAuthTries MaxSessions
+    PasswordAuthentication PermitEmptyPasswords PermitListen PermitOpen PermitRootLogin PermitTTY
+    PermitTunnel PermitUserRC PubkeyAcceptedAlgorithms PubkeyAuthentication PubkeyAuthOptions
+    RDomain RekeyLimit RevokedKeys SetEnv StreamLocalBindMask StreamLocalBindUnlink
+    TrustedUserCAKeys UnusedConnectionTimeout X11DisplayOffset X11Forwarding X11UseLocalhost
+    """.split()
+)
+
+
+def validate_match_block(text):
+    inside = False
+    for line in text.splitlines():
+        words = line.split()
+        if not words or words[0].startswith("#"):
+            continue
+        if words[0] == "Match":
+            inside = words[1:] != ["all"]
+        elif inside and words[0] not in SSHD_MATCH_KEYWORDS:
+            raise InstallError(f"{words[0]} is not allowed within an sshd Match block")
+    return text
+
+
 def sshd_dropin(account):
-    return f"""# Managed by commonplace.compute.target_installer; removed by its uninstall.
+    return validate_match_block(f"""# Managed by commonplace.compute.target_installer; removed by its uninstall.
 Match User {account}
     AuthenticationMethods publickey
     PubkeyAuthentication yes
@@ -459,9 +588,8 @@ Match User {account}
     X11Forwarding no
     PermitTunnel no
     PermitUserRC no
-    PermitUserEnvironment no
 Match all
-"""
+""")
 
 
 def _scratch_unit(uid, gid):
@@ -482,16 +610,20 @@ def _runtime_unit():
 
 
 class Installer:
-    def __init__(self, options, host=None, *, runtime_source=None, pin=None, out=print):
+    def __init__(
+        self, options, host=None, *, runtime_source=None, package_source=None, pin=None, out=print
+    ):
         self.options = options
         self.host = StagedHost() if host is None else host
         self.runtime_source = runtime_source or (lambda: discover_runtime(options.python))
+        self.package_source = package_source or running_packages
         self.pin = pin or pin_approval_keys
         self.out = out
         self.root = Path(options.root)
         self.manifest_path = self._phys(MANIFEST_PATH)
         self.items = []
         self._loaded = False
+        self._site = None
 
     # -- paths and manifest -------------------------------------------------------
     def _phys(self, logical):
@@ -681,28 +813,46 @@ class Installer:
         self._flush()
         return True
 
-    def _tree_conflict(self):
-        if not self._item("tree", RUNTIME_SOURCE) and os.path.lexists(self._phys(RUNTIME_SOURCE)):
-            return f"{RUNTIME_SOURCE} already exists and was not installed by this installer"
+    def _tree_conflict(self, logical):
+        if not self._item("tree", logical) and os.path.lexists(self._phys(logical)):
+            return f"{logical} already exists and was not installed by this installer"
         return None
 
-    def _tree(self):
-        phys = self._phys(RUNTIME_SOURCE)
-        item = self._item("tree", RUNTIME_SOURCE)
+    def _tree(self, logical, build):
+        phys = self._phys(logical)
+        item = self._item("tree", logical)
         if item and item.get("digest"):
             if phys.is_dir() and staged_inventory(phys) == item["digest"]:
                 return False
-            raise InstallError("the runtime tree changed since install; uninstall first")
+            raise InstallError(f"{logical} changed since install; uninstall first")
         if item is None:
-            item = {"kind": "tree", "path": RUNTIME_SOURCE, "digest": None}
+            item = {"kind": "tree", "path": logical, "digest": None}
             self.items.append(item)
             self._flush()
         elif phys.is_dir():
             shutil.rmtree(phys)  # an interrupted build we recorded ourselves
-        build_runtime_tree(phys, self.runtime_source())
+        build(phys)
         item["digest"] = staged_inventory(phys)
         self._flush()
         return True
+
+    def _pth(self):
+        logical = self._site_dir() + "/commonplace-compute.pth"
+        changed, item = self._file(logical, (LIB_ROOT + "\n").encode(), 0o644)
+        if not item.get("verified"):
+            # The ForceCommand entry needs exactly this import to work with only the stdlib.
+            self.host.run(
+                ["/usr/bin/python3", "-I", "-c", "import commonplace.compute.target_helper"]
+            )
+            item["verified"] = True
+            self._flush()
+            changed = True
+        return changed
+
+    def _site_dir(self):
+        if self._site is None:
+            self._site = self.host.python_site_dir()
+        return self._site
 
     def _runtime_unit(self):
         changed = self._unit(RUNTIME_UNIT_NAME, _runtime_unit())
@@ -819,8 +969,10 @@ class Installer:
                 RUNTIME_SOURCE,
                 "root-owned copy of python3, its shared libraries, zipped stdlib and lib-dynload; "
                 "digest = runtime_inventory",
-                self._tree_conflict,
-                self._tree,
+                lambda: self._tree_conflict(RUNTIME_SOURCE),
+                lambda: self._tree(
+                    RUNTIME_SOURCE, lambda phys: build_runtime_tree(phys, self.runtime_source())
+                ),
             )
         )
         ops.append(
@@ -849,6 +1001,29 @@ class Installer:
                 f"({TARGET_HELPER_COMMAND})",
                 lambda: self._file_conflict(ENTRY_PATH),
                 lambda: self._file(ENTRY_PATH, entry_script().encode(), 0o755)[0],
+            )
+        )
+        ops.append(
+            Op(
+                "python-packages",
+                LIB_ROOT,
+                "root-owned copy of the commonplace and mempalace python sources the helper imports "
+                "(stdlib only, no third party)",
+                lambda: self._tree_conflict(LIB_ROOT),
+                lambda: self._tree(
+                    LIB_ROOT, lambda phys: copy_python_packages(phys, self.package_source())
+                ),
+            )
+        )
+        site = self._site_dir()
+        ops.append(
+            Op(
+                "python-pth",
+                f"{site}/commonplace-compute.pth",
+                f"0644 root; adds {LIB_ROOT} for /usr/bin/python3, then checks "
+                "`/usr/bin/python3 -I -c import commonplace.compute.target_helper`",
+                lambda: self._file_conflict(f"{site}/commonplace-compute.pth"),
+                self._pth,
             )
         )
         principal = o.controller_key.principal if o.controller_key else "?"
@@ -893,6 +1068,20 @@ class Installer:
         )
         return ops
 
+    def _sshd_effective_problems(self):
+        """PermitUserEnvironment is global-only (sshd rejects it in Match), so read its value."""
+        value = None
+        for line in self.host.sshd_effective_config().splitlines():
+            words = line.split()
+            if len(words) >= 2 and words[0].lower() == "permituserenvironment":
+                value = words[1].lower()
+        if value != "no":
+            return [
+                "sshd's global PermitUserEnvironment must be no (it cannot be set per Match "
+                f"block); effective value: {value or 'unknown'}"
+            ]
+        return []
+
     # -- sshd preflight (file reads only) -----------------------------------------
     def _sshd_problems(self):
         main = self._phys(SSHD_CONFIG_PATH)
@@ -933,7 +1122,10 @@ class Installer:
         self.out(
             "  cgroup v2 cpu/memory/pids, useradd/userdel/systemctl/systemd-run/sshd, sshd Include and"
         )
-        self.out("  no AcceptEnv SSH_USER_AUTH, no pre-existing target path outside the manifest")
+        self.out(
+            "  no AcceptEnv SSH_USER_AUTH, effective global PermitUserEnvironment no (sshd -T),"
+        )
+        self.out("  no pre-existing target path outside the manifest")
         for number, op in enumerate(self._operations(), 1):
             self.out(f"{number:2}. {op.kind} {op.target} {op.detail}")
         self.out(
@@ -948,6 +1140,7 @@ class Installer:
         self._load()
         ops = self._operations()
         problems = self.host.preflight(self.options) + self._sshd_problems()
+        problems += self._sshd_effective_problems()
         problems += [message for op in ops if op.check and (message := op.check())]
         if problems:
             raise InstallError("\n".join(problems))
@@ -1033,6 +1226,10 @@ class Installer:
             )
         for sub in data:
             self._discard(sub)
+        for item in self.items:
+            if item["kind"] == "account":
+                # Sessions and the account's systemd user manager hold it in use.
+                self.host.stop_account(item["name"])
         left, deferred, errors = [], [], []
         reloads = set()
         for item in reversed(self.items):
@@ -1083,7 +1280,7 @@ def _parser():
     return parser
 
 
-def main(argv=None, *, host=None, runtime_source=None, pin=None):
+def main(argv=None, *, host=None, runtime_source=None, package_source=None, pin=None):
     args = _parser().parse_args(argv)
     try:
         root = Path(args.root)
@@ -1107,7 +1304,9 @@ def main(argv=None, *, host=None, runtime_source=None, pin=None):
         )
         if host is None:
             host = LiveHost() if root == Path("/") else StagedHost()
-        installer = Installer(options, host, runtime_source=runtime_source, pin=pin)
+        installer = Installer(
+            options, host, runtime_source=runtime_source, package_source=package_source, pin=pin
+        )
         if args.command == "plan":
             return installer.plan()
         if args.command == "install":

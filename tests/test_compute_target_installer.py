@@ -797,7 +797,7 @@ def test_install_places_the_python_packages_and_a_pth(root, runtime):
     assert pth.read_text() == "/" + LIB + "\n"
     assert stat.S_IMODE(pth.stat().st_mode) == 0o644
     manifest = json.loads((root / "etc/commonplace/compute-install-manifest.json").read_text())
-    kinds = {(item["kind"], item["path"]) for item in manifest["items"]}
+    kinds = {(item["kind"], item.get("path")) for item in manifest["items"]}
     assert ("tree", "/" + LIB) in kinds
     assert ("file", "/" + SITE_DIR + "/commonplace-compute.pth") in kinds
 
@@ -847,7 +847,7 @@ def test_the_real_packages_import_with_only_the_stdlib_and_the_placed_copy(tmp_p
         "print(h.TARGET_HELPER_COMMAND, bad)"
     )
     done = subprocess.run(
-        [sys.executable, "-I", "-S", "-c", code, str(site), str(lib)],
+        [sys.executable, "-I", "-B", "-S", "-c", code, str(site), str(lib)],
         capture_output=True,
         text=True,
         cwd=tmp_path,

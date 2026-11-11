@@ -96,5 +96,5 @@ disabled without independent runtime verification.
 
 `python -m commonplace.compute.target_installer` provisions this fixture in one root
 invocation and writes the protected config; see RUNNING.md. The installer is
-idempotent and reversible but unverified on a real host until a disposable VM run;
+idempotent and reversible, and was verified on a disposable Ubuntu 24.04 VM;
 confined execution additionally needs the bubblewrap `--disable-userns` fix.
