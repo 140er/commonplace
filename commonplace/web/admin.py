@@ -849,8 +849,8 @@ def instance_authorized(gateway, principal, context):
     return row is not None and row["is_admin"] == 1
 
 
-def index_stats(gateway, context, after=None):
-    from commonplace.index_stats import unknown, workspace
+def index_stats(gateway, context, principal, after=None):
+    from commonplace.index_stats import scoped, unknown, workspace
 
     # Close the control snapshot before any workspace file work.
     with read_control(gateway.db, context) as conn:
@@ -862,6 +862,17 @@ def index_stats(gateway, context, after=None):
             + "ORDER BY created_at,id LIMIT ?",
             (*(after or ()), PAGE_SIZE + 1),
         ).fetchall()
+        # Size figures sum every wing, private ones included; only a current
+        # owner of that workspace may see them (person private reads are owner-only).
+        owned = {
+            r["workspace_id"]
+            for r in select(
+                conn,
+                context,
+                "SELECT workspace_id FROM memberships WHERE user_id=? AND role='owner'",
+                (principal.user_id,),
+            ).fetchall()
+        }
     figures = []
     for row in rows[:PAGE_SIZE]:
         values = (
@@ -871,6 +882,8 @@ def index_stats(gateway, context, after=None):
                 gateway, row["id"], clock=context.clock.monotonic, deadline=context.deadline
             )
         )
+        if row["id"] not in owned:
+            values = scoped(values)
         figures.append({"workspace_id": identifier(row["id"]), **values})
     return {"workspaces": figures, **page(rows, "created_at", "instance", "index-stats")}
 
@@ -984,7 +997,7 @@ def install(gateway):
                 except (ValueError, TypeError):
                     send_json(h, 400, {"error": "Invalid admin query"})
                     return
-                send_json(h, 200, index_stats(gateway, context, after))
+                send_json(h, 200, index_stats(gateway, context, principal, after))
                 return
             if urlsplit(h.path).query:
                 send_json(h, 400, {"error": "Invalid admin query"})

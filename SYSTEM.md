@@ -58,6 +58,11 @@ entry was written.
   Paths are lstat-ed and symlinks refused (`symlink`); writer contention returns
   `busy`, not corruption. Missing/empty HNSW state uses `header_unavailable`.
   Non-admin index-stats requests receive the exact unknown-section 404.
+  Drawer count, vector count and HNSW capacity sum every wing, private ones
+  included, so they are reported only for a workspace the viewer currently owns
+  (person private reads are owner-only); for any other workspace they are null
+  with reason `private_scope`. Status applies the same rule through the loaded
+  `private:read` scope. Model and dimension describe the index and stay visible.
   Missing/corrupt/unsupported stores return nulls with stable reasons. No settings,
   dependencies, admission changes, background jobs or index-content reads added.
 

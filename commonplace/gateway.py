@@ -754,14 +754,14 @@ class Mediator:
 
             result = summary(self.gateway, principal, self.workers, name)
             if authorized:
-                from .index_stats import workspace
+                from .index_stats import scoped, workspace
 
+                figures = workspace(self.gateway, principal.workspace_id)
+                if not principal.policy.has_scope("private:read"):
+                    figures = scoped(figures)
                 result = {
                     **result,
-                    "index_stats": {
-                        "workspace_id": principal.workspace_id,
-                        **workspace(self.gateway, principal.workspace_id),
-                    },
+                    "index_stats": {"workspace_id": principal.workspace_id, **figures},
                 }
             return {"respond": result}
         if name == "mempalace_delete_by_source":

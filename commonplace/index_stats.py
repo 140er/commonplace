@@ -24,6 +24,21 @@ def unknown(reason):
     return {key: {"value": None, "reason": reason} for key in FIELDS}
 
 
+SCOPED = ("drawers", "vector_count", "hnsw_capacity")
+
+
+def scoped(figures):
+    """Withhold whole-palace sizes from a viewer who is not the workspace owner.
+
+    Row counts and HNSW capacity include private wings, which only a workspace
+    owner may read; model and dimension describe the index, not its content.
+    """
+    return {
+        **figures,
+        **{key: {"value": None, "reason": "private_scope"} for key in SCOPED},
+    }
+
+
 def _symlink(*paths):
     for path in paths:
         try:

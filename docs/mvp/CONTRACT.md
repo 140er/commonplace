@@ -304,3 +304,8 @@ creating no files on a closed WAL palace. Symlinked workspace/palace/database/
 segment/header paths are refused with symlink; locks return busy. Empty HNSW
 state returns header_unavailable. Non-admin index-stats requests return exactly
 404 {"error":"not found"}, identical to an unknown section.
+
+Drawer count, vector count and HNSW capacity include private wings. They are
+returned only for workspaces where the viewer is currently an owner (and, for
+status, holds `private:read`); otherwise each is `{"value":null,"reason":
+"private_scope"}`. Model and dimension are unaffected.
