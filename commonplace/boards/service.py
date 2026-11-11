@@ -1253,11 +1253,37 @@ class BoardService:
                     not self._restricted_origin(row)
                     or self._origin_lineage(q, row) == "independent"
                 )
-                and row["board_coordinator"] == q.actor
+                and (row["board_coordinator"] == q.actor or self._holds_lease(q, row))
                 and _can_coordinate(q, row["board_wing"])
             )
         except (ControlError, ValueError, TypeError):
             return False
+
+    def _lease_coordinator(self, row):
+        """The live principal holding this board's coordinator lease, if any.
+
+        Only a live lease of exactly this board counts: a replaced epoch, a released or
+        expired lease and another board's lease name nobody."""
+        from commonplace.orch import durable
+        from commonplace.projects import split
+
+        slug = row["board"] if "board" in row.keys() else None
+        if not slug:
+            return None
+        cache = getattr(self, "_projection_cache", None)
+        cache = cache if cache is not None else {}
+        key = ("lease", slug)
+        if key not in cache:
+            with split.runner_read(self.ctx.workspace_dir()) as reader:
+                actor = durable.coordinator_holder_in(reader, slug)
+            cache[key] = (
+                self._live_connection(actor[5:]) if actor and actor.startswith("conn:") else None
+            )
+        return cache[key]
+
+    def _holds_lease(self, q, row):
+        leased = self._lease_coordinator(row)
+        return leased is not None and leased.actor == q.actor
 
     def _top_level_actor(self, actor):
         try:
@@ -1303,20 +1329,30 @@ class BoardService:
             and q.policy.tool_visible("needs_me")
         )
 
-    def _origin_authority(self, row):
-        """Nonrecursive shared owner/coordinator classification for this card."""
-        actor = row["board_coordinator"] or ""
-        q = self._live_connection(actor[5:]) if actor.startswith("conn:") else None
-        if q is None:
-            return "owner", None
+    def _authority_of(self, q, row):
+        """Classify one live candidate as this card's origin coordinator."""
         lineage = self._origin_lineage(q, row)
         if row["created_by"].startswith("conn:") and self._creator_connection(row) is None:
-            return "stamp", q
+            return "stamp"
         if lineage != "independent":
-            return lineage, q
+            return lineage
         if self._release_grants(q, row["board_wing"]):
-            return "coordinator", q
-        return "owner", q
+            return "coordinator"
+        return "owner"
+
+    def _origin_authority(self, row):
+        """Nonrecursive shared owner/coordinator classification for this card.
+
+        The configured coordinator comes first; the live holder of the board's
+        coordinator lease counts when the configured one does not qualify."""
+        actor = row["board_coordinator"] or ""
+        q = self._live_connection(actor[5:]) if actor.startswith("conn:") else None
+        state = self._authority_of(q, row) if q is not None else "owner"
+        if state != "coordinator":
+            leased = self._lease_coordinator(row)
+            if leased is not None and self._authority_of(leased, row) == "coordinator":
+                return "coordinator", leased
+        return state, q
 
     @staticmethod
     def _restricted_origin(row):
@@ -1454,8 +1490,10 @@ class BoardService:
                             not _restricted(approver)
                             and self._release_role(approver, row) in ("parent", "creator-parent")
                         )
-                        or _trusted_agent(approver)
-                        or self._coordinates(approver, row)
+                        or (
+                            (_trusted_agent(approver) or self._coordinates(approver, row))
+                            and self._release_grants(approver, row["board_wing"])
+                        )
                         or self._owning_top_level(row, approver)
                     )
                 )

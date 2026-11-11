@@ -7,7 +7,7 @@ from commonplace.projects.types import SEAT_CLIENT
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_board_authority import fresh as fresh
 from tests.test_commonplace_boards import api
-from tests.test_commonplace_origin_holder_release import edit, raw, snapshot
+from tests.test_commonplace_origin_holder_release import TOOLS, edit, policy, raw, snapshot
 
 REASON = "Independent origin checked"
 NOTE = "Handing this to the coordinator seat"
@@ -68,6 +68,7 @@ def test_handoff_to_the_coordinator_keeps_an_existing_release(hub, fresh, releas
         assert status == 200, card
     assert creator.work.task_take_next(task=number)["status"] == "doing"
     creator.work.task_handoff(number, seat.principal.actor, NOTE)
+    assert not fresh.owner.task_show(number).get("awaiting_release")
     if change == "replaced":
         fresh.owner.board_set("work", fresh.connect("replacement").principal.actor)
     elif change == "cleared":
@@ -96,3 +97,34 @@ def test_a_seat_that_is_not_the_board_coordinator_is_refused(hub, fresh, appoint
         number,
         lambda: creator.work.task_approve(number, approve=True, reason=REASON),
     )
+
+
+@pytest.mark.parametrize("loss", ["none", "tools", "wing-write"])
+def test_a_release_by_a_former_coordinator_lapses_with_its_authority(hub, fresh, loss):
+    creator = fresh.connect("creator", trust="untrusted", write_wing="inbox")
+    former = fresh.connect("former", trust="trusted")
+    seat = fresh.connect("seat", trust="trusted")
+    fresh.owner.board_set("work", former.principal.actor)
+    number = creator.work.task_add(board="work", title="Restricted work")["number"]
+    former.work.task_approve(number, approve=True, reason=REASON)
+    assert creator.work.task_take_next(task=number)["status"] == "doing"
+    creator.work.task_handoff(number, seat.principal.actor, NOTE)
+    fresh.owner.board_set("work", fresh.connect("replacement").principal.actor)
+    if loss == "tools":
+        policy(hub, former, tools=[t for t in TOOLS if t not in ("task_approve", "needs_me")])
+    elif loss == "wing-write":
+        policy(hub, former, write_wing="elsewhere")
+    if loss == "none":
+        assert seat.work.task_take_next(task=number)["status"] == "doing"
+    else:
+        refuse(fresh.owner, number, lambda: seat.work.task_take_next(task=number))
+        assert fresh.owner.task_show(number).get("awaiting_release") is True
+
+
+def test_another_boards_coordinator_is_refused(hub, fresh):
+    creator, seat, number = held_unreleased(fresh)
+    fresh.owner.board_add(slug="elsewhere", wing="shared")
+    fresh.owner.board_set("work", None)
+    fresh.owner.board_set("elsewhere", seat.principal.actor)
+    refuse(fresh.owner, number, lambda: seat.work.task_approve(number, approve=True, reason=REASON))
+    refuse(fresh.owner, number, lambda: seat.work.task_update(number, status="doing"))
