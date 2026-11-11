@@ -214,7 +214,7 @@ def _worker_policy(wings, write_wings=None):
     )
 
 
-def _audit(db, owner, action, machine_id, *, reset=False):
+def _audit(db, owner, action, machine_id, *, reset=False, detail=""):
     db.audit(
         action=f"runner.{action}",
         decision="ok",
@@ -222,9 +222,17 @@ def _audit(db, owner, action, machine_id, *, reset=False):
         user_id=owner.user_id,
         connection_id=owner.connection_id,
         auth=owner.auth,
-        reason="binding_reset" if reset else "",
+        reason=";".join(part for part in ("binding_reset" if reset else "", detail) if part),
         target_ids=(machine_id,),
     )
+
+
+def _write_set_diff(before, after):
+    """``write_set +added -removed`` (wing names only), or "" when the set is unchanged."""
+    changes = [f"+{w}" for w in after if w not in before] + [
+        f"-{w}" for w in before if w not in after
+    ]
+    return "write_set " + " ".join(changes) if changes else ""
 
 
 def _write(db, machine_id, data):
@@ -339,6 +347,7 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
         data = {
             "requesters": [ref for ref in json.loads(row["requesters"]) if ref != remove_requester]
         }
+    detail = ""
     if "wings" in data or "write_wings" in data:
         wings = data.get("wings", json.loads(row["wings"]))
         stored = json.loads(row["write_wings"]) if row["write_wings"] else None
@@ -347,6 +356,9 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
         elif stored is not None:
             # Narrowing the read grant also drops any extra write wing it no longer covers.
             data["write_wings"] = write_set(wings, stored)[1:]
+        detail = _write_set_diff(
+            machine_write_set(row), write_set(wings, data.get("write_wings", stored))
+        )
     # A NULL write_wings column and an empty list grant the same write set.
     reset = any(
         key in data and (data[key] or []) != json.loads(row[key] or "[]")
@@ -368,7 +380,7 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
     _write(db, row["id"], data)
     if reset:
         db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
-    _audit(db, owner, "patch", row["id"], reset=reset)
+    _audit(db, owner, "patch", row["id"], reset=reset, detail=detail)
     return get_machine(db, owner.workspace_id, row["id"])
 
 

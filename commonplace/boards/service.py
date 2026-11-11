@@ -3491,13 +3491,18 @@ class BoardService:
             )
             if "lesson" in args:
                 lesson = validate_text(args["lesson"], "lesson", required=True)
+                policy = self.principal.policy
+                # A lesson stays with its card when the card's wing is literally one of this
+                # connection's write wings; otherwise it goes to the first write wing.
+                wing = (
+                    board["wing"]
+                    if policy.write_wing
+                    and board["wing"] in (policy.write_wing, *policy.write_wings)
+                    else policy.write_wing or board["wing"]
+                )
                 saved = self.ctx.memory(
                     "mempalace_add_drawer",
-                    {
-                        "content": lesson,
-                        "wing": self.principal.policy.write_wing or board["wing"],
-                        "room": "general",
-                    },
+                    {"content": lesson, "wing": wing, "room": "general"},
                 )
                 memory_id = saved.get("drawer_id") if isinstance(saved, dict) else None
                 if not memory_id:

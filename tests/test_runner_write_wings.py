@@ -150,9 +150,105 @@ def test_write_set_change_is_audited_and_resets_the_binding(signup_hub, owners):
                 (owner["workspace"],),
             )
         ]
-    assert reasons == ["binding_reset", "binding_reset"]
-    status, body = _patch(hub, machine, {"write_wings": []}, cookie=owner["cookie"])
-    assert status == 200 and body["binding_state"] == "unbound", (status, body)
+    assert reasons == ["binding_reset;write_set +compute", "binding_reset;write_set -compute"]
+    # Unchanged set: no reset and no diff; narrowing wings records the extras it drops.
+    for patch in ({"write_wings": []}, {"write_wings": ["compute", "notes"]}, {"wings": WINGS[:2]}):
+        status, body = _patch(hub, machine, patch, cookie=owner["cookie"])
+        assert status == 200, (status, body)
+    with hub.db._lock:
+        reasons = [
+            r[0]
+            for r in hub.db._conn.execute(
+                "SELECT reason FROM audit_log WHERE workspace_id=? AND action='runner.patch' "
+                "ORDER BY seq",
+                (owner["workspace"],),
+            )
+        ]
+    assert reasons[2:] == [
+        "",
+        "binding_reset;write_set +compute +notes",
+        "binding_reset;write_set -notes",
+    ]
+
+
+def test_submissions_follow_read_scope_not_the_write_set(signup_hub, owners):
+    """Characterises existing behaviour (unchanged by write_wings): comments and asks are
+    submissions, gated by the worker's read wings rather than its write set."""
+    hub, owner = signup_hub, owners["A"]
+    machine = _enroll(hub, owner, wings=WINGS)
+    worker = machine["worker_token"]
+    readable, unreadable = card(hub, owner, board="notes"), card(hub, owner)
+    question = {
+        "question": "Which synthetic option should this example card use next?",
+        "options": ["First option", "Second option"],
+        "context": "Synthetic context for a characterisation test.",
+    }
+    _ok(_tool(hub, worker, "task_comment", task=readable["number"], text="Synthetic note."))
+    _ok(_tool(hub, worker, "ask", board="notes", **question))
+    response = _tool(hub, worker, "task_comment", task=unreadable["number"], text="Synthetic.")
+    assert "error" in response or response["result"].get("isError"), response
+    response = _tool(hub, worker, "ask", board="shared", **question)
+    assert "error" in response or response["result"].get("isError"), response
+
+
+def _lesson_wing(hub, owner, worker, task):
+    from commonplace.boards.store import BoardStore
+
+    lesson = "Synthetic lesson for card " + str(task["number"])
+    # Lessons are recorded when the card is finished.
+    _ok(_tool(hub, worker, "task_update", task=task["number"], status="done", lesson=lesson))
+    with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+        (drawer,) = conn.execute(
+            "SELECT drawer_id FROM task_links WHERE task_id=?", (task["number"],)
+        ).fetchone()
+    status, body = http(hub.port, "GET", "/api/memory/" + drawer, cookie=owner["cookie"])
+    assert status == 200 and body["text"] == lesson, (status, body)
+    return body["theme"]
+
+
+def test_lessons_stay_with_the_card_wing_inside_the_write_set(signup_hub, owners):
+    """Runner workers cannot save lessons (no memory tools), so this uses an agent whose
+    policy has the same shape: a first write wing plus a literal extra write wing."""
+    hub, owner = signup_hub, owners["A"]
+    _enroll(hub, owner, wings=WINGS)  # creates the three wings through public HTTP
+    agent_id, agent = cli_token(
+        owner,
+        "lesson-agent",
+        profile="standard",
+        read_wings=",".join(WINGS),
+        write_wing="platform",
+        write_wings="compute",
+    )
+    actor = hub.db.authenticate_connection(agent_id).actor
+    from commonplace.boards.store import BoardStore
+
+    for board, expected in (("compute", "compute"), ("platform", "platform"), ("notes", None)):
+        task = card(hub, owner, board=board)
+        if expected is None:
+            # A held card outside the write set (assigned by the owner) keeps the first wing.
+            with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+                conn.execute(
+                    "UPDATE tasks SET status='doing', assignee=? WHERE id=?",
+                    (actor, task["number"]),
+                )
+            expected = "platform"
+        else:
+            _ok(_tool(hub, agent, "task_take_next", task=task["number"]))
+        assert _lesson_wing(hub, owner, agent, task) == expected, board
+
+
+def test_registry_permission_error_is_a_403_not_a_500(signup_hub, owners, monkeypatch):
+    hub, owner = signup_hub, owners["A"]
+    machine = _enroll(hub, owner)
+    from commonplace.runner import registry
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError("a signed-in workspace owner is required")
+
+    # The route guard runs first; this pins the response if the registry is the one refusing.
+    monkeypatch.setattr(registry, "patch", refuse)
+    status, body = _patch(hub, machine, {"max_in_flight": 2}, cookie=owner["cookie"])
+    assert (status, body) == (403, {"error": "a signed-in workspace owner is required"})
 
 
 def test_existing_grants_keep_the_first_wing_as_the_only_write_wing(signup_hub, owners):

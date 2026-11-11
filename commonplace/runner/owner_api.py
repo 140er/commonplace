@@ -114,6 +114,9 @@ def register(gateway):
                     raise ValueError("credential must be machine or worker")
                 result = registry.rotate(gateway.db, owner, parts[0], data["credential"])
                 status = 200
+        except PermissionError as exc:
+            send_json(h, 403, {"error": str(exc)})
+            return
         except registry.NotFound as exc:
             send_json(h, 404, {"error": str(exc)})
             return
