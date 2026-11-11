@@ -285,6 +285,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Board design also documents coordinator release of restricted-origin cards.
 
+  - Project documentation explains the coordinator status block, the owner-only End lease and what ending a lease leaves in place.
+
   - Board API and design documentation state default coordinator routing, audited person reasons, owner recovery and coordinator-only withdrawal of its own asks; existing asks retain their stored data.
 
   - Contributor test instructions state that the default run excludes the `timing` lane and that timing results are informational, never a merge gate.
@@ -591,6 +593,8 @@ Format (read by `commonplace orch docs-check`):
   - Shared fixtures and harnesses and every test file not listed in another block, including binding-epoch migration, direct fences, lock-entry instrumentation and bounded reset races.
 
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
+
+  - Coordinator status regressions: `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) and `tests/test_orch_lease_status.py` pin the status states, the End lease confirm and refusals, and that ending a live lease leaves unfinished steps listed.
 
 - **Promises:**
 
