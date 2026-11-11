@@ -10,13 +10,13 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from urllib.parse import urlparse
 
-from commonplace import events, privacy
+from commonplace import decide_grant, events, privacy, sessions
 from commonplace.callstack import LIMITS
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
-from . import task_types
+from . import priority as priorities, task_types
 from .digest import digest
 from .display import (
     _waiting_on_person as _display_waiting,
@@ -984,7 +984,29 @@ class BoardService:
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,
+            claim_expired=bool(
+                row["status"] == "doing" and row["claim_until"] and row["claim_until"] <= now()
+            ),
+            plan_review=_plan_waiting(row),
+            agents=self._agent_connected(row["board_wing"]),
         )
+
+    def _agent_connected(self, wing):
+        """Whether any live agent connection can write ``wing``; None when unreadable."""
+        cache = getattr(self, "_projection_cache", None)
+        cache = cache if cache is not None else {}
+        key = ("agent", wing)
+        if key not in cache:
+            try:
+                cache[key] = any(
+                    (q := self._live_connection(c["id"])) is not None
+                    and q.policy.can_write_wing(wing)
+                    for c in self.ctx.db.connections(self.principal.workspace_id)
+                    if not c["revoked_at"]
+                )
+            except (ControlError, ValueError, TypeError):
+                return None
+        return cache[key]
 
     def _usage(self, boards, runner, row):
         from commonplace.projects import orchestration as orch
@@ -1012,11 +1034,12 @@ class BoardService:
         )
 
     def _refuse_waiting(self, conn, row):
+        from commonplace.boards import why
         from commonplace.boards.store import CardRefused
 
         if self._orchestration_on is True:
             reason = self._waiting(conn, row)
-            if reason is not None and reason["code"] != "project_limit":
+            if reason is not None and reason["code"] in why.REFUSING:
                 raise CardRefused(reason["code"], reason["text"])
 
     def orchestrator_inbox(self, board):
@@ -1125,6 +1148,16 @@ class BoardService:
 
     def _own_card(self, row):
         return owns_card(row, self.principal.actor)
+
+    def _can_cancel_reservation(self, row):
+        p = self.principal
+        return (
+            not p.person
+            and row["status"] == "todo"
+            and row["created_by"] == p.actor
+            and row["assignee"] == p.actor
+            and not _waiting_on_person(row)
+        )
 
     def _plan_gate(self, conn, board_id):
         """The orchestrator plan gate of a board with an accepted live config, else None."""
@@ -1415,7 +1448,16 @@ class BoardService:
     def _claimable_origin(self, row):
         return self._available_origin(row)
 
-    def _write(self, board, *, submission=False, row=None, claiming=False, content_edit=False):
+    def _write(
+        self,
+        board,
+        *,
+        submission=False,
+        row=None,
+        claiming=False,
+        content_edit=False,
+        cancelling=False,
+    ):
         p = self.principal
         if not p.policy.has_scope("memory:write") or not p.policy.can_read_wing(board["wing"]):
             raise ToolError("no: this connection cannot change this board")
@@ -1425,7 +1467,11 @@ class BoardService:
                 if claiming or self._own_card(row)
                 else self._available_origin(row)
             )
-            if not available and not content_edit:
+            if (
+                not available
+                and not content_edit
+                and not (cancelling and self._can_cancel_reservation(row))
+            ):
                 raise ToolError(
                     "no: restricted-origin work needs parent or workspace owner release"
                 )
@@ -1783,20 +1829,25 @@ class BoardService:
                         from commonplace.boards import why
 
                         summary = dict.fromkeys(why.CODES, 0)
-                        for found in conn.execute(
+                        waiting_ids = conn.execute(
                             "SELECT id FROM tasks WHERE board_id=? AND status!='done' "
                             + ("AND parent_number IS NULL" if top_level else ""),
                             (board["id"],),
-                        ).fetchall():
-                            reason = self._waiting(
-                                conn,
-                                task_row(conn, found["id"]),
-                                usage=waiting_usage,
-                                runner=runner,
-                            )
-                            if reason:
-                                summary[reason["code"]] += 1
+                        ).fetchall()
+                        with self._projection():
+                            for found in waiting_ids:
+                                reason = self._waiting(
+                                    conn,
+                                    task_row(conn, found["id"]),
+                                    usage=waiting_usage,
+                                    runner=runner,
+                                )
+                                if reason:
+                                    summary[reason["code"]] += 1
                         result[-1]["waiting"] = summary
+                        result[-1]["waiting_notes"] = why.notes(
+                            summary, used=waiting_usage.used, cap=waiting_usage.cap
+                        )
             return result
 
     def space_metadata(self, slug):
@@ -1927,6 +1978,10 @@ class BoardService:
                     for candidate in [db.authenticate_connection(row["id"])]
                 ):
                     unbound.append(coordinator)
+                    # Before the NULL write and the board COMMIT (the clear is its own
+                    # control-DB commit): a grant left by a failed clear must not come
+                    # back when the app stops coordinating. A failed clear rolls back.
+                    self._clear_coordinator_grant(coordinator, "coordinator unbound")
                     coordinator = None
                     conn.execute("UPDATE boards SET coordinator=NULL WHERE id=?", (b["id"],))
             if changed or unbound:
@@ -2010,7 +2065,21 @@ class BoardService:
                     raise ToolError(
                         "no: coordinator must be an active agent with access to this board"
                     )
+            previous = b["coordinator"]
+            if previous and previous != actor:
+                # Replacing or unassigning: clear the previous coordinator's grant
+                # before the board COMMIT (the clear is its own control-DB commit, not
+                # atomic with this one), so a grant that survived a failed clear never
+                # comes back when it stops coordinating. A failed clear rolls back.
+                self._clear_coordinator_grant(previous, "coordinator removed")
             conn.execute("UPDATE boards SET coordinator=? WHERE id=?", (actor, b["id"]))
+            if actor is not None and actor.startswith("conn:"):
+                # A coordinator is agent machinery: assigning one ends any stored
+                # cards:decide grant, so unassigning it later needs fresh consent.
+                coordinator_row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+                self.ctx.db.clear_decide(
+                    coordinator_row["id"], reason="coordinator", user_id=self.principal.user_id
+                )
             self.pending.append(
                 (
                     "space_configured",
@@ -2020,6 +2089,13 @@ class BoardService:
                 )
             )
             result = {"board": b["slug"], "coordinator": actor}
+        if actor is not None and actor.startswith("conn:"):
+            # Again after the commit: a grant written while this transaction was
+            # open is removed too (the in-transaction clear covers a rollback).
+            coordinator_row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+            self.ctx.db.clear_decide(
+                coordinator_row["id"], reason="coordinator", user_id=self.principal.user_id
+            )
         if actor is not None:
             from commonplace import webhooks
 
@@ -2148,7 +2224,7 @@ class BoardService:
                 for row in conn.execute(
                     "SELECT id FROM tasks WHERE board_id=? "
                     + ("AND parent_number IS NULL " if top_level else "")
-                    + "ORDER BY position,id",
+                    + "ORDER BY priority,position,id",
                     (b["id"],),
                 ):
                     task = task_row(conn, row["id"])
@@ -2432,9 +2508,15 @@ class BoardService:
         claim=False,
         task_type=task_types.UNSET,
         type_holder=None,
+        priority=priorities.UNSET,
     ):
         p = self.principal
         label = "" if task_type is task_types.UNSET else task_types.owner_value(p, task_type)
+        rank = (
+            priorities.DEFAULT_RANK
+            if priority is priorities.UNSET
+            else priorities.rank(priorities.owner_value(p, priority))
+        )
         if message_id is not None:
             if (
                 isinstance(message_id, bool)
@@ -2564,7 +2646,7 @@ class BoardService:
         number = cur.lastrowid
         conn.execute(
             "UPDATE tasks SET claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
-            "proposed_to=?,review_kind=?,task_type=? WHERE id=?",
+            "proposed_to=?,review_kind=?,task_type=?,priority=? WHERE id=?",
             (
                 until,
                 at if until else None,
@@ -2573,6 +2655,7 @@ class BoardService:
                 p.parent_agent if proposal else None,
                 "decision" if ask is not None else None,
                 label,
+                rank,
                 number,
             ),
         )
@@ -2608,9 +2691,12 @@ class BoardService:
         claim=False,
         blocked_by=_UNSET,
         task_type=task_types.UNSET,
+        priority=priorities.UNSET,
     ):
         if task_type is not task_types.UNSET:
             task_types.owner_value(self.principal, task_type)
+        if priority is not priorities.UNSET:
+            priorities.owner_value(self.principal, priority)
         type_holder = (
             self._type_holder(
                 self._actor(assignee) if assignee is not None else self.principal.actor
@@ -2637,6 +2723,7 @@ class BoardService:
                 claim=claim,
                 task_type=task_type,
                 type_holder=type_holder,
+                priority=priority,
             )
             if blocked_by is not _UNSET:
                 from commonplace.boards.store import CardRefused, set_blockers
@@ -2894,7 +2981,7 @@ class BoardService:
                         if self._orchestration_on is True
                         else ""
                     )
-                    + "ORDER BY assignee IS NULL,position,id",
+                    + "ORDER BY assignee IS NULL,priority,position,id",
                     (
                         b["id"],
                         self.principal.actor,
@@ -3111,7 +3198,11 @@ class BoardService:
                 ("doing", "backlog"),
             }:
                 return
-            if old == "todo" and status == "backlog" and row["assignee"] is None:
+            if (
+                old == "todo"
+                and status == "backlog"
+                and (row["assignee"] is None or self._can_cancel_reservation(row))
+            ):
                 return
         raise ToolError("no: this move requires a person or a handoff")
 
@@ -3307,6 +3398,22 @@ class BoardService:
             actor = self._update_acquisition_actor(prospective, args)
         return actor, self._type_holder(actor)
 
+    def _priority_rank(self, args):
+        """The owner's requested rank, or None when the update does not set one."""
+        if "priority" not in args:
+            return None
+        return priorities.rank(priorities.owner_value(self.principal, args["priority"]))
+
+    @staticmethod
+    def _priority_change(row, rank):
+        return {} if rank is None or rank == row["priority"] else {"priority": rank}
+
+    @staticmethod
+    def _priority_note(ask, updates):
+        if "priority" in updates and ask["text"] is None:
+            return {**ask, "text": "Priority set to " + priorities.name(updates["priority"])}
+        return ask
+
     def task_update(self, task, *, version=None, **args):
         type_updates = {
             key: task_types.owner_value(self.principal, value)
@@ -3314,8 +3421,10 @@ class BoardService:
             if key == "task_type"
         }
         prospective_actor, type_holder = self._update_type_holder(task, args)
+        priority_update = self._priority_rank(args)
         permitted = {
             "task_type",
+            "priority",
             "title",
             "body",
             "labels",
@@ -3355,7 +3464,12 @@ class BoardService:
             inactive_annotation = (
                 set(args) == {"status_line"} and row["status"] == "backlog" and self._own_card(row)
             )
-            self._write(board, row=row, content_edit=content_edit or inactive_annotation)
+            self._write(
+                board,
+                row=row,
+                content_edit=content_edit or inactive_annotation,
+                cancelling=set(args) == {"status"} and args["status"] == "backlog",
+            )
             self._version(conn, row, version)
             if (
                 set(args) - permitted
@@ -3401,7 +3515,7 @@ class BoardService:
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status", row["status"]) != "done":
                 raise ToolError("no: a lesson requires status done")
-            updates = dict(type_updates)
+            updates = {**type_updates, **self._priority_change(row, priority_update)}
             self._update_waiting(conn, row, args)
             if "labels" in args:
                 labels = args["labels"]
@@ -3532,6 +3646,7 @@ class BoardService:
                 if updates.get("ask") is not None
                 else {"text": review_edit_text}
             )
+            ask = self._priority_note(ask, updates)
             self._record_review_withdrawal(conn, row, status, reason)
             self._log(
                 conn,
@@ -3700,6 +3815,31 @@ class BoardService:
             )
 
     def decide(self, task, choice=None, reply=None, then="return", version=None):
+        audited = []
+        try:
+            return self._decide(task, choice, reply, then, version, audited)
+        except BaseException:
+            # The audit row was written inside the board transaction. The log is
+            # append-only, so a rollback after it appends a row that cancels it.
+            p = self.principal
+            for seq, card in audited:
+                try:
+                    self.ctx.db.audit(
+                        action=decide_grant.ROLLBACK_ACTION,
+                        decision="rolled_back",
+                        workspace_id=p.workspace_id,
+                        user_id=p.user_id,
+                        connection_id=p.connection_id,
+                        auth=p.auth,
+                        tool="decide",
+                        reason=f"audit_seq={seq}",
+                        target_ids=[card],
+                    )
+                except Exception as exc:
+                    log_failure(logger, "delegated decide rollback audit failed", exc)
+            raise
+
+    def _decide(self, task, choice, reply, then, version, audited):
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             p = self.principal
@@ -3710,11 +3850,29 @@ class BoardService:
                 and coordinator.actor == p.actor == row["ask_to"]
                 and row["review_kind"] == "decision"
             )
+            # An owner's own app may answer only asks addressed to that owner;
+            # seats and board coordinators are agents, never the owner's app.
+            delegated = (
+                not addressed
+                and decide_grant.answers_for(p, row)
+                and not self._agent_connection(conn, p)
+            )
             if not addressed:
                 _owner(p)
-                if not p.person:
+                if not p.person and not delegated:
                     raise ToolError("no: only a signed-in workspace owner can answer this")
-            self._write(board)
+            if delegated:
+                # The app holds memory:write and may see the board, and its owner,
+                # as a person, may write the board's wing: what the owner could
+                # decide in the browser. The app's own write wings do not apply.
+                if (
+                    not p.policy.has_scope("memory:write")
+                    or not p.policy.can_read_wing(board["wing"])
+                    or not self._owner_writes(board["wing"])
+                ):
+                    raise ToolError("no: this connection cannot change this board")
+            else:
+                self._write(board)
             self._version(conn, row, version)
             if row["status"] != "review":
                 raise ToolError("no: card is not in review")
@@ -3792,7 +3950,60 @@ class BoardService:
                     "ask_to": row["ask_to"],
                 },
             )
+            if delegated:
+                # Inside the board transaction: a failed audit write fails the answer.
+                # A later rollback appends a cancelling row in decide().
+                seq = self.ctx.db.audit(
+                    action=decide_grant.AUDIT_ACTION,
+                    decision="ok",
+                    workspace_id=p.workspace_id,
+                    user_id=p.user_id,
+                    connection_id=p.connection_id,
+                    auth=p.auth,
+                    tool="decide",
+                    reason=f"board={board['slug']}",
+                    target_ids=[str(row["id"])],
+                )
+                audited.append((seq, str(row["id"])))
             return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def _owner_writes(self, wing):
+        """Whether the app's person, signed in, could write this wing right now."""
+        p = self.principal
+        person = sessions.person_principal(self.ctx.db, p.user_id, p.workspace_id)
+        return bool(
+            person is not None
+            and person.role == "owner"
+            and person.policy.has_scope("memory:write")
+            and person.policy.can_read_wing(wing)
+            and person.policy.can_write_wing(wing)
+        )
+
+    def _clear_coordinator_grant(self, actor, reason):
+        """Clear a ``conn:`` coordinator's stored cards:decide grant (errors propagate)."""
+        if not actor or not actor.startswith("conn:"):
+            return
+        try:
+            row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+        except ControlError:
+            return  # no such connection: nothing to clear
+        self.ctx.db.clear_decide(row["id"], reason=reason, user_id=self.principal.user_id)
+
+    def coordinator_actors(self):
+        """Every board coordinator actor in this workspace (archived boards included)."""
+        with self.store.connection() as conn:
+            return frozenset(
+                r[0]
+                for r in conn.execute(
+                    "SELECT coordinator FROM boards WHERE coordinator IS NOT NULL"
+                )
+            )
+
+    def _agent_connection(self, conn, p):
+        """A project seat or any board's coordinator: agent machinery, not an owner's app."""
+        return decide_grant.is_seat(self.ctx.db, p.connection_id, p.client) or bool(
+            conn.execute("SELECT 1 FROM boards WHERE coordinator=? LIMIT 1", (p.actor,)).fetchone()
+        )
 
     def needs_me(self, format="list"):
         if not self.principal.policy.has_scope(
@@ -3845,7 +4056,36 @@ class BoardService:
             return result
         if self.principal.role == "owner":
             groups["coordinator_waiting"] = self._coordinator_waiting()
+            groups["orchestrator_failing"] = self._orchestrator_failing()
+            groups["orchestrator_stalled"] = self._orchestrator_stalled()
         return groups
+
+    def _orchestrator_stalled(self):
+        if not self.principal.person:
+            return []
+        from commonplace.orch import stall
+
+        return [
+            item
+            for item in stall.stalled(self.ctx.gateway, self.principal.workspace_id)
+            if self._visible_board_slug(item["board"])
+        ]
+
+    def _orchestrator_failing(self):
+        if not self.principal.person:
+            return []
+        from commonplace.orch import triggers
+
+        return [
+            item
+            for item in triggers.failing(self.ctx.gateway, self.principal.workspace_id)
+            if self._visible_board_slug(item["board"])
+        ]
+
+    def _visible_board_slug(self, slug):
+        with self.store.connection() as conn:
+            row = conn.execute("SELECT wing FROM boards WHERE slug=?", (slug,)).fetchone()
+        return row is not None and self.principal.policy.can_read_wing(row["wing"])
 
     def seed_card(
         self,
