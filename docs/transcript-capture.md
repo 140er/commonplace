@@ -80,8 +80,8 @@ supplied hook events. The [live-sync daemon](live-sync.md) also checks selected
 files every two seconds.
 ### Offline spool and retry
 
-The capture hook does not wait for the hub. It writes the hook JSON, unchanged,
-to a private spool (`~/.commonplace/spool`, directory mode 0700, files 0600,
+The capture hook does not wait for the hub. It writes the hook JSON, unchanged (session metadata and the
+transcript path, no transcript text), to a private spool (`~/.commonplace/spool`, directory mode 0700, files 0600,
 written atomically) and returns. The detached child then uploads spooled items
 oldest first through the same cursor protocol, sending a `client_op_id` of the
 item key and offset, so a repeated send is a no-op on the hub. An item is deleted

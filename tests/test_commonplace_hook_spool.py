@@ -487,3 +487,49 @@ def test_the_unreachable_hub_costs_the_hook_nothing(tmp_path, monkeypatch):
         runs.append(time.perf_counter() - started)
     assert max(runs) < 0.5
     assert len(Spool(hook_spool.default_root(tmp_path / "home")).items()) == 5
+
+
+def test_a_transcript_of_many_chunks_uploads_in_one_drain_without_backoff(
+    surface, tmp_path, monkeypatch
+):
+    s = surface
+    url, bearer = hub(s, monkeypatch)
+    monkeypatch.setattr(capture_client, "CHUNK_BYTES", 300)
+    path = tmp_path / "long.jsonl"
+    path.write_bytes("".join(native(text=f"turn {n}") for n in range(200)).encode())
+    spool = Spool(tmp_path / "spool", clock=Clock())
+    spool.enqueue("claude-code", payload_for(path))
+    assert spool.drain(hook_spool.uploader(url, bearer)) == "done"
+    assert spool.items() == [] and spool.state() == {}
+    state = capture_client.request(
+        capture_client.endpoint(url),
+        bearer,
+        "GET",
+        "/api/capture?source=claude-code&thread_id=session-1",
+    )
+    assert state["offset"] == path.stat().st_size
+
+
+def test_a_cursor_that_does_not_advance_is_a_failure_not_an_endless_loop(tmp_path):
+    spool = Spool(tmp_path / "spool", clock=Clock())
+    spool.enqueue("claude-code", payload_for(tmp_path / "s.jsonl"))
+    upload = hook_spool.uploader(CLOSED_PORT_URL, "token")
+
+    def stuck(target, token, source, path, op_id=None):
+        return {"status": "appended", "offset": 10}
+
+    with (
+        patch.object(capture_client, "request", return_value={"enabled": True}),
+        patch.object(capture_client, "sync_file", stuck),
+    ):
+        assert spool.drain(upload) == "failed"
+    assert len(spool.items()) == 1
+
+
+def test_items_removed_by_a_concurrent_drain_do_not_break_enqueue_or_status(tmp_path):
+    spool = Spool(tmp_path / "spool")
+    spool.enqueue("codex", "{}")
+    ghost = spool.root / "99999999999999999999-gone.json"
+    with patch.object(Spool, "items", lambda self: [*sorted(self.root.glob("0*.json")), ghost]):
+        assert spool.status()["pending"] == 2
+        assert spool.enqueue("codex", "{}") is not None

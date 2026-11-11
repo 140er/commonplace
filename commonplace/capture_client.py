@@ -63,7 +63,7 @@ def request(target, token, method, route, body=None):
         if response.status == 429:
             return {"status": "deferred"}
         if response.status != 200 or len(raw) > 65536:
-            # 409 covers a cursor race and a workspace opt-out; both resolve on a fresh cursor read.
+            # 409 is a cursor race (another writer moved the cursor); a fresh cursor read resolves it.
             failure = (
                 CaptureUnavailable
                 if response.status in (408, 409) or response.status >= 500

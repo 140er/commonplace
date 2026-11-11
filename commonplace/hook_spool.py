@@ -34,9 +34,8 @@ MAX_LOG_BYTES = 256 * 1024
 BACKOFF_BASE_S = 5
 BACKOFF_CAP_S = 900
 # Consecutive failures of the same head item before it is set aside; with the
-# backoff above this is roughly an hour and a half.
+# backoff above the delays before giving up add up to about 66 minutes.
 MAX_ATTEMPTS = 12
-MAX_CHUNKS_PER_ITEM = 64
 SOURCES = ("claude-code", "codex")
 
 
@@ -106,6 +105,14 @@ def _sync_directory(directory):
         pass
     finally:
         os.close(descriptor)
+
+
+def _size(path):
+    """File size, or None when a concurrent drain already removed it."""
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
 
 
 def payload_path(payload):
@@ -194,7 +201,7 @@ class Spool:
             if len(envelope) > self.max_bytes:
                 self.log("dropped", key=key, reason="item_larger_than_spool", bytes=len(envelope))
                 return None
-            existing = [(p, p.stat().st_size) for p in self.items() if p.exists()]
+            existing = [(p, size) for p in self.items() if (size := _size(p)) is not None]
             total = sum(size for _, size in existing) + len(envelope)
             while existing and (len(existing) + 1 > self.max_items or total > self.max_bytes):
                 victim, size = existing.pop(0)
@@ -300,7 +307,7 @@ class Spool:
         state = self.state()
         return {
             "pending": len(items),
-            "pending_bytes": sum(p.stat().st_size for p in items if p.exists()),
+            "pending_bytes": sum(_size(p) or 0 for p in items),
             "rejected": len(list((self.root / "rejected").glob("*.json"))),
             "failures": state.get("failures", 0),
             "next_attempt_at": state.get("next_at"),
@@ -326,7 +333,8 @@ def uploader(url, token):
         path = payload_path(item["payload"])
         if path is None:
             raise Permanent("payload names no absolute transcript path")
-        for _ in range(MAX_CHUNKS_PER_ITEM):
+        offset = -1
+        while True:
             try:
                 result = capture_client.sync_file(target, token, item["source"], path, item["key"])
             except capture_client.CaptureUnavailable as error:
@@ -342,7 +350,11 @@ def uploader(url, token):
                 raise Transient("hub asked to retry later")
             if status in ("unchanged", "duplicate"):
                 return
-        raise Transient("transcript larger than one pass; continuing")
+            # Each appended chunk moves the hub's cursor; a large transcript is
+            # progress, not failure. A cursor that does not move would loop forever.
+            if type(result.get("offset")) is not int or result["offset"] <= offset:
+                raise Transient("hub cursor did not advance")
+            offset = result["offset"]
 
     return upload
 
