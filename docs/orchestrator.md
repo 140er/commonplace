@@ -157,11 +157,17 @@ Inside it, in this order:
 3b. **Path contracts.** A card with `paths` (canonical repo-relative globs, set
    with `task_update`) is refused with `path_overlap` (409; details `card`,
    `paths`, `other_paths`) while another card of the board that holds a start
-   declares a glob that can match the same path. Holding a start means a live
-   runner job (whatever the card's status) or `doing` with a connection
-   assignee. The contracts are read inside the write lock. `card_start` on a
-   board without an orchestrator config runs the same check before the job is
-   inserted. Cards without a contract never conflict.
+   declares a glob that can match the same path. Holding a start means a
+   runner job that is queued, leased, starting, uncertain or started (a started
+   job counts whatever its age, unlike the cap's one-hour hold; no state ends
+   it) whatever the card's status, or `doing` with a connection assignee. The
+   jobs, the doing cards and the contracts are read inside the write lock, and a
+   running card's paths are read live, so clearing them (`task_update(paths=[])`)
+   releases the card; no owner action ends a started job. Unreadable stored
+   contracts count as `**`; more than 200 000 glob pairs refuse with
+   `path_contract_too_large`. `card_start` on a board without an orchestrator
+   config runs the same check before the job is inserted. Cards without a
+   contract never conflict.
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with

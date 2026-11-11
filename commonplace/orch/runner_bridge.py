@@ -342,16 +342,23 @@ def request_key_for(path: str, *, role=None, step_key=None, event=None, request_
 # -------------------------------------------------------------- fenced start
 
 
-def _live_cards(conn, board: str, now: str) -> set:
+def _live_cards(conn, board: str, now: str, *, hold: bool = True) -> set:
     """Cards with a live runner job on ``board``: queued, leased, starting or uncertain,
-    or started within the hold, whatever the card's own status says."""
-    rows = conn.execute(
+    or started, whatever the card's own status says. ``hold`` (the cap) counts a started
+    job for ``STARTED_HOLD_SECONDS`` only; without it (path contracts) a started job counts
+    whatever its age, because a started job never leaves that state."""
+    sql = (
         "SELECT DISTINCT task_number FROM runner_jobs WHERE board_slug=? AND "
-        "(state IN ('queued','leased','starting','uncertain') "
-        "OR (state='started' AND started_at>?))",
-        (board, jobs._after(now, -jobs.STARTED_HOLD_SECONDS)),
-    ).fetchall()
-    return {row[0] for row in rows}
+        "(state IN ('queued','leased','starting','uncertain') OR (state='started'"
+    )
+    if hold:
+        rows = conn.execute(
+            sql + " AND started_at>?))",
+            (board, jobs._after(now, -jobs.STARTED_HOLD_SECONDS)),
+        )
+    else:
+        rows = conn.execute(sql + "))", (board,))
+    return {row[0] for row in rows.fetchall()}
 
 
 def _cap_count(conn, plan: Plan, now: str) -> int:
@@ -362,16 +369,22 @@ def contract_refusal(
     conn, *, workspace_dir, board_slug: str, board_id: int, card: int, now: str
 ) -> StartRefused | None:
     """``path_overlap`` when ``card`` declares a path contract that overlaps the contract
-    of another card of the board that holds a start: a live runner job (whatever the
-    card's status) or ``doing`` with a ``conn:`` assignee. Call it inside the runner
-    write transaction (``conn``): the contracts are read there, next to the live jobs.
-    A card with no contract, or running next to cards with none, is never refused."""
+    of another card of the board that holds a start: a runner job that has not failed or
+    been cancelled (a started job counts whatever its age, because nothing ends it) or
+    ``doing`` with a ``conn:`` assignee. Call it inside the runner write transaction
+    (``conn``): the jobs, the doing cards and every contract are read there. A running
+    card's paths are read as they are now, so clearing them releases the card. An
+    unreadable stored contract counts as ``**``. A card with no contract, or running next
+    to cards with none, is never refused; too many glob pairs refuse
+    (``path_contract_too_large``) rather than hold the lock."""
     from commonplace.projects import orchestration as orch
 
-    live = _live_cards(conn, board_slug, now)
+    live = _live_cards(conn, board_slug, now, hold=False)
     with orch.board_read(workspace_dir) as boards:
         row = boards.execute("SELECT paths FROM tasks WHERE id=?", (card,)).fetchone()
         mine = contracts.parse(row["paths"] if row is not None else None)
+        if mine is None:
+            mine = list(contracts.ANY)
         if not mine:
             return None
         running = live | {
@@ -391,13 +404,26 @@ def contract_refusal(
             )
             if r["id"] in running
         ]
+    budget = contracts.Budget()
     for other, globs in declared:
-        pair = contracts.first_overlap(mine, globs)
+        if globs is None:
+            globs = list(contracts.ANY)
+        try:
+            pair = contracts.first_overlap(mine, globs, budget)
+        except contracts.TooLarge:
+            return StartRefused(
+                "path_contract_too_large",
+                f"card #{card}'s path contract is too large to compare with the running "
+                f"cards' contracts; narrow the paths of #{card} or of #{other}",
+                card=other,
+                paths=mine,
+            )
         if pair is not None:
             return StartRefused(
                 "path_overlap",
                 f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of "
-                f"running card #{other}; start it after #{other} finishes or narrow the paths",
+                f"running card #{other}; start it after #{other} finishes, narrow the paths, "
+                f"or clear #{other}'s paths (task_update paths=[]) once its work is finished",
                 card=other,
                 paths=mine,
                 other_paths=globs,

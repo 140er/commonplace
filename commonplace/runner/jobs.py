@@ -291,7 +291,9 @@ def create(
 
     requested_by is user:<id> or conn:<connection_id>, never a connection name.
     ``guard(conn, now)``, when given, runs inside the write transaction after the other
-    guards and may raise to refuse the start.
+    guards and may raise to refuse the start. It is opt-in: ``card_start`` is the only
+    caller and passes the path-contract check (``runner_bridge.contract_refusal``); a new
+    caller that starts cards must pass it too, or contracts are silently skipped.
     """
     from commonplace.projects import orchestration as orch
 

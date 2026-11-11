@@ -1797,3 +1797,133 @@ def test_c389_contract_is_canonical_when_stored(world):
     for bad in (["../x"], ["a/../.."], ["*/../x"]):
         with pytest.raises(ToolError, match="path"):
             world.update(card, paths=bad)
+
+
+def _age_job(world, card, seconds):
+    with world.js.connection() as conn:
+        conn.execute(
+            "UPDATE runner_jobs SET started_at=? WHERE task_number=?",
+            (jobs._after(jobs._now(), -seconds), card),
+        )
+
+
+def test_c389_started_job_blocks_whatever_its_age(world):
+    """A started job never leaves that state, so its card keeps its contract for as long
+    as the job exists, even when the card went to review and the hour hold is long over."""
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/api/**")
+    _declare(world, second, "src/api/users.py")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    world.launch(world.lease())
+    assert world.jobs_for(first)[0]["state"] == "started"
+    _age_job(world, first, 2 * 3600)
+    _set_status(world, first, "done")
+    exc = refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+    assert exc.details["card"] == first
+    assert "paths=[]" in str(exc)  # how an owner releases a finished card
+    assert world.jobs_for(second) == []
+
+
+def test_c389_aged_started_job_still_counts_for_the_cap_only_within_the_hold(world):
+    """The cap keeps its hour hold: only the path check ignores the age."""
+    first, second = world.card(), world.card()
+    world.configure(max_agents=1)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    world.launch(world.lease())
+    _age_job(world, first, 2 * 3600)
+    _set_status(world, first, "done")
+    world.orch_start(world.a, lease, second, "s2")  # no contracts: the old cap behaviour
+    assert len(world.all_jobs()) == 2
+
+
+def test_c389_clearing_a_running_cards_paths_releases_it(world):
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/**")
+    _declare(world, second, "src/a.py")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+    world.update(first, paths=[])
+    world.orch_start(world.a, lease, second, "s2")
+    assert len(world.all_jobs()) == 2
+
+
+def _raw_paths(world, card, raw):
+    with BoardStore(world.gw.workspace_dir(world.ws)).transaction() as conn:
+        if "paths" not in {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}:
+            conn.execute("ALTER TABLE tasks ADD COLUMN paths TEXT")
+        conn.execute("UPDATE tasks SET paths=? WHERE id=?", (raw, card))
+
+
+@pytest.mark.parametrize("raw", ["not json", '{"a": 1}', '["src/a", 3]'])
+def test_c389_unreadable_running_contract_refuses(world, raw):
+    first, second = world.card(), world.card()
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    _raw_paths(world, first, None)
+    world.orch_start(world.a, lease, first, "s1")
+    _raw_paths(world, first, raw)
+    _declare(world, second, "elsewhere/x.py")
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+
+
+def test_c389_unreadable_own_contract_refuses(world):
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/**")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    _raw_paths(world, second, "not json")
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+
+
+def test_c389_oversized_stored_contracts_refuse_instead_of_holding_the_lock(world):
+    """Contracts written outside normalize can expand far past what is stored today; the
+    comparison is bounded and fails closed."""
+    first, second = world.card(), world.card()
+    wide = "{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}"
+    _declare(world, first, *[f"s{i}/{wide}/x" for i in range(16)])
+    _declare(world, second, *[f"t{i}/{wide}/y" for i in range(16)])
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    started = time.monotonic()
+    exc = refused("path_contract_too_large", world.orch_start, world.a, lease, second, "s2")
+    assert exc.details["card"] == first
+    assert time.monotonic() - started < 2
+    assert world.jobs_for(second) == []
+
+
+def test_c389_doing_cards_are_read_inside_the_lock(world, monkeypatch):
+    """A card that becomes doing after the pre-transaction snapshot still blocks."""
+    first, second = world.card(), world.card()
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    real = runner_bridge.prepare
+
+    def take_after_prepare(*args, **kwargs):
+        plan = real(*args, **kwargs)
+        _declare(world, first, "pkg/**")
+        _declare(world, second, "pkg/mod.py")
+        BoardService(world.ctx(world.b)).task_take_next(board=BOARD, task=first)
+        return plan
+
+    monkeypatch.setattr(runner_bridge, "prepare", take_after_prepare)
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+
+
+def test_c389_braces_are_refused_at_store_time(world):
+    card = world.card()
+    for bad in (["{../x,y}"], ["src/{a"], ["{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}"]):
+        with pytest.raises(ToolError, match="path"):
+            world.update(card, paths=bad)
+    assert world.update(card, paths=["src/*.{ts,tsx}", "{./a,b}"])["paths"] == [
+        "src/*.ts",
+        "src/*.tsx",
+        "a",
+        "b",
+    ]
