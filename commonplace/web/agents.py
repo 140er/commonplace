@@ -32,7 +32,7 @@ def _read_wings(gateway, principal, data):
     return list(dict.fromkeys(canonical_wing(wing) for wing in wings))
 
 
-def connection_view(row):
+def connection_view(row, db=None):
     view = {
         key: row[key]
         for key in (
@@ -53,6 +53,13 @@ def connection_view(row):
     view["read_wings"] = list(policy.read_wings)
     view["import_read"] = policy.has_scope(import_grant.READER_SCOPE)
     view["decide"] = policy.has_scope(decide_grant.DECIDE_SCOPE)
+    # Offered only on the owner's own active top-level PATs; never agents or seats.
+    view["decide_grantable"] = bool(
+        db is not None
+        and row["auth"] == "pat"
+        and not row["revoked_at"]
+        and decide_grant.refusal(db, row) is None
+    )
     return view
 
 
@@ -62,16 +69,14 @@ def _update_decide(gateway, h, principal, row, data):
         return
     try:
         gateway.db.set_connection_decide(
-            row["id"], data["decide"], actor=principal.user_id, workspace_ref=principal.workspace_id
+            row["id"], data["decide"], actor=principal, workspace_ref=principal.workspace_id
         )
-    except ControlError:
-        send_json(h, 409, {"error": decide_grant.TOP_LEVEL_TEXT})
+    except ControlError as exc:
+        # Specific, owner-safe reasons: inactive, runner-linked, agent or not top-level.
+        send_json(h, 409, {"error": str(exc)})
         return
-    send_json(
-        h,
-        200,
-        {"connection": connection_view(gateway.db.connection(row["id"], principal.workspace_id))},
-    )
+    view = connection_view(gateway.db.connection(row["id"], principal.workspace_id), gateway.db)
+    send_json(h, 200, {"connection": view})
 
 
 def _update_read_wings(gateway, h, principal, row, data):
@@ -95,7 +100,11 @@ def _update_read_wings(gateway, h, principal, row, data):
     send_json(
         h,
         200,
-        {"connection": connection_view(gateway.db.connection(row["id"], principal.workspace_id))},
+        {
+            "connection": connection_view(
+                gateway.db.connection(row["id"], principal.workspace_id), gateway.db
+            )
+        },
     )
 
 
@@ -178,6 +187,7 @@ def install(gateway):
                     name=data["name"],
                     client=data.get("client", "generic"),
                     parent=parent,
+                    grantor=principal,
                     expires_days=TOKEN_DAYS,
                     policy=Policy.build(
                         profile="slim",
@@ -255,7 +265,7 @@ def install(gateway):
             h,
             status,
             {
-                "connection": connection_view(row),
+                "connection": connection_view(row, gateway.db),
                 "token": token,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },

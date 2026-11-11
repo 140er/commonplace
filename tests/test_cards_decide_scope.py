@@ -15,6 +15,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext
 from commonplace.policy import Policy
 from tests._commonplace_helpers import hub_fixture as hub_fixture
+from tests._projects_helpers import projects_hub_fixture as projects_hub_fixture
 from tests.test_commonplace_oauth import Client
 
 OPTIONS = ["Ship it", "Hold"]
@@ -24,12 +25,16 @@ HIDDEN = "tool not allowed for this connection"
 FULL = "memory:read memory:write cards:decide"
 # Literal copies: this file must run (and fail behaviourally) on a base without the scope.
 SCOPE_TEXT = (
-    "Allow this app to answer your Needs-me questions as you. It can answer only questions "
-    "addressed to you, never another person's, and every answer is recorded with this "
-    "connection. You can stop this at any time under Agents."
+    "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
+    "It can answer only questions addressed to you, never another person's, and only on "
+    "boards it may write to. Every answer is recorded with this connection. You can stop "
+    "this at any time under Agents."
 )
 OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
 TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
+AGENT_TEXT = "Agent, runner and orchestrator connections cannot answer Needs-me questions."
+INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
+OAUTH_GRANT_TEXT = "An OAuth app gets this only through a fresh sign-in consent."
 AUDIT_ACTION = "card.decide.delegated"
 
 
@@ -72,7 +77,10 @@ def cookie_for(hub, email):
 def world(hub):
     person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
     owner = service(hub, person)
-    owner.board_add(slug="work", wing="shared")
+    # Default browser-made and OAuth apps write only the inbox wing, so the
+    # answerable board lives there; "team" is a board they cannot write.
+    owner.board_add(slug="work", wing="inbox")
+    owner.board_add(slug="team", wing="shared")
     asker_token = hub.owner_token("asker")
     asker = service(hub, hub.gateway.authenticate(f"Bearer {asker_token}"))
     return SimpleNamespace(
@@ -85,11 +93,11 @@ def world(hub):
     )
 
 
-def ask(w, question="Ship the release?", recipient=None):
+def ask(w, question="Ship the release?", recipient=None, board="work"):
     card = w.asker.ask(
         f"{question} Choose one of the options.",
         options=OPTIONS,
-        board="work",
+        board=board,
         context="The release notes are ready for review.",
     )
     assert card["ask_to"] == f"user:{recipient or w.hub.admin}"
@@ -312,7 +320,7 @@ def test_a4_non_owner_or_agent_cannot_grant(world):
     assert status == 201
     child_id = child["connection"]["id"]
     status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{child_id}", {"decide": True})
-    assert status == 409 and refused["error"] == TOP_LEVEL_TEXT
+    assert status == 409 and refused["error"] == AGENT_TEXT
 
     # Control-level guards: only the owner's own top-level connection.
     policy = Policy.build(scopes=["memory:read", "cards:decide"], read_wings=["*"])
@@ -417,3 +425,321 @@ def test_a6_audit_row_per_delegated_decide(world):
         and r["reason"] == "board=work"
         for r in rows
     )
+
+
+# ── review round 1: seats, write wings, audit timing, control layer, messages ──
+
+
+def _seat(projects_hub):
+    h = projects_hub
+    status, body = h.connect(h.owner, "work", {})
+    assert status in (200, 201), body
+    return body["connection"]["id"], body["token"]
+
+
+def _owner_ask(hub, board="work", asker=None):
+    """An agent ask routed to the owner even when the board has a coordinator."""
+    if asker is None:
+        asker = service(hub, hub.gateway.authenticate(f"Bearer {hub.owner_token('asker')}"))
+    card = asker.ask(
+        "Should the owner ship this release now? Choose one.",
+        options=OPTIONS,
+        board=board,
+        context="The release notes are ready for review.",
+        person_reason="Only the owner decides releases.",
+    )
+    assert card["ask_to"] == f"user:{hub.admin}"
+    return card["number"], card["version"]
+
+
+def test_r1_seats_are_never_granted_and_never_answer(projects_hub):
+    h = projects_hub
+    hub = h.hub
+    seat_id, seat_token = _seat(h)
+    status, refused = api(hub, h.owner, "PATCH", f"/api/connections/{seat_id}", {"decide": True})
+    assert status == 409 and refused["error"] == AGENT_TEXT, refused
+    status, listing = api(hub, h.owner, "GET", "/api/connections")
+    seat_row = next(c for c in listing["connections"] if c["id"] == seat_id)
+    assert seat_row["decide"] is False and seat_row["decide_grantable"] is False
+    # A grant stored by other means (an older build) still never answers.
+    with hub.db._lock:
+        row = hub.db._conn.execute(
+            "SELECT policy FROM connections WHERE id=?", (seat_id,)
+        ).fetchone()
+        policy = json.loads(row["policy"])
+        policy["scopes"] = sorted(set(policy["scopes"]) | {"cards:decide"})
+        hub.db._conn.execute(
+            "UPDATE connections SET policy=? WHERE id=?", (json.dumps(policy), seat_id)
+        )
+    assert hub.gateway.authenticate(f"Bearer {seat_token}").policy.has_scope("cards:decide")
+    number, version = _owner_ask(hub)
+    w = SimpleNamespace(hub=hub)
+    status, refused = rest_decide(w, seat_token, number, version)
+    assert status == 403 and REFUSAL in refused["error"], refused
+
+
+def test_r1_board_coordinator_never_answers_as_the_owner(world):
+    w = world
+    hub = w.hub
+    token = hub.token(
+        "coordinator-app",
+        profile="full",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["*"],
+        write_wings=["inbox"],
+        trust="trusted",
+    )
+    cid = hub.gateway.authenticate(f"Bearer {token}").connection_id
+    status, body = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
+    assert status == 200 and body["connection"]["decide"] is True
+    w.owner.board_set("work", "conn:coordinator-app")
+    number, version = _owner_ask(hub, asker=w.asker)
+    status, refused = rest_decide(w, token, number, version)
+    assert status == 403 and REFUSAL in refused["error"], refused
+    assert w.owner.task_show(number)["status"] == "review"
+    assert delegated_audit(hub) == []
+
+
+def test_r2_delegated_answer_needs_write_access_to_the_board(world):
+    w = world
+    hub = w.hub
+    inbox_app, _cid = owner_app(w)
+    # Default app: it writes only inbox, so the shared-wing board is refused.
+    number, version = ask(w, "Team board question?", board="team")
+    status, refused = rest_decide(w, inbox_app, number, version)
+    assert status == 403 and "cannot change this board" in refused["error"], refused
+    assert w.owner.task_show(number)["status"] == "review"
+    # An app that may write the board's wing answers it once the owner grants it.
+    writer = hub.token(
+        "team-app",
+        profile="slim",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["*"],
+        write_wings=["shared"],
+        trust="standard",
+    )
+    wid = hub.gateway.authenticate(f"Bearer {writer}").connection_id
+    assert api(hub, w.cookie, "PATCH", f"/api/connections/{wid}", {"decide": True})[0] == 200
+    status, card = rest_decide(w, writer, number, version)
+    assert status == 200, card
+    assert [r["connection_id"] for r in delegated_audit(hub)] == [wid]
+
+
+def test_r3_no_audit_row_for_an_answer_that_rolls_back(world, monkeypatch):
+    w = world
+    token, _cid = owner_app(w)
+    number, version = ask(w)
+    app = service(w.hub, w.hub.gateway.authenticate(f"Bearer {token}"))
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("board commit failed")
+
+    monkeypatch.setattr(app, "_card", fail)
+    with pytest.raises(RuntimeError):
+        app.decide(number, choice=OPTIONS[0], version=version)
+    assert w.owner.task_show(number)["status"] == "review"
+    assert delegated_audit(w.hub) == []
+
+
+def test_r4_control_layer_needs_the_signed_in_owner(world):
+    w = world
+    hub = w.hub
+    status, body = mint(w)
+    assert status == 201
+    cid = body["connection"]["id"]
+    agent = hub.gateway.authenticate(f"Bearer {w.asker_token}")
+    # A bare user id or an agent principal is not the signed-in owner.
+    for actor in (hub.admin, agent):
+        with pytest.raises(ControlError):
+            hub.db.set_connection_decide(cid, True, actor=actor, workspace_ref=hub.workspace)
+    with pytest.raises(ControlError):
+        hub.db.create_token(
+            workspace_ref=hub.workspace,
+            user_ref=hub.admin,
+            name="no-grantor",
+            client="test",
+            policy=Policy.build(scopes=["memory:read", "cards:decide"], read_wings=["*"]),
+            actor=hub.admin,
+        )
+    assert "no-grantor" not in {c["name"] for c in hub.db.connections(hub.workspace)}
+    # OAuth code minting never issues the scope to an agent principal.
+    from commonplace.oauth import store
+
+    client = Client(hub)
+    client_row = store.client(hub.db, client.register())
+    params = {
+        "scope": FULL,
+        "redirect_uri": json.loads(client_row["redirect_uris"])[0],
+        "resource": "unused",
+        "code_challenge": "x" * 43,
+    }
+    with pytest.raises(store.OAuthError):
+        with hub.db._lock, hub.db._tx() as conn:
+            store.create_code(conn, client_row, agent, params)
+
+
+def test_r5_refusal_messages_name_the_actual_reason(world):
+    w = world
+    hub = w.hub
+    _token, cid = owner_app(w)
+    status, body = mint(w)
+    revoked = body["connection"]["id"]
+    assert api(hub, w.cookie, "DELETE", f"/api/connections/{revoked}")[0] == 200
+    status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{revoked}", {"decide": True})
+    assert (status, refused["error"]) == (409, INACTIVE_TEXT)
+    # A runner-linked connection keeps the runner message.
+    from commonplace import control_db
+
+    with hub.db._lock:
+        control_db.link_runner(hub.db._conn, cid, "mach_example", "worker")
+    status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": False})
+    assert (status, refused["error"]) == (409, "manage this runner under /api/runners")
+    grant = oauth_grant(hub)
+    status, refused = api(
+        hub, w.cookie, "PATCH", f"/api/connections/{grant.p.connection_id}", {"decide": True}
+    )
+    assert (status, refused["error"]) == (409, OAUTH_GRANT_TEXT)
+
+
+def test_r6_losing_ownership_clears_the_stored_grant(world):
+    w = world
+    hub = w.hub
+    token, cid = owner_app(w)
+    co_owner = hub.db.create_user("co-owner@example.com")
+    hub.db.add_member(hub.workspace, co_owner, "owner", actor=hub.admin)
+    for _round in range(2):
+        with hub.db._lock:
+            for role in ("member", "owner"):
+                hub.db._conn.execute(
+                    "UPDATE memberships SET role=? WHERE workspace_id=? AND user_id=?",
+                    (role, hub.workspace, hub.admin),
+                )
+        stored = json.loads(hub.db.connection(cid, hub.workspace)["policy"])
+        assert "cards:decide" not in stored["scopes"]
+        assert not hub.gateway.authenticate(f"Bearer {token}").policy.has_scope("cards:decide")
+        # Granting again needs the owner's fresh, explicit action.
+        assert api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})[0] == 200
+    lost = [
+        r
+        for r in hub.db.audit_entries(hub.workspace, limit=500)
+        if r["action"] == "connection.decide.revoke" and r["reason"] == "ownership lost"
+    ]
+    assert [r["connection_id"] for r in lost] == [cid, cid]
+
+
+def test_r7_consent_copy_has_one_source_and_names_the_scope(world):
+    from pathlib import Path
+
+    w = world
+    grant = oauth_grant(w.hub)
+    label = re.search(r'name="grant_decide" value="1"> ([^<]+)</label>', grant.page)[1]
+    assert unescape(label) == SCOPE_TEXT and "cards:decide" in SCOPE_TEXT
+    status, listing = api(w.hub, w.cookie, "GET", "/api/connections")
+    assert status == 200 and listing["decide_consent"] == SCOPE_TEXT
+    static = Path(__file__).parents[1] / "commonplace" / "web" / "static" / "agents.js"
+    assert "answer your Needs-me questions as you" not in static.read_text()
+
+
+# ── moved from review probes: refresh, spellings, runners, other workspaces ──
+
+
+def test_refresh_does_not_restore_a_withdrawn_grant(world):
+    w = world
+    hub = w.hub
+    client = Client(hub)
+    client.login("owner@example.com")
+    cid = client.register(client_name="Owner Phone")
+    path = client.authorize_path(cid, scope=FULL)
+    _, _, page = client.request("GET", path)
+    request = unescape(re.search(r'name="request" value="([^"]+)"', page)[1])
+    _, headers, _ = client.request(
+        "POST", path, {"request": request, "decision": "allow", "grant_decide": "1"}
+    )
+    code = parse_qs(urlsplit(headers["Location"]).query)["code"][0]
+    issued = json.loads(client.exchange(cid, code)[2])
+    conn_id = hub.gateway.authenticate("Bearer " + issued["access_token"]).connection_id
+    assert api(hub, w.cookie, "PATCH", f"/api/connections/{conn_id}", {"decide": False})[0] == 200
+    status, _, raw = client.refresh(cid, issued["refresh_token"])
+    assert status == 200, raw
+    fresh = json.loads(raw)
+    assert not hub.gateway.authenticate("Bearer " + fresh["access_token"]).policy.has_scope(
+        "cards:decide"
+    )
+    number, version = ask(w, "After refresh?")
+    assert rest_decide(w, fresh["access_token"], number, version)[0] == 403
+
+
+def test_refresh_cannot_widen_into_the_scope(world):
+    client = Client(world.hub)
+    client.login("owner@example.com")
+    cid = client.register(client_name="Owner Phone")
+    path = client.authorize_path(cid, scope=FULL)
+    _, _, page = client.request("GET", path)
+    request = unescape(re.search(r'name="request" value="([^"]+)"', page)[1])
+    _, headers, _ = client.request("POST", path, {"request": request, "decision": "allow"})
+    code = parse_qs(urlsplit(headers["Location"]).query)["code"][0]
+    issued = json.loads(client.exchange(cid, code)[2])
+    assert "cards:decide" not in issued["scope"].split()
+    status, _, raw = client.refresh(cid, issued["refresh_token"], scope=FULL)
+    assert status == 400 and "invalid_scope" in raw
+
+
+def test_scope_spellings_and_untyped_consent_are_refused(world):
+    from commonplace.oauth.store import OAuthError, scope as parse_scope
+    from commonplace.policy import PolicyError
+
+    for bad in ("cards:decide,memory:read", "CARDS:DECIDE", "cards:*", "memory:*", "cards:decide_"):
+        with pytest.raises(OAuthError):
+            parse_scope(bad)
+    for bad in ("cards:decide ", "CARDS:DECIDE", "cards:*"):
+        with pytest.raises(PolicyError):
+            Policy.build(scopes=[bad])
+    for value in ("true", 1, None):
+        assert mint(world, decide=value)[0] == 400, value
+
+
+def test_runner_connections_never_answer(world):
+    from commonplace import control_db
+
+    w = world
+    hub = w.hub
+    token, cid = owner_app(w)
+    with hub.db._lock:
+        control_db.link_runner(hub.db._conn, cid, "mach_example", "worker")
+    number, version = ask(w)
+    status, refused = rest_decide(w, token, number, version)
+    assert status == 403, refused
+    status, listing = api(hub, w.cookie, "GET", "/api/connections")
+    row = next(c for c in listing["connections"] if c["id"] == cid)
+    assert row["decide_grantable"] is False
+    assert w.owner.task_show(number)["status"] == "review"
+
+
+def test_an_app_answers_only_in_its_own_workspace(world):
+    w = world
+    hub = w.hub
+    token, _cid = owner_app(w)
+    other = hub.db.create_workspace("second", hub.admin)
+    second = service(hub, sessions.person_principal(hub.db, hub.admin, other))
+    second.board_add(slug="work", wing="inbox")
+    asker_token = hub.token(
+        "second-asker",
+        workspace=other,
+        profile="full",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["*"],
+        write_wings=["*"],
+        trust="trusted",
+    )
+    asker = service(hub, hub.gateway.authenticate(f"Bearer {asker_token}"))
+    card = asker.ask(
+        "Second workspace: ship this now? Choose one.",
+        options=OPTIONS,
+        board="work",
+        context="Notes in the second workspace are ready.",
+    )
+    assert card["ask_to"] == f"user:{hub.admin}"
+    status, _ = rest_decide(w, token, card["number"], card["version"])
+    assert status == 404
+    assert second.task_show(card["number"])["status"] == "review"
+    assert delegated_audit(hub) == []

@@ -3710,15 +3710,21 @@ class BoardService:
                 and coordinator.actor == p.actor == row["ask_to"]
                 and row["review_kind"] == "decision"
             )
-            # An owner's own app may answer only asks addressed to that owner.
-            delegated = not addressed and decide_grant.answers_for(p, row)
+            # An owner's own app may answer only asks addressed to that owner;
+            # seats and board coordinators are agents, never the owner's app.
+            delegated = (
+                not addressed
+                and decide_grant.answers_for(p, row)
+                and not self._agent_connection(conn, p)
+            )
             if not addressed:
                 _owner(p)
                 if not p.person and not delegated:
                     raise ToolError("no: only a signed-in workspace owner can answer this")
             if delegated:
-                # The owner's grant replaces agent write trust, never board visibility.
-                if not p.policy.has_scope("memory:write") or not p.policy.can_read_wing(
+                # The owner's grant replaces agent write trust, never board visibility
+                # or the connection's own write wings.
+                if not p.policy.can_read_wing(board["wing"]) or not p.policy.can_write_wing(
                     board["wing"]
                 ):
                     raise ToolError("no: this connection cannot change this board")
@@ -3801,8 +3807,12 @@ class BoardService:
                     "ask_to": row["ask_to"],
                 },
             )
-            if delegated:
-                # Inside the board transaction: no delegated answer commits unaudited.
+            result = self._card(conn, task_row(conn, row["id"]), self.principal)
+        if delegated:
+            # After the board commit, so no audit row describes an answer that rolled
+            # back. The committed card event already names this connection; a failed
+            # control-log write is logged, not raised, because the answer stands.
+            try:
                 self.ctx.db.audit(
                     action=decide_grant.AUDIT_ACTION,
                     decision="ok",
@@ -3814,7 +3824,15 @@ class BoardService:
                     reason=f"board={board['slug']}",
                     target_ids=[str(row["id"])],
                 )
-            return self._card(conn, task_row(conn, row["id"]), self.principal)
+            except Exception as exc:
+                log_failure(logger, "delegated decide audit failed", exc)
+        return result
+
+    def _agent_connection(self, conn, p):
+        """A project seat or any board's coordinator: agent machinery, not an owner's app."""
+        return decide_grant.is_seat(self.ctx.db, p.connection_id, p.client) or bool(
+            conn.execute("SELECT 1 FROM boards WHERE coordinator=? LIMIT 1", (p.actor,)).fetchone()
+        )
 
     def needs_me(self, format="list"):
         if not self.principal.policy.has_scope(

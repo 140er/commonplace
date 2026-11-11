@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 from .. import urls
 from ..control_db import Principal
+from ..decide_grant import DECIDE_SCOPE
 from ..policy import Policy
 from .http import OAuthError
 
@@ -120,6 +121,14 @@ def scope(value: str | None) -> str:
     return " ".join(sorted(set(requested)))
 
 
+def conn_role(conn, principal):
+    row = conn.execute(
+        "SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?",
+        (principal.workspace_id, principal.user_id),
+    ).fetchone()
+    return row["role"] if row else None
+
+
 def _live_connection(conn, connection_id):
     row = conn.execute(
         "SELECT c.*, u.email AS user_email, u.disabled_at AS user_disabled, m.role "
@@ -198,6 +207,11 @@ def _guess_client(client_row) -> str:
 
 
 def create_code(conn, client_row, principal, parameters) -> str:
+    if DECIDE_SCOPE in parameters["scope"].split() and not (
+        principal.person and conn_role(conn, principal) == "owner"
+    ):
+        # Consent already drops an unticked or ineligible grant; never mint it otherwise.
+        raise OAuthError("invalid_scope")
     cid = "conn_" + secrets.token_hex(8)
     slug = re.sub(r"[^a-z0-9]+", "-", client_row["client_name"].lower()).strip("-")[:80] or "client"
     while True:

@@ -494,22 +494,32 @@ playbooks and the original wider orchestration acceptance remain separate work.
   only when the owner ticks the consent box, and the request must also carry
   `memory:read` and `memory:write`. Members see an owner-only notice and a forged
   tick grants nothing. Authorization-server metadata advertises the scope; OAuth
-  defaults never include it. `create_token` refuses the scope unless the holder is the
-  acting owner and the connection is top-level; the CLI refuses it; person
-  policies, profile defaults and seat or runner policies never include it.
+  defaults never include it. The control layer takes the signed-in owner's
+  principal, never a bare user id: `create_token` needs it as `grantor` for its
+  own top-level, non-seat connection; `set_connection_decide` needs it as actor
+  and refuses runner (its runner message), inactive, child, agent-started and
+  seat connections with specific 409 messages; OAuth code minting rechecks a
+  person owner. The CLI refuses it; person policies, profile defaults and seat or
+  runner policies never include it. Settings → Agents offers the grant only on
+  eligible rows, with the consent text served from one source.
 - Answering: the connection must be a live PAT or OAuth connection of a current
   owner, top-level, not a runner, hold the scope, and the ask's recipient must be
-  exactly that owner. It still needs `memory:write` and a readable board wing; the
-  grant replaces only agent write trust (`_restricted`). It cannot escalate or
-  answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
+  exactly that owner. Project seats and board coordinators are refused. It still
+  needs read and write access to the board's wing (`can_write_wing`); the grant
+  replaces only the trust-based restriction, so default inbox-writing apps
+  answer only on inbox boards. It cannot escalate or answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
   tool lists stay unchanged.
-- Audit: every delegated answer writes `audit_log` action `card.decide.delegated`
-  with user, connection id, auth kind, board and card number, inside the board
-  transaction, so no delegated answer commits unaudited. Grants and withdrawals
-  write `connection.decide.grant` and `connection.decide.revoke`.
+- Audit: the board event committed with the answer names the connection. After
+  that commit every delegated answer writes `audit_log` action
+  `card.decide.delegated` with user, connection id, auth kind, board and card
+  number, so a rolled-back answer leaves no audit row; a failed control-log write
+  is logged. Grants and withdrawals write `connection.decide.grant` and
+  `connection.decide.revoke`.
 - Revocation: `PATCH {"decide": false}` (PAT or OAuth) or revoking the connection
   takes effect on the next request; policies load on every request and lose the
-  scope when the holder stops being owner.
+  scope when the holder stops being owner. Membership triggers also remove the
+  stored grant (with a `connection.decide.revoke` audit row, reason "ownership
+  lost") when an owner is demoted or removed, so re-promotion never revives it.
 
 ### Explicit imported-history reader consent
 
