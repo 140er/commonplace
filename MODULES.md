@@ -257,6 +257,8 @@ Format (read by `commonplace orch docs-check`):
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
   - Public Space endpoint and error documentation alongside legacy board routes.
 
+  - `docs/boards/API.md` describes structured decision blocks: the `{label, detail, preview}` option shape, its bounds, and the `ask_blocks` card field; `docs/boards/schema.sql` lists the column.
+
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
   - `docs/projects.md` and `docs/orchestrator.md` state who may hold a lease on a board without `[runner]`: its own trusted project seat.
@@ -612,6 +614,8 @@ Format (read by `commonplace orch docs-check`):
   - Card339 regressions exercise MCP and HTTP routing, owner fallback, person queue visibility, withdrawal history and authorization refusals. The pinned Space tool contract records the optional person_reason parameter and matching ask/review descriptions without changing tool names or profile visibility.
 
   - `tests/test_commonplace_subagent_asks.py` covers released-card questions and coordinator routing, answers, escalation and recovery.
+
+  - `tests/test_commonplace_decision_blocks.py` and its Node harness `tests/commonplace_decision_blocks.mjs` cover structured asks from the MCP call through `needs_me` and the decide route to the Needs me blocks, with refusal controls for options that were not offered and for malformed blocks.
 
   - Shared fixtures and harnesses and every test file not listed in another block.
   - Shared fixtures and harnesses and every test file not listed in another block, including binding-epoch migration, direct fences, lock-entry instrumentation and bounded reset races.
