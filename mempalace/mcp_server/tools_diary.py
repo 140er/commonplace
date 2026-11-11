@@ -171,15 +171,27 @@ def _diary_read_response(agent_name: str, entries: list, total: int) -> dict:
     }
 
 
-def _sqlite_diary_read(agent_name: str, last_n: int, wing: str):
+# Distinct diary topics one probe may report; more is a probe fault.
+_DIARY_TOPIC_LIMIT = 1000
+
+
+def _topic_probe_result(topics, source):
+    if len(topics) > _DIARY_TOPIC_LIMIT:
+        return {"error": "diary topic probe limit exceeded", "probe_fault": True}
+    return {"topics": topics, "source": source}
+
+
+def _sqlite_diary_read(agent_name: str, last_n: int, wing: str, scope=None):
     """Read the requested diary page without cold-loading Chroma's HNSW index.
 
     ``None`` preserves the collection path for other backends, unavailable
     databases, unsupported schemas, and records SQLite cannot safely order.
-    This does not cache content or change diary chunk/total semantics.
+    This does not cache content or change diary chunk/total semantics. A
+    server-set ``scope`` probes topics or excludes them on this same store.
     """
     if not _is_chroma_backend():
         return None
+    scope = scope or {}
     try:
         from ..backends.chroma_sqlite import sqlite_diary_rows
 
@@ -189,9 +201,13 @@ def _sqlite_diary_read(agent_name: str, last_n: int, wing: str):
             agent_name=agent_name,
             wing=_palace_wing_aliases(wing) if wing else "",
             limit=last_n,
+            exclude_topics=scope.get("exclude_topics"),
+            topics_limit=_DIARY_TOPIC_LIMIT if scope.get("probe") else None,
         )
         if result is None:
             return None
+        if scope.get("probe"):
+            return _topic_probe_result(result[1], "sqlite")
         total, rows = result
         entries = []
         for _drawer_id, doc, meta in rows:
@@ -211,13 +227,22 @@ def _sqlite_diary_read(agent_name: str, last_n: int, wing: str):
 
 
 def _diary_scope(thread_scope):
-    """Server-set read scope: ``probe`` lists entry topics, ``exclude_topics`` skips them."""
+    """Server-set read scope.
+
+    ``{"probe": true}`` lists entry topics and names the store that served
+    them. ``{"exclude_topics": [...], "source": store}`` reads from that same
+    store while skipping those topics before counting and windowing.
+    """
     if not isinstance(thread_scope, dict):
         return None
     if set(thread_scope) == {"probe"} and thread_scope["probe"] is True:
         return thread_scope
     excluded = thread_scope.get("exclude_topics")
-    if set(thread_scope) == {"exclude_topics"} and isinstance(excluded, list):
+    if (
+        set(thread_scope) == {"exclude_topics", "source"}
+        and isinstance(excluded, list)
+        and thread_scope["source"] in ("sqlite", "collection")
+    ):
         return thread_scope
     return None
 
@@ -250,11 +275,15 @@ def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = "", thread_sc
         return {"error": "invalid thread_scope"}
     probe = thread_scope is not None and "probe" in thread_scope
     excluded = (thread_scope or {}).get("exclude_topics") or []
+    store = (thread_scope or {}).get("source")
     last_n = max(1, min(last_n, 100))
-    if thread_scope is None:
-        result = _sqlite_diary_read(agent_name, last_n, wing)
+    if store != "collection":
+        result = _sqlite_diary_read(agent_name, last_n, wing, thread_scope)
         if result is not None:
             return result
+        if store == "sqlite":
+            # The probe ran on SQLite; never count on a different store.
+            return {"error": "diary store changed during read", "probe_fault": True}
     col = _get_collection()
     if not col:
         return _collection_error_or_no_palace()
@@ -313,11 +342,11 @@ def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = "", thread_sc
             del entries[last_n:]
 
             offset += len(batch_ids)
-            if len(batch_ids) < _DIARY_READ_PAGE_SIZE:
+            if len(batch_ids) < _DIARY_READ_PAGE_SIZE or len(topics) > _DIARY_TOPIC_LIMIT:
                 break
 
         if probe:
-            return {"topics": topics}
+            return _topic_probe_result(topics, "collection")
         return _diary_read_response(agent_name, entries, total)
     except Exception:
         logger.exception("diary_read failed")

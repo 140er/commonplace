@@ -1,6 +1,8 @@
 """Rooms and topics naming a thread reveal it only to readers of that thread."""
 
 import json
+import logging
+import re
 import secrets
 
 import pytest
@@ -20,7 +22,19 @@ def deep_encoded(identifier, layers=4):
 
 
 UNPROVABLE = {"undecodable", "deep_encoded"}
-FULLWIDTH_THR = "ｔｈｒ"
+SOURCE_CHARS = {
+    "space": " ",
+    "slash": "/",
+    "query": "?",
+    "hash": "#",
+    "amp": "&",
+    "dquote": '"',
+    "squote": "'",
+    "lt": "<",
+    "gt": ">",
+    "backslash": "\\",
+}
+FULLWIDTH_THR = "\uff54\uff48\uff52"
 FORMS = {
     "bare": lambda t: t.id,
     "app_path": lambda t: f"/app/threads/{t.id}",
@@ -33,7 +47,11 @@ FORMS = {
     "letter_suffix": lambda t: f"{t.id}g",
     "letter_prefix": lambda t: f"x{t.id}",
     "fullwidth": lambda t: FULLWIDTH_THR + t.id[3:],
+    "upper_case": lambda t: t.id.upper(),
     "mcp_source": lambda t: t.source_thread_id,
+    # Stored sources containing each character the old token scan stopped at;
+    # the room is the whole source, so only the full value resolves it.
+    **{f"mcp_source_{name}": (lambda t: t.source_thread_id) for name in SOURCE_CHARS},
     "mcp_source_underscore": lambda t: f"{t.source_thread_id}_notes",
     "mcp_source_letter": lambda t: f"{t.source_thread_id}x",
     # A percent sign behind NFKC: decoding must repeat until the value is stable.
@@ -51,6 +69,7 @@ WRITABLE = [
     "letter_suffix",
     "letter_prefix",
     "fullwidth",
+    "upper_case",
 ]
 DRAWER = "thread-room-probe"
 TEXT = "Shared exact words about the plan"
@@ -58,12 +77,19 @@ TEXT = "Shared exact words about the plan"
 
 def secret(thread, form):
     """The identity that must not reach a non-reader, in any spelling."""
-    return thread.source_thread_id[4:] if form.startswith("mcp_source") else thread.id[4:]
+    if form.startswith("mcp_source"):
+        # The ASCII-safe part: JSON escapes quotes and backslashes in the rest.
+        return re.search(r"probe-[0-9a-f]+", thread.source_thread_id)[0]
+    return thread.id[4:].upper() if form == "upper_case" else thread.id[4:]
 
 
 def store_thread(hub, form, *, actor, wing, source=None):
+    probe = f"mcp:probe-{secrets.token_hex(6)}"
+    char = SOURCE_CHARS.get(form.removeprefix("mcp_source_"))
     source = source or (
-        f"mcp:probe-{secrets.token_hex(6)}"
+        probe + char + "tail"
+        if form.startswith("mcp_source") and char is not None
+        else probe
         if form.startswith("mcp_source")
         else f"capture:{actor}:room-{secrets.token_hex(6)}"
     )
@@ -242,7 +268,16 @@ def test_thread_blind_reader_never_receives_thread_identity(
 @pytest.mark.parametrize("route", sorted(READS))
 @pytest.mark.parametrize(
     "form",
-    ["bare", "app_path", "underscore_suffix", "fullwidth", "mcp_source", "double_encoded"],
+    [
+        "bare",
+        "app_path",
+        "underscore_suffix",
+        "fullwidth",
+        "upper_case",
+        "mcp_source",
+        "mcp_source_slash",
+        "double_encoded",
+    ],
 )
 def test_thread_reader_keeps_room_on_every_route(hub, collection, config, reader, form, route):
     thread = readable_thread(hub, reader, form)
@@ -351,11 +386,17 @@ def test_room_references_names_every_form():
     for undecodable in (
         "%FF" + Thread.id,
         "thr%252525255Fab12",
-        "thr​_ab12",
+        "thr\u200b_ab12",  # zero-width space
     ):
         assert provenance_refs.room_references(undecodable) is None, undecodable
-    # A list cannot say "undecodable"; callers decide through private_thread_reference.
+    # The old thread_ids alias is gone on purpose: a tuple cannot say
+    # "undecodable", so returning () would let a caller show such a value.
+    # Callers decide visibility through mirror_access.private_thread_reference.
     assert not hasattr(mirror_access, "thread_ids")
+    # A source ID is the whole remaining value, whatever characters it holds,
+    # and an upper-case thread ID names the stored lower-case thread.
+    assert provenance_refs.room_references("mcp:github.com/o/r") == ("mcp:github.com/o/r",)
+    assert provenance_refs.room_references("THR_" + "AB12" * 4) == ("thr_" + "ab12" * 4,)
 
 
 @pytest.mark.parametrize("route", sorted(READS))
@@ -452,3 +493,88 @@ def test_gate_recounts_diary_entries_it_drops(hub, blind):
     only_hidden = {**page, "entries": page["entries"][:1], "total": 1, "showing": 1}
     gated = mirror_access.gate(hub.gateway, blind[2], "diary_read", only_hidden)
     assert gated == {"agent": "probe", "entries": [], "message": "No diary entries yet."}
+
+
+def test_client_thread_scope_never_reaches_the_worker(hub, collection, config, blind):
+    """A client's {"probe": true} is dropped: it receives entries, never topics."""
+    seed(collection, config, "general")
+    visible_diary_entry(collection)
+    body = payload(
+        mcp(
+            hub,
+            blind[1],
+            "mempalace_diary_read",
+            agent_name="probe",
+            wing="shared",
+            thread_scope={"probe": True},
+        )
+    )
+    assert "topics" not in body and "source" not in body, body
+    assert [entry["topic"] for entry in body["entries"]] == ["general", "general"], body
+
+
+def test_diary_scope_is_server_only_in_the_worker_schema():
+    from mempalace import mcp_server
+
+    tool = mcp_server.TOOLS["mempalace_diary_read"]
+    entry = mcp_server._tool_catalog_entry("mempalace_diary_read", tool)
+    assert "thread_scope" not in entry["inputSchema"]["properties"]
+    # Still declared, so the argument whitelist accepts the gateway's scope.
+    assert "thread_scope" in tool["input_schema"]["properties"]
+
+
+def test_diary_read_stays_on_the_store_its_probe_used(hub, collection, monkeypatch):
+    """The exclusion runs on the probe's store; a changed store is refused."""
+    from mempalace import mcp_server
+
+    visible_diary_entry(collection)
+    read = mcp_server.tool_diary_read
+    probe = read("probe", wing="shared", thread_scope={"probe": True})
+    assert probe["topics"] == ["general"] and probe["source"] in ("sqlite", "collection"), probe
+    scope = {"exclude_topics": ["general"], "source": probe["source"]}
+    assert read("probe", wing="shared", thread_scope=scope)["entries"] == []
+    monkeypatch.setattr(mcp_server, "_sqlite_diary_read", lambda *a, **k: None)
+    pinned = {"exclude_topics": [], "source": "sqlite"}
+    refused = read("probe", wing="shared", thread_scope=pinned)
+    assert refused.get("probe_fault") is True and "entries" not in refused, refused
+
+
+def failing_probe(hub, monkeypatch):
+    workers = hub.gateway.mediator.workers
+    original = workers.call_tool
+
+    def call_tool(principal, name, args):
+        if args.get("thread_scope") == {"probe": True}:
+            raise RuntimeError("probe unavailable")
+        return original(principal, name, args)
+
+    monkeypatch.setattr(workers, "call_tool", call_tool)
+
+
+def test_probe_fault_is_logged_and_owner_keeps_diary(
+    hub, collection, config, blind, monkeypatch, caplog
+):
+    seed(collection, config, "general")
+    visible_diary_entry(collection)
+    failing_probe(hub, monkeypatch)
+    with caplog.at_level(logging.WARNING, logger="commonplace.gateway"):
+        body = payload(
+            mcp(hub, blind[1], "mempalace_diary_read", agent_name="probe", wing="shared")
+        )
+    assert len(body["entries"]) == 2, body
+    assert "Diary topic probe failed (RuntimeError)" in caplog.text
+    assert "probe unavailable" not in caplog.text
+
+
+def test_probe_fault_fails_closed_for_non_owners(hub, collection, config, monkeypatch):
+    seed(collection, config, "general")
+    visible_diary_entry(collection)
+    uid = hub.db.create_user("diary-member@example.test")
+    hub.db.add_member(hub.workspace, uid, "member", actor=hub.admin)
+    token = hub.token(
+        "diary-member", user=uid, profile="full", scopes=["memory:read"], read_wings=["shared"]
+    )
+    assert hub.db.authenticate_token(token).role != "owner"
+    failing_probe(hub, monkeypatch)
+    body = payload(mcp(hub, token, "mempalace_diary_read", agent_name="probe", wing="shared"))
+    assert body == {"agent": "probe", "entries": [], "message": "No diary entries yet."}, body

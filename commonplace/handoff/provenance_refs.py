@@ -63,7 +63,9 @@ _MAX_REFERENCE_CHARS = MAX_REFERENCE_CHARS
 THREAD_ID = re.compile(r"thr_[0-9a-fA-F]+")
 _THREAD = re.compile(THREAD_ID.pattern, re.IGNORECASE)
 # Stored threads keep their caller's source ID; T3 source IDs carry this prefix.
-_SOURCE = re.compile(r"mcp:[^\s/?#&\"'<>\\]+")
+# A source ID may contain any character, so a match is the whole remaining
+# value: thread stores resolve every stored source that prefixes it.
+_SOURCE = re.compile("mcp:", re.IGNORECASE)
 # Real thread IDs have 16 hex digits. A shorter run directly followed by an
 # ASCII letter is an ordinary word such as thr_deadline, not an ID.
 _ID_DIGITS = 16
@@ -242,8 +244,9 @@ def _named_threads(text):
         after = text[match.end() : match.end() + 1]
         if len(match[0]) - 4 < _ID_DIGITS and after.isascii() and after.isalpha():
             continue
-        yield match[0]
-    yield from (match[0] for match in _SOURCE.finditer(text))
+        # Stored IDs are lower case; an upper-case spelling names the same thread.
+        yield match[0].lower()
+    yield from ("mcp:" + text[match.end() :] for match in _SOURCE.finditer(text))
 
 
 def room_references(value):

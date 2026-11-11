@@ -88,7 +88,8 @@ class _ResponseAccess:
 
     def reference(self, token):
         if token.lower().startswith("thr_"):
-            return self(token)
+            # Stored IDs are lower case; an upper-case spelling names the same thread.
+            return self(token.lower())
         rows = self._source_rows(token)
         return bool(rows) and any(self(row.id) for row in rows)
 

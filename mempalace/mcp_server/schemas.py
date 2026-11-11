@@ -986,7 +986,8 @@ TOOLS = {
                     "type": "string",
                     "description": "Wing to read diary entries from (optional). If omitted, reads from wing_{agent_name}.",
                 },
-                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
+                # Server-only: accepted from the Commonplace gateway, never listed.
+                "thread_scope": {"type": "object", "x-mempalace-server-only": True},
             },
             "required": ["agent_name"],
         },

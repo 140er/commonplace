@@ -1725,10 +1725,12 @@ percent-decoding followed by NFKC normalisation, repeated until the value stops
 changing (at most four rounds). The thread ID may appear as a bare ID, in an
 `/app/threads/` path or URL, in a `t3-thread://v1/` link, after `mcp:`, or next
 to letters, digits or underscores (`notes_thr_…`, `thr_…_notes`); fullwidth
-spellings count after NFKC. A T3 source ID (`mcp:<source>`, possibly followed by
-more characters such as `mcp:<source>_notes`) is resolved through the workspace
-thread store: every stored source ID, or hash-variant base, that begins the value
-counts. One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
+spellings count after NFKC, and an upper-case `THR_` or hex spelling names the
+stored lower-case thread, so its readers keep the room. A T3 source ID may contain
+any character (`mcp:github.com/o/r`, spaces, quotes), so each `mcp:` occurrence
+(any case) names the whole remaining value, which is resolved through the
+workspace thread store: every stored source ID, or hash-variant base, that is a
+prefix of that remainder counts, including `mcp:<source>_notes`. One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
 check (`provenance_refs.room_references`, used through
 `mirror_access.private_thread_reference`) cover every route that returns or
 writes a room or topic. Reads: drawer reads, search (structured and
@@ -1745,8 +1747,14 @@ nothing; a source lookup failure hides the value.
 Counts and flags describe only what the reader receives. Diary reads probe the
 entry topics first, and the worker excludes entries whose topic names an
 unreadable thread before it counts or windows them, so `total` and `showing`
-cover visible entries; the final gate recounts any entry it still drops, and an
-unreadable probe answers as an empty diary. `check_duplicate` recomputes
+cover visible entries; the final gate recounts any entry it still drops. The
+probe reports which store served it (the SQLite fast path or the collection),
+and the read is pinned to that store; a store change between the two refuses the
+read. The probe reports at most 1000 distinct topics. Probe faults are logged by
+class only: owners then receive the unscoped read, still scrubbed and recounted
+by the final gate; every other principal receives an empty diary. The diary
+`thread_scope` is server-only: the gateway drops any client value before every
+route and always sets its own, and the worker accepts it without listing it. `check_duplicate` recomputes
 `is_duplicate` from the matches that pass the gate. Search acquisition counters
 and truncation flags (`total_before_filter`, `filtered_by_max_distance`,
 `date_filter_pool_truncated`, `candidates_truncated`,

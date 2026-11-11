@@ -1074,9 +1074,15 @@ class Mediator:
 
     def _scope_diary_topics(self, principal, name, args):
         """Exclude entries whose topic names an unreadable thread before the
-        worker counts or windows them, so totals describe only visible entries."""
+        worker counts or windows them, so totals describe only visible entries.
+
+        The probe names the store that served it, and the read is pinned to
+        that store so the excluded topics and the counted rows agree.
+        """
         from .handoff.mirror_access import private_thread_reference, reader
 
+        # Server-only: a client value was already dropped; never forward one.
+        args.pop("thread_scope", None)
         empty = {
             "agent": str(args.get("agent_name") or "").lower(),
             "entries": [],
@@ -1086,18 +1092,30 @@ class Mediator:
             probe = self.workers.call_tool(
                 principal, name, {**args, "thread_scope": {"probe": True}}
             )
-        except Exception:
-            return {"respond": empty}
+        except Exception as exc:
+            return self._diary_probe_fault(principal, empty, type(exc).__name__)
         if isinstance(probe, dict) and set(probe) == {"error"}:
             return None  # The worker answers the same validation error unscoped.
         topics = probe.get("topics") if isinstance(probe, dict) else None
-        if not isinstance(probe, dict) or set(probe) != {"topics"} or not isinstance(topics, list):
-            return {"respond": empty}
+        if (
+            not isinstance(probe, dict)
+            or set(probe) != {"topics", "source"}
+            or not isinstance(topics, list)
+            or probe["source"] not in ("sqlite", "collection")
+        ):
+            return self._diary_probe_fault(principal, empty, "malformed probe reply")
         access = reader(self.gateway, principal)
         hidden = [topic for topic in topics if private_thread_reference(access, topic)]
-        if hidden:
-            args["thread_scope"] = {"exclude_topics": hidden}
+        args["thread_scope"] = {"exclude_topics": hidden, "source": probe["source"]}
         return None
+
+    def _diary_probe_fault(self, principal, empty, kind):
+        """Log the fault class only. Owners keep their diary, still scrubbed by
+        the final gate; every other principal fails closed to an empty diary."""
+        logger.warning("Diary topic probe failed (%s)", kind)
+        if getattr(principal, "role", None) == "owner":
+            return None
+        return {"respond": empty}
 
     def _before_tunnel_write(self, principal, name, args, notes):
         policy = principal.policy
