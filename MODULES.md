@@ -1047,6 +1047,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Imported-history consent: OAuth reader consent is separate and unticked; defaults and person policies exclude the reader, while refresh descendants cannot regain a dropped scope.
 
+  - OAuth client revoke: a workspace owner can revoke an OAuth-connected client from Settings > Agents. One transaction marks the connection, every access and refresh token and any unredeemed code revoked and audits it; later calls and refreshes are refused, and what the client wrote stays. Members, other workspaces and the client itself cannot revoke it.
+
   - Enabled coordinator startup context includes unsplit inbox counts, without migrating boards.
 
   - Accounts exist only after verification; sessions are cookie-bound and revocable; mail is configured only through the environment.
@@ -1063,7 +1065,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Tests:**
 
-  - `tests/test_commonplace_email_auth.py`, `tests/test_commonplace_oauth.py`, `tests/test_commonplace_social.py`, `tests/test_commonplace_session.py`.
+  - `tests/test_commonplace_email_auth.py`, `tests/test_commonplace_oauth.py`, `tests/test_commonplace_agents_oauth_revoke.py`, `tests/test_commonplace_social.py`, `tests/test_commonplace_session.py`.
 
 
 ## cli-and-client
