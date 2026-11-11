@@ -259,6 +259,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Project documentation and the project routes table describe the four model roles and the owner-only escalation rule.
+
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
   - The Admin API guide documents legacy-column defaults and enabled, unrevoked grant eligibility.
@@ -599,6 +601,8 @@ Format (read by `commonplace orch docs-check`):
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
 
 - **Promises:**
+
+  - Project model and escalation regressions run through `tests/test_projects_escalation.py`, `tests/test_projects_escalation_unit.py`, `tests/projects_view.mjs` and the real-browser `tests/workbench_e2e/test_project_models.py`.
 
   - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Authority lookup failures pin one redacted diagnostic and no enqueue. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
 
@@ -1094,7 +1098,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/callstack.py`
 - **Owns:**
 
-  - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest.
+  - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest. Every slot (orchestrator, builder, reviewer, gate) gets a button to its picker; only a role that names no `model_role` has none.
 
   - Canonical Space REST response projection and typed creation refusals.
 
@@ -1235,6 +1239,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - A start resolves its model from the project slots and, when the project's escalation rule applies (card failed jobs counted in the start transaction, or a card label), from the rule; the job records `model_reason` and the reply carries it. With no rule the model is unchanged.
+
   - Up to eight distinct area sub-orchestrators sit directly under one parentless orchestrator; areas remain preview-only across live and experiment accept/write paths. No-area graph rules and main/worker model slots remain unchanged.
 
   - Owner-assigned runner work uses the existing configured person-start fence; agent-authored todo reservations still produce an assigned-card trigger miss for a different worker.
@@ -1311,6 +1317,7 @@ Format (read by `commonplace orch docs-check`):
   - Split marker task references are range-checked before SQLite binding and settings-read failures remain retryable.
   - Default-off project reports capture the current coordinator and activation/binding generations, baseline existing staleness, scan at most 100 cards and publish at most 100 rows per workspace pass, and retain receipt-backed event identity across crashes.
 
+  - Project models cover four roles (orchestrator `main`, builder `worker`, `reviewer`, `gate`); one owner-only escalation rule per project (`project_model_escalation`) swaps the builder and reviewer model after N failed jobs of the card or for chosen labels, evaluated inside the runner start transaction and recorded on the job as `model_reason`; the rule's model must be in the workspace model list, a keyed retry or orchestrator step replays its stored job whatever escalation decided, judged by the job's pre-escalation request digest (a changed default model is a conflict), and a role with no default stays unmapped; with no rule a start resolves as before.
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
   - **Browser GitHub connection:** Signup plan assignment accepts the provisioning transaction to preserve atomic GitHub ownership reservation.
@@ -1690,6 +1697,8 @@ Format (read by `commonplace orch docs-check`):
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
 - **Promises:**
+
+  - Project settings show a model field pair for each role (orchestrator, builder, reviewer, gate) and an escalation rule form (failed rounds, labels, stronger model); non-owners see both read-only without a save button.
 
   - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 

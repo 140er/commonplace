@@ -416,6 +416,7 @@ const cases = {
         return current;
       }
       if (path.endsWith("/models/catalog")) { current = { ...current, model_catalog: [...current.model_catalog, options.body] }; return current; }
+      if (path.endsWith("/escalation") && options.method === "PUT") { current = { ...current, escalation: options.body.rule }; return current; }
       return current;
     };
     const host = doc.createElement("div"); doc.body.append(host);
@@ -451,6 +452,38 @@ const cases = {
     assert.ok([...host.querySelector('[data-model-role="worker"]').querySelectorAll("option")].some((o) => o.getAttribute("value") === "claude claude-new"));
     assert.equal(host.querySelector('[data-model-role="worker"]').value, "claude claude-haiku-5-5", "an unsaved pick survives the redraw");
     assert.equal(host.querySelector('[data-model-role="main"]').value, "codex gpt-5.5", "the saved choice is still selected");
+    // Unsaved edits survive every redraw of another form: picks of all four roles and the escalation
+    // picker, and the typed rule fields. The form just saved is redrawn from what was saved.
+    const submit = (form) => form.onsubmit({ preventDefault() {}, stopPropagation() {} });
+    const rule = () => host.querySelector("[data-project-escalation]");
+    const pick = (role) => host.querySelector(`[data-model-role="${role}"]`);
+    pick("reviewer").value = "claude claude-haiku-5-5";
+    pick("gate").value = "codex gpt-5.5";
+    rule().querySelector('[name="after_failures"]').value = "2";
+    rule().querySelector('[name="labels"]').value = "security";
+    pick("escalation").value = "codex gpt-5.5";
+    await submit(rule()); await tick();
+    assert.deepEqual(calls.filter((c) => c.path.endsWith("/escalation")).at(-1).body, { rule: { after_failures: 2, labels: ["security"], model: { provider: "codex", model: "gpt-5.5" } } });
+    assert.equal(host.querySelector("[data-project-escalation-status]").textContent, ui.PROJECT_COPY.escalationSaved);
+    assert.equal(pick("reviewer").value, "claude claude-haiku-5-5", "the escalation save keeps an unsaved reviewer pick");
+    assert.equal(pick("gate").value, "codex gpt-5.5", "the escalation save keeps an unsaved gate pick");
+    assert.equal(rule().querySelector('[name="labels"]').value, "security", "the saved rule is shown as saved");
+    rule().querySelector('[name="labels"]').value = "security, typed-not-saved";
+    rule().querySelector('[name="after_failures"]').value = "4";
+    pick("escalation").value = "claude claude-haiku-5-5";
+    await submit(host.querySelector("[data-project-models]")); await tick();
+    assert.equal(rule().querySelector('[name="labels"]').value, "security, typed-not-saved", "the models save keeps typed rule labels");
+    assert.equal(rule().querySelector('[name="after_failures"]').value, "4", "the models save keeps the typed failure count");
+    assert.equal(pick("escalation").value, "claude claude-haiku-5-5", "the models save keeps an unsaved escalation pick");
+    assert.equal(pick("reviewer").value, "claude claude-haiku-5-5", "the saved reviewer choice is shown");
+    pick("worker").value = "codex gpt-5.5";
+    const again = host.querySelector("[data-project-model-add]");
+    again.querySelector('[name="provider"]').value = "claude"; again.querySelector('[name="model"]').value = "claude-third";
+    await again.onsubmit({ preventDefault() {}, stopPropagation() {} }); await tick();
+    assert.equal(rule().querySelector('[name="labels"]').value, "security, typed-not-saved", "the add keeps typed rule labels");
+    assert.equal(rule().querySelector('[name="after_failures"]').value, "4", "the add keeps the typed failure count");
+    assert.equal(pick("escalation").value, "claude claude-haiku-5-5", "the add keeps the escalation pick");
+    assert.equal(pick("worker").value, "codex gpt-5.5", "the add keeps the worker pick");
     host.remove();
   },
   // #404: the shell's mapping from a Needs me button to the settings panel, run for real.
