@@ -1730,10 +1730,15 @@ stored lower-case thread, so its readers keep the room. A T3 source ID may conta
 any character (`mcp:github.com/o/r`, spaces, quotes), so each `mcp:` occurrence
 (any case) names the whole remaining value, which is resolved through the
 workspace thread store: every stored source ID, or hash-variant base, that is a
-prefix of that remainder counts, including `mcp:<source>_notes`. Both sides are
-compared after NFKC with the `mcp` namespace in any case, so stored or named
-`MCP:x`, `Mcp:x` and fullwidth spellings all match `mcp:x`, and a bare stored
-`mcp:` source is a prefix of every `mcp:` value (it fails closed). One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
+prefix of that remainder counts, including `mcp:<source>_notes`. A stored source
+is keyed as NFKC first, then its `#sha256:` variant base, then the namespace
+folded; the room's whole value is NFKC-normalised with its namespace folded and
+never cut at a hash marker. The namespace folds `mcp` in any case after NFKC, so
+the covered spellings all match `mcp:x`: `MCP:x`, `Mcp:x`, a fullwidth `mcp`,
+mixed-width ASCII `m` with fullwidth `cp` or `p`, and a fullwidth colon. A
+stored `mcp:x#` matches a room `mcp:x#sha256:...`, a stored variant marked with
+a fullwidth number sign matches its base, and a bare stored `mcp:` source is a
+prefix of every `mcp:` value (it fails closed). One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
 check (`provenance_refs.room_references`, used through
 `mirror_access.private_thread_reference`) cover every route that returns or
 writes a room or topic. Reads: drawer reads, search (structured and

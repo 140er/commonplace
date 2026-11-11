@@ -152,13 +152,21 @@ def _stored_thread(row: Optional[sqlite3.Row]) -> Optional[StoredThread]:
     )
 
 
-def source_match_key(source: str) -> str:
-    """How a source ID is compared for room authorization: its hash-variant
-    base, NFKC-normalised, with an ``mcp`` namespace in any case as ``mcp:``."""
-    base = source.split("#sha256:", 1)[0]
-    text = unicodedata.normalize("NFKC", base)
+def _fold_namespace(text: str) -> str:
     namespace, sep, rest = text.partition(":")
     return "mcp:" + rest if sep and namespace.lower() == "mcp" else text
+
+
+def source_match_key(source: str) -> str:
+    """How a stored source ID is compared for room authorization: NFKC first,
+    then its hash-variant base, then an ``mcp`` namespace in any case as ``mcp:``."""
+    return _fold_namespace(unicodedata.normalize("NFKC", source).split("#sha256:", 1)[0])
+
+
+def room_match_value(value: str) -> str:
+    """A room's whole value, NFKC-normalised with the namespace folded; never cut
+    at a hash marker, so a stored source ending inside one still matches."""
+    return _fold_namespace(unicodedata.normalize("NFKC", value))
 
 
 class ThreadStore:
@@ -750,19 +758,23 @@ class ThreadStore:
     def by_source_prefix(self, workspace_id: str, value: str) -> list[StoredThread]:
         """Threads whose source ID, or its hash-variant base, is a prefix of ``value``.
 
-        Both sides compare as ``source_match_key``: NFKC, with the ``mcp``
-        namespace in any case, so ``MCP:x``, ``Mcp:x`` and fullwidth spellings
-        match ``mcp:x``. ``mcp:<source>_notes`` finds the threads filed under
-        ``mcp:<source>``, and a bare stored ``mcp:`` matches every ``mcp:`` value.
+        A stored ``source_match_key`` must prefix the room's whole
+        ``room_match_value``. Both are NFKC-normalised with the ``mcp`` namespace
+        in any case, so ``MCP:x``, ``Mcp:x`` and fullwidth or mixed-width
+        spellings match ``mcp:x``. ``mcp:<source>_notes`` finds the threads filed
+        under ``mcp:<source>``, a stored ``mcp:<source>#`` matches a room
+        ``mcp:<source>#sha256:...``, and a bare stored ``mcp:`` matches every
+        ``mcp:`` value.
         """
-        target = source_match_key(value)
+        target = room_match_value(value)
         if not target.startswith("mcp:"):
             return []
         with self._lock:
-            # Narrow by spelling; NFKC can only fold a non-ASCII first character.
+            # Narrow by first character only: NFKC can turn a non-ASCII character
+            # into "m", and later characters may be fullwidth (m + fullwidth "cp").
             candidates = self._conn.execute(
                 "SELECT id, source_thread_id FROM threads WHERE workspace_id=? AND "
-                "(lower(substr(source_thread_id, 1, 3)) = 'mcp' "
+                "(lower(substr(source_thread_id, 1, 1)) = 'm' "
                 "OR unicode(source_thread_id) > 127) ORDER BY id",
                 (workspace_id,),
             ).fetchall()

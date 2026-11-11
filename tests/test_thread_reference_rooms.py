@@ -61,6 +61,14 @@ FORMS = {
     "mcp_source_fullwidth_room": lambda t: "\uff4d\uff43\uff50\uff1a" + t.source_thread_id[4:],
     # A bare stored "mcp:" is a prefix of every mcp: room, so it fails closed.
     "mcp_source_bare_namespace": lambda t: "mcp:probe-" + t.id[4:],
+    # Mixed-width stored namespaces (ASCII "m" with fullwidth letters or colon).
+    "mcp_source_ascii_m_fullwidth_cp": lambda t: "mcp:" + probe_id(t),
+    "mcp_source_ascii_mc_fullwidth_p": lambda t: "mcp:" + probe_id(t),
+    "mcp_source_ascii_m_fullwidth_cp_colon": lambda t: "mcp:" + probe_id(t),
+    # A stored source ending inside the hash marker still prefixes the room.
+    "mcp_source_trailing_hash": lambda t: "mcp:" + probe_id(t) + "#sha256:0123abcd",
+    # A fullwidth number sign in the stored variant marker is a variant after NFKC.
+    "mcp_source_fullwidth_hash_variant": lambda t: "mcp:" + probe_id(t),
     # A percent sign behind NFKC: decoding must repeat until the value is stable.
     "double_encoded": lambda t: "%EF%BC%85" + "74" + t.id[1:],
     # Still changing after the decode/NFKC round bound: hidden from every reader.
@@ -93,6 +101,18 @@ def secret(thread, form):
     return thread.id[4:].upper() if form == "upper_case" else thread.id[4:]
 
 
+def probe_id(thread):
+    return re.search(r"probe-[0-9a-f]+", thread.source_thread_id)[0]
+
+
+# Stored source spellings, built from "probe-<hex>".
+SOURCE_SPELLINGS = {
+    "mcp_source_ascii_m_fullwidth_cp": lambda p: "m\uff43\uff50:" + p,
+    "mcp_source_ascii_mc_fullwidth_p": lambda p: "mc\uff50:" + p,
+    "mcp_source_ascii_m_fullwidth_cp_colon": lambda p: "m\uff43\uff50\uff1a" + p,
+    "mcp_source_trailing_hash": lambda p: "mcp:" + p + "#",
+    "mcp_source_fullwidth_hash_variant": lambda p: "mcp:" + p + "\uff03sha256:abc",
+}
 NAMESPACE_SOURCES = {
     "mcp_source_upper_namespace": "MCP:",
     "mcp_source_mixed_namespace": "Mcp:",
@@ -104,7 +124,9 @@ NAMESPACE_SOURCES = {
 def store_thread(hub, form, *, actor, wing, source=None):
     probe = f"mcp:probe-{secrets.token_hex(6)}"
     char = SOURCE_CHARS.get(form.removeprefix("mcp_source_"))
-    if form in NAMESPACE_SOURCES:
+    if form in SOURCE_SPELLINGS:
+        source = source or SOURCE_SPELLINGS[form](probe[4:])
+    elif form in NAMESPACE_SOURCES:
         source = source or NAMESPACE_SOURCES[form] + probe[4:]
     elif form == "mcp_source_bare_namespace":
         source = source or "mcp:"
@@ -329,6 +351,9 @@ def test_thread_blind_reader_never_receives_thread_identity(
         "mcp_source_upper_namespace",
         "mcp_source_fullwidth_namespace",
         "mcp_source_bare_namespace",
+        "mcp_source_ascii_m_fullwidth_cp",
+        "mcp_source_trailing_hash",
+        "mcp_source_fullwidth_hash_variant",
         "double_encoded",
     ],
 )
