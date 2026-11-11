@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from time import monotonic, sleep
 from typing import Callable, Optional
@@ -37,7 +38,7 @@ from mempalace.config import normalize_wing_name
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, plans, privacy, ratelimit, sessions, urls
+from . import backfill_allowance, events, extensions, plans, privacy, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
@@ -68,6 +69,54 @@ def _with_search_facts(result, facts):
         out = {"facts": facts, **out}
     if isinstance(out.get("cli_output"), str):
         out["cli_output"] = format_facts(facts) + out["cli_output"]
+    return out
+
+
+def _scoped_cli_search_error(args):
+    """Retain the CLI argument contract when acquiring structured drawer hits."""
+    from mempalace.query_sanitizer import sanitize_query
+
+    if args.get("include_media") or args.get("query_task", "search") != "search":
+        return "cli_compatible cannot be combined with media/code task search"
+    if args.get("source_file") is not None:
+        return "cli-compatible search does not support source_file"
+    unsupported = [
+        key for key in ("min_similarity", "max_distance", "context") if args.get(key) is not None
+    ]
+    if unsupported:
+        return "cli-compatible search does not support " + ", ".join(unsupported)
+    query = args.get("query")
+    if isinstance(query, str):
+        sanitized = sanitize_query(query)
+        if sanitized["clean_query"] != query or sanitized["was_sanitized"]:
+            return "cli-compatible search requires an unchanged query"
+    return None
+
+
+def _render_scoped_cli_search(result, args):
+    """Render only structured hits and facts that passed the final drawer gate."""
+    from mempalace.searcher import render_cli_search
+
+    out = {
+        "query": result.get("query", args.get("query", "")),
+        "cli_output": render_cli_search(
+            result.get("query", args.get("query", "")),
+            result.get("results", []),
+            wing=args.get("wing"),
+            room=args.get("room"),
+            since=args.get("since"),
+            before=args.get("before"),
+            metric=result.get("distance_metric", "cosine"),
+            facts=result.get("facts", []),
+            vector_disabled=bool(result.get("vector_disabled")),
+            flat=True,
+        ),
+        "results": [],
+    }
+    if "wings_searched" in result:
+        out["wings_searched"] = result["wings_searched"]
+    if result.get("facts"):
+        out["facts"] = result["facts"]
     return out
 
 
@@ -581,7 +630,18 @@ class Mediator:
             committed_result = _tool_result(response)
         else:
             response, committed_result = self._gate_response(
-                principal, name, rule, req_id, response
+                principal,
+                name,
+                rule,
+                req_id,
+                response,
+                cli_args=(
+                    import_filters
+                    if name == "mempalace_search"
+                    and import_filters.get("cli_compatible")
+                    and not principal.policy.sees_all_wings
+                    else None
+                ),
             )
 
         if classify_tool(name) != "read":
@@ -597,7 +657,7 @@ class Mediator:
             )
         return response
 
-    def _gate_response(self, principal, name, rule, req_id, response):
+    def _gate_response(self, principal, name, rule, req_id, response, *, cli_args=None):
         """Apply the final read boundary while retaining the committed result for audit."""
         from .handoff.mirror_access import gate
 
@@ -605,6 +665,8 @@ class Mediator:
         if isinstance(response, dict) and "result" in response:
             result = committed_result = _tool_result(response)
             cleaned = gate(self.gateway, principal, rule, result)
+            if cli_args is not None and isinstance(cleaned, dict) and not cleaned.get("error"):
+                cleaned = _render_scoped_cli_search(cleaned, cli_args)
             if name == "mempalace_list_drawers":
                 from .handoff.drawer_pages import finish_page
 
@@ -727,11 +789,13 @@ class Mediator:
         ):
             return self._before_import_listing(principal, name, args)
         if name == "mempalace_list_drawers":
+            # The existing projection filters physical identities before paging,
+            # so wildcard shared readers do not need private read authority.
             if not policy.sees_all_wings:
                 wing = args.get("wing") or _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
-                if not policy.can_read_wing(wing):
+                if wing and not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
                 args["wing"] = wing
             from .handoff.drawer_pages import finish_page, project
@@ -743,10 +807,10 @@ class Mediator:
             wing = args.get("wing")
             if not wing:
                 wing = _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
                 args["wing"] = wing
-            if not policy.can_read_wing(wing):
+            if wing and not policy.can_read_wing(wing):
                 raise Denied(f"this connection can't read wing {wing!r}")
         if name == "mempalace_list_rooms":
             from .handoff.overview import summary
@@ -850,6 +914,10 @@ class Mediator:
             return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
         if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
             raise Denied(f"this connection can't read wing {wing!r}")
+        if cli and not policy.sees_all_wings:
+            error = _scoped_cli_search_error(args)
+            if error:
+                return {"respond": {"error": error}}
         fact_result = (
             self._search_facts(principal, args)
             if args.get("include_facts", True)
@@ -863,6 +931,8 @@ class Mediator:
                 canonical_wing(wing) == canonical_wing(w) for w in requested
             ):
                 return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
+            if cli and not policy.sees_all_wings:
+                args["cli_compatible"] = False
             return fact_result
         return {
             "respond": _with_search_facts(
@@ -1004,7 +1074,12 @@ class Mediator:
         policy = principal.policy
         for key in ("source_wing", "target_wing"):
             wing = args.get(key)
-            if not wing or not policy.can_write_wing(wing):
+            if (
+                not wing
+                or not policy.can_write_wing(wing)
+                or not policy.sees_all_wings
+                and not policy.can_read_wing(wing)
+            ):
                 raise Denied(f"this connection can't link wing {wing!r}")
         for prefix in ("source", "target"):
             self._check_thread_room(
@@ -1310,11 +1385,19 @@ class Mediator:
             # A retry into a wing the caller can't read must not show whose
             # chat the first copy came from.
             result = _tool_result(response)
-            if isinstance(result, dict) and "source_kept" in result:
-                result = {k: v for k, v in result.items() if k != "source_kept"}
+            if isinstance(result, dict):
+                result = {k: v for k, v in result.items() if k not in {"source_kept", "reason"}}
                 return _replace_result(response, result)
             return response
-        if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read", "kg_read"):
+        if rule not in (
+            "wing_list",
+            "read_wing",
+            "search",
+            "drawer_read",
+            "diary_read",
+            "kg_read",
+            "tunnel_write",
+        ):
             return response
         result = _tool_result(response)
         if result is None:
@@ -1414,7 +1497,10 @@ class Mediator:
             raise Denied(f"pass a wing: this connection reads {len(wings)} wings")
         if not wings:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
-        result = self.workers.call_tool(principal, name, {**args, "wings": wings})
+        worker_args = {**args, "wings": wings}
+        if args.get("cli_compatible") and not principal.policy.sees_all_wings:
+            worker_args["cli_compatible"] = False
+        result = self.workers.call_tool(principal, name, worker_args)
         if not isinstance(result, dict):
             raise WorkerUnavailable()
         if result.get("error"):
@@ -1778,6 +1864,9 @@ class Gateway:
         self.prefix_routes: list = []
         self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
         self.limiter = ratelimit.TokenBuckets()
+        self.write_limit, self.backfill = ratelimit.limits_from_env()
+        self.wall_clock = time.time
+        backfill_allowance.ensure_schema(db)
         self.storage_meter = plans.StorageMeter()
         allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
         self.allowed_hosts = (
@@ -2057,6 +2146,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         forwarded = ",".join(self.headers.get_all("X-Forwarded-For", []))
         ip = ratelimit.client_ip(self.client_address[0], forwarded)
         policies = []
+        topup = False
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
@@ -2076,18 +2166,53 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 (ratelimit.UNTRUSTED if untrusted else ratelimit.AUTHENTICATED, identity)
             )
             if untrusted and _write_request(self.command, path, request):
-                policies.append((ratelimit.WRITES, identity))
+                policies.append((self.server.gateway.write_limit, identity))
+                topup = (
+                    not principal.person
+                    and self.command == "POST"
+                    and path in ("/api/capture", "/api/import")
+                )
         # Short links replace the anonymous policy with their own budget.
         if self.command == "GET" and path.startswith("/s/"):
             policies.append((ratelimit.SHORT_LINKS, ip))
         elif principal is None:
             policies.append((ratelimit.ANONYMOUS, ip))
-        retry = self.server.gateway.limiter.check(policies)
+        gateway = self.server.gateway
+        retry = gateway.limiter.check(policies)
         if not retry:
             return False
+        if topup:
+            # A per-minute refusal wins: waiting that out, not the hourly limit, is what helps.
+            wait = self._backfill_allowance(principal, policies)
+            if wait == 0:
+                return False
+            retry = wait if wait > 0 else retry
         self.close_connection = True
         self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
         return True
+
+    def _backfill_allowance(self, principal, policies):
+        """Spend one first-backfill write when only the steady write limit refused.
+
+        Returns 0 on admission, the Retry-After of another budget that refused,
+        or -1 when the allowance is spent. Every other budget (per-minute
+        included) is still charged, and refunded if the allowance is spent.
+        """
+        gateway = self.server.gateway
+        others = [(limit, ident) for limit, ident in policies if limit is not gateway.write_limit]
+        wait = gateway.limiter.check(others)
+        if wait:
+            return wait
+        if backfill_allowance.admit(
+            gateway.db,
+            workspace_id=principal.workspace_id,
+            connection_id=principal.connection_id,
+            now=gateway.wall_clock(),
+            limits=gateway.backfill,
+        ):
+            return 0
+        gateway.limiter.refund(others)
+        return -1
 
     def _dispatch(self):
         self._response_started = False

@@ -12,10 +12,24 @@ entry was written.
 
 ## Decisions
 
+- **OAuth consent navigation:** Only a consent form bound to a validated client and
+  exact registered redirect adds that redirect's parsed origin to CSP `form-action
+  'self'` and shows that same escaped origin as the code destination. Login forms and generic HTML pages remain self-only, including failed
+  login retries; a retry that renders authenticated consent gets the same single
+  origin allowance. Other CSP directives, PKCE, state and exact redirect matching
+  are unchanged. Redirect hosts must be DNS labels with numeric ports; IPv6 literals are refused because Chromium
+  ignores them in CSP host-sources; schemes remain HTTPS or loopback HTTP. New registrations
+  and authorization GET/POST reject unsafe legacy registrations locally before
+  rendering or redirecting. HTTPS hosts ending in digits or `0x` hex must be canonical
+  dotted-quad IPv4. Registered-but-invalid errors request re-registration; missing
+  registrations retain their separate error. Live redirect registrations must be
+  inventoried before deploy; that inventory is not performed here. No stored client
+  data is migrated.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck
-  inventories bind the decoded path ID to the authenticated workspace before any
+  inventories (the runtime panel's one write is the owner's machine requester edit: one owner-only add or remove per request on the stored list) bind the decoded path ID to the authenticated workspace before any
   projection source read. Members and owner connections receive the exact
   person-owner refusal; foreign workspace IDs are concealed with 404. Personal
   data remains workspace-local; no global directory or mutation action is added.
@@ -121,6 +135,8 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Owner summary-edit checks use a fixed injection clock and a forced-expiry regression, retaining verbatim injection and acceptance assertions without changing the production deadline.
 
+- Rules-injection functional tests run on a frozen deadline clock and a slow-host regression re-runs them with a clock that exhausts the budget on every read; the production 80 ms budget and its fail-open empty text are unchanged.
+- Onboarding tests that assert startup content opt into the same frozen clock and run the installed startup hook with only its 0.4 s hub allowance lifted; a slow-hub regression re-runs them with every gateway POST slower than that allowance. The production budgets and fail-open notices are unchanged.
 - Shared-proposal acceptance is checked with a fixed injection clock; scheduler-delay regression coverage retains exact rule text and spacing for both agents without changing the production fail-open deadline.
 
 - Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
@@ -136,6 +152,8 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Production enrollment, OAuth schema, capabilities, worker leases, job/cache closure and refresh serialization belong to the runtime slice. Fresh-DEK cutover, user-only recovery, exact-data comparison, crash/restore proofs and activation belong to the final slice. Production remains locked pending those slices, complete encrypted-content inventory acceptance and owner decisions. No cutover, pointer publication, archive deletion or B2 wrap reuse is implemented.
 
 - Raw-key `cipher_connect` is a low-level SQLCipher utility used by B2 migration, not a B3 authority boundary. Future B3 callers must use `connect` or a dedicated guarded entry point that authenticates current control state before content opens.
+
+- Thread-store storage budgets convert SQLCipher's text `page_size` (and `page_count`) to integers, so budgeted writes in encrypted workspaces are checked rather than failing with a type error.
 
 
 ### Chroma session rebuilds
@@ -194,6 +212,29 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Rules initialization tests check remaining SQLite wait budgets with a fake clock; wall-clock budgets stay in separate timing-marked tests.
 
+### Orchestrator no-progress wake
+
+- The hub measures progress, not liveness: a runner-configured board with actionable open work and no card done for N minutes (default 20, per board, 0 = off) emits one `board.stalled` wake through the existing event and webhook path, with backoff and owner escalation after three unanswered nudges. Boards whose open cards all wait on a blocker or a person are never nudged.
+
+### Orchestrator trigger sweep never wedges
+
+- A trigger start that cannot be planned is a coded miss that advances the board's cursor; only infrastructure errors leave the cursor. A split start falls back to the `[runner]` role when the config has no `main` role, and an origin release fires the trigger.
+
+- Repeated sweep failures are visible: the second consecutive failure of a board alerts the owner once (`orch.trigger.failing`, `needs_me.orchestrator_failing`) until a sweep succeeds.
+
+- A todo start refused for a transient reason (`at_cap`, `project_limit`, `busy`, `settings_unavailable`, `config_changed`, `worker_unavailable`, `started_recently`) is retried by the sweep with bounded backoff (1, 5, 15, 30, 60 minutes, then `retry_exhausted`); every refusal stays a miss and the attempts are kept in `orch_start_retries`. A permanent refusal is never retried.
+
+### Runner wings and the owner runner block
+
+- A runner machine's worker PAT reads and writes every wing in the machine grant and no other; its first wing is the default write wing. `startable()` accepts a card whose board wing is granted and otherwise refuses with `outside_worker_wing`, naming the board wing and the granted wings. Machines enrolled before this keep a first-wing-only worker policy until their wings are saved once (same wings do not reset the binding).
+- The Admin page's runner block lists, enrolls, attests and edits wings through the existing owner-only `/api/runners` routes. Enrollment tokens are shown once in a panel and never stored, logged or redrawn.
+
+### Mirror and search-index test waits
+
+- Tests that wait for background mirror or search-index work drain on the actual completion condition (no sweep active, no mirror job pending) through one shared test helper, with a 120 s stuck-job limit, rather than one fixed `wait_for_mirrors` budget that returns silently when it runs out.
+
+- A slow-host regression re-runs the converted selections with late-starting jobs and a wait that returns at once; the production sweep, its 20-thread and unit bounds and `wait_for_mirrors` are unchanged.
+
 ### Console activity query checks
 
 - Console activity schema and query checks freeze the store clock, keeping both dated rows within the seven-day retention window while asserting ordering, latest timestamps and redaction.
@@ -211,7 +252,9 @@ reviews, person callers and explicit person handoffs keep their owner/person rou
 A status line never hides a person decision or an item needing person release.
 
 Only the addressed, still-authorized coordinator or a signed-in workspace owner
-can answer; agents never answer their own asks. The coordinator may instead use
+can answer, plus an owner's own connection holding the owner-granted
+`cards:decide` scope for asks addressed to that owner; agents never answer their
+own asks. The coordinator may instead use
 `decide(then="escalate", reply=<reason>)` to send the unchanged question, options,
 context and return recipient to the owner; an empty reason is refused. An appointed
 coordinator may withdraw only an agent-directed decision it requested itself,
@@ -242,6 +285,10 @@ visibility for slim, standard and full profiles remain unchanged.
 - Message coordinator filtering and reply-loop suppression still apply.
 
 - With orchestration enabled, the list appends `card.created` and `project.report`.
+
+### Card-lifecycle rule replay
+
+- `tests/test_statechart_card_rules.py` keeps one proof per rule of the card-lifecycle statechart replay: release of restricted and subagent cards by the live orchestrator, subagent questions to the orchestrator, approvals offered to the owner only from Needs me, claimed manual assignments, starts by an owner-trusted seat, the machine limit past an hour, and completion reaching the recommended seat webhook. It changes no behavior; a seat without the owner's trust confirmation still cannot request starts.
 
 ### Restricted-origin card content
 
@@ -317,6 +364,10 @@ visibility for slim, standard and full profiles remain unchanged.
   - Trusted seats cannot create boards.
 
   - Connect alone never grants this trust.
+
+  - A trusted project seat may hold the orchestrator lease of its own board and seat role while the board has no `[runner]` config; no config or requester edit is needed. Its direct starts are unchanged. Demotion, switch-off or revocation ends that authority at the next lease call.
+
+  - A project seat never claims another board's lease, also when that board's runner machine lists it as a requester.
 
 - **Lock order.**
 
@@ -428,6 +479,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
   - Agent tokens with an owner role are refused.
 
+- **The app shows who coordinates.**
+
+  - Project settings > Orchestrator reads the read-only checkpoint for role `main` and says in words who holds the lease, when it runs out and how much work is open, in doubt or unstarted. A signed-in owner can End lease (a confirm first); it calls the same `force-release` as the CLI and MCP, so members, agent tokens and other workspaces are refused. Ending a lease changes no step: unfinished work stays listed and becomes in doubt when the next coordinator claims.
+
 - **Channels.**
 
   - `live` and `exp:<name>`.
@@ -454,6 +509,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - A background workspace refresh that supersedes a pending foreground render inherits that render on the same screen.
 
+- A background refresh leaves an edit, hand-off or ask form in the card panel alone, including a form opened after the refresh already requested the card; `state.card` stays at the version the person started from, and Cancel or Save redraws the panel from a fresh read. On Needs me the item's detail is paused while a hand-off form is open, so a changed queue redraws the list but not the form; Cancel, a saved hand-off, choosing another item or a filter that drops the item resumes it. Known limits: a hand-off form keeps the version it started from, so after a conflict Save keeps failing until the form is cancelled and opened again; on a card route a conflict redraws the panel and drops the typed note.
+
 - Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
 
 - Settings bounds each of its six section reads and three prerequisite reads to ten seconds, including response decoding. Failures name the section or request and offer Retry; successful reads show saved values. Orchestration settings lock contention returns retryable HTTP 503 after a one-second lock wait.
@@ -479,6 +536,74 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
 
 - The plan is also re-checked when the runner reports `starting`; a refused job ends `cancelled` with outcome `plan_pending`.
+
+### Owner-granted answers from the owner's own apps (`cards:decide`)
+
+- Answering a Needs-me ask stays a signed-in owner action by default. A separate,
+  unticked `cards:decide` consent lets one of the owner's own connections answer
+  asks addressed to that owner, over MCP `decide` or REST
+  `POST /api/cards/<n>/decide`.
+- Granting: the owner's browser session only. PATs get it at creation
+  (`"decide": true`) or through `PATCH /api/connections/<id>`; OAuth clients get it
+  only when the owner ticks the consent box, and the request must also carry
+  `memory:read` and `memory:write`. Members see an owner-only notice and a forged
+  tick grants nothing. Authorization-server metadata advertises the scope; OAuth
+  defaults never include it. The control layer takes the signed-in owner's
+  principal, never a bare user id: `create_token` needs it as `grantor` for its
+  own top-level, non-seat connection; `set_connection_decide` needs it as actor
+  and refuses runner (its runner message), inactive, child, agent-started and
+  seat connections with specific 409 messages; OAuth code minting rechecks a
+  person owner. The CLI refuses it; person policies, profile defaults and seat or
+  runner policies never include it. The grant route also refuses any current
+  board coordinator (checked in the board store). Settings → Agents offers the
+  grant only on the viewing owner's own eligible, unexpired, non-coordinator
+  PATs, with the consent text served from one source. Withdrawing works on any
+  connection, also expired or revoked ones; another member's row gets its own
+  message.
+- Answering: the connection must be a live PAT or OAuth connection of a current
+  owner, top-level, not a runner, hold the scope, and the ask's recipient must be
+  exactly that owner. Project seats and board coordinators are refused. The app
+  needs `memory:write` and read access to the board's wing; write access is the
+  owner's **person-level** access (`_owner_writes`: the owner's current person
+  policy can write the board's wing), so it answers wherever the owner could in
+  the browser, regardless of the app's own `inbox` write wing, and is refused
+  where the owner cannot write. It cannot escalate or answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
+  tool lists stay unchanged.
+- Audit: inside the answer's board transaction, before it commits, every
+  delegated answer writes `audit_log` action `card.decide.delegated` with user,
+  connection id, auth kind, board and card number. A failed audit write fails the
+  answer. The audit log is append-only and a separate database, so if the board
+  transaction rolls back after the row was written, a `card.decide.rolled_back`
+  row with `reason=audit_seq=<seq>` cancels it. Window: an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails. No answer commits without its audit row; no
+  reconcile exists yet. Grants and withdrawals write
+  `connection.decide.grant` and `connection.decide.revoke`.
+- Revocation: `PATCH {"decide": false}` (PAT or OAuth) or revoking the connection
+  takes effect on the next request; policies load on every request and lose the
+  scope when the holder stops being owner. Losing eligibility removes the stored
+  grant, each with a `connection.decide.revoke` audit row, so regaining it needs
+  fresh consent:
+  - demotion: a membership trigger fires on an `UPDATE` of `memberships.role`
+    from `owner` to anything else (reason "ownership lost"); deleting a
+    membership is refused by the foreign key while the user has connections;
+  - coordinator assignment: `board_set` clears the grant of the connection it
+    assigns (reason "coordinator") inside its transaction and again after the
+    commit; the grant route re-reads coordinators after writing a grant and
+    withdraws it (409) if the app became one meanwhile. Unassigning does not
+    restore it, because every path that removes or replaces a coordinator
+    (`board_set` replace or unassign, and the auto-unbind when the owner runs the
+    own-wing action and the app can no longer coordinate the board, whether or not
+    the wing changes) clears that connection's grant before the board commit. The
+    clear is its own control-database commit, ordered before the board COMMIT, not
+    one atomic transaction with it: a grant left by a failed clear or a crash is
+    gone before the app stops coordinating; a failed clear rolls the removal back;
+    a crash after the clear leaves the coordinator in place without a grant (fail
+    closed);
+  - expiry: rotating an expired PAT clears the grant (reason "expired"); rotating
+    a live PAT keeps it. Expired tokens can still be rotated, as the connection
+    docs describe.
+- OAuth token and refresh responses (and the stored token rows) carry only the
+  granted scopes the connection still holds after policy and role intersection,
+  so a withdrawn `cards:decide` never reappears in a refresh.
 
 ### Explicit imported-history reader consent
 
@@ -561,6 +686,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - `orch_resume` returns a checkpoint (open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses) plus the unstarted `todo` cards of each configured board: no active job and no job started strictly after the card's latest firing event (a start in the same second as the event does not count).
 
+- Checkpoint `jobs` covers runner jobs (`source=runner`) and builders started outside the runner (`source=journal`). A journal entry is listed only while two facts hold: the lease holder recorded the start of an unvoided, unfinished `thread` step for a card (`started` or `waiting`; it stays listed when a later epoch marks the step `in_doubt`), and that card is in `doing` on the same board under a live claim. Each entry carries the card, step key, assignee, claim end and the step's evidence. Nothing is stored and no card or step is changed; the hub does not verify that the thread exists.
+
 ### Thread-search ranking
 
 - For a verified thread index, search finds the scoped BM25 cutoff using the FTS rank iterator, then includes every hit at or above that cutoff before ordering by BM25, thread ID and chunk index.
@@ -596,8 +723,14 @@ playbooks and the original wider orchestration acceptance remain separate work.
   edges (maximum 16 per card, no self/cycles, DFS bounded to 200 nodes).
   Only Done unblocks. SQL selection skips unresolved blockers and the runner
   checks them before starting. Views use the pure `boards.why` predicate in
-  blocker/person/release/cap order; explicit claims share its waiting text.
+  blocker/person/release/cap order (the full list is in docs/boards/API.md);
+  explicit claims share its waiting text.
   Dependency waiting alone does not enter `needs_me`.
+
+- Blocker links are edited in the app through the ordinary card `PATCH` with the full `blocked_by` list and the card version, so ownership, visibility and optimistic-version rules are unchanged. Refusals (`self`, `cycle`, `other_board`, `invalid_blockers`, `blocker_graph_too_large`) carry a plain sentence; a card the caller cannot read is answered exactly like a missing number.
+
+- `boards.why` is the single source of waiting sentences. Besides blockers, person, release and capacity it explains an expired claim, a plan awaiting review, no connected agent and pending checks; only `blocked_by`, `waits_on_person`, `plan_review` and `not_released` refuse a claim or start. Board lists add `waiting_notes` built from the same counts.
+
 - `boards.sqlite3` adds `task_blockers` and `card_splits`. Keyed children use
   `split:<parent>:<key>` labels; key checks and inserts share the board write
   transaction. Inbox reads include open unsplit roots, excluding children and
@@ -682,7 +815,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 | Question | Default |
 |---|---|
 | Who approves a config | The owner only. |
-| Who may hold an orchestrator lease | A principal that passes `requester_ok` for the configured machine (a listed trusted PAT or the person owner). |
+| Who may hold an orchestrator lease | A principal that passes `requester_ok` for the configured machine (a listed trusted PAT or the person owner); a project seat only on its own board. Without `[runner]`: only the board's own trusted project seat, for its seat role. |
 | Lease TTL | 1800 s (G). |
 | Wait budgets | Guesses until measured (see Numbers). |
 | CLI acts as owner | Yes, through data-dir access. |
@@ -1199,6 +1332,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
   - Approval of the waiver list below is a manual owner review.
 
+- **Scheduled prompts:** A schedule's prompt is delivered as an owner-authored message on the board the agent coordinates, through the ordinary `space_message` wake; delivery is at most once per due time (a missed or interrupted due time is recorded, never replayed), is re-authorised at each due time, and is limited to coordinators. Non-coordinator agents have no existing prompt channel that avoids creating a card, so they are not supported yet. The worker polls every 30 seconds, so a prompt can arrive up to that much after its due time.
+
 ## Open dependencies (D1–D3)
 
 - These are owner decisions or captures tracked in `docs/runner.md` ("Owner checklists").
@@ -1249,6 +1384,19 @@ playbooks and the original wider orchestration acceptance remain separate work.
 ### Compatibility fixture coverage boundary
 
 - The overlaid board definitions share schemas between baseline and current servers; the strict fixture protects visibility, HTTP and audit compatibility, while focused card tests cover opt-in schema fields.
+
+### Refused Done moves and handoffs
+
+When the service refuses `PATCH /api/cards/<n>` with `status: "done"` or
+`POST /api/cards/<n>/handoff` with 403, the answer is
+`{error, next_step, code}`: `error` is a plain reason, `next_step` says what to do
+next (for example release the restricted-origin card first, or move a todo card to
+Doing before Done), and `code` is `done_refused` or `handoff_refused`. Refusals the
+service does not know get its own text plus a generic reload-and-ask step. Only the
+wording is added here: who may move or hand off a card, and every status code
+(404 not found, 409 version clash, 400 invalid input), stay as the service decides.
+The owner web client joins `error` and `next_step`, and shows a readable message
+for a 403 that carries no JSON body.
 
 ### Canonical Space REST foundation
 
@@ -1707,3 +1855,111 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   semantics are unchanged, including omission of malformed scalar citations.
 - Broader semantic record/count-map collisions and search/duplicate vector
   diagnostics remain separate work.
+
+## Person private-read containment
+
+Person sessions derive private read authority only from the exact current
+workspace owner role. A missing, omitted or unexpected role grants no private
+read scope. Membership alone is insufficient. The admin callback eligibility
+reader uses that same role-aware policy. No stored membership or data migration
+is involved; owner policies retain their existing scopes and behavior.
+
+Members temporarily cannot read any private wing, including their own private
+notes, private chats, thread mirrors and diaries. Workstation wing aliases that
+require every wing, private-sensitive facts, secret/unwinged facts and the map's
+people overlay are also unavailable. Existing input-authorized projections retain
+shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
+labels, ranks or counts. Wildcard policies can reach those projections without
+private scope; literal-wing policies keep their existing tool visibility.
+
+For principals without every-wing access, CLI-compatible search acquires structured
+hits and renders only after the same drawer gate as structured search: room and
+provenance checks; body text is not scanned. This applies with a literal wing and
+with no wing. Both CLI paths use the same pure formatter. The gateway explicitly
+renders flat rows, so import-authorization metadata cannot replace a
+readable row's wing, room or source; the owner renderer retains its metadata mode.
+Restricted CLI responses contain only query, CLI text, an empty results array,
+optional searched wings and
+non-empty facts; structured search also omits acquisition counts and truncation
+flags that could include hidden candidates. Every-wing policies retain those
+diagnostics and their existing CLI output.
+
+Content placed in an ordinary shared room is visible on every route. Body text
+and arbitrary provenance labels are not scanned for private words or fingerprinted;
+recognized protected references in source_file, source_path and media path/title
+aliases are still checked.
+
+Provenance containing control or format characters (for example a tab or zero-width
+space) is omitted even for ordinary paths. This remains fail-closed because hidden
+or encoded characters can make reference interpretation ambiguous; readable drawer
+text is retained without rewriting the path to guess its meaning.
+
+Unprojected whole-palace operations remain unavailable to members: mesh estate,
+duplicate detection, checkpoint, source-wide deletion, tunnel/hallway deletion,
+memories-filed-away, and low-level coordination event/artifact/patch operations.
+They have the same unknown-operation refusal as unavailable operations. Explicit
+private reads remain independent of private data presence. This containment does
+not define a restricted estate response or restore filer-specific private reads.
+
+### Event, write and durable-token boundaries
+
+Non-owner person event feeds use the same current-principal visibility as
+webhooks: boardless events require every-wing access, and board events require
+a readable active board (space messages retain coordinator checks). Their feed
+and cursor are projected onto visible events; hidden events do not change the
+member feed response. Members consequently lose boardless
+live Memory refresh signals. Card and board linked-memory state can remain stale
+until the next board event or an explicit refresh. Owner feeds retain their
+original ordered log.
+
+Each member poll snapshots readable active boards once and filters a bounded
+SQL page against that set. The opaque epoch hashes the member role and readable
+board identities, never hidden activity. A missing or changed epoch, or a cursor
+above the projected latest, returns `reset: true` without replaying events. The
+app refetches the open screen, including an open card, before adopting the reset
+cursor and epoch. Ordinary pages advance only through returned events. An owner
+request carrying a non-empty member-era epoch also returns a reset with no
+events, adopting the latest raw cursor before resuming the owner feed.
+
+Deploy note: open member tabs from before this deploy stop receiving live events
+until they reload. Reload those tabs after upgrading to resume live updates.
+
+Webhook subscriptions whose effective principal lacks `policy.sees_all_wings`
+receive no numbers: payload `seq` and delivery-list `event_seq` are omitted.
+Their payload id is `evt_` followed by the first 32 hexadecimal characters of
+HMAC-SHA256 of the raw event sequence, keyed by an independent server-only
+per-subscription key. The disclosed signing secret cannot derive those ids.
+A restricted retry keeps the same opaque id for the same event.
+The internal `(webhook_id, event_seq)` key still deduplicates enqueue attempts.
+There is no subscription counter, counter column or counter backfill. One
+nullable key column is initialized atomically on first restricted use, persists
+across restarts and is never returned by any API or logged. No operator setting
+or manual data setup is required. Subscriptions with `sees_all_wings` retain the
+raw sequence and id. Enqueue, send and listing resolve the subscription's current
+effective authority, including owner-held restricted tokens; an unresolvable
+principal is restricted. Send rechecks queued payloads after authority changes.
+Subscription lookup exceptions log one diagnostic with exception type and stack
+locations, excluding exception text and key material; admission still fails closed.
+
+Writes into unreadable private wings remain allowed, but duplicate drawer
+retries return the same successful shape as fresh writes. Replay fields and
+retained source provenance are hidden; returned structural fields depend only
+on the supplied request and current chunk configuration. Readable-owner retries
+still report already_exists. Tunnel creation additionally requires both endpoint
+wings to be readable for principals without every-wing access, and outgoing
+write results pass the wing scrubber. Denial happens before any private upsert.
+
+Token issuance refuses private read scope for a holder who is not a workspace
+owner. PAT, durable subscription connection and OAuth authentication strip both
+private read and admin scopes unless current membership is exactly owner;
+missing membership rejects authentication. Stored policies are not rewritten.
+Member PATs minted earlier with private:read silently lose it when loaded.
+
+Health-flagged member notes are always saved privately when private writing is
+allowed; they are never redirected to shared storage. The successful HTTP save
+response includes a notice, and the MCP save text states: "Saved privately. You
+cannot read this note for now." This also applies to other saves into unreadable
+private wings. The notice uses the actual filed destination after write-wing
+pinning; readable shared or inbox saves do not carry that notice. A save that
+succeeds privately but fails to link to a card includes the same notice in its
+saved-but-not-linked error.
