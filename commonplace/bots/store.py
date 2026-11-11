@@ -482,6 +482,20 @@ class BotStore:
             ).fetchone()
             return _message(row) if row else None
 
+    def unanswered(self, bot_id, user_id) -> list[dict]:
+        """User messages of this bot that have no bot reply, oldest first."""
+        with self._tx(write=False) as conn:
+            self._own(conn, bot_id, user_id)
+            return [
+                _message(row)
+                for row in conn.execute(
+                    "SELECT * FROM bot_messages u WHERE u.bot_id=? AND u.role='user' "
+                    "AND NOT EXISTS (SELECT 1 FROM bot_messages b WHERE b.bot_id=u.bot_id "
+                    "AND b.role='bot' AND b.reply_to=u.id) ORDER BY u.id",
+                    (bot_id,),
+                )
+            ]
+
     def reply_to(self, bot_id, user_id, message_id) -> dict | None:
         with self._tx(write=False) as conn:
             self._own(conn, bot_id, user_id)
@@ -596,6 +610,18 @@ class BotStore:
             self._own(conn, bot_id, user_id)
             row = conn.execute(
                 "SELECT * FROM bot_pending WHERE id=? AND bot_id=?", (pending_id, bot_id)
+            ).fetchone()
+            return self._pending(row) if row else None
+
+    def pending_for(self, user_id, pending_id) -> dict | None:
+        """A pending action of one of this person's bots (for hydrating a confirm block)."""
+        if not isinstance(pending_id, str):
+            return None
+        with self._tx(write=False) as conn:
+            row = conn.execute(
+                "SELECT p.* FROM bot_pending p JOIN bots b ON b.id=p.bot_id "
+                "WHERE p.id=? AND b.user_id=? AND p.user_id=?",
+                (pending_id, user_id, user_id),
             ).fetchone()
             return self._pending(row) if row else None
 

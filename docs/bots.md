@@ -5,9 +5,8 @@ project they can read, a General bot, and any custom bots they create. A bot is 
 and has no token or rights of its own: whatever it reads is read as the person it belongs to,
 and what that person may not see, it cannot show.
 
-This page covers the storage and the read and management routes. Sending a message to a
-bot, stopping a turn and confirming an action come with the turn engine and are not part of
-this page yet.
+This page covers the storage, the read and management routes, and talking to a bot: a turn
+streams the reply of the workspace's chat model, runs tools as the person and stores the reply.
 
 ## Routes
 
@@ -21,6 +20,9 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `POST /api/bots` | `{name, job?, instructions?, board?}`, 201 `{bot}` |
 | `PATCH /api/bots/<id>` | `{name?, job?, instructions?, archived?}`, `{bot}` |
 | `GET /api/bots/<id>/messages?after=&before=&limit=` | `{bot, messages, waiting, running}` |
+| `POST /api/bots/<id>/messages` | `{text, request_id}`, a `text/event-stream`; with `?stream=0`, `{message, reply}` when the turn ends |
+| `POST /api/bots/<id>/stop` | `{request_id}`, `{ok}` (true when that turn was running) |
+| `POST /api/bots/<id>/confirm` | `{pending, accept}`, `{message}` (an `event` message with the action block) |
 | `POST /api/bots/<id>/read` | `{upto}`, `{ok}` |
 | `GET /api/bots/<id>/memory` | `{memories:[{id,text,at}]}` |
 | `POST /api/bots/<id>/memory` | `{text}`, `{memory}` |
@@ -31,7 +33,8 @@ A bot is `{id, name, job, instructions, kind, board, archived, last, unread, wai
 shortened to 200 characters, `at`) or null. `unread` counts bot and event messages after the
 read mark. `waiting` is the number of the person's open decisions for the bot's project, or
 across every readable project for General and for a custom bot without a project. `state` is
-`needs_you` while something waits, else `idle`.
+`needs_you` while something waits, `working` while a turn runs, else `idle`. The thread
+listing's `running` is true while a turn of this bot runs.
 
 Defaults: one `project` bot for each non-archived project the person can read, named after
 it, plus one `general` bot. An archived default is never created again. The roster is sorted
@@ -50,8 +53,92 @@ person (409 `limit`), `limit` at most 100 (default 50). Out-of-bound input is 40
 A message may carry blocks: small references that are filled in when the thread is read,
 with the reader's own permissions. A `work` block shows a task's title, a status word
 (`queued`, `working`, `needs_you`, `ready`, `blocked`, `done`), a note and links; a `decision`
-block shows the open question and its options, or the answer. An item the reader cannot see,
-or that no longer exists, comes back as `gone`. Tasks are always named by their number.
+block shows the open question and its options, or the answer. An `action` block is one line
+for a tool the bot used (`tool`, `label`, `ok`, and a `code` when refused). A `confirm` block
+adds the server-built `label` and `state` (`open`, `done`, `cancelled`, `expired`) of an action
+waiting for the person's tap. A `setup` block says no model is usable and whether the reader
+can configure one. An item the reader cannot see, or that no longer exists, comes back as
+`gone`. Tasks are always named by their number.
+
+## Talking to a bot
+
+`POST /api/bots/<id>/messages` stores the person's message, starts a turn on its own thread
+and relays that turn as server-sent events. Each frame is `event:` plus a JSON `data:` line and
+is flushed at once; a `: ping` comment goes out every 10 seconds.
+
+| Event | Data |
+|---|---|
+| `ack` | `{message}`: the stored user message; sent before any model work |
+| `delta` | `{text}`: reply text, in order, while the model is still sending |
+| `action` | `{step, tool, label, state, code?}`: `running`, then `ok` or `refused` |
+| `block` | a hydrated block a tool returned (a work item, a `confirm` chip) |
+| `done` | `{message, timing:{first_token_ms, total_ms}}`: the stored bot message |
+| `error` | `{code, text, message}`: `needs_configuration`, `limit`, `rate`, `model_error`, `timeout`, `stopped` or `interrupted`, a fixed sentence and the stored bot message |
+| `running` | `{}`: a replay of a request whose turn is still running; read the thread later |
+
+Before the stream starts, errors are plain HTTP `{error, code}`: 400 `invalid`, 404 for an
+unknown or foreign bot, 409 `busy` while another turn of this bot runs, 409 `conflict` for a
+request id sent again with other text, 429 `busy` when the person already has 4 turns running
+or the process 32. Once the message is stored, every outcome is a stream event and a stored
+bot message.
+
+**A turn.** The model is the one the owner configured in chat settings for the bot's project
+(the workspace setting for a bot without one). Without a usable model the reply is a stored
+`setup` block and `error needs_configuration`; no request is sent. The model reads a fixed
+system prompt with the bot's name, job and persona notes (quoted; they grant nothing), up to 20
+memory notes, a short snapshot of the bot's project, and the last 20 messages, all redacted and
+quoted as data. A turn takes at most 6 tool steps, 30 seconds per model request, 60 seconds in
+total, 800 output tokens per request and 48,000 input characters. The reply is stored in one
+write, redacted, with the model label and a state: `ok`, `stopped` or `failed:<code>`. Partial
+text is kept when a turn stops or fails. Provider error text never reaches the person.
+
+**Replay.** Sending the same `request_id` with the same text again never runs anything twice:
+a finished request answers `ack` and its stored `done` or `error`; a running one answers `ack`
+and `running`. A request that has a stored message but no reply and no running turn (the hub
+restarted mid-turn) is answered with `error interrupted` and a stored `failed:interrupted`
+reply listing what the turn had journaled; an action that had started but not finished reads
+"Outcome unknown". The same report is written when the thread is next read. It is never rerun.
+
+**A dropped client.** The turn does not depend on the connection. A client that disconnects,
+or a socket write blocked for 10 seconds, only ends the relay; the reply is stored and shows
+when the thread is read again.
+
+**Stop.** `POST /api/bots/<id>/stop {request_id}` ends that turn. A tool call in flight
+finishes first (a write is never cut off); the partial text is kept and stored with state
+`stopped`.
+
+**Limits.** Bots and project chat share one model budget. One unit is one model request sent;
+bots count theirs per person and day, and project chat's daily count includes them, so both
+draw on the same workspace `daily_limit` and per-person `user_daily_limit`, and on the same
+20-requests-per-minute rate per person. A used-up budget is `error limit` (or `rate`).
+
+**Tools.** The model may call the tools offered for the turn. Arguments are checked against
+each tool's schema first. Every tool runs as the person, re-resolved for each call, so what
+the person may not do the bot cannot do either; each write gets an audit row like a REST write
+(tool `bot:<name>`, no text). Text a tool writes must be a verbatim part of the person's
+current message, or the tool refuses with `not_your_words`. Every call is journaled before it
+runs and after it finishes; its result goes back to the model as quoted data. Built in:
+`remember(text)` saves a memory note (the person's own words) and `forget(id)` removes one.
+
+**Confirm.** A consequential tool never runs from a model's tool call. The turn stores a
+pending action with its arguments frozen (including the item's `version` when the call names
+an item by `ref`) and a label the server builds, valid for 10 minutes, and shows a `confirm`
+block. `POST /api/bots/<id>/confirm {pending, accept:true}` moves it from `open` to `done`
+once and runs exactly the stored action as the person; the result is an `event` message with
+the action block. `accept:false` cancels it. A second confirm is 409 `conflict`, an expired one
+409 `expired`, another person's 404. A confirm tool receives the frozen `version` among its
+arguments.
+
+**Writing a tool.** `commonplace/bots/tools.py` defines `Tool` (name, description, a closed
+JSON Schema, kind `read` / `routine` / `confirm`, `run`, `label`, scope, `available`),
+`Result` and `register()`. A `project`-scope tool acts on the bot's own project; for a bot
+without one the model must name a readable project in a `project` argument, and
+`Turn.board(args)` returns it. Tool modules are listed in `bots.TOOL_MODULES` and imported at
+install; a missing module is skipped.
+
+## Project tools
+
+## Machines
 
 ## Updates between turns
 
