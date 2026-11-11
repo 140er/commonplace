@@ -272,6 +272,8 @@ Format (read by `commonplace orch docs-check`):
   - Public Space endpoint and error documentation alongside legacy board routes.
   - `docs/design/RULES.md` documents the `rules_feedback` tool, its limits and its evidence routes.
 
+  - `docs/boards/API.md` describes structured decision blocks: the `{label, detail, preview}` option shape, its bounds, and the `ask_blocks` card field; `docs/boards/schema.sql` lists the column.
+
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
   - `CONTRIBUTING.md` documents the hook install, the pre-push quick check and its budget, and the per-worktree environment.
@@ -677,6 +679,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_subagent_asks.py` covers released-card questions and coordinator routing, answers, escalation and recovery.
 
+  - `tests/test_commonplace_decision_blocks.py` and its Node harness `tests/commonplace_decision_blocks.mjs` cover structured asks from the MCP call through `needs_me` and the decide route to the Needs me blocks, with refusal controls for options that were not offered and for malformed blocks.
+
   - Shared fixtures and harnesses and every test file not listed in another block.
   - Shared fixtures and harnesses and every test file not listed in another block, including binding-epoch migration, direct fences, lock-entry instrumentation and bounded reset races.
 
@@ -1016,6 +1020,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The extension seam lists `commonplace.agent_schedules`, installed after holds.
 
+  - The extension list ends with `commonplace.bots`, which installs the person-only `/api/bots` routes.
+
   - The extension list also loads `commonplace.routines`, which starts its worker with the other background workers and stops it before the control database closes.
 
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
@@ -1326,12 +1332,16 @@ Format (read by `commonplace orch docs-check`):
 
   - All agent asks and review questions default to the authorized live board coordinator. Explicit person_reason is audited and routes to the owner; completion reviews and person handoffs retain their route. Missing or unavailable coordinators fall back to the owner without rewriting asks. Only a currently authorized coordinator may withdraw its own agent-directed decision to todo/doing; recipient, requester and current board appointment are checked. Person decisions and other requesters remain protected, and agents cannot answer their own asks. Withdrawal preserves history.
 
+  - `ask` accepts structured decision blocks (`boards/decision_blocks.py`): each option is a label or `{label, detail, preview}`, with 2 to 6 distinct labels, detail up to 280 characters and a plain-text preview up to 1200 characters and 24 lines. Labels stay in `ask_options`, so routing, events and `decide` are unchanged; the card adds `ask_blocks` (empty for a plain ask), which is cleared whenever the offered options change.
+
 - **How it fails:**
 
   - Hidden metadata is absent; hidden repo collisions are forbidden; unsupported shapes execute no domain method.
   - Report routing defers one event durably before advancing the global cursor; authorization retries indefinitely with fixed inspection code and persisted count/since, independent of HTTP attempts. Control persistence failures retain unacknowledged work.
 
   - A swallowed emission loses a notification but not the change (the trigger sweep reads `task_events`); webhook delivery retries and records failures.
+
+  - A structured option with an unknown key, non-text or control characters, a missing or duplicate label, or text over its bound is refused with a `no:` message and nothing is stored; a decision naming a label that was not offered is refused and the ask stays open.
 
   - Non-closure ProgrammingError follows the same recovery path as every other unexpected dispatcher-pass exception: it is contained and logged without its private message, then waits on the stop event for 5 s, doubling after consecutive errors up to 300 s, before continuing.
 
@@ -1353,6 +1363,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
   - `tests/test_commonplace_subagent_asks.py` and `tests/test_commonplace_agent_asks.py` check generic question routing, owner fallback, explicit person reasons, recipient authority and withdrawal guards through MCP and HTTP.
+
+  - `tests/test_commonplace_decision_blocks.py` checks structured asks end to end: blocks reach the person's `needs_me`, the chosen label returns to the asker, options that were not offered and malformed or oversized blocks are refused, plain asks are unchanged, and a later ask never inherits earlier blocks.
 
   - `tests/test_card_lifecycle.py` holds archive/restore (hide, never delete), carry-on follow-ups and the Pocket, with owner, member, connection and anonymous authorization over the service and REST.
 
@@ -1789,6 +1801,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
+  - `commonplace/chat/model.py` holds the shared connection code (`resolve_endpoint`, `Call`) behind both `complete` and the streaming client `commonplace/chat/model_stream.py`, which yields reply text, complete tool calls and one stop reason as the provider sends them.
+
 - **Promises:**
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
@@ -1796,17 +1810,22 @@ Format (read by `commonplace orch docs-check`):
 
   - Chat answers come from the configured provider or the poster's own runner, never a silent fallback; audio stays in request memory; push is opt-in.
 
+  - `model_stream.stream` takes every limit from its caller (timeout for the whole call, output tokens, input characters, response bytes), makes no retry, uses the same origin, key-host and loopback checks as `complete`, and can be cancelled, which closes the socket.
+
   - Voice is switched per instance with `COMMONPLACE_VOICE` (default on) and picks each language's model with `COMMONPLACE_VOICE_MODEL_EN` and `COMMONPLACE_VOICE_MODEL_NL`; the defaults equal the previous fixed models. A switched-off instance refuses voice with 503, and the free-plan daily transcription cap applies to every clip.
 
 - **How it fails:**
 
   - Without a provider or runner the chat shows a receipt and no answer; push delivery failures are recorded, not retried forever.
 
+  - A streaming call fails with only the codes `timeout`, `http_error`, `bad_response` and `stopped`, never provider error text; a tool call with a name that was not offered, or arguments that are not a JSON object, is a `bad_response`.
+
   - An empty or invalid voice setting stops startup with a message naming the setting, and a missing model at load time is an error; neither falls back to another model.
 
 - **Tests:**
 
   - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
+  - `tests/test_chat_model_stream.py` holds the streaming transport against loopback fake Anthropic and OpenAI-compatible servers: events arrive while the server holds the rest back, fragmented and parallel tool calls, wire shapes, caller limits, deadline, cancel, and the key-host and loopback refusals.
   - `tests/test_commonplace_voice.py` covers the instance switch, model settings, invalid-setting errors and the free-plan cap at, over and under its limit.
   - Coordinator-revocation recovery verifies the origin approval item and retains notification, priority and duplicate-suppression assertions.
 
@@ -1991,6 +2010,37 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/agent_schedules_view.mjs` (run by `tests/test_agent_schedules.py`) covers row rendering and escaping in the app section.
 
+## bots
+
+- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_store.py`
+- **Owns:**
+
+  - Per-person chat bots: one workspace file `bots.sqlite3` (opened like `chat.sqlite3`) holding bots, append-only messages, the tool-action journal, pending confirmations, the work a bot filed, the posts it forwarded and memory notes, plus the person-only `/api/bots` read and management routes (`docs/bots.md`).
+
+  - `auth.person` is the single gate for `/api/bots*`: a signed-in person session, 404 for any agent token or machine credential, 401 for no credentials.
+
+  - `blocks.HYDRATORS` fills stored block references (`work`, `decision`, `action`, `setup`) with the reader's own view through `BoardService`; an invisible or missing item becomes `gone`, an unknown type is returned as stored. `modelcfg.resolve` turns the chat front settings into a model or one of `needs_configuration`, `needs_turn_on`, `key_missing`.
+
+- **Promises:**
+
+  - A bot and its thread belong to one person; every store method takes the user id and answers `Missing` for another person's bot, so a foreign id looks like an unknown one (404).
+
+  - Messages are append-only (triggers refuse UPDATE and DELETE) and verbatim; one reply per user message; a request id sent again with the same text returns the stored message, with other text it is a conflict. Memory removal is a tombstone.
+
+  - Defaults (one project bot per readable, non-archived project plus General) are created lazily and an archived default is never recreated. At most 50 live bots per person.
+
+- **How it fails:**
+
+  - Out-of-bound input is 400 `invalid`, the bot limit and conflicts are 409, a busy store is 429; error bodies carry fixed text, never conversation text.
+
+  - The message, stop and confirm routes are not served yet; they answer 404.
+
+- **Tests:**
+
+  - `tests/test_bots_store.py` covers bounds, append-only triggers, idempotent sends and conflicts, one reply, paging, unread, the action journal, pending compare-and-set, forwards and work lookups, memory tombstones, per-user isolation and reopening the store.
+
+  - `tests/test_bots_api.py` covers defaults per readable project, create/rename/archive and the 50-bot bound, thread paging, block hydration and status words, waiting decisions, read marks, memory, redacted display, and 404 for another person, another workspace and agent tokens.
+
 ## web-and-console
 
 - **Paths:** `commonplace/web/`, `commonplace/console/`
@@ -2093,6 +2143,8 @@ Format (read by `commonplace orch docs-check`):
   - **Connection recovery:** Callbacks reopen the selected Needs item; GitHub-only status failures preserve card actions, and connections in another workspace show an explicit disconnect control.
 
   - Needs me renders origin/configuration as approvals, requires a release reason and posts directly; coordinator configuration navigates to existing settings without mutating a card. Proposal Decline and plan Reject controls follow reject permission independently of approve permission and use the existing rejection handler.
+
+  - Needs me shows a structured ask (`ask_blocks`, `web/static/decision-blocks.js`) as side-by-side option blocks under the question: optional plain-text preview, the answer button, optional detail. The button answers with the option's label exactly like a plain option; plain asks keep their footer buttons, and blocks that do not match the offered labels are not drawn.
   - Shell needItems includes approvals when counting each project and retaining selected details on refresh; release ranks between person decisions and plan review.
 
 - **How it fails:**
@@ -2122,6 +2174,8 @@ Format (read by `commonplace orch docs-check`):
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
 
   - `tests/workbench_e2e/test_refresh_forms.py` drives a real browser: an open hand-off form (also one opened mid-refresh) and a comment in progress survive a background refresh, the panel updates once the form is cancelled, and on Needs me a queue change leaves an open hand-off form alone and Cancel closes it.
+
+  - `tests/commonplace_decision_blocks.mjs` (run by `tests/test_commonplace_decision_blocks.py`) checks that a structured ask renders one block per option in the Needs me body, escapes option text, answers with the option's label through the decide route, and falls back to plain buttons for plain or mismatched blocks.
 
   - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals and escaping; `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
 
