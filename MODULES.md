@@ -256,6 +256,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
   - Public Space endpoint and error documentation alongside legacy board routes.
+  - `docs/design/RULES.md` documents the `rules_feedback` tool, its limits and its evidence routes.
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
@@ -588,6 +589,7 @@ Format (read by `commonplace orch docs-check`):
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
+  - `tests/test_commonplace_rules_evidence.py` and the `rules_feedback` entries of `tests/spaces_surfaces.json` pin evidence writes, refusals, workspace isolation, bounded growth and old-database migration.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
