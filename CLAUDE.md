@@ -37,8 +37,8 @@ We do not accept summarization of user content, cloud storage/sync features, tel
 
 ## Merging pull requests (batch lane)
 
-- A pull request into `develop` is merge-ready on its exact head when it has a claude-gate PASS and a quick `pr-check` subset PASS (affected or narrow tests plus smoke, about 2 minutes; never the full suite). Only `RESULT: PASS` counts. `SKIP`, `ERROR` and `TIMEOUT` are not a pass.
-- The builder that owns the PR merges it: `gh pr merge <n> -R 140er/commonplace --squash --match-head-commit <full sha>`.
+- A pull request into `develop` is merge-ready on its exact head when it has a gate PASS and a quick PR check subset PASS (affected or narrow tests plus smoke, about 2 minutes; never the full suite). Only a PASS result counts. SKIP, ERROR and TIMEOUT are not a pass.
+- The builder that owns the PR merges it: `gh pr merge <n> -R <owner>/<repo> --squash --match-head-commit <full sha>`.
 - No full-suite check per PR. The full suite runs per batch on `develop`, about every 5 merges or 60 minutes. If a batch is red, bisect it, open a revert or fix PR, and hold merges while `develop` is red.
 - The coordinator never merges. `develop` to `main` needs the owner's go.
 
