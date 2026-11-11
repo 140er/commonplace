@@ -188,6 +188,51 @@ A route's `hops` is a list of `{"link", "from", "to", "method", "known", "stale"
 
 `read_graph` returns `{"wing", "nodes", "links", "routes", "conflicts"}`. A conflict is `{"conflict_id", "subject", "predicate", "state", "created_at", "resolved_by", "resolved_at", "current", "contender"}`, where both values have the field shape above. `history` returns every value a subject held, newest first, each with `predicate`, `state` and `superseded_by`.
 
+## Map read
+
+`GET /api/topology/map` is what the map canvas in the web app draws from. It is an interim, deliberately small read in its own module (`commonplace/topology/map_route.py`): the agent tools add the general graph read and the live status read adds status derived from runner heartbeats, and the canvas then reads those instead.
+
+Only a signed-in workspace owner whose policy reads the `topology` wing gets an answer; anyone else gets `403`, and a request without a session `401`. It reads one workspace's store and creates no file.
+
+```json
+{
+  "graph": {
+    "wing": "topology",
+    "nodes": [{"subject": "node:web1", "wing": "topology", "key": "web1",
+               "values": {"kind": "server", "name": "Web 1", "role": "app host"},
+               "stale": false, "conflicted": false, "last": {}}],
+    "links": [{"subject": "link:laptop>web1:tailscale", "wing": "topology",
+               "id": "laptop>web1:tailscale", "from": "laptop", "to": "web1", "method": "tailscale",
+               "values": {"method": "tailscale", "status": "up"}, "stale": false, "conflicted": false}],
+    "routes": [{"subject": "route:example.test", "wing": "topology", "site": "example.test",
+                "values": {"hops": ["example.test>web1:reverse_proxy"]}, "stale": false, "conflicted": false,
+                "hops": [{"link": "example.test>web1:reverse_proxy", "from": "example.test", "to": "web1",
+                          "method": "reverse_proxy", "known": true, "stale": false, "status": "unknown"}]}]
+  },
+  "status": {
+    "nodes": {"web1": "unknown"},
+    "links": {"laptop>web1:tailscale": {"from": "up", "to": "up"}}
+  }
+}
+```
+
+- `graph` is `read_graph` without `fields` and without `conflicts`: no evidence and no observers, only what is drawn. A node also has `last`: the `kind`, `name` and `role` that have expired, so a stale node keeps its icon and label and is marked stale.
+- `status` has one state per node and one per end of a link: `up`, `degraded`, `down` or `unknown`. Until the live status read exists, every node is `unknown` and both ends of a link carry the link's own fresh `status` fact; an expired or missing status is `unknown`, never `up`.
+
+## The map in the app
+
+The owner opens the map from **Compute map** in the rail (`#/compute-map`). It is drawn as SVG by `commonplace/web/static/topology-map.js` with `topology-layout.js` (layout, pan and zoom maths) and `topology-icons.js` (one icon per node kind, drawn for this app). Nothing is loaded from another origin.
+
+- **Devices** are icons with the name and the role underneath. A stale device is faded with a dashed outline and says "stale"; a device with an open conflict says "conflict"; a device that a link or route names but that has no facts is drawn as an unknown device that says "not recorded".
+- **Links** are lines with a status mark at each end. A status is a shape and a word as well as a colour: circle for up, triangle for degraded, square for down, ring for unknown. Each mark and each device carries its status as text for a screen reader and as a tooltip, and the legend names the four shapes. Two methods between the same two devices run side by side.
+- **Layout** is automatic and the same on every load: rows from site to DNS or CDN, edge, machine and app, with the devices people sit at last. A device dragged somewhere stays there. Dragged places and the chosen view are remembered in the browser, per workspace; **Reset layout** forgets the places.
+- **Moving around:** drag the background to pan, scroll or pinch to zoom, or use the buttons. With the canvas focused, the arrow keys pan, `+` and `-` zoom and `0` fits everything. On a focused device, Enter selects it and Shift with an arrow key moves it.
+- **Route** highlights one site's route as a path, dims the rest, and writes the hops out in words, including a hop that is unknown or stale.
+- **Live:** the map reads again every five seconds while the tab is visible and redraws only when something changed. If a read fails, the last map stays and a line says it is not updating.
+- **Empty workspace:** the empty state has one button, "Start agent work on map". The canvas only offers it; the discovery work behind it is separate, and until that is connected the button is off and says so.
+
+Selecting a device sends a `topology:select` event (`detail.key`) from the map's root element, which is where a detail panel attaches.
+
 ## Existing workspaces
 
 The store is additive: one new file per workspace with three tables, created by the first write. No existing file or table changes. A workspace from before this feature has no `topology.sqlite3`; it reads as an empty map (`nodes`, `links`, `routes` and `conflicts` all empty), `get_*` return `None`, and reading does not create the file.

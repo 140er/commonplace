@@ -610,6 +610,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/bots_harness.html` and `tests/bots_shots.sh` are the screenshot harness for the bots screens: the real `bots.js` and stylesheets with a scripted fake API and stream, captured through headless Chromium.
 
+  - `tests/topology_harness.html` (with `topology_harness.mjs` and `topology_harness.css`) and `tests/topology_shots.sh` are the screenshot harness for the Compute map: the real `topology-map.js` and stylesheets over a scripted API serving `tests/topology_fixture.mjs`, an invented topology. Its walk scene drives the real DOM with pointer and wheel events and the script fails unless every check of the walk passed. `tests/test_commonplace_public_surface.py` classifies `GET /api/topology/map` as authenticated in the route inventory.
+
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
   - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
@@ -2021,12 +2023,14 @@ Format (read by `commonplace orch docs-check`):
 
 ## topology
 
-- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`
+- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`, `tests/test_topology_map_route.py`
 - **Owns:**
 
   - The topology store behind the Compute map: nodes, links and site routes as structured `(subject, predicate, object)` facts in the workspace's `topology` wing, in the workspace file `topology.sqlite3` (`topology_facts`, `topology_observations`, `topology_conflicts`). `docs/topology.md` is the contract: node kinds, link methods, routes, provenance, expiry, conflicts, the secret filter and the Python read and write signatures.
 
   - `model.py` is the allow-list: every field and its shape, the observer, lifetimes, subjects and the secret filter. `store.py` holds `TopologyStore` (one workspace's file, opened like `bots.sqlite3`; `open_topology` caches one per workspace on the gateway) and writes and reads: `upsert` (and the node, link and route forms), `retract`, `resolve_conflict`, `get_node`, `get_link`, `get_route`, `read_graph`, `list_conflicts`, `history`.
+
+  - `map_route.py` is the owner read behind the map canvas, `GET /api/topology/map`: `read_graph` without provenance plus one status per node and per link end. It is interim and stands alone so the agent tools' graph read and the live status read can replace it.
 - **Promises:**
 
   - Every fact keeps who observed it, when, from what verbatim evidence, and when it expires. A stale value leaves `values` and is still readable with `stale: true`; nothing is deleted.
@@ -2042,6 +2046,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_topology_store.py` covers upsert and read back with provenance and expiry, refreshes, allow-list refusals, stale facts and route hops, conflicts and their resolutions, the authoritative write, retraction, secret refusals, workspace isolation, an old workspace without the file, reopening, a moved workspace directory, a crash inside a write and the wing grant.
+
+  - `tests/test_topology_map_route.py` covers the map read over real HTTP: the shape without evidence or observers, an expired status reading as unknown, a stale node keeping its last label, an empty workspace that creates no file, and refusal of members, agent tokens and requests without a session.
 
 
 ## bots
@@ -2095,6 +2101,8 @@ Format (read by `commonplace orch docs-check`):
   - The ledger lines of the card panel's Runs list in `cardruns.js`: end status, tokens, cost and log pointer of a started run.
 
   - The bots screens (`bots.js`, `botstream.js`, `bots.css`, routes `#/bots` and `#/bots/<id>`): a roster of named bots with one state dot each and one streamed thread per bot, drawn from the `/api/bots*` contract. `botstream.js` is the DOM-free SSE frame parser and the message sender; `bots.js` renders blocks (actions on one line, work chip, decision buttons and reply field through the existing decide route, confirm chip, setup block, a "Waiting on you" strip) and owns polling, the unsent-text retry and the memory/rename/archive sheet. See "Using bots in the web app" in `docs/bots.md`.
+
+  - The Compute map canvas (`topology-map.js`, `topology-layout.js`, `topology-icons.js`, `topology.css`, route `#/compute-map`, one rail and one palette entry for the owner): machines, sites and links drawn as SVG from `GET /api/topology/map`, with pan, zoom, drag-to-place, a route highlight and a status mark at each link end. `topology-layout.js` is the DOM-free geometry (stable automatic layout, zoom, link and dot places), `topology-icons.js` holds one icon per node kind, and `topology-map.js` holds the model of the read (`mapModel`, the one place that knows its shape), the scene, the per-workspace memory and the screen. A status is always a shape and a text as well as a colour; dragged places and the view live in the browser's storage per workspace; the screen reads again every five seconds while visible, stops itself when its markup is replaced, and loads nothing from another origin. It announces a selected device with a `topology:select` event for a detail panel. `docs/topology.md` describes it.
 
   - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
 
@@ -2230,6 +2238,8 @@ Format (read by `commonplace orch docs-check`):
   - `api.js` joins a refusal's `error` and `next_step` and words a 403 without a JSON body; `tests/test_commonplace_owner_403_message.py` and `tests/owner_403_message.mjs` cover it.
 
   - `tests/commonplace_bots_view.mjs` (run by `tests/test_commonplace_bots_view.py`) covers the stream parser cut at every byte, the sender's pre-stream refusals and events, the roster, every block type, the optimistic echo and streamed fill, Stop, retry under one request id, escaping of hostile text and the route and rail glue; `tests/bots_harness.html` with `tests/bots_shots.sh` renders the screens for desktop and phone screenshots.
+
+  - `tests/topology_map_view.mjs` (run by `tests/test_topology_map_view.py`) covers the Compute map: the model of the read, one distinct icon per kind, labels and status shapes with their text, escaping, the route highlight in marks and in words, a stable layout that keeps 300 nodes apart, zoom about the pointer, dragged places and the view surviving a reload per workspace, the five-second read showing a status change, a read during a drag waiting for the drop, the empty state, refusals and the app and rail glue. `tests/topology_fixture.mjs` is the invented topology they share with `tests/topology_harness.html` (`topology_harness.mjs`, `topology_harness.css`), which `tests/topology_shots.sh` renders in headless Chromium and walks with real pointer and wheel events.
 
 ## browser-github-grants
 
