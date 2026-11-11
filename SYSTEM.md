@@ -558,7 +558,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - **A project can show its own panel.**
 
-  - A project panel (`commonplace.panel/1`, `docs/project-panels.md`) is a few text highlight lines and http(s) action links, set with `PUT /api/projects/<slug>/panel` by the owner or an agent with board-write authority and shown at the top of the project's board. It is untrusted: unknown fields, markup, control characters, over-limit sizes (4096 bytes) and non-http(s) links are refused, and the page draws only escaped text. A project without a panel is unchanged.
+  - A project panel (`commonplace.panel/1`, `docs/project-panels.md`) is a few text highlight lines and http(s) action links, set with `PUT /api/projects/<slug>/panel` by the owner or an agent with board-write authority and shown at the top of the project's board. It is untrusted: unknown fields, markup, control characters, over-limit sizes (4096 bytes) and non-http(s) links are refused, and the page draws only escaped text. Its rules are adopted as a constructed style sheet, never an inline style element, so the app's content security policy applies them. A project without a panel is unchanged.
 
 - **Channels.**
 
@@ -688,6 +688,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
   (collecting `tests/` must never error); `CP_BROWSER_E2E=1` makes a missing
   Playwright fail instead.
 
+- Compatibility baseline: the pinned handoff "off" baseline test supplies
+  `commonplace/decide_grant.py` (a leaf module the current board code imports);
+  its gateway, policy and handoff comparison stays pinned.
+
 ### Explicit imported-history reader consent
 
   - Imported view proofs share the response access checker with normalized citation and private-source authorization; thread-bound mutation and source-delete checks remain enforced.
@@ -774,8 +778,6 @@ playbooks and the original wider orchestration acceptance remain separate work.
 ### Thread-search ranking
 
 - For a verified thread index, search finds the scoped BM25 cutoff using the FTS rank iterator, then includes every hit at or above that cutoff before ordering by BM25, thread ID and chunk index.
-
-- Fact and vector-disabled drawer ranking for a restricted caller use statistics of the readable scope only (document count, term frequencies, candidate pool); FTS5 rank and whole-index vocabulary counts are used only when the caller can read everything. Hidden facts or drawers therefore cannot change a visible order or score.
 
 - The top rowids are materialized before fetching canonical chunk fields.
 
