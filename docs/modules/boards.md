@@ -36,6 +36,8 @@
 
   - Web feeds and webhooks share the current-principal event visibility rule; non-owner person feeds omit boardless/private events and use readable-log sequence numbers.
 
+  - `space_read` by a board's current orchestrator connection advances that board's chat read cursor (`chat/live.py`) after the read; the page it returns is unchanged, and reads by people or other agents record nothing.
+
   - Owner assignments to active agent connections claim the card with a lease and a claim event.
 
   - Immediate assignment claims apply to todo cards; handoffs of doing cards return to todo without starting the replacement worker.

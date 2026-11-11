@@ -35,11 +35,15 @@
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
+  - The chat pane's live delivery block (`chatlive.js`, mounted by `chat.js`): one line per server state with owner or member wording, shown in place of the timed "Working on it…" guess whenever the chat page carries `live`.
+
   - Owner REST for the workspace goals tree (`web/goals.py`: GET/POST `/api/goals`, POST `/api/goals/card`), a thin layer over `BoardService`.
 
   - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
 
 - **Promises:**
+
+  - The Admin runner wing editor loads its picker from `GET /api/runners/wings` under a client deadline; on failure it keeps granted wings ticked and accepts typed wing names. `GET /api/connections` gets its wing names from the same index read (`workspace_wing_names` in `web/agents.py`).
 
   - The Runs list shows a run's reported tokens, cost, end and log pointer; an unreported value reads "not reported", never zero, and a log pointer is a link only when it is an http(s) address.
 

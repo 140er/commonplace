@@ -30,6 +30,8 @@
 
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
+  - `docs/chat.md` lists the live delivery states of a chat message, their reasons and timing, and who sees the agent's read time.
+
   - `docs/design/RULES.md` describes the reviewer rules block and its verdict line, the session hook's missing-rules notice, and a table that maps each rule enforcement point to the tests that fail when it is skipped.
 
 

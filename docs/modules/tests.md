@@ -3,9 +3,13 @@
 - **Paths:** `tests/`
 - **Owns:**
 
+  - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
+
   - `tests/test_commonplace_deck_bots.py` (`commonplace_deck_bots.mjs`) covers draft hand-off in both looks, Deck tile and strip markup, project work status mapping, week-bounded completion groups, escaped text and the read-only project sheet lifecycle.
 
   - The navigation tests follow the bots-first rail: `tests/workbench_shell_wiring.mjs`, `tests/workbench_chat_wiring.mjs`, `tests/commonplace_home_render.mjs`, `tests/commonplace_board_defaults_render.mjs`, `tests/card_log_links.mjs`, `tests/admin_ui.mjs` and the phone scenarios of `tests/workbench_e2e/test_keys.py` no longer expect project rows, a Needs me or Console rail entry or a Chat tab (the phone Chat button is the dock toggle in the header).
+
+  - `tests/conftest.py` refuses a raw pytest run (exit 4 at configure) on a shared test host that opts in with `~/.config/commonplace/require-test-runner` in the real account home; the marker names the environment variable the host's test runner sets for admitted runs. xdist workers pass; `COMMONPLACE_ALLOW_RAW_PYTEST=1` overrides one run. `tests/test_raw_pytest_guard.py` pins the cases.
 
   - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
 
@@ -40,6 +44,8 @@
   - Chromium project-connect regressions verify visible shared-memory and other conflict statuses, dialog dismissal and unchanged explicit retry bodies.
   - Restricted-search refill regressions cover hidden ranked prefixes, counter suppression, exhaustion, work bounds, unchanged every-wing calls, restricted CLI-compatible search, filters and deadline failures; the same fixture reports information-only latency.
   - `tests/test_runner_start_context.py` is the measurement and the contract of a start prompt's card context; `tests/test_runner_start.py` allows `card_context` beside the identifier keys of a lease.
+
+  - `tests/test_chat_live.py` and `tests/test_chat_live_view.py` (with `tests/chat_live_view.mjs`) pin the live chat delivery states on the server and in the pane.
 
   - OAuth CSP header controls and real Chromium form submissions cover normal consent, login retry and re-rendered error consent.
 

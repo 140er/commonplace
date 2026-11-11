@@ -15,6 +15,8 @@
 
 - **Promises:**
 
+  - `GET /api/runners/wings` (owner only) returns the wings grant validation accepts; enroll and wing edits validate against the same fast index read, so neither waits on a drawer-by-drawer listing.
+
   - Every start has one ledger row, written in the job's own transaction and following its state; tokens, cost, log pointer and the run's end are only what the run's own enabled machine reported, and an unreported value stays NULL. The end status is set once; jobs from before the ledger are given a row when the store opens.
 
   - A machine's worker policy reads and writes exactly its granted wings (first is the default write wing); starts on any other board wing are refused with a message naming the board wing and the granted wings, and the worker cannot write to an ungranted wing through any tool.

@@ -278,6 +278,7 @@ records of another agent or session. No Cursor database reader is claimed.
 
 - A runner machine's worker PAT reads and writes every wing in the machine grant and no other; its first wing is the default write wing. `startable()` accepts a card whose board wing is granted and otherwise refuses with `outside_worker_wing`, naming the board wing and the granted wings. Machines enrolled before this keep a first-wing-only worker policy until their wings are saved once (same wings do not reset the binding).
 - The Admin page's runner block lists, enrolls, attests and edits wings through the existing owner-only `/api/runners` routes. Enrollment tokens are shown once in a panel and never stored, logged or redrawn.
+- The runner block reads its wing picker from `GET /api/runners/wings`, never from the connections listing. For an owner who reads every wing, the wing names come from the palace's Chroma metadata index in one seek per wing, skipping wings that hold only miner bookkeeping rows, under a two-second deadline; other principals, compact stores and a failed index read use the memory listing. Grant validation, connection read wings and `GET /api/connections` share that read (#451: the drawer-by-drawer listing did not answer on a 2.6 million drawer palace). When the wing read still fails, the editor keeps the granted wings ticked and offers a typed wing field; the server validates every name.
 
 ### Run ledger
 
@@ -286,6 +287,10 @@ records of another agent or session. No Cursor database reader is claimed.
 - The hub never measures, prices or estimates usage. Tokens, cost (millionths of a currency unit plus the currency), the log pointer and the run's end are only what the run's own enabled machine reported through `POST /api/runner/usage`; an unreported value stays NULL and reads "not reported".
 
 - A reported end changes neither the start job nor machine capacity nor the card (D3 stays open).
+
+### Raw test runs on a shared test host
+
+- A host that caps concurrent test runs (its test runner holds a slot per run) opts in with `~/.config/commonplace/require-test-runner`, naming the variable the runner sets; there `tests/conftest.py` stops a pytest run without it, so agents cannot overload the host by bypassing the cap. Machines without the marker run unchanged; `COMMONPLACE_ALLOW_RAW_PYTEST=1` is the one-run override.
 
 ### Mirror and search-index test waits
 
@@ -931,6 +936,24 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 | CLI acts as owner | Yes, through data-dir access. |
 | Members' moves fire triggers | No. |
 | Model slots | Two (`main`, `worker`). |
+
+### Live chat delivery state
+
+The chat page (`GET /api/chat/<board>`) reports a `live` state for the caller's
+own newest message: `idle`, `delivered`, `working`, `answered`, `no_agent` or
+`no_answer`, with a reason. It is derived from stored facts only: the wake
+delivery row of the `space_message` event that carried the message
+(`chat_live_posts` maps message to event), the read cursor of the board's
+current orchestrator connection (`chat_live_reads`, advanced after that
+connection's `space_read`), and any later agent message. Both tables live in
+the control database, are keyed by workspace and board, and hold ids and times
+but no message text. The server calls no model and no outside service for this
+state. A read by a person or by an agent that is not the board's coordinator
+records nothing, and a failed cursor write never fails the read. The agent's
+read time is returned only to a caller who may see that agent in the console.
+`no_answer` follows 60 seconds after a successful wake without a read, 5
+minutes without a wake hook or after a read without a reply, and at once when
+every wake attempt failed. See `docs/chat.md`.
 
 ### Board coordinator settings
 
