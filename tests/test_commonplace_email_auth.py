@@ -614,12 +614,45 @@ class SQLBoundary:
 
 
 def observe_sql(client):
-    # Stop unrelated dispatch before measuring the email-delivery lifecycle.
+    # Stop unrelated dispatch before measuring the email-delivery lifecycle:
+    # webhook delivery, and the answer-hold worker, which reads answer_holds
+    # once a second until the database closes. Either could otherwise run SQL
+    # inside the window a test declares closed.
     client.gateway.webhooks.stop()
+    hold_worker = getattr(client.gateway, "hold_worker", None)
+    if hold_worker is not None:
+        hold_worker.stop()
     with client.db._lock:
         boundary = SQLBoundary(client.db._conn)
         client.db._conn = boundary
     return boundary
+
+
+def test_sql_boundary_window_gets_no_background_hold_tick(fresh, monkeypatch):
+    client, _ = fresh()
+    worker = client.gateway.hold_worker
+    window = {"open": False}
+    ticked_inside = threading.Event()
+    original = worker.run_once
+
+    def run_once(*args, **kwargs):
+        inside = window["open"]
+        try:
+            return original(*args, **kwargs)
+        finally:
+            if inside:
+                ticked_inside.set()
+
+    monkeypatch.setattr(worker, "run_once", run_once)
+    boundary = observe_sql(client)
+    boundary.forbidden = True
+    window["open"] = True
+    if worker.thread is not None and worker.thread.is_alive():
+        # Force the tick a loaded host produces at random: a live worker
+        # runs once more as soon as it is woken.
+        worker._wake.set()
+        assert ticked_inside.wait(HANG_GUARD_S)
+    assert not boundary.late
 
 
 def test_known_and_unknown_return_before_held_delivery(fresh, monkeypatch):
