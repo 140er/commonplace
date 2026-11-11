@@ -337,18 +337,18 @@ def test_launch_limit_cuts_the_body_whole_and_says_so():
 def test_added_section_gets_the_same_budget_and_marker():
     """The extension point: a builder inserted in the order is budgeted like the rest."""
 
-    def goals(card):
+    def notes(card):
         return start_context.Section(
-            "Goals:", tuple(card["goals"]), "goals", "task_show(task=<goal>)"
+            "Notes:", tuple(card["notes"]), "notes", "task_show(task=<note>)"
         )
 
-    card = _card(goals=["- " + "g" * 400, "- " + "h" * 400], events=[_comment("small")])
-    order = [goals, *start_context.SECTIONS]
+    card = _card(notes=["- " + "g" * 400, "- " + "h" * 400], events=[_comment("small")])
+    order = [notes, *start_context.SECTIONS]
     context = start_context.assemble(card, sections=order)
-    assert context.index("Goals:") < context.index("Comments (newest first):")
+    assert context.index("Notes:") < context.index("Comments (newest first):")
     tight = start_context.assemble(card, sections=order, budget_tokens=250)
     assert start_context.tokens(tight) <= 250
-    assert "[cut: 1 of 2 goals left out to fit the start budget; " in tight
+    assert "[cut: 1 of 2 notes left out to fit the start budget; " in tight
 
 
 def test_budget_setting(monkeypatch):
