@@ -259,6 +259,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
+  - `docs/transcript-capture.md` documents the capture hook's offline spool: bounds, drop log, backoff and the `hook_spool` status and drain commands.
+
   - `docs/projects.md` and `docs/orchestrator.md` state who may hold a lease on a board without `[runner]`: its own trusted project seat.
 
 - **Promises:**
@@ -582,6 +584,8 @@ Format (read by `commonplace orch docs-check`):
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
+
+  - `tests/test_commonplace_hook_spool.py` covers the offline spool, ordered upload, backoff, retry after failure, a crash between upload and delete against the real gateway, and the hook time budget; the existing capture hook test spools into a temporary home.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -1618,6 +1622,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Memory tools and routes under the caller's policy, search index progress, workspace store generations and cutovers, and opt-in chat capture.
+
+  - The capture runner classifies hub and transcript failures that a retry can fix (`CaptureUnavailable`: network, 5xx, 408, 409, transcript changed during read) apart from permanent ones, and `sync_file` accepts an idempotency key sent as `client_op_id`.
 
 - **Promises:**
 

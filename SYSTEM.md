@@ -1235,6 +1235,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
   - Approval of the waiver list below is a manual owner review.
 
+- **Capture hook spool.**
+
+  - The capture hook stores its payload (a transcript pointer, not transcript text) in `~/.commonplace/spool` and an uploader reads the transcript later. A transcript deleted or rewritten before the upload is lost to the hub; the item is set aside under `rejected/` with a log line. The spool is bounded (500 items, 8 MiB) and drops the oldest items first, logging each drop.
+
 ## Open dependencies (D1–D3)
 
 - These are owner decisions or captures tracked in `docs/runner.md` ("Owner checklists").
