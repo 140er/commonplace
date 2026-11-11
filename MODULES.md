@@ -247,6 +247,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `docs/admin.md` is the authoritative current Admin API and partial-rollout contract, linked from the existing board API and agent connection guide.
 
+  - `docs/projects.md` describes the idle nudge: the setting, the `board.idle_nudge` wake and when it repeats.
+
 
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
   - Public Space endpoint and error documentation alongside legacy board routes.
@@ -564,6 +566,8 @@ Format (read by `commonplace orch docs-check`):
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
+
+  - `tests/test_projects_idle_nudge.py` drives the idle nudge sweep with a fake clock and reads nudges from the event feed: one nudge after N minutes, no repeat within N, done resets, empty and blocked boards stay silent, the setting changes N, recipient choice and webhook matching.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
