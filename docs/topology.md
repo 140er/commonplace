@@ -2,7 +2,7 @@
 
 The single source of truth for the Compute map: machines, how they reach each other, and how a website is routed to the app that serves it. Everything is a structured fact in the workspace's `topology` wing. The map, the agent tools and the live status all read from this store; nothing else holds a second copy.
 
-Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`. How agents write and the owner approves is under Proposals below.
+Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`. How agents write and the owner approves is under Proposals below; how an agent finds a website's route is under Site route discovery.
 
 ## Facts
 
@@ -263,6 +263,85 @@ A proposal passes the same filter as a write (`model.facts_for`, `model.evidence
 ### Storage
 
 Proposals are rows of `topology_proposals` in `topology.sqlite3`, next to the facts. The table is added to an existing file by the first proposal; a workspace without proposals reads as an empty list and reading creates nothing.
+
+## Site route discovery
+
+How a website is routed is found by an agent, read-only, and handed to the owner as a proposal. Code: `commonplace/topology/site_dns.py` (the DNS step), `commonplace/topology/proxy_adapters.py` (the reverse proxy adapters), `commonplace/topology/site_routes.py` (the mapping to nodes, links and a route) and `commonplace/topology/site_route_api.py` (the tool). Tests: `tests/test_topology_site_adapters.py`, `tests/test_topology_site_routes.py`.
+
+```
+topology_discover_site(site="example.com",
+                       proxies=[{"node": "web1", "kind": "caddy", "config": "<the config text>"}],
+                       machines=[{"node": "web1", "addresses": ["203.0.113.10"]}],
+                       apps=[{"node": "blog", "host": "web1", "port": 3000, "names": ["blog"]}],
+                       ttl_seconds=None, board=None)
+```
+
+Only `site` is required. The caller needs write access to the `topology` wing, and that is checked before anything is looked up. The agent reads the proxy configuration on the user's machine itself, without changing anything there, and passes the text in; the hub never reaches into a machine.
+
+The route is derived in three steps, and every hop keeps the lines it was derived from:
+
+1. **DNS.** One lookup of the public name through the hub's resolver: the alias chain and the addresses. Only public domain names are looked up: an address, a single label, `localhost` and special-use suffixes such as `.local`, `.internal` or `.test` are refused without a lookup. The step never connects to what it finds. The answer is matched against the `hostname` of the nodes on the map and against `machines`, the addresses the agent saw for a node. The match is the first hop, `<site>><node>:dns`.
+2. **Reverse proxy.** The config handed in for that node is read by its adapter, which returns the sites it names and their upstream targets. A node of kind `cloud` or `router` is a proxy or CDN in front: the route continues with a `proxy` hop to the machine whose config names the site.
+3. **Upstream.** The upstream for the whole site becomes the `reverse_proxy` hop:
+
+| The upstream is | The route continues to |
+| --- | --- |
+| the machine itself (`localhost`, a loopback address, a unix socket, the node's own name) | the app the map or `apps` knows on that port, else a new container node `<node>-port-<port>` |
+| a container or app known from `apps` or the map | that node; through a `reverse_proxy` hop to its machine and a `hosts` hop when it runs on another machine |
+| another machine on the map (by `hostname`, `tailscale_name`, an alias or its key) | that machine, then a `hosts` hop to the app known on that port, if any |
+| a bare name nobody listed (`blog:3000`) | a new container node `<node>-<name>` on the proxy's machine |
+| any other name or address, or a placeholder the config does not spell out | an external node |
+
+A site whose entry has no upstream (the machine serves it itself), a machine without a config handed in and a config that does not name the site all end the route at the machine, with a note that says which.
+
+**External / unknown.** When the name points at nothing on the map, or the upstream is nobody's, the route ends in an explicit node of kind `cloud` named `External / unknown`, keyed `ext-<address or name>` and with that name as its `hostname`. Nothing is guessed past it: a proxy config that names the site on a machine DNS does not lead to is reported as a note, not stitched onto the route. To continue such a route, name the node in front under `machines` (kind `cloud` for a proxy or CDN) or record its hostname on the map, and run the discovery again.
+
+**A proposal, never a write.** The derived nodes, links and route go through `proposals.propose` with the caller as observer. Nodes already on the map are not written again. A first route is one decision for the owner; a rerun that finds the same route asks nothing; a changed upstream shows up as the route's hops before and after and is applied only when the owner approves. A name without DNS records proposes nothing and removes nothing. The reply holds `site`, `resolved`, `ends` (`app`, `host`, `edge` or `external`), `hops` (each with its `link` and `evidence`), `notes`, `withheld`, and `applied`, `proposal` and `unchanged` as for `topology_propose`.
+
+### Reverse proxy adapters
+
+An adapter gets configuration text and returns the sites it names and, per site, the upstream targets with the config line as evidence. Two ship:
+
+| `kind` | Reads |
+| --- | --- |
+| `caddy` | a Caddyfile (site blocks, the one-site form, snippets in the same file, `handle`, `handle_path` and `route` blocks, `reverse_proxy` with upstreams or a `to` line), or Caddy's JSON config |
+| `nginx_proxy_manager` | its proxy-host rows as JSON (the API's list or rows of the `proxy_host` table), or the nginx server files it generates |
+
+What every adapter guarantees:
+
+- It reads only the text handed to it. An `import` or `include` of another file is not followed, no environment variable is read, nothing is run and nothing is connected to.
+- It keeps only site names and upstream targets. Basic-auth users and hashes, API tokens, TLS keys, headers and everything else in the config are never copied. Credentials inside an upstream URL are cut off. A site or upstream line that still looks like a secret to the secret filter is left out and counted in `withheld`.
+- A refusal (unknown `kind`, no text, more than 512 KB) never repeats any of the config. A config it cannot make sense of yields no sites instead of an error.
+
+Another proxy is one class:
+
+```python
+from commonplace.topology import proxy_adapters
+
+class TraefikAdapter(proxy_adapters.ProxyAdapter):
+    kind = "traefik"
+    label = "Traefik"
+
+    def read(self, text, found):
+        handle = found.site(["example.com"], "line 3: rule Host(`example.com`)")
+        found.upstream(handle, "http://app:3000", "line 7: url http://app:3000")
+
+proxy_adapters.register(TraefikAdapter())
+```
+
+`found.site` and `found.upstream` are the only way anything leaves an adapter; they apply the rules above. Add the new `kind` to the fixtures in `tests/test_topology_site_adapters.py`, including the secret tests.
+
+### Python API
+
+```python
+site_dns.lookup(site, resolver=None) -> {"name", "cnames", "addresses", "evidence"}
+proxy_adapters.parse(kind, text) -> Parsed(sites, withheld)
+site_routes.derive(site, proxies=None, machines=None, apps=None, *, graph, resolver=None) -> dict
+site_routes.discover(ctx, site, proxies=None, machines=None, apps=None,
+                     ttl_seconds=None, board=None, *, resolver=None) -> dict
+```
+
+A resolver is a callable `resolver(name) -> site_dns.DnsAnswer(addresses, cnames)`. The hub uses the system resolver unless `gateway.topology_resolver` is set; tests pass a fake. A lookup that fails or takes longer than five seconds raises `DnsUnavailable` and proposes nothing. `derive` computes the route from `store.read_graph`'s result without proposing it.
 
 ## Existing workspaces
 

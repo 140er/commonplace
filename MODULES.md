@@ -1387,7 +1387,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
 
-  - `WORKER_TOOLS` includes `topology_propose`, so a worker can report its machine's own topology facts. The tool still needs the `topology` wing in the machine grant, and the worker policy is rebuilt with the tool whenever the grant's wings are patched.
+  - `WORKER_TOOLS` includes `topology_propose` and `topology_discover_site`, so a worker can report its machine's own topology facts and the site routes it finds there. Each tool still needs the `topology` wing in the machine grant, and the worker policy is rebuilt with the tool whenever the grant's wings are patched.
 
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
 
@@ -1607,7 +1607,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Canonical Space create in the checked REST write inventory.
 
-  - `topology_propose` is a checked write, over MCP and as `POST /api/topology/proposals` in the REST write inventory. Undoing a topology change is a signed-in owner's write and sits outside the inventory, like the card lifecycle routes.
+  - `topology_propose` is a checked write, over MCP and as `POST /api/topology/proposals` in the REST write inventory; `topology_discover_site` is a checked write over MCP. Undoing a topology change is a signed-in owner's write and sits outside the inventory, like the card lifecycle routes.
 
   - The goals writes `goal_set` and `card_goal` in the checked MCP write inventory, because goals become agent card context.
 
@@ -2035,7 +2035,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## topology
 
-- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`, `tests/test_topology_proposals.py`
+- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`, `tests/test_topology_proposals.py`, `tests/test_topology_site_adapters.py`, `tests/test_topology_site_routes.py`
 - **Owns:**
 
   - The topology store behind the Compute map: nodes, links and site routes as structured `(subject, predicate, object)` facts in the workspace's `topology` wing, in the workspace file `topology.sqlite3` (`topology_facts`, `topology_observations`, `topology_conflicts`). `docs/topology.md` is the contract: node kinds, link methods, routes, provenance, expiry, conflicts, the secret filter and the Python read and write signatures.
@@ -2043,6 +2043,8 @@ Format (read by `commonplace orch docs-check`):
   - `model.py` is the allow-list: every field and its shape, the observer, lifetimes, subjects and the secret filter. `store.py` holds `TopologyStore` (one workspace's file, opened like `bots.sqlite3`; `open_topology` caches one per workspace on the gateway) and writes and reads: `upsert` (and the node, link and route forms), `retract`, `resolve_conflict`, `get_node`, `get_link`, `get_route`, `read_graph`, `list_conflicts`, `history`.
 
   - The write side for agents. `proposals.py` holds the rules: `propose` compares a request with the map fact by fact, applies a runner's additions about itself (and the signed-in owner's own write) at once, and turns every other addition, change or removal into one proposal with one owner decision opened through the board's ask path (structured options Approve and Reject, the map after and before as their previews). `settle` applies or closes a proposal from its card's history, `undo` puts back what an applied change replaced, `listing` and `get` read the rows. The rows are the table `topology_proposals` in `topology.sqlite3`. `proposal_api.py` is the surface, mounted by one import in `topology/__init__.py` (`commonplace.topology` is one entry of `extensions.MODULES`): the MCP tool `topology_propose`, `/api/topology/proposals` (propose, list, read, undo) and the `card.decided` listener that calls `settle`.
+
+  - Site route discovery. `site_dns.py` is the DNS step: one lookup of one public name through an injected resolver (`lookup`, `public_name`, `system_resolver`). `proxy_adapters.py` is the reverse proxy adapter interface (`ProxyAdapter`, `Found`, `register`, `parse`, `serving`, `primary`) with the `caddy` and `nginx_proxy_manager` adapters. `site_routes.py` maps both to nodes, links and a route (`derive`) and hands the result to `proposals.propose` (`discover`). `site_route_api.py` is the MCP tool `topology_discover_site`, mounted by one import in `topology/__init__.py`.
 - **Promises:**
 
   - Every fact keeps who observed it, when, from what verbatim evidence, and when it expires. A stale value leaves `values` and is still readable with `stale: true`; nothing is deleted.
@@ -2056,17 +2058,22 @@ Format (read by `commonplace orch docs-check`):
   - Every applied change keeps each fact's value before and after; undo is the signed-in owner's and deletes nothing. A proposal passes the secret filter before a row or a card exists.
 
   - The schema is additive and each write is one transaction. The store does not authorize: callers check the `topology` wing with the existing wing grants. A store is one workspace's file, so reads never cross workspaces; the control database holds no topology text.
+
+  - Site route discovery is read-only and never writes the store: its result is a proposal like any other, so a changed upstream is a change the owner approves. An adapter reads only the text handed to it, runs nothing, and lets out only site names and upstream targets; credentials in a proxy config are never stored. Only public domain names are looked up, and a name or upstream outside the map ends the route in an explicit `External / unknown` node.
 - **How it fails:**
 
   - A value outside the allow-list, a broken route chain or secret-looking text raises `TopologyError` (`SecretRefused` for secrets) before anything is stored. A workspace without `topology.sqlite3` reads as an empty map, and reading does not create the file.
 
   - A proposal that does not fit one readable decision is refused ("propose it in smaller parts"). A caller without write access to the `topology` wing does not see `topology_propose` and gets 403 on the route. If the hub stops between the owner's answer and the write, the next read of the proposals settles it; a proposal whose card never opened is void after ten minutes.
+
+  - A site that is not a public domain name, an unknown proxy kind, a node that is not on the map or a config over 512 KB is refused before any lookup, in words that never repeat the config. A failed or slow DNS lookup raises `DnsUnavailable`; a name without records proposes nothing.
 - **Tests:**
 
   - `tests/test_topology_store.py` covers upsert and read back with provenance and expiry, refreshes, allow-list refusals, stale facts and route hops, conflicts and their resolutions, the authoritative write, retraction, secret refusals, workspace isolation, an old workspace without the file, reopening, a moved workspace directory, a crash inside a write and the wing grant.
 
   - `tests/test_topology_proposals.py` runs through the real gateway: one decision with a readable before and after, approve (also through `/api/cards/<n>/decide`), reject, a reply without a choice, removal, a runner's self-report and its rerun, a runner's change and its facts about others, a non-owner who cannot approve, an edited card, a map that moved on, a missed event, secret refusals, invalid requests, undo, the wing grant, the REST routes and an old workspace. `tests/spaces_surfaces.json` carries `topology_propose`.
 
+  - `tests/test_topology_site_adapters.py` covers the DNS step with a fake resolver (alias chain, no records, non-public names, a failing or hanging resolver, the system resolver) and both adapters on invented configs in each form they read, the dropped credentials, withheld lines, no file, process or network use, wildcard matching and a third adapter. `tests/test_topology_site_routes.py` covers the derived route per proxy, apps on the same and on another machine, the external hop for a domain and for an upstream, a proxy or CDN in front, refusals, and through the real gateway: one proposal, approve, a changed upstream proposed and rejected, an unchanged rerun, no secret in any stored file, the MCP tool, the wing grant and the owner's own run. `tests/spaces_surfaces.json` carries `topology_discover_site`.
 
 ## bots
 

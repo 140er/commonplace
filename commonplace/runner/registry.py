@@ -24,6 +24,7 @@ WORKER_TOOLS = (
     "task_handoff",
     "ask",
     "topology_propose",
+    "topology_discover_site",
 )
 GRANT_KEYS = {
     "label",

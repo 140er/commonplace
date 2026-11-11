@@ -4,7 +4,11 @@
 control database with provenance, expiry and conflict records. See ``docs/topology.md``.
 """
 
-from . import model, store
+from . import (
+    model,
+    site_route_api,  # noqa: F401  registers topology_discover_site
+    store,
+)
 from .model import TOPOLOGY_WING, Observer, SecretRefused, TopologyError
 from .proposal_api import install  # also registers topology_propose
 
