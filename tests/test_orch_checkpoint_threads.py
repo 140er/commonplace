@@ -180,3 +180,23 @@ def test_checkpoint_with_thread_jobs_writes_nothing(env):
     before = snapshot()
     assert len(thread_jobs(env)) == 1
     assert snapshot() == before
+
+
+def test_stale_open_thread_steps_do_not_crowd_out_a_live_builder(env, monkeypatch):
+    monkeypatch.setattr(durable, "MAX_LIST", 2)
+    epoch, token = lease(env)
+    live = env.card("Live")
+    claim(env, env.b, live)
+    start_thread(env, epoch, token, "live", live)
+    for index in range(3):
+        start_thread(env, epoch, token, f"stale-{index}", env.card(f"Stale {index}"))
+
+    assert [job["step_key"] for job in thread_jobs(env)] == ["live"]
+
+
+def test_no_thread_step_means_no_extra_read():
+    # Neither store is opened without a candidate step: a context or store of None
+    # would raise on first use.
+    steps = [{"kind": "merge", "card": 1, "voided_at": None, "state": "started"}]
+    assert durable._thread_jobs(None, None, {"id": 1, "slug": BOARD}, ROLE, steps, NOW) == []
+    assert durable._thread_jobs(None, None, {"id": 1, "slug": BOARD}, ROLE, [], NOW) == []

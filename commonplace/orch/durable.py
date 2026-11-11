@@ -1239,21 +1239,26 @@ def _thread_jobs(ctx, st, board_row, role, steps, now) -> list[dict]:
         and row["card"] is not None
         and row["voided_at"] is None
         and row["state"] in THREAD_JOB_STATES
-    ][-MAX_LIST:]
+    ]
     if not found:
         return []
-    marks = ",".join("?" * len(found))
+    # Filter by the card's claim before capping, so stale open steps never crowd out
+    # a live builder.
+    numbers = sorted({row["card"] for row in found})
+    doing = {}
     with BoardStore(ctx.workspace_dir()).connection() as conn:
-        doing = {
-            row["id"]: row
+        for start in range(0, len(numbers), 500):
+            chunk = numbers[start : start + 500]
             for row in conn.execute(
                 "SELECT id, assignee, claim_until FROM tasks WHERE board_id=? AND status='doing' "
                 "AND assignee IS NOT NULL AND assignee!='' AND claim_expired_at IS NULL "
-                f"AND (claim_until IS NULL OR claim_until>?) AND id IN ({marks})",
-                (board_row["id"], now, *(row["card"] for row in found)),
-            )
-        }
-    found = [row for row in found if row["card"] in doing]
+                "AND (claim_until IS NULL OR claim_until>?) AND id IN ("
+                + ",".join("?" * len(chunk))
+                + ")",
+                (board_row["id"], now, *chunk),
+            ):
+                doing[row["id"]] = row
+    found = [row for row in found if row["card"] in doing][-MAX_LIST:]
     if not found:
         return []
     marks = ",".join("?" * len(found))
