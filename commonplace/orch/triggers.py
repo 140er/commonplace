@@ -276,8 +276,8 @@ def _reconcile(js, st, board, now):
                 # Counted like any refused attempt: three of them end reconciliation.
                 code = exc.code if isinstance(exc, runner_bridge.StartRefused) else "config_invalid"
                 trigger = runner_bridge.TriggerRef(0, pair[0], pair[1], ref, retry=n)
-                runner_bridge.trigger_miss(js, board, row["id"], trigger, code, now=now)
-                results.append({"card": row["id"], "retry": n, "job": None, "miss": code})
+                if runner_bridge.trigger_miss(js, board, row["id"], trigger, code, now=now):
+                    results.append({"card": row["id"], "retry": n, "job": None, "miss": code})
                 continue
             outcome = runner_bridge.fenced_start(
                 js,
