@@ -1691,6 +1691,8 @@ Format (read by `commonplace orch docs-check`):
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 
+  - A background refresh never replaces an edit, hand-off or ask form open in the card panel, including one opened while the refresh's card read was in flight; the panel redraws from the fresh card once the form is cancelled or saved.
+
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
 
   - The person-owner task-type API rejects non-object JSON with 400 and replaces a connection’s sorted allowlist atomically; GET never creates a boards store.
@@ -1727,6 +1729,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
+
+  - `tests/workbench_e2e/test_refresh_forms.py` drives a real browser: an open hand-off form (also one opened mid-refresh) and a comment in progress survive a background refresh, and the panel updates once the form is cancelled.
 
 ## browser-github-grants
 

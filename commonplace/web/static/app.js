@@ -647,7 +647,9 @@ function boardsView() {
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
-async function cardPanel(number, epoch) {
+// A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
+const panelForm = () => root.querySelector("#card-panel form.form-tile");
+async function cardPanel(number, epoch, { keepForm = false } = {}) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
   const opening = state.card?.number !== number;
@@ -658,6 +660,8 @@ async function cardPanel(number, epoch) {
   try {
     const card = await api(`/api/cards/${number}`);
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
+    // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
+    if (keepForm && !opening && panelForm()) return;
     state.card = card;
     // A shared card link draws its own board behind the card, once.
     const rebase = state.rebase === number && card.board && state.base !== `#/board/${enc(card.board)}`;
@@ -1062,7 +1066,7 @@ async function refresh({ background = false, events = [] } = {}) {
     } else state.workbenchChat?.dispose();
     restore(saved); play();
     if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
-    if (state.route.startsWith("#/card/") && !(background && root.querySelector('form[data-form="edit-card"], form[data-form="handoff"]'))) await cardPanel(Number(state.route.slice(7)), epoch);
+    if (state.route.startsWith("#/card/") && !(background && panelForm())) await cardPanel(Number(state.route.slice(7)), epoch, { keepForm: background });
     showError("");
     return true;
   } catch (error) {
