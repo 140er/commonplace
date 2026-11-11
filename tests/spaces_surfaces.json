@@ -140,7 +140,7 @@
           "name": "board_set"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2000,7 +2000,7 @@
           "name": "board_own_wing"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2896,7 +2896,7 @@
           "name": "board_set"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
