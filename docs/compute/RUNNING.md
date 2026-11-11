@@ -72,8 +72,14 @@ only accept, and nothing after it asks anything. It installs no packages, fetche
 nothing, scans no network and reads no secret: the controller's public ed25519 key
 is passed in. Prerequisites it refuses without: a root-owned non-setuid
 `/usr/bin/bwrap`, cgroup v2 with cpu/memory/pids, systemd, an sshd that Includes
-`/etc/ssh/sshd_config.d/*.conf` and does not `AcceptEnv` `SSH_USER_AUTH`, and the
-`commonplace` package importable by `/usr/bin/python3`.
+`/etc/ssh/sshd_config.d/*.conf`, does not `AcceptEnv` `SSH_USER_AUTH` and has an
+effective global `PermitUserEnvironment no` (checked with `sshd -T`; sshd does not
+allow that directive inside a Match block). The installer itself places the python
+sources the helper imports: it copies the `commonplace` and `mempalace` packages it
+is running from (sources only, stdlib is enough) to `/opt/commonplace-compute/lib` and
+adds a root-owned `commonplace-compute.pth` to the system python's local
+dist-packages, then checks `/usr/bin/python3 -I -c "import
+commonplace.compute.target_helper"` before touching sshd.
 
 ```sh
 python -m commonplace.compute.target_installer plan \
@@ -100,7 +106,9 @@ Each created item is recorded in the root-owned manifest
 `/etc/commonplace/compute-install-manifest.json`. A second `install` with the same
 settings changes nothing; different settings, or any pre-existing path that is not in
 the manifest, are refused. `uninstall` removes exactly what the manifest lists, leaves
-files that changed after install, and refuses while `attempts/`, `inputs/` or
+files that changed after install, needs no install arguments, stops the account's
+sessions and systemd user manager (disabling linger if set) before removing it, and
+refuses while `attempts/`, `inputs/` or
 `scratch/` hold data (preserve claim evidence first; `--discard-workspace-data`
 overrides). `--root PREFIX` stages everything under a directory without root and runs
 no system command. To run the optional confinement fixture against a provisioned
