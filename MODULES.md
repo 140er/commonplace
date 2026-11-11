@@ -444,6 +444,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The fact readers (`knowledge_graph`, `fact_index`, `searcher/facts`) take the read deadline from the stdlib-only `mempalace/deadline.py` and never import `commonplace.rules`, so an import-following test selector does not widen every change into most of the suite; `commonplace.rules.checks` re-uses the same context variable and keeps its own clock.
+
   - Local CLI and gated gateway CLI use the same pure drawer formatter, preserving headers, match scores, folded-copy labels, body whitespace conventions, empty results and BM25 fallback output. The gateway explicitly selects flat rows even when they carry import-authorization metadata; the owner default remains unchanged.
 
   - Drawer retries retain replay status for readable owners while also returning request-derived fresh-write fields, allowing the gateway to hide replay status for unreadable wings.
@@ -556,6 +558,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - `tests/test_fact_readers_import_graph.py` runs a fresh interpreter over the fact read and search path and asserts `commonplace.rules` is never loaded, scans the three fact readers for any `commonplace` import, and pins the shared read deadline.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
@@ -1316,6 +1320,8 @@ Format (read by `commonplace orch docs-check`):
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
 - **Promises:**
+
+  - `commonplace/rules/checks.py` keeps the deadline API (`deadline`, `remaining`, `_deadline`) as thin wrappers over `mempalace/deadline.py` with its own patchable clock; fact readers call the leaf directly and do not import rules.
 
   - Split completion markers are checked writes on MCP and REST.
   - Canonical create uses header freshness while legacy routes retain body compatibility.
