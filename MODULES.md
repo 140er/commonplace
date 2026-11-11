@@ -1233,6 +1233,8 @@ Format (read by `commonplace orch docs-check`):
 
   - A lost launch result becomes `uncertain` and waits for a person; a revoked machine cancels queued jobs on the next sweep; a busy queue refuses with `busy`.
 
+  - Resolving a start that is no longer `uncertain` answers 409, not 403, so a settled start reads differently from a refused caller; `tests/test_card_runs_contract.py` pins it with the member and other-workspace refusals.
+
 - **Tests:**
 
   - tests/test_admin_runtime_api.py covers machine timestamps, unverified binding, expired lease omission and absent/corrupt runner sources; existing runner owner tests retain authority contracts.
