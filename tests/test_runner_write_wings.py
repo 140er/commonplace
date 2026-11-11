@@ -181,5 +181,5 @@ def test_older_registry_tables_gain_a_nullable_write_wings_column(tmp_path):
     registry.ensure(db)
     registry.ensure(db)
     row = registry.get_machine(db, "ws", "mach_0123456789abcdef")
-    assert row["write_wings"] is None
+    assert "write_wings" in row.keys() and row["write_wings"] is None
     assert registry.machine_write_set(row) == ["platform"]
