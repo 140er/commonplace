@@ -98,7 +98,7 @@ def test_panel_updates_after_the_form_closes(ui, app):
     _refreshed(page, seen, before)
     assert _handoff_text(page) == TYPED
     assert "A comment from Leon" not in page.inner_text("#card-panel")
-    page.click('#card-panel form[data-form="handoff"] [data-action="retry"]')
+    page.get_by_role("button", name="Cancel").click()
     page.wait_for_selector("#card-panel .activity")
     page.wait_for_function(
         "() => document.querySelector('#card-panel .activity').textContent.includes('A comment from Leon')"
@@ -114,3 +114,52 @@ def test_comment_in_progress_survives_refresh(ui, app):
     _wake(app)
     _refreshed(page, seen, before)
     assert page.input_value("#details-comment") == TYPED
+
+
+STALE = "A-124"
+STALE_TOO = "A-118"
+
+
+def _let_claim_run_out(seed, cid):
+    """The agent holding the card stopped: Needs me offers Requeue and Reassign."""
+    with seed.service().transaction() as conn:
+        # With no coordinator or parent agent to resume it, the card is the person's to recover.
+        conn.execute("UPDATE boards SET coordinator=NULL WHERE slug='atlas'")
+        conn.execute(
+            "UPDATE tasks SET claim_until='2000-01-01T00:00:00Z' WHERE id=?",
+            (seed.number(cid),),
+        )
+
+
+def _open_needs_handoff(ui, seed):
+    _let_claim_run_out(seed, STALE)
+    page = ui.open("#/needs")
+    page.click(f'[data-needs-select="{seed.number(STALE)}"]')
+    page.click('#card-panel [data-action="need-requeue"]')
+    page.wait_for_selector('#card-panel form[data-form="handoff"]')
+    page.fill('#card-panel form[data-form="handoff"] [name="note"]', TYPED)
+    settle(page, 2500)
+    return page
+
+
+def test_needs_handoff_form_survives_queue_change(ui, app):
+    page = _open_needs_handoff(ui, app)
+    seen = _refresh_probe(page)
+    before = len(seen)
+    # A second card stops, so the queue itself changes and the Needs list redraws.
+    _let_claim_run_out(app, STALE_TOO)
+    _wake(app)
+    assert _wait(page, lambda: len(seen) > before), "no background refresh ran"
+    assert _wait(
+        page, lambda: page.locator(f'[data-needs-select="{app.number(STALE_TOO)}"]').count() == 1
+    ), "the queue did not change"
+    settle(page, 600)
+    assert _handoff_text(page) == TYPED
+
+
+def test_needs_cancel_closes_the_form(ui, app):
+    page = _open_needs_handoff(ui, app)
+    page.get_by_role("button", name="Cancel").click()
+    settle(page, 600)
+    assert page.locator('#card-panel form[data-form="handoff"]').count() == 0
+    assert page.locator('#card-panel [data-action="need-requeue"]').count() == 1

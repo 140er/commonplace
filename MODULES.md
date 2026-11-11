@@ -565,6 +565,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
+  - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form.
+
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
   - Assertion-only review witnesses pin public facet compatibility, real-wrapper projected retry, refusal envelopes and negative-cache invalidation.
@@ -1691,7 +1693,7 @@ Format (read by `commonplace orch docs-check`):
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 
-  - A background refresh never replaces an edit, hand-off or ask form open in the card panel, including one opened while the refresh's card read was in flight; the panel redraws from the fresh card once the form is cancelled or saved.
+  - A background refresh never replaces an edit, hand-off or ask form open in the card panel, including one opened while the refresh's card read was in flight. On Needs me the item's detail waits (paused) while a hand-off form is open; Cancel, a saved hand-off or choosing another item gives the panel back, and on a card route the panel redraws from a fresh card read.
 
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
 
@@ -1730,7 +1732,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
 
-  - `tests/workbench_e2e/test_refresh_forms.py` drives a real browser: an open hand-off form (also one opened mid-refresh) and a comment in progress survive a background refresh, and the panel updates once the form is cancelled.
+  - `tests/workbench_e2e/test_refresh_forms.py` drives a real browser: an open hand-off form (also one opened mid-refresh) and a comment in progress survive a background refresh, the panel updates once the form is cancelled, and on Needs me a queue change leaves an open hand-off form alone and Cancel closes it.
 
 ## browser-github-grants
 
