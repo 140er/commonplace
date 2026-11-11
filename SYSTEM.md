@@ -232,6 +232,18 @@ with matching descriptions for `ask`, `task_update` and `decide`; tool names and
 visibility for slim, standard and full profiles remain unchanged.
 
 
+### Idle nudge
+
+- When a board has actionable cards (todo or doing, with no open dependency, person ask, person assignee or unreleased restricted origin) and no card reached done for N minutes, one `board.idle_nudge` event goes to the live orchestrator lease holder, or the board coordinator when no lease is live.
+
+- N is a per-project setting: default 20, 1 to 1440 minutes, 0 turns it off. A board with no actionable cards never nudges and forgets its timer.
+
+- The timer starts at the latest of the last done card, the sweep that first saw actionable work, and the previous nudge, so a nudge repeats only after another N minutes without done, and a done card re-arms it. After a restart the first sweep starts the clock, so a restart never nudges at once.
+
+- The event uses the existing webhook wake path: only the coordinator's webhooks match it, like `space_message`. The message names the board, minutes since the last done card and the counts of doing, checks-pending and expired-claim cards.
+
+- The app shows the latest nudge on the project panel and settings until a card reaches done. Escalation to Needs me after repeated unanswered nudges and a free-slot or stuck-card precondition are not implemented.
+
 ### Project seat wake recommendations
 
 - Connect recommends a board-scoped webhook for `space_message` and `card.moved`, so messages and worker completion moves can wake the orchestrator.

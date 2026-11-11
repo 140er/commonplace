@@ -1090,6 +1090,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
+  - The `board.idle_nudge` event: matched only to the coordinator's webhooks (like `space_message`), with a payload message naming the board, minutes since the last done card and the stuck counts.
+
 - **Promises:**
 
   - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill. Subscription lookup exceptions log their type and stack locations while retaining fail-closed authority.
@@ -1270,6 +1272,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
+
+  - The per-project idle nudge setting (`project_idle_nudge`), its stall state (`project_idle_nudge_state`) and the sweep worker in `commonplace/projects/idle_nudge.py`; `PUT /api/projects/<slug>/idle_nudge` takes `{"minutes": null|0..1440}` and the project view returns `idle_nudge`.
 
 - **Promises:**
 
@@ -1658,6 +1662,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
+
+  - The project settings idle nudge control and the nudge note on the project panel.
 
 - **Promises:**
 

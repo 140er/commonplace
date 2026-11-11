@@ -99,6 +99,12 @@ _DATA_FIELDS = frozenset(
         "decision",
         "message_id",
         "coordinator",
+        "minutes",
+        "stalled_minutes",
+        "todo",
+        "doing",
+        "checks",
+        "expired",
     }
 )
 _PRESETS = {
@@ -394,13 +400,23 @@ def _matches(row, event):
     data = event["data"]
     if row["board"] and row["board"] != data.get("board"):
         return False
-    if kind == "space_message":
+    if kind in ("space_message", "board.idle_nudge"):
         return data.get("coordinator") == row["owner_actor"]
     if row["waiting_on"]:
         return kind in ("card.review_needed", "card.handoff", "card.decided") and row[
             "waiting_on"
         ] in (data.get("ask_to"), data.get("return_to"), data.get("assignee"))
     return True
+
+
+def _nudge_text(board, data, url):
+    return (
+        f"{board}: {data.get('stalled_minutes')} min since the last done card. "
+        f"Stuck: {data.get('doing', 0)} doing, {data.get('checks', 0)} checks pending, "
+        f"{data.get('expired', 0)} expired claims, {data.get('todo', 0)} todo. "
+        f"No card finished in the last {data.get('minutes')} minutes. "
+        f"Check what is stuck, unblock or reassign it, or start the next card. {url}"
+    )
 
 
 def _payload(db, event):
@@ -422,6 +438,10 @@ def _payload(db, event):
         from urllib.parse import quote
 
         path += "#/space/" + quote(data["board"], safe="")
+    elif event["kind"] == "board.idle_nudge":
+        from urllib.parse import quote
+
+        path += "#/board/" + quote(data["board"], safe="")
     try:
         from commonplace import urls
     except ImportError:
@@ -451,6 +471,7 @@ def _payload(db, event):
         "card.claimed": "picked up",
         "card.expired": "claim expired",
         "space_message": "new request",
+        "board.idle_nudge": "no card reached done",
         "handoff.completed": "context handed off",
         "handoff.failed": "handoff failed, compacted instead",
         "handoff.launch_failed": "successor didn't start",
@@ -459,6 +480,8 @@ def _payload(db, event):
     message = " ".join(
         part for part in (event["subject"], f'"{title}"' if title else "", label, url) if part
     )
+    if event["kind"] == "board.idle_nudge":
+        message = _nudge_text(event["subject"], data, url)
     if event["kind"] == "webhook.test":
         message = f"test wake {event['subject']} {url}"
     return json.dumps(

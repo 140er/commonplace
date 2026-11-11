@@ -15,6 +15,7 @@ Kinds in use (add, never rename):
     memory.saved  memory.linked  fact.saved
     rule.changed  rule.suggestion
     space_created
+    board.idle_nudge
     webhook.failed
     orch.config.proposed  orch.config.accepted  orch.config.rejected
     orch.experiment.retired  orch.restore.acked  orch.lease.forced  orch.step.voided

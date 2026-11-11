@@ -129,6 +129,15 @@ project does not block another project on the same machine. Board lists expose
 another card for an agent already doing work on that board (`agent_busy`).
 A person claiming a card manually is exempt from the agent cap.
 
+When a project has open, unblocked cards and no card reaches done for N minutes
+(default 20, set in Project settings, 0 turns it off), the orchestrator receives
+one `board.idle_nudge` wake through its existing webhook. Subscribe with
+`events=board.idle_nudge` on the project board; only the lease holder or the
+coordinator is woken. The nudge names the board, the minutes since the last done
+card and the counts of doing, checks-pending and expired-claim cards, and the
+project panel shows it until a card reaches done. It repeats only after another N
+minutes without done.
+
 Connect still creates a standard-trust seat. Owners separately approve permissions
 in Project settings, choosing machines and confirming trust. The API is
 `POST /api/projects/<slug>/orchestrator/trust` with

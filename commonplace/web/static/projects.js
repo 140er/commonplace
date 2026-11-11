@@ -406,6 +406,8 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     if (hint) { hint.hidden = project.main.connected; hint.textContent = notice; }
     const button = host.querySelector("[data-project-connect]");
     if (button) { button.disabled = connecting; button.onclick = connect; }
+    const nudged = host.querySelector("[data-project-nudge]");
+    if (nudged) { nudged.textContent = idleNudgeText(project.idle_nudge); nudged.hidden = !nudged.textContent; }
     const memory = host.querySelector("[data-project-memory]");
     if (memory) {
       memory.innerHTML = memoryHTML(project, e);
@@ -471,13 +473,14 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       if (next) next.disabled = false;
     }
   }
-  host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>';
+  host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-heading></div><p data-project-notice hidden></p><p class="warn" role="status" data-project-nudge hidden></p><p role="status" data-project-connect-status></p>';
   if (settings) {
     installProjectStyles();
     bindSettingsNavigation(host, {slug, origin, onBack, current: active});
     const root = host.querySelector(".workbench-project");
     if (globalThis.matchMedia?.("(max-width: 699px)").matches) { root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); }
     mountAgentLimit(host.querySelector("[data-project-limit]"), {project, api, e, current: active, onSaved: markSaved});
+    mountIdleNudge(host.querySelector("[data-project-idle-nudge]"), {project, api, e, current: active, onSaved: markSaved});
     const check = host.querySelector("[data-project-check]");
     if (check) check.onclick = async () => {
       if (check.disabled || !active()) return;
@@ -661,6 +664,39 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
   render();
 }
 
+export function idleNudgeText(nudge) {
+  const last = nudge?.last;
+  if (!last) return "";
+  const stuck = `${last.doing} doing, ${last.checks} checks pending, ${last.expired} expired claims`;
+  return `No card reached done for ${last.stalled_minutes} minutes, so the orchestrator was nudged. Stuck: ${stuck}.`;
+}
+
+export function mountIdleNudge(host, { project, api, e, current = () => true, onSaved = () => {} }) {
+  let setting = project.idle_nudge ?? {minutes: null, effective: 20, enabled: true, last: null};
+  let busy = false, status = "";
+  const active = () => current() && host.isConnected;
+  function render() {
+    if (!active()) return;
+    const note = idleNudgeText(setting);
+    host.innerHTML = `<div class="inline-row"><span id="project-idle-nudge">Nudge the orchestrator after minutes without a done card</span><div class="stepper" role="group" aria-labelledby="project-idle-nudge"><button type="button" aria-label="Five minutes less" data-nudge-step="-5" ${!project.can_configure || busy || !setting.enabled ? "disabled" : ""}>−</button><output aria-live="polite" data-nudge-value>${setting.enabled ? setting.effective : "Off"}</output><button type="button" aria-label="Five minutes more" data-nudge-step="5" ${!project.can_configure || busy || setting.effective >= 1440 ? "disabled" : ""}>+</button></div><span class="set-note">Only when cards are open and not blocked.</span>${project.can_configure ? `<button type="button" class="btn ghost" data-nudge-toggle>${setting.enabled ? "Turn off" : "Turn on"}</button>` : ""}</div>${note ? `<p class="warn" role="status" data-nudge-banner>${e(note)}</p>` : ""}<p role="status" data-nudge-status>${e(status)}</p>`;
+    host.querySelectorAll("[data-nudge-step]").forEach(button => {
+      button.onclick = () => save(Math.min(1440, Math.max(5, setting.effective + Number(button.getAttribute("data-nudge-step")))));
+    });
+    const toggle = host.querySelector("[data-nudge-toggle]");
+    if (toggle) { toggle.disabled = busy; toggle.onclick = () => save(setting.enabled ? 0 : null); }
+  }
+  async function save(next) {
+    if (!active() || !project.can_configure || busy) return;
+    busy = true; status = ""; render();
+    try {
+      const result = await api(`/api/projects/${encodeURIComponent(project.board)}/idle_nudge`, {method: "PUT", body: {minutes: next}});
+      if (active()) { setting = result.idle_nudge; status = savedAt(); onSaved(); }
+    } catch { if (active()) status = "Could not save the nudge setting"; }
+    finally { busy = false; render(); }
+  }
+  render();
+}
+
 export function settingsOrigin(slug, origin = "") {
   if (origin === "#/needs") return {href: origin, label: "Back to Needs me"};
   if (origin === `#/board/${encodeURIComponent(slug)}/chat` || origin === `#/chat/${encodeURIComponent(slug)}`) return {href: origin, label: "Back to the chat"};
@@ -759,7 +795,7 @@ function installProjectStyles() {
 
 export function projectSettingsHTML(project, e, {origin = "", restart = false} = {}) {
   const back = settingsOrigin(project.board, origin);
-  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec"><summary>Agent models</summary>${modelsHTML(project, e)}</details></div></div></section>`;
+  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-idle-nudge></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec"><summary>Agent models</summary>${modelsHTML(project, e)}</details></div></div></section>`;
 }
 
 export async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {

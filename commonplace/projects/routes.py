@@ -8,7 +8,7 @@ from commonplace.boards.store import CardRefused
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, read_json, require_principal, send_json
-from commonplace.projects import connect, limits, models, orchestration, seats, wing
+from commonplace.projects import connect, idle_nudge, limits, models, orchestration, seats, wing
 from commonplace.projects.types import ProjectDenied
 from commonplace.rules.enforce import RulesRefresh, rest_write
 from commonplace.runner import registry
@@ -26,6 +26,8 @@ def _view(gateway, principal, board):
     service = BoardService(ToolContext(principal=principal, gateway=gateway))
     with service.store.connection() as conn:
         project_limits = limits.get(conn, board["id"])
+        nudge = idle_nudge.get(conn, board["id"])
+        nudge["last"] = idle_nudge.banner(conn, board["id"])
     choices = models.get(gateway.db, principal.workspace_id, board["slug"])
     result = {
         "board": board["slug"],
@@ -37,6 +39,7 @@ def _view(gateway, principal, board):
         "name": redact.redact(board["name"])[0],
         "main": seats.main(gateway, principal, board["slug"]).public(),
         "limits": project_limits,
+        "idle_nudge": nudge,
         "models": {
             role: choice.public() if choice is not None else None
             for role, choice in choices.items()
@@ -151,6 +154,7 @@ def _project_action(method, parts):
         ("POST", ("orchestrator", "split")): "split",
         ("PUT", ("models",)): "models",
         ("PUT", ("limits",)): "limits",
+        ("PUT", ("idle_nudge",)): "idle_nudge",
         ("POST", ("wing",)): "wing",
     }
     return routes.get((method, tuple(parts[1:])))
@@ -191,6 +195,9 @@ def _project_result(gateway, principal, service, board, action, body):
     if action == "limits":
         with service.transaction() as conn:
             limits.put(conn, board["id"], body)
+    if action == "idle_nudge":
+        with service.transaction() as conn:
+            idle_nudge.put(conn, board["id"], body)
     if action == "models":
         models.put(gateway.db, principal, slug, body)
     return 200, _view(gateway, principal, board)
