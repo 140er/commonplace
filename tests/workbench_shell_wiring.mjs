@@ -26,8 +26,10 @@ function node() { return { innerHTML: '', hidden: true, dataset: {}, children: [
 for (const selector of ['#board-nav', '#phone-bar', '#phone-tabs', '#content', '#card-panel', '.shell', '#title', '#head-actions']) nodes[selector] = node();
 const root = { innerHTML: '', querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} };
 const storage = new Map();
-const context = { root, state, e, enc: encodeURIComponent, document: { activeElement: null, title: '' }, location: { hash: state.route }, localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) }, URLSearchParams, remember: () => ({}), restore() {}, title() {}, markOpenCard() {}, voice: { stop() {} }, showError: (s) => assert.equal(s, ''), needsCards: () => [], message: (text) => text, matchMedia: () => ({matches: false, addEventListener() {}, removeEventListener() {}}), MutationObserver: class {observe() {} disconnect() {}}, setTimeout, clearTimeout };
+const context = { root, state, e, placeLifecycle: () => {}, enc: encodeURIComponent, document: { activeElement: null, title: '' }, location: { hash: state.route }, localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) }, URLSearchParams, remember: () => ({}), restore() {}, title() {}, markOpenCard() {}, voice: { stop() {} }, showError: (s) => assert.equal(s, ''), needsCards: () => [], message: (text) => text, matchMedia: () => ({matches: false, addEventListener() {}, removeEventListener() {}}), MutationObserver: class {observe() {} disconnect() {}}, setTimeout, clearTimeout };
 const run = (s) => runInNewContext(s, context);
+// The shell's panel helpers (the panel observer's resume and the settings opener) sit at module level.
+run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));
 const which = process.argv[2];
 if (which === 'shell') {
   Object.assign(context, await module('rail'));
@@ -57,7 +59,7 @@ if (which === 'shell') {
   const ui = await module('board');
   assert.equal(typeof ui.boardView, 'function'); assert.equal(typeof ui.bindBoard, 'function');
   let mounted = 0, cleaned = 0;
-  Object.assign(context, { fillChatTimes() {}, cardId: ui.cardId, chatTag: ui.chatTag, cancelCard() {}, renderBoard: ui.boardView, bindBoard: (mount, options) => { assert.equal(mount, nodes['#content']); assert.equal(options.board.slug, 'alpha'); mounted++; return () => cleaned++; }, boardDispose: null, currentBoard: () => board, api() {}, refresh() {} });
+  Object.assign(context, { fillChatTimes() {}, mountProjectPanel() {}, cardId: ui.cardId, chatTag: ui.chatTag, cancelCard() {}, renderBoard: ui.boardView, bindBoard: (mount, options) => { assert.equal(mount, nodes['#content']); assert.equal(options.board.slug, 'alpha'); mounted++; return () => cleaned++; }, boardDispose: null, currentBoard: () => board, api() {}, refresh() {} });
   run(slice('// The board lists child cards', 'const options ='));
   run(slice('function boardView()', 'function markOpenCard()') + '\nboardView(); boardView();');
   assert.equal(mounted, 2); assert.equal(cleaned, 1);
@@ -95,8 +97,9 @@ if (which === 'shell') {
   const handlers = {}, mounted = [];
   root.addEventListener = (type, handler) => { handlers[type] = handler; };
   state.base = '#/needs';
-  Object.assign(context, {consoleUI: null, api() {}, currentBoard: () => ({slug: 'wrong-project'}), injectedMountProject: async (_mount, options) => mounted.push(options.slug)});
-  run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injectedMountProject})'));
+  const projects = await module('projects');
+  Object.assign(context, {consoleUI: null, api() {}, onNeeds: () => state.base === '#/needs' || state.base === '#/', refresh: async () => {}, settingsOptions: projects.settingsOptions, currentBoard: () => ({slug: 'wrong-project'}), injectedMountProject: async (_mount, options) => mounted.push(options.slug)});
+  run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injectedMountProject, settingsOptions})'));
   await handlers.click({target: {closest: (s) => s.includes('chat-recovery') ? null : ({dataset: {action: 'coordinator', board: 'origin-project'}})}});
   assert.deepEqual(mounted, ['origin-project']);
   let edited = null; state.card = {number: 5, version: 1, board: 'alpha'};

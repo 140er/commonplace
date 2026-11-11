@@ -13,6 +13,7 @@ from commonplace.extensions import ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
 from .display import need_for, plan_waiting
+from .goals import GOALS_SCHEMA
 from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
@@ -40,6 +41,7 @@ TASK_COLUMNS = {
     "escalated_to": "TEXT",
     "review_kind": "TEXT",
     "review_context": "TEXT",
+    "reviewer": "TEXT",
     "priority": f"INTEGER NOT NULL DEFAULT {DEFAULT_RANK} CHECK (priority BETWEEN 0 AND {len(PRIORITIES) - 1})",
 }
 
@@ -246,6 +248,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
     }
     person_owner = bool(principal and principal.person and principal.role == "owner")
     result["can_prioritize"] = person_owner
+    result["can_set_reviewer"] = person_owner
     person_release = (
         release(row)
         if release is not None
@@ -380,7 +383,14 @@ class BoardStore:
         self.create = create
         self.path = str(directory / "boards.sqlite3")
         with self.connection() as conn:
-            conn.executescript(Path(__file__).with_name("schema.sql").read_text() + BLOCKERS_SCHEMA)
+            from .lifecycle import SCHEMA as LIFECYCLE_SCHEMA
+
+            conn.executescript(
+                Path(__file__).with_name("schema.sql").read_text()
+                + BLOCKERS_SCHEMA
+                + LIFECYCLE_SCHEMA
+                + GOALS_SCHEMA
+            )
             conn.execute("BEGIN IMMEDIATE")
             try:
                 board_columns = {r[1] for r in conn.execute("PRAGMA table_info(boards)")}

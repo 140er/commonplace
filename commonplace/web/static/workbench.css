@@ -259,10 +259,21 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 .card-runs .run-state { color: var(--text); font-weight: 600; }
 .card-runs [data-state="uncertain"] { border-color: var(--wait-line); background: var(--wait-bg); }
 .card-runs [data-state="failed"] .run-state { color: var(--block); }
-.card-runs .run-reason, .card-runs .run-thread, .card-runs .run-resolve p { font-size: 12.5px; line-height: 19px; color: var(--text-2); overflow-wrap: anywhere; }
+.card-runs .run-usage { font-variant-numeric: tabular-nums; }
+.card-runs .run-reason, .card-runs .run-thread, .card-runs .run-ended, .card-runs .run-usage, .card-runs .run-log, .card-runs .run-resolve p { font-size: 12.5px; line-height: 19px; color: var(--text-2); overflow-wrap: anywhere; }
 .card-runs .run-resolve { width: 100%; display: flex; flex-direction: column; gap: 6px; }
 .card-runs .run-resolve-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .card-runs .run-resolve input { flex: 1 1 140px; min-width: 0; }
 .card-runs .run-empty { font-size: 13px; color: var(--text-2); }
 .card-runs .run-note { font-size: 12.5px; color: var(--text-2); }
 .card-runs .run-note:empty { display: none; }
+.card-runs .run-start { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: var(--r); }
+.card-runs .run-start p, .card-runs .run-start-why { font-size: 12.5px; line-height: 19px; color: var(--text-2); margin: 0; }
+.card-runs .run-start-row { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.card-runs .run-start-field { display: flex; flex-direction: column; gap: 2px; flex: 1 1 120px; min-width: 0; font-size: 12px; color: var(--text-2); }
+.card-runs .run-start-field select { min-width: 0; }
+
+/* Card details: the Pocket of pinned facts. */
+.workbench-details .pocket { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.workbench-details .pocket li { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.workbench-details .pocket-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
