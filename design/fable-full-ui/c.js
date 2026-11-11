@@ -77,7 +77,7 @@ function home(D, o) {
   const others = D.bots.filter((b) => b.kind !== "project");
   const cols = [["needs_you", "Needs you"], ["working", "Working"], ["blocked", "Blocked"], ["queued", "Queued"], ["done", "Done this week"]];
   const sum = (k) => projects.reduce((s, b) => s + D.tallies[b.id][k], 0);
-  const head = `<header class="ph">${o.phone ? `<a class="hb" aria-label="Menu">${icon("menu", 20)}</a>` : ""}<div><h1>Home</h1><p>${D.counts.waiting} things wait on you across ${projects.length} projects. ${D.counts.agents} agents are working.</p></div>${o.phone ? "" : `<button class="btn dark">New project</button>`}</header>`;
+  const head = `<header class="ph">${o.phone ? `<a class="hb" aria-label="Menu">${icon("menu", 20)}</a>` : ""}<div><h1>Home</h1><p>${D.counts.waiting} things wait on you across ${projects.length} projects.</p></div>${o.phone ? "" : `<button class="btn dark">New project</button>`}</header>`;
   const needs = `<section><h2>Needs you <i>${D.counts.waiting}</i></h2>${D.waiting.map((w) => (w.kind === "approve" ? ask(D, w, o).replace("<div><b>", `<div><em>${e(bot(D, w.bot).name)}</em><b>`) : `<div class="ask"><div><em>${e(bot(D, w.bot).name)}</em><b>${e(w.title)}</b><span>${e(w.why)}</span></div>${w.options.map((x) => `<button class="btn">${e(x)}</button>`).join("")}</div>`)).join("")}</section>`;
   const table = o.phone
     ? `<ul class="wl">${projects.map((b) => `<li><div><b>${e(b.name)}</b><span>${e(b.job)}</span></div><span class="tl">${D.tallies[b.id].needs_you ? state(D, "needs_you") : D.tallies[b.id].working ? state(D, "working") : state(D, "idle")}</span></li>`).join("")}</ul>`

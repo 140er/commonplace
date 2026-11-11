@@ -53,7 +53,7 @@ ${m.suggest ? `<div class="sug">${m.suggest.map((s) => `<button class="btn">${e(
 }
 
 function roster(D, o) {
-  const doing = (b) => { const n = D.agents.filter((a) => a.bot === b.id).length; return b.state === "needs_you" ? `<span class="amb">Waiting on you</span>` : n ? `${n} agent${n > 1 ? "s" : ""} working` : "Idle"; };
+  const doing = (b) => { const n = D.agents.filter((a) => a.bot === b.id).length; const w = n ? `${n} agent${n > 1 ? "s" : ""} working` : ""; return b.state === "needs_you" ? `<span class="amb">Waiting on you</span>${w ? `, ${w}` : ""}` : w || "Idle"; };
   const tile = (b) => `<a class="card tile" href="#/chat"><header>${av(b)}<div><b>${e(b.name)}</b><span>${e(b.job)}</span></div></header><p>${e(b.last)}</p><footer><span>${doing(b)}</span><time>${e(b.ago)}</time></footer></a>`;
   return `<div class="col pg"><div class="title"><h1>Bots</h1><p>${D.counts.bots} bots, one thread each. Tap one to talk.</p><button class="btn inv">New bot</button></div>
 <div class="tiles">${D.bots.map(tile).join("")}</div></div>`;

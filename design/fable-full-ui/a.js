@@ -81,7 +81,7 @@ function projectView(D, o) {
 }
 
 function roster(D, o) {
-  const doing = (b) => { const n = D.agents.filter((a) => a.bot === b.id).length; return b.state === "needs_you" ? "Waiting on you" : n ? `${n} agent${n > 1 ? "s" : ""} working` : "Idle"; };
+  const doing = (b) => { const n = D.agents.filter((a) => a.bot === b.id).length; const w = n ? `${n} agent${n > 1 ? "s" : ""} working` : ""; return b.state === "needs_you" ? `Waiting on you${w ? `, ${w}` : ""}` : w || "Idle"; };
   if (o.phone) {
     return `<header class="ph"><h1>Bots</h1><a class="btn" href="#/bots">New bot</a></header>
 <a class="strip" href="#/chat"><b>${D.counts.waiting} waiting on you</b><span>Atlas, Ledger</span>${icon("chev", 14)}</a>
