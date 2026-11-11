@@ -287,6 +287,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Board design also documents coordinator release of restricted-origin cards.
 
+  - Project documentation explains the coordinator status block, the owner-only End lease and what ending a lease leaves in place.
+
   - Board API and design documentation state default coordinator routing, audited person reasons, owner recovery and coordinator-only withdrawal of its own asks; existing asks retain their stored data.
 
   - Contributor test instructions state that the default run excludes the `timing` lane and that timing results are informational, never a merge gate.
@@ -595,6 +597,8 @@ Format (read by `commonplace orch docs-check`):
   - Shared fixtures and harnesses and every test file not listed in another block, including binding-epoch migration, direct fences, lock-entry instrumentation and bounded reset races.
 
   - Subagent question routing, proposal/release prerequisites and recipient authority regressions.
+
+  - Coordinator status regressions: `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) and `tests/test_orch_lease_status.py` pin the status states, the End lease confirm and refusals, and that ending a live lease leaves unfinished steps listed.
 
 - **Promises:**
 
@@ -1715,6 +1719,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 
+  - **Coordinator status:** Project settings > Orchestrator reads the read-only checkpoint (`roles/main/checkpoint`) and shows who holds the lease, when it runs out, the accepted config version and counts of open, in-doubt and unstarted work; only a signed-in owner sees End lease, behind a confirm, and ending it leaves unfinished steps listed. A board without orchestration, or one the person cannot read, shows nothing.
+
   - **Browser GitHub connection:** Needs shows local GitHub connection state and validated PR links; selection and session teardown discard connection state.
 
   - **Connection lifecycle proof:** Versioned fixture cards preserve the loading assertion; stopped Needs controllers clear the detail DOM as well as cached connection state.
@@ -1745,6 +1751,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
+
+  - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals and escaping; `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
 
 ## browser-github-grants
 

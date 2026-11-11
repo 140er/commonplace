@@ -148,6 +148,18 @@ Invalid grants return 400,
 unknown machines 404, and revoked/disabled machines or conflicting authority 409.
 A database lock timeout returns 409 `busy`. The whole change rolls back. Only signed-in workspace owners may use this route.
 
+**Coordinator status.** With orchestration on, Project settings > Orchestrator shows
+who holds the project's coordinator lease (role `main`), when it runs out, the accepted
+config version and how many steps are open, in doubt or still unstarted Todo cards. It
+reads `GET /api/orch/boards/<slug>/roles/main/checkpoint`, which claims and renews
+nothing, and is visible to anyone who can read the board. A signed-in owner also gets
+**End lease**, with a confirm; it calls `POST /api/orch/boards/<slug>/roles/main/force-release`,
+the owner-only route that already exists. Members, agent tokens and people of other
+workspaces are refused. Ending a lease changes no step: unfinished work stays listed
+(it becomes "in doubt" when the next coordinator claims the lease). The checkpoint
+does not say since when the lease is held or when it was last renewed, so only the
+expiry time is shown.
+
 `{"trusted":false}` demotes the seat and removes only its requester id from
 machines, preserving other entries even when stale. Switching orchestration off
 atomically demotes all project seats and removes their requester ids. Other
