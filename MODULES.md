@@ -561,6 +561,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
+
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
@@ -1249,6 +1251,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
+  - A configured start is refused with `path_overlap` while a running card of the board declares an overlapping path contract; cards without a contract are never refused by it.
+
   - Configured starts share project admission with claims and plain jobs when workspace orchestration is enabled; boards without a `[runner]` config retain earlier behavior with the workspace switch off.
 
   - The stored-job retry above applies only to unvoided steps.
@@ -1685,6 +1689,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The GET-only Admin dispatcher, scoped users/connections projections, account/palette navigation and independently settling page controller.
 
+
+  - The card panel shows a card's path contract (`Owns paths`).
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
