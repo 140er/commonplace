@@ -11,7 +11,7 @@ _USER = re.compile(r"\buser:(usr_[0-9a-f]+)\b")
 
 # What a card needs from the person reading it, strongest first. ``done`` is
 # terminal and wins over everything; the rest apply in this order.
-NEEDS = ("you", "plan", "merge", "checks", "working", "idle", "done")
+NEEDS = ("you", "release", "plan", "merge", "checks", "expired", "working", "idle", "done")
 STALE_MINUTES = 30
 
 
@@ -21,7 +21,40 @@ def stale_before(at=None) -> str:
     return (at - timedelta(minutes=STALE_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def need(card, *, me=None, owner=False, now=None) -> str:
+def merge_ready(card, cutoff) -> bool:
+    """A fresh, explicit holder report; legacy or incomplete reports fail closed."""
+    head = card.get("pr_head")
+    return bool(
+        card["status"] in ("doing", "review")
+        and card.get("pr_url")
+        and card.get("pr_state") == "open"
+        and isinstance(head, str)
+        and re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", head)
+        and card.get("checks") == "passing"
+        and card.get("pr_reported_at")
+        and card["pr_reported_at"] > cutoff
+    )
+
+
+def _waiting_on_person(row):
+    return (
+        bool(row.get("ask"))
+        or any((row.get(key) or "").startswith("user:") for key in ("assignee", "ask_to"))
+        or (row["status"] == "backlog" and (row.get("return_to") or "").startswith("user:"))
+    )
+
+
+def plan_waiting(card):
+    """The plan label requests review without gating the holder's work."""
+    return (
+        card["status"] in ("todo", "doing")
+        and "plan" in (card.get("labels") or ())
+        and card.get("proposal_status") not in ("pending", "rejected")
+        and not _waiting_on_person(card)
+    )
+
+
+def need(card, *, me=None, owner=False, now=None, person_release: bool | None = None) -> str:
     """One of ``NEEDS`` for a public card dict, seen by actor ``me``.
 
     An ask with no recipient goes to the workspace owner. A question to someone
@@ -30,28 +63,42 @@ def need(card, *, me=None, owner=False, now=None) -> str:
     status = card["status"]
     if status == "done":
         return "done"
+    if card.get("proposal_status") == "pending":
+        return (
+            "you"
+            if card.get("proposed_to") == me or (owner and person_release is not False)
+            else "plan"
+        )
     ask_to = card.get("ask_to")
     if card.get("ask") and (ask_to == me if ask_to else owner):
         return "you"
-    if "plan" in (card.get("labels") or ()) or (status == "review" and not card.get("ask")):
-        return "plan"
-    if card.get("pr_url") and card.get("checks") == "passing":
+    if plan_waiting(card):
+        return "you" if owner and person_release else "plan"
+    cutoff = stale_before(now)
+    if merge_ready(card, cutoff):
         return "merge"
     if card.get("checks") == "pending":
         return "checks"
-    if status == "doing" and (card.get("heartbeat_at") or card["updated_at"]) >= stale_before(now):
+    if status == "doing" and card.get("claim_until"):
+        at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if card["claim_until"] <= at:
+            return "expired"
+    if status == "doing" and (card.get("heartbeat_at") or card["updated_at"]) >= cutoff:
         return "working"
     return "idle"
 
 
-def need_for(card, principal, now=None) -> str:
+def need_for(card, principal, now=None, *, person_release: bool | None = None) -> str:
     """``need`` as ``principal`` sees it: only a signed-in person is ever ``you``."""
     person = bool(principal and principal.person)
     return need(
         card,
-        me=principal.actor if person else None,
+        me=principal.actor
+        if principal and (person or card.get("proposal_status") == "pending")
+        else None,
         owner=person and principal.role == "owner",
         now=now,
+        person_release=person_release,
     )
 
 

@@ -45,15 +45,17 @@ C waits for B1c and B1e. Before B1c the mirror embeds everything: about 4M vecto
 
 ## A0: Placeholder embeddings (all backends)
 
-- Core derives index text from a drawer's whole content before it is split or embedded: extend `stored_text.index_text` with the PR #39 detector. The embedder and every lexical index get index text; the stored document stays verbatim.
+- Core derives index text from a drawer's whole content before it is split or embedded: extend `stored_text.index_text` with the PR #39 detector. The embedder and every lexical index get index text, except that a nonempty chunk wholly covered by a continuing run embeds the run's placeholder when its keyword view is empty; the stored document stays verbatim.
 - Chroma accepts explicit embeddings, so this ships on Chroma too. It removes base64 from embedding input; CPU savings depend on the model, and fixed-length padding can retain most inference cost. It does not change Chroma's own word index (Chroma indexes the stored document) or the vector count.
 
 ### A0 indexing policy
 
 New and updated drawers retain their verbatim documents. Core detects validated
 base64 on the whole input before chunking. Each physical chunk indexes its own
-range: a span emits its placeholder where it starts, continuation fragments are
-removed, and a chunk wholly inside a span indexes the placeholder. Padding-only
+range: the keyword view emits one placeholder per whole run, only in the chunk
+where the run starts. Fully covered later chunks add nothing to the keyword view;
+their embedder input is the whole run's placeholder, never an empty string. Other
+continuation fragments are removed from both views. Padding-only
 intersections create no span and stay literal in index text, whether they would
 otherwise emit or continue a placeholder. No vectors are removed in A0; the vector
 count is unchanged. Keyword-only message policy is B1c.
@@ -174,8 +176,15 @@ A new backend `compact` with the RFC 001 contract. It reuses `sqlite_exact` code
 - Today the mirror writes 4,000-character chunks of mixed messages, and `add_drawer` cuts them into 800-character pieces, often through a base64 run. A per-kind policy cannot apply to mixed pieces.
 - New mirror unit: consecutive messages of one class (conversation = user, assistant and thinking; tool call; tool output; system), grouped up to 4,000 characters. Index text is derived on the whole unit before it is split.
 - Policy (decided 30 Oct): conversation and tool-call drawers are embedded; tool output and system drawers are keyword-only.
+- Only the embedding policy applies exclusively to `compact`; other backends continue embedding every class. Class grouping, unit IDs, progress tracking and recall deduplication apply to every backend. A dedicated internal mirror operation takes the unit identity, message class and index-span provenance. IDs include the thread, sequence range, class and SHA-256 of the 4,000-character unit body. Identical continuations within that range share a drawer; another range stays distinct. Repeated units are skipped before transport and writing, with their input-to-ID mapping preserved. The 800-character pieces retain their indexed IDs beneath the unit ID. Only the authenticated internal gateway channel or direct server-side callers can invoke it; it is absent from MCP schemas. Public `add_drawer` retains its content-derived IDs, and client ingress strips forged policy arguments and reserved metadata.
+- Mirror groups stop at class, checkpoint and append boundaries. Oversized messages retain one header and verbatim continuation pieces, with whole-message index provenance projected through both the 4,000-character mirror limit and the 800-character drawer split. Source thread and inclusive message ranges remain exact.
+- Existing drawers are read without rewriting them. On legacy bootstrap, progress starts at the highest surviving legacy end sequence when that final message fits in one legacy 4,000-character chunk. Each legacy `add_drawer` commits all its physical rows atomically, so an unsplit message is complete even when the palace splits its drawer into several 800-character rows. Only a split, missing or unexpected final message is replayed in full, starting progress one sequence earlier. This preserves earlier matching messages in broad legacy ranges while recovering partial oversized tails. Fresh chats have no legacy drawers and skip this final-message read. One `mirror_progress` row per thread records the completed sequence and pending batch end; a retry finishes that same batch before starting later appends. Progress advances after every unit in the batch commits. Both thread-store formats retain this row, and verified store switching and rollback copy and compare it field by field.
+- Bootstrap accepts an absent palace (`No palace found`), or on the Chroma backend `Chroma database missing`; any other error still fails the mirror.
+- The v2 thread store upgrades additively to schema version 3. Older builds supporting only version 2 refuse the upgraded store; existing tables and transcript data remain unchanged.
 - Ranking: `_hybrid_rank` caps a hit without a vector distance at 0.4 × BM25. Keyword-only by design must not be penalised like "outside the vector pool". If the gate shows it, rank keyword-only records on BM25 alone.
-- Gate: the PR #39 gate through default `mempalace_search` (`union`, PR #38), plus end-to-end recall@10 on the existing benchmarks against today's default search, not only overlap with float32.
+- Compact's intentional keyword-only records use the normalized scope-local BM25 contribution alone; ordinary lexical additions retain the existing hybrid weights. Recall deduplicates overlapping source message ranges rather than assuming mirror units and thread FTS chunks share boundaries.
+- Recall returns one ranked excerpt per overlapping message range. For an oversized message, that excerpt can omit a query match in another continuation piece; use `thread_get` on the returned sequence range to retrieve the complete verbatim message.
+- Gate: the PR #39 gate through default `mempalace_search` (`union`, PR #38), plus end-to-end `recall_at_10` and `palace_recall_at_10` accuracy on the existing benchmarks against today's default search, not only overlap with float32. Hook-recall p95 measures latency against the 500 ms budget; the accuracy metrics are separate.
 - The vector-count saving (112k → ~18k on the corpus) was measured per message. B1c's PR measures it with the real mirror unit and restates it.
 
 ## B1d: Flag, backfill, switch, rollback

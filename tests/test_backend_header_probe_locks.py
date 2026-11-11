@@ -18,6 +18,7 @@ import builtins
 import gc
 import io
 import json
+import multiprocessing
 import os
 import sqlite3
 import subprocess
@@ -230,6 +231,331 @@ def test_probes_keep_chroma_writer_shared_lock(tmp_path):
     backend.close()
     del col
     assert _lock_released_within(db_path), "closing the writer releases the lock"
+
+
+@posix_only
+def test_concurrent_cold_probes_create_one_connection_and_keep_writer_lock(tmp_path, monkeypatch):
+    import chromadb
+
+    db_path = str(tmp_path / "chroma.sqlite3")
+    setup = sqlite3.connect(db_path)
+    setup.execute("PRAGMA journal_mode=WAL")
+    setup.close()
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("probe-race", embedding_function=None)
+    collection.add(ids=["a"], documents=["alpha"], embeddings=[[1.0, 0.0]])
+    st = os.stat(db_path)
+    key = (st.st_dev, st.st_ino)
+    first_created, second_progress, resume = (threading.Event() for _ in range(3))
+    real_lock, real_connect = threading.Lock(), sqlite3.connect
+    created_ids, thread_checks, results, errors = [], [], [], []
+
+    class ObservedLock:
+        def __enter__(self):
+            if not real_lock.acquire(blocking=False):
+                if threading.current_thread() is threads[1]:
+                    second_progress.set()
+                real_lock.acquire()
+
+        def __exit__(self, *exc):
+            real_lock.release()
+
+    def paused_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        if threading.current_thread() in threads:
+            # Keep only identities: retaining either connection would hide an orphan's GC close.
+            created_ids.append(id(conn))
+            thread_checks.append(kwargs.get("check_same_thread"))
+            if threading.current_thread() is threads[0]:
+                first_created.set()
+                if not resume.wait(30):
+                    raise TimeoutError("first probe was not resumed")
+            else:
+                # The broken implementation reaches a second connect instead of waiting.
+                second_progress.set()
+        return conn
+
+    def probe():
+        try:
+            results.append(_magic.has_sqlite_magic(db_path))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=probe) for _ in range(2)]
+    try:
+        assert key not in _magic._retained_conns and key not in _magic._positive
+        assert _shared_lock_held(db_path), "precondition: native writer holds SHARED"
+        # Observe the inode's probe lock; the dictionary lock stays available
+        # while the first connection is paused.
+        monkeypatch.setitem(_magic._probe_locks, key, ObservedLock())
+        monkeypatch.setattr(_magic.sqlite3, "connect", paused_connect)
+        try:
+            threads[0].start()
+            assert first_created.wait(30), "first probe did not open its connection"
+            threads[1].start()
+            assert second_progress.wait(30), "second probe did not reach the retention race"
+        finally:
+            resume.set()
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(30)
+        assert not any(thread.is_alive() for thread in threads)
+        assert errors == [] and results == [True, True]
+        gc.collect()
+        assert (len(created_ids), len(_magic._retained_conns), _shared_lock_held(db_path)) == (
+            1,
+            1,
+            True,
+        )
+        assert id(_magic._retained_conns[key]) == created_ids[0]
+        assert thread_checks == [False]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("probe_count", [1, 300])
+@pytest.mark.parametrize("cached", [False, True])
+def test_other_palaces_progress_during_cold_probes(tmp_path, monkeypatch, probe_count, cached):
+    """Even a stalled first probe must not hold up another palace."""
+    paths = []
+    for i in range(probe_count + 1):
+        path = str(tmp_path / f"probe-{i}.sqlite3")
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE synthetic(value)")
+        conn.close()
+        paths.append(path)
+    if cached:
+        assert _magic.has_sqlite_magic(paths[-1])
+    entered, resume, done = (threading.Event() for _ in range(3))
+    real_connect = sqlite3.connect
+    opened, results, errors = [], [], []
+
+    def paused_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        if threading.current_thread() is producer:
+            opened.append(args[0])
+            if len(opened) == 1:
+                entered.set()
+                if not resume.wait(5):
+                    raise TimeoutError("first probe was not resumed")
+        return conn
+
+    def produce():
+        try:
+            for path in paths[:-1]:
+                assert _magic.has_sqlite_magic(path)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def lookup():
+        try:
+            results.append(_magic.has_sqlite_magic(paths[-1]))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+
+    producer = threading.Thread(target=produce)
+    consumer = threading.Thread(target=lookup)
+    monkeypatch.setattr(_magic.sqlite3, "connect", paused_connect)
+    try:
+        producer.start()
+        assert entered.wait(5)
+        consumer.start()
+        assert done.wait(2), "another palace waited for the stalled probe"
+        assert not resume.is_set()
+    finally:
+        resume.set()
+        for thread in (producer, consumer):
+            if thread.ident is not None:
+                thread.join(5)
+    assert not producer.is_alive() and not consumer.is_alive()
+    assert not errors and results == [True]
+    assert len(opened) == probe_count
+
+
+@pytest.mark.parametrize("all_paths", [False, True])
+def test_forget_during_probe_does_not_publish_old_generation(tmp_path, monkeypatch, all_paths):
+    db_path = str(make_minimal_chroma_sqlite(tmp_path))
+    entered, resume, forgotten = (threading.Event() for _ in range(3))
+    real_connect = sqlite3.connect
+    opened, results, errors = [], [], []
+
+    def paused_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(id(conn))
+        entered.set()
+        if not resume.wait(5):
+            raise TimeoutError("probe was not resumed")
+        return conn
+
+    def probe():
+        try:
+            results.append(_magic.has_sqlite_magic(db_path))
+        except BaseException as exc:
+            errors.append(exc)
+
+    def forget():
+        _magic.forget(None if all_paths else db_path)
+        forgotten.set()
+
+    producer = threading.Thread(target=probe)
+    invalidator = threading.Thread(target=forget)
+    monkeypatch.setattr(_magic.sqlite3, "connect", paused_connect)
+    try:
+        producer.start()
+        assert entered.wait(5)
+        invalidator.start()
+        assert forgotten.wait(2), "invalidation held up by SQLite I/O"
+    finally:
+        resume.set()
+        for thread in (producer, invalidator):
+            if thread.ident is not None:
+                thread.join(5)
+    assert not producer.is_alive() and not invalidator.is_alive()
+    assert not errors and results == [True]
+    st = os.stat(db_path)
+    key = (st.st_dev, st.st_ino)
+    assert key not in _magic._positive
+    assert _magic.has_sqlite_magic(db_path)
+    if os.name == "posix":
+        assert opened == [id(_magic._retained_conns[key])]
+
+
+def test_fork_reset_does_not_close_inherited_connections(monkeypatch):
+    class InheritedConnection:
+        def close(self):
+            pytest.fail("fork cleanup closed an inherited SQLite connection")
+
+    connection = InheritedConnection()
+    old_global, old_probe = threading.Lock(), threading.Lock()
+    monkeypatch.setattr(_magic, "_lock", old_global)
+    monkeypatch.setattr(_magic, "_probe_locks", {(1, 2): old_probe})
+    monkeypatch.setattr(_magic, "_retained_conns", {(1, 2): connection})
+    monkeypatch.setattr(_magic, "_positive", {(1, 2): True})
+    monkeypatch.setattr(_magic, "_generation", 9)
+    monkeypatch.setattr(_magic, "_inherited_conns", [])
+    with old_global, old_probe:
+        _magic._reset_after_fork_in_child()
+        assert _magic._lock.acquire(blocking=False)
+        _magic._lock.release()
+    assert _magic._probe_locks == {}
+    assert _magic._retained_conns == {} and _magic._positive == {}
+    assert _magic._generation == 0
+    assert _magic._inherited_conns == [connection]
+
+
+@posix_only
+def test_close_retained_waits_for_inflight_probe(tmp_path, monkeypatch):
+    db_path = str(make_minimal_chroma_sqlite(tmp_path))
+    entered, resume, closing = (threading.Event() for _ in range(3))
+    real_connect = sqlite3.connect
+    connections, errors = [], []
+
+    def paused_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        connections.append(conn)
+        entered.set()
+        if not resume.wait(5):
+            raise TimeoutError("probe was not resumed")
+        return conn
+
+    def probe():
+        try:
+            assert _magic.has_sqlite_magic(db_path)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def close():
+        closing.set()
+        try:
+            _magic.close_retained()
+        except BaseException as exc:
+            errors.append(exc)
+
+    producer = threading.Thread(target=probe)
+    closer = threading.Thread(target=close)
+    monkeypatch.setattr(_magic.sqlite3, "connect", paused_connect)
+    try:
+        producer.start()
+        assert entered.wait(5)
+        closer.start()
+        assert closing.wait(5)
+    finally:
+        resume.set()
+        for thread in (producer, closer):
+            if thread.ident is not None:
+                thread.join(5)
+    assert not producer.is_alive() and not closer.is_alive()
+    assert not errors and not _magic._retained_conns
+    assert len(connections) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is unavailable")
+def test_fork_mid_probe_child_can_probe(tmp_path, monkeypatch):
+    paths = []
+    for name in ("warm", "blocked"):
+        directory = tmp_path / name
+        directory.mkdir()
+        paths.append(str(make_minimal_chroma_sqlite(directory)))
+    assert _magic.has_sqlite_magic(paths[0])
+    entered, resume = threading.Event(), threading.Event()
+    real_connect = sqlite3.connect
+    results, errors = [], []
+
+    def paused_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        if threading.current_thread() is worker:
+            entered.set()
+            if not resume.wait(10):
+                raise TimeoutError("parent probe was not resumed")
+        return conn
+
+    def probe():
+        try:
+            results.append(_magic.has_sqlite_magic(paths[1]))
+        except BaseException as exc:
+            errors.append(exc)
+
+    def child_probe(pipe):
+        try:
+            assert not _magic._positive and not _magic._retained_conns
+            assert not _magic._probe_locks and _magic._generation == 0
+            assert len(_magic._inherited_conns) >= 1
+            pipe.send([_magic.has_sqlite_magic(path) for path in paths])
+            _magic.close_retained()
+        finally:
+            pipe.close()
+
+    context = multiprocessing.get_context("fork")
+    receiver, sender = context.Pipe(duplex=False)
+    child = context.Process(target=child_probe, args=(sender,))
+    worker = threading.Thread(target=probe)
+    monkeypatch.setattr(_magic.sqlite3, "connect", paused_connect)
+    try:
+        worker.start()
+        assert entered.wait(5)
+        # Exercise both an inherited held dictionary lock and the probe lock.
+        with _magic._lock:
+            child.start()
+        sender.close()
+        child.join(5)
+        assert not child.is_alive(), "child inherited a held parent lock"
+        assert child.exitcode == 0
+        assert receiver.poll(1) and receiver.recv() == [True, True]
+        assert not resume.is_set(), "parent probe must still be blocked"
+    finally:
+        resume.set()
+        worker.join(5)
+        if child.pid is not None and child.is_alive():
+            child.terminate()
+            child.join(5)
+        receiver.close()
+        sender.close()
+    assert not worker.is_alive() and not child.is_alive()
+    assert not errors and results == [True]
 
 
 @posix_only

@@ -47,6 +47,8 @@ from itertools import combinations
 from pathlib import Path
 from typing import Iterator, Optional
 
+from mempalace.sqlite_crypto import connect
+
 from . import paths
 from .dynamics import initialize_dynamics_fields
 from .fsio import (
@@ -187,12 +189,12 @@ def _connect(path: str, *, readonly: bool) -> sqlite3.Connection:
     """
     if readonly:
         uri = Path(os.path.abspath(path)).as_uri() + "?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=30, isolation_level=None)
+        conn = connect(uri, uri=True, timeout=30, isolation_level=None)
     else:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         if not os.path.exists(path):
             os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
-        conn = sqlite3.connect(path, timeout=30, isolation_level=None)
+        conn = connect(path, timeout=30, isolation_level=None)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_DDL)
     conn.execute("PRAGMA busy_timeout=30000")
@@ -1313,9 +1315,27 @@ def _prune_spelling_hallways_locked(config, apply: bool) -> dict:
     }
 
 
-def delete_hallway(hallway_id: str, config=None) -> bool:
+def get_hallway(hallway_id, config=None):
+    return next((h for h in list_hallways(config=config) if h.get("id") == hallway_id), None)
+
+
+def delete_hallway(hallway_id: str, config=None, *, allow=None) -> bool:
     """Remove one hallway record by id. Returns True if a record was removed."""
     with _hallway_file_lock(config), _writing(config) as conn:
+        if allow is not None:
+            row = conn.execute("SELECT record FROM hallways WHERE id=?", (hallway_id,)).fetchone()
+            if row is None:
+                return False
+            record = json.loads(row[0])
+            wing, rooms = record.get("wing"), record.get("rooms") or [""]
+            if (
+                not isinstance(wing, str)
+                or not isinstance(rooms, list)
+                or not all(isinstance(r, str) for r in rooms)
+            ):
+                return False
+            if not {(wing, r) for r in rooms}.issubset({tuple(p) for p in allow}):
+                return False
         return conn.execute("DELETE FROM hallways WHERE id = ?", (hallway_id,)).rowcount > 0
 
 

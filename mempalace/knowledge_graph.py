@@ -41,9 +41,12 @@ import sqlite3
 import threading
 import unicodedata
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
 from typing import Optional
+
+from mempalace.sqlite_crypto import connect, row_factory
 
 from . import fact_provenance, paths, provenance
 from .config import DEFAULT_SINGLE_VALUED_PREDICATES, sanitize_iso_temporal
@@ -88,8 +91,8 @@ def open_graph(path: str, read: bool = False) -> "KnowledgeGraph":
 
 
 def _read_only(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+    conn = connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = row_factory
     return conn
 
 
@@ -712,6 +715,10 @@ _STRICTER_SENSITIVITY = (
 )
 
 
+_read_ids = ContextVar("kg_read_ids", default=None)
+_search_snapshot = ContextVar("kg_search_snapshot", default=None)
+
+
 def _visibility_sql(wings, sensitivities, alias: str = "t") -> tuple:
     """``AND`` clauses for a read filter. A fact with no wing passes no wing filter."""
     sql, params = "", []
@@ -723,7 +730,8 @@ def _visibility_sql(wings, sensitivities, alias: str = "t") -> tuple:
             continue
         sql += f" AND {alias}.{column} IN ({', '.join('?' for _ in allowed)})"
         params.extend(allowed)
-    return sql, params
+    scoped, values = _allow_sql(_read_ids.get(), alias)
+    return sql + scoped, params + values
 
 
 def _fact_fields(row) -> dict:
@@ -833,6 +841,43 @@ def _temporal_filter_sql(as_of: str) -> tuple[str, list[str]]:
     )
 
 
+_PROBE_PAGE = 1000
+
+
+def _stmt_where(kind):
+    """Statement predicates shared by candidate discovery and mutations."""
+    base = "subject=? AND predicate=? AND object=? AND wing IS ? "
+    if kind == "open":
+        return base + "AND valid_to IS NULL"
+    if kind == "history":
+        return base + "AND valid_from IS ? AND valid_to = ?"
+    if kind == "rivals":
+        return "subject=? AND predicate=? AND object != ? AND wing IS ? AND valid_to IS NULL"
+    raise ValueError("unknown mutation statement")
+
+
+def _allow_sql(ids, alias="triples"):
+    if ids is None:
+        return "", []
+    if not ids:
+        return " AND 0", []
+    return f" AND {alias}.id IN (SELECT value FROM json_each(?))", [json.dumps(ids)]
+
+
+def valid_fact_entries(entries):
+    return isinstance(entries, list) and all(
+        isinstance(row, dict)
+        and set(row) == {"id", "wing", "threads"}
+        and isinstance(row["id"], str)
+        and bool(row["id"])
+        and (row["wing"] is None or isinstance(row["wing"], str))
+        and isinstance(row["threads"], list)
+        and all(isinstance(t, str) for t in row["threads"])
+        and row["threads"] == sorted(set(row["threads"]))
+        for row in entries
+    )
+
+
 class KnowledgeGraph:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or DEFAULT_KG_PATH
@@ -843,7 +888,7 @@ class KnowledgeGraph:
         except (OSError, NotImplementedError):
             pass
         self._connection = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._init_db()
 
     @classmethod
@@ -852,7 +897,7 @@ class KnowledgeGraph:
         kg = cls.__new__(cls)
         kg.db_path = ":memory:"
         kg._connection = None
-        kg._lock = threading.Lock()
+        kg._lock = threading.RLock()
         kg._init_db()
         return kg
 
@@ -1022,9 +1067,9 @@ class KnowledgeGraph:
 
     def _conn(self):
         if self._connection is None:
-            self._connection = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
+            self._connection = connect(self.db_path, timeout=10, check_same_thread=False)
             self._connection.execute("PRAGMA journal_mode=WAL")
-            self._connection.row_factory = sqlite3.Row
+            self._connection.row_factory = row_factory
         return self._connection
 
     def close(self):
@@ -1059,6 +1104,230 @@ class KnowledgeGraph:
             if row is not None and entity_id_for_name(row["name"]) != legacy:
                 return legacy
         return eid
+
+    def _target(self, conn, subject, predicate, objects):
+        return (
+            self._resolve_entity_id(conn, subject),
+            predicate.lower().replace(" ", "_"),
+            [self._resolve_entity_id(conn, obj) for obj in objects],
+        )
+
+    @staticmethod
+    def _fact_snapshot(conn, row):
+        threads = {
+            r[0]
+            for r in conn.execute(
+                "SELECT source_thread FROM fact_sources WHERE triple_id=?", (row["id"],)
+            )
+            if isinstance(r[0], str)
+        }
+        if isinstance(row["source_thread"], str):
+            threads.add(row["source_thread"])
+        return {"id": row["id"], "wing": row["wing"], "threads": sorted(threads)}
+
+    def _still_allowed(self, conn, allow):
+        if allow is None:
+            return None
+        if not valid_fact_entries(allow):
+            raise ValueError("thread_scope is invalid")
+        expected = {row["id"]: row for row in allow}
+        rows = conn.execute(
+            "SELECT id, wing, source_thread FROM triples "
+            "WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(expected)),),
+        )
+        return [row["id"] for row in rows if self._fact_snapshot(conn, row) == expected[row["id"]]]
+
+    def _read_descriptor(self, conn, row):
+        return {
+            **self._fact_snapshot(conn, row),
+            "sensitivity": row["sensitivity"],
+            "source_thread": row["source_thread"],
+            "source_seq_start": row["source_seq_start"],
+            "source_seq_end": row["source_seq_end"],
+            "sources": [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM fact_sources WHERE triple_id=? ORDER BY id", (row["id"],)
+                )
+            ],
+        }
+
+    def read_candidates(self, after=None):
+        """Metadata only; never hydrate hidden fact text."""
+        from time import monotonic
+
+        from commonplace.rules import checks
+
+        with self._lock:
+            conn = self._conn()
+            end = checks._deadline.get()
+            if end is not None:
+                checks.remaining(0)
+                conn.set_progress_handler(lambda: monotonic() >= end, 1000)
+            try:
+                rows = conn.execute(
+                    "SELECT id, wing, source_thread, sensitivity, source_seq_start, source_seq_end FROM triples "
+                    "WHERE (? IS NULL OR id > ?) ORDER BY id LIMIT 501",
+                    (after, after),
+                ).fetchall()
+                facts = []
+                for row in rows[:500]:
+                    checks.remaining(0)
+                    facts.append(self._read_descriptor(conn, row))
+                return {"facts": facts, "next": facts[-1]["id"] if len(rows) > 500 else None}
+            finally:
+                conn.set_progress_handler(None, 0)
+
+    def _copy_search_snapshot(self, conn, ids):
+        from commonplace.rules import checks
+
+        scope = json.dumps(ids)
+        queries = {
+            "entities": (
+                "SELECT * FROM entities WHERE id IN ("
+                "SELECT subject FROM triples WHERE id IN (SELECT value FROM json_each(?)) "
+                "UNION SELECT object FROM triples WHERE id IN (SELECT value FROM json_each(?)))",
+                (scope, scope),
+            ),
+            "triples": (
+                "SELECT t.* FROM triples t JOIN fact_search_keys k ON k.triple_id=t.id "
+                "WHERE t.id IN (SELECT value FROM json_each(?)) ORDER BY k.docid",
+                (scope,),
+            ),
+            "fact_sources": (
+                "SELECT * FROM fact_sources WHERE triple_id IN (SELECT value FROM json_each(?)) ORDER BY id",
+                (scope,),
+            ),
+        }
+        copied = {}
+        for table, (sql, params) in queries.items():
+            checks.remaining(0)
+            schema = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()[0]
+            rows = []
+            for row in conn.execute(sql, params):
+                checks.remaining(0)
+                rows.append(dict(row))
+            copied[table] = (schema, rows)
+        return copied
+
+    def read_projection(self, allow, operation, *, search=False):
+        """Revalidate once; search works on a detached authorized snapshot."""
+        from time import monotonic
+
+        from commonplace.rules import checks
+
+        with self._lock:
+            conn = self._conn()
+            end = checks._deadline.get()
+            if end is not None:
+                checks.remaining(0)
+                conn.set_progress_handler(lambda: monotonic() >= end, 1000)
+            token = None
+            try:
+                conn.execute("BEGIN")
+                expected = {r["id"]: r for r in allow}
+                rows = conn.execute(
+                    "SELECT id, wing, source_thread, sensitivity, source_seq_start, source_seq_end FROM triples "
+                    "WHERE id IN (SELECT value FROM json_each(?))",
+                    (json.dumps(list(expected)),),
+                ).fetchall()
+                ids = []
+                for row in rows:
+                    checks.remaining(0)
+                    if self._read_descriptor(conn, row) == expected[row["id"]]:
+                        ids.append(row["id"])
+                if search:
+                    copied = self._copy_search_snapshot(conn, ids)
+                else:
+                    token = _read_ids.set(ids)
+                    return operation()
+            finally:
+                if token is not None:
+                    _read_ids.reset(token)
+                conn.set_progress_handler(None, 0)
+                conn.rollback()
+        # No palace connection or lock is held while building/searching the
+        # private in-memory lexical index. Later writes cannot alter this copy.
+        token = _read_ids.set(ids)
+        snapshot_token = _search_snapshot.set(copied)
+        try:
+            return operation()
+        finally:
+            _search_snapshot.reset(snapshot_token)
+            _read_ids.reset(token)
+
+    def mutation_candidates(
+        self,
+        kind,
+        subject,
+        predicate,
+        objects,
+        wing=None,
+        sensitivities=None,
+        after=None,
+        limit=None,
+        single_valued=False,
+        valid_from=None,
+        source_thread=None,
+        source_url=None,
+    ):
+        """Read one sanitized page without changing data or taking the lock twice."""
+        limit = _PROBE_PAGE if limit is None else limit
+        if (
+            type(limit) is not int
+            or limit < 1
+            or (after is not None and not isinstance(after, str))
+        ):
+            raise ValueError("thread_scope is invalid")
+        wing = fact_wing(wing)
+        within, within_params = _visibility_sql(None, sensitivities, alias="triples")
+        with self._lock:
+            conn = self._conn()
+            sub, pred, ids = self._target(conn, subject, predicate, objects)
+            clauses = [_stmt_where("open") for _ in ids]
+            params = [v for oid in ids for v in (sub, pred, oid, wing)]
+            if kind == "save" and single_valued:
+                clauses.append(_stmt_where("rivals"))
+                params.extend((sub, pred, ids[0], wing))
+                # Every history boundary the filtered mutation could choose.
+                boundary = valid_from or utc_now_z()
+                if _is_date_only_temporal(boundary):
+                    boundary += "T00:00:00Z"
+                rivals = conn.execute(
+                    "SELECT valid_from, approval_status FROM triples WHERE "
+                    + _stmt_where("rivals")
+                    + within,
+                    (sub, pred, ids[0], wing, *within_params),
+                ).fetchall()
+                can_approve = fact_provenance.may_replace_approved(source_thread, source_url)
+                ends = {
+                    _temporal_start_key(r["valid_from"])
+                    for r in rivals
+                    if r["valid_from"] is not None
+                    and (not can_approve or r["approval_status"] == "approved")
+                    and _temporal_start_key(r["valid_from"]) > _temporal_start_key(boundary)
+                }
+                for end in sorted(ends):
+                    clauses.append(_stmt_where("history"))
+                    params.extend((sub, pred, ids[0], wing, valid_from, end))
+            sql = (
+                "SELECT id, wing, source_thread FROM triples WHERE ("
+                + " OR ".join(clauses)
+                + ")"
+                + within
+            )
+            params.extend(within_params)
+            if after is not None:
+                sql += " AND id > ?"
+                params.append(after)
+            sql += " ORDER BY id LIMIT ?"
+            params.append(limit + 1)
+            rows = conn.execute(sql, params).fetchall()
+            facts = [self._fact_snapshot(conn, row) for row in rows[:limit]]
+            return {"facts": facts, "next": facts[-1]["id"] if len(rows) > limit else None}
 
     # ── Write operations ──────────────────────────────────────────────────
 
@@ -1109,6 +1378,8 @@ class KnowledgeGraph:
         wing: str = None,
         sensitivity: str = None,
         sensitivities=None,
+        *,
+        allow=None,
     ):
         """
         Add a relationship triple: subject → predicate → object.
@@ -1164,8 +1435,10 @@ class KnowledgeGraph:
         with self._lock:
             conn = self._conn()
             with self._write(conn):
-                sub_id = self._resolve_entity_id(conn, subject)
-                obj_id = self._resolve_entity_id(conn, obj)
+                scope_sql, scope_params = _allow_sql(self._still_allowed(conn, allow))
+                within_sql += scope_sql
+                within_params += scope_params
+                sub_id, pred, (obj_id,) = self._target(conn, subject, predicate, [obj])
                 conn.execute(
                     "INSERT OR IGNORE INTO entities (id, name) VALUES (?, ?)",
                     (sub_id, subject),
@@ -1177,8 +1450,7 @@ class KnowledgeGraph:
 
                 # Check for existing identical triple in the same wing
                 existing = conn.execute(
-                    "SELECT id FROM triples WHERE subject=? AND predicate=? AND object=? "
-                    "AND wing IS ? AND valid_to IS NULL" + within_sql,
+                    "SELECT id FROM triples WHERE " + _stmt_where("open") + within_sql,
                     (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchone()
                 if existing:
@@ -1248,6 +1520,8 @@ class KnowledgeGraph:
         ended: str = None,
         wing: str = None,
         sensitivities=None,
+        *,
+        allow=None,
     ) -> int:
         """Mark a relationship in ``wing`` as no longer valid (set valid_to date/time).
 
@@ -1263,12 +1537,13 @@ class KnowledgeGraph:
         with self._lock:
             conn = self._conn()
             with self._write(conn):
-                sub_id = self._resolve_entity_id(conn, subject)
-                obj_id = self._resolve_entity_id(conn, obj)
+                scope_sql, scope_params = _allow_sql(self._still_allowed(conn, allow))
+                within_sql += scope_sql
+                within_params += scope_params
+                sub_id, pred, (obj_id,) = self._target(conn, subject, predicate, [obj])
                 rows = conn.execute(
                     "SELECT id, valid_from, approval_status FROM triples "
-                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL" + within_sql,
+                    "WHERE " + _stmt_where("open") + within_sql,
                     (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchall()
 
@@ -1287,9 +1562,7 @@ class KnowledgeGraph:
                         )
 
                 return conn.execute(
-                    "UPDATE triples SET valid_to=? "
-                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL" + within_sql,
+                    "UPDATE triples SET valid_to=? WHERE " + _stmt_where("open") + within_sql,
                     (ended, sub_id, pred, obj_id, wing, *within_params),
                 ).rowcount
 
@@ -1312,6 +1585,8 @@ class KnowledgeGraph:
         wing: str = None,
         sensitivity: str = None,
         sensitivities=None,
+        *,
+        allow=None,
     ):
         """Atomically replace one fact with another at a single shared boundary.
 
@@ -1363,9 +1638,12 @@ class KnowledgeGraph:
         with self._lock:
             conn = self._conn()
             with self._write(conn):
-                sub_id = self._resolve_entity_id(conn, subject)
-                old_id = self._resolve_entity_id(conn, old_obj)
-                new_id = self._resolve_entity_id(conn, new_obj)
+                scope_sql, scope_params = _allow_sql(self._still_allowed(conn, allow))
+                within_sql += scope_sql
+                within_params += scope_params
+                sub_id, pred, (old_id, new_id) = self._target(
+                    conn, subject, predicate, [old_obj, new_obj]
+                )
                 # Only create entities we actually open a fact for. old_obj is
                 # matched by id in the UPDATE below whether or not its row
                 # exists, so inserting it would just orphan an entity when no
@@ -1380,8 +1658,7 @@ class KnowledgeGraph:
                 # inverted interval would be invisible to every KG query.
                 rows = conn.execute(
                     "SELECT id, valid_from, sensitivity, approval_status FROM triples "
-                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL" + within_sql,
+                    "WHERE " + _stmt_where("open") + within_sql,
                     (sub_id, pred, old_id, wing, *within_params),
                 ).fetchall()
                 if any(
@@ -1403,17 +1680,13 @@ class KnowledgeGraph:
 
                 # Close the open old fact at the shared boundary.
                 conn.execute(
-                    "UPDATE triples SET valid_to=? "
-                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL" + within_sql,
+                    "UPDATE triples SET valid_to=? WHERE " + _stmt_where("open") + within_sql,
                     (boundary, sub_id, pred, old_id, wing, *within_params),
                 )
 
                 # Open the successor at the same instant (idempotent if already open).
                 existing = conn.execute(
-                    "SELECT id, sensitivity FROM triples "
-                    "WHERE subject=? AND predicate=? AND object=? AND wing IS ? "
-                    "AND valid_to IS NULL" + within_sql,
+                    "SELECT id, sensitivity FROM triples WHERE " + _stmt_where("open") + within_sql,
                     (sub_id, pred, new_id, wing, *within_params),
                 ).fetchone()
                 if existing:
@@ -1537,6 +1810,7 @@ class KnowledgeGraph:
         sensitivity: str = None,
         sensitivities=None,
         single_valued: bool = False,
+        allow=None,
     ) -> dict:
         """File a fact, folding it into what the graph already holds. One transaction.
 
@@ -1586,8 +1860,10 @@ class KnowledgeGraph:
         with self._lock:
             conn = self._conn()
             with self._write(conn):
-                sub_id = self._resolve_entity_id(conn, subject)
-                obj_id = self._resolve_entity_id(conn, obj)
+                scope_sql, scope_params = _allow_sql(self._still_allowed(conn, allow))
+                within_sql += scope_sql
+                within_params += scope_params
+                sub_id, pred, (obj_id,) = self._target(conn, subject, predicate, [obj])
                 for name, eid in ((subject, sub_id), (obj, obj_id)):
                     conn.execute(
                         "INSERT OR IGNORE INTO entities (id, name) VALUES (?, ?)", (eid, name)
@@ -1603,8 +1879,7 @@ class KnowledgeGraph:
                 )
 
                 same = conn.execute(
-                    "SELECT id, sensitivity FROM triples WHERE subject=? AND predicate=? "
-                    "AND object=? AND wing IS ? AND valid_to IS NULL" + within_sql,
+                    "SELECT id, sensitivity FROM triples WHERE " + _stmt_where("open") + within_sql,
                     (sub_id, pred, obj_id, wing, *within_params),
                 ).fetchone()
                 if same:
@@ -1616,8 +1891,9 @@ class KnowledgeGraph:
                     )
                     if single_valued and can_approve:
                         closing = conn.execute(
-                            "SELECT id, valid_from FROM triples WHERE subject=? AND predicate=? AND object != ? "
-                            "AND wing IS ? AND valid_to IS NULL "
+                            "SELECT id, valid_from FROM triples WHERE "
+                            + _stmt_where("rivals")
+                            + " "
                             "AND (approval_status != 'approved' OR valid_from IS NULL "
                             f"OR {_sql_temporal_start_expr('valid_from')} <= ?)" + within_sql,
                             (sub_id, pred, obj_id, wing, boundary, *within_params),
@@ -1639,8 +1915,13 @@ class KnowledgeGraph:
                     rivals = conn.execute(
                         "SELECT t.id, t.valid_from, t.sensitivity, t.approval_status, e.name AS obj_name "
                         "FROM triples t JOIN entities e ON t.object = e.id "
-                        "WHERE t.subject=? AND t.predicate=? AND t.object != ? AND t.wing IS ? "
-                        "AND t.valid_to IS NULL" + within_sql.replace("triples.", "t."),
+                        "WHERE "
+                        + re.sub(
+                            r"\b(subject|predicate|object|wing|valid_to)\b",
+                            r"t.\1",
+                            _stmt_where("rivals"),
+                        )
+                        + within_sql.replace("triples.", "t."),
                         (sub_id, pred, obj_id, wing, *within_params),
                     ).fetchall()
                 if not can_approve:
@@ -1665,8 +1946,8 @@ class KnowledgeGraph:
                     action, start, closing = "historical", valid_from, []
                     end = _temporal_start_key(later[0]["valid_from"])
                     same_history = conn.execute(
-                        "SELECT id, sensitivity FROM triples WHERE subject=? AND predicate=? "
-                        "AND object=? AND wing IS ? AND valid_from IS ? AND valid_to = ?"
+                        "SELECT id, sensitivity FROM triples WHERE "
+                        + _stmt_where("history")
                         + within_sql,
                         (sub_id, pred, obj_id, wing, start, end, *within_params),
                     ).fetchone()
@@ -1781,6 +2062,22 @@ class KnowledgeGraph:
         as_of = sanitize_iso_temporal(as_of, "as_of")
         visible_sql, params = _visibility_sql(wings, sensitivities)
         temporal_sql, temporal_params = _temporal_filter_sql(as_of) if as_of else ("", [])
+        snapshot = _search_snapshot.get()
+        if snapshot is not None:
+            from .fact_index import snapshot_candidates
+
+            return snapshot_candidates(
+                snapshot,
+                tokens,
+                visible_sql,
+                params,
+                temporal_sql,
+                temporal_params,
+                limit=candidate_limit,
+                common_term_fraction=common_term_fraction,
+            )
+        if _read_ids.get() is not None:
+            raise RuntimeError("Scoped fact search snapshot unavailable")
         with self._lock:
             if not self._fact_index_ready:
                 raise RuntimeError("Fact search index unavailable")
@@ -2020,8 +2317,13 @@ class KnowledgeGraph:
 
             if not results:
                 exact_exists = (
-                    conn.execute("SELECT 1 FROM entities WHERE id = ?", (eid,)).fetchone()
-                    is not None
+                    conn.execute("SELECT 1 FROM entities WHERE id=?", (eid,)).fetchone()
+                    if _read_ids.get() is None
+                    else conn.execute(
+                        "SELECT 1 FROM triples t WHERE (t.subject = ? OR t.object = ?)"
+                        + visible_sql,
+                        (eid, eid, *visible_params),
+                    ).fetchone()
                 )
                 if not exact_exists:
                     candidates = self._lookup_entity_candidates(
@@ -2065,7 +2367,7 @@ class KnowledgeGraph:
         id_esc = _escape_like(eid)
         visible_sql, visible_params = _visibility_sql(wings, sensitivities)
         seen_in = ""
-        if wings is not None or sensitivities is not None:
+        if wings is not None or sensitivities is not None or _read_ids.get() is not None:
             seen_in = (
                 f" AND id IN (SELECT subject FROM triples t WHERE 1{visible_sql}"
                 f" UNION SELECT object FROM triples t WHERE 1{visible_sql})"
@@ -2388,6 +2690,18 @@ class KnowledgeGraph:
 
     def list_wings(self):
         """Fact wings in one covering-index query, without graph-wide statistics."""
+        if _read_ids.get() is not None:
+            clause, params = _allow_sql(_read_ids.get(), "t")
+            with self._lock:
+                return [
+                    r[0]
+                    for r in self._conn().execute(
+                        "SELECT DISTINCT wing FROM triples t WHERE wing IS NOT NULL"
+                        + clause
+                        + " ORDER BY wing",
+                        params,
+                    )
+                ]
         with self._lock:
             return [
                 r["wing"]
@@ -2397,6 +2711,27 @@ class KnowledgeGraph:
             ]
 
     def stats(self):
+        if _read_ids.get() is not None:
+            clause, params = _allow_sql(_read_ids.get(), "t")
+            with self._lock:
+                rows = (
+                    self._conn()
+                    .execute(
+                        "SELECT t.subject, t.object, t.predicate, t.wing, t.valid_to FROM triples t WHERE 1"
+                        + clause,
+                        params,
+                    )
+                    .fetchall()
+                )
+            current = sum(r["valid_to"] is None for r in rows)
+            return {
+                "entities": len({r[k] for r in rows for k in ("subject", "object")}),
+                "triples": len(rows),
+                "current_facts": current,
+                "expired_facts": len(rows) - current,
+                "relationship_types": sorted({r["predicate"] for r in rows}),
+                "wings": sorted({r["wing"] for r in rows if r["wing"] is not None}),
+            }
         with self._lock:
             conn = self._conn()
             entities = conn.execute("SELECT COUNT(*) as cnt FROM entities").fetchone()["cnt"]

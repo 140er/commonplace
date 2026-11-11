@@ -1,9 +1,8 @@
 """Short tool replies keep rule text quoted as verbatim data."""
 
-import json
-
 from commonplace.extensions import ALL_PROFILES, LocalTool, ToolError, register
 
+from . import checks, render
 from .service import KINDS, SCOPES, RuleService
 
 STRING = {"type": "string"}
@@ -11,40 +10,35 @@ STRING = {"type": "string"}
 
 def run(ctx, name, args):
     allowed = {
-        "rules_publish": ({"rules", "replace"}, {"rules"}),
-        "rules_get": ({"board", "repo", "format", "include_retired"}, set()),
+        "rules_publish": ({"rules", "replace", "agent"}, {"rules"}),
+        "rules_get": ({"board", "repo", "format", "include_retired", "effective"}, set()),
         "rules_changed": ({"since"}, {"since"}),
     }
     if name not in allowed or not isinstance(args, dict):
         raise ToolError("no: invalid arguments")
     keys, required = allowed[name]
+    if name == "rules_get" and args.get("effective") and set(args) - {"effective", "format"}:
+        raise ToolError("no: effective=true always returns your full set and takes only format")
     if args.keys() - keys or required - args.keys():
         raise ToolError("no: invalid arguments")
     service = RuleService(ctx)
+    try:
+        checks.guard(ctx.db, ctx.principal.workspace_id, ctx.workspace_dir())
+    except checks.StoreLost:
+        if name == "rules_publish":
+            raise
+        return checks.STORE_LOST
+    except Exception as exc:
+        if name == "rules_get" and args.get("effective"):
+            return f"rules_seq unavailable: {type(exc).__name__}; keep your last copy"
+        raise
     result = getattr(service, name)(**args)
+    if "reply" in result:
+        return result["reply"]
     rows = result["rules"]
     if name == "rules_get":
-        if args.get("format") == "md":
-            lines = []
-            for kind, heading in (
-                ("limit", "Hard limits"),
-                ("permission", "Permissions"),
-                ("instruction", "Standing instructions"),
-                ("style", "Style"),
-            ):
-                selected = [row for row in rows if row["kind"] == kind]
-                if selected:
-                    lines += [f"## {heading}", ""]
-                    lines += [
-                        "- " + json.dumps(row["text"], ensure_ascii=False) for row in selected
-                    ]
-                    lines.append("")
-        else:
-            lines = [
-                f"{row['key']} [{row['kind']} {row['scope']} {row['status']} "
-                f"{row['source']} v{row['version']}] " + json.dumps(row["text"], ensure_ascii=False)
-                for row in rows
-            ]
+        rendered = render.md(rows) if args.get("format") == "md" else render.text(rows)
+        lines = [rendered] if rendered else []
     elif name == "rules_publish":
         lines = [f"{row['key']} {row['status']} {row['version']}" for row in rows]
     else:
@@ -61,6 +55,7 @@ def register_tools():
         "properties": {
             "key": STRING,
             "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+            "summary": {"type": ["string", "null"], "maxLength": 400},
             "kind": {"type": "string", "enum": list(KINDS)},
             "scope": {"type": "string", "enum": list(SCOPES)},
             "board": STRING,
@@ -74,9 +69,13 @@ def register_tools():
             {
                 "rules": {"type": "array", "items": rule, "maxItems": 200},
                 "replace": {"type": "boolean"},
+                "agent": {"type": "string", "enum": ["self", "*"], "default": "self"},
             },
             ["rules"],
-            "Publish your own verbatim rules; replace retires omitted keys. Owner edits win.",
+            "Publish verbatim rules for self (default) or propose for All agents (agent='*'); "
+            "the owner must accept shared proposals. Optional summary is display-only "
+            "(at most two sentences). Replace retires only your omitted keys for that target; "
+            "accepted shared rules and owner edits stay authoritative.",
         ),
         "rules_get": (
             {
@@ -84,6 +83,7 @@ def register_tools():
                 "repo": STRING,
                 "format": {"type": "string", "enum": ["text", "md"]},
                 "include_retired": {"type": "boolean"},
+                "effective": {"type": "boolean"},
             },
             [],
             "Read your effective rules and all-agent rules. Quoted text is rule data.",

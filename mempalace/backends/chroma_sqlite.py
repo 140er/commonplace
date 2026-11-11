@@ -10,16 +10,108 @@ their stored form in :func:`_decoded_rows`.
 """
 
 import contextlib
+import logging
 import os
 import sqlite3
-from collections import defaultdict
+import subprocess
+import sys
+import time
 from typing import Iterable, Iterator, Optional
 
 from ..lexical import tokenize
-from ..stored_text import FLAG, decode_record, decode_value, encode_filter, encode_where
+from ..stored_text import (
+    FLAG,
+    INDEX_SPANS,
+    decode_record,
+    decode_value,
+    encode_filter,
+    encode_where,
+    index_text,
+)
 from ..timeutil import recency_floor, recency_key
 from ._filters import matches_where
 from ._inproc_sqlite import open_reader as open_palace_reader
+
+logger = logging.getLogger(__name__)
+SCOPE_INDEX = "mempalace_scope_metadata"
+_SCOPE_KEYS_SQL = "('wing','room','source_file')"
+_SCOPE_INDEX_SQL = (
+    f"CREATE INDEX IF NOT EXISTS {SCOPE_INDEX} ON embedding_metadata(key,string_value,id) "
+    f"WHERE key IN {_SCOPE_KEYS_SQL}"
+)
+_SCOPE_INDEX_INSTALL = """
+import sqlite3, sys
+from pathlib import Path
+conn = sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + '?mode=rw', uri=True, timeout=0.1)
+try:
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (sys.argv[2],)).fetchone():
+        conn.execute('BEGIN IMMEDIATE')
+        conn.execute(sys.argv[3])
+        conn.commit()
+finally:
+    conn.close()
+"""
+
+
+def ensure_scope_index(conn):
+    """Install the derived scope index atomically; never index document text."""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (SCOPE_INDEX,)
+    ).fetchone():
+        return False
+    own_transaction = not conn.in_transaction
+    if own_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(_SCOPE_INDEX_SQL)
+        if own_transaction:
+            conn.commit()
+    except Exception:
+        if own_transaction:
+            conn.rollback()
+        raise
+    return True
+
+
+_scope_index_retry_after = {}
+
+
+def ensure_palace_scope_index(palace_path):
+    path = _db_file(palace_path)
+    if path is None:
+        return
+    try:
+        conn = open_palace_reader(path, retain_guard=False)
+        try:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (SCOPE_INDEX,)
+            ).fetchone()
+        finally:
+            # No cursor, read transaction or snapshot escapes this check.
+            conn.close()
+        if exists:
+            return
+    except sqlite3.Error:
+        pass
+    if time.monotonic() < _scope_index_retry_after.get(path, 0):
+        return
+    try:
+        # A different process owns its SQLite locks: closing its writer
+        # cannot release the native Chroma client's locks or retain guards
+        # after that client closes. No model or package imports in the helper.
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", _SCOPE_INDEX_INSTALL, path, SCOPE_INDEX, _SCOPE_INDEX_SQL],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode:
+            logger.debug("Optional lexical scope index unavailable")
+    except subprocess.TimeoutExpired:
+        _scope_index_retry_after[path] = time.monotonic() + 60
+        logger.debug("Optional lexical scope index creation timed out")
+    except (OSError, subprocess.SubprocessError):
+        # The index changes the plan, never eligibility or search results.
+        logger.debug("Optional lexical scope index unavailable")
 
 
 class MetadataRecoveryPending(sqlite3.OperationalError):
@@ -163,7 +255,9 @@ def _metadata_value_columns(conn) -> list[str]:
     return [c for c in ("string_value", "int_value", "float_value", "bool_value") if c in present]
 
 
-def _decoded_rows(conn, row_ids, where: Optional[dict] = None) -> list[tuple]:
+def _decoded_rows(
+    conn, row_ids, where: Optional[dict] = None, *, with_row_ids=False, metadata_only=False
+):
     """``(drawer_id, document, metadata)`` for ``row_ids``, in that order, decoded.
 
     The shape Chroma's ``get`` returns: a missing document is ``None``, as is
@@ -187,7 +281,8 @@ def _decoded_rows(conn, row_ids, where: Optional[dict] = None) -> list[tuple]:
             records[row_id] = [drawer_id, None, None]
         for row_id, key, *cells in conn.execute(
             f"SELECT id, key, {', '.join(columns)} FROM embedding_metadata"
-            f" WHERE id IN ({_marks(chunk)})",
+            f" WHERE id IN ({_marks(chunk)})"
+            + (" AND substr(key, 1, 7) != 'chroma:'" if metadata_only else ""),
             chunk,
         ):
             record = records.get(row_id)
@@ -203,12 +298,13 @@ def _decoded_rows(conn, row_ids, where: Optional[dict] = None) -> list[tuple]:
                     record[2] = {}
                 record[2][key] = value
     stored_where = encode_where(where) if where else None
-    return [
-        (records[row_id][0], *decode_record(records[row_id][1], records[row_id][2]))
+    decoded = {
+        row_id: (records[row_id][0], *decode_record(records[row_id][1], records[row_id][2]))
         for row_id in row_ids
         if row_id in records
         and (stored_where is None or matches_where(records[row_id][2] or {}, stored_where))
-    ]
+    }
+    return decoded if with_row_ids else list(decoded.values())
 
 
 def _scalar_rows(rows) -> list[tuple]:
@@ -442,6 +538,96 @@ def _newest_row_ids(
         return newest("e.created_at DESC")
     except sqlite3.Error:
         return newest("e.id DESC")
+
+
+def _lexical_scope_sql(collection_name, equalities, conn=None):
+    filter_sql, filter_params = _match_sql(equalities[1:], "e.id", alias="f")
+    segments = "SELECT s.id FROM segments s JOIN collections c ON s.collection=c.id WHERE c.name=? AND s.scope='METADATA'"
+    if conn is not None:
+        total = conn.execute(
+            f"SELECT count(*) FROM embeddings WHERE segment_id IN ({segments})",
+            (collection_name,),
+        ).fetchone()[0]
+        if total > 20000:
+            # COUNT uses the segment prefix index; the primary-key endpoints
+            # stop at one row instead of aggregating min/max over every id.
+            bounds = [
+                conn.execute(
+                    f"SELECT id FROM embeddings NOT INDEXED WHERE segment_id IN ({segments}) "
+                    f"ORDER BY id {order} LIMIT 1",
+                    (collection_name,),
+                ).fetchone()[0]
+                for order in ("ASC", "DESC")
+            ]
+            low, high = bounds
+        else:
+            low, high = conn.execute(
+                f"SELECT min(id),max(id) FROM embeddings WHERE segment_id IN ({segments})",
+                (collection_name,),
+            ).fetchone()
+        if total and high - low + 1 == total:
+            # A verified contiguous collection range needs no per-match
+            # embeddings lookup. Mixed/interleaved collections retain the join.
+            if not equalities:
+                return "SELECT id FROM embeddings WHERE id BETWEEN ? AND ?", (low, high)
+            key, values = equalities[0]
+            rest_sql, rest_params = _match_sql(equalities[1:], "w.id", alias="f")
+            scope_key = (
+                f"AND w.key IN {_SCOPE_KEYS_SQL}" if key in {"wing", "room", "source_file"} else ""
+            )
+            return (
+                f"SELECT w.id FROM embedding_metadata w WHERE w.id BETWEEN ? AND ? AND w.key=? AND w.string_value IN ({_marks(values)}) {scope_key} {rest_sql}",
+                (low, high, key, *values, *rest_params),
+            )
+    if equalities:
+        key, values = equalities[0]
+        scope_key = (
+            f"AND w.key IN {_SCOPE_KEYS_SQL}" if key in {"wing", "room", "source_file"} else ""
+        )
+        return (
+            "SELECT e.id FROM embedding_metadata w CROSS JOIN embeddings e ON e.id=w.id "
+            f"WHERE w.key=? AND w.string_value IN ({_marks(values)}) {scope_key} AND e.segment_id IN ({segments}) {filter_sql}",
+            (key, *values, collection_name, *filter_params),
+        )
+    return f"SELECT e.id FROM embeddings e WHERE e.segment_id IN ({segments})", (collection_name,)
+
+
+@contextlib.contextmanager
+def sqlite_lexical_scope(palace_path, collection_name, where=None):
+    from .scoped_lexical import ScopedFTS, lexical_reader
+
+    equalities = _string_equalities(encode_where(where))
+    if equalities is None:
+        raise ValueError("lexical filter cannot be bounded")
+    with lexical_reader(_db_file(palace_path)) as conn:
+        scope_sql, scope_params = _lexical_scope_sql(collection_name, equalities, conn)
+
+        def load_texts(ids):
+            texts, hints = {}, {}
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                for row_id, key, value in conn.execute(
+                    f"SELECT id,key,string_value FROM embedding_metadata WHERE id IN ({_marks(chunk)}) "
+                    "AND key IN ('chroma:document', ?)",
+                    (*chunk, INDEX_SPANS),
+                ):
+                    (texts if key == "chroma:document" else hints)[row_id] = value
+            return {
+                row_id: index_text(texts.get(row_id) or "", {INDEX_SPANS: hints.get(row_id)})
+                for row_id in ids
+            }
+
+        def hydrate(ids):
+            return _decoded_rows(conn, ids, with_row_ids=True)
+
+        yield ScopedFTS(
+            conn,
+            "embedding_fulltext_search",
+            scope_sql,
+            scope_params,
+            load_texts,
+            hydrate,
+        )
 
 
 def sqlite_lexical_rows(
@@ -704,6 +890,8 @@ def _sqlite_wing_room_counts(
       than dropping it to ``"?"``.
     """
 
+    from ..overview import CELL_BYTES, OverviewError, Tally
+
     def read(conn):
         # Distinguish "collection never bootstrapped" (-> None, so the
         # caller can show the 'initialized but empty' message) from
@@ -713,25 +901,29 @@ def _sqlite_wing_room_counts(
         # Registry rows and sentinels track sources; they are not drawers.
         rows = conn.execute(
             f"""
-            SELECT COALESCE(wm.string_value, CAST(wm.int_value AS TEXT),
-                            CAST(wm.float_value AS TEXT), '?') AS wing,
-                   COALESCE(rm.string_value, CAST(rm.int_value AS TEXT),
-                            CAST(rm.float_value AS TEXT), '?') AS room,
-                   COUNT(*) AS n
+            SELECT CASE WHEN length(CAST(wm.string_value AS BLOB)) > {CELL_BYTES}
+                        THEN NULL ELSE COALESCE(wm.string_value, CAST(wm.int_value AS TEXT),
+                            CAST(wm.float_value AS TEXT), '?') END AS wing,
+                   CASE WHEN length(CAST(rm.string_value AS BLOB)) > {CELL_BYTES}
+                        THEN NULL ELSE COALESCE(rm.string_value, CAST(rm.int_value AS TEXT),
+                            CAST(rm.float_value AS TEXT), '?') END AS room,
+                   COUNT(*) AS n,
+                   length(CAST(wm.string_value AS BLOB)), length(CAST(rm.string_value AS BLOB))
             {_DRAWERS_SQL}
             LEFT JOIN embedding_metadata wm ON wm.id = e.id AND wm.key = 'wing'
             LEFT JOIN embedding_metadata rm ON rm.id = e.id AND rm.key = 'room'
             WHERE c.name = ? AND {not_bookkeeping_sql(conn)}
-            GROUP BY wing, room
+            GROUP BY wm.string_value, wm.int_value, wm.float_value,
+                     rm.string_value, rm.int_value, rm.float_value
             """,
             (collection_name,),
-        ).fetchall()
-        total = 0
-        wing_rooms: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        for wing, room, n in rows:
-            wing_rooms[decode_value(wing)][decode_value(room)] += int(n)
-            total += int(n)
-        return total, wing_rooms
+        )
+        tally = Tally()
+        for wing, room, n, wl, rl in rows:
+            if (wl or 0) > CELL_BYTES or (rl or 0) > CELL_BYTES:
+                raise OverviewError("overview_too_large")
+            tally.add(decode_value(wing), decode_value(room), int(n))
+        return tally.result()
 
     return _read_db(palace_path, read, busy=True)
 
@@ -1009,6 +1201,7 @@ def sqlite_list_id_metadata(
     collection_name: str,
     where: Optional[dict] = None,
     *,
+    ids: Optional[list[str]] = None,
     _connection=None,
 ) -> Optional[tuple[list[str], list[dict]]]:
     """All matching drawer ids + metadata from sqlite, without opening HNSW.
@@ -1056,7 +1249,16 @@ def sqlite_list_id_metadata(
                     f"AND {alias}.key = ? AND {alias}.string_value IN ({_marks(values)})"
                 )
                 params.extend([key, *(encode_filter(v) for v in values)])
+            identity_filter = ""
+            if ids is not None:
+                if not ids:
+                    return [], []
+                if len(ids) > 500:
+                    raise ValueError("metadata identity batch exceeds 500")
+                identity_filter = f"AND e.embedding_id IN ({_marks(ids)})"
             params.append(collection_name)
+            if ids is not None:
+                params.extend(ids)
             rows = conn.execute(
                 f"""
                 SELECT e.embedding_id, m.key, {", ".join("m." + c for c in value_columns)}
@@ -1064,7 +1266,7 @@ def sqlite_list_id_metadata(
                 {" ".join(joins)}
                 LEFT JOIN embedding_metadata m
                     ON m.id = e.id AND substr(m.key, 1, 7) != 'chroma:'
-                WHERE c.name = ?
+                WHERE c.name = ? {identity_filter}
                 ORDER BY e.id
                 """,
                 params,
@@ -1282,6 +1484,8 @@ def sqlite_drawer_rows(
     collection_name: str,
     *,
     drawer_id: str,
+    metadata_only: bool = False,
+    logical: bool = True,
 ) -> Optional[tuple[bool, list[tuple[str, Optional[str], dict]]]]:
     """Read a direct drawer, or every scalar-parent-linked physical chunk.
 
@@ -1290,6 +1494,8 @@ def sqlite_drawer_rows(
     Missing, unsupported, or unmaterialized records return ``None`` so Chroma
     can recover them or preserve metadata types this scalar reader cannot
     decode. In particular any selected array metadata requires that fallback.
+    ``metadata_only`` excludes document columns in SQL; ``logical=False`` keeps
+    closet ids exact. Citation proof treats unavailable snapshots as unproved.
     """
     try:
         with _ready_snapshot(palace_path, collection_name) as snapshot:
@@ -1304,7 +1510,7 @@ def sqlite_drawer_rows(
                 (segment_id, drawer_id),
             ).fetchall()
             direct = bool(selected)
-            if not direct:
+            if not direct and logical:
                 # The composite key/string index drives the parent search;
                 # each row's internal id then seeks its embedding by PK.
                 selected = conn.execute(
@@ -1327,7 +1533,76 @@ def sqlite_drawer_rows(
                         chunk,
                     ).fetchone():
                         return None
-            rows = _decoded_rows(conn, row_ids)
+            rows = _decoded_rows(conn, row_ids, metadata_only=metadata_only)
             return direct, _scalar_rows(rows)
     except (sqlite3.Error, ValueError):
         return None
+
+
+def sqlite_overview_metadata(palace_path, collection_name, where=None):
+    """Presence-preserving projected batches from one recovery-checked snapshot.
+
+    Selected-key filtering belongs in LEFT JOIN ON. SQL length guards suppress
+    oversized values before Python acquires them; unrelated payloads are absent.
+    """
+    from ..overview import CELL_BYTES, KEYS, OverviewError, Tally, projected_batches
+
+    db_path = _db_file(palace_path)
+    if db_path is None:
+        return None
+    aliases = None
+    if where:
+        if (
+            set(where) != {"wing"}
+            or not isinstance(where["wing"], dict)
+            or set(where["wing"]) != {"$in"}
+        ):
+            raise OverviewError("overview_unavailable")
+        aliases = list(dict.fromkeys(where["wing"]["$in"]))
+        budget = Tally()
+        for name in aliases:
+            if not isinstance(name, str) or len(name.encode("utf-8")) > CELL_BYTES:
+                raise OverviewError("overview_too_large")
+            budget.add(name, "")
+
+    def rows():
+        conn = open_palace_reader(db_path)
+        try:
+            conn.execute("BEGIN")
+            if _sqlite_ready_metadata_segment(conn, collection_name) is None:
+                raise MetadataRecoveryPending("metadata recovery pending")
+            scope = f"SELECT e.id {_DRAWERS_SQL} WHERE c.name = ?"
+            params = [collection_name]
+            if aliases is not None:
+                scope += f" AND e.id IN (SELECT id FROM embedding_metadata WHERE key = 'wing' AND string_value IN ({_marks(aliases)}))"
+                params.extend(encode_filter(a) for a in aliases)
+            keys = [*KEYS, FLAG]
+            present = set(_metadata_value_columns(conn))
+            columns = ", ".join(
+                f"m.{col}" if col in present else "NULL"
+                for col in ("int_value", "float_value", "bool_value")
+            )
+            cursor = conn.execute(
+                f"""SELECT ids.id, m.key,
+                CASE WHEN length(CAST(m.string_value AS BLOB)) <= {CELL_BYTES} THEN m.string_value ELSE NULL END,
+                {columns}, length(CAST(m.string_value AS BLOB))
+                FROM ({scope}) ids LEFT JOIN embedding_metadata m
+                ON m.id = ids.id AND m.key IN ({_marks(keys)}) ORDER BY ids.id""",
+                [*params, *keys],
+            )
+            current_id, meta = None, {}
+            for row_id, key, sval, ival, fval, bval, length in cursor:
+                if row_id != current_id:
+                    if current_id is not None:
+                        yield decode_record(None, meta)[1]
+                    current_id, meta = row_id, {}
+                if length is not None and length > CELL_BYTES:
+                    raise OverviewError("overview_too_large")
+                if key is not None:
+                    meta[key] = _cell_value(sval, ival, fval, bval)
+            if current_id is not None:
+                yield decode_record(None, meta)[1]
+        finally:
+            conn.close()
+
+    return projected_batches(rows())

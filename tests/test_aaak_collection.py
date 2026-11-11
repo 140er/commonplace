@@ -124,8 +124,9 @@ def test_an_older_aaak_row_no_longer_boosts_lexical_closet_search():
         SimpleNamespace(metadata=_REAL_CLOSET, document="kubernetes rollout notes"),
     ]
     closets = SimpleNamespace(
-        _backend=SimpleNamespace(capabilities=frozenset({"supports_lexical_search"})),
-        lexical_search=lambda **kwargs: SimpleNamespace(hits=hits),
+        _backend=SimpleNamespace(capabilities=frozenset({"bounded_lexical_search"})),
+        supports_bounded_lexical_filter=lambda where: True,
+        union_lexical_search=lambda **kwargs: SimpleNamespace(hits=hits),
     )
 
     boosts = _closet_boosts(closets, query="kubernetes rollout", n_results=5, where={})

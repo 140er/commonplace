@@ -101,7 +101,7 @@ def palace_wing_aliases(wing: str, col=None, known=None) -> list:
 
 
 def build_where_filter(
-    wing: str = None, room: str = None, source_file: str = None, col=None, known=None
+    wing: str = None, room: str = None, source_file: str = None, col=None, known=None, wings=None
 ) -> dict:
     """Build a ChromaDB where filter from optional wing/room/source_file.
 
@@ -112,7 +112,14 @@ def build_where_filter(
     to it.
     """
     clauses = []
-    if wing:
+    if wings is not None:
+        aliases = sorted(
+            {alias for name in wings for alias in palace_wing_aliases(name, col, known)}
+        )
+        if wing:
+            aliases = sorted(set(aliases) & set(palace_wing_aliases(wing, col, known)))
+        clauses.append({"wing": {"$in": aliases}})
+    elif wing:
         clauses.append({"wing": {"$in": palace_wing_aliases(wing, col, known)}})
     if room:
         clauses.append({"room": room})

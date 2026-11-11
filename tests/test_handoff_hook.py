@@ -12,6 +12,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import URLError
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -264,6 +265,7 @@ def test_early_exit_touches_nothing(local, monkeypatch, capsys, reason):
     assert not (local.home / ".commonplace").exists()
 
 
+@pytest.mark.timing
 def test_warm_below_threshold_has_no_http_or_full_read(local, api, monkeypatch, capsys):
     local.usage = ContextUsage(10, 200_000, "tiny")
     seed_cache(local, api)
@@ -413,7 +415,18 @@ def test_bad_response_json_falls_back(local, api, monkeypatch, capsys, route, ra
 
 
 @pytest.mark.parametrize("route", ["/api/settings/handoff", "/api/handoff"])
+@pytest.mark.timing
 def test_timeout_falls_back(local, api, monkeypatch, capsys, route):
+    if route == "/api/handoff":
+        seed_cache(local, api)
+    original = hook._request
+    calls = []
+
+    def request(server, token, path, body=None):
+        calls.append(urlsplit(path).path)
+        return original(server, token, path, body)
+
+    monkeypatch.setattr(hook, "_request", request)
     api.delays[route] = 1
     monkeypatch.setattr(hook, "HTTP_TIMEOUT", 0.03)
     started = time.monotonic()
@@ -423,6 +436,42 @@ def test_timeout_falls_back(local, api, monkeypatch, capsys, route):
     assert bool(err) == (route != "/api/settings/handoff")
     assert time.monotonic() - started < 1
     assert local.children == []
+    assert calls == [route]
+
+
+@pytest.mark.parametrize("route", ["/api/settings/handoff", "/api/handoff"])
+@pytest.mark.parametrize("wrapped", [False, True], ids=["timeout", "url-timeout"])
+def test_request_timeout_falls_back(local, monkeypatch, capsys, route, wrapped):
+    monkeypatch.setenv("COMMONPLACE_URL", "http://127.0.0.1:1")
+    calls = []
+
+    def open_request(request, *, timeout):
+        path = urlsplit(request.full_url).path
+        calls.append((request.get_method(), path, timeout))
+        if path == route:
+            error = TimeoutError("cmmn_test-secret\nexact text")
+            raise URLError(error) if wrapped else error
+        if path != "/api/settings/handoff":
+            pytest.fail(f"Unexpected request: {path}")
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "rows": [],
+                    "effective": {"enabled": True, "threshold": 0.8, "context_window": None},
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(hook, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+    out, err = run_hook(local, monkeypatch, capsys)
+    assert out == ""
+    assert len(err.splitlines()) == int(route != "/api/settings/handoff")
+    assert local.children == []
+    assert not cache_paths(local)[1].exists()
+    expected = [("GET", "/api/settings/handoff", 30)]
+    if route == "/api/handoff":
+        expected.append(("POST", "/api/handoff", 30))
+    assert calls == expected
 
 
 def test_redirect_is_not_followed(local, api, monkeypatch, capsys):
@@ -707,6 +756,15 @@ def test_invalid_client_config(local, api, monkeypatch, capsys, raw):
 )
 def test_launch_failure_does_not_stop_or_retry(local, api, monkeypatch, capsys, argv):
     configure_successor(local, argv=argv)
+    start = hook.subprocess.Popen
+
+    def exited_child(*args, **kwargs):
+        child = start(*args, **kwargs)
+        # Observe a completed failure, independent of interpreter startup time.
+        child.wait(timeout=10)
+        return child
+
+    monkeypatch.setattr(hook.subprocess, "Popen", exited_child)
     out, err = run_hook(local, monkeypatch, capsys)
     assert out == ""
     assert err

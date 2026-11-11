@@ -1062,8 +1062,7 @@ def test_bm25_only_via_sqlite_forwards_stop_words_to_bm25_scores(monkeypatch, tm
 def test_finalize_candidate_hits_forwards_stop_words_to_hybrid_rank(monkeypatch):
     """`_finalize_candidate_hits` must forward `stop_words` into the final
     `_hybrid_rank` re-rank — the BM25 site on the vector/union path. (The
-    union candidate gather runs through the backend's own ``lexical_search``,
-    which does its own tokenization and takes no mempalace stop words.)"""
+    union candidate gather uses the bounded scope-local backend path.)"""
     from mempalace import searcher
 
     captured = {}
@@ -1084,6 +1083,7 @@ def test_finalize_candidate_hits_forwards_stop_words_to_hybrid_rank(monkeypatch)
         n_results=5,
         max_distance=0.0,
         stop_words=frozenset({"a", "an"}),
+        where=None,
     )
 
     assert captured["stop_words"] == frozenset({"a", "an"})

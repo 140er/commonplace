@@ -37,7 +37,22 @@ def _restamp_palace_db() -> None:
     _note_own_db_stamp(_config.palace_path, (_palace_db_inode, _palace_db_mtime))
 
 
-def _drop_session_client_for_system_reset() -> None:
+def _close_session_client() -> None:
+    """Release the cached owner before dropping it, preserving open errors."""
+    global _client_cache
+    cached = _client_cache
+    if cached is not None:
+        from ..backends.chroma import _close_client
+
+        # The configuration may already name a replacement palace.
+        path = getattr(cached, "_identifier", None)
+        if not isinstance(path, str):
+            path = _config.palace_path
+        _close_client(cached, path)
+    _client_cache = None
+
+
+def _drop_session_client_for_system_reset(palace_path=None) -> None:
     """Close the session client before the shared Chroma System is dropped.
 
     Search goes through ``ChromaBackend`` and the other tools through this
@@ -56,24 +71,20 @@ def _drop_session_client_for_system_reset() -> None:
         _collection_cache_backend, \
         _collection_cache_palace, \
         _collection_open_error
-    cached = _client_cache
-    _client_cache = None
+    if palace_path is not None:
+        from ..backends.chroma import _same_palace
+
+        cached_path = getattr(_client_cache, "_identifier", None)
+        if not isinstance(cached_path, str):
+            cached_path = _config.palace_path if _config is not None else None
+        if cached_path is None or not _same_palace(palace_path, cached_path):
+            return
+    _close_session_client()
     _collection_cache = None
     _collection_cache_backend = None
     _collection_cache_palace = None
     _collection_open_error = None
     _invalidate_overview_caches()
-    if cached is None:
-        return
-    try:
-        close = getattr(cached, "close", None)
-        if callable(close):
-            close()
-    except Exception:
-        logger.debug(
-            "Failed to close session Chroma client before system reset",
-            exc_info=True,
-        )
 
 
 register_before_system_cache_reset(_drop_session_client_for_system_reset)
@@ -82,6 +93,8 @@ register_before_system_cache_reset(_drop_session_client_for_system_reset)
 class _SessionFreshness:
     """Stands in for ``ChromaCollection``'s owning backend so the session's own
     writes re-baseline its freshness stat (see :func:`_restamp_palace_db`)."""
+
+    capabilities = ChromaBackend.capabilities
 
     @staticmethod
     def _restamp(palace_path: str) -> None:
@@ -128,7 +141,10 @@ def _get_client():
     # both stored and current values are 0 on the first call after deletion,
     # making inode_changed and mtime_changed both False.
     if not os.path.isfile(db_path) and _collection_cache is not None:
-        _client_cache = None
+        # A dropped client can retain the shared System after this owner
+        # closes. Evict it too: its SQLite pool still targets the renamed DB
+        # and cannot safely open connections at the now-missing path.
+        _force_chroma_cache_reset()
         _collection_cache = None
         _collection_cache_backend = None
         _collection_cache_palace = None
@@ -164,7 +180,8 @@ def _get_client():
         # if the index is severely undersized, segment load can segfault
         # the whole MCP server. The probe is pure sqlite +
         # metadata read; never touches the HNSW binary files.
-        _refresh_vector_disabled_flag()
+        with _worker_phase("capacity_probe"):
+            _refresh_vector_disabled_flag()
         if client_is_current and (inode_changed or mtime_changed):
             ChromaBackend._quarantined_paths.discard(_config.palace_path)
             # A peer process changed chroma.sqlite3 on disk. chromadb
@@ -204,6 +221,8 @@ def _get_collection(create=False):
     scratch, so the second attempt heals the common stale-handle case
     automatically.
     """
+    from ..backends.base import PalaceNotFoundError
+
     global \
         _client_cache, \
         _collection_cache, \
@@ -217,8 +236,7 @@ def _get_collection(create=False):
     # Operator read-only mode must never bootstrap a collection. In
     # particular, sqlite_exact's normal create/open path initializes WAL,
     # schema, FTS metadata, and commits before the first read.
-    if _READ_ONLY:
-        create = False
+    create = create and not _READ_ONLY
     try:
         backend_name = _selected_backend_name()
     except (BackendMismatchError, KeyError) as exc:
@@ -256,6 +274,7 @@ def _get_collection(create=False):
                     and _collection_cache_palace == _config.palace_path
                 ):
                     _collection_open_error = None
+                    _observation.selected(backend=backend_name)
                     return _collection_cache
                 _collection_cache = None
                 _collection_cache_backend = None
@@ -270,6 +289,7 @@ def _get_collection(create=False):
                         backend=backend_name,
                         read_only=collection_read_only,
                     )
+                    _observation.selected(backend=backend_name)
                     _collection_cache_backend = backend_name
                     _collection_cache_palace = _config.palace_path
                     _collection_open_error = None
@@ -309,7 +329,13 @@ def _get_collection(create=False):
                 _collection_cache_palace = None
                 _invalidate_overview_caches()
                 return None
-            except Exception:
+            except Exception as exc:
+                if not create and isinstance(exc, PalaceNotFoundError):
+                    # An absent palace/collection is normal before the first
+                    # drawer write. Other open failures must remain errors.
+                    _collection_open_error = None
+                    _invalidate_overview_caches()
+                    return None
                 logger.exception(
                     "_get_collection generic attempt %d/2 failed (palace=%s, create=%s)",
                     attempt + 1,
@@ -327,6 +353,7 @@ def _get_collection(create=False):
                 }
         return None
 
+    _observation.covered("collection_open_count")
     db_path = os.path.join(_config.palace_path, "chroma.sqlite3")
     if not create and not os.path.isfile(db_path):
         _force_chroma_cache_reset()
@@ -396,6 +423,8 @@ def _get_collection(create=False):
                         },
                         **ef_kwargs,
                     )
+                _observation.success("collection_open_count")
+                _observation.selected(backend="chroma")
                 _pin_hnsw_threads(raw)
                 _collection_cache = _checked_chroma_collection(raw, create=True)
                 _restamp_palace_db()
@@ -409,6 +438,8 @@ def _get_collection(create=False):
                     "embedding_function": ChromaBackend._resolve_embedding_function(read_only=True)
                 }
                 raw = client.get_collection(_config.collection_name, **ef_kwargs)
+                _observation.success("collection_open_count")
+                _observation.selected(backend="chroma")
                 _pin_hnsw_threads(raw)
                 _collection_cache = _checked_chroma_collection(raw, create=False)
                 _restamp_palace_db()
@@ -425,7 +456,7 @@ def _get_collection(create=False):
                 "details": str(exc),
                 "hint": "Select the matching backend or use a fresh palace directory.",
             }
-            _client_cache = None
+            _close_session_client()
             _collection_cache = None
             _collection_cache_backend = None
             _collection_cache_palace = None
@@ -437,7 +468,7 @@ def _get_collection(create=False):
             # Deterministic config error: retrying cannot help, and the
             # generic "Backend open failed" would hide the fix.
             _collection_open_error = _unknown_embedding_model_error(exc)
-            _client_cache = None
+            _close_session_client()
             _collection_cache = None
             _collection_cache_backend = None
             _collection_cache_palace = None
@@ -480,7 +511,7 @@ def _get_collection(create=False):
                 # to rebuild the chromadb client from scratch, reopening
                 # the collection cleanly and healing the common
                 # stale-handle case.
-                _client_cache = None
+                _close_session_client()
                 _collection_cache = None
                 _collection_cache_backend = None
                 _collection_cache_palace = None
@@ -492,7 +523,7 @@ def _get_collection(create=False):
                     "details": "Could not open the Chroma collection.",
                     "hint": "Run: mempalace repair-status for diagnostics.",
                 }
-    _client_cache = None
+    _close_session_client()
     _collection_cache = None
     _collection_cache_backend = None
     _collection_cache_palace = None
@@ -642,6 +673,7 @@ def _fetch_all_metadata(col, where=None):
     correct strategy without this caller needing to know which backend it's
     talking to.
     """
+    _observation.mark(fallback_kind="full_metadata")
     get_all = getattr(col, "get_all_metadata", None)
     if callable(get_all):
         return get_all(where=where)
@@ -730,7 +762,9 @@ def _get_cached_metadata(col, where=None):
         and _metadata_cache is not None
         and (time.time() - _metadata_cache_time) < _METADATA_CACHE_TTL
     ):
+        _observation.mark(raw_metadata_cache_hit=True)
         return _metadata_cache
+    _observation.mark(raw_metadata_cache_hit=False)
     result = _fetch_all_metadata(col, where=where)
     if where is None:
         _metadata_cache = result

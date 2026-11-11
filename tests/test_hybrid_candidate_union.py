@@ -1,20 +1,74 @@
 """Tests for ``candidate_strategy="union"`` in ``search_memories``.
 
-The default ``"vector"`` strategy gathers candidates from the vector index
+The selectable ``"vector"`` strategy gathers candidates from the vector index
 only. Docs with strong BM25 signal but vector embeddings far from the query
 get skipped — terminology guides looked up by narrative-shaped queries are
 the canonical case.
 
-The ``"union"`` strategy also pulls top-K BM25-only candidates from sqlite
+The default ``"union"`` strategy also pulls top-K BM25-only candidates from sqlite
 FTS5 and merges them into the rerank pool. Both signal sources contribute
 candidates; the hybrid rerank picks the best from a richer pool.
 
-Default behavior is unchanged ("vector") — these tests exercise opt-in
-"union" mode.
+Both implicit and explicit union selection must retrieve lexical-only drawers.
 """
 
 from mempalace.palace import get_collection
 from mempalace.searcher import search_memories
+
+
+def test_hybrid_full_query_preserves_stopword_length_statistics():
+    from mempalace.lexical import bm25_scores
+    from mempalace.searcher import _hybrid_rank
+
+    query = "texts def auth pass metadatas source"
+    docs = [
+        "texts def auth pass metadatas source " + "session summary source " * 20,
+        "auth pass extra ordinary words",
+        "metadatas source",
+    ]
+    stop_words = frozenset({"source", "session", "summary"})
+    expected = bm25_scores(query, docs, stop_words=stop_words)
+    hits = [
+        {
+            "drawer_id": str(i),
+            "text": text,
+            "distance": None,
+            "_lexical_terms": ["metadatas"],
+            "_lexical_trigram": True,
+        }
+        for i, text in enumerate(docs)
+    ]
+    ranked = _hybrid_rank(hits, query, stop_words=stop_words)
+    assert {hit["drawer_id"]: hit["bm25_score"] for hit in ranked} == {
+        str(i): round(score, 3) for i, score in enumerate(expected)
+    }
+
+
+def test_hybrid_union_keeps_full_query_signal_on_vector_candidates():
+    from mempalace.searcher import _hybrid_rank
+
+    results = [
+        {
+            "drawer_id": "vector",
+            "text": "texts def auth pass metadatas source",
+            "distance": 0.8,
+            "_lexical_terms": ["lantern"],
+            "_lexical_matches": (),
+        },
+        {
+            "drawer_id": "lexical",
+            "text": "lantern lantern",
+            "distance": None,
+            "_lexical_terms": ["lantern"],
+            "_lexical_matches": ("lantern",),
+        },
+    ]
+    ranked = _hybrid_rank(
+        results, "texts def auth pass metadatas source lantern", stop_words=frozenset({"source"})
+    )
+    assert ranked[0]["drawer_id"] == "vector"
+    assert ranked[0]["bm25_score"] > 0
+    assert all(not any(key.startswith("_lexical_") for key in hit) for hit in ranked)
 
 
 def _seed_drawers(palace_path):
@@ -58,17 +112,17 @@ _NARRATIVE_QUERY = (
 
 
 class TestCandidateUnion:
-    def test_default_vector_strategy_unchanged(self, tmp_path):
+    def test_default_strategy_is_union(self, tmp_path):
         """Default behavior must be identical to omitting the parameter."""
         palace = str(tmp_path / "palace")
         _seed_drawers(palace)
         without = search_memories(_NARRATIVE_QUERY, palace, n_results=5)
         with_default = search_memories(
-            _NARRATIVE_QUERY, palace, n_results=5, candidate_strategy="vector"
+            _NARRATIVE_QUERY, palace, n_results=5, candidate_strategy="union"
         )
         ids_a = [h["source_file"] for h in without["results"]]
         ids_b = [h["source_file"] for h in with_default["results"]]
-        assert ids_a == ids_b, "explicit candidate_strategy='vector' must match default"
+        assert ids_a == ids_b, "explicit candidate_strategy='union' must match default"
 
     def test_union_surfaces_bm25_strong_vector_distant_doc(self, tmp_path):
         """The brand-voice doc has strong BM25 signal for the query but is
@@ -165,7 +219,7 @@ class TestCandidateUnion:
         )
         for h in filtered["results"]:
             if h.get("distance") is None:
-                assert h.get("fallback_reason") == "distance_unavailable", h
+                assert "fallback_reason" not in h, h
                 continue
             assert h["distance"] <= 0.5, f"hit violates max_distance=0.5: distance={h['distance']}"
 

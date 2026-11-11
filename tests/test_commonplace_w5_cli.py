@@ -187,10 +187,10 @@ def test_explicit_empty_pinned_wing_and_unknown_client(initialized, capsys):
     assert policy == {
         "tools": "slim",
         "scopes": ["memory:read"],
-        "read_wings": [],
+        "read_wings": ["shared", "inbox"],
         "write_wings": [],
-        "write_wing": "",
-        "trust": "untrusted",
+        "write_wing": "inbox",
+        "trust": "standard",
     }
 
 

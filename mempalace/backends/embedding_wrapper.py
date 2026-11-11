@@ -81,11 +81,11 @@ def _embed_texts(
     if not texts:
         return []
     from ..embedding import configured_embedding_function, embedding_section
-    from ..stored_text import index_text
+    from ..stored_text import embedding_text, index_text
 
     texts = _embeddable(
         [
-            index_text(text, metadatas[i] if metadatas is not None else None, stored_form=False)
+            embedding_text(text, metadatas[i] if metadatas is not None else None)
             for i, text in enumerate(texts)
         ]
     )
@@ -398,6 +398,16 @@ class EmbeddingCollection(BaseCollection):
 
     def health(self):
         return self._inner.health()
+
+    def supports_bounded_lexical_filter(self, where=None):
+        return self._inner.supports_bounded_lexical_filter(where)
+
+    def union_lexical_search(
+        self, *, query: str, n_results: int = 10, where=None, closet=False, stop_words=frozenset()
+    ):
+        return self._inner.union_lexical_search(
+            query=query, n_results=n_results, where=where, closet=closet, stop_words=stop_words
+        )
 
     def lexical_search(self, *, query: str, n_results: int = 10, where: Optional[dict] = None):
         return self._inner.lexical_search(query=query, n_results=n_results, where=where)

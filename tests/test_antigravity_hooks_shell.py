@@ -524,6 +524,7 @@ def test_save_hook_backgrounds_probe_mine_and_cleanup_in_one_subshell(tmp_path: 
     )
 
 
+@pytest.mark.timing
 def test_save_hook_returns_before_slow_version_probe(tmp_path: Path) -> None:
     """The hook must return immediately even if `--version` is slow.
 
@@ -905,6 +906,7 @@ def test_wing_inference_defaults_to_sessions_when_workspace_empty(tmp_path: Path
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="not relevant on Windows code path")
+@pytest.mark.timing
 def test_save_hook_returns_quickly_under_kill_switch(tmp_path: Path) -> None:
     """Under the kill switch the hook should return well under 1s.
 

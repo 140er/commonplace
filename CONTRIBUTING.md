@@ -16,16 +16,17 @@ uv sync --extra dev
 # Or with pip in your own venv:
 # pip install -e ".[dev]"
 
-# Activate pre-commit hooks (one-time, per clone)
+# Install commit and push hooks (one-time, per clone)
 pre-commit install
 ```
 
-The `pre-commit install` step is important: the repo has a
-`.pre-commit-config.yaml` that pins ruff to the exact version CI uses,
-but the actual git hook is per-machine and **must be installed
-locally**. Without this step, you can commit code that passes your
-local lint (using whatever ruff version you happen to have installed)
-but fails CI on push.
+Run `pre-commit install` after setup, including in existing clones, to install
+both hooks. Linked Git worktrees share the clone's hooks. The configuration pins
+Ruff to the same version as the merge checks. Commits fix Python lint and formatting;
+pushes check changed Python files with `ruff check` and `ruff format --check`
+without editing them. When Rust files change, pushes also run
+`cargo fmt --all --check` for the workspace; install Rust with the `rustfmt`
+component for that check. Push hooks run no type checks or tests.
 
 ## Running Tests
 
@@ -34,6 +35,22 @@ uv run pytest tests/ -v
 ```
 
 All tests must pass before submitting a PR. Tests should run without API keys or network access.
+
+For parallel runs, install the development extras and run behavior tests first,
+then wall-clock budget tests serially:
+
+```bash
+uv sync --extra dev
+uv run pytest tests/ --ignore=tests/benchmarks -m "not (benchmark or slow or stress or timing)" -n 6 --dist load
+uv run pytest tests/ --ignore=tests/benchmarks -m "timing and not (benchmark or slow or stress)" -n 0
+```
+
+The default marker expression in `pyproject.toml` already excludes `timing`, so a
+plain `uv run pytest tests/` runs the behavior tests only; the first command is its
+parallel form. Wall-clock and memory measurements live in the `timing` lane: run the
+second command explicitly, on an idle system. Timing results are informational and
+never block a merge. Each worker has its own home, and configuration follows each test's
+HOME. Benchmarks and performance budgets run separately.
 
 ### Property-based tests (optional)
 
@@ -166,4 +183,3 @@ git config user.email
 ```
 
 This is especially important when commits are created through agentic coding tools or automation, because those tools may not inherit your normal shell Git configuration. Avoid placeholder values such as `your@email.com` or localized template text; unresolved author emails can create avoidable provenance and SBOM review friction for downstream users.
-

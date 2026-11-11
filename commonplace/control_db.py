@@ -27,11 +27,13 @@ import re
 import secrets
 import sqlite3
 import threading
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from . import tokens
+from .admission import GATE
 from .policy import Policy
 
 SCHEMA_VERSION = 1
@@ -58,6 +60,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     personal_of TEXT REFERENCES users(id),
+    initial_space_pending INTEGER NOT NULL DEFAULT 0 CHECK (initial_space_pending IN (0,1)),
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS memberships (
@@ -87,6 +90,11 @@ CREATE TABLE IF NOT EXISTS connections (
     UNIQUE (workspace_id, name),
     FOREIGN KEY (workspace_id, user_id) REFERENCES memberships(workspace_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS runner_connections (
+    connection_id TEXT PRIMARY KEY REFERENCES connections(id),
+    machine_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('machine','worker'))
+);
 CREATE TABLE IF NOT EXISTS account_plans (
     user_id TEXT PRIMARY KEY REFERENCES users(id),
     plan TEXT NOT NULL CHECK (plan IN ('free','paid')),
@@ -98,6 +106,19 @@ CREATE TABLE IF NOT EXISTS transcription_usage (
     day TEXT NOT NULL,
     seconds INTEGER NOT NULL,
     PRIMARY KEY(user_id, day)
+);
+CREATE TABLE IF NOT EXISTS rule_checks (
+    workspace_id TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('off','warn','enforce')),
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, agent)
+);
+CREATE TABLE IF NOT EXISTS rule_stores (
+    workspace_id TEXT PRIMARY KEY,
+    rules_store_id INTEGER,
+    boards_store_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS audit_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +144,21 @@ BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 
 class ControlError(ValueError):
     """A refused control operation: unknown user, wrong role, duplicate name."""
+
+
+class RunnerLinkedError(ControlError):
+    """A runner connection must be managed with its machine registry."""
+
+    def __init__(self):
+        super().__init__("manage this runner under /api/runners")
+
+
+def link_runner(conn, connection_id, machine_id, kind):
+    """Link a runner connection inside the caller's control transaction."""
+    conn.execute(
+        "INSERT INTO runner_connections(connection_id, machine_id, kind) VALUES (?,?,?)",
+        (connection_id, machine_id, kind),
+    )
 
 
 def _now() -> datetime:
@@ -157,6 +193,9 @@ class Principal:
     role: str
     policy: Policy
     person: bool = False  # a signed-in person (web session), not an agent's token
+    parent_connection_id: Optional[str] = None
+    parent_agent: Optional[str] = None
+    runner: Optional[str] = None
 
     @property
     def actor(self) -> str:
@@ -175,6 +214,7 @@ class Principal:
             "auth": self.auth,
             "trust": self.policy.trust,
             "workspace": self.workspace_id,
+            "parent_agent": self.parent_agent,
         }
 
 
@@ -184,6 +224,9 @@ class ControlDB:
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
         self._lock = threading.RLock()
+        self._close_lock = threading.Lock()
+        self._closed = False
+        self._pre_close: list[Callable[[], None]] = []
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
@@ -191,6 +234,12 @@ class ControlDB:
         with self._lock:
             self._conn.executescript(_SCHEMA)
             with self._tx() as conn:
+                workspace_columns = {r[1] for r in conn.execute("PRAGMA table_info(workspaces)")}
+                if "initial_space_pending" not in workspace_columns:
+                    conn.execute(
+                        "ALTER TABLE workspaces ADD COLUMN initial_space_pending INTEGER "
+                        "NOT NULL DEFAULT 0 CHECK (initial_space_pending IN (0,1))"
+                    )
                 columns = {r[1] for r in conn.execute("PRAGMA table_info(connections)")}
                 if "parent_id" not in columns:
                     conn.execute(
@@ -230,9 +279,30 @@ class ControlDB:
         except OSError:
             pass
 
+    def add_pre_close_callback(self, callback: Callable[[], None]) -> None:
+        """Register an owned resource to stop before SQLite closes."""
+        with self._close_lock:
+            if self._closed:
+                raise RuntimeError("Control database is closed")
+            self._pre_close.append(callback)
+
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        with self._close_lock:
+            if self._closed:
+                return
+            error = None
+            for callback in self._pre_close:
+                try:
+                    # A callback may join a worker that needs the SQL lock.
+                    callback()
+                except Exception as exc:
+                    error = error or exc
+            with self._lock:
+                self._conn.close()
+                self._closed = True
+            self._pre_close.clear()
+            if error is not None:
+                raise error
 
     def _tx(self):
         conn = self._conn
@@ -282,17 +352,27 @@ class ControlDB:
             return self._conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
 
     # ── workspaces and memberships ──
-    def create_workspace(self, name: str, owner_ref: str, *, personal: bool = False) -> str:
+    def create_workspace(
+        self,
+        name: str,
+        owner_ref: str,
+        *,
+        personal: bool = False,
+        initial_space_pending: bool = False,
+        conn=None,
+    ) -> str:
         owner = self.user(owner_ref)
         name = name.strip()
         if not name:
             raise ControlError("workspace name is empty")
         wid = _new_id("ws")
         now = _iso(_now())
-        with self._lock, self._tx() as conn:
+        # A new workspace adds stores to the data tree: never during a backup cut.
+        with GATE.creating(), self._lock, self._tx() if conn is None else nullcontext(conn) as conn:
             conn.execute(
-                "INSERT INTO workspaces(id, name, personal_of, created_at) VALUES (?,?,?,?)",
-                (wid, name, owner["id"] if personal else None, now),
+                "INSERT INTO workspaces(id, name, personal_of, initial_space_pending, created_at) "
+                "VALUES (?,?,?,?,?)",
+                (wid, name, owner["id"] if personal else None, int(initial_space_pending), now),
             )
             conn.execute(
                 "INSERT INTO memberships(workspace_id, user_id, role, created_at) VALUES (?,?,?,?)",
@@ -387,6 +467,8 @@ class ControlDB:
             raise ControlError(f"{user['email']} is not a member of {ws['name']}")
         if "admin" in policy.scopes and role != "owner":
             raise ControlError("only an owner's connection can hold the admin scope")
+        if "private:read" in policy.scopes and role != "owner":
+            raise ControlError("only an owner's connection can hold the private:read scope")
         name = name.strip()
         client = client.strip()
         if not _CONNECTION_NAME.fullmatch(name):
@@ -407,6 +489,13 @@ class ControlDB:
             parent_row = self.connection(parent, ws["id"]) if parent is not None else None
             if parent_row is not None and parent_row["revoked_at"]:
                 raise ControlError("parent connection is revoked")
+            if (
+                parent_row is not None
+                and self._conn.execute(
+                    "SELECT 1 FROM runner_connections WHERE connection_id=?", (parent_row["id"],)
+                ).fetchone()
+            ):
+                raise ControlError("a runner connection cannot be a parent")
             try:
                 self._conn.execute(
                     "INSERT INTO connections(id, workspace_id, user_id, name, client, auth, "
@@ -487,12 +576,26 @@ class ControlDB:
         with self._lock:
             return self._conn.execute(sql + " ORDER BY created_at", params).fetchall()
 
-    def revoke(self, ref: str, *, actor: str, workspace_ref: Optional[str] = None) -> None:
+    def revoke(
+        self,
+        ref: str,
+        *,
+        actor: str,
+        workspace_ref: Optional[str] = None,
+        _runner_owned: bool = False,
+    ) -> None:
         row = self.connection(ref, workspace_ref)
         actor_id = self.user(actor)["id"]
         if actor_id != row["user_id"]:
             self.require_owner(row["workspace_id"], actor_id)
         with self._lock:
+            if (
+                not _runner_owned
+                and self._conn.execute(
+                    "SELECT 1 FROM runner_connections WHERE connection_id=?", (row["id"],)
+                ).fetchone()
+            ):
+                raise RunnerLinkedError()
             self._conn.execute(
                 "UPDATE connections SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?",
                 (_iso(_now()), row["id"]),
@@ -506,6 +609,76 @@ class ControlDB:
             auth=row["auth"],
         )
 
+    def rotate_token(
+        self,
+        ref: str,
+        *,
+        actor: str,
+        workspace_ref: str,
+        expires_days: int = DEFAULT_TOKEN_DAYS,
+        _runner_owned: bool = False,
+    ) -> str:
+        """Replace a live PAT's secret, preserving its identity and permissions."""
+        with self._lock:
+            row = self.connection(ref, workspace_ref)
+            actor_id = self.user(actor)["id"]
+            self.require_owner(row["workspace_id"], actor_id)
+            if (
+                not _runner_owned
+                and self._conn.execute(
+                    "SELECT 1 FROM runner_connections WHERE connection_id=?", (row["id"],)
+                ).fetchone()
+            ):
+                raise RunnerLinkedError()
+            if row["auth"] != "pat" or row["revoked_at"]:
+                raise ControlError("only active personal access tokens can be rotated")
+            token = tokens.new_token()
+            self._conn.execute(
+                "UPDATE connections SET token_hash=?, token_hint=?, expires_at=?, "
+                "last_used_at=NULL WHERE id=?",
+                (
+                    tokens.token_hash(token),
+                    tokens.token_hint(token),
+                    _iso(_now() + timedelta(days=expires_days)),
+                    row["id"],
+                ),
+            )
+            self.audit(
+                action="token.rotate",
+                decision="ok",
+                workspace_id=row["workspace_id"],
+                user_id=actor_id,
+                connection_id=row["id"],
+                auth="pat",
+            )
+        return token
+
+    def set_connection_read_wings(self, ref, wings, *, actor, workspace_ref):
+        """Change only a live agent's read policy, keeping its token and identity."""
+        with self._lock, self._tx():
+            row = self.connection(ref, workspace_ref)
+            actor_id = self.user(actor)["id"]
+            self.require_owner(row["workspace_id"], actor_id)
+            principal = self.authenticate_connection(row["id"])
+            if principal is not None and principal.runner is not None:
+                raise RunnerLinkedError()
+            if row["auth"] != "pat" or principal is None:
+                raise ControlError("only active personal access tokens can be updated")
+            policy = json.loads(row["policy"])
+            policy["read_wings"] = list(wings)
+            self._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?",
+                (json.dumps(policy, sort_keys=True), row["id"]),
+            )
+            self.audit(
+                action="connection.read_wings",
+                decision="ok",
+                workspace_id=row["workspace_id"],
+                user_id=actor_id,
+                connection_id=row["id"],
+                auth="pat",
+            )
+
     def authenticate_token(self, token: str) -> Optional[Principal]:
         """The principal for a bearer token, or ``None``. Checked on every request."""
         if not tokens.looks_like_token(token):
@@ -513,10 +686,13 @@ class ControlDB:
         digest = tokens.token_hash(token)
         with self._lock:
             row = self._conn.execute(
-                "SELECT c.*, u.email AS user_email, u.disabled_at AS user_disabled, m.role AS role "
+                "SELECT c.*, u.email AS user_email, u.disabled_at AS user_disabled, m.role AS role, "
+                "r.kind AS runner_kind "
                 "FROM connections c JOIN users u ON u.id = c.user_id "
                 "LEFT JOIN memberships m ON m.workspace_id = c.workspace_id "
-                "AND m.user_id = c.user_id WHERE c.token_hash = ? AND c.auth = 'pat'",
+                "AND m.user_id = c.user_id "
+                "LEFT JOIN runner_connections r ON r.connection_id = c.id "
+                "WHERE c.token_hash = ? AND c.auth = 'pat'",
                 (digest,),
             ).fetchone()
         if row is None or not tokens.hashes_match(row["token_hash"], digest):
@@ -527,10 +703,12 @@ class ControlDB:
         """Rebuild a durable subscription owner's current connection authority."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT c.*, u.email AS user_email, u.disabled_at AS user_disabled, m.role "
+                "SELECT c.*, u.email AS user_email, u.disabled_at AS user_disabled, m.role, "
+                "r.kind AS runner_kind "
                 "FROM connections c JOIN users u ON u.id = c.user_id "
                 "LEFT JOIN memberships m ON m.workspace_id = c.workspace_id "
-                "AND m.user_id = c.user_id WHERE c.id = ?",
+                "AND m.user_id = c.user_id "
+                "LEFT JOIN runner_connections r ON r.connection_id = c.id WHERE c.id = ?",
                 (connection_id,),
             ).fetchone()
             return self._connection_principal(row)
@@ -554,8 +732,15 @@ class ControlDB:
             connection=row["name"],
             client=row["client"],
             auth=row["auth"],
-            role=row["role"],
-            policy=Policy.from_json(row["policy"]),
+            role="member" if row["runner_kind"] is not None else row["role"],
+            policy=Policy.from_json(row["policy"]).for_role(row["role"]),
+            parent_connection_id=row["parent_id"],
+            parent_agent=(
+                f"conn:{self.connection(row['parent_id'], row['workspace_id'])['name']}"
+                if row["parent_id"]
+                else None
+            ),
+            runner=row["runner_kind"],
         )
 
     def _touch(self, row, now: datetime) -> None:
@@ -565,6 +750,74 @@ class ControlDB:
         with self._lock:
             self._conn.execute(
                 "UPDATE connections SET last_used_at = ? WHERE id = ?", (_iso(now), row["id"])
+            )
+
+    def rule_checks(self, workspace_id):
+        with self._lock:
+            return dict(
+                self._conn.execute(
+                    "SELECT agent,mode FROM rule_checks WHERE workspace_id=?", (workspace_id,)
+                )
+            )
+
+    def set_rule_check(self, workspace_id, agent, mode, principal, *, target_id):
+        if mode not in ("default", "off", "warn", "enforce"):
+            raise ControlError("invalid check mode")
+        with self._lock, self._tx() as conn:
+            if mode == "default":
+                conn.execute(
+                    "DELETE FROM rule_checks WHERE workspace_id=? AND agent=?",
+                    (workspace_id, agent),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO rule_checks VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,agent) "
+                    "DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at,updated_by=excluded.updated_by",
+                    (workspace_id, agent, mode, _iso(_now()), principal.actor),
+                )
+            self.audit(
+                action="rules.check",
+                decision=mode,
+                workspace_id=workspace_id,
+                user_id=principal.user_id,
+                connection_id=principal.connection_id,
+                auth=principal.auth,
+                target_ids=(target_id,),
+            )
+
+    def rule_stores(self, workspace_id):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM rule_stores WHERE workspace_id=?", (workspace_id,)
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def bind_rule_stores(self, workspace_id, rules_store_id, boards_store_id, *, accept=False):
+        # A replacement must never win a race against the first binding.
+        with self._lock, self._tx() as conn:
+            if accept:
+                conn.execute(
+                    "INSERT INTO rule_stores VALUES (?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET "
+                    "rules_store_id=excluded.rules_store_id,boards_store_id=excluded.boards_store_id",
+                    (workspace_id, rules_store_id, boards_store_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO rule_stores VALUES (?,NULL,NULL)", (workspace_id,)
+                )
+                for name, value in (
+                    ("rules_store_id", rules_store_id),
+                    ("boards_store_id", boards_store_id),
+                ):
+                    if value is not None:
+                        conn.execute(
+                            f"UPDATE rule_stores SET {name}=? WHERE workspace_id=? AND {name} IS NULL",
+                            (value, workspace_id),
+                        )
+            return dict(
+                conn.execute(
+                    "SELECT * FROM rule_stores WHERE workspace_id=?", (workspace_id,)
+                ).fetchone()
             )
 
     # ── audit log ──

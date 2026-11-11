@@ -17,9 +17,12 @@ from pathlib import Path
 
 import zstandard as zstd
 
+from mempalace.sqlite_crypto import connect, row_factory
+
 from . import thread_frames as frames
 from .models import THREADS_WING, RecallHit, ThreadMessage
 from .thread_store import (
+    MIRROR_PROGRESS_SQL,
     Chunk,
     ThreadConflict,
     ThreadStore as V1ThreadStore,
@@ -65,10 +68,8 @@ class ThreadStoreV2(V1ThreadStore):
                 os.chmod(file_path, 0o600)
             finally:
                 os.close(descriptor)
-        self._conn = sqlite3.connect(
-            path, check_same_thread=False, isolation_level=None, timeout=30
-        )
-        self._conn.row_factory = sqlite3.Row
+        self._conn = connect(path, check_same_thread=False, isolation_level=None, timeout=30)
+        self._conn.row_factory = row_factory
         try:
             self._initialize()
         except BaseException:
@@ -76,10 +77,12 @@ class ThreadStoreV2(V1ThreadStore):
             raise
 
     def _initialize(self):
+        # Version 3 adds mirror progress in place. Older version-2-only
+        # readers reject this store rather than silently losing its progress.
         app = self._conn.execute("PRAGMA application_id").fetchone()[0]
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         tables = self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if tables and (app != APPLICATION_ID or version != USER_VERSION):
+        if tables and (app != APPLICATION_ID or version not in (2, USER_VERSION)):
             raise ValueError("Not a supported v2 thread store")
         if not tables and (app not in (0, APPLICATION_ID) or version not in (0, USER_VERSION)):
             raise ValueError("Not a supported v2 thread store")
@@ -103,6 +106,8 @@ class ThreadStoreV2(V1ThreadStore):
                     if sqlite3.complete_statement(statement):
                         self._conn.execute(statement)
                         statement = ""
+            self._conn.execute(MIRROR_PROGRESS_SQL)
+            self._conn.execute(f"PRAGMA user_version={USER_VERSION}")
             for name, sql in BLOCK_TRIGGERS.items():
                 self._conn.execute(f"DROP TRIGGER IF EXISTS {name}")
                 self._conn.execute(sql)
@@ -239,19 +244,29 @@ class ThreadStoreV2(V1ThreadStore):
                 for value in trained
             ]
 
-    def store(self, workspace_id, source_thread_id, messages, *, actor, parent_stored_id=""):
+    def store(
+        self,
+        workspace_id,
+        source_thread_id,
+        messages,
+        *,
+        actor,
+        parent_stored_id="",
+        max_storage_bytes=None,
+        wing=THREADS_WING,
+    ):
         messages = list(messages)
         self._validate(messages)
         if not messages:
             raise ValueError("Thread must contain at least one message")
         digest = canonical_sha256(messages)
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._transaction():
             existing = self.by_source(workspace_id, source_thread_id)
             if existing is not None:
                 if existing.sha256 != digest:
                     raise ThreadConflict("Source thread already has different stored content")
                 return existing
+            self._check_storage_budget(max_storage_bytes, messages)
             stored_id = "thr_" + secrets.token_hex(8)
             chunks = chunk_messages(messages)
             self._conn.execute(
@@ -264,13 +279,14 @@ class ThreadStoreV2(V1ThreadStore):
                     len(messages),
                     len(chunks),
                     digest,
-                    THREADS_WING,
+                    wing,
                     datetime.now(timezone.utc).isoformat(),
                     actor,
                 ),
             )
             cache = self._write_messages(stored_id, messages)
             self._write_chunks(stored_id, chunks, messages, cache=cache)
+            self._check_storage_budget(max_storage_bytes)
             return self.get(stored_id)
 
     @staticmethod
@@ -278,11 +294,10 @@ class ThreadStoreV2(V1ThreadStore):
         if any(message.seq != seq for seq, message in enumerate(messages)):
             raise ValueError("Message sequence must start at zero and be contiguous")
 
-    def append(self, stored_id, messages):
+    def append(self, stored_id, messages, *, max_storage_bytes=None):
         messages = list(messages)
         self._validate(messages)
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._transaction():
             stored = self.get(stored_id)
             if stored is None:
                 raise ValueError("Thread not found")
@@ -298,6 +313,7 @@ class ThreadStoreV2(V1ThreadStore):
             if len(messages) <= stored.message_count:
                 return stored
             added = messages[stored.message_count :]
+            self._check_storage_budget(max_storage_bytes, added)
             cache = self._write_messages(stored_id, added)
             self._write_chunks(
                 stored_id, chunk_messages(added), added, stored.chunk_count, cache=cache
@@ -313,6 +329,7 @@ class ThreadStoreV2(V1ThreadStore):
                     stored_id,
                 ),
             )
+            self._check_storage_budget(max_storage_bytes)
             return self.get(stored_id)
 
     def _write_messages(self, stored_id, added):

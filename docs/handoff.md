@@ -91,6 +91,19 @@ gateway, using the gateway's `COMMONPLACE_DATA` directory. This also works
 when the source model has hit its session limit: it reads the saved native
 transcript without calling that model.
 
+Find the workspace name or ID in the gateway's local data directory:
+
+```bash
+commonplace workspace list
+# For a different gateway data directory:
+commonplace --data /path/to/gateway-data workspace list
+```
+
+Use a printed ID with `--workspace` to avoid ambiguous names. `personal`
+in the examples is a workspace name, not an alias for your personal
+workspace; replace it with your actual name or ID. Missing or invalid
+workspace selections show the available local names and IDs.
+
 Claude Code → Codex:
 
 ```bash
@@ -115,6 +128,26 @@ and destination without saving a handoff or starting or settling a thread.
 `--workspace` can be omitted when `COMMONPLACE_WORKSPACE` or the local
 checkout map below selects one. `--data` before `handoff` selects another
 gateway data directory, as with the other local administration commands.
+
+To bind checkouts, create `~/.commonplace/handoff-client.json` on the source
+machine (this file is separate from the gateway data directory):
+
+```json
+{
+  "workspaces": {
+    "~/projects/example": "ws_REPLACE_WITH_PRINTED_ID",
+    "~/projects/example/other-checkout": "another-workspace-name"
+  }
+}
+```
+
+Keys are checkout directories; `~` is expanded. Values are Commonplace
+workspace names or IDs, not T3 project IDs. The most specific matching
+directory or ancestor wins. Selection order is `--workspace`, then
+`COMMONPLACE_WORKSPACE`, then a mapping for the source thread's checkout,
+then one for its project root. This uses the source thread's paths, not
+the shell's current directory. The map contains no credentials and does
+not enable handoff; enable the selected workspace or override separately.
 
 Manual handoff respects the same task → agent → workspace settings. Use
 `--agent <connection-name>` and `--task '#142'` when the source has those
@@ -420,6 +453,10 @@ The launched process inherits the environment and receives
 back to this one. The server's `command` launcher also supplies
 `COMMONPLACE_THREAD_ID` with the stored thread ID.
 
+The local hook observes the successor for 50 ms and reports a nonzero exit
+seen during that window. A process still running then is registered as
+launched; this startup observation does not guarantee continued liveness.
+
 Gateway `command` and `webhook` launchers are disabled by default. An operator
 can enable either kind with `COMMONPLACE_HANDOFF_LAUNCHERS=command`,
 `COMMONPLACE_HANDOFF_LAUNCHERS=webhook`, or both:
@@ -539,7 +576,7 @@ For agent tokens, every launch and settings write or delete also requires
 | GET | `/api/handoffs/<id>` | `threads:read` | Handoff record |
 | POST | `/api/handoffs/<id>/successor` | `handoff:write` | `{agent_ref, url?, thread_id?}` |
 | POST | `/api/handoffs/<id>/launch-failed` | `handoff:write` | `{error}` |
-| POST | `/api/handoffs/<id>/relaunch` | owner; agent tokens: `handoff:write` + `trusted` | Retry a failed launch |
+| POST | `/api/handoffs/<id>/relaunch` | person owner, owner-role connection, or original launcher connection; agent tokens: `handoff:write` + `trusted`, unrestricted | Retry a `launch_failed` handoff |
 | GET | `/api/threads/<id>` | `threads:read` | Stored thread metadata |
 | GET | `/api/threads/<id>/messages?start=0&end=99` | `threads:read` | Verbatim messages in the inclusive range |
 | POST | `/api/threads/<id>/recall` | `threads:read` | `{query, limit?, follow_chain?}` → search hits |
@@ -690,9 +727,13 @@ Run the offline extraction eval with `python benchmarks/fact_recall_bench.py --s
 | Server command or webhook launcher fails | The thread stays saved; `handoff.launch_failed`; the old agent is told to stop |
 | Hook configuration, HTTP, timeout or response error | The hook exits successfully and silently; the agent continues on its normal path |
 
-Owners can retry a recorded launch failure with
+Person owners, owner-role connections, or the original launcher connection can retry a recorded launch failure with
 `commonplace handoff relaunch <handoff_id>`. Inspect the saved handoff
-before starting a successor manually.
+before starting a successor manually. Every agent connection must still have
+`handoff:write`, trusted trust and unrestricted access. Standard-trust, untrusted
+and inbox-restricted tokens cannot relaunch. A member connection may relaunch only
+its own handoff; an owner-role connection retains its existing ability to relaunch
+another connection's handoff. Retries outside `launch_failed` are refused.
 
 When the hook's own successor command fails, it reports
 `POST /api/handoffs/<id>/launch-failed`, which records `launch_failed`
@@ -718,8 +759,9 @@ stored thread; the handoff and its successor stay the same. Other
 different content under the same source ID is a conflict. A failed
 storage attempt can be retried. A handoff stuck mid-store after a crash
 is taken over by the next retry once its 10-minute lease runs out. A
-recorded launch failure needs an explicit owner relaunch to release its
-launch claim.
+recorded launch failure needs an explicit relaunch by a person owner, an owner-role
+connection, or the original launcher connection to release its launch claim.
+Agent connections still need the launch authority described above.
 
 When a successor's own thread ID was registered with its handoff, its
 next handoff links into the chain even without `COMMONPLACE_HANDOFF_ID`.
@@ -743,14 +785,41 @@ old thread and the successor reference or URL.
   other JSON requests.
 - A Codex handoff happens at the start of the next turn, not mid-turn;
   see the Codex section. If that successor fails to start and the gateway
-  restarts before an owner relaunches it, the relaunched successor doesn't
+  restarts before it is explicitly relaunched, the relaunched successor doesn't
   get the user's unanswered message (the control database holds no text);
   the old session showed it was refused.
-- Each stored thread is also written into Memory search in the background,
-  in a private section: ordinary Memory tools show it only to tokens with
-  `private:read`. The thread tools need `threads:read`.
+- Each stored thread is also written into Memory search in the background, in a private
+  section. Structured mirror copies of private stored threads, facts derived from them,
+  and their tunnel previews are returned only to callers who can read their source
+  thread. This covers structured Memory search, `memory_get` and session start context.
+  CLI-format (`cli_compatible`) search excludes mirror drawer copies for everyone, including owners; its `facts` field is still returned only to callers who can read each fact's source thread. A `superseded_by` id is returned only when its target is another kept fact in
+  the same response. Mirror copies do not count as duplicates for anyone. Similarity
+  dedup exclusion (D5) is verified on compact, sqlite_exact and chroma. Adding,
+  updating, deleting or linking drawers in a stored-thread room requires permission to
+  read that thread. Known exceptions: `delete_by_source`, `delete_tunnel` and
+  `delete_hallway` take no room and are not checked yet. Fact mutations
+  (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived facts are not
+  room-checked. A member with fact-write permissions but no source-thread read access
+  can mutate those hidden facts. Invalidate's `closed` count is a yes/no oracle for
+  hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section, fan-out ranks and counts can reflect hidden hits, and gating runs after a bounded fetch of at most 100 candidates, so hidden hits can take candidate slots.
 - `handoff.completed` is queued in the same transaction that records the
   successor and delivered exactly once, also after a crash (it goes out
   when the gateway starts again) and with several gateways on one control
   database. A webhook receiver may still see one delivery twice if the
   hub crashed after the receiver accepted it; deduplicate by delivery id.
+
+
+## Imported-history reader exception
+
+`memory:import:read` with `memory:read`, granted by a new explicit unticked owner
+consent, allows REST reads of the filer's connection-route private imports only.
+It does not grant `threads:read`, private-wing access or handoff authority.
+MCP thread tools keep their existing `threads:read` requirement. See
+[reader consent](agent-connections.md#allow-an-agent-to-read-imported-history).
+
+Recall and REST share exact account/workspace checks and live personal-owner
+eligibility. A shared holder or fork contributes only the imported prefix and
+bounded suffix; a capture ID is never authorized by its imported ancestor.
+Counts, ranges and hashes describe the view. Mirror words require authoritative
+source and complete range proof, including the recall path; mixed or unknown
+chunks are hidden. Refusals use the missing-thread response.

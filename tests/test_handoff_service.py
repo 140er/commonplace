@@ -190,6 +190,20 @@ class FakeStore:
         self.writes = []
         self.lock = threading.RLock()
         self.on_store = None
+        self.mirrors = {}
+
+    def mirror_progress(self, stored_id):
+        return self.mirrors.get(stored_id)
+
+    def begin_mirror(self, stored_id, through, *, bootstrap=-1):
+        completed, pending = self.mirrors.get(stored_id, (bootstrap, through))
+        if completed == pending:
+            pending = max(pending, through)
+        self.mirrors[stored_id] = (completed, pending)
+        return completed, pending
+
+    def finish_mirror(self, stored_id, through):
+        self.mirrors[stored_id] = (through, through)
 
     def store(self, workspace_id, source_thread_id, messages, *, actor, parent_stored_id=""):
         self.trace.append("store")
@@ -392,7 +406,7 @@ def rig(monkeypatch, tmp_path):
         return value.store
 
     monkeypatch.setattr(service.transcripts, "parse", parse)
-    monkeypatch.setattr(service.thread_store, "chunk_messages", chunk_messages)
+    monkeypatch.setattr(service.palace_mirror, "class_units", chunk_messages)
     monkeypatch.setattr(service.palace_mirror, "mirror", mirror)
     monkeypatch.setattr(service.writer, "build_doc", build_doc)
     monkeypatch.setattr(service.writer, "render_markdown", render_markdown)
@@ -404,7 +418,7 @@ def rig(monkeypatch, tmp_path):
         settings=value.settings,
         store_for=store_for,
         events=value.events,
-        call_tool=object(),
+        call_tool=lambda *args: {"drawers": [], "total": 0},
         prompt_dir=value.prompt_dir,
     )
     value.service = value.new_service()
@@ -683,7 +697,7 @@ def test_mirror_failures_are_best_effort(rig, monkeypatch, stage):
         raise RuntimeError("private mirror content")
 
     target = (
-        (service.thread_store, "chunk_messages")
+        (service.palace_mirror, "class_units")
         if stage == "chunks"
         else (service.palace_mirror, "mirror")
     )
@@ -1116,27 +1130,42 @@ def test_reported_client_failure_can_be_relaunched_by_owner(rig):
 
 
 @pytest.mark.parametrize("kind", ["client", "command"])
-def test_owner_relaunch_releases_claim_and_uses_captured_settings(rig, kind):
+@pytest.mark.parametrize("caller", ["launcher", "owner-connection", "person-owner"])
+def test_launcher_or_owner_relaunch_uses_captured_settings(rig, kind, caller):
     rig.settings.current = HandoffSettings(enabled=True, launcher=LauncherConfig(kind=kind))
     rig.launch_error = service.launchers.LaunchError("failed")
     first = rig.service.run(rig.principal, make_request())
     assert first.handoff.state == "launch_failed"
     rig.launch_error = None
     rig.settings.current = HandoffSettings(enabled=False, launcher=LauncherConfig(kind="webhook"))
-    owner = SimpleNamespace(**{**vars(rig.principal), "role": "owner"})
-    result = rig.service.relaunch(owner, first.handoff.id)
+    changes = {}
+    if caller != "launcher":
+        changes.update(
+            role="owner", connection_id="another", connection="another", actor="conn:another"
+        )
+    if caller == "person-owner":
+        changes.update(person=True, connection_id=None, connection=None, actor="user:owner")
+    caller = SimpleNamespace(**{**vars(rig.principal), **changes})
+    result = rig.service.relaunch(caller, first.handoff.id)
     assert result.action == "handoff" and result.handoff.state == "launched"
     assert result.launch == (kind == "client")
     assert rig.launch_calls[-1][0].kind == kind
-    assert ("release", owner.actor) in rig.trace
+    assert ("release", caller.actor) in rig.trace
     assert len(rig.store.writes) == 1 and len(rig.settings.calls) == 1
+    assert rig.events.count(EVENT_STARTED) == 1
 
 
-@pytest.mark.parametrize("case", ["member", "other_workspace", "missing"])
-def test_relaunch_is_owner_only_and_workspace_scoped(rig, case):
+@pytest.mark.parametrize(
+    "case", ["other_connection", "other_workspace", "missing", "member_person"]
+)
+def test_relaunch_is_launcher_or_owner_only_and_workspace_scoped(rig, case):
     rig.launch_error = service.launchers.LaunchError("failed")
     result = rig.service.run(rig.principal, make_request())
-    changes = {"role": "member" if case == "member" else "owner"}
+    changes = {"role": "member" if case in ("other_connection", "member_person") else "owner"}
+    if case == "other_connection":
+        changes.update(connection_id="another", connection="another", actor="conn:another")
+    if case == "member_person":
+        changes["person"] = True
     if case == "other_workspace":
         changes["workspace_id"] = "other"
     caller = SimpleNamespace(**{**vars(rig.principal), **changes})
@@ -1145,11 +1174,42 @@ def test_relaunch_is_owner_only_and_workspace_scoped(rig, case):
     assert not any(isinstance(item, tuple) and item[0] == "release" for item in rig.trace)
 
 
+@pytest.mark.parametrize("role", ["member", "owner"])
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"scopes": []},
+        {"trust": "standard"},
+        {"trust": "untrusted", "write_wing": "inbox"},
+        {"write_wing": "inbox"},
+        {"write_wing": "wing_inbox"},
+    ],
+)
+def test_relaunch_keeps_launch_authority_and_restriction_checks(rig, role, policy):
+    rig.launch_error = service.launchers.LaunchError("failed")
+    first = rig.service.run(rig.principal, make_request())
+    caller = SimpleNamespace(
+        **{
+            **vars(rig.principal),
+            "role": role,
+            "policy": Policy.build(**{"scopes": ["handoff:write"], "trust": "trusted", **policy}),
+        }
+    )
+    before = rig.db.get(first.handoff.id)
+    calls = len(rig.launch_calls)
+    with pytest.raises(PermissionError):
+        rig.service.relaunch(caller, first.handoff.id)
+    assert rig.db.get(first.handoff.id) == before
+    assert len(rig.launch_calls) == calls
+    assert not any(isinstance(item, tuple) and item[0] == "release" for item in rig.trace)
+
+
 @pytest.mark.parametrize("state", ["pending", "stored", "launched", "done", "failed"])
-def test_relaunch_rejects_other_states(rig, state):
+@pytest.mark.parametrize("owner", [False, True])
+def test_relaunch_rejects_other_states(rig, state, owner):
     first = rig.service.run(rig.principal, make_request())
     rig.db.update(first.handoff.id, state=state)
-    owner = SimpleNamespace(**{**vars(rig.principal), "role": "owner"})
+    owner = SimpleNamespace(**{**vars(rig.principal), "role": "owner" if owner else "member"})
     with pytest.raises(HandoffDBError):
         rig.service.relaunch(owner, first.handoff.id)
     assert len(rig.launch_calls) == 1

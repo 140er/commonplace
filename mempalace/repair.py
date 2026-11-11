@@ -1694,6 +1694,10 @@ def _vacuum_and_rebuild_fts5(
                 )
                 conn.commit()
                 progress("  FTS5 index rebuilt.")
+            if "embedding_metadata" in tables:
+                from .backends.chroma_sqlite import ensure_scope_index
+
+                ensure_scope_index(conn)
             conn.execute("VACUUM")
             progress("  SQLite VACUUM complete.")
             if strict:
@@ -2684,13 +2688,13 @@ def _rebuild_from_sqlite_locked(
             return {}
         source_palace = archive_path
 
-        # In-place only: drop chromadb's process-wide System registry so
+        # In-place only: close this palace's cached Chroma Systems so
         # the new client at dest_palace builds a fresh System. Without
         # this, ``create_collection`` raises "Collection already exists"
         # because the cached System still holds the pre-rename schema.
         # Cross-palace mode does not need this and would needlessly
         # invalidate other callers' clients (see docstring warning).
-        if not _clear_chroma_system_cache():
+        if not _clear_chroma_system_cache(dest_palace):
             print(
                 "  Warning: could not clear chromadb system cache; "
                 "in-place rebuild may fail with 'Collection already exists'."
@@ -2877,7 +2881,7 @@ def status(palace_path=None, collection_name: Optional[str] = None) -> dict:
 
 
 def _close_chroma_handles(palace_path: str, backend: "ChromaBackend | None" = None) -> None:
-    """Drop ChromaBackend + chromadb singleton caches so OS mmap handles release.
+    """Close this palace's backend and native clients so mmap handles release.
 
     When ``backend`` is provided, close the live instance so rollback/restore
     releases the handles it was already using. Otherwise fall back to a
@@ -2890,7 +2894,7 @@ def _close_chroma_handles(palace_path: str, backend: "ChromaBackend | None" = No
         closer.close_palace(palace_path)
     except Exception:
         pass
-    _clear_chroma_system_cache()
+    _clear_chroma_system_cache(palace_path)
     gc.collect()
 
 

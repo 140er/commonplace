@@ -145,6 +145,64 @@ def tool_kg_query(
     return _with_kg_notice(payload)
 
 
+def _kg_mutation_scope(
+    thread_scope,
+    kind,
+    subject,
+    predicate,
+    objects,
+    wing,
+    sensitivities,
+    single_valued=False,
+    valid_from=None,
+    source_thread=None,
+    source_url=None,
+):
+    from ..knowledge_graph import valid_fact_entries
+
+    if thread_scope is None:
+        return None, None
+    if not isinstance(thread_scope, dict):
+        return None, {"success": False, "error": "thread_scope is invalid"}
+    if set(thread_scope) == {"allow"} and valid_fact_entries(thread_scope["allow"]):
+        return thread_scope["allow"], None
+    if (
+        thread_scope.get("probe") is not True
+        or set(thread_scope) - {"probe", "after", "closet"}
+        or (thread_scope.get("after") is not None and not isinstance(thread_scope["after"], str))
+        or ("closet" in thread_scope and not isinstance(thread_scope["closet"], str))
+    ):
+        return None, {"success": False, "error": "thread_scope is invalid"}
+    page = _call_kg(
+        lambda kg: kg.mutation_candidates(
+            kind,
+            subject,
+            predicate,
+            objects,
+            wing,
+            sensitivities,
+            after=thread_scope.get("after"),
+            single_valued=single_valued,
+            valid_from=valid_from,
+            source_thread=source_thread,
+            source_url=source_url,
+        ),
+        read=True,
+    )
+    result = {"success": True, "probe": page}
+    if "closet" in thread_scope:
+        try:
+            found = read_associations("closet", thread_scope["closet"])["associations"]
+            pair = [found[0].get("wing"), found[0].get("room")] if found else None
+            if pair is not None and not all(isinstance(x, str) and x.strip() for x in pair):
+                pair = None
+        except Exception:
+            pair = None
+        result["cited"] = {"closet": pair}
+
+    return None, result
+
+
 def tool_kg_add(
     subject: str,
     predicate: str,
@@ -161,6 +219,7 @@ def tool_kg_add(
     wing: str = None,
     sensitivity: str = None,
     sensitivities: list = None,
+    thread_scope: dict = None,
 ):
     """Add a relationship to the knowledge graph.
 
@@ -189,6 +248,12 @@ def tool_kg_add(
         _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
+
+    allow, scoped_reply = _kg_mutation_scope(
+        thread_scope, "add", subject, predicate, [object], wing, sensitivities
+    )
+    if scoped_reply is not None:
+        return scoped_reply
 
     _wal_log(
         "kg_add",
@@ -228,6 +293,7 @@ def tool_kg_add(
                 wing=wing,
                 sensitivity=sensitivity,
                 sensitivities=sensitivities,
+                allow=allow,
             )
         )
     except Exception as e:
@@ -243,6 +309,7 @@ def tool_kg_add(
         "triple_id": triple_id,
         "fact": f"{subject} → {predicate} → {object}",
         "wing": wing,
+        "sources": _call_kg(lambda kg: kg.sources([triple_id]), read=True).get(triple_id, []),
     }
     _wal_result("kg_add", outcome)
     return _with_kg_notice(outcome)
@@ -264,6 +331,7 @@ def tool_kg_save(
     sensitivity: str = None,
     sensitivities: list = None,
     single_valued: bool = None,
+    thread_scope: dict = None,
 ):
     """Save a fact, merging it into the same open fact or replacing a single value.
 
@@ -287,6 +355,22 @@ def tool_kg_save(
         return {"success": False, "error": str(e)}
     if single_valued is None:
         single_valued = predicate.lower().replace(" ", "_") in _config.single_valued_predicates
+
+    allow, scoped_reply = _kg_mutation_scope(
+        thread_scope,
+        "save",
+        subject,
+        predicate,
+        [object],
+        wing,
+        sensitivities,
+        single_valued=single_valued,
+        valid_from=valid_from,
+        source_thread=source_thread,
+        source_url=source_url,
+    )
+    if scoped_reply is not None:
+        return scoped_reply
 
     _wal_log(
         "kg_save",
@@ -325,6 +409,7 @@ def tool_kg_save(
                 wing=wing,
                 sensitivity=sensitivity,
                 sensitivities=sensitivities,
+                allow=allow,
                 single_valued=single_valued,
             )
         )
@@ -332,19 +417,25 @@ def tool_kg_save(
         outcome = {"success": False, "error": str(e)}
         _wal_result("kg_save", outcome)
         return outcome
-    saved = _call_kg(
-        lambda kg: next(
-            (
-                row
-                for row in kg.query_entity(
-                    subject, wings=[wing] if wing else None, sensitivities=sensitivities
-                )
-                if row["id"] == outcome["triple_id"]
-            ),
-            {},
+    rows = _call_kg(
+        lambda kg: kg.query_entity(
+            subject, wings=[wing] if wing else None, sensitivities=sensitivities
         ),
         read=True,
     )
+    saved = next((row for row in rows if row["id"] == outcome["triple_id"]), {})
+    # Previous/current ids and values are also echoes of stored facts. Bind
+    # them to their own sources so the gateway can drop an unreadable echo.
+    related_ids = list(outcome.get("superseded", []))
+    if outcome.get("current"):
+        related_ids.append(outcome["current"])
+    if related_ids:
+        sources = _call_kg(lambda kg: kg.sources(related_ids), read=True)
+        by_id = {row["id"]: row for row in rows}
+        outcome["related_facts"] = [
+            {**by_id.get(key, {"fact": "", "wing": wing}), "sources": sources.get(key, [])}
+            for key in related_ids
+        ]
     from mempalace.fact_provenance import COLUMNS
 
     outcome = {
@@ -353,6 +444,9 @@ def tool_kg_save(
         **outcome,
         "fact": f"{subject} → {predicate} → {object}",
         "wing": wing,
+        "sources": _call_kg(lambda kg: kg.sources([outcome["triple_id"]]), read=True).get(
+            outcome["triple_id"], []
+        ),
     }
     _wal_result("kg_save", outcome)
     return _with_kg_notice(outcome)
@@ -365,6 +459,7 @@ def tool_kg_invalidate(
     ended: str = None,
     wing: str = None,
     sensitivities: list = None,
+    thread_scope: dict = None,
 ):
     """Mark a fact as no longer true.
 
@@ -387,6 +482,12 @@ def tool_kg_invalidate(
 
     resolved_ended = ended or date.today().isoformat()
 
+    allow, scoped_reply = _kg_mutation_scope(
+        thread_scope, "invalidate", subject, predicate, [object], wing, sensitivities
+    )
+    if scoped_reply is not None:
+        return scoped_reply
+
     _wal_log(
         "kg_invalidate",
         {
@@ -406,6 +507,7 @@ def tool_kg_invalidate(
             ended=resolved_ended,
             wing=wing,
             sensitivities=sensitivities,
+            allow=allow,
         )
     )
     return _with_kg_notice(
@@ -431,6 +533,7 @@ def tool_kg_supersede(
     wing: str = None,
     sensitivity: str = None,
     sensitivities: list = None,
+    thread_scope: dict = None,
 ):
     """Atomically replace one fact with another at a single shared boundary.
 
@@ -457,6 +560,12 @@ def tool_kg_supersede(
         _, sensitivities = visibility(None, sensitivities)
     except ValueError as e:
         return {"success": False, "error": str(e)}
+
+    allow, scoped_reply = _kg_mutation_scope(
+        thread_scope, "supersede", subject, predicate, [old_object, new_object], wing, sensitivities
+    )
+    if scoped_reply is not None:
+        return scoped_reply
 
     _wal_log(
         "kg_supersede",
@@ -493,6 +602,7 @@ def tool_kg_supersede(
             wing=wing,
             sensitivity=sensitivity,
             sensitivities=sensitivities,
+            allow=allow,
         )
     )
     return _with_kg_notice(
@@ -501,6 +611,8 @@ def tool_kg_supersede(
             "triple_id": triple_id,
             "fact": f"{subject} → {predicate} → {new_object}",
             "superseded": old_object,
+            "wing": wing,
+            "sources": _call_kg(lambda kg: kg.sources([triple_id]), read=True).get(triple_id, []),
         }
     )
 
@@ -535,6 +647,9 @@ def tool_kg_timeline(
         }
 
     result = _call_kg(_query, read=True)
+    sources = _call_kg(lambda kg: kg.sources([row["id"] for row in result["timeline"]]), read=True)
+    for row in result["timeline"]:
+        row["sources"] = sources.get(row["id"], [])
     return _with_kg_notice(
         {
             "entity": entity or "all",
@@ -555,3 +670,58 @@ def tool_kg_stats():
 def tool_kg_list_wings():
     """List fact wings without counting entities, facts or predicates."""
     return {"wings": _call_kg(lambda kg: kg.list_wings(), read=True)}
+
+
+def _scoped_kg_read(handler):
+    from functools import wraps
+
+    @wraps(handler)
+    def scoped(*args, thread_scope=None, **kwargs):
+        if thread_scope is None:
+            return handler(*args, **kwargs)
+        import time
+
+        from commonplace.gateway import WORKER_TIMEOUT_S
+        from commonplace.rules import checks
+
+        search = (
+            handler.__name__ == "tool_kg_query"
+            and signature.bind_partial(*args, **kwargs).arguments.get("search") is True
+        )
+        expiry = thread_scope.get("deadline")
+        timeout = WORKER_TIMEOUT_S if expiry is None else max(0, expiry - time.time())
+        try:
+            with checks.deadline(timeout):
+                if thread_scope.get("probe") is True:
+                    return {
+                        "probe": _call_kg(
+                            lambda kg: kg.read_candidates(thread_scope.get("after")), read=True
+                        )
+                    }
+                return _call_kg(
+                    lambda kg: kg.read_projection(
+                        thread_scope["allow"], lambda: handler(*args, **kwargs), search=search
+                    ),
+                    read=True,
+                )
+        except TimeoutError:
+            if search:
+                return {"facts": []}
+            raise
+
+    import inspect
+
+    signature = inspect.signature(handler)
+    scoped.__signature__ = signature.replace(
+        parameters=[
+            *signature.parameters.values(),
+            inspect.Parameter("thread_scope", inspect.Parameter.KEYWORD_ONLY, default=None),
+        ]
+    )
+    return scoped
+
+
+tool_kg_query = _scoped_kg_read(tool_kg_query)
+tool_kg_timeline = _scoped_kg_read(tool_kg_timeline)
+tool_kg_stats = _scoped_kg_read(tool_kg_stats)
+tool_kg_list_wings = _scoped_kg_read(tool_kg_list_wings)

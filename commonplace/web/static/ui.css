@@ -18,6 +18,7 @@ body:has(.signin) { overflow-y: auto; }
 .signin form { display: flex; gap: 6px; }
 .signin input { flex: 1; width: 100px; min-height: 40px; }
 .signin .message { margin-top: 16px; }
+.signin .legal-links { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 24px; font-size: 14px; }
 .speak[data-active="true"] { color: var(--strong); box-shadow: inset 0 0 0 1px var(--strong); }
 .digest-captions { padding: 16px 20px; margin-bottom: var(--gap); border-left: 2px solid var(--line-2); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; background: var(--side); }
 #content { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; padding: 20px 24px 24px; gap: var(--gap); }
@@ -42,12 +43,13 @@ body:has(.signin) { overflow-y: auto; }
 input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px solid var(--muted); outline-offset: -1px; }
 .setting-row button:hover { filter: none; color: var(--strong); box-shadow: inset 0 0 0 1px var(--muted); }
 .mtabs b { min-width: 0; padding: 0; background: none; color: var(--accent); font-size: 12px; }
-.space-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--strong); }
+.space-tabs button[aria-pressed="true"] { background: var(--surface); color: var(--strong); font-weight: 700; box-shadow: inset 0 -2px var(--strong); }
 .settings-section .message { box-shadow: none; padding: 12px 0; color: var(--muted); }
 .setting-row:last-child { border-bottom: 0; }
 .setting-row button[aria-pressed="true"] { color: var(--strong); box-shadow: inset 0 0 0 1px var(--muted); }
 .signin .brand-v2 { margin-bottom: 40px; }
 .signin form .blockbtn { height: auto; min-height: 40px; }
+.signin form .email-confirm { width: 100%; min-height: 44px; }
 .signin .provider:hover { filter: none; background: var(--surface); }
 .mtabs a[aria-current] { background: none; color: var(--strong); box-shadow: inset 0 2px 0 var(--strong); }
 @keyframes spin {
@@ -90,6 +92,28 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 .setting-row span { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
 .setting-row small { color: var(--muted); font-size: 12px; }
 .setting-row button { padding: 4px 10px; background: none; color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+.settings summary { padding: 2px 0; cursor: pointer; }
+@media (max-width: 699px) {
+  .settings summary { padding: 12px 0; }
+  .settings :is(input:not([type=checkbox], [type=radio]), select, button) { min-height: 44px; }
+}
+.agent-form { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; margin: 16px 0; }
+.agent-form label, .agent-secret label { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.agent-form > label { flex: 1 1 180px; }
+.agent-form details { flex-basis: 100%; }
+.agent-form details label { margin-top: 16px; }
+.agent-form input, .agent-form select, .agent-secret input, .agent-secret select { width: 100%; min-height: 40px; }
+.agent-form > label.agent-consent { flex-basis: 100%; flex-direction: row; align-items: start; }
+.agent-form .agent-consent input { width: 18px; height: 18px; min-height: 0; flex-shrink: 0; }
+.agent-secret { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 16px; padding: 16px; margin: 16px 0; background: var(--side); }
+.agent-secret h3, .agent-secret p, .agent-secret pre, .agent-secret > label:has(select), .agent-secret strong, .agent-secret [role="status"] { grid-column: 1 / -1; }
+.agent-secret h3 { font-size: 16px; overflow-wrap: anywhere; }
+.agent-secret pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.agent-secret button, .agents-settings .setting-row button { min-height: 44px; }
+@media (max-width: 640px) {
+  .agent-secret { grid-template-columns: minmax(0, 1fr); }
+  .agent-form > label, .agent-form > button { flex-basis: 100%; }
+}
 .webhook-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
 .webhook-form input { flex: 1; min-width: 160px; }
 .webhook-form button { align-self: stretch; height: auto; }
@@ -124,7 +148,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
   .head { display: flex; height: auto; }
   .head h1 { background: none; display: block; height: auto; padding: 0; }
   .head .right { display: flex; margin-left: auto; }
-  .mtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mtabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .mtabs a { display: flex; justify-content: center; align-items: center; min-height: 50px; font-size: 12px; }
   .item { padding: 16px; }
   .item .top { align-items: start; }
@@ -192,6 +216,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 .space-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 22px; }
 .space-task { min-width: 0; padding: 12px 14px; margin-top: 6px; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .space-task .trow .tt { white-space: normal; overflow-wrap: anywhere; color: var(--strong); }
+.space-task .trow .tt, .space-task .trow .tm a { display: flex; align-items: center; min-height: 24px; }
 .space-message > .space-task:first-of-type { margin-top: 16px; }
 .space-task .task-meta, .space-task .status-line { margin: 6px 0 0 20px; }
 .space-tasks .stack { flex: 1; min-height: 0; overflow-y: auto; }
@@ -213,12 +238,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 @media (min-width: 641px) and (max-width: 1100px) {
   .app:has(.space) { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 56px; height: 100dvh; }
   .app:has(.space) .side { display: none; }
-  .app:has(.space) .mtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
+  .app:has(.space) .mtabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0; }
   .app:has(.space) .mtabs a { display: flex; justify-content: center; align-items: center; min-height: 50px; font-size: 12px; }
 }
 @media (max-width: 640px) {
   .space { display: flex; flex-direction: column; }
-  .app:has(.space) .mtabs { grid-template-columns: 1.25fr repeat(3, minmax(0, 1fr)); }
   .space-tabs { display: flex; flex: none; gap: 6px; padding: 4px 12px; }
   .space-tabs button { flex: 1; min-height: 44px; color: var(--muted); }
   .space-chat, .space-tasks { flex: 1; }
@@ -230,6 +254,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
   .space-task { padding: 8px 10px; }
   .space-message > .space-task:first-of-type { margin-top: 10px; }
   .space-task .trow .tt { font-size: 13px; }
+  .space-task .trow .tt, .space-task .trow .tm a { min-width: 44px; min-height: 44px; }
   .space-message .task-meta { display: none; }
   .space-asks { margin: 4px 0 6px; }
   .space-asks .ev.ask .hit { padding: 10px 12px; gap: 8px; }

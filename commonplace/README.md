@@ -13,7 +13,13 @@ commonplace serve --host 127.0.0.1 --port 8765
 
 Social sign-in: [provider setup](SETUP.md).
 
+Project chat offers instant basic receipts, optional owner-configured model answers and a linked-card fallback for unclaimed work requests; see [project chat](../docs/chat.md).
+
 ## Mail
+
+The signed-out app accepts an email address and sends a single-use sign-in link, valid for 15 minutes. New accounts and personal workspaces are created only after verification with `COMMONPLACE_SIGNUP=open`. Signup is closed by default; existing accounts can still sign in. The request gives the same neutral response for unknown addresses and delivery failures.
+
+`POST /app/auth/email` accepts JSON or form data with `email` and optional `next`. The mailed link opens `/app/auth/email/verify?t=…` and starts a normal web session. Only safe app or OAuth return paths are accepted. Requests share the credential IP limit (10/minute) and a normalized-email limit (3/15 minutes).
 
 `commonplace login-link <email> --send` emails the sign-in link to the account's address and prints only `login link sent to <address>`; the link itself is never printed. Without `--send` the link is printed as before. The link uses `--base-url`, else `COMMONPLACE_APP_URL`, else `COMMONPLACE_BASE_URL`.
 
@@ -34,21 +40,27 @@ Claude Code: [local setup and repeatable fresh-install check](../docs/commonplac
 
 ## Hosted plans
 
-Set `COMMONPLACE_PLANS=on` to enable hosted plans. New social sign-ups receive Free:
+Set `COMMONPLACE_PLANS=on` to enable hosted plans. New email and social sign-ups receive Free:
 250 MB storage per account and 10 minutes of server voice transcription per UTC day.
-The chat-sync interval hook is every 15 minutes for Free and live for Paid; sync is not built here.
+Opt-in native chat capture accepts updates every 15 minutes for Free and at
+configured hook events for Paid; see [transcript capture](../docs/transcript-capture.md).
 Paid has *unlimited*\*\* storage and transcription and a server-load throttle hook.
 
 ** zolang de server het aankan / as long as the server can handle it
 
 Admins manage plans with `commonplace plan set <user email|id> free|paid|none` and inspect
-usage with `commonplace plan show <user email|id>`. Payment is not built. The transcription
-meter is a hook for a future endpoint. Accounts without a plan have no limits and every feature.
+usage with `commonplace plan show <user email|id>`. Payment is not built. Voice transcription
+charges the signed-in person's account for received audio, rounded up to whole seconds per clip.
+Invalid input and model failures do not consume quota. Each successful POST is a separate clip;
+there is no replay cache or idempotency key. Limit errors return HTTP 429 with
+`limit: "transcription"` and the daily reset time. Accounts without a plan have no limits and every feature.
 Unset, empty or `off` keeps plans off: self-hosted installations have no limits or plan UI.
 
 ## Context handoff
 
 Optional handoff saves a full thread in Memory and starts a fresh agent with a pointer to it. It is installed with the gateway and off by default. Thread tools appear once a workspace enables handoff or has stored threads. Pages use the hub's web sign-in; events use its signed webhooks with the `handoff` preset. See [setup and API](../docs/handoff.md).
+
+One-time conversation and memory-fact imports use the authenticated workspace route independently of handoff. See [supported sources, command and reports](../docs/one-time-import.md).
 
 ## Policy
 
@@ -58,7 +70,7 @@ Optional handoff saves a full thread in Memory and starts a fresh agent with a p
 | `--scopes` | `memory:read`, `memory:write`, `memory:delete`, `kg:read`, `kg:write`, `events:read`, `events:write`, `private:read`, `private:write`, `admin` |
 | `--read-wings` / `--write-wings` | wing names or patterns (`project_*`, `*`) |
 | `--write-wing` | where an `untrusted` token's writes always land |
-| `--trust` | `untrusted` (inbox writes only, no update, delete or graph writes), `standard` (no delete), `trusted` |
+| `--trust` | `untrusted` (memory inbox writes only, no memory update, delete or graph writes; own board cards remain manageable), `standard` (no delete), `trusted` |
 
 - `mine`, `sync`, `hook_settings` and `reconnect` are never served through the gateway.
 - Wings named `private` or `private_*` also need `private:read` / `private:write`, even under `*`.
@@ -71,3 +83,14 @@ Optional handoff saves a full thread in Memory and starts a fresh agent with a p
 The canary suite (`tests/test_commonplace_canary.py`) seeds forbidden wings and calls every MemPalace tool with scoped tokens; run it before every push.
 
 Opt-in compact workspace storage uses a verified offline backfill and rollback. See [compact store switching](../docs/compact-store-switch.md) for backup requirements, commands and retention.
+
+Operators: [nightly backups and scratch restore](../docs/backups.md) covers
+consistent snapshots, encrypted off-host storage, 30-day retention and alerts.
+
+Agents create and claim their own board cards with every client preset. Child-created cards need approval from a parent, top-level agent, board coordinator or owner; orchestrators handle approvals each heartbeat with a reason or escalate to the owner; orchestrators can create assigned child cards directly. See [the board API](../docs/boards/API.md) for `task_approve`, `task_heartbeat`, expiry, review requirements, and space creation.
+
+## Native transcript capture
+
+Workspace owners can opt in to private, append-only Claude Code and Codex capture.
+See [transcript capture](../docs/transcript-capture.md) for local selection,
+hook and scheduler setup, storage limits and supported source formats.

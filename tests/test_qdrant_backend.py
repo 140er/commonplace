@@ -109,7 +109,12 @@ class _FakeQdrantClient:
                             "distance": "Cosine",
                         }
                     }
-                }
+                },
+                "payload_schema": {
+                    field: {"data_type": schema}
+                    for name, field, schema in self.created_indexes
+                    if name == collection
+                },
             }
         }
 
@@ -269,7 +274,7 @@ def test_qdrant_add_query_filters_lexical_and_marker(tmp_path, fake_qdrant):
 
     hits = col.lexical_search(query="rareterm backend", n_results=2, where={"wing": "project"}).hits
     assert [hit.id for hit in hits] == ["b", "a"]
-    assert fake_qdrant.instances[0].created_indexes[0][1:] == ("document", "text")
+    assert fake_qdrant.instances[0].created_indexes[0][1:] == ("index_text", "text")
 
     backend.close_palace(str(tmp_path))
     with pytest.raises(Exception):
@@ -691,3 +696,65 @@ def test_qdrant_facet_counts_ignores_missing_metadata(tmp_path, fake_qdrant):
     assert collection.facet_counts("wing") == {
         "alpha": 1,
     }
+
+
+def test_bookkeeping_union_facet_request_is_typed(monkeypatch):
+    """Exercise the REST facet body without a live service or local row scan."""
+    from mempalace.backends import qdrant
+    from mempalace.backends.qdrant import _QdrantConfig, _QdrantRESTClient
+
+    where = {
+        "$and": [
+            {"ingest_mode": {"$ne": "registry"}},
+            {"is_sentinel": {"$in": ["True", "1", "yes", True, 1.0, 2.5]}},
+        ]
+    }
+    assert not qdrant._requires_local_filter(where)
+    bodies = []
+    client = _QdrantRESTClient(
+        _QdrantConfig(url="http://unused", api_key=None, timeout=1, namespace=None)
+    )
+
+    def request(method, path, *, body=None, **kw):
+        bodies.append(body)
+        return {"result": {"hits": []}}
+
+    monkeypatch.setattr(client, "request", request)
+    client.facet_counts(
+        "scratch", field="metadata.wing", qdrant_filter=qdrant._qdrant_filter(where)
+    )
+    stack = [bodies[0]]
+    matches, ranges = [], []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if "match" in node:
+                matches.append(node["match"])
+            if "range" in node:
+                ranges.append(node["range"])
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    for match in matches:
+        if "any" in match:
+            values = match["any"]
+            assert len({type(v) for v in values}) == 1
+            assert all(type(v) in (str, int) for v in values)
+        if "value" in match:
+            assert type(match["value"]) in (str, bool, int)
+    assert {"gte": 2.5, "lte": 2.5} in ranges
+    from tests.test_qdrant_backend import _fake_match_filter
+
+    predicate = bodies[0]["filter"]
+    for flag, expected in [
+        (True, True),
+        (1.0, True),
+        (2.5, True),
+        ("yes", True),
+        ("false", False),
+        (0.0, False),
+    ]:
+        point = {"payload": {"metadata": {"is_sentinel": flag}}}
+        assert _fake_match_filter(point, predicate) is expected
+        point["payload"]["metadata"]["ingest_mode"] = "registry"
+        assert not _fake_match_filter(point, predicate)

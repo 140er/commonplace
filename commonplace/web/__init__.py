@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from commonplace import events, plans, sessions
-from commonplace.http_util import query, require_principal, send_json
+from commonplace import events, plans, sessions, sync_feed, urls
+from commonplace.http_util import log_failure, query, require_principal, send_json
+
+LOG = logging.getLogger(__name__)
 
 STATIC = Path(__file__).parent / "static"
 CSP = (
@@ -64,9 +67,13 @@ def _static(h):
 
 def install(gateway):
     def login(h):
-        session = sessions.redeem_login_link(gateway.db, query(h).get("t", ""))
+        token = query(h).get("t", "")
+        if not token:
+            _response(h, 302, headers={"Location": "/app/"})
+            return
+        session = sessions.redeem_login_link(gateway.db, token)
         if not session or sessions.session_principal(gateway.db, session) is None:
-            _response(h, 400, b"Sign in link is invalid or expired")
+            _response(h, 302, headers={"Location": "/app/?signin=expired"})
             return
         _response(
             h,
@@ -89,13 +96,25 @@ def install(gateway):
     def me(h):
         principal = require_principal(gateway, h)
         if principal is not None:
+            from . import admin
+
+            try:
+                can_instance = admin.instance_authorized(
+                    gateway, principal, admin.ReadContext(gateway.admin_clock)
+                )
+            except Exception as exc:
+                log_failure(LOG, "Admin capability unavailable", exc)
+                can_instance = False
             send_json(
                 h,
                 200,
                 {
+                    "can_admin": principal.person and principal.role == "owner",
+                    "can_admin_instance": can_instance,
                     "user": principal.user_id,
                     "email": principal.user_email,
                     "workspace": principal.workspace_id,
+                    "workspace_name": gateway.db.workspace(principal.workspace_id)["name"],
                     "actor": principal.actor,
                     "people": _people(gateway.db, principal.workspace_id),
                 },
@@ -138,6 +157,9 @@ def install(gateway):
         principal = require_principal(gateway, h)
         if principal is None:
             return
+        if query(h).get("feed") == "sync":
+            sync_feed.handle(gateway, h, principal)
+            return
         # Events carry labels without theme ACLs. Restrict unfilterable metadata
         # to people and agents already permitted to read the entire workspace.
         if not principal.person and not (
@@ -152,12 +174,24 @@ def install(gateway):
         except ValueError:
             send_json(h, 400, {"error": "Invalid event cursor"})
             return
-        # The snapshot and read share the lock. The contract's seq is the latest
-        # sequence, so return every unread event rather than skipping a batch.
+        if principal.person and principal.role != "owner":
+            send_json(
+                h,
+                200,
+                events.member_page(gateway.db, gateway, principal, seq, query(h).get("epoch", "")),
+            )
+            return
         with gateway.db._lock:
             latest = events.latest_seq(gateway.db, principal.workspace_id)
-            batch = events.after(gateway.db, principal.workspace_id, min(seq, latest), latest or 1)
-        send_json(h, 200, {"events": batch, "seq": latest})
+            if query(h).get("epoch"):
+                # A member-era ordinal is not a raw workspace cursor.
+                response = {"events": [], "seq": latest, "reset": True}
+            else:
+                batch = events.after(
+                    gateway.db, principal.workspace_id, min(seq, latest), latest or 1
+                )
+                response = {"events": batch, "seq": latest}
+        send_json(h, 200, response)
 
     def connections(h):
         principal = require_principal(gateway, h)
@@ -166,21 +200,41 @@ def install(gateway):
         if principal.role != "owner":
             send_json(h, 403, {"error": "Owner access required"})
             return
-        fields = (
-            "id",
-            "name",
-            "client",
-            "auth",
-            "user_id",
-            "created_at",
-            "expires_at",
-            "revoked_at",
-            "last_used_at",
-            "parent_id",
-            "started_by",
-        )
+        from commonplace.extensions import ToolError
+        from commonplace.policy import canonical_wing, is_private_wing
+
+        from .agents import connection_view
+
         rows = gateway.db.connections(principal.workspace_id)
-        send_json(h, 200, {"connections": [{key: row[key] for key in fields} for row in rows]})
+        try:
+            known = gateway.call_memory_tool(principal, "mempalace_list_wings", {}).get("wings", {})
+        except ToolError:
+            # Connection management remains available while memory is offline.
+            known = {}
+        wings = sorted(
+            {
+                canonical_wing(wing)
+                for wing in known
+                if not is_private_wing(wing)
+                and principal.policy.can_read_wing(wing)
+                and not any(c in wing for c in "*?[]")
+            }
+        )
+        send_json(
+            h,
+            200,
+            {
+                "connections": [connection_view(row) for row in rows],
+                "wings": wings,
+                "mcp_url": urls.AGENT_URL + "/mcp",
+            },
+        )
+
+    from . import admin, agents, task_types
+
+    admin.install(gateway)
+    agents.install(gateway)
+    task_types.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)
     gateway.add_route("POST", "/app/logout", logout)

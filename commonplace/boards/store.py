@@ -3,28 +3,147 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from commonplace.admission import GATE
 from commonplace.extensions import ToolError
+from mempalace.sqlite_crypto import connect, row_factory
 
-from .display import need_for
+from .display import need_for, plan_waiting
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
+    "task_type": "TEXT NOT NULL DEFAULT ''",
     "parent_number": "INTEGER REFERENCES tasks(id)",
     "message_id": "INTEGER REFERENCES space_messages(id)",
     "repo": "TEXT",
     "branch": "TEXT",
     "pr_url": "TEXT",
     "pr_number": "INTEGER",
+    "pr_repo": "TEXT",
     "checks": "TEXT",
+    "pr_state": "TEXT CHECK (pr_state IN ('open', 'merged', 'closed'))",
+    "pr_head": "TEXT",
+    "pr_reported_at": "TEXT",
     "status_line": "TEXT",
     "heartbeat_at": "TEXT",
     "labels": "TEXT",
+    "claim_expired_at": "TEXT",
+    "agent_parent": "TEXT",
+    "proposal_status": "TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected'))",
+    "proposed_to": "TEXT",
+    "approved_by": "TEXT",
+    "escalated_to": "TEXT",
+    "review_kind": "TEXT",
+    "review_context": "TEXT",
 }
+
+
+BLOCKERS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS task_blockers (
+ task_id INTEGER NOT NULL REFERENCES tasks(id),
+ blocker_id INTEGER NOT NULL REFERENCES tasks(id),
+ created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+ PRIMARY KEY(task_id, blocker_id)
+);
+CREATE INDEX IF NOT EXISTS task_blockers_reverse ON task_blockers(blocker_id, task_id);
+CREATE TABLE IF NOT EXISTS card_splits (
+ task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+ state TEXT NOT NULL CHECK(state IN ('split','kept')),
+ by TEXT NOT NULL, at TEXT NOT NULL
+);
+"""
+
+
+class CardRefused(ToolError):
+    def __init__(self, code, message=None, *, status=409, **details):
+        self.code, self.status, self.details = code, status, details
+        super().__init__("no: " + (message or code))
+
+
+def active_blockers(conn, number):
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='task_blockers'").fetchone():
+        return []
+    return [
+        dict(row)
+        for row in conn.execute(
+            "SELECT t.id AS number,t.title FROM task_blockers b JOIN tasks t ON t.id=b.blocker_id "
+            "WHERE b.task_id=? AND t.status!='done' ORDER BY t.id",
+            (number,),
+        )
+    ]
+
+
+def set_blockers(conn, row, values, actor):
+    if (
+        not isinstance(values, list)
+        or len(values) > 16
+        or any(type(n) is not int or not 1 <= n < 2**63 for n in values)
+    ):
+        raise CardRefused("invalid_blockers", status=400)
+    for number in set(values):
+        if number == row["id"]:
+            raise CardRefused("self", status=400)
+        found = conn.execute("SELECT board_id FROM tasks WHERE id=?", (number,)).fetchone()
+        if found is None or found[0] != row["board_id"]:
+            raise CardRefused("other_board", status=400)
+        pending, seen = [number], set()
+        while pending:
+            current = pending.pop()
+            if current == row["id"]:
+                raise CardRefused("cycle", status=400)
+            if current in seen:
+                continue
+            seen.add(current)
+            if len(seen) > 200:
+                raise CardRefused("blocker_graph_too_large", status=400)
+            pending.extend(
+                r[0]
+                for r in conn.execute(
+                    "SELECT blocker_id FROM task_blockers WHERE task_id=?", (current,)
+                )
+            )
+    conn.execute("DELETE FROM task_blockers WHERE task_id=?", (row["id"],))
+    conn.executemany(
+        "INSERT INTO task_blockers VALUES (?,?,?,?)",
+        [(row["id"], n, actor, now()) for n in sorted(set(values))],
+    )
+
+
+def pr_repository(url):
+    """Repository part of a PR URL, including GitLab and plural pulls URLs."""
+    if not isinstance(url, str):
+        return None
+    from .service import normalize_repo
+
+    try:
+        parsed = urlsplit(url if "://" in url else "https://" + url)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    parts = parsed.path.strip("/").split("/")
+    if parsed.scheme not in ("http", "https") or not hostname or len(parts) < 4:
+        return None
+    if parts[-2] not in ("pull", "pulls", "merge_requests") or not parts[-1].isdigit():
+        return None
+    try:
+        number = int(parts[-1])
+    except ValueError:
+        return None
+    if number < 1:
+        return None
+    prefix = parts[:-2]
+    if prefix[-1] == "-":
+        prefix.pop()
+    if len(prefix) >= 2:
+        try:
+            return normalize_repo(hostname + "/" + "/".join(prefix))
+        except ToolError:
+            return None
+    return None
 
 
 def now() -> str:
@@ -46,7 +165,7 @@ def task_number(ref) -> int:
 def task_row(conn, ref):
     row = conn.execute(
         "SELECT t.*, b.slug AS board, b.wing AS board_wing, "
-        "b.claim_minutes, b.done_needs_review FROM tasks t "
+        "b.claim_minutes, b.done_needs_review, b.coordinator AS board_coordinator FROM tasks t "
         "JOIN boards b ON b.id=t.board_id WHERE t.id=?",
         (task_number(ref),),
     ).fetchone()
@@ -68,7 +187,15 @@ def require_visible(row, principal) -> None:
         raise ToolError("no: card not found")
 
 
-def card(conn, row, principal=None) -> dict:
+def owns_card(row, actor):
+    return row is not None and (
+        row["assignee"] == actor
+        or (row["assignee"] is None and row["created_by"] == actor)
+        or (row["status"] == "review" and row["return_to"] == actor)
+    )
+
+
+def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
     result = {
         "number": row["id"],
@@ -76,6 +203,7 @@ def card(conn, row, principal=None) -> dict:
         "board": row["board"],
         "title": row["title"],
         "body": row["body"],
+        "task_type": row["task_type"],
         "status": row["status"],
         "assignee": row["assignee"],
         "claim_until": row["claim_until"],
@@ -84,7 +212,11 @@ def card(conn, row, principal=None) -> dict:
         "ask_to": row["ask_to"],
         "return_to": row["return_to"],
         "flags": json.loads(row["flags"] or "[]"),
-        **{key: row[key] for key in TASK_COLUMNS if key not in ("labels", "parent_number")},
+        **{
+            key: row[key] if key in row.keys() else None
+            for key in TASK_COLUMNS
+            if key not in ("labels", "parent_number", "pr_repo", "task_type")
+        },
         "labels": json.loads(row["labels"] or "[]"),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
@@ -92,21 +224,68 @@ def card(conn, row, principal=None) -> dict:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "position": row["position"],
+        # Filed by a restricted (untrusted) connection; clients gate their own actions on this.
+        "restricted": "restricted_origin" in row.keys() and bool(row["restricted_origin"]),
     }
-    result["need"] = need_for(result, principal)
+    person_owner = bool(principal and principal.person and principal.role == "owner")
+    person_release = (
+        release(row)
+        if release is not None
+        and person_owner
+        and (row["proposal_status"] == "pending" or plan_waiting(result))
+        else None
+    )
+    result["need"] = need_for(result, principal, person_release=person_release)
+    result["claim_expired"] = bool(
+        row["status"] == "doing" and row["claim_until"] and row["claim_until"] <= now()
+    )
+    result["can_approve"] = bool(
+        principal
+        and (
+            (plan_waiting(result) and (person_owner or (approver is not None and approver(row))))
+            or (
+                row["status"] == "backlog"
+                and (
+                    (
+                        row["proposal_status"] in ("pending", "rejected")
+                        and principal.person
+                        and principal.role == "owner"
+                    )
+                    or (
+                        row["proposal_status"] == "pending"
+                        and row["proposed_to"] == principal.actor
+                        and row["assignee"] != principal.actor
+                        and not result["escalated_to"]
+                    )
+                )
+            )
+        )
+    )
     if row["parent_number"] is None:
         children = []
         for child in conn.execute(
             "SELECT * FROM tasks WHERE board_id=? AND parent_number=? ORDER BY position,id",
             (row["board_id"], row["id"]),
         ):
-            fields = {**dict(child), "labels": json.loads(child["labels"] or "[]")}
+            child = {
+                **dict(child),
+                "board_wing": row["board_wing"],
+                "board_coordinator": row["board_coordinator"],
+            }
+            fields = {**child, "labels": json.loads(child["labels"] or "[]")}
+            person_release = (
+                release(child)
+                if release is not None
+                and person_owner
+                and (child["proposal_status"] == "pending" or plan_waiting(fields))
+                else None
+            )
             children.append(
                 {
                     "number": child["id"],
                     "title": child["title"],
                     "status": child["status"],
-                    "need": need_for(fields, principal),
+                    "need": need_for(fields, principal, person_release=person_release),
                 }
             )
         if children:
@@ -121,13 +300,14 @@ def card(conn, row, principal=None) -> dict:
 
 def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
     conn.execute(
-        "INSERT INTO task_events(task_id,kind,text,from_status,to_status,target,choice,options,"
-        "stamp_user,stamp_connection,stamp_trust,flags,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO task_events(task_id,kind,text,reason,from_status,to_status,target,choice,options,"
+        "stamp_user,stamp_connection,stamp_trust,flags,created_at,context) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             number,
             kind,
             fields.get("text"),
+            fields.get("reason"),
             fields.get("from_status"),
             fields.get("to_status"),
             fields.get("target"),
@@ -138,20 +318,22 @@ def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
             trust,
             json.dumps(fields.get("flags", [])),
             now(),
+            fields.get("context"),
         ),
     )
 
 
 def expire_claims(conn, board_id):
     expired = conn.execute(
-        "SELECT id,assignee FROM tasks WHERE board_id=? AND status='doing' AND claim_until<=?",
+        "SELECT id,assignee FROM tasks "
+        "WHERE board_id=? AND status='doing' AND claim_until<=? AND claim_expired_at IS NULL",
         (board_id, now()),
     ).fetchall()
     for row in expired:
         conn.execute(
-            "UPDATE tasks SET status='todo',assignee=NULL,claim_until=NULL,"
+            "UPDATE tasks SET claim_expired_at=?,"
             "version=version+1,updated_at=?,updated_by='system' WHERE id=?",
-            (now(), row["id"]),
+            (now(), now(), row["id"]),
         )
         append_event(
             conn,
@@ -160,7 +342,7 @@ def expire_claims(conn, board_id):
             "system",
             target=row["assignee"],
             from_status="doing",
-            to_status="todo",
+            to_status="doing",
         )
     return expired
 
@@ -172,22 +354,45 @@ class BoardStore:
     Calls without it are the contract's trusted, local workspace API.
     """
 
-    def __init__(self, workspace_dir):
+    def __init__(self, workspace_dir, *, legacy_origin=None, create=True):
         directory = Path(workspace_dir)
-        directory.mkdir(parents=True, exist_ok=True)
+        if create:
+            with GATE.creating(directory):
+                directory.mkdir(parents=True, exist_ok=True)
+        self.create = create
         self.path = str(directory / "boards.sqlite3")
         with self.connection() as conn:
-            conn.executescript(Path(__file__).with_name("schema.sql").read_text())
+            conn.executescript(Path(__file__).with_name("schema.sql").read_text() + BLOCKERS_SCHEMA)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 board_columns = {r[1] for r in conn.execute("PRAGMA table_info(boards)")}
                 if "coordinator" not in board_columns:
                     conn.execute("ALTER TABLE boards ADD COLUMN coordinator TEXT")
                 columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
-                extra = {"created_by": "TEXT", "callstack": "TEXT"}
+                extra = {
+                    "created_by": "TEXT",
+                    "callstack": "TEXT",
+                    "claim_from": "TEXT CHECK (claim_from IN ('backlog', 'todo'))",
+                    "restricted_origin": "INTEGER CHECK (restricted_origin IN (0, 1))",
+                }
                 for name, datatype in {**TASK_COLUMNS, **extra}.items():
                     if name not in columns:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {datatype}")
+                if "restricted_origin" not in columns:
+                    # NULL leaves legacy agent backlog pending a policy lookup.
+                    conn.execute(
+                        "UPDATE tasks SET restricted_origin=CASE "
+                        "WHEN stamp_trust='untrusted' THEN 1 "
+                        "WHEN stamp_connection IS NULL OR status!='backlog' THEN 0 END"
+                    )
+                if legacy_origin is not None:
+                    for row in conn.execute(
+                        "SELECT * FROM tasks WHERE status='backlog' AND restricted_origin IS NULL"
+                    ).fetchall():
+                        conn.execute(
+                            "UPDATE tasks SET restricted_origin=? WHERE id=?",
+                            (int(legacy_origin(row)), row["id"]),
+                        )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS tasks_by_parent ON tasks(board_id,parent_number)"
                 )
@@ -199,6 +404,10 @@ class BoardStore:
                 event_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_events)")}
                 if "options" not in event_columns:
                     conn.execute("ALTER TABLE task_events ADD COLUMN options TEXT")
+                if "reason" not in event_columns:
+                    conn.execute("ALTER TABLE task_events ADD COLUMN reason TEXT")
+                if "context" not in event_columns:
+                    conn.execute("ALTER TABLE task_events ADD COLUMN context TEXT")
                 link_columns = {r[1] for r in conn.execute("PRAGMA table_info(task_links)")}
                 if "title" not in link_columns:
                     conn.execute("ALTER TABLE task_links ADD COLUMN title TEXT NOT NULL DEFAULT ''")
@@ -208,6 +417,22 @@ class BoardStore:
                     conn.execute(
                         "ALTER TABLE task_links ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0"
                     )
+                pending_pr_repo = (
+                    "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS tasks_pending_pr_repo ON tasks(id) WHERE "
+                    + pending_pr_repo
+                )
+                for row in conn.execute(
+                    "SELECT id,pr_url FROM tasks WHERE " + pending_pr_repo
+                ).fetchall():
+                    repo = pr_repository(row["pr_url"])
+                    if repo:
+                        conn.execute("UPDATE tasks SET pr_repo=? WHERE id=?", (repo, row["id"]))
+                from commonplace.projects import reports
+
+                reports.ensure_source(conn)
                 conn.commit()
             except BaseException:
                 conn.rollback()
@@ -215,8 +440,15 @@ class BoardStore:
 
     @contextmanager
     def connection(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
-        conn.row_factory = sqlite3.Row
+        target = self.path if self.create else Path(self.path).resolve().as_uri() + "?mode=rw"
+        with GATE.creating(self.path):
+            conn = connect(
+                target,
+                uri=not self.create,
+                timeout=10 if self.create else 0.2,
+                isolation_level=None,
+            )
+        conn.row_factory = row_factory
         conn.execute("PRAGMA foreign_keys=ON")
         try:
             yield conn
@@ -255,7 +487,13 @@ class BoardStore:
         with self.transaction() as conn:
             row = task_row(conn, task_ref)
             require_visible(row, principal)
-            if principal is not None and not principal.policy.can_write_wing(row["board_wing"]):
+            if principal is not None and not (
+                principal.policy.has_scope("memory:write")
+                and (
+                    principal.policy.can_write_wing(row["board_wing"])
+                    or owns_card(row, principal.actor)
+                )
+            ):
                 raise ToolError("no: this connection cannot change this board")
             expire_claims(conn, row["board_id"])
             row = task_row(conn, row["id"])
@@ -278,7 +516,10 @@ class BoardStore:
                     until = (
                         datetime.now(timezone.utc) + timedelta(minutes=row["claim_minutes"])
                     ).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    conn.execute("UPDATE tasks SET claim_until=? WHERE id=?", (until, row["id"]))
+                    conn.execute(
+                        "UPDATE tasks SET claim_until=?,claim_expired_at=NULL,heartbeat_at=? WHERE id=?",
+                        (until, now(), row["id"]),
+                    )
                 append_event(conn, row["id"], "link", actor, user_id=user, target=drawer_id)
 
     def task_links(self, task_ref, *, principal=None) -> list[dict]:

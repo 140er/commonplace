@@ -31,9 +31,15 @@ class HandoffContext:
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def store_for(self, workspace_id: str):
+        from commonplace.admission import GATE
         from commonplace.workspace_store import open_threads, workspace_path
 
         with self._lock:
+            store = self._stores.get(workspace_id)
+            if store is not None:
+                return store
+        # Enter the gate before the lock, so a waiting opener never holds it.
+        with GATE.creating(), self._lock:
             store = self._stores.get(workspace_id)
             if store is None:
                 directory = workspace_path(self.data_dir, workspace_id)
@@ -55,15 +61,18 @@ class HandoffContext:
         Extraction is automatic, so its facts stay proposals even when a person
         uploaded the transcript: uploading is not approving what was parsed out.
         """
-        response = self.gateway.mediator.handle(
-            dataclasses.replace(principal, person=False),
-            {
-                "jsonrpc": "2.0",
-                "id": "handoff-fact",
-                "method": "tools/call",
-                "params": {"name": "fact_save", "arguments": arguments},
-            },
-        )
+        from commonplace.rules.checks import internal_call
+
+        with internal_call():
+            response = self.gateway.mediator.handle(
+                dataclasses.replace(principal, person=False),
+                {
+                    "jsonrpc": "2.0",
+                    "id": "handoff-fact",
+                    "method": "tools/call",
+                    "params": {"name": "fact_save", "arguments": arguments},
+                },
+            )
         result = response.get("result") if isinstance(response, dict) else None
         if not isinstance(result, dict) or result.get("isError") or response.get("error"):
             raise RuntimeError("handoff fact write refused or unavailable")
@@ -97,7 +106,14 @@ def install(gateway, data_dir=None, **_ignored) -> HandoffContext:
     ctx.handoff_db = HandoffDB(gateway.db)
     ctx.events = Events(gateway.db, ctx.handoff_db)
     ctx.settings = SettingsService(ctx.handoff_db, ctx.events)
-    ctx.recall = Recall(ctx.store_for, call_tool=ctx.call_tool)
+    from commonplace import continuity_read, import_grant
+
+    ctx.recall = Recall(
+        ctx.store_for,
+        call_tool=ctx.call_tool,
+        private=continuity_read.PrivateReader(gateway.db, ctx.store_for),
+        import_eligible=lambda principal: import_grant.reader_eligible(gateway.db, principal),
+    )
     ctx.service = HandoffService(
         control_db=gateway.db,
         handoff_db=ctx.handoff_db,
@@ -106,11 +122,35 @@ def install(gateway, data_dir=None, **_ignored) -> HandoffContext:
         events=ctx.events,
         call_tool=ctx.call_tool,
         save_fact=ctx.save_fact,
+        can_read=ctx.recall.can_read,
+        progress_can_read=lambda principal, stored_id: ctx.recall.can_read(
+            principal, stored_id, strict=True
+        ),
         prompt_dir=str(Path(data_dir) / "handoff-prompts"),
     )
     gateway.handoff = ctx
     api.register(ctx)
+    from commonplace import capture, imports, search_index_api, sync_sessions
+
+    search_index_api.register(gateway)
+    imports.register(ctx)
+    capture.register(ctx)
+    sync_sessions.register(ctx)
     web.register(ctx)
     # Events a crash left queued (handoff.completed) go out now.
     ctx.service.replay_pending()
+    # Resume eligible history without opening stores on the startup path.
+    try:
+        with gateway.db._lock:
+            workspaces = gateway.db._conn.execute(
+                "SELECT id FROM workspaces ORDER BY id"
+            ).fetchall()
+        for workspace in workspaces:
+            try:
+                if ctx.has_threads(workspace["id"]):
+                    ctx.service.index_later(workspace["id"])
+            except Exception:
+                pass  # Indexing is best effort; startup must still succeed.
+    except Exception:
+        pass
     return ctx

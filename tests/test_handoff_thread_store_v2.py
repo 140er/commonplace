@@ -308,6 +308,9 @@ def make_v1(path):
     )
     old.put_doc("handoff", "verbatim\0quoted")
     old.advance_fact_cursor(root.id, 2, 2)
+    old.begin_mirror(root.id, 1)
+    old.finish_mirror(root.id, 1)
+    old.begin_mirror(root.id, len(items) - 1)
     return old, root, child
 
 
@@ -325,6 +328,7 @@ def test_row_copy_migration_preserves_all_rows_and_boundaries(tmp_path):
             assert new.parent_of(thread.id) == old.parent_of(thread.id)
         assert new.doc("handoff") == old.doc("handoff")
         assert new.fact_cursor(root.id, 2) == 2
+        assert new.mirror_progress(root.id) == old.mirror_progress(root.id)
         assert new.search([root.id, child.id], "needle") == old.search(
             [root.id, child.id], "needle"
         )
@@ -959,12 +963,17 @@ def test_reverse_copy_retains_post_switch_appends_and_auxiliary_rows(tmp_path):
         )
         old.put_doc("handoff", "verbatim document")
         old.advance_fact_cursor(thread.id, 1, 1)
+        old.begin_mirror(thread.id, 1)
+        old.finish_mirror(thread.id, 1)
     migrate_v1(str(source), str(target))
     with closing(ThreadStoreV2(str(target))) as new:
         new.append(thread.id, simple(["first", "second", "after switch"]))
         new.put_doc("handoff", "updated verbatim document")
         new.advance_fact_cursor(thread.id, 1, 3)
+        assert new.mirror_progress(thread.id) == (1, 1)
+        new.begin_mirror(thread.id, 2)
     assert migrate_v2(str(target), str(restored)) == 2
     with read_store(target, compact=True) as new, read_store(restored) as old:
         verify_stores(new, old)
         assert len(old.chunks(thread.id)) == 3
+        assert old.mirror_progress(thread.id) == new.mirror_progress(thread.id) == (1, 2)

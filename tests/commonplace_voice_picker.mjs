@@ -186,6 +186,8 @@ assert.doesNotMatch(source, /SpeechRecognition|createObjectURL|\.submit\(|reques
 // Boot must display the app without waiting for voice status. The real API's
 // session-expired event must still replace that shell with sign-in on a late 401.
 const apiSource = await readFile(new URL("../commonplace/web/static/api.js", import.meta.url), "utf8");
+const adminSource = await readFile(new URL("../commonplace/web/static/admin.js", import.meta.url), "utf8");
+const { boundedRequest } = await import(`data:text/javascript;base64,${Buffer.from(adminSource).toString("base64")}`);
 const bootSource = app.slice(app.indexOf("async function boot()"), app.lastIndexOf("\nboot();"));
 const expiredSource = app.split("\n").find((line) => line.startsWith('document.addEventListener("session-expired"'));
 function bootFixture() {
@@ -193,13 +195,25 @@ function bootFixture() {
   let resolveStatus;
   const pendingStatus = new Promise((resolve) => { resolveStatus = resolve; });
   const context = {
-    document, state, Event, timer: null, clearTimeout() {},
+    document, state, Event, boundedRequest, adminUI: null, timer: null, clearTimeout() {},
     fetch: async (path) => path === "/api/voice" ? pendingStatus : { ok: true, status: 200, json: async () => ({ people: {} }) },
     shell() { calls.push("shell"); },
     async route() { calls.push("route"); },
     schedule() { calls.push("schedule"); },
     signin() { calls.push("signin"); context.voice.reset(); },
+    // Expiry clears the signed-in user's chat state first (seen ids live on the device).
+    clearWorkbenchChat() { calls.push("clear-chat"); },
+    signinCode: null,
+    showError(text) { calls.push(`error:${text}`); },
+    URLSearchParams,
+    location: { pathname: "/app/", search: "", hash: "" },
+    history: { state: null, replaceState(_state, _title, url) { calls.push(`replace:${url}`); } },
   };
+  // boot() runs in a bare vm context: every browser global or app function it
+  // names must be provided here, or the test dies with a ReferenceError.
+  for (const name of ["URLSearchParams", "URL", "location", "history", "window", "navigator", "localStorage", "sessionStorage", "showError", "signinCode"]) {
+    if (new RegExp(`\\b${name}\\b`).test(bootSource)) assert.ok(name in context, `boot() uses ${name}; add it to the boot fixture`);
+  }
   const { boot, api } = runInNewContext([apiSource.replace(/export /g, ""), expiredSource, bootSource, "({ boot, api })"].join("\n"), context);
   const root = { querySelector: () => null, querySelectorAll: () => [], addEventListener() {} };
   context.voice = voiceInput(root, api, assert.fail, { document });
@@ -211,7 +225,13 @@ assert.deepEqual(booting.calls, ["shell", "route", "schedule"]);
 booting.resolveStatus({ ok: false, status: 401, json: async () => ({ error: "Sign in" }) });
 await new Promise(setImmediate);
 assert.equal(booting.state.me, null);
-assert.equal(booting.calls.at(-1), "signin");
+assert.deepEqual(booting.calls.slice(-2), ["clear-chat", "signin"]);
+// A tapped card link for another workspace: boot drops ?w=, keeps the user on
+// the board and explains why, without waiting for the voice status.
+const otherWorkspace = bootFixture();
+otherWorkspace.context.location = { pathname: "/app/", search: "?w=ws_other", hash: "#/card/7" };
+await otherWorkspace.boot();
+assert.deepEqual(otherWorkspace.calls, ["shell", "replace:/app/#/", "route", "error:This card is in another workspace. Sign out, then sign in again to open it.", "schedule"]);
 const expiredAtLoad = bootFixture();
 expiredAtLoad.context.voice = { load() { expiredAtLoad.state.me = null; } };
 await expiredAtLoad.boot(); assert.deepEqual(expiredAtLoad.calls, ["shell"]);

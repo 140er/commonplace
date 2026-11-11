@@ -61,7 +61,7 @@ ROUTES = [
         "write",
         200,
     ),
-    ("relaunch", "POST", "/api/handoffs/hof_local/relaunch", None, "owner", 200),
+    ("relaunch", "POST", "/api/handoffs/hof_local/relaunch", None, "write", 200),
     ("thread", "GET", "/api/threads/thr_local", None, "read", 200),
     ("messages", "GET", "/api/threads/thr_local/messages", None, "read", 200),
     ("recall", "POST", "/api/threads/thr_local/recall", {"query": "café"}, "read", 200),
@@ -1015,8 +1015,8 @@ def test_output_defense_rejects_foreign_records_and_truncates_chain(hub, monkeyp
 
 @pytest.mark.parametrize(
     "route",
-    [row for row in ROUTES if row[4] == "owner"],
-    ids=[row[0] for row in ROUTES if row[4] == "owner"],
+    [row for row in ROUTES if row[4] == "owner" or row[0] == "relaunch"],
+    ids=[row[0] for row in ROUTES if row[4] == "owner" or row[0] == "relaunch"],
 )
 def test_owner_routes_require_handoff_scope(hub, route):
     _, method, path, body, _, _ = route
@@ -1118,6 +1118,25 @@ def test_relaunch_allows_no_body_and_validates_any_supplied_body(hub, body, head
     if expected >= 400:
         assert response_headers["Connection"] == "close"
         assert not any(call[0] == "relaunch" for call in hub.calls)
+
+
+def test_relaunch_http_accepts_original_member_connection(hub):
+    status, _body, _headers = hub.request(
+        "POST", "/api/handoffs/hof_local/relaunch", {}, token="member"
+    )
+    assert status == 200
+    assert any(call[0] == "relaunch" for call in hub.calls)
+
+
+@pytest.mark.parametrize("token,expected", [("member", 404), ("owner", 200)])
+def test_relaunch_http_other_connection_requires_owner_role(hub, token, expected):
+    record = hub.ctx.handoff_db.records["hof_local"]
+    hub.ctx.handoff_db.records["hof_local"] = replace(record, connection_id="another")
+    status, _body, _headers = hub.request(
+        "POST", "/api/handoffs/hof_local/relaunch", {}, token=token
+    )
+    assert status == expected
+    assert any(call[0] == "relaunch" for call in hub.calls) is (expected == 200)
 
 
 def test_json_routes_consume_body_and_reconnect_after_gateway_closes(hub):

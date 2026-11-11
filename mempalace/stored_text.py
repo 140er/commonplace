@@ -158,10 +158,16 @@ def _warn_index_hint(message: str) -> None:
 class IndexSource:
     """Detect once on whole content, then project into unchanged chunk ranges."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, metadata=None):
         from .index_hygiene import base64_candidate_ranges, find_base64_spans
 
         self.text = text
+        self._inherited_spans = None
+        if (metadata or {}).get(INDEX_SPANS):
+            try:
+                self._inherited_spans = _validated_index_spans(text, metadata[INDEX_SPANS])
+            except (ValueError, TypeError, KeyError, RecursionError):
+                _warn_index_hint("Ignoring stale or invalid index span hint")
         self.spans = find_base64_spans(text)
         self.candidates = base64_candidate_ranges(text)
         self._set_offsets()
@@ -181,13 +187,29 @@ class IndexSource:
         result = dict(metadata or {})
         if INDEX_SPANS in result:
             result[INDEX_SPANS] = None
+        if self._inherited_spans is not None:
+            spans = [
+                [
+                    max(start, a) - start,
+                    min(end, b) - start,
+                    placeholder,
+                    emit and start <= a < end,
+                ]
+                for a, b, placeholder, emit in self._inherited_spans
+                if a < end and start < b and self.text[max(start, a)] != "="
+            ]
+            result[INDEX_SPANS] = json.dumps(
+                {"v": INDEX_VERSION, "sha256": _text_hash(self.text[start:end]), "spans": spans},
+                separators=(",", ":"),
+            )
+            return result
         # Validated runs have padding only at the end; padding-only slices stay literal.
         spans = [
             [
                 max(start, s.start) - start,
                 min(end, s.end) - start,
                 s.placeholder,
-                start <= s.start < end or (s.start <= start and end <= s.end),
+                start <= s.start < end,
             ]
             for s in self.spans[bisect_right(self._ends, start) : bisect_left(self._starts, end)]
             if self.text[max(start, s.start)] != "="
@@ -322,6 +344,9 @@ def user_tool_arguments(arguments, *, tool_name=None):
     if tool_name is not None and tool_name not in _DRAWER_WRITE_TOOLS:
         return dict(arguments)
     clean = user_metadata(arguments)
+    clean.pop("lexical_only", None)
+    # Ignore obsolete forged identities before public argument validation.
+    clean.pop("_mirror_unit", None)
     for key in ("metadata", "metadatas"):
         if key in clean:
             clean[key] = user_metadata(clean[key])
@@ -343,58 +368,65 @@ def public_tool_result(result, *, tool_name=None):
     return result
 
 
+def _validated_index_spans(text: str, hint: str) -> list:
+    from .index_hygiene import PLACEHOLDER_RE, find_base64_spans
+
+    data = json.loads(hint)
+    if data["v"] != INDEX_VERSION or data["sha256"] != _text_hash(text):
+        raise ValueError("version or content changed")
+    cursor = 0
+    for start, end, placeholder, emit in data["spans"]:
+        # A trusted continuation may occupy the whole fragment. Its run's
+        # placeholder was emitted in the earlier piece containing the start.
+        if not (
+            type(start) is int
+            and type(end) is int
+            and cursor <= start < end <= len(text)
+            and isinstance(placeholder, str)
+            and _BASE64_FRAGMENT.fullmatch(text[start:end])
+            and type(emit) is bool
+            and (emit or start == 0)
+            and not run_touches_word(text, start, end)
+        ):
+            raise ValueError("invalid span")
+        match = PLACEHOLDER_RE.fullmatch(placeholder)
+        if match is None:
+            raise ValueError("invalid placeholder")
+        size = int(match["decoded_bytes"])
+        # The detector requires 200 payload characters (150 bytes).
+        # A full run must fit in a Python bytes object and cover this
+        # fragment, including only the padding its byte count permits.
+        if not (
+            150 <= size <= sys.maxsize
+            and end - start <= 4 * ((size + 2) // 3)
+            and text[start:end].count("=") <= -size % 3
+        ):
+            raise ValueError("invalid placeholder size")
+        if emit and end < len(text):
+            # Emitting spans with a visible end are complete runs,
+            # even at offset zero. They must satisfy the detector's rule,
+            # including its threshold, alphabets, pad bits and entropy.
+            spans = find_base64_spans(text[start:end])
+            if len(spans) != 1 or spans[0].placeholder != placeholder:
+                raise ValueError("invalid complete run")
+        cursor = end
+    return data["spans"]
+
+
 def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
     """The words of a stored document for a full-text index.
 
     NUL and lone surrogates become spaces: the index never returns text, and
     neither can be tokenized or UTF-8 encoded.
     """
-    from .index_hygiene import (
-        PLACEHOLDER_RE,
-        find_base64_spans,
-        index_text as detect_index_text,
-    )
+    from .index_hygiene import index_text as detect_index_text
 
     text = _decode(stored) if stored_form else stored
     hint = (metadata or {}).get(INDEX_SPANS)
     if hint:
         try:
-            data = json.loads(hint)
-            if data["v"] != INDEX_VERSION or data["sha256"] != _text_hash(text):
-                raise ValueError("version or content changed")
             parts, cursor = [], 0
-            for start, end, placeholder, emit in data["spans"]:
-                if not (
-                    type(start) is int
-                    and type(end) is int
-                    and cursor <= start < end <= len(text)
-                    and isinstance(placeholder, str)
-                    and _BASE64_FRAGMENT.fullmatch(text[start:end])
-                    and type(emit) is bool
-                    and (emit or (start == 0 and end < len(text)))
-                    and not run_touches_word(text, start, end)
-                ):
-                    raise ValueError("invalid span")
-                match = PLACEHOLDER_RE.fullmatch(placeholder)
-                if match is None:
-                    raise ValueError("invalid placeholder")
-                size = int(match["decoded_bytes"])
-                # The detector requires 200 payload characters (150 bytes).
-                # A full run must fit in a Python bytes object and cover this
-                # fragment, including only the padding its byte count permits.
-                if not (
-                    150 <= size <= sys.maxsize
-                    and end - start <= 4 * ((size + 2) // 3)
-                    and text[start:end].count("=") <= -size % 3
-                ):
-                    raise ValueError("invalid placeholder size")
-                if emit and end < len(text):
-                    # Emitting spans with a visible end are complete runs,
-                    # even at offset zero. They must satisfy the detector's rule,
-                    # including its threshold, alphabets, pad bits and entropy.
-                    spans = find_base64_spans(text[start:end])
-                    if len(spans) != 1 or spans[0].placeholder != placeholder:
-                        raise ValueError("invalid complete run")
+            for start, end, placeholder, emit in _validated_index_spans(text, hint):
                 parts.extend((text[cursor:start], placeholder if emit else ""))
                 cursor = end
             parts.append(text[cursor:])
@@ -402,6 +434,19 @@ def index_text(stored: str, metadata=None, *, stored_form=True) -> str:
         except (ValueError, TypeError, KeyError, RecursionError):
             _warn_index_hint("Ignoring stale or invalid index span hint")
     return _BAD.sub(" ", detect_index_text(text))
+
+
+def embedding_text(stored: str, metadata=None) -> str:
+    """Use a covering run's placeholder when its keyword projection is empty."""
+    text = index_text(stored, metadata, stored_form=False)
+    if text != "" or not stored:
+        return text
+    spans = _validated_index_spans(stored, (metadata or {})[INDEX_SPANS])
+    if len(spans) == 1:
+        start, end, placeholder, _ = spans[0]
+        if start == 0 and end == len(stored):
+            return placeholder
+    raise ValueError("Empty embedding projection requires a single full-cover span")
 
 
 _EQUALITY_OPS = ("$eq", "$ne", "$in", "$nin")

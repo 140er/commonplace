@@ -3,6 +3,7 @@
 from commonplace.boards._http import HTTPError, path_parts, read_json, require_principal, send_json
 from commonplace.extensions import ToolContext, ToolError
 
+from . import checks
 from .service import RuleService, VersionClash
 
 
@@ -16,6 +17,9 @@ def install(gateway):
                 raise HTTPError(403, "people only" if h.command == "GET" else "owner only")
             service = RuleService(ToolContext(principal=principal, gateway=gateway))
             status, result = dispatch(service, h, path_parts(h, "/api/"), h.command)
+        except checks.StoreLost:
+            send_json(h, 409, {"error": checks.LOST_ERROR, "store_lost": True})
+            return
         except VersionClash as exc:
             send_json(h, 409, {"error": "rule changed", "current": exc.current})
             return
@@ -49,6 +53,12 @@ def dispatch(service, h, parts, method):
                 raise HTTPError(400, f"{key} is required")
         return value
 
+    if parts == ["rules", "checks"] and method == "PATCH":
+        return 200, service.set_check(**body(("agent", "mode"), ("agent", "mode")))
+    if parts == ["rules", "store", "accept"] and method == "POST":
+        body(())
+        return 200, service.accept_store()
+    checks.guard(service.ctx.db, service.principal.workspace_id, service.ctx.workspace_dir())
     if parts == ["rules", "count"] and method == "GET":
         return 200, service.count()
     if parts == ["rules"]:
@@ -56,7 +66,10 @@ def dispatch(service, h, parts, method):
             return 200, service.list_rules()
         if method == "POST":
             return 201, service.create(
-                **body(("agent", "text", "kind", "scope", "scope_ref"), ("agent", "text", "kind"))
+                **body(
+                    ("agent", "text", "summary", "kind", "scope", "scope_ref"),
+                    ("agent", "text", "kind"),
+                )
             )
     if len(parts) == 3 and parts[:2] == ["rules", "suggestions"] and method == "POST":
         values = body(("action", "version"), ("action",))
@@ -70,7 +83,10 @@ def dispatch(service, h, parts, method):
         if len(parts) == 2 and method == "PATCH":
             return 200, service.edit(
                 rule_id,
-                **body(("version", "text", "kind", "scope", "scope_ref", "note"), ("version",)),
+                **body(
+                    ("version", "text", "summary", "kind", "scope", "scope_ref", "note"),
+                    ("version",),
+                ),
             )
         if len(parts) == 3 and method == "POST":
             if parts[2] == "action":
@@ -84,6 +100,6 @@ def dispatch(service, h, parts, method):
                 )
             if parts[2] == "suggestions":
                 return 201, service.suggest(
-                    rule_id, **body(("text", "from_agent"), ("text", "from_agent"))
+                    rule_id, **body(("text", "from_agent", "base_version"), ("text", "from_agent"))
                 )
     raise HTTPError(404, "not found")

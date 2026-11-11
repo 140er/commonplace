@@ -486,6 +486,7 @@ def test_message_object_lossless_property(words, wrapper):
 
 
 @pytest.mark.parametrize("fmt", ["claude-code", "codex", "messages"])
+@pytest.mark.timing
 def test_twenty_megabyte_transcript_under_three_seconds(tmp_path, fmt):
     content = "Synthetic line ☕ " * 220
     if fmt == "claude-code":

@@ -18,6 +18,7 @@ from mempalace.index_hygiene import (
 )
 
 
+@pytest.mark.timing
 def test_candidate_detection_is_bounded_on_adversarial_short_runs():
     # Without the start boundary, each 199-character run is retried 199 times.
     text = ("A" * 199 + " ") * 20_000
@@ -37,6 +38,7 @@ def test_candidate_detection_is_bounded_on_adversarial_short_runs():
 
 
 @pytest.mark.parametrize("separator", ["", " "], ids=["backward", "forward"])
+@pytest.mark.timing
 def test_format_look_past_is_bounded_on_adversarial_runs(separator):
     # Spaces keep the preceding edge visible so every run exercises the forward cap.
     text = ("A" * 200 + "\u00ad" * 4_000 + separator) * 1_000
@@ -220,6 +222,22 @@ def payload(size=300, prefix=b"", urlsafe=False):
     data = prefix + random.Random(size).randbytes(size - len(prefix))
     encode = base64.urlsafe_b64encode if urlsafe else base64.b64encode
     return data, encode(data).decode()
+
+
+def test_projection_emits_one_placeholder_across_two_continuation_pieces():
+    from mempalace.stored_text import IndexSource, index_text as hinted_index_text
+
+    _, encoded = payload(1950)
+    text = "before\n" + encoded + "\nafter"
+    source = IndexSource(text)
+    views = []
+    for start, end in [(0, 1300), (1300, len(text))]:
+        piece = text[start:end]
+        metadata = source.metadata(start, end)
+        # Exercise the mirror-to-drawer projection as well as direct hints.
+        projected = IndexSource(piece, metadata).metadata(0, len(piece))
+        views.append(hinted_index_text(piece, projected))
+    assert "".join(views) == "before\n[base64 binary 1950 B]\nafter"
 
 
 @pytest.mark.parametrize(

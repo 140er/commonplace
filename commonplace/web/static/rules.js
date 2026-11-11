@@ -68,7 +68,7 @@ export function wordDiff(before, after) {
 const actionButton = (action, label, attrs = "", cls = "opt") => `<button type="button" class="${cls}" data-rule-action="${action}" ${attrs}>${e(label)}</button>`;
 const choices = (values, current) => values.map((value) => `<option value="${e(value)}"${value === current ? " selected" : ""}>${e(value)}</option>`).join("");
 function fields(rule = {}) {
-  return `<label>Text<textarea name="text" required>${e(rule.text || "")}</textarea></label><div class="rule-fields"><label>Kind<select name="kind">${choices(kinds, rule.kind || "instruction")}</select></label><label>Scope<select name="scope">${choices(scopes, rule.scope || "global")}</select></label><label data-scope-ref${!rule.scope || rule.scope === "global" ? " hidden" : ""}>Scope reference<input name="scope_ref" value="${e(rule.scope_ref || "")}"${rule.scope && rule.scope !== "global" ? " required" : ""}></label></div>`;
+  return `<label>Text<textarea name="text" required>${e(rule.text || "")}</textarea></label><label>Summary (optional)<textarea name="summary" maxlength="400">${e(rule.summary || "")}</textarea></label><div class="rule-fields"><label>Kind<select name="kind">${choices(kinds, rule.kind || "instruction")}</select></label><label>Scope<select name="scope">${choices(scopes, rule.scope || "global")}</select></label><label data-scope-ref${!rule.scope || rule.scope === "global" ? " hidden" : ""}>Scope reference<input name="scope_ref" value="${e(rule.scope_ref || "")}"${rule.scope && rule.scope !== "global" ? " required" : ""}></label></div>`;
 }
 function clarifyPanel(attrs, bridge) {
   return `<details class="rule-clarify" ${attrs}><summary class="rule-text-button">Help me clarify</summary><div class="rule-clarify-panel"><div class="opts">${actionButton("copy-prompt", "Copy prompt")}${bridge ? actionButton("agents", "Ask an agent") : ""}</div><div data-rule-ask></div><div data-rule-reply role="status" aria-live="polite"></div></div></details>`;
@@ -83,15 +83,18 @@ function movePanel(rule, targets) {
 }
 function ruleRow(rule, suggestions, owner, bridge, targets = []) {
   const waiting = isActive(rule) && (rule.status === "proposed" || Number(rule.pending) === 1), edited = rule.status === "edited" && rule.agent_text != null;
-  const controls = `<div class="rule-actions">${owner ? `${rule.status === "proposed" && !rule.pending ? `${actionButton("accept", "Accept", "", "blockbtn")}${rule.agent !== "*" ? actionButton("accept-all", "Accept for all agents", "", "rule-text-button") : ""}` : ""}${rule.status === "retired" ? actionButton("restore", "Restore", "", "rule-text-button") : `${actionButton("edit", "Edit", "", "rule-text-button")}${actionButton("retire", "Retire", "", "rule-text-button")}${movePanel(rule, targets)}`}` : ""}${actionButton("history", "History", "", "rule-text-button")}${clarifyPanel(`data-clarify-rule="${e(rule.id)}"`, owner && bridge)}</div>`;
-  return `<article class="rule-row" data-rule-id="${e(rule.id)}" data-version="${e(rule.version)}"><div class="rule-chips"><span class="pill">${e(rule.kind)}</span>${rule.scope !== "global" ? `<span class="pill">${e(rule.scope)} ${e(rule.scope_ref)}</span>` : ""}<span class="pill${waiting ? " you" : ""}">${e(rule.status)}</span>${rule.pending ? '<span class="pill you">Agent changed</span>' : ""}</div><div data-rule-body><p class="rule-text">${edited ? wordDiff(rule.agent_text, rule.text) : e(rule.text)}</p>${controls}</div>${rule.pending ? `<section class="rule-proposal"><h4>${rule.agent_text_by && rule.agent_text_by !== rule.agent ? e(`${agentName(rule.agent_text_by)}’s wording`) : "Agent’s wording"}</h4><p class="rule-text">${wordDiff(rule.text, rule.agent_text)}</p>${owner ? `<div class="opts">${actionButton("accept_agent", "Use agent's")}${actionButton("keep_edit", "Keep mine")}</div>` : ""}</section>` : ""}${suggestions.map((suggestion) => suggestionView(rule, suggestion, owner)).join("")}<div data-rule-history hidden></div></article>`;
+  const controls = `<div class="rule-actions">${owner ? `${rule.status === "proposed" && !rule.pending ? `${actionButton("accept", rule.agent === "*" ? "Accept for all agents" : "Accept", "", "blockbtn")}${rule.agent !== "*" ? actionButton("accept-all", "Accept for all agents", "", "rule-text-button") : ""}` : ""}${rule.status === "retired" ? actionButton("restore", "Restore", "", "rule-text-button") : `${actionButton("edit", "Edit", "", "rule-text-button")}${actionButton("retire", "Retire", "", "rule-text-button")}${movePanel(rule, targets)}`}` : ""}${actionButton("history", "History", "", "rule-text-button")}${clarifyPanel(`data-clarify-rule="${e(rule.id)}"`, owner && bridge)}</div>`;
+  const proposer = owner && rule.agent === "*" && rule.source === "agent" && rule.agent_text_by ? `<span class="pill">Proposed by ${e(agentName(rule.agent_text_by))}</span>` : "";
+  const fullId = `rule-full-${rule.id}`;
+  const summary = rule.display_summary || rule.summary || String(rule.text).split(/(?<=[.!?])\s+/)[0].slice(0, 240);
+  return `<article class="rule-row" data-rule-id="${e(rule.id)}" data-version="${e(rule.version)}"><div class="rule-chips"><span class="pill">${e(rule.kind)}</span>${rule.scope !== "global" ? `<span class="pill">${e(rule.scope)} ${e(rule.scope_ref)}</span>` : ""}<span class="pill${waiting ? " you" : ""}">${e(rule.status)}</span>${proposer}${rule.pending ? '<span class="pill you">Agent changed</span>' : ""}</div><div data-rule-body><button type="button" class="rule-summary" data-rule-action="expand" aria-expanded="false" aria-controls="${e(fullId)}"><span>${e(summary)}</span><span data-rule-expand-icon aria-hidden="true">+</span></button><div id="${e(fullId)}" data-rule-full hidden><p class="rule-text">${edited ? wordDiff(rule.agent_text, rule.text) : e(rule.text)}</p>${rule.pending ? `<section class="rule-proposal"><h4>${rule.agent_text_by && rule.agent_text_by !== rule.agent ? e(`${agentName(rule.agent_text_by)}’s wording`) : "Agent’s wording"}</h4><p class="rule-text">${wordDiff(rule.text, rule.agent_text)}</p>${owner ? `<div class="opts">${actionButton("accept_agent", "Use agent's")}${actionButton("keep_edit", "Keep mine")}</div>` : ""}</section>` : ""}${suggestions.map((suggestion) => suggestionView(rule, suggestion, owner)).join("")}</div>${controls}</div><div data-rule-history hidden></div></article>`;
 }
 export function rulesView({ rules = [], suggestions = [], agents = [], waiting = 0, waiting_by_agent = {} } = {}, { owner = true } = {}) {
   const bridge = desktopBridge();
   const groups = [...new Set([...agents.map(agentRef), ...rules.map((rule) => rule.agent)])].map((agent) => ({ agent, rules: rules.filter((rule) => rule.agent === agent) }));
   groups.sort((a, b) => (waiting_by_agent[b.agent] || 0) - (waiting_by_agent[a.agent] || 0) || agentName(a.agent).localeCompare(agentName(b.agent)));
   const targets = ["*", ...groups.map(({ agent }) => agent).filter((agent) => agent !== "*").sort((a, b) => agentName(a).localeCompare(agentName(b)))];
-  return `<section class="rules-view" aria-label="Rules" data-waiting="${e(waiting)}">${owner ? `<section class="rule-new" id="rule-new" hidden><form class="form-tile" data-rule-form="new"><label>Agent<select name="agent"><option value="*">All agents</option>${[...new Set([...agents.map(agentRef), ...rules.map((rule) => rule.agent)])].filter((agent) => agent !== "*").map((agent) => `<option value="${e(agent)}">${e(agentName(agent))}</option>`).join("")}</select></label>${fields()}<div class="opts"><button class="blockbtn">Save</button>${actionButton("cancel-new", "Cancel")}</div></form></section>` : ""}<div class="rule-tiles">${groups.map(({ agent, rules: group }) => `<section class="rule-tile" data-rule-agent="${e(agent)}"><header><h2>${e(agentName(agent))}</h2>${(waiting_by_agent[agent] || 0) > 0 ? `<span class="pill you">${e(waiting_by_agent[agent])}</span>` : ""}${clarifyPanel(`data-clarify-agent="${e(agent)}"`, owner && bridge)}</header>${activeRules(group).map((rule) => ruleRow(rule, suggestions.filter((s) => s.rule_id === rule.id && (!s.status || s.status === "open")), owner, bridge, targets)).join("") || '<p class="rule-empty">No active rules</p>'}${group.some((rule) => !isActive(rule)) ? `<details class="rule-retired"><summary>Retired (${group.filter((rule) => !isActive(rule)).length})</summary>${group.filter((rule) => !isActive(rule)).map((rule) => ruleRow(rule, suggestions.filter((s) => s.rule_id === rule.id && (!s.status || s.status === "open")), owner, bridge)).join("")}</details>` : ""}</section>`).join("") || '<p class="message">No rules</p>'}</div></section>`;
+  return `<section class="rules-view" aria-label="Rules" data-waiting="${e(waiting)}"><p class="message quiet" data-rule-pending role="status" hidden>Rule list refresh pending</p>${owner ? `<section class="rule-new" id="rule-new" hidden><form class="form-tile" data-rule-form="new"><label>Applies to<select name="agent"><option value="*">All agents</option>${[...new Set([...agents.map(agentRef), ...rules.map((rule) => rule.agent)])].filter((agent) => agent !== "*").map((agent) => `<option value="${e(agent)}">${e(agentName(agent))}</option>`).join("")}</select></label>${fields()}<div class="opts"><button class="blockbtn">Save</button>${actionButton("cancel-new", "Cancel")}</div></form></section>` : ""}<div class="rule-tiles">${groups.map(({ agent, rules: group }) => `<section class="rule-tile" data-rule-agent="${e(agent)}"><header><h2>${e(agentName(agent))}</h2>${(waiting_by_agent[agent] || 0) > 0 ? `<span class="pill you">${e(waiting_by_agent[agent])}</span>` : ""}${clarifyPanel(`data-clarify-agent="${e(agent)}"`, owner && bridge)}</header>${activeRules(group).map((rule) => ruleRow(rule, suggestions.filter((s) => s.rule_id === rule.id && (!s.status || s.status === "open")), owner, bridge, targets)).join("") || '<p class="rule-empty">No active rules</p>'}${group.some((rule) => !isActive(rule)) ? `<details class="rule-retired"><summary>Retired (${group.filter((rule) => !isActive(rule)).length})</summary>${group.filter((rule) => !isActive(rule)).map((rule) => ruleRow(rule, suggestions.filter((s) => s.rule_id === rule.id && (!s.status || s.status === "open")), owner, bridge)).join("")}</details>` : ""}</section>`).join("") || '<p class="message">No rules</p>'}</div></section>`;
 }
 
 async function copyText(text, button) {
@@ -121,9 +124,32 @@ export function rulesHandlers(root, api, refresh, showError) {
     const buttons = [...element.querySelectorAll("button")];
     buttons.forEach((button) => { button.disabled = true; });
     // A finished write renders once even if a background refresh overtakes this one.
-    try { if (await work() !== false) { ui.force = true; await refresh(); } }
+    try {
+      const saved = await work();
+      if (saved !== false) {
+        const row = element.dataset?.ruleForm === "edit" ? element.closest("[data-rule-id]") : null;
+        if (row && String(saved?.id) === row.dataset.ruleId && Number.isInteger(saved?.version)) {
+          payload = { ...payload, rules: payload.rules.map((rule) => String(rule.id) === row.dataset.ruleId ? saved : rule) };
+          row.dataset.version = String(saved.version);
+          element.querySelector("[data-rule-current]").innerHTML = "";
+        }
+        ui.force = true; await refresh();
+      }
+    }
     catch (error) {
-      if (error.status === 409) { ui.force = true; await refresh(); showError("Rule changed. Review it and try again."); }
+      if (element.dataset?.ruleForm === "edit") {
+        const row = element.closest("[data-rule-id]"), current = error.payload?.current;
+        if (error.status === 409 && !error.payload?.store_lost && row && current && String(current.id) === row.dataset.ruleId && Number.isInteger(current.version)) {
+          payload = { ...payload, rules: payload.rules.map((rule) => String(rule.id) === row.dataset.ruleId ? current : rule) };
+          row.dataset.version = String(current.version);
+          const explanation = current.status === "retired" ? "Rule retired. Restore it before saving. Your draft is kept." : "Rule changed. Your draft is kept. Review the current rule and Save again.";
+          element.querySelector("[data-rule-current]").innerHTML = `<section class="rule-proposal"><p class="rule-text">${e(explanation)}</p><h4>Current rule</h4><div class="rule-chips"><span class="pill">${e(agentName(current.agent))}</span><span class="pill">${e(current.status)}</span><span class="pill">${e(current.kind)}</span><span class="pill">${e(current.scope)}${current.scope_ref == null ? "" : ` ${e(current.scope_ref)}`}</span></div><p class="rule-text">${e(current.text)}</p><p class="rule-text quiet">Summary: ${e(current.summary ?? "None")}</p></section>`;
+          ui.stale = true;
+          const marker = root.querySelector("[data-rule-pending]");
+          if (marker) marker.hidden = false;
+        } else showError(error.message);
+      } else if (element.dataset?.ruleForm === "new" || error.payload?.store_lost) showError(error.message);
+      else if (error.status === 409) { ui.force = true; await refresh(); showError("Rule changed. Review it and try again."); }
       else showError(error.message);
     } finally { pending.delete(key); buttons.forEach((button) => { button.disabled = false; }); await refreshIfStale(); }
   }
@@ -147,7 +173,13 @@ export function rulesHandlers(root, api, refresh, showError) {
     const action = button.dataset.ruleAction, row = button.closest("[data-rule-id]"), rule = ruleFor(row);
     const panel = button.closest(".rule-clarify");
     try {
-      if (action === "new" && owner) {
+      if (action === "expand" && rule) {
+        const full = row.querySelector("[data-rule-full]");
+        full.hidden = !full.hidden;
+        button.setAttribute("aria-expanded", String(!full.hidden));
+        button.querySelector("[data-rule-expand-icon]").textContent = full.hidden ? "+" : "−";
+        if (full.hidden) await refreshIfStale();
+      } else if (action === "new" && owner) {
         const form = root.querySelector(".rule-new");
         form.hidden = !form.hidden;
         button.setAttribute("aria-expanded", String(!form.hidden));
@@ -166,6 +198,7 @@ export function rulesHandlers(root, api, refresh, showError) {
         const bridge = desktopBridge(); if (!bridge) return;
         const select = panel.querySelector("[data-ask-agent]"), agent = select.value, name = select.selectedOptions[0].textContent;
         const { rules, prompt, single } = context(panel), reply = panel.querySelector("[data-rule-reply]");
+        const baseVersions = new Map(rules.map((rule) => [rule.id, rule.version]));
         await mutate(`ask-${panel.dataset.clarifyRule || panel.dataset.clarifyAgent}`, panel, async () => {
           reply.textContent = `Asking ${name}…`;
           try {
@@ -176,12 +209,12 @@ export function rulesHandlers(root, api, refresh, showError) {
               reply.innerHTML = `<p class="rule-text" data-reply-text>${e(answer.text)}</p>${actionButton("copy-reply", "Copy")}`;
               return false;
             }
-            for (const match of matches) await api(`/api/rules/${encodeURIComponent(match.rule_id)}/suggestions`, { method: "POST", body: { text: match.text, from_agent: name } });
+            for (const match of matches) await api(`/api/rules/${encodeURIComponent(match.rule_id)}/suggestions`, { method: "POST", body: { text: match.text, from_agent: name, base_version: baseVersions.get(match.rule_id) } });
             reply.textContent = "";
           } catch (error) { reply.textContent = ""; throw error; }
         });
       } else if (action === "edit" && owner && rule) {
-        row.querySelector("[data-rule-body]").innerHTML = `<form class="form-tile" data-rule-form="edit">${fields(rule)}<div class="opts"><button class="blockbtn">Save</button>${actionButton("cancel-edit", "Cancel")}</div></form>`;
+        row.querySelector("[data-rule-body]").innerHTML = `<form class="form-tile" data-rule-form="edit">${fields(rule)}<div data-rule-current role="status" aria-live="polite"></div><div class="opts"><button class="blockbtn">Save</button>${actionButton("cancel-edit", "Cancel")}</div></form>`;
         row.querySelector("textarea").focus();
       } else if (action === "cancel-edit") await refresh();
       else if (action === "cancel-new") { const panel = button.closest(".rule-new"); panel.hidden = true; panel.querySelector("form").reset(); panel.querySelector("[data-scope-ref]").hidden = true; panel.querySelector('[name="scope_ref"]').required = false; const trigger = root.querySelector('[data-rule-action="new"]'); trigger.setAttribute("aria-expanded", "false"); trigger.focus(); await refreshIfStale(); }
@@ -218,7 +251,7 @@ export function rulesHandlers(root, api, refresh, showError) {
     stale: false,
     force: false,
     update(next, options = {}) { payload = next; owner = options.owner ?? true; ui.stale = false; ui.force = false; },
-    busy() { return pending.size > 0 || !!root.querySelector('.rules-view .rule-new:not([hidden]), .rules-view form[data-rule-form="edit"], .rules-view details[open], .rules-view [data-rule-history]:not([hidden]), .rules-view .rule-clarify[open] [data-ask-agent], .rules-view .rule-clarify[open] [data-reply-text]'); },
+    busy() { return pending.size > 0 || !!root.querySelector('.rules-view .rule-new:not([hidden]), .rules-view form[data-rule-form="edit"], .rules-view details[open], .rules-view [data-rule-history]:not([hidden]), .rules-view [data-rule-full]:not([hidden]), .rules-view .rule-clarify[open] [data-ask-agent], .rules-view .rule-clarify[open] [data-reply-text]'); },
   };
   return ui;
 }

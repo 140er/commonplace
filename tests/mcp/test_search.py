@@ -171,8 +171,9 @@ class TestSearchTool:
 
         assert 0.0 < seen["max_distance"] < 0.001
 
-    def test_search_passes_candidate_strategy(self, monkeypatch, config, kg):
-        """MCP callers can opt into backend BM25/vector union candidate gathering."""
+    @pytest.mark.parametrize("strategy", [None, "vector", "union"])
+    def test_search_passes_candidate_strategy(self, monkeypatch, config, kg, strategy):
+        """MCP forwards None for capability resolution and keeps explicit selection."""
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
@@ -184,10 +185,11 @@ class TestSearchTool:
 
         monkeypatch.setattr(mcp_server, "search_memories", fake_search)
 
-        result = mcp_server.tool_search(query="rareterm", candidate_strategy="union")
+        arguments = {} if strategy is None else {"candidate_strategy": strategy}
+        result = mcp_server.tool_search(query="rareterm", **arguments)
 
         assert "error" not in result
-        assert seen["candidate_strategy"] == "union"
+        assert seen["candidate_strategy"] == strategy
 
     def test_search_applies_no_default_max_distance(self, monkeypatch, config, kg):
         _patch_mcp_server(monkeypatch, config, kg)
@@ -206,7 +208,8 @@ class TestSearchTool:
         assert "error" not in result
         assert seen["max_distance"] is None
 
-    def test_search_cli_compatible_reuses_hub_collection(self, monkeypatch, config, kg):
+    @pytest.mark.parametrize("strategy", [None, "vector", "union"])
+    def test_search_cli_compatible_reuses_hub_collection(self, monkeypatch, config, kg, strategy):
         _patch_mcp_server(monkeypatch, config, kg)
         from mempalace import mcp_server
 
@@ -222,11 +225,13 @@ class TestSearchTool:
         monkeypatch.setattr(mcp_server, "cli_search", fake_cli_search)
         monkeypatch.setattr(mcp_server, "_capture_fd_stdout", lambda fn: (fn(), "exact CLI\n"))
 
-        result = mcp_server.tool_search(query="needle", limit=7, cli_compatible=True)
+        arguments = {} if strategy is None else {"candidate_strategy": strategy}
+        result = mcp_server.tool_search(query="needle", limit=7, cli_compatible=True, **arguments)
 
         assert result == {"query": "needle", "cli_output": "exact CLI\n"}
         assert seen["collection"] is collection
         assert seen["n_results"] == 7
+        assert seen["candidate_strategy"] == strategy
 
     def test_search_cli_compatible_rejects_embedder_identity_mismatch(
         self, monkeypatch, config, kg
@@ -341,7 +346,6 @@ class TestSearchTool:
     @pytest.mark.parametrize(
         ("arguments", "control"),
         [
-            ({"candidate_strategy": "union"}, "candidate_strategy"),
             ({"min_similarity": 0.5}, "min_similarity"),
             ({"max_distance": 0.5}, "max_distance"),
             ({"context": "background"}, "context"),
@@ -693,3 +697,38 @@ def test_2288_grouped_graph_stats_count_distinct_room_instances(monkeypatch):
         "matlab-drive",
         "octopus",
     }
+
+
+@pytest.mark.parametrize("cli_compatible", [False, True])
+@pytest.mark.parametrize(
+    "wing,wings,expected",
+    [
+        (None, ["notes"], ["notes"]),
+        ("notes", ["notes", "other"], ["notes"]),
+        ("notes", ["other"], []),
+        (None, [], []),
+    ],
+)
+def test_search_fact_attachment_preserves_wing_union_and_sanitized_query(
+    monkeypatch, config, palace_path, seeded_collection, kg, cli_compatible, wing, wings, expected
+):
+    _patch_mcp_server(monkeypatch, config, kg)
+    from mempalace import mcp_server
+
+    calls = []
+
+    def facts(query, **kwargs):
+        calls.append((query, kwargs))
+        return {"facts": []}
+
+    monkeypatch.setattr(mcp_server, "tool_kg_search", facts)
+    result = mcp_server.tool_search(
+        "JWT authentication", wing=wing, wings=wings, cli_compatible=cli_compatible
+    )
+    assert not result.get("error")
+    assert calls == [
+        (
+            "JWT authentication",
+            {"limit": 5, "wings": expected, "query_is_sanitized": True},
+        )
+    ]

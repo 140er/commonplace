@@ -32,12 +32,24 @@ MODULES = (
     "commonplace.boards",
     "commonplace.rules",
     "commonplace.memory_tools",
+    "commonplace.skills",
+    "commonplace.session",
     "commonplace.webhooks",
+    "commonplace.phone_push",
     "commonplace.oauth",
     "commonplace.web",
     "commonplace.voice",
+    "commonplace.email_auth",
+    # Email admission must stop before GitHub shutdown waits for the SQL lock.
     "commonplace.social",
     "commonplace.handoff.extension",
+    "commonplace.import_tools",
+    "commonplace.runner",
+    "commonplace.orch",
+    "commonplace.console",
+    "commonplace.chat",
+    "commonplace.holds",
+    "commonplace.projects",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})
@@ -63,6 +75,8 @@ class LocalTool:
     # False hides the tool exactly like a tool the token can't use.
     available: Optional[Callable[[Any, Any], bool]] = None  # (principal, gateway)
 
+    input_schema_for: Optional[Callable[[Any, Any], dict]] = None
+
     def usable_by(self, principal, gateway=None) -> bool:
         if self.owner_only and principal.role != "owner":
             return False
@@ -73,11 +87,13 @@ class LocalTool:
         except Exception:
             return False
 
-    def schema(self) -> dict:
+    def schema(self, principal=None, gateway=None) -> dict:
         return {
             "name": self.name,
             "description": self.description,
-            "inputSchema": self.input_schema,
+            "inputSchema": self.input_schema_for(principal, gateway)
+            if self.input_schema_for is not None and principal is not None
+            else self.input_schema,
         }
 
 

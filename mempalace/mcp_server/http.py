@@ -619,6 +619,17 @@ def _http_reconnect_refused_during_mine(request):
 
 
 def _http_dispatch(request):
+    method, params = _normalize_envelope(request) if isinstance(request, dict) else ("", {})
+    if method == "tools/call" or method in {
+        "internal/write_mirror_units",
+        "internal/read_associations",
+    }:
+        with _worker_local_scope(params.get("name") if method == "tools/call" else method, "http"):
+            return _http_dispatch_unobserved(request)
+    return _http_dispatch_unobserved(request)
+
+
+def _http_dispatch_unobserved(request):
     """Dispatch one JSON-RPC request with the transport's locking policy.
 
     Protocol methods and independent stores are lock-free. Palace reads share
@@ -628,7 +639,32 @@ def _http_dispatch(request):
     # Same envelope trap as handle_request, on a dispatcher added after it: the
     # `or ""` fallback only rescues falsy values, so a truthy non-string method
     # reached .startswith() below and raised out of the handler thread.
-    method, _ = _normalize_envelope(request) if isinstance(request, dict) else ("", {})
+    method, params = _normalize_envelope(request) if isinstance(request, dict) else ("", {})
+    if method == "internal/read_associations" and _provenance.current() is not None:
+        req_id = request.get("id")
+        with _HTTP_REQUEST_LOCK.read_lock():
+            try:
+                result = read_associations(**params)
+            except Exception:
+                result = {"associations": None}
+            return _tool_call_response(req_id, result)
+    if method == "internal/write_mirror_units" and _provenance.current() is not None:
+        from ..palace import mine_yield_hook
+
+        req_id = request.get("id")
+        with (
+            _http_embedding_release_installed("write"),
+            _HTTP_REQUEST_LOCK,
+            mine_yield_hook(_HTTP_REQUEST_LOCK.yield_write),
+        ):
+            refusal = _mcp_tool_preflight_refusal(req_id, "mempalace_add_drawer")
+            if refusal is not None:
+                return refusal
+            try:
+                result = write_mirror_units(**params)
+            except (TypeError, ValueError):
+                return _json_rpc_error(req_id, -32602, "Invalid mirror units")
+            return _tool_call_response(req_id, result)
     if method in _HTTP_PROTOCOL_METHODS or method.startswith("notifications/"):
         return handle_request(request)
     tool_name = None
@@ -1437,46 +1473,53 @@ def _build_http_server(host: str, port: int):
                 self._send_json(400, _json_rpc_parse_error())
                 return
 
-            # Locking policy lives in _http_dispatch: global lock for
-            # Chroma-touching tools, lock-free for logstream tools.
-            try:
-                with _provenance.verified(self.verified_identity):
-                    response = _http_dispatch(request)
-            except Exception:
-                # Without this the exception escaped into BaseHTTPRequestHandler,
-                # which closes the connection with no reply at all -- the client
-                # sees a dropped socket instead of a JSON-RPC error. Log with the
-                # traceback: -32603 tells the client nothing diagnostic, so the
-                # stack is the only record of what actually failed.
-                logger.exception("HTTP JSON-RPC dispatch error")
-                req_id = request.get("id") if isinstance(request, dict) else None
-                if req_id is None:
-                    # A notification is owed no response body, failure included,
-                    # matching the 202 branch below and the stdio loop. The
-                    # status still reports the failure at the transport level.
-                    self._record_request(500)
-                    self.send_response(500)
-                    self.send_header("Content-Length", "0")
-                    self.send_header("Connection", "close")
-                    self.end_headers()
-                    self.close_connection = True
-                    return
-                self._send_json(500, _json_rpc_internal_error(req_id))
-                return
+            with _worker_transport():
+                try:
+                    # Locking policy lives in _http_dispatch: global lock for
+                    # Chroma-touching tools, lock-free for logstream tools.
+                    try:
+                        with _provenance.verified(self.verified_identity):
+                            response = _http_dispatch(request)
+                    except Exception:
+                        # Without this the exception escaped into BaseHTTPRequestHandler,
+                        # which closes the connection with no reply at all -- the client
+                        # sees a dropped socket instead of a JSON-RPC error. Log with the
+                        # traceback: -32603 tells the client nothing diagnostic, so the
+                        # stack is the only record of what actually failed.
+                        logger.exception("HTTP JSON-RPC dispatch error")
+                        req_id = request.get("id") if isinstance(request, dict) else None
+                        if req_id is None:
+                            # A notification is owed no response body, failure included,
+                            # matching the 202 branch below and the stdio loop. The
+                            # status still reports the failure at the transport level.
+                            self._record_request(500)
+                            self.send_response(500)
+                            self.send_header("Content-Length", "0")
+                            self.send_header("Connection", "close")
+                            self.end_headers()
+                            self.close_connection = True
+                            return
+                        self._send_json(500, _json_rpc_internal_error(req_id))
+                        return
 
-            if response is None:
-                # JSON-RPC notifications intentionally have no response body.
-                self._record_request(202)
-                self.send_response(202)
-                self.send_header("Content-Length", "0")
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.close_connection = True
-                return
+                    if response is None:
+                        # JSON-RPC notifications intentionally have no response body.
+                        self._record_request(202)
+                        self.send_response(202)
+                        self.send_header("Content-Length", "0")
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        self.close_connection = True
+                        return
 
-            # Another MemPalace process (proxy, hub client) asks for the exact
-            # text; it shows the result to its own client the client's way.
-            self._send_json(200, response, exact=self.headers.get(EXACT_WIRE_HEADER) == "1")
+                    # Another MemPalace process (proxy, hub client) asks for the exact
+                    # text; it shows the result to its own client the client's way.
+                    self._send_json(200, response, exact=self.headers.get(EXACT_WIRE_HEADER) == "1")
+                finally:
+                    try:
+                        self.wfile.flush()
+                    finally:
+                        raw = request = response = req_id = None
 
     httpd = _MCPHTTPServer((host, port), _Handler)
     bound_port = httpd.server_address[1]
@@ -1543,6 +1586,8 @@ def _serve_http(host: str, port: int) -> None:
                     "mine_include_ignored",
                     "mine_include_subagents",
                     "search_cli_compatible",
+                    "search_candidate_union",
+                    "search_candidate_auto",
                 ],
                 search_config_fingerprint=_config.search_config_fingerprint,
             )

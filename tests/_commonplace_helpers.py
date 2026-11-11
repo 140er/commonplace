@@ -13,6 +13,36 @@ from commonplace.policy import Policy
 from commonplace.workers import Worker, WorkerSupervisor
 from tests._mcp_server_helpers import _patch_mcp_server
 
+REVIEW_QUESTION = "Should this change ship now or wait for the next release?"
+REVIEW_CONTEXT = "The implementation is complete and the affected tests have passed."
+REVIEW_OPTIONS = ["Proceed with the change", "Wait for more information"]
+
+
+@pytest.fixture
+def functional_worker_transport(monkeypatch):
+    """Keep functional reads independent of the real startup socket budget.
+
+    Logical deadline checks still run first. Only worker transport gets the
+    Hub client's bounded allowance; explicit deadline tests use no shim.
+    """
+    from commonplace.gateway import WORKER_TIMEOUT_S
+    from commonplace.rules import checks
+
+    original = checks.remaining
+    calls = 0
+
+    def remaining(timeout):
+        nonlocal calls
+        bounded = original(timeout)
+        if timeout == WORKER_TIMEOUT_S:
+            calls += 1
+            return 30.0
+        return bounded
+
+    monkeypatch.setattr(checks, "remaining", remaining)
+    yield
+    assert calls, "Functional acceptance must exercise the worker transport"
+
 
 class InProcessLauncher:
     """Starts the production MCP HTTP server in this process, on loopback.
@@ -146,3 +176,49 @@ def hub_fixture(tmp_path, monkeypatch, config, kg):
         yield h
     finally:
         h.close()
+
+
+@pytest.fixture
+def shared_readers(hub):
+    """Real member holders for wildcard shared-only and literal-wing reads."""
+    user = hub.db.create_user("shared-reader@example.test")
+    hub.db.add_member(hub.workspace, user, "member", actor=hub.admin)
+    tokens = {}
+    for kind, wings in (("wildcard", ["*"]), ("literal", ["wing_fixture", "shared", "threads"])):
+        tokens[kind] = hub.token(
+            "shared-" + kind,
+            user=user,
+            profile="full",
+            scopes=["memory:read", "threads:read", "kg:read"],
+            read_wings=wings,
+            trust="trusted",
+        )
+    return tokens
+
+
+def assert_member_drawer_access(hub, token):
+    """Exercise shared recall and private refusal with the actual holder."""
+    owner = hub.owner_token("drawer-control")
+
+    def call(credential, name, args):
+        return hub.rpc(credential, "tools/call", {"name": name, "arguments": args})["result"]
+
+    for wing, text in (
+        ("shared", "SHARED_HOLDER_CONTROL"),
+        ("private_notes", "PRIVATE_HOLDER_CONTROL"),
+    ):
+        saved = call(
+            owner, "mempalace_add_drawer", {"wing": wing, "room": "contract", "content": text}
+        )
+        assert not saved.get("isError"), saved
+        drawer = json.loads(saved["content"][0]["text"])["drawer_id"]
+        owner_read = call(owner, "mempalace_get_drawer", {"drawer_id": drawer})
+        assert text in json.dumps(owner_read)
+        member_read = call(token, "mempalace_get_drawer", {"drawer_id": drawer})
+        if wing == "shared":
+            assert not member_read.get("isError") and text in json.dumps(member_read)
+        else:
+            assert text not in json.dumps(member_read)
+            assert json.loads(member_read["content"][0]["text"]) == {
+                "error": f"Drawer not found: {drawer}"
+            }

@@ -392,6 +392,8 @@ def _launch(
             close_fds=True,
         )
         try:
+            # Observe immediate startup failures only. Surviving this 50 ms
+            # window does not guarantee the successor's continued liveness.
             if process.wait(timeout=0.05) != 0:
                 raise RuntimeError("Successor exited")
         except subprocess.TimeoutExpired:

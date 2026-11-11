@@ -226,6 +226,9 @@ def _iter_all_metadata(col):
     collection from the start. The loop is kept only for collection objects
     that predate the contract method.
     """
+    from .worker_observation import mark
+
+    mark(fallback_kind="full_metadata")
     if isinstance(col, BaseCollection):
         yield from col.get_all_metadata()
         return
@@ -343,14 +346,14 @@ def build_graph(col=None, config=None):
     return nodes, edges
 
 
-def traverse(start_room: str, col=None, config=None, max_hops: int = 2):
+def traverse(start_room: str, col=None, config=None, max_hops: int = 2, *, graph_data=None):
     """
     Walk the graph from a starting room. Find connected rooms
     through shared wings.
 
     Returns list of paths: [{room, wing, hall, hop_distance}]
     """
-    nodes, edges = build_graph(col, config)
+    nodes, edges = build_graph(col, config) if graph_data is None else graph_data
 
     if start_room not in nodes:
         return {
@@ -405,12 +408,12 @@ def traverse(start_room: str, col=None, config=None, max_hops: int = 2):
     return results[:50]  # cap results
 
 
-def find_tunnels(wing_a: str = None, wing_b: str = None, col=None, config=None):
+def find_tunnels(wing_a: str = None, wing_b: str = None, col=None, config=None, *, graph_data=None):
     """
     Find rooms that connect two wings (or all tunnel rooms if no wings specified).
     These are the "hallways" — same named idea appearing in multiple domains.
     """
-    nodes, edges = build_graph(col, config)
+    nodes, edges = build_graph(col, config) if graph_data is None else graph_data
 
     norm_a = _normalize_wing(wing_a)
     norm_b = _normalize_wing(wing_b)
@@ -449,7 +452,7 @@ def find_tunnels(wing_a: str = None, wing_b: str = None, col=None, config=None):
     return tunnels[:50]
 
 
-def graph_stats(col=None, config=None):
+def graph_stats(col=None, config=None, *, graph_data=None, explicit_tunnels=None):
     """Summary statistics about the palace graph.
 
     ``total_rooms`` keeps its historical meaning: unique room-name nodes in
@@ -458,11 +461,13 @@ def graph_stats(col=None, config=None):
     Explicit tunnel records are reported separately so the overview does not
     silently omit agent-created graph connections.
     """
-    nodes, edges = build_graph(col, config)
+    nodes, edges = build_graph(col, config) if graph_data is None else graph_data
 
     passive_tunnel_rooms = sum(1 for n in nodes.values() if len(n["wings"]) >= 2)
     total_room_instances = sum(len(n["wings"]) for n in nodes.values())
-    explicit_tunnel_count = len(_load_tunnels(config))
+    explicit_tunnel_count = len(
+        _load_tunnels(config) if explicit_tunnels is None else explicit_tunnels
+    )
     wing_counts = Counter()
     for data in nodes.values():
         for wing in data["wings"]:
@@ -886,10 +891,14 @@ def list_tunnels(wing: str = None):
     return tunnels
 
 
-def delete_tunnel(tunnel_id: str):
+def delete_tunnel(tunnel_id: str, *, expect=None):
     """Delete an explicit tunnel by ID. Returns ``{"deleted": <id>}``."""
     with mine_lock(_get_tunnel_file()):
         tunnels = _load_tunnels(for_write=True)
+        if expect is not None:
+            target = next((t for t in tunnels if t.get("id") == tunnel_id), None)
+            if target is None or {k: target.get(k) for k in ("source", "target")} != expect:
+                return {"deleted": tunnel_id}
         tunnels = [t for t in tunnels if t.get("id") != tunnel_id]
         _save_tunnels(tunnels)
     return {"deleted": tunnel_id}
@@ -924,7 +933,9 @@ def record_tunnel_traversal(tunnel_ids, config=None) -> int:
     return touched
 
 
-def follow_tunnels(wing: str, room: str, col=None, config=None, record: bool = True):
+def follow_tunnels(
+    wing: str, room: str, col=None, config=None, record: bool = True, *, tunnels=None
+):
     """Follow explicit tunnels from a room — returns connected drawers.
 
     Given a location (wing/room), finds all tunnels leading from or to it,
@@ -939,7 +950,7 @@ def follow_tunnels(wing: str, room: str, col=None, config=None, record: bool = T
     # mempalace.yaml slug (underscore) and an explicit ``--wing`` slug
     # (verbatim) both resolve through the same comparison.
     norm_wing = _normalize_wing(wing) or wing
-    tunnels = _load_tunnels(config)
+    tunnels = _load_tunnels(config) if tunnels is None else tunnels
     connections = []
 
     for t in tunnels:
@@ -982,10 +993,14 @@ def follow_tunnels(wing: str, room: str, col=None, config=None, record: bool = T
             try:
                 results = col.get(ids=drawer_ids, include=["documents", "metadatas"])
                 drawer_map = dict(zip(results["ids"], results["documents"]))
+                metadata_map = dict(zip(results["ids"], results["metadatas"]))
                 for c in connections:
                     did = c.get("drawer_id")
                     if did and did in drawer_map:
                         c["drawer_preview"] = drawer_map[did][:300]
+                        metadata = metadata_map.get(did) or {}
+                        c["drawer_wing"] = metadata.get("wing")
+                        c["drawer_room"] = metadata.get("room")
             except Exception:
                 logger.debug("Drawer preview hydration failed", exc_info=True)
 

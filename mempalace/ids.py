@@ -80,6 +80,17 @@ def make_drawer_id_from_content(wing: str, room: str, content: str) -> str:
     return f"drawer_{wing}_{room}_{_delimited_sha256((wing, room, content), _HASH_TRUNC_DRAWER)}"
 
 
+def make_mirror_unit_id(thread: str, start: int, end: int, message_class: str, content: str) -> str:
+    """Content-address one class-pure unit within its exact message range.
+
+    Repeated continuation bodies in that range share a logical drawer; another
+    range or class remains distinct. Physical chunk IDs stay under this unit.
+    """
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    key = _delimited_sha256((thread, start, end, message_class, digest), _HASH_TRUNC_DRAWER)
+    return f"drawer_private_threads_{thread}_{key}"
+
+
 def make_convo_drawer_id(
     wing: str, room: str, source_file: str, extract_mode: str, chunk_index: int
 ) -> str:

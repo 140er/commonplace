@@ -6,10 +6,11 @@ Any mismatch rolls back every copied row, keeping the original file intact.
 
 from __future__ import annotations
 
-import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+
+from mempalace.sqlite_crypto import connect, row_factory
 
 from .thread_frames import sql_string, string
 from .thread_store import ThreadStore, canonical_sha256
@@ -21,19 +22,31 @@ class MigrationMismatch(ValueError):
     """The source's rows or the copied content fail lossless verification."""
 
 
+def _auxiliary_rows(store, table):
+    # Read-only sources from before B1c have no progress table to upgrade.
+    if (
+        table == "mirror_progress"
+        and not store._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='mirror_progress'"
+        ).fetchone()
+    ):
+        return []
+    return store._conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+
+
 @contextmanager
 def read_store(path, *, compact=False):
     """Read a snapshot without initializing or repairing the source file."""
     cls = ThreadStoreV2 if compact else ThreadStore
     store = cls.__new__(cls)
     store._lock = threading.RLock()
-    store._conn = sqlite3.connect(
+    store._conn = connect(
         Path(path).resolve().as_uri() + "?mode=ro",
         uri=True,
         isolation_level=None,
         check_same_thread=False,
     )
-    store._conn.row_factory = sqlite3.Row
+    store._conn.row_factory = row_factory
     try:
         store._conn.execute("BEGIN")
         store._fts_enabled = bool(
@@ -49,9 +62,9 @@ def read_store(path, *, compact=False):
 
 def verify_stores(source, target):
     """Compare identities, auxiliary rows, all fields, boundaries and digests."""
-    for table in ("threads", "handoff_docs", "fact_extraction"):
-        original = list(map(tuple, source._conn.execute(f"SELECT * FROM {table} ORDER BY 1")))
-        copied = list(map(tuple, target._conn.execute(f"SELECT * FROM {table} ORDER BY 1")))
+    for table in ("threads", "handoff_docs", "fact_extraction", "mirror_progress"):
+        original = list(map(tuple, _auxiliary_rows(source, table)))
+        copied = list(map(tuple, _auxiliary_rows(target, table)))
         if original != copied:
             raise MigrationMismatch("Copied thread or auxiliary rows mismatch")
     for row in source._conn.execute("SELECT * FROM threads ORDER BY id"):
@@ -111,12 +124,19 @@ def migrate_v2(source: str, destination: str) -> int:
         try:
             with new._lock, new._conn:
                 new._conn.execute("BEGIN IMMEDIATE")
-                for table in ("threads", "messages", "chunks", "handoff_docs", "fact_extraction"):
+                for table in (
+                    "threads",
+                    "messages",
+                    "chunks",
+                    "handoff_docs",
+                    "fact_extraction",
+                    "mirror_progress",
+                ):
                     if new._conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                         raise ValueError("Migration destination must be empty")
                 rows = old._conn.execute("SELECT * FROM threads ORDER BY rowid").fetchall()
-                for table in ("threads", "handoff_docs", "fact_extraction"):
-                    for row in old._conn.execute(f"SELECT * FROM {table}"):
+                for table in ("threads", "handoff_docs", "fact_extraction", "mirror_progress"):
+                    for row in _auxiliary_rows(old, table):
                         placeholders = ",".join("?" for _ in row)
                         new._conn.execute(
                             f"INSERT INTO {table} ({','.join(row.keys())}) VALUES ({placeholders})",
@@ -179,8 +199,8 @@ def migrate_v1(source: str, destination: str | None = None) -> int:
         raise ValueError("Migration needs a separate v2 file")
     old = ThreadStore.__new__(ThreadStore)
     old._lock = threading.RLock()
-    old._conn = sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True, isolation_level=None)
-    old._conn.row_factory = sqlite3.Row
+    old._conn = connect(source_path.as_uri() + "?mode=ro", uri=True, isolation_level=None)
+    old._conn.row_factory = row_factory
     try:
         old._conn.execute("BEGIN")
         new = ThreadStoreV2(str(target))
@@ -205,6 +225,7 @@ def _copy(old, new):
             "chunk",
             "handoff_docs",
             "fact_extraction",
+            "mirror_progress",
         ):
             if new._conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
                 raise ValueError("Migration destination must be empty")
@@ -243,15 +264,15 @@ def _copy(old, new):
         original_threads = old._conn.execute("SELECT * FROM threads ORDER BY id").fetchall()
         if list(map(tuple, copied_threads)) != list(map(tuple, original_threads)):
             raise MigrationMismatch("Copied thread rows mismatch")
-        for table in ("handoff_docs", "fact_extraction"):
-            rows = old._conn.execute(f"SELECT * FROM {table}").fetchall()
+        for table in ("handoff_docs", "fact_extraction", "mirror_progress"):
+            rows = _auxiliary_rows(old, table)
             if rows:
                 placeholders = ",".join("?" for _ in rows[0])
                 new._conn.executemany(
                     f"INSERT INTO {table} VALUES ({placeholders})", map(tuple, rows)
                 )
-            copied = new._conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
-            original = old._conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            copied = _auxiliary_rows(new, table)
+            original = _auxiliary_rows(old, table)
             if list(map(tuple, copied)) != list(map(tuple, original)):
                 raise MigrationMismatch("Copied auxiliary rows mismatch")
         return len(threads)

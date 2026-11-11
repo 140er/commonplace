@@ -8,12 +8,22 @@ if __name__ != "mempalace.mcp_server":
 TOOLS = {
     "mempalace_status": {
         "description": "Palace overview — total drawers, wing and room counts",
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"}
+            },
+        },
         "handler": tool_status,
     },
     "mempalace_list_wings": {
         "description": "List all wings with drawer counts",
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"}
+            },
+        },
         "handler": tool_list_wings,
     },
     "mempalace_list_rooms": {
@@ -28,7 +38,12 @@ TOOLS = {
     },
     "mempalace_get_taxonomy": {
         "description": "Full taxonomy: wing → room → drawer count",
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"}
+            },
+        },
         "handler": tool_get_taxonomy,
     },
     "mempalace_get_aaak_spec": {
@@ -47,6 +62,7 @@ TOOLS = {
                 },
                 "search": {
                     "type": "boolean",
+                    "x-mempalace-strict": True,
                     "description": "Rank whole-word matches across facts, using entity as search text (default false).",
                 },
                 "limit": {
@@ -86,6 +102,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "subject": {"type": "string", "description": "The entity doing/being something"},
                 "predicate": {
                     "type": "string",
@@ -157,6 +174,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "subject": {"type": "string", "description": "The entity doing/being something"},
                 "predicate": {"type": "string", "description": "The relationship type"},
                 "object": {"type": "string", "description": "The entity being connected to"},
@@ -207,6 +225,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "subject": {"type": "string", "description": "Entity"},
                 "predicate": {"type": "string", "description": "Relationship"},
                 "object": {"type": "string", "description": "Connected entity"},
@@ -236,6 +255,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "subject": {"type": "string", "description": "The entity whose fact is changing"},
                 "predicate": {
                     "type": "string",
@@ -339,6 +359,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "start_room": {
                     "type": "string",
                     "description": "Room to start from (e.g. 'chromadb-setup', 'riley-school')",
@@ -357,6 +378,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "wing_a": {"type": "string", "description": "First wing (optional)"},
                 "wing_b": {"type": "string", "description": "Second wing (optional)"},
             },
@@ -365,7 +387,12 @@ TOOLS = {
     },
     "mempalace_graph_stats": {
         "description": "Palace graph overview: total rooms, tunnel connections, edges between wings.",
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
+            },
+        },
         "handler": tool_graph_stats,
     },
     "mempalace_mesh_peers": {
@@ -401,6 +428,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "wing": {
                     "type": "string",
                     "description": "Filter tunnels by wing (shows tunnels where wing is source or target)",
@@ -414,6 +442,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "tunnel_id": {"type": "string", "description": "Tunnel ID to delete"},
             },
             "required": ["tunnel_id"],
@@ -425,6 +454,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "wing": {
                     "type": "string",
                     "description": "Filter hallways by wing",
@@ -449,6 +479,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "hallway_id": {"type": "string", "description": "Hallway ID to delete"},
             },
             "required": ["hallway_id"],
@@ -460,6 +491,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "wing": {"type": "string", "description": "Wing to start from"},
                 "room": {"type": "string", "description": "Room to follow tunnels from"},
             },
@@ -522,10 +554,16 @@ TOOLS = {
                     "type": "boolean",
                     "description": "Include matching facts (default true); drawer results are unchanged.",
                 },
+                "wings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 64,
+                    "description": "Search the union of these wings in one candidate pool. Combined with wing, uses their intersection.",
+                },
                 "candidate_strategy": {
                     "type": "string",
                     "enum": ["vector", "union"],
-                    "description": "Candidate source strategy. 'vector' preserves default semantic search; 'union' also merges backend BM25 lexical candidates before reranking.",
+                    "description": "Drawer-only candidate strategy. By default, bounded lexical backends merge vector and backend BM25 lexical candidates before reranking; 'vector' selects semantic candidates only. Media/code task search always uses shared-space vector ranking.",
                 },
                 "cli_compatible": {
                     "type": "boolean",
@@ -767,6 +805,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "source_file": {
                     "type": "string",
                     "description": "Exact source_file metadata value to remove (e.g. the full path that was mined)",
@@ -848,6 +887,7 @@ TOOLS = {
         "input_schema": {
             "type": "object",
             "properties": {
+                "thread_scope": {"type": "object", "description": "Set by the Commonplace server"},
                 "wing": {"type": "string", "description": "Filter by wing (optional)"},
                 "room": {"type": "string", "description": "Filter by room (optional)"},
                 "since": {
@@ -1346,3 +1386,17 @@ SUPPORTED_PROTOCOL_VERSIONS = [
     "2025-03-26",
     "2024-11-05",
 ]
+
+
+for _kg_read_name in (
+    "mempalace_kg_query",
+    "mempalace_kg_timeline",
+    "mempalace_kg_stats",
+    "mempalace_kg_list_wings",
+):
+    TOOLS[_kg_read_name]["input_schema"]["properties"]["thread_scope"] = {
+        "type": "object",
+        "description": "Set by the Commonplace server",
+    }
+
+del _kg_read_name

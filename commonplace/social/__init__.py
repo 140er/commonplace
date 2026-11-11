@@ -129,6 +129,17 @@ class SignIn:
                 },
             )
             return
+        if path == "/app/auth/github/callback":
+            try:
+                connect = query(h.path).get("state", "").startswith("gc1_")
+            except OAuthError:
+                connect = False
+            if connect:
+                if h.command != "GET":
+                    send_json(h, 405, {"error": "use GET"})
+                    return
+                gateway.github.callback(h)
+                return
         parts = path.removeprefix("/app/auth/").split("/")
         provider = self.providers.get(parts[0])
         if provider is None or len(parts) > 2 or len(parts) == 2 and parts[1] != "callback":
@@ -216,12 +227,9 @@ class SignIn:
             profile = provider.profile(
                 code, row["verifier"], row["nonce"], parameters.get("user", "")
             )
-            with gateway.db._lock:
-                uid = accounts.resolve(gateway.db, provider.id, profile, signup=self.signup)
-                workspace = sessions.home_workspace(gateway.db, uid)
-                if workspace is None:
-                    raise SignInError("disabled")
-                session = sessions.start_session(gateway.db, uid, workspace, via=provider.id)
+            session, first_landing = accounts.complete_signin(
+                gateway, provider.id, profile, signup=self.signup
+            )
         except (OAuthError, SignInError) as exc:
             self._refuse(
                 gateway,
@@ -233,7 +241,9 @@ class SignIn:
             )
             return
         landing = (
-            urls.AGENT_URL + next_path if next_path.startswith("/oauth/") else next_path or "/app/"
+            urls.AGENT_URL + next_path
+            if next_path.startswith("/oauth/")
+            else next_path or first_landing
         )
         via_cookie = f"cmmn_via={provider.id}; Path=/app/; Max-Age=34560000; SameSite=Lax"
         if gateway.secure_cookies:
@@ -269,7 +279,10 @@ def install(gateway):
     gateway.sign_in = SignIn(
         db=gateway.db,
         providers=configured(),
-        signup=signup in ("", "open"),
+        signup=accounts.signup_enabled(),
     )
+    from .. import github
+
+    github.install(gateway)
     for method in ("GET", "POST"):
         gateway.add_prefix_route(method, "/app/auth/", lambda h: gateway.sign_in.handle(gateway, h))

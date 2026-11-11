@@ -20,7 +20,8 @@ from . import events
 from ._http import BadRequest, path_parts, query, read_json, require_principal, send_json
 from .extensions import LocalTool, ToolContext, ToolError, register
 from .http_util import log_failure
-from .policy import canonical_wing
+from .policy import canonical_wing, is_private_wing
+from .rules.enforce import RulesRefresh, rest_write
 
 logger = logging.getLogger(__name__)
 _AMSTERDAM = ZoneInfo("Europe/Amsterdam")
@@ -83,7 +84,7 @@ def _memory(ctx, name, args):
                 return {"wings": {}}
             if name == "mempalace_search":
                 return {"results": []}
-            if name == "mempalace_get_drawer":
+            if name in ("mempalace_get_drawer", "mempalace_get_drawers"):
                 raise ToolError("no: memory not found") from None
         if "not found" in str(exc).lower():
             raise ToolError("no: memory not found") from None
@@ -100,7 +101,9 @@ def _boards(ctx, required=False):
         if required:
             raise ToolError("no: boards unavailable") from None
         return None
-    return service.open_store(ctx.workspace_dir())
+    return service.open_store(
+        ctx.workspace_dir(), db=ctx.db, workspace_id=ctx.principal.workspace_id
+    )
 
 
 def _task(args):
@@ -171,6 +174,10 @@ def _stored_source(metadata):
 
 def _get(ctx, memory_id, store=None):
     record = _memory(ctx, "mempalace_get_drawer", {"drawer_id": memory_id})
+    return _record(ctx, record, store)
+
+
+def _record(ctx, record, store=None):
     metadata = record.get("metadata") or {}
     return {
         "id": record["drawer_id"],
@@ -205,14 +212,27 @@ def _search(ctx, args, store=None):
     if args.get("theme"):
         params["wing"] = _string(args, "theme")
     result = _memory(ctx, "mempalace_search", params)
-    found = []
-    seen = set()
-    for hit in result.get("results", []):
-        memory_id = hit["drawer_id"]
-        if memory_id not in seen:
-            found.append(_get(ctx, memory_id, store))
-            seen.add(memory_id)
-    return found
+    ids = list(dict.fromkeys(hit["drawer_id"] for hit in result.get("results", [])))
+    if not ids:
+        return []
+    if not (_available(ctx, "mempalace_get_drawer") and _available(ctx, "mempalace_get_drawers")):
+        return [_get(ctx, memory_id, store) for memory_id in ids]
+    records = _memory(ctx, "mempalace_get_drawers", {"drawer_ids": ids}).get("results", [])
+    if len(records) != len(ids):
+        raise ToolError("no: memory not found")
+    for record in records:
+        if record.get("error"):
+            # Match the singular read's error translation, including refusals.
+            if str(record["error"]) in ("No palace found", "Chroma database missing") or (
+                "not found" in str(record["error"]).lower()
+            ):
+                raise ToolError("no: memory not found")
+            raise ToolError("no: memory request refused or unavailable")
+    return [_record(ctx, record, store) for record in records]
+
+
+def _available(ctx, name):
+    return ctx.principal.policy.tool_visible(name)
 
 
 def _emit(ctx, kind, memory_id, **data):
@@ -235,6 +255,7 @@ def _link_target(ctx, task, store):
     board = store.board_for_task(task, principal=ctx.principal)
     if not ctx.principal.policy.can_write_wing(board["wing"]):
         raise ToolError("no: cannot link this card")
+    return board
 
 
 def _link(ctx, memory_id, task, store):
@@ -259,13 +280,22 @@ def _link(ctx, memory_id, task, store):
 
 def _save(ctx, args):
     text = _string(args, "text")
-    theme = _string(args, "theme", ctx.principal.policy.write_wing or "shared")
     topic = _string(args, "topic", "general")
     task = _task(args) if args.get("task") is not None else None
     source = _source(args)
     store = _boards(ctx, required=True) if task is not None else None
+    default = ctx.principal.policy.write_wing or "shared"
     if task is not None:
-        _link_target(ctx, task, store)
+        board = _link_target(ctx, task, store)
+        wing = canonical_wing(board["wing"])
+        if (
+            not ctx.principal.policy.write_wing
+            and wing.startswith("project_")
+            and not any(c in wing for c in "*?[]")
+            and ctx.principal.policy.can_write_wing(wing)
+        ):
+            default = wing
+    theme = _string(args, "theme", default)
     flags = _privacy_flags(text)
     if "health" in flags and ctx.principal.policy.can_write_wing("private"):
         theme = "private"
@@ -274,6 +304,12 @@ def _save(ctx, args):
     )
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id, flags=flags)
+    saved_wing = result.get("wing") or theme
+    notice = (
+        "Saved privately. You cannot read this note for now."
+        if is_private_wing(saved_wing) and not ctx.principal.policy.can_read_wing(saved_wing)
+        else ""
+    )
     if task is not None:
         try:
             _link(ctx, memory_id, task, store)
@@ -281,13 +317,15 @@ def _save(ctx, args):
             # The memory is stored: say so, so the agent doesn't save it again.
             raise ToolError(
                 f"saved {memory_id}, not linked: {str(exc).removeprefix('no: ')}"
+                + (f"\n{notice}" if notice else "")
             ) from None
-    return memory_id, task
+    return memory_id, task, notice
 
 
 def memory_save(ctx, args):
-    memory_id, task = _save(ctx, args)
-    return f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
+    memory_id, task, notice = _save(ctx, args)
+    result = f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
+    return result + (f"\n{notice}" if notice else "")
 
 
 def _file_fact(ctx, args):
@@ -377,7 +415,7 @@ def _recent(ctx, limit):
             for item in items:
                 records[item["drawer_id"]] = item
             offset += len(items)
-            if not items or offset >= page["total"]:
+            if not items or ("total" in page and offset >= page["total"]):
                 break
     counts = Counter(canonical_wing(r["wing"]) for r in records.values())
 
@@ -392,8 +430,8 @@ def _people(ctx, nodes, links, memory_ids):
     policy = ctx.principal.policy
     if not policy.sees_all_wings or not policy.tool_visible("mempalace_kg_query"):
         return
-    # KG tools do not expose entity types or source ids. The brief permits
-    # reading the workspace graph only for principals that see every theme.
+    # Entity types for graph layout need a direct read. Derived facts still
+    # pass the shared source-thread gate, even for see-all principals.
     # Read-only mode never creates a file or resolves to the operator's graph.
     from mempalace.knowledge_graph import _read_only
 
@@ -405,9 +443,22 @@ def _people(ctx, nodes, links, memory_ids):
         conn.execute("BEGIN")
         people = conn.execute("SELECT id, name, created_at FROM entities WHERE type = 'person'")
         people = {row["id"]: dict(row) for row in people}
-        facts = conn.execute("SELECT * FROM triples").fetchall()
+        facts = [dict(row) for row in conn.execute("SELECT * FROM triples")]
+        sources = {}
+        for row in conn.execute("SELECT * FROM fact_sources"):
+            sources.setdefault(row["triple_id"], []).append(dict(row))
+        for fact in facts:
+            fact["sources"] = sources.get(fact["id"], [])
     finally:
         conn.close()
+    from .handoff.mirror_access import gate
+
+    visible = gate(ctx.gateway, ctx.principal, "kg_read", {"facts": facts})["facts"]
+    visible_people = {fact[key] for fact in visible for key in ("subject", "object")}
+    referenced = {fact[key] for fact in facts for key in ("subject", "object")}
+    people = {
+        key: row for key, row in people.items() if key not in referenced or key in visible_people
+    }
     for person in people.values():
         nodes.append(
             {
@@ -420,15 +471,15 @@ def _people(ctx, nodes, links, memory_ids):
             }
         )
     seen = set()
-    for fact in facts:
+    for fact in visible:
         source, target = fact["subject"], fact["object"]
         label = fact["predicate"]
         if source in people and target in people:
             seen.add(
                 (f"person:{people[source]['name']}", f"person:{people[target]['name']}", label)
             )
-        memory_id = fact["source_drawer_id"]
-        if memory_id in memory_ids:
+        memory_id = fact.get("source_drawer_id")
+        if memory_id is not None and memory_id in memory_ids:
             for person_id in (source, target):
                 if person_id in people:
                     seen.add((f"person:{people[person_id]['name']}", memory_id, label))
@@ -502,8 +553,10 @@ def install(gateway):
             if h.command == "POST" and not parts:
                 if principal.policy.refusal("memory_save"):
                     raise ToolError("no: memory write refused")
-                memory_id, _ = _save(ctx, read_json(h))
-                send_json(h, 201, {"id": memory_id})
+                body = read_json(h)
+                with rest_write(ctx, h, "memory_save", body):
+                    memory_id, _, notice = _save(ctx, body)
+                send_json(h, 201, {"id": memory_id, **({"notice": notice} if notice else {})})
             elif h.command == "GET" and parts == ["search"]:
                 if principal.policy.refusal("memory_search"):
                     raise ToolError("no: memory search refused")
@@ -521,6 +574,8 @@ def install(gateway):
                 send_json(h, 404, {"error": "not found"})
         except BadRequest:
             pass
+        except RulesRefresh as exc:
+            send_json(h, 428, exc.payload)
         except ToolError as exc:
             status = 404 if str(exc) == "no: memory not found" else 403
             send_json(h, status, {"error": str(exc)})
@@ -536,11 +591,15 @@ def install(gateway):
             if principal.policy.refusal("fact_save"):
                 raise ToolError("no: fact write refused")
             ctx = ToolContext(principal=principal, gateway=gateway)
-            result = _file_fact(ctx, read_json(h))
-            _emit(ctx, "fact.saved", result.get("triple_id"), action=result.get("action"))
+            body = read_json(h)
+            with rest_write(ctx, h, "fact_save", body):
+                result = _file_fact(ctx, body)
+                _emit(ctx, "fact.saved", result.get("triple_id"), action=result.get("action"))
             send_json(h, 201, result)
         except BadRequest:
             pass
+        except RulesRefresh as exc:
+            send_json(h, 428, exc.payload)
         except ToolError as exc:
             send_json(h, 403, {"error": str(exc)})
         except Exception as exc:

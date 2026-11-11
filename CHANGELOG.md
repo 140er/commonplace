@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Add separate, unticked reader consent for connection-route imported history.
+  Import remains write-only; existing tokens retain their scopes. Consented
+  reads are bounded to the exact filer's imports and exclude capture tails.
+
+
+- Imported history and active captured sessions become searchable in Memory after background indexing. Existing imports are indexed automatically; untouched older captures require an operator `commonplace search-index run --workspace WORKSPACE_ID --captures`. Index bytes count toward plan storage; indexing pauses 16 MiB before the limit. Owners can check `GET /api/search-index`; operators can use `commonplace search-index status` ([guide](docs/one-time-import.md#indexing-progress-and-storage)).
+
+- Optional Commonplace live sync joins native session imports and captures, with a durable local outbox, private session reads, plan cadence and explicitly enabled user services ([guide](docs/live-sync.md)).
 - Commonplace can send mail over SMTP, configured with `COMMONPLACE_SMTP_*` and off by default. `commonplace login-link --send` emails the sign-in link and never prints it ([mail setup](commonplace/README.md#mail)).
 - Commonplace rules: the owner can change who a rule applies to, between one agent and All agents (or another agent), from an "Applies to…" menu, and accept an agent's proposal for all agents in one step. The move keeps the rule's history, and the agent's later republishes of that key stay with the moved rule for the owner to review ([design](docs/design/RULES.md)).
 - Optional context handoff in Commonplace, off by default: verbatim thread storage, successor agents, thread recall, settings and webhooks ([guide](docs/handoff.md)).
@@ -18,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Commonplace nightly backups no longer take the service down. `backup-hook.sh` used to stop the serve container and snapshot in a one-off container; it now runs `commonplace backup --online` inside the running container with `docker compose exec` and never stops, starts, recreates or replaces it. The gateway pauses memory workers for about a minute or two and briefly holds file creation while one consistent cut is taken; site, sign-in, boards and chat stay up, memory calls answer `-32603` with `retry_after_s` during the pause, and one-shot CLI commands are refused for the run. The snapshot format, `commonplace restore` and manifest checks are unchanged. A run fails closed, with the service untouched and nothing published, when the image lacks online backup, a workspace database is encrypted (back those up offline in a maintenance window), the backup directory is on another filesystem, or a launched successor agent is still alive. A failed run keeps its private log and removes its staging. Use a finite unit `TimeoutStartSec` below the deploy gate's `DEPLOY_BACKUP_TIMEOUT` (for example 3 h and 11400 s). `deploy/commonplace/backup-live-probe.sh` checks a real run against a live service ([backups](docs/backups.md), [deployment](deploy/commonplace/DEPLOY.md#backups)).
 - Codex CLI 0.163+ sessions are filed again. Those rollouts carry turns only as `item_completed` UserMessage / AgentMessage events, so the hooks counted 0 exchanges and mining filed 0 drawers. Older `user_message` rollouts still parse, and a file holding both forms files each turn once. Codex sessions now file into the project wing from `session_meta.cwd` instead of `sessions`.
 - `mempalace init --yes` never prompts. With `--yes` or non-TTY stdin,
   init accepts detected entities and rooms and skips mining unless
@@ -31,6 +40,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and user-level hooks correctly. Status also tolerates a deleted working directory.
 
 ### Changed
+
+- KG search requires a JSON boolean for `search`; string booleans are refused.
+  Search fact enrichment omits `facts_error` and uses empty facts on failure,
+  preserving the same public shape when no eligible facts exist.
+- KG reads retain explicit worker argument errors, including `-32602` for
+  malformed pagination; null pagination uses protocol defaults. Limited readers'
+  shorthand wing filters resolve to stored names as before, with visible-only
+  counts and pages.
+
+- Imported-history listing and thread reads without reader consent return 404
+  instead of 403. Connection imports use `import-private:<user>:<source>:<id>`;
+  incomplete three-part identities are refused rather than granted reader access.
+
+- Structured mirror copies of private stored threads, facts derived from them, and their
+  tunnel previews are returned only to callers who can read their source thread. This
+  covers structured Memory search, `memory_get` and session start context. CLI-format (`cli_compatible`) search excludes mirror drawer copies for everyone, including owners; its `facts` field is still returned only to callers who can read each fact's source thread. A
+  `superseded_by` id is returned only when its target is another kept fact in the same
+  response. Mirror copies do not count as duplicates for anyone. Similarity dedup
+  exclusion (D5) is verified on compact, sqlite_exact and chroma. Adding, updating,
+  deleting or linking drawers in a stored-thread room requires permission to read that
+  thread. Known exceptions: `delete_by_source`, `delete_tunnel` and `delete_hallway`
+  take no room and are not checked yet. Fact mutations (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived facts are not room-checked. A member with
+  fact-write permissions but no source-thread read access can mutate those hidden facts.
+  Invalidate's `closed` count is a yes/no oracle for hidden values. This pre-existing
+  write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section, fan-out ranks and counts can reflect hidden hits, and gating runs after a bounded fetch of at most 100 candidates, so hidden hits can take candidate slots.
+- To roll back search indexing, set `COMMONPLACE_SEARCH_INDEX=off` and ship a hotfix retaining the thread-read protection. Never deploy a build without that protection once any imported or captured text has been indexed. The switch stops new sweeps; queued work finishes its current thread.
 
 - The `mempalace-recall` skill now also fires on "anything I should know about X" / "safe way to do Y" / gotcha questions and before the agent says it doesn't know. When memory has nothing, it answers from the repo instead of stopping at "the palace is empty". The skill is also about 30% shorter (description 410 → 366 characters).
 

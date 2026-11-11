@@ -2509,7 +2509,7 @@ def test_chroma_backend_requarantines_after_inode_replacement(tmp_path, monkeypa
 
 
 def test_chroma_backend_resets_system_cache_on_inode_change(tmp_path, monkeypatch):
-    """#2028/#2375: drain owned clients, clear the cache, then reopen."""
+    """Reopen the changed palace without draining another palace's clients."""
     palace = tmp_path / "palace"
     palace.mkdir()
     (palace / "chroma.sqlite3").write_text("")
@@ -2575,12 +2575,10 @@ def test_chroma_backend_resets_system_cache_on_inode_change(tmp_path, monkeypatc
         assert events == [
             ("open", str(palace)),
             ("close", str(palace)),
-            ("close", str(other_palace)),
-            ("clear", None),
             ("open", str(palace)),
         ]
-        assert set(backend._clients) == {str(palace)}
-        assert set(backend._freshness) == {str(palace)}
+        assert set(backend._clients) == {str(palace), str(other_palace)}
+        assert set(backend._freshness) == {str(palace), str(other_palace)}
     finally:
         backend.close()
 

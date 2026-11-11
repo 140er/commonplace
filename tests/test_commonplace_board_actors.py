@@ -3,6 +3,7 @@
 import shutil
 import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,10 @@ from commonplace.cli import main
 from commonplace.control_db import ControlDB, ControlError
 from commonplace.oauth import store as oauth_store
 from commonplace.policy import Policy
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    hub_fixture,  # noqa: F401
+)
 from tests.test_commonplace_boards import api, env, mcp, service  # noqa: F401
 
 
@@ -50,6 +54,24 @@ def test_deep_actors_roll_up_four_children_and_agents_still_see_them(hub, env): 
         deeper.task_add(title="Test the deeper actor", board="work"),
         deeper.task_add(title="Test the counts", board="work"),
     ]
+    for child in children[:2]:
+        released = owner.task_approve(child["number"], reason="synthetic reason")
+        assert released["proposal_status"] == "pending" and released["status"] == "backlog"
+        assert (
+            owner.task_approve(child["number"], reason="Separate proposal review")[
+                "proposal_status"
+            ]
+            == "approved"
+        )
+    for child in children[2:]:
+        released = owner.task_approve(child["number"], reason="synthetic reason")
+        assert released["proposal_status"] == "pending" and released["status"] == "backlog"
+        assert (
+            owner.task_approve(child["number"], reason="Separate proposal review")[
+                "proposal_status"
+            ]
+            == "approved"
+        )
     for worker, child in ((sub, children[0]), (deeper, children[2])):
         worker.task_update(child["number"], status="done")
     assert {c["parent"] for c in children} == {parent["number"]}
@@ -145,6 +167,12 @@ def test_assigned_current_card_and_nested_explicit_parent_are_flattened(hub, env
         sub.task_add(title="Explicit flatten", board="work", parent=nested["number"])["parent"]
         == parent["number"]
     )
+    released = owner.task_approve(nested["number"], reason="synthetic reason")
+    assert released["proposal_status"] == "pending" and released["status"] == "backlog"
+    assert (
+        owner.task_approve(nested["number"], reason="Separate proposal review")["proposal_status"]
+        == "approved"
+    )
     owner.task_handoff(nested["number"], to=principal.actor, note="Take the nested task")
     top.task_take_next(task=nested["number"])
     assert sub.task_add(title="Automatic flatten", board="work")["parent"] == parent["number"]
@@ -160,6 +188,13 @@ def test_reassigned_child_cannot_roll_work_into_another_actors_top_level_card(hu
     _, _, second_sub = actor(hub, "second-worker", parent=other_id)
     nested = second_sub.task_add(title="Reassigned child", board="work", assignee=principal.actor)
     assert nested["parent"] == foreign["number"]
+    released = owner.task_approve(nested["number"], reason="synthetic reason")
+    assert released["proposal_status"] == "pending" and released["status"] == "backlog"
+    assert (
+        owner.task_approve(nested["number"], reason="Separate proposal review")["proposal_status"]
+        == "approved"
+    )
+    owner.task_handoff(nested["number"], to=principal.actor, note="Reassign approved work")
     first.task_take_next(task=nested["number"])
     _, sub_token, first_sub = actor(hub, "first-worker", parent=principal.connection_id)
     status, refused = api(
@@ -197,7 +232,18 @@ def test_chat_linked_children_keep_asks_and_answer_history(hub, env):  # noqa: F
     parent = top.task_add(title="Parent", board="work", message_id=message["id"])
     _, _, sub = actor(hub, "worker", parent=principal.connection_id)
     child = sub.task_add(title="Child approval", board="work", message_id=message["id"])
-    sub.ask('Ship <script> & "original"?', ["Ship", "Wait"], task=child["number"])
+    released = owner.task_approve(child["number"], reason="synthetic reason")
+    assert released["proposal_status"] == "pending" and released["status"] == "backlog"
+    assert (
+        owner.task_approve(child["number"], reason="Separate proposal review")["proposal_status"]
+        == "approved"
+    )
+    sub.ask(
+        'Ship <script> & "original"?',
+        ["Ship", "Wait"],
+        task=child["number"],
+        context=REVIEW_CONTEXT,
+    )
     sub.task_add(title="Not chat-linked", board="work")
     owner.board_add(slug="other", wing="shared")
     other_message = owner.space_post("other", "Other board")
@@ -251,17 +297,32 @@ def test_explicit_parent_refuses_foreign_cards_and_top_level_callers(hub, env): 
             {"title": "Refused", "parent": invalid},
         )
         assert status == 400 and "parent" in payload["error"]
-    for caller in (token, cookie):
-        assert (
-            api(
-                hub,
-                caller,
-                "POST",
-                "/api/boards/work/cards",
-                {"title": "Refused", "parent": parent["number"]},
-            )[0]
-            == 400
-        )
+    assert (
+        api(
+            hub,
+            cookie,
+            "POST",
+            "/api/boards/work/cards",
+            {"title": "Refused", "parent": parent["number"]},
+        )[0]
+        == 400
+    )
+    status, linked = api(
+        hub,
+        token,
+        "POST",
+        "/api/boards/work/cards",
+        {"title": "Top-level child", "parent": parent["number"]},
+    )
+    assert status == 201 and linked["parent"] == parent["number"]
+    status, payload = api(
+        hub,
+        token,
+        "POST",
+        "/api/boards/work/cards",
+        {"title": "Refused", "parent": foreign["number"]},
+    )
+    assert status == 400 and "top-level actor" in payload["error"]
     ok, output = mcp(
         hub, sub_token, "task_add", title="Refused", board="work", parent=foreign["number"]
     )
@@ -289,7 +350,19 @@ def test_child_asks_stay_in_needs_me_and_refresh_parent_count(hub, env):  # noqa
     top = service(hub, principal)
     parent = top.task_add(title="Parent", board="work")
     _, _, sub = actor(hub, "worker", parent=principal.connection)
-    child = sub.ask("Pick the release?", ["Now", "Later"], board="work")
+    child = sub.task_add(title="Pick the release", board="work")
+    released = owner.task_approve(child["number"], reason="synthetic reason")
+    assert released["proposal_status"] == "pending" and released["status"] == "backlog"
+    assert (
+        owner.task_approve(child["number"], reason="Separate proposal review")["proposal_status"]
+        == "approved"
+    )
+    child = sub.ask(
+        "Pick the release? Which approach should we take?",
+        ["Now", "Later"],
+        task=child["number"],
+        context=REVIEW_CONTEXT,
+    )
     assert child["parent"] == parent["number"]
     parent_view = owner.task_show(parent["number"])
     assert parent_view["children_need_you"] is True
@@ -327,17 +400,67 @@ def test_parent_connections_require_same_workspace_active_parent_and_no_cycles(h
     foreign, _, _ = actor(hub, "foreign", workspace=other)
     with pytest.raises(ControlError):
         actor(hub, "cross-workspace", parent=foreign)
-    for target in (principal.connection_id, cid):
-        with pytest.raises(sqlite3.IntegrityError, match="cycle"):
-            hub.db._conn.execute(
-                "UPDATE connections SET parent_id=?,started_by='agent' WHERE id=?",
-                (target, principal.connection_id),
-            )
-    with pytest.raises(sqlite3.IntegrityError):
-        hub.db._conn.execute("UPDATE connections SET started_by='user' WHERE id=?", (cid,))
+    with hub.db._lock:
+        assert not hub.db._conn.in_transaction
+    # Exercise persistent database guards through an independent client, rather
+    # than issuing unlocked statements on the gateway's shared connection.
+    with closing(sqlite3.connect(hub.db.path, timeout=5, isolation_level=None)) as probe:
+        probe.execute("PRAGMA foreign_keys=ON")
+        selection = "SELECT * FROM connections WHERE id IN (?,?) ORDER BY id"
+        ids = (principal.connection_id, cid)
+        before = probe.execute(selection, ids).fetchall()
+        assert len(before) == 2
+        for target in ids:
+            with pytest.raises(sqlite3.IntegrityError, match="cycle"):
+                probe.execute(
+                    "UPDATE connections SET parent_id=?,started_by='agent' WHERE id=?",
+                    (target, principal.connection_id),
+                )
+            assert probe.execute(selection, ids).fetchall() == before
+        with pytest.raises(sqlite3.IntegrityError):
+            probe.execute("UPDATE connections SET started_by='user' WHERE id=?", (cid,))
+        assert probe.execute(selection, ids).fetchall() == before
     hub.db.revoke(cid, actor=hub.admin)
     with pytest.raises(ControlError, match="revoked"):
         actor(hub, "revoked-parent", parent=cid)
+
+
+def test_parent_triggers_protect_fresh_non_admin_connections(hub):
+    user = hub.db.create_user("fresh-ancestry@example.test")
+    workspace = hub.db.create_workspace("Fresh ancestry", user)
+    assert not hub.db.user(user)["is_admin"]
+    policy = Policy.build(scopes=["memory:read"], read_wings=["shared"], trust="standard")
+    parent, _ = hub.db.create_token(
+        workspace_ref=workspace,
+        user_ref=user,
+        name="parent",
+        client="test",
+        policy=policy,
+        actor=user,
+    )
+    child, _ = hub.db.create_token(
+        workspace_ref=workspace,
+        user_ref=user,
+        name="child",
+        client="test",
+        policy=policy,
+        actor=user,
+        parent=parent,
+    )
+    with closing(sqlite3.connect(hub.db.path, timeout=5, isolation_level=None)) as probe:
+        probe.execute("PRAGMA foreign_keys=ON")
+        selection = "SELECT * FROM connections WHERE id IN (?,?) ORDER BY id"
+        ids = (parent, child)
+        before = probe.execute(selection, ids).fetchall()
+        assert len(before) == 2
+        with pytest.raises(sqlite3.IntegrityError):
+            probe.execute("UPDATE connections SET started_by='user' WHERE id=?", (child,))
+        assert probe.execute(selection, ids).fetchall() == before
+        with pytest.raises(sqlite3.IntegrityError, match="cycle"):
+            probe.execute(
+                "UPDATE connections SET parent_id=?,started_by='agent' WHERE id=?", (child, parent)
+            )
+        assert probe.execute(selection, ids).fetchall() == before
 
 
 def test_connection_listing_and_cli_expose_ancestry(hub, env, tmp_path, capsys):  # noqa: F811

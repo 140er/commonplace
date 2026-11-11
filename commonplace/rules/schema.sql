@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS rules (
     agent TEXT NOT NULL,
     key TEXT NOT NULL,
     text TEXT NOT NULL,
+    summary TEXT,
     agent_text TEXT,
     kind TEXT NOT NULL CHECK (kind IN ('permission','limit','instruction','style')),
     scope TEXT NOT NULL CHECK (scope IN ('global','board','repo')),
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS rule_versions (
     rule_id INTEGER NOT NULL REFERENCES rules(id),
     version INTEGER NOT NULL,
     text TEXT NOT NULL,
+    summary TEXT,
     kind TEXT NOT NULL,
     scope TEXT NOT NULL,
     scope_ref TEXT,
@@ -56,4 +58,14 @@ CREATE TABLE IF NOT EXISTS rule_suggestions (
     stamp_user TEXT NOT NULL,
     created_at TEXT NOT NULL,
     decided_at TEXT
+);
+
+INSERT OR IGNORE INTO meta VALUES ('store_id', (random() & 0x7fffffffffffffff) | 1);
+CREATE TABLE IF NOT EXISTS agent_seq (agent TEXT PRIMARY KEY, token INTEGER NOT NULL);
+INSERT OR IGNORE INTO agent_seq VALUES ('*', (random() & 0x7fffffffffffffff) | 1);
+CREATE TABLE IF NOT EXISTS agent_served (
+    agent TEXT PRIMARY KEY,
+    state TEXT NOT NULL CHECK (state IN ('served','too_large')),
+    rules_seq INTEGER,
+    at TEXT NOT NULL
 );

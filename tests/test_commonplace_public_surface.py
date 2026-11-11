@@ -1,10 +1,10 @@
 """Complete installed route inventory and real-HTTP public-boundary probes."""
 
-import http.client
 import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from http import client as http_client
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -19,6 +19,14 @@ from commonplace.workers import WorkerSupervisor
 # A new registered route must be deliberately classified here. Prefix entries
 # include methods without an implemented action: authentication still runs first.
 EXACT = {
+    ("GET", "/api/github"): "authenticated",
+    ("POST", "/api/github/connect"): "authenticated",
+    ("POST", "/api/github/confirm"): "authenticated",
+    ("DELETE", "/api/github"): "authenticated",
+    ("GET", "/api/settings/orchestration"): "authenticated",
+    ("PUT", "/api/settings/orchestration"): "authenticated",
+    ("GET", "/api/holds"): "authenticated",
+    ("POST", "/api/holds"): "authenticated",
     ("GET", "/.well-known/oauth-protected-resource"): "public",
     ("GET", "/.well-known/oauth-protected-resource/mcp"): "public",
     ("GET", "/.well-known/oauth-authorization-server"): "public",
@@ -28,15 +36,36 @@ EXACT = {
     ("POST", "/oauth/token"): "public",
     ("POST", "/oauth/revoke"): "public",
     ("GET", "/app/login"): "public",
+    ("POST", "/app/auth/email"): "public",
+    ("GET", "/app/auth/email/verify"): "public",
+    ("POST", "/app/auth/email/verify"): "public",
     ("POST", "/app/logout"): "authenticated",
     ("GET", "/api/me"): "authenticated",
     ("GET", "/api/plan"): "authenticated",
     ("GET", "/api/events"): "authenticated",
+    ("GET", "/api/sync/sessions"): "authenticated",
     ("GET", "/api/connections"): "authenticated",
     ("GET", "/api/voice"): "authenticated",
     ("PATCH", "/api/voice"): "authenticated",
     ("POST", "/api/voice/transcribe"): "authenticated",
     ("POST", "/api/facts"): "authenticated",
+    # Machine runner (commonplace/runner), inert until an owner attests.
+    ("GET", "/api/runners"): "authenticated",
+    ("POST", "/api/runners"): "authenticated",
+    ("POST", "/api/card-starts"): "authenticated",
+    ("GET", "/api/card-starts"): "authenticated",
+    **{
+        (method, path): "authenticated"
+        for method in ("GET", "POST", "PATCH", "DELETE")
+        for path in ("/api/skills", "/api/skill-decks")
+    },
+    ("GET", "/api/imports"): "authenticated",
+    ("GET", "/api/search-index"): "authenticated",
+    ("POST", "/api/import"): "authenticated",
+    ("GET", "/api/capture"): "authenticated",
+    ("POST", "/api/capture"): "authenticated",
+    ("GET", "/api/settings/capture"): "authenticated",
+    ("POST", "/api/settings/capture"): "authenticated",
     # Context handoff (commonplace/handoff), off by default.
     ("POST", "/api/handoff"): "authenticated",
     ("GET", "/api/handoffs"): "authenticated",
@@ -45,12 +74,44 @@ EXACT = {
     ("DELETE", "/api/settings/handoff"): "authenticated",
     ("GET", "/app/settings/memory"): "public",
     ("POST", "/app/settings/memory"): "authenticated",
+    ("GET", "/api/phone-push"): "authenticated",
+    ("POST", "/api/phone-push"): "authenticated",
+    ("DELETE", "/api/phone-push"): "authenticated",
+    ("POST", "/api/phone-push/test"): "authenticated",
+    ("GET", "/api/console"): "authenticated",
+    ("GET", "/api/console/stream"): "authenticated",
+    ("GET", "/api/chat"): "authenticated",
+    ("GET", "/api/chat-settings"): "authenticated",
+    ("PUT", "/api/chat-settings"): "authenticated",
 }
 PREFIX = {
+    ("GET", "/api/admin/instance/"): "authenticated",
+    ("GET", "/api/admin/workspaces/"): "authenticated",
+    ("GET", "/api/task-types/connections/"): "authenticated",
+    ("POST", "/api/task-types/connections/"): "authenticated",
+    ("POST", "/api/holds/"): "authenticated",
+    ("POST", "/api/connections/"): "authenticated",
+    ("DELETE", "/api/connections/"): "authenticated",
+    ("PATCH", "/api/connections/"): "authenticated",
+    ("PATCH", "/api/runners/"): "authenticated",
+    ("POST", "/api/runners/"): "authenticated",
+    ("DELETE", "/api/runners/"): "authenticated",
+    ("GET", "/api/runner/"): "authenticated",
+    ("POST", "/api/runner/"): "authenticated",
+    ("GET", "/api/orch/"): "authenticated",
+    ("POST", "/api/orch/"): "authenticated",
+    ("POST", "/api/runner/chat/"): "authenticated",
+    ("POST", "/api/card-starts/"): "authenticated",
+    **{
+        (method, path): "authenticated"
+        for method in ("GET", "POST", "PATCH", "DELETE")
+        for path in ("/api/skills/", "/api/skill-decks/")
+    },
+    ("GET", "/skills/decks/"): "public",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
-        for prefix in ("/api/boards/", "/api/cards/", "/api/needs-me/")
+        for prefix in ("/api/boards/", "/api/cards/", "/api/needs-me/", "/api/spaces/")
     },
     **{(method, "/api/rules/"): "authenticated" for method in ("GET", "POST", "PATCH")},
     ("GET", "/api/memory/"): "authenticated",
@@ -69,6 +130,9 @@ PREFIX = {
     ("GET", "/app/cards/"): "public",
     ("GET", "/app/threads/"): "public",
     ("GET", "/app/static/"): "public",
+    ("POST", "/api/console/agents/"): "authenticated",
+    ("GET", "/api/chat/"): "authenticated",
+    **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT")},
 }
 BUILTIN = {
     ("GET", "/health"): "public",
@@ -79,7 +143,7 @@ BUILTIN = {
 
 
 def request(surface, method="GET", path="/api/me", *, headers=None, body=None, source=None):
-    conn = http.client.HTTPConnection("127.0.0.1", surface.port, timeout=5, source_address=source)
+    conn = http_client.HTTPConnection("127.0.0.1", surface.port, timeout=5, source_address=source)
     try:
         conn.request(method, path, body, headers or {})
         response = conn.getresponse()
@@ -265,7 +329,7 @@ def test_sensitive_endpoint_ip_limit(surface, method, path):
 def test_authenticated_requests_still_obey_sensitive_ip_limit(surface):
     auth = token(surface)[2]
     for _ in range(10):
-        assert request(surface, "GET", "/app/login", headers=auth)[0] == 400
+        assert request(surface, "GET", "/app/login", headers=auth)[0] == 302
     assert request(surface, "GET", "/app/login", headers=auth)[0] == 429
     assert request(surface, headers=auth)[0] == 200
 
@@ -384,9 +448,11 @@ def test_rate_limits_default_on_and_explicit_off(make_surface, monkeypatch):
     assert not surface.gateway.limiter._buckets
 
 
-@pytest.mark.parametrize("host", ["cmmn.dev", "CMMN.DEV.:443", "app.cmmn.dev:8765", "[::1]:8765"])
+@pytest.mark.parametrize(
+    "host", ["agent.example", "AGENT.EXAMPLE.:443", "app.agent.example:8765", "[::1]:8765"]
+)
 def test_allowed_host_normalization(make_surface, monkeypatch, host):
-    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "cmmn.dev, app.cmmn.dev, [::1]")
+    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "agent.example, app.agent.example, [::1]")
     surface = make_surface()
     assert request(surface, "GET", "/app/", headers={"Host": host})[0] == 200
 
@@ -395,26 +461,26 @@ def test_allowed_host_normalization(make_surface, monkeypatch, host):
     "host",
     [
         "attacker.example",
-        "cmmn.dev.attacker.example",
-        "cmmn.dev@attacker.example",
-        "cmmn.dev:bad",
-        "cmmn.dev:0",
-        "cmmn.dev:65536",
-        "cmmn.dev:",
-        "cmmn.dev/path",
-        "cmmn.dev#x",
-        "cmmn.dev?x",
-        "cmmn.dev#",
-        "cmmn.dev?",
-        "cmmn.dev\\evil",
-        "cmmn.dev ",
+        "agent.example.attacker.example",
+        "agent.example@attacker.example",
+        "agent.example:bad",
+        "agent.example:0",
+        "agent.example:65536",
+        "agent.example:",
+        "agent.example/path",
+        "agent.example#x",
+        "agent.example?x",
+        "agent.example#",
+        "agent.example?",
+        "agent.example\\evil",
+        "agent.example ",
         "[::1]:bad",
         "[::1]evil",
-        "cmmn.dev..",
+        "agent.example..",
     ],
 )
 def test_host_mismatch_or_malformed_is_421(make_surface, monkeypatch, host):
-    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "cmmn.dev, [::1]")
+    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "agent.example, [::1]")
     surface = make_surface()
     assert hardened(request(surface, headers={"Host": host})) == 421
     for path in ("/health", "/healthz"):
@@ -422,7 +488,7 @@ def test_host_mismatch_or_malformed_is_421(make_surface, monkeypatch, host):
 
 
 def test_health_exempt_from_rate_limits_and_host_check(make_surface, monkeypatch):
-    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "cmmn.dev")
+    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "agent.example")
     surface = make_surface()
     for _ in range(35):
         assert request(surface, "GET", "/health", headers={"Host": "other"})[0] == 200
@@ -430,8 +496,8 @@ def test_health_exempt_from_rate_limits_and_host_check(make_surface, monkeypatch
 
 
 def test_metadata_challenge_and_app_links_use_production_config(surface, monkeypatch):
-    monkeypatch.setattr(urls, "AGENT_URL", "https://cmmn.dev")
-    monkeypatch.setattr(urls, "APP_URL", "https://app.cmmn.dev")
+    monkeypatch.setattr(urls, "AGENT_URL", "https://agent.example")
+    monkeypatch.setattr(urls, "APP_URL", "https://app.agent.example")
     attacker = {"Host": "attacker.example", "X-Forwarded-Host": "attacker.example"}
     for path in (
         "/.well-known/oauth-protected-resource",
@@ -444,17 +510,19 @@ def test_metadata_challenge_and_app_links_use_production_config(surface, monkeyp
         for value in data.values():
             for item in value if isinstance(value, list) else [value]:
                 if isinstance(item, str) and item.startswith("http"):
-                    assert item == "https://cmmn.dev" or item.startswith("https://cmmn.dev/")
+                    assert item == "https://agent.example" or item.startswith(
+                        "https://agent.example/"
+                    )
     response = request(surface, "POST", "/mcp", headers=attacker)
     assert hardened(response) == 401
     assert (
         response[1]["WWW-Authenticate"]
-        == 'Bearer resource_metadata="https://cmmn.dev/.well-known/oauth-protected-resource"'
+        == 'Bearer resource_metadata="https://agent.example/.well-known/oauth-protected-resource"'
     )
     link = urls.share_link(surface.db, surface.workspace, "/app/#/card/1")
     response = request(surface, "GET", urlsplit(link).path, headers=attacker)
     assert hardened(response) == 302
-    assert response[1]["Location"] == "https://app.cmmn.dev/app/#/card/1"
+    assert response[1]["Location"] == "https://app.agent.example/app/#/card/1"
 
 
 @pytest.mark.parametrize(
@@ -472,7 +540,7 @@ def test_metadata_challenge_and_app_links_use_production_config(surface, monkeyp
     ],
 )
 def test_oversized_body_rejected_at_http_boundary_before_reading(surface, path, cap):
-    conn = http.client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
+    conn = http_client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
     try:
         conn.putrequest("POST", path)
         conn.putheader("Content-Length", str(cap + 1))
@@ -493,7 +561,7 @@ def test_oversized_body_rejected_at_http_boundary_before_reading(surface, path, 
     ],
 )
 def test_ambiguous_body_framing_is_closed(surface, headers):
-    conn = http.client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
+    conn = http_client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
     try:
         conn.putrequest("POST", "/api/memory")
         for key, value in headers:
@@ -634,7 +702,7 @@ def test_host_normalizer_validates_ports_and_ipv6():
 
 def test_keepalive_request_reauthenticates_after_revocation(surface):
     cid, _raw, auth = token(surface)
-    conn = http.client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
+    conn = http_client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
     try:
         headers = {**auth, "Content-Type": "application/json"}
         conn.request("POST", "/mcp", b"{}", headers)
@@ -649,11 +717,11 @@ def test_keepalive_request_reauthenticates_after_revocation(surface):
         conn.close()
 
 
-@pytest.mark.parametrize("hosts", [[], ["cmmn.dev", "attacker.example"]])
+@pytest.mark.parametrize("hosts", [[], ["agent.example", "attacker.example"]])
 def test_missing_or_duplicate_host_is_421(make_surface, monkeypatch, hosts):
-    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "cmmn.dev")
+    monkeypatch.setenv("COMMONPLACE_ALLOWED_HOSTS", "agent.example")
     surface = make_surface()
-    conn = http.client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
+    conn = http_client.HTTPConnection("127.0.0.1", surface.port, timeout=5)
     try:
         conn.putrequest("GET", "/app/", skip_host=True)
         for host in hosts:
@@ -695,6 +763,9 @@ def test_mcp_failure_preserves_rpc_envelope_without_exception_text(surface, capl
 
 
 REST_TOOLS = [
+    ("GET", "/api/spaces", "board_list"),
+    ("POST", "/api/spaces", "board_add"),
+    ("GET", "/api/spaces/work", "board_list"),
     ("GET", "/api/boards", "board_list"),
     ("POST", "/api/boards", "board_add"),
     ("GET", "/api/boards/work/cards", "task_list"),
@@ -714,6 +785,10 @@ REST_TOOLS = [
     ("DELETE", "/api/webhooks/id", "webhook_remove"),
     ("GET", "/api/webhooks/id/deliveries", "webhook_list"),
     ("POST", "/api/webhooks/id/test", "webhook_test"),
+    ("POST", "/api/card-starts", "card_start"),
+    ("GET", "/api/card-starts", "card_start_status"),
+    ("POST", "/api/card-starts/id/cancel", "card_start_cancel"),
+    ("POST", "/api/card-starts/id/resolve", "card_start_resolve"),
 ]
 
 
@@ -750,11 +825,16 @@ def test_rest_requires_the_matching_visible_tool(surface, method, path, tool):
     )
 
 
-def test_rest_profiles_apply_the_same_tool_visibility(surface):
+@pytest.mark.parametrize("profile", ["slim", "standard", "full"])
+@pytest.mark.parametrize("restricted", [False, True])
+def test_rest_profiles_apply_the_same_tool_visibility(surface, profile, restricted):
     from commonplace.http_util import send_json
 
     surface.gateway.add_route("PATCH", "/api/cards/1", lambda h: send_json(h, 200, {}))
-    policy = Policy.build(profile="slim", trust="trusted")
+    policy = Policy.build(
+        profile=profile, tools=["task_show"] if restricted else None, trust="trusted"
+    )
+    assert policy.tools == (("task_show",) if restricted else profile)
     _cid, value = surface.db.create_token(
         workspace_ref=surface.workspace,
         user_ref=surface.uid,
@@ -763,17 +843,14 @@ def test_rest_profiles_apply_the_same_tool_visibility(surface):
         policy=policy,
         actor=surface.uid,
     )
-    assert not policy.tool_visible("task_update")
-    assert (
-        request(
-            surface,
-            "PATCH",
-            "/api/cards/1",
-            headers={"Authorization": "Bearer " + value},
-            body=b"{}",
-        )[0]
-        == 403
-    )
+    assert policy.tool_visible("task_update") is (not restricted)
+    assert request(
+        surface,
+        "PATCH",
+        "/api/cards/1",
+        headers={"Authorization": "Bearer " + value},
+        body=b"{}",
+    )[0] == (403 if restricted else 200)
 
 
 @pytest.mark.parametrize(
@@ -843,3 +920,28 @@ def test_session_json_writes_accept_app_and_request_origins(surface, monkeypatch
             "default-port": "https://app.example:443",
         }[origin]
     assert request(surface, "POST", "/api/boards", headers=headers, body=b"{}")[0] == 200
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("PATCH", "/api/rules/checks", {"agent": "*", "mode": "warn"}),
+        ("POST", "/api/rules/store/accept", {}),
+    ],
+)
+def test_rules_control_routes_require_a_person_owner(surface, method, path, body):
+    response = request(
+        surface, method, path, body=json.dumps(body), headers={"Content-Type": "application/json"}
+    )
+    assert hardened(response) == 401
+    _cid, _value, headers = token(surface)
+    response = request(
+        surface,
+        method,
+        path,
+        body=json.dumps(body),
+        headers={**headers, "Content-Type": "application/json"},
+    )
+    assert hardened(response) == 403
+    assert surface.db.rule_checks(surface.workspace) == {}
+    assert surface.db.rule_stores(surface.workspace) is None

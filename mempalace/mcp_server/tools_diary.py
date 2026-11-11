@@ -455,13 +455,13 @@ def _tool_reconnect_locked():
             close_errors.append(f"cached {cached_backend_name} close_palace failed: {exc}")
     if _client_cache is not None:
         try:
-            close = getattr(_client_cache, "close", None)
-            if callable(close):
-                close()
+            from ..backends.chroma import _close_client
+
+            _close_client(_client_cache, _config.palace_path)
         except Exception as exc:
             logger.debug("Failed to close MCP-local Chroma client during reconnect", exc_info=True)
             close_errors.append(f"local Chroma client close failed: {exc}")
-    if _is_chroma_backend() and not _clear_chroma_system_cache():
+    if _is_chroma_backend() and not _clear_chroma_system_cache(_config.palace_path):
         logger.debug("Failed to clear Chroma shared system cache during reconnect")
         close_errors.append("shared Chroma cache clear failed")
     _client_cache = None

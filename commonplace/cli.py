@@ -14,9 +14,11 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import plans
 from .backup import BackupError, data_lock
+from .backup_supervisor import cli_fence
 from .control_db import ControlDB, ControlError
 from .extensions import ToolError
 from .mailer import MailError
+from .orch import cli as orch_cli
 from .policy import PROFILES, TRUST_LEVELS, Policy, PolicyError
 
 DATA_ENV = "COMMONPLACE_DATA"
@@ -147,9 +149,11 @@ def cmd_member_add(args) -> int:
 
 def cmd_token_add(args) -> int:
     db = _db(args)
-    from .bridge import CLIENT_PRESETS
+    from .bridge import CLIENT_PRESETS, DEFAULT_CLIENT_PRESET
 
-    defaults = CLIENT_PRESETS.get(args.client, {})
+    if "memory:import:read" in (_csv(args.scopes) or []):
+        raise ValueError("Imported history requires explicit browser reader consent")
+    defaults = CLIENT_PRESETS.get(args.client, DEFAULT_CLIENT_PRESET)
 
     def value(name, fallback):
         explicit = getattr(args, name)
@@ -431,6 +435,56 @@ def cmd_thread(args) -> int:
     return 0
 
 
+def cmd_search_index(args) -> int:
+    from .gateway import WorkerClient
+    from .handoff.db import HandoffDB
+    from .handoff.events import Events
+    from .handoff.service import HandoffService
+    from .search_index_api import progress
+    from .workers import WorkerSupervisor
+
+    db = _db(args)
+    workspace = db.workspace(args.workspace)["id"]
+    with ExitStack() as stack:
+        store_for = _stores(args, stack)
+        handoff_db = HandoffDB(db)
+        worker = None
+        if args.action == "run":
+            supervisor = WorkerSupervisor(str(_data_dir(args)))
+            stack.callback(supervisor.close)
+            worker = WorkerClient(supervisor)
+        service = HandoffService(
+            control_db=db,
+            handoff_db=handoff_db,
+            settings=_settings(db, handoff_db),
+            store_for=store_for,
+            events=Events(db, handoff_db),
+            call_tool=worker.call_tool if worker else None,
+        )
+        stack.callback(service.close)
+        if args.action == "run":
+            store = store_for(workspace)
+            if args.captures:
+                for prefix in ("capture:", "capture-fork:"):
+                    after = None
+                    while rows := store.list_source_range(
+                        workspace, prefix, after=after, limit=100
+                    ):
+                        for row in rows:
+                            store.begin_mirror(row.id, -1, bootstrap=-1)
+                        after = (rows[-1].source_thread_id, rows[-1].id)
+            service.index_later(workspace)
+            service.wait_for_mirrors()
+        counts = progress(service, workspace, principal=None)
+        print(
+            json.dumps(
+                {k: v for k, v in counts.items() if k not in ("state", "units_written")},
+                sort_keys=True,
+            )
+        )
+    return 0
+
+
 def _positive_int(value):
     number = int(value)
     if number <= 0:
@@ -490,7 +544,10 @@ def _handoff_parsers(sub):
     s.add_argument("--to", required=True)
     s.add_argument("--effort", default="")
     s.add_argument("--note", default="")
-    s.add_argument("--workspace")
+    s.add_argument(
+        "--workspace",
+        help="workspace name or ID (discover with `commonplace workspace list`)",
+    )
     s.add_argument("--agent", default="")
     s.add_argument("--task", default="")
     s.add_argument("--by")
@@ -543,6 +600,14 @@ def _handoff_parsers(sub):
             s.add_argument("query")
         s.set_defaults(func=cmd_thread)
 
+    search_index = sub.add_parser("search-index").add_subparsers(dest="action", required=True)
+    for action in ("status", "run"):
+        s = search_index.add_parser(action)
+        s.add_argument("--workspace", required=True)
+        if action == "run":
+            s.add_argument("--captures", action="store_true")
+        s.set_defaults(func=cmd_search_index)
+
 
 def cmd_serve(args) -> int:
     from .gateway import Gateway
@@ -550,11 +615,14 @@ def cmd_serve(args) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     db = _db(args)
-    if not db.has_users():
-        raise ControlError("not set up: run `commonplace init` first")
-    supervisor = WorkerSupervisor(str(_data_dir(args)), idle_stop_s=args.idle_minutes * 60)
-    Gateway(db, supervisor).serve(args.host, args.port)
-    return 0
+    try:
+        if not db.has_users():
+            raise ControlError("not set up: run `commonplace init` first")
+        supervisor = WorkerSupervisor(str(_data_dir(args)), idle_stop_s=args.idle_minutes * 60)
+        Gateway(db, supervisor).serve(args.host, args.port)
+        return 0
+    finally:
+        db.close()
 
 
 def add_webhook_commands(sub):
@@ -615,6 +683,119 @@ def cmd_connect(args) -> int:
     return run_bridge(args.url, args.token_env)
 
 
+def _client(args):
+    from .client import Client
+
+    return Client(url=args.url, token_env=args.token_env)
+
+
+def _client_paths(args):
+    home = (args.home or Path.home()).expanduser()
+    project = None if args.no_project else (args.project or Path.cwd()).expanduser()
+    return home, project
+
+
+def _print_install_report(report):
+    refused = False
+    for item in report.get("files", []):
+        name = Path(item["path"]).name
+        print(f"{name}: {item['status']}" + (f"; {item['reason']}" if item.get("reason") else ""))
+        refused |= item["status"] == "refused"
+    for warning in report.get("warnings", []):
+        print(f"Warning: {warning}", file=sys.stderr)
+    for note in report.get("notes", []):
+        print(note)
+    return refused or bool(report.get("warnings"))
+
+
+def cmd_onboard(args) -> int:
+    from .client_install import install_client_config
+    from .onboarding import onboard
+
+    home, project = _client_paths(args)
+    # Preflight never calls the client, so a dry run needs no credential.
+    client = None if args.dry_run else _client(args)
+    migration = onboard(client, home=home, project=project, dry_run=args.dry_run)
+    warnings = _print_install_report(migration)
+    config = install_client_config(
+        home=home,
+        project=project,
+        url=args.url,
+        token_env=args.token_env,
+        dry_run=args.dry_run,
+    )
+    warnings |= _print_install_report(config)
+    if args.dry_run:
+        print("Dry run: no files or memories changed.")
+    else:
+        print("Onboarding finished with warnings." if warnings else "Onboarding complete.")
+    print("Imported rules await owner approval.")
+    return 1 if warnings else 0
+
+
+def cmd_remember(args) -> int:
+    print(_client(args).remember(args.text))
+    return 0
+
+
+def cmd_rule(args) -> int:
+    print(_client(args).publish_rule(args.text, agent=args.agent, kind=args.kind))
+    print("Rule proposals require owner approval before taking effect.")
+    return 0
+
+
+def cmd_check(args) -> int:
+    from .onboarding import check_local_only
+
+    home, project = _client_paths(args)
+    findings = check_local_only(home=home, project=project)
+    for finding in findings:
+        print(
+            f"Warning: {Path(finding['path']).name}: local-only instructions or memory; "
+            "save with memory_save (commonplace remember) or propose with "
+            "rules_publish (commonplace rule).",
+            file=sys.stderr,
+        )
+    if not findings:
+        print("No local-only instructions or memory found.")
+    return 1 if findings else 0
+
+
+def _client_parsers(sub):
+    for command, handler in (
+        ("onboard", cmd_onboard),
+        ("remember", cmd_remember),
+        ("rule", cmd_rule),
+    ):
+        parser = sub.add_parser(command)
+        parser.add_argument(
+            "--url", help="Commonplace URL (default $COMMONPLACE_URL or https://app.cmmn.dev)"
+        )
+        parser.add_argument("--token-env", default="COMMONPLACE_TOKEN")
+        if command == "onboard":
+            parser.add_argument("--dry-run", action="store_true")
+        else:
+            parser.add_argument("text")
+        if command == "rule":
+            parser.add_argument("--agent", choices=("self", "*"), default="self")
+            parser.add_argument(
+                "--kind",
+                choices=("instruction", "permission", "limit", "style"),
+                default="instruction",
+            )
+        parser.set_defaults(func=handler)
+    check = sub.add_parser("check", help="warn about instructions or memory saved only locally")
+    check.set_defaults(func=cmd_check)
+    from . import sync_cli
+
+    sync_cli.register(sub)
+    for parser in (sub.choices["onboard"], check):
+        parser.add_argument("--home", type=Path)
+        project = parser.add_mutually_exclusive_group()
+        project.add_argument("--project", type=Path)
+        project.add_argument("--no-project", action="store_true")
+
+
 def cmd_seed(args) -> int:
     from .seed import seed_workspace
 
@@ -641,6 +822,35 @@ def cmd_workspace_store(args) -> int:
     print(
         json.dumps(
             switch_workspace(_data_dir(args), args.workspace, args.store, authorize=authorize),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def cmd_workspace_encrypt(args) -> int:
+    from .workspace_encryption import encrypt_workspace
+
+    def authorize(ref):
+        db = _db(args)
+        try:
+            workspace = db.workspace(ref)
+            db.require_owner(workspace["id"], db.user(args.by)["id"])
+            return workspace["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            encrypt_workspace(
+                _data_dir(args),
+                args.workspace,
+                backup_dir=args.backup_dir,
+                key_store=args.key_store,
+                server_key_file=args.server_key_file,
+                recovery_key_file=args.recovery_key_file,
+                authorize=authorize,
+            ),
             sort_keys=True,
         )
     )
@@ -695,11 +905,53 @@ def cmd_workspace_prune(args) -> int:
 
 
 def cmd_backup(args) -> int:
-    from .backup import backup
+    from . import backup_supervisor
 
-    backup(_data_dir(args), args.dest_dir)
-    print(Path(args.dest_dir).expanduser().resolve() / "manifest.json")
+    data = _data_dir(args)
+    if args.check_online:
+        print(json.dumps(backup_supervisor.check_online(data, args.dest_dir), sort_keys=True))
+        return 0
+    if args.online_cleanup:
+        print(json.dumps(backup_supervisor.cleanup(data, args.dest_dir), sort_keys=True))
+        return 0
+    from .backup_status import Reporter
+
+    reporter = Reporter()
+    if args.online:
+        try:
+            result = backup_supervisor.run_online(data, args.dest_dir, deadline=args.deadline)
+        except BaseException:
+            reporter.finish("online", False)
+            raise
+        reporter.finish("online", True)
+        print(result)
+        return 0
+    print(
+        backup_supervisor.backup_auto(
+            data, args.dest_dir, deadline=args.deadline, report=reporter.finish
+        )
+    )
     return 0
+
+
+def cmd_restore(args) -> int:
+    from .backup import restore
+
+    print(json.dumps(restore(args.backup_dir, args.dest_dir), sort_keys=True))
+    return 0
+
+
+def cmd_runner(args) -> int:
+    if args.action == "chat":
+        from .runner import chat_agent
+
+        return chat_agent.run(args.config, args.once)
+
+    from .runner.agent import check, run
+
+    if args.action == "check":
+        return check(args.config)
+    return run(args.config, args.once)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -707,6 +959,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data", help=f"data directory (default ${DATA_ENV} or ~/.commonplace)")
     sub = p.add_subparsers(dest="command", required=True)
     add_webhook_commands(sub)
+    _client_parsers(sub)
+
+    runner = sub.add_parser("runner").add_subparsers(dest="action", required=True)
+    for action in ("check", "run", "chat"):
+        s = runner.add_parser(action)
+        s.add_argument("--config", required=True)
+        if action in ("run", "chat"):
+            s.add_argument("--once", action="store_true")
+        s.set_defaults(func=cmd_runner)
 
     s = sub.add_parser("init", help="create the control database and the first admin")
     s.add_argument("--admin-email", required=True)
@@ -737,6 +998,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--owner", required=True)
     s.set_defaults(func=cmd_workspace_add)
     ws.add_parser("list").set_defaults(func=cmd_workspace_list)
+    s = ws.add_parser("encrypt")
+    s.add_argument("workspace")
+    s.add_argument("--by", required=True)
+    s.add_argument("--backup-dir", required=True)
+    s.add_argument("--key-store", required=True)
+    s.add_argument("--server-key-file", required=True)
+    s.add_argument("--recovery-key-file", required=True)
+    s.set_defaults(func=cmd_workspace_encrypt)
     s = ws.add_parser("store")
     s.add_argument("workspace")
     s.add_argument("store", choices=("v1", "compact"))
@@ -817,14 +1086,75 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--by")
     s.set_defaults(func=cmd_seed)
 
-    s = sub.add_parser("backup")
-    s.add_argument("dest_dir")
+    s = sub.add_parser(
+        "backup",
+        help="verified backup: offline when the data directory is free, else online",
+    )
+    s.add_argument("dest_dir", nargs="?", metavar="DEST")
+    mode = s.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--online",
+        action="store_true",
+        help="snapshot next to a running gateway; DEST is <data>/.backup-staging/<stamp>",
+    )
+    mode.add_argument(
+        "--check-online",
+        action="store_true",
+        help="exit 0 when a gateway for this data directory can run an online backup",
+    )
+    mode.add_argument(
+        "--online-cleanup",
+        action="store_true",
+        help="remove an unlocked staging run's leftovers for DEST (never signals)",
+    )
+    s.add_argument(
+        "--deadline", type=_epoch, metavar="EPOCH", help="stop the run at this Unix time"
+    )
     s.set_defaults(func=cmd_backup)
+    s = sub.add_parser("restore", help="verify and restore a backup into a new directory")
+    s.add_argument("backup_dir")
+    s.add_argument("dest_dir")
+    s.set_defaults(func=cmd_restore)
+    orch_cli.add_parsers(sub)
     return p
 
 
+def _epoch(value):
+    number = float(value)
+    if not 0 < number < float("inf"):
+        raise argparse.ArgumentTypeError("must be a positive Unix time")
+    return number
+
+
+def _check_backup_args(parser, args) -> None:
+    if args.command != "backup":
+        return
+    if args.dest_dir is None and not args.check_online:
+        parser.error("backup: the following arguments are required: DEST")
+    if args.deadline is not None and (args.check_online or args.online_cleanup):
+        parser.error("backup: --deadline applies to a backup run only")
+
+
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    _check_backup_args(parser, args)
+    if args.command == "runner" or orch_cli.repo_only(args):
+        # Repository checks and the runner client never open the data directory.
+        return args.func(args)
+    if args.command in {"onboard", "remember", "rule", "check", "sync"}:
+        from .client import ClientError
+
+        # Client operations neither open server databases nor take their lock.
+        try:
+            return args.func(args)
+        except (ClientError, OSError, ValueError):
+            print(
+                f"commonplace: {args.command} failed; check the connection, token environment "
+                "variable and local file permissions.",
+                file=sys.stderr,
+            )
+            return 2
     errors = (ControlError, PolicyError, BackupError, ToolError, MailError, OSError, sqlite3.Error)
     if args.command in ("handoff", "thread"):
         from .handoff.db import HandoffDBError
@@ -835,17 +1165,21 @@ def main(argv=None) -> int:
 
         errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
-        if args.command in {"connect", "backup"} or (
-            args.command == "workspace" and args.action in {"store", "prune-stores"}
+        if args.command in {"connect", "backup", "restore"} or (
+            args.command == "workspace" and args.action in {"store", "prune-stores", "encrypt"}
         ):
             return args.func(args)
-        with data_lock(_data_dir(args)):
+        if args.func is cmd_serve:
+            # Serve never takes the backup fence; an online backup runs beside it.
+            with data_lock(_data_dir(args)):
+                return args.func(args)
+        with cli_fence(_data_dir(args)), data_lock(_data_dir(args)):
             return args.func(args)
     except errors as exc:
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
-        if args.command not in {"login-link", "seed", "backup", "workspace", "doctor"}:
+        if args.command not in {"login-link", "seed", "backup", "workspace", "doctor", "orch"}:
             raise
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2

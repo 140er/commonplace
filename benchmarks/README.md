@@ -10,6 +10,23 @@ cd mempalace
 uv sync --extra dev   # or: pip install -e ".[dev]"
 ```
 
+## Offline default-search comparison
+
+```bash
+uv run python benchmarks/search_union_bench.py
+uv run python benchmarks/search_union_bench.py --backend chroma --wing engineering --room notes
+```
+
+Compares explicit `vector` (the previous default) and `union` (the current
+default) on 20,000 synthetic drawers, including local MiniLM query embedding.
+Supports `sqlite_exact` and Chroma. Each query/strategy/scope is warmed once;
+five interleaved repeats give 165 samples per strategy per scope. Unfiltered,
+wing, and wing/room searches include natural-language common-word queries.
+The model must already be fully cached. Construction reuses 100 filler-template
+embeddings with unique record suffixes; ten embedded needles and ten zero-vector
+ID/path needles measure recall@5 within each scope. These search timings do not
+measure hook execution or startup injection.
+
 ## Benchmark 1: LongMemEval (500 questions)
 
 Tests retrieval across ~53 conversation sessions per question. The standard benchmark for AI memory.

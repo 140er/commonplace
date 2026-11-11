@@ -21,16 +21,42 @@ import os
 import secrets
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from mempalace.sqlite_crypto import connect, integrity_error_type, row_factory
+
 from .models import CHUNK_MAX_CHARS, THREADS_WING, RecallHit, StoredThread, ThreadMessage
+
+MIRROR_PROGRESS_SQL = """
+CREATE TABLE IF NOT EXISTS mirror_progress (
+    thread_id TEXT PRIMARY KEY REFERENCES threads(id),
+    completed_seq INTEGER NOT NULL CHECK(completed_seq >= -1),
+    pending_seq INTEGER NOT NULL CHECK(pending_seq >= completed_seq)
+)
+"""
+
+# GLOB keeps source namespace matching literal and case sensitive.
+_INDEX_PENDING_SQL = """(
+    (p.thread_id IS NULL AND
+        (t.source_thread_id GLOB 'import:*' OR t.source_thread_id GLOB 'import-private:*'))
+    OR p.completed_seq < t.message_count-1
+)"""
 
 
 class ThreadConflict(ValueError):
     """Same source thread id, different content."""
+
+
+class ThreadStorageLimit(ValueError):
+    """The thread cannot fit within its allocated storage budget."""
+
+
+class _FTSRowidCollision(Exception):
+    """An FTS insert encountered a verified, misidentified rowid."""
 
 
 @dataclass(frozen=True)
@@ -138,10 +164,8 @@ class ThreadStore:
             finally:
                 os.close(descriptor)
 
-        self._conn = sqlite3.connect(
-            path, check_same_thread=False, isolation_level=None, timeout=30
-        )
-        self._conn.row_factory = sqlite3.Row
+        self._conn = connect(path, check_same_thread=False, isolation_level=None, timeout=30)
+        self._conn.row_factory = row_factory
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=FULL")
@@ -192,10 +216,118 @@ class ThreadStore:
                 );
                 """
             )
+            self._conn.execute(MIRROR_PROGRESS_SQL)
+            self._fts_verified_version = None
             self._fts_enabled = self._init_fts()
         except BaseException:
             self._conn.close()
             raise
+
+    def mirror_progress(self, stored_id: str):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT completed_seq, pending_seq FROM mirror_progress WHERE thread_id=?",
+                (stored_id,),
+            ).fetchone()
+            return tuple(row) if row is not None else None
+
+    def index_backlog(self, workspace_id: str, *, after_id: str = "", limit: int = 20):
+        """Return pending imports and enrolled threads, ordered by stored id.
+
+        Unenrolled captures are deliberately excluded. Import-group holders
+        and forks enter this selection when their caller enrolls them with
+        ``begin_mirror``. Only metadata is read, for both store formats.
+        """
+        if limit <= 0:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT t.* FROM threads t LEFT JOIN mirror_progress p ON p.thread_id=t.id "
+                "WHERE t.workspace_id=? AND t.id>? AND "
+                + _INDEX_PENDING_SQL
+                + " ORDER BY t.id LIMIT ?",
+                (workspace_id, after_id, limit),
+            ).fetchall()
+        return [_stored_thread(row) for row in rows]
+
+    @contextmanager
+    def index_snapshot(self):
+        """Bound a read-only progress snapshot to the caller's single deadline.
+
+        The caller holds the store lock, so connection settings cannot affect
+        another operation. Both store formats share this metadata connection.
+        """
+        from time import monotonic
+
+        from commonplace.rules import checks
+
+        wait = self._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        try:
+            self._conn.execute(f"PRAGMA busy_timeout={int(checks.remaining(1.0) * 1000)}")
+            end = checks._deadline.get()
+            self._conn.set_progress_handler(lambda: end is not None and monotonic() >= end, 1000)
+            self._conn.execute("BEGIN")
+            try:
+                yield
+            finally:
+                self._conn.rollback()
+        finally:
+            self._conn.set_progress_handler(None, 0)
+            self._conn.execute(f"PRAGMA busy_timeout={wait}")
+
+    def index_descriptors(self, workspace_id: str, *, after_id: str = "", limit: int = 500):
+        """Page current thread metadata with the existing checkpoint predicates."""
+        if not 1 <= limit <= 500:
+            raise ValueError("Progress pages require a limit from 1 to 500")
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT t.*, p.completed_seq >= t.message_count-1 AS indexed, "
+                + _INDEX_PENDING_SQL
+                + " AS pending FROM threads t "
+                "LEFT JOIN mirror_progress p ON p.thread_id=t.id "
+                "WHERE t.workspace_id=? AND t.id>? ORDER BY t.id LIMIT ?",
+                (workspace_id, after_id, limit),
+            ).fetchall()
+        return [(_stored_thread(row), bool(row["indexed"]), bool(row["pending"])) for row in rows]
+
+    def index_counts(self, workspace_id: str) -> dict[str, int]:
+        """Count completed mirrors and pending threads without loading words.
+
+        Indexed means a progress row has caught up with the current thread.
+        Pending uses exactly the same eligibility rule as ``index_backlog``.
+        Unit-write totals belong to the sweep, not the message checkpoints.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT count(CASE WHEN p.completed_seq >= t.message_count-1 THEN 1 END), "
+                "count(CASE WHEN " + _INDEX_PENDING_SQL + " THEN 1 END) FROM threads t "
+                "LEFT JOIN mirror_progress p ON p.thread_id=t.id WHERE t.workspace_id=?",
+                (workspace_id,),
+            ).fetchone()
+        return {"threads_indexed": row[0], "threads_pending": row[1]}
+
+    def begin_mirror(self, stored_id: str, through: int, *, bootstrap: int = -1):
+        """Pin an append boundary until its idempotent mirror writes finish."""
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                "INSERT OR IGNORE INTO mirror_progress VALUES (?,?,?)",
+                (stored_id, bootstrap, max(through, bootstrap)),
+            )
+            self._conn.execute(
+                "UPDATE mirror_progress SET pending_seq=max(pending_seq,?) "
+                "WHERE thread_id=? AND completed_seq=pending_seq",
+                (through, stored_id),
+            )
+            return self.mirror_progress(stored_id)
+
+    def finish_mirror(self, stored_id: str, through: int):
+        """Advance only the pending batch whose units have all committed."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE mirror_progress SET completed_seq=? WHERE thread_id=? AND pending_seq=?",
+                (through, stored_id, through),
+            )
 
     def _init_fts(self) -> bool:
         with self._conn:
@@ -212,22 +344,114 @@ class ThreadStore:
             # Old writers ignore user_version and can misalign FTS rowids after
             # fallback writes. Repair identities on every open, retaining all
             # aligned entries so migration does not rewrite a healthy index.
-            self._conn.execute(
-                """DELETE FROM chunks_fts WHERE rowid IN (
-                       SELECT f.rowid FROM chunks_fts f
-                       LEFT JOIN chunks c ON c.rowid=f.rowid
-                       WHERE c.thread_id IS NOT f.thread_id OR c.idx IS NOT f.idx
-                   )"""
-            )
+            self._repair_fts()
             if self._conn.execute("PRAGMA user_version").fetchone()[0] < 1:
                 self._conn.execute("PRAGMA user_version=1")
-            # Also handles reopening with FTS5 after stores made without it.
-            self._conn.execute(
-                """INSERT INTO chunks_fts(rowid, thread_id, idx, text)
-                   SELECT rowid, thread_id, idx, text FROM chunks
-                   WHERE rowid NOT IN (SELECT rowid FROM chunks_fts)"""
-            )
+            verified_version = self._conn.execute("PRAGMA data_version").fetchone()[0]
+        # Only this successful, self-owned commit makes the evidence reusable.
+        self._fts_verified_version = verified_version
         return True
+
+    def _repair_fts(self):
+        """Repair derived identities under the caller's writer transaction."""
+        self._conn.execute(
+            """DELETE FROM chunks_fts WHERE rowid IN (
+                   SELECT f.rowid FROM chunks_fts f
+                   LEFT JOIN chunks c ON c.rowid=f.rowid
+                   WHERE c.thread_id IS NOT f.thread_id OR c.idx IS NOT f.idx
+               )"""
+        )
+        self._conn.execute(
+            """INSERT INTO chunks_fts(rowid, thread_id, idx, text)
+               SELECT rowid, thread_id, idx, text FROM chunks
+               WHERE rowid NOT IN (SELECT rowid FROM chunks_fts)"""
+        )
+
+    def _insert_fts(self, identities):
+        attempted = None
+
+        def parameters():
+            nonlocal attempted
+            for attempted in identities:
+                yield attempted
+
+        try:
+            self._conn.executemany(
+                "INSERT INTO chunks_fts(rowid, thread_id, idx, text) "
+                "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
+                parameters(),
+            )
+        except integrity_error_type(self._conn) as error:
+            # FTS5 reports a rowid conflict as a generic constraint failure.
+            # Verify the failing item, not an unrelated stale row elsewhere.
+            if str(error) != "constraint failed" or attempted is None:
+                raise
+            collision = self._conn.execute(
+                "SELECT 1 FROM chunks c JOIN chunks_fts f ON f.rowid=c.rowid "
+                "WHERE c.thread_id=? AND c.idx=? "
+                "AND (c.thread_id IS NOT f.thread_id OR c.idx IS NOT f.idx)",
+                attempted,
+            ).fetchone()
+            if collision is None:
+                raise
+            raise _FTSRowidCollision() from error
+
+    def _write_with_fts_retry(self, write):
+        """Rollback the whole operation before repairing, then retry once."""
+        self._conn.execute("SAVEPOINT thread_write")
+        try:
+            for attempt in range(2):
+                try:
+                    return write()
+                except _FTSRowidCollision as error:
+                    if attempt:
+                        raise error.__cause__ from None
+                    self._fts_verified_version = None
+                    self._conn.execute("ROLLBACK TO thread_write")
+                    self._repair_fts()
+        except BaseException:
+            # SQLite may abort the entire transaction on I/O/full errors.
+            # In that case its savepoints are gone; preserve the original error.
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK TO thread_write")
+            raise
+        finally:
+            if self._conn.in_transaction:
+                self._conn.execute("RELEASE thread_write")
+
+    @contextmanager
+    def _search_snapshot(self, use_fts):
+        outer = self._conn.in_transaction
+        self._conn.execute("SAVEPOINT thread_search")
+        released = False
+        try:
+            # SAVEPOINT alone does not pin a snapshot. Read canonical data
+            # before comparing connection-local data_version evidence.
+            self._conn.execute("SELECT rowid FROM chunks LIMIT 1").fetchone()
+            if use_fts and hasattr(self, "_fts_verified_version"):
+                version = self._conn.execute("PRAGMA data_version").fetchone()[0]
+                if version != self._fts_verified_version:
+                    self._fts_verified_version = None
+                    if not outer:
+                        self._conn.execute("RELEASE thread_search")
+                        released = True
+                        with self._transaction():
+                            self._repair_fts()
+                            verified = self._conn.execute("PRAGMA data_version").fetchone()[0]
+                            yield
+                        self._fts_verified_version = verified
+                        return
+                    # Never end an enclosing transaction to obtain a newer
+                    # snapshot. A failed writer upgrade must surface to caller.
+                    self._repair_fts()
+            yield
+        except BaseException:
+            if not released and self._conn.in_transaction:
+                self._conn.execute("ROLLBACK TO thread_search")
+            raise
+        finally:
+            if not released and self._conn.in_transaction:
+                self._conn.execute("RELEASE thread_search")
 
     def close(self) -> None:
         with self._lock:
@@ -261,6 +485,17 @@ class ThreadStore:
                 (stored_id, version, next_seq),
             )
 
+    @contextmanager
+    def _transaction(self):
+        """Compose ingest operations under one writer transaction and lock."""
+        with self._lock:
+            if self._conn.in_transaction:
+                yield
+            else:
+                with self._conn:
+                    self._conn.execute("BEGIN IMMEDIATE")
+                    yield
+
     def store(
         self,
         workspace_id: str,
@@ -269,6 +504,8 @@ class ThreadStore:
         *,
         actor: str,
         parent_stored_id: str = "",
+        max_storage_bytes: Optional[int] = None,
+        wing: str = THREADS_WING,
     ) -> StoredThread:
         messages = list(messages)
         if not messages:
@@ -277,8 +514,7 @@ class ThreadStore:
             raise ValueError("Message sequence must start at zero and be contiguous")
         digest = canonical_sha256(messages)
 
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._transaction():
             existing = _stored_thread(
                 self._conn.execute(
                     "SELECT * FROM threads WHERE workspace_id=? AND source_thread_id=?",
@@ -290,6 +526,7 @@ class ThreadStore:
                     raise ThreadConflict("Source thread already has different stored content")
                 return existing
 
+            self._check_storage_budget(max_storage_bytes, messages)
             chunks = chunk_messages(messages)
             stored = StoredThread(
                 id="thr_" + secrets.token_hex(8),
@@ -298,61 +535,109 @@ class ThreadStore:
                 message_count=len(messages),
                 chunk_count=len(chunks),
                 sha256=digest,
-                wing=THREADS_WING,
+                wing=wing,
                 created_at=datetime.now(timezone.utc).isoformat(),
                 created_by=actor,
             )
-            self._conn.execute(
-                """INSERT INTO threads
-                   (id, workspace_id, source_thread_id, parent_stored_id,
-                    message_count, chunk_count, sha256, wing, created_at, created_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    stored.id,
-                    workspace_id,
-                    source_thread_id,
-                    parent_stored_id,
-                    stored.message_count,
-                    stored.chunk_count,
-                    digest,
-                    stored.wing,
-                    stored.created_at,
-                    actor,
-                ),
-            )
-            self._conn.executemany(
-                """INSERT INTO messages
-                   (thread_id, seq, role, kind, name, call_id, at, text, raw)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
+
+            def write():
+                self._conn.execute(
+                    """INSERT INTO threads
+                       (id, workspace_id, source_thread_id, parent_stored_id,
+                        message_count, chunk_count, sha256, wing, created_at, created_by)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         stored.id,
-                        m.seq,
-                        m.role,
-                        m.kind,
-                        m.name,
-                        m.call_id,
-                        m.at,
-                        m.text,
-                        m.raw,
-                    )
-                    for m in messages
-                ],
-            )
-            self._conn.executemany(
-                "INSERT INTO chunks(thread_id, idx, seq_start, seq_end, text) "
-                "VALUES (?, ?, ?, ?, ?)",
-                [(stored.id, c.index, c.seq_start, c.seq_end, c.text) for c in chunks],
-            )
-            if self._fts_enabled:
-                self._conn.executemany(
-                    "INSERT INTO chunks_fts(rowid, thread_id, idx, text) "
-                    "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
-                    [(stored.id, c.index) for c in chunks],
+                        workspace_id,
+                        source_thread_id,
+                        parent_stored_id,
+                        stored.message_count,
+                        stored.chunk_count,
+                        digest,
+                        stored.wing,
+                        stored.created_at,
+                        actor,
+                    ),
                 )
-            return stored
+                self._conn.executemany(
+                    """INSERT INTO messages
+                       (thread_id, seq, role, kind, name, call_id, at, text, raw)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [
+                        (
+                            stored.id,
+                            m.seq,
+                            m.role,
+                            m.kind,
+                            m.name,
+                            m.call_id,
+                            m.at,
+                            m.text,
+                            m.raw,
+                        )
+                        for m in messages
+                    ],
+                )
+                self._conn.executemany(
+                    "INSERT INTO chunks(thread_id, idx, seq_start, seq_end, text) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [(stored.id, c.index, c.seq_start, c.seq_end, c.text) for c in chunks],
+                )
+                if self._fts_enabled:
+                    self._insert_fts([(stored.id, c.index) for c in chunks])
+                self._check_storage_budget(max_storage_bytes)
+                return stored
 
-    def append(self, stored_id: str, messages: list[ThreadMessage]) -> StoredThread:
+            return self._write_with_fts_retry(write)
+
+    def _check_storage_budget(self, maximum, messages=()):
+        if callable(maximum):
+            maximum = maximum()
+        if maximum is None:
+            return
+        path = self._conn.execute("PRAGMA database_list").fetchone()[2]
+        page_size = self._conn.execute("PRAGMA page_size").fetchone()[0]
+        pages = self._conn.execute("PRAGMA page_count").fetchone()[0]
+
+        def size(suffix):
+            if not path or path == ":memory:":
+                return 0
+            candidate = Path(path + suffix)
+            return candidate.stat().st_size if candidate.exists() else 0
+
+        # Allow for a checkpoint growing the main file and a commit writing
+        # every page to WAL. Already spilled frames are included in WAL size.
+        bound = (
+            max(size(""), pages * page_size)
+            + size("-wal")
+            + max(size("-shm"), 32768)
+            + 32
+            + pages * (page_size + 24)
+        )
+        if messages:
+            lengths = {}
+
+            def utf8_size(value):
+                # Content blocks share raw objects; avoid encoding the same
+                # large line once per block while still budgeting every row.
+                key = id(value)
+                if key not in lengths:
+                    lengths[key] = len(value.encode("utf-8"))
+                return lengths[key]
+
+            # Reject before a large transaction can spill. Include raw source,
+            # readable text, chunks, FTS and SQLite allocation overhead.
+            bound += 256 * 1024 + 8 * sum(
+                utf8_size(value)
+                for m in messages
+                for value in (m.raw, m.text, m.role, m.kind, m.name, m.call_id, m.at)
+            )
+        if bound > maximum:
+            raise ThreadStorageLimit("Insufficient storage for this thread")
+
+    def append(
+        self, stored_id: str, messages: list[ThreadMessage], *, max_storage_bytes=None
+    ) -> StoredThread:
         """Append the suffix of a full transcript, retaining every existing row.
 
         Canonical fields must match the saved prefix. An identical transcript,
@@ -363,8 +648,7 @@ class ThreadStore:
         messages = list(messages)
         if any(message.seq != seq for seq, message in enumerate(messages)):
             raise ValueError("Message sequence must start at zero and be contiguous")
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._transaction():
             stored = self.get(stored_id)
             if stored is None:
                 raise ValueError("Thread not found")
@@ -375,38 +659,40 @@ class ThreadStore:
             if len(messages) <= len(previous):
                 return stored
             added = messages[len(previous) :]
+            self._check_storage_budget(max_storage_bytes, added)
             chunks = chunk_messages(added)
-            self._conn.executemany(
-                "INSERT INTO messages(thread_id, seq, role, kind, name, call_id, at, text, raw) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (stored_id, m.seq, m.role, m.kind, m.name, m.call_id, m.at, m.text, m.raw)
-                    for m in added
-                ],
-            )
-            self._conn.executemany(
-                "INSERT INTO chunks(thread_id, idx, seq_start, seq_end, text) VALUES (?, ?, ?, ?, ?)",
-                [
-                    (stored_id, stored.chunk_count + c.index, c.seq_start, c.seq_end, c.text)
-                    for c in chunks
-                ],
-            )
-            if self._fts_enabled:
+
+            def write():
                 self._conn.executemany(
-                    "INSERT INTO chunks_fts(rowid, thread_id, idx, text) "
-                    "SELECT rowid, thread_id, idx, text FROM chunks WHERE thread_id=? AND idx=?",
-                    [(stored_id, stored.chunk_count + c.index) for c in chunks],
+                    "INSERT INTO messages(thread_id, seq, role, kind, name, call_id, at, text, raw) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (stored_id, m.seq, m.role, m.kind, m.name, m.call_id, m.at, m.text, m.raw)
+                        for m in added
+                    ],
                 )
-            self._conn.execute(
-                "UPDATE threads SET message_count = ?, chunk_count = ?, sha256 = ? WHERE id = ?",
-                (
-                    len(messages),
-                    stored.chunk_count + len(chunks),
-                    canonical_sha256(previous + added),
-                    stored_id,
-                ),
-            )
-            return self.get(stored_id)
+                self._conn.executemany(
+                    "INSERT INTO chunks(thread_id, idx, seq_start, seq_end, text) VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (stored_id, stored.chunk_count + c.index, c.seq_start, c.seq_end, c.text)
+                        for c in chunks
+                    ],
+                )
+                if self._fts_enabled:
+                    self._insert_fts([(stored_id, stored.chunk_count + c.index) for c in chunks])
+                self._conn.execute(
+                    "UPDATE threads SET message_count = ?, chunk_count = ?, sha256 = ? WHERE id = ?",
+                    (
+                        len(messages),
+                        stored.chunk_count + len(chunks),
+                        canonical_sha256(previous + added),
+                        stored_id,
+                    ),
+                )
+                self._check_storage_budget(max_storage_bytes)
+                return self.get(stored_id)
+
+            return self._write_with_fts_retry(write)
 
     def put_doc(self, handoff_id: str, markdown: str) -> None:
         """Save a handoff's verbatim quotes beside its workspace transcript."""
@@ -438,6 +724,32 @@ class ThreadStore:
                     (workspace_id, source_thread_id),
                 ).fetchone()
             )
+
+    def by_source_family(self, workspace_id: str, base: str) -> list[StoredThread]:
+        """Exact source plus literal hash variants; no wildcard or case folding."""
+        prefix = base + "#sha256:"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM threads WHERE workspace_id=? AND "
+                "(source_thread_id = ? COLLATE BINARY OR "
+                "substr(source_thread_id,1,length(?)) = ? COLLATE BINARY) ORDER BY id",
+                (workspace_id, base, prefix, prefix),
+            ).fetchall()
+            return [_stored_thread(row) for row in rows]
+
+    def list_source_range(self, workspace_id, prefix, *, after=None, limit):
+        """Page a literal source namespace in binary identity order."""
+        if not prefix.endswith(":"):
+            raise ValueError("source prefix must end with a colon")
+        sql = "SELECT * FROM threads WHERE workspace_id=? AND source_thread_id>=? AND source_thread_id<?"
+        parameters = [workspace_id, prefix, prefix[:-1] + ";"]
+        if after is not None:
+            sql += " AND (source_thread_id, id) > (?, ?)"
+            parameters.extend(after)
+        sql += " ORDER BY source_thread_id, id LIMIT ?"
+        parameters.append(limit)
+        with self._lock:
+            return [_stored_thread(row) for row in self._conn.execute(sql, parameters).fetchall()]
 
     def parent_of(self, stored_id: str) -> Optional[str]:
         """The stored thread this one's agent was a successor of, if any."""
@@ -471,6 +783,21 @@ class ThreadStore:
                 Chunk(row["idx"], row["seq_start"], row["seq_end"], row["text"]) for row in rows
             ]
 
+    def import_source_candidates(self, workspace_id, query, *, limit=100):
+        """FTS candidates only; the caller must prove each account's bounded view."""
+        tokens = query.split()
+        if not tokens or not self._fts_enabled or "\x00" in query:
+            return []
+        match = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
+        with self._lock, self._search_snapshot(True):
+            rows = self._conn.execute(
+                "SELECT DISTINCT t.id FROM chunks_fts JOIN chunks c ON c.rowid=chunks_fts.rowid "
+                "JOIN threads t ON t.id=c.thread_id WHERE chunks_fts MATCH ? "
+                "AND t.workspace_id=? AND t.wing='private_chats' LIMIT ?",
+                (match, workspace_id, limit),
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def search(self, stored_ids: list[str], query: str, limit: int = 8) -> list[RecallHit]:
         """BM25 over the chunks of ``stored_ids``. Any query text is safe
         (quoted for FTS5, never a syntax error). Best first. Scores are
@@ -480,10 +807,11 @@ class ThreadStore:
         if not tokens or not stored_ids or limit <= 0:
             return []
         stored_ids = list(dict.fromkeys(stored_ids))
-        with self._lock:
+        use_fts = self._fts_enabled and "\x00" not in query
+        with self._lock, self._search_snapshot(use_fts):
             # FTS5's query parser treats NUL as an end marker even in a
             # quoted string, so such queries use the literal scan as well.
-            if self._fts_enabled and "\x00" not in query:
+            if use_fts:
                 rows = self._search_fts(stored_ids, tokens, limit)
             else:
                 rows = self._search_like(stored_ids, tokens, limit)
@@ -507,60 +835,66 @@ class ThreadStore:
         return read_limit(getattr(sqlite3, category)) if read_limit is not None else default
 
     def _search_fts(self, stored_ids: list[str], tokens: list[str], limit: int) -> list:
+        # Migration readers intentionally lack normal writer verification state.
+        if not hasattr(self, "_fts_verified_version"):
+            return self._search_fts_logical(stored_ids, tokens, limit)
+        match = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
+        batch_size = max(1, min(500, self._sqlite_limit("SQLITE_LIMIT_VARIABLE_NUMBER", 999) - 3))
+        rows = []
+        for offset in range(0, len(stored_ids), batch_size):
+            ids = stored_ids[offset : offset + batch_size]
+            placeholders = ",".join("?" for _ in ids)
+            # FTS5's rank iterator scores without reading stored text. Find a
+            # cutoff first, then read identity/tie keys only at or above it.
+            # Include the whole boundary tie before applying the stable limit.
+            scores = self._conn.execute(
+                "SELECT rank FROM chunks_fts "
+                f"WHERE chunks_fts MATCH ? AND thread_id IN ({placeholders}) "
+                "AND rank MATCH 'bm25()' ORDER BY rank LIMIT ?",
+                (match, *ids, limit),
+            ).fetchall()
+            if not scores:
+                continue
+            cutoff = scores[-1][0]
+            # Materialize the top rowids before any canonical chunk lookup.
+            selected = self._conn.execute(
+                "WITH ranked AS MATERIALIZED ("
+                "SELECT chunks_fts.rowid AS chunk_rowid, -rank AS score "
+                "FROM chunks_fts "
+                f"WHERE chunks_fts MATCH ? AND rank <= ? AND thread_id IN ({placeholders}) "
+                "AND rank MATCH 'bm25()' ORDER BY rank, thread_id, idx LIMIT ?) "
+                "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, ranked.score, "
+                "(c.thread_id IS f.thread_id AND c.idx IS f.idx) AS aligned "
+                "FROM ranked LEFT JOIN chunks AS c ON c.rowid=ranked.chunk_rowid "
+                "JOIN chunks_fts AS f ON f.rowid=ranked.chunk_rowid",
+                (match, cutoff, *ids, limit),
+            ).fetchall()
+            if any(not row["aligned"] for row in selected):
+                self._fts_verified_version = None
+                return self._search_fts_logical(stored_ids, tokens, limit)
+            rows.extend(selected)
+        # BM25 scores use the same corpus for every id batch, so their
+        # best results can be merged without changing relevance scores.
+        return rows
+
+    def _search_fts_logical(self, stored_ids, tokens, limit):
+        """Rerun the entire scoped query when rowids cannot be trusted."""
         match = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
         batch_size = max(1, min(500, self._sqlite_limit("SQLITE_LIMIT_VARIABLE_NUMBER", 999) - 2))
         rows = []
         for offset in range(0, len(stored_ids), batch_size):
             ids = stored_ids[offset : offset + batch_size]
             placeholders = ",".join("?" for _ in ids)
-            chunk_count = self._conn.execute(
-                f"SELECT coalesce(sum(chunk_count), 0) FROM threads WHERE id IN ({placeholders})",
-                ids,
-            ).fetchone()[0]
-            if not chunk_count:
-                continue
-            # Stop counting at the scoped chunk count. A rare global match set
-            # is cheaper to join directly than materializing the entire scope.
-            match_count = self._conn.execute(
-                "SELECT count(*) FROM (SELECT 1 FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT ?)",
-                (match, chunk_count),
-            ).fetchone()[0]
-            if match_count < chunk_count:
-                scope_sql = ""
-                rank_sql = (
-                    "FROM chunks_fts CROSS JOIN chunks AS s ON s.rowid=chunks_fts.rowid "
-                    f"WHERE chunks_fts MATCH ? AND s.thread_id IN ({placeholders}) "
-                    "ORDER BY bm25(chunks_fts), s.thread_id, s.idx LIMIT ?"
-                )
-                parameters = (match, *ids, limit)
-            else:
-                # Covering primary-key metadata avoids payload reads for common
-                # terms. AS MATERIALIZED requires SQLite 3.35+ and prevents the
-                # planner from moving chunk payload lookups ahead of LIMIT.
-                scope_sql = (
-                    "scope AS MATERIALIZED ("
-                    "SELECT rowid AS chunk_rowid, thread_id, idx FROM chunks "
-                    f"WHERE thread_id IN ({placeholders})), "
-                )
-                rank_sql = (
-                    "FROM chunks_fts JOIN scope ON scope.chunk_rowid=chunks_fts.rowid "
-                    "WHERE chunks_fts MATCH ? "
-                    "ORDER BY bm25(chunks_fts), scope.thread_id, scope.idx LIMIT ?"
-                )
-                parameters = (*ids, match, limit)
             rows.extend(
                 self._conn.execute(
-                    "WITH " + scope_sql + "ranked AS MATERIALIZED ("
-                    "SELECT chunks_fts.rowid AS chunk_rowid, -bm25(chunks_fts) AS score "
-                    + rank_sql
-                    + ") "
-                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, ranked.score "
-                    "FROM ranked JOIN chunks AS c ON c.rowid=ranked.chunk_rowid",
-                    parameters,
+                    "SELECT c.thread_id, c.idx, c.seq_start, c.seq_end, c.text, "
+                    "-bm25(chunks_fts) AS score FROM chunks_fts "
+                    "JOIN chunks AS c ON c.thread_id=chunks_fts.thread_id AND c.idx=chunks_fts.idx "
+                    f"WHERE chunks_fts MATCH ? AND c.thread_id IN ({placeholders}) "
+                    "ORDER BY bm25(chunks_fts), c.thread_id, c.idx LIMIT ?",
+                    (match, *ids, limit),
                 ).fetchall()
             )
-        # BM25 scores use the same corpus for every id batch, so their
-        # best results can be merged without changing relevance scores.
         return rows
 
     def _search_like(self, stored_ids: list[str], tokens: list[str], limit: int) -> list:

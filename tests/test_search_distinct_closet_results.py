@@ -474,7 +474,7 @@ def test_dedupe_keeps_distinct_chunks_of_one_logical_drawer():
     assert [hit["text"] for hit in _dedupe_rendered_hits(hits)] == ["first part", "second part"]
 
 
-def test_candidate_pool_limits_widen_only_default_vector_strategy():
+def test_candidate_pool_limits_preserve_vector_depth_for_both_strategies():
     assert _candidate_pool_limits(
         "vector",
         5,
@@ -487,6 +487,6 @@ def test_candidate_pool_limits_widen_only_default_vector_strategy():
         "union",
         5,
     ) == (
-        15,
-        5,
+        20,
+        20,
     )

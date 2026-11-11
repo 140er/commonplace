@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 import zstandard as zstd
 
+from mempalace.sqlite_crypto import connect
+
 from ..stored_text import (
     FLAG,
     KEYWORD_ONLY,
@@ -573,8 +575,11 @@ class CompactCollection(SQLiteExactCollection):
             raise BackendError("compact document dictionary is missing")
         return zstd.ZstdCompressionDict(row[0])
 
-    def _decompress(self, cur, blob, dictionary_id):
-        cache = self._handle.__dict__.setdefault("compact_decompressors", {})
+    def _decompress(self, cur, blob, dictionary_id, *, cache=None):
+        # Handle reads are serialized. Independent SQLite snapshots must supply
+        # their own cache: Zstandard contexts cannot serve overlapping reads.
+        if cache is None:
+            cache = self._handle.__dict__.setdefault("compact_decompressors", {})
         if dictionary_id not in cache:
             cache[dictionary_id] = zstd.ZstdDecompressor(
                 dict_data=self._dictionary(cur, dictionary_id)
@@ -1115,6 +1120,11 @@ class CompactCollection(SQLiteExactCollection):
             return {key: self._result(cur, [row], spec) for key, row in by_id.items()}
         return self._result(cur, [by_id[r] for r in rowids if r in by_id], spec)
 
+    def lexical_scope(self, where=None):
+        from .scoped_lexical import sqlite_collection_scope
+
+        return sqlite_collection_scope(self, where, compact=True)
+
     def lexical_search(self, **kwargs):
         return self._retry_snapshot(lambda: self._lexical_once(**kwargs))
 
@@ -1250,7 +1260,7 @@ class CompactCollection(SQLiteExactCollection):
         ):
             with self._cursor() as cur:
                 snapshot = self._collection_snapshot(cur)
-            stage = sqlite3.connect(os.path.join(directory, "vectors.sqlite3"))
+            stage = connect(os.path.join(directory, "vectors.sqlite3"))
             try:
                 stage.execute(
                     "CREATE TABLE staged(rowid INTEGER PRIMARY KEY,embedding BLOB,scale BLOB,dim INTEGER)"
@@ -1486,7 +1496,7 @@ class CompactBackend(SQLiteExactBackend):
             if not db_path.is_file():
                 raise PalaceNotFoundError("compact palace database does not exist")
             try:
-                conn = sqlite3.connect(db_path.as_uri() + "?mode=rw", uri=True)
+                conn = connect(db_path.as_uri() + "?mode=rw", uri=True)
             except sqlite3.OperationalError as exc:
                 raise BackendError("could not open compact palace for repair") from exc
             try:

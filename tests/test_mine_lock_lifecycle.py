@@ -296,6 +296,7 @@ def test_windows_blocking_lock_raises_on_a_non_contention_error(tmp_path, monkey
 
 
 @windows_only
+@pytest.mark.timing
 def test_windows_open_fails_fast_on_a_directory_at_the_lock_path(tmp_path):
     lock_path = tmp_path / "dir.lock"
     lock_path.mkdir()
@@ -306,6 +307,7 @@ def test_windows_open_fails_fast_on_a_directory_at_the_lock_path(tmp_path):
 
 
 @windows_only
+@pytest.mark.timing
 def test_windows_open_fails_fast_on_a_read_only_lock_file(tmp_path):
     import stat
 

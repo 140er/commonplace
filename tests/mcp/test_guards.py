@@ -1481,6 +1481,7 @@ def test_sqlite_integrity_refusal_handles_none_palace_path(monkeypatch):
     assert result["error"]["data"]["sqlite_version"] == sqlite3.sqlite_version
 
 
+@pytest.mark.timing
 def test_startup_preflight_does_not_block_initialize(monkeypatch):
     """The startup integrity probe is O(database size) (PRAGMA quick_check
     reads every page of chroma.sqlite3 — 20s+ on multi-GB palaces) and used

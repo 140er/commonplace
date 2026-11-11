@@ -114,6 +114,7 @@ class TestEditDistance:
         assert _edit_distance("abc", "") == 3
         assert _edit_distance("", "abc") == 3
 
+    @pytest.mark.timing
     def test_performance_bounded_by_mentioned_names(self):
         """Regression: an earlier implementation did O(n²) pairwise
         edit-distance over every registry entry on every check_text call.

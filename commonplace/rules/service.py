@@ -3,7 +3,6 @@
 import hashlib
 import logging
 import re
-import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
 
@@ -11,17 +10,21 @@ from commonplace import events
 from commonplace.boards.service import normalize_repo, validate_text
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
+from mempalace.sqlite_crypto import connect
 
-from .store import RuleStore, now, sequence
+from . import checks, render
+from .store import RuleStore, bump, now, rules_sequence, sequence
 
 KINDS = ("permission", "limit", "instruction", "style")
 SCOPES = ("global", "board", "repo")
 RULE_FIELDS = (
-    "id agent key text agent_text agent_text_by kind scope scope_ref status source pending version seq "
+    "id agent key text summary agent_text agent_text_by kind scope scope_ref status source pending version seq "
     "retired_by updated_at updated_by"
 ).split()
 WAITING = "(status='proposed' OR pending=1) AND (status!='retired' OR retired_by='owner')"
 logger = logging.getLogger(__name__)
+_UNSET = object()
+INSTRUCTIONS_TIMEOUT = 0.08
 
 
 def open_store(workspace_dir):
@@ -34,12 +37,50 @@ class VersionClash(ToolError):
         self.current = current
 
 
-def rule_json(row):
-    return {key: row[key] for key in RULE_FIELDS}
+def rule_json(row, *, include_display=True):
+    value = {key: row[key] for key in RULE_FIELDS}
+    if include_display:
+        value["display_summary"] = display_summary(row["summary"], row["text"])
+    return value
+
+
+def sentences(value):
+    """Split punctuation followed by whitespace; keep common abbreviations together."""
+    parts = re.split(
+        r"(?<=[.!?])\s+|(?<=[.!?][\"'”’])\s+|(?<=[。！？])\s*", " ".join(value.split())
+    )
+    result = []
+    for part in parts:
+        if not part:
+            continue
+        if result and re.search(r"\b(?:e\.g|i\.e|Mr|Mrs|Ms|Dr|Prof|vs)\.$", result[-1]):
+            result[-1] += " " + part
+        else:
+            result.append(part)
+    return result
+
+
+def summary_text(value):
+    if value is None:
+        return None
+    value = validate_text(value, "summary", limit=400).strip()
+    if len(sentences(value)) > 2:
+        raise ToolError("no: summary must be at most two sentences")
+    return value or None
+
+
+def display_summary(summary, text):
+    if summary:
+        return summary
+    first = sentences(text)[0]
+    return first if len(first) <= 240 else first[:239].rstrip() + "…"
 
 
 def rule_text(value):
-    return validate_text(value, "text", required=True, limit=4000)
+    value = validate_text(value, "text", required=True, limit=4000)
+    if render.length(render.quote(value)) > render.RULE_BYTES:
+        raise ToolError("no: rule text too long once escaped")
+    return value
 
 
 def agent_ref(agent):
@@ -58,7 +99,7 @@ def rule_key(text):
     return "r-" + hashlib.sha1(" ".join(text.split()).encode()).hexdigest()[:10]
 
 
-def fields(text, kind, scope="global", scope_ref=None):
+def fields(text, kind, scope="global", scope_ref=None, summary=_UNSET):
     text = rule_text(text)
     if kind not in KINDS or scope not in SCOPES:
         raise ToolError("no: invalid kind or scope")
@@ -68,9 +109,16 @@ def fields(text, kind, scope="global", scope_ref=None):
         scope_ref = validate_text(scope_ref, "scope_ref", required=True, limit=1000)
         if scope == "repo":
             scope_ref = normalize_repo(scope_ref)
-            if len(scope_ref.split("/")) != 3 or not all(scope_ref.split("/")):
+            if (
+                len(scope_ref.split("/")) != 3
+                or not all(scope_ref.split("/"))
+                or "@" in scope_ref.split("/")[0]
+            ):
                 raise ToolError("no: repo must be host/owner/name")
-    return dict(text=text, kind=kind, scope=scope, scope_ref=scope_ref)
+    values = dict(text=text, kind=kind, scope=scope, scope_ref=scope_ref)
+    if summary is not _UNSET:
+        values["summary"] = summary_text(summary)
+    return values
 
 
 def row_for(conn, rule_id):
@@ -86,9 +134,19 @@ class RuleService:
     def __init__(self, ctx):
         self.ctx = ctx
         self.principal = ctx.principal
-        self.store = open_store(ctx.workspace_dir())
+        self._store = None
+        self._affected = set()
         self._board_visibility = {}
         self._moved = []
+
+    @property
+    def store(self):
+        directory = self.ctx.workspace_dir()
+        checks.guard(self.ctx.db, self.principal.workspace_id, directory)
+        if self._store is None or Path(self._store.path).parent != Path(directory):
+            self._store = open_store(directory)
+            checks.guard(self.ctx.db, self.principal.workspace_id, directory)
+        return self._store
 
     def _emit(self, kind, data):
         try:
@@ -106,9 +164,12 @@ class RuleService:
     def transaction(self):
         # Rules moved to another agent also refresh the agent they left.
         self._moved = []
+        self._affected = set()
         with self.store.transaction() as conn:
             before = sequence(conn)
             yield conn
+            for agent in self._affected:
+                bump(conn, agent)
             changed = conn.execute(
                 "SELECT agent,id,key FROM rules WHERE seq>? ORDER BY seq", (before,)
             ).fetchall()
@@ -136,7 +197,7 @@ class RuleService:
         path = Path(self.ctx.workspace_dir()) / "boards.sqlite3"
         if not path.is_file():
             return False
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
+        with closing(connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
             row = conn.execute("SELECT wing FROM boards WHERE slug=?", (slug,)).fetchone()
         return row is not None and self.principal.policy.can_read_wing(row[0])
 
@@ -162,14 +223,15 @@ class RuleService:
         row = row_for(conn, rule_id)
         p = self.principal
         conn.execute(
-            "INSERT INTO rule_versions(rule_id,version,agent,text,kind,scope,scope_ref,status,"
+            "INSERT INTO rule_versions(rule_id,version,agent,text,summary,kind,scope,scope_ref,status,"
             "source,note,stamp_user,stamp_connection,stamp_trust,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 row["id"],
                 row["version"],
                 row["agent"],
                 row["text"],
+                row["summary"],
                 row["kind"],
                 row["scope"],
                 row["scope_ref"],
@@ -185,6 +247,8 @@ class RuleService:
         return rule_json(row)
 
     def _change(self, conn, row, updates, *, note=None, source=None):
+        if "text" in updates:
+            rule_text(updates["text"])
         conn.execute("UPDATE meta SET value=value+1 WHERE key='seq'")
         updates = dict(
             updates,
@@ -197,6 +261,23 @@ class RuleService:
             "UPDATE rules SET " + ",".join(f"{key}=?" for key in updates) + " WHERE id=?",
             (*updates.values(), row["id"]),
         )
+        after = row_for(conn, row["id"])
+        effective_fields = ("text", "kind", "scope", "scope_ref", "agent")
+        before_set = (
+            tuple(row[k] for k in effective_fields)
+            if row["status"] in ("accepted", "edited")
+            else None
+        )
+        after_set = (
+            tuple(after[k] for k in effective_fields)
+            if after["status"] in ("accepted", "edited")
+            else None
+        )
+        if before_set != after_set:
+            if before_set is not None:
+                self._affected.add(row["agent"])
+            if after_set is not None:
+                self._affected.add(after["agent"])
         return self._snapshot(conn, row["id"], note=note, source=source)
 
     def _create(self, conn, agent, key, values, *, owner=False):
@@ -204,7 +285,7 @@ class RuleService:
         stamp = now()
         columns = dict(
             agent=agent,
-            origin_agent=None if agent == "*" else agent,
+            origin_agent=(None if agent == "*" else agent) if owner else self.principal.actor,
             key=key,
             **values,
             agent_text=None if owner else values["text"],
@@ -224,18 +305,25 @@ class RuleService:
             + ")",
             tuple(columns.values()),
         )
+        if owner:
+            self._affected.add(agent)
         return self._snapshot(conn, cursor.lastrowid)
 
-    def rules_publish(self, rules, replace=False):
+    def rules_publish(self, rules, replace=False, agent="self"):
         if self.principal.person or not self.principal.policy.has_scope("memory:write"):
             raise ToolError("no: an agent with memory:write is required")
+        if agent not in ("self", "*"):
+            raise ToolError("no: agent must be self or *")
         if not isinstance(rules, list) or len(rules) > 200 or type(replace) is not bool:
             raise ToolError("no: publish requires up to 200 rules and a boolean replace")
+        actor = self.principal.actor
+        target = actor if agent == "self" else "*"
         prepared = {}
         for item in rules:
             if not isinstance(item, dict) or set(item) - {
                 "key",
                 "text",
+                "summary",
                 "kind",
                 "scope",
                 "board",
@@ -245,7 +333,13 @@ class RuleService:
             scope = item.get("scope", "global")
             if scope not in SCOPES:
                 raise ToolError("no: invalid scope")
-            values = fields(item.get("text"), item.get("kind"), scope, item.get(scope))
+            values = fields(
+                item.get("text"),
+                item.get("kind"),
+                scope,
+                item.get(scope),
+                summary=item.get("summary", _UNSET),
+            )
             key = item.get("key", rule_key(values["text"]))
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", key):
                 raise ToolError("no: key must match [A-Za-z0-9._-]{1,100}")
@@ -257,21 +351,33 @@ class RuleService:
         result = []
         with self.transaction() as conn:
             for key, values in prepared.items():
-                actor = self.principal.actor
-                # A rule the owner moved to another agent still answers to its first agent.
+                # Keep following owner moves, without confusing self and shared keys.
+                # Older snapshots have no target; their origin was always the caller.
                 row = conn.execute(
-                    "SELECT * FROM rules WHERE key=? AND (agent=? OR origin_agent=?) "
+                    "SELECT r.*,coalesce((SELECT CASE WHEN v.agent='*' AND v.source='owner' "
+                    "THEN r.origin_agent ELSE v.agent END FROM rule_versions v WHERE v.rule_id=r.id "
+                    "ORDER BY v.id LIMIT 1),origin_agent,agent) AS publish_target FROM rules r "
+                    "WHERE key=? AND (agent=? OR (origin_agent=? AND publish_target=?)) "
                     "ORDER BY agent=? DESC, agent='*' DESC, id LIMIT 1",
-                    (key, actor, actor, actor),
+                    (key, target, actor, target, target),
                 ).fetchone()
                 if row is None:
-                    result.append(self._create(conn, actor, key, values))
+                    result.append(self._create(conn, target, key, values))
                     continue
                 if not self._visible(row):
                     # The owner moved it out of this agent's sight: skip it, reveal nothing.
                     continue
+                if target == "*" and row["origin_agent"] != actor:
+                    raise ToolError("no: shared rule key belongs to the owner or another proposer")
                 # A rule moved here from another agent is handled like an owner edit.
-                owned = row["agent"] == actor and row["origin_agent"] in (None, actor)
+                owned = (
+                    row["agent"] == target
+                    and row["publish_target"] == target
+                    and row["origin_agent"] in (None, actor)
+                    and (
+                        target != "*" or row["status"] == "proposed" or row["retired_by"] == "agent"
+                    )
+                )
                 if owned and row["retired_by"] == "agent":
                     updates = dict(
                         values,
@@ -302,6 +408,9 @@ class RuleService:
                     )
                     if all(row[k] == v for k, v in values.items()):
                         updates = {}
+                    elif all(row[k] == v for k, v in values.items() if k != "summary"):
+                        # Display-only changes never reopen an accepted rule.
+                        updates = {"summary": values["summary"]}
                 result.append(
                     self._agent_view(
                         self._change(conn, row, updates) if updates else rule_json(row)
@@ -310,8 +419,12 @@ class RuleService:
             if replace:
                 rows = conn.execute(
                     "SELECT * FROM rules WHERE agent=? AND source='agent' AND status!='retired' "
-                    "AND retired_by IS NULL AND coalesce(origin_agent,agent)=agent",
-                    (self.principal.actor,),
+                    "AND retired_by IS NULL AND coalesce(origin_agent,agent)=? "
+                    "AND coalesce((SELECT CASE WHEN v.agent='*' AND v.source='owner' "
+                    "THEN rules.origin_agent ELSE v.agent END FROM rule_versions v WHERE v.rule_id=rules.id "
+                    "ORDER BY v.id LIMIT 1),origin_agent,agent)=? "
+                    "AND (agent!='*' OR status='proposed')",
+                    (target, actor, target),
                 ).fetchall()
                 for row in rows:
                     if row["key"] not in prepared and self._visible(row):
@@ -326,14 +439,54 @@ class RuleService:
                             )
                         )
             total, active = conn.execute(
-                "SELECT count(*),coalesce(sum(status!='retired'),0) FROM rules WHERE agent=?",
-                (self.principal.actor,),
+                "SELECT count(*),coalesce(sum(status!='retired'),0) FROM rules WHERE agent=? "
+                "AND (agent!='*' OR origin_agent=?)",
+                (target, actor),
             ).fetchone()
             if active > 500 or total > 2000:
                 raise ToolError("no: agent rule limit exceeded (500 non-retired, 2000 total)")
             return {"rules": result, "seq": sequence(conn)}
 
-    def rules_get(self, board=None, repo=None, format="text", include_retired=False):
+    def rules_get(
+        self, board=_UNSET, repo=_UNSET, format="text", include_retired=_UNSET, effective=False
+    ):
+        if type(effective) is not bool:
+            raise ToolError("no: effective must be a boolean")
+        if effective:
+            if self.principal.person:
+                raise ToolError("no: effective=true is for agent connections")
+            if any(value is not _UNSET for value in (board, repo, include_retired)):
+                raise ToolError(
+                    "no: effective=true always returns your full set and takes only format"
+                )
+            if format not in ("text", "md"):
+                raise ToolError("no: invalid format or include_retired")
+            try:
+                if not (Path(self.ctx.workspace_dir()) / "rules.sqlite3").exists():
+                    _ = self.store  # Only a first tool read creates the store.
+                result = effective_rules(self.ctx, bind=True, emit=True)
+                mode = checks.mode(self.ctx.gateway, self.principal)
+                if mode == "unknown":
+                    raise RuntimeError("check settings unavailable")
+                reply, state = render.effective(
+                    result["rules"], result["seq"], result["rules_seq"], format=format, mode=mode
+                )
+                changed = checks.record_served(
+                    self.ctx, result["rules_seq"], state, prior=result["served"]
+                )
+                if changed and state == "too_large":
+                    self._emit("rule.too_large", {"agent": self.principal.actor})
+                return dict(result, reply=reply, state=state)
+            except checks.StoreLost:
+                return {"reply": checks.STORE_LOST}
+            except Exception as exc:
+                log_failure(logger, "effective rules unavailable", exc)
+                return {
+                    "reply": f"rules_seq unavailable: {type(exc).__name__}; keep your last copy"
+                }
+        board = None if board is _UNSET else board
+        repo = None if repo is _UNSET else repo
+        include_retired = False if include_retired is _UNSET else include_retired
         if format not in ("text", "md") or type(include_retired) is not bool:
             raise ToolError("no: invalid format or include_retired")
         if board is not None:
@@ -400,6 +553,7 @@ class RuleService:
                 if self.principal.role == "owner"
                 else [],
                 "seq": sequence(conn),
+                "checks": self.ctx.db.rule_checks(self.principal.workspace_id),
                 "can_edit": self.principal.role == "owner",
                 "waiting": conn.execute(f"SELECT count(*) FROM rules WHERE {WAITING}").fetchone()[
                     0
@@ -411,6 +565,40 @@ class RuleService:
                     )
                 },
             }
+
+    def set_check(self, agent, mode):
+        self._person(owner=True)
+        agent = agent_ref(agent)
+        if mode not in ("default", "off", "warn", "enforce") or (
+            agent == "*" and mode == "default"
+        ):
+            raise ToolError("no: invalid check mode")
+        target_id = self.principal.workspace_id
+        if agent != "*":
+            from commonplace.control_db import ControlError
+            from commonplace.policy import Policy
+
+            try:
+                row = self.ctx.db.connection(agent[5:], self.principal.workspace_id)
+            except ControlError:
+                raise ToolError("no: connection not found") from None
+            agent = "conn:" + row["name"]
+            target_id = row["id"]
+            if mode == "enforce" and not Policy.from_json(row["policy"]).tool_visible("rules_get"):
+                raise ToolError("no: this connection cannot read rules")
+        self.ctx.db.set_rule_check(
+            self.principal.workspace_id, agent, mode, self.principal, target_id=target_id
+        )
+        self._emit("rule.check", {"agent": agent, "mode": mode})
+        return {"checks": self.ctx.db.rule_checks(self.principal.workspace_id)}
+
+    def accept_store(self):
+        self._person(owner=True)
+        result = checks.migrate_workspace(
+            self.ctx.db, self.principal.workspace_id, self.ctx.workspace_dir(), accept=True
+        )
+        self._store = None
+        return result
 
     def count(self):
         self._person()
@@ -433,10 +621,10 @@ class RuleService:
                 )
             ]
 
-    def create(self, agent, text, kind, scope="global", scope_ref=None):
+    def create(self, agent, text, kind, scope="global", scope_ref=None, summary=None):
         self._person(owner=True)
         agent = agent_ref(agent)
-        values = fields(text, kind, scope, scope_ref)
+        values = fields(text, kind, scope, scope_ref, summary)
         with self.transaction() as conn:
             key = rule_key(text)
             if conn.execute("SELECT 1 FROM rules WHERE agent=? AND key=?", (agent, key)).fetchone():
@@ -453,7 +641,7 @@ class RuleService:
 
     def edit(self, rule_id, version, **changes):
         self._person(owner=True)
-        if set(changes) - {"text", "kind", "scope", "scope_ref", "note"}:
+        if set(changes) - {"text", "summary", "kind", "scope", "scope_ref", "note"}:
             raise ToolError("no: invalid edit")
         note = changes.pop("note", None)
         if note is not None:
@@ -463,14 +651,20 @@ class RuleService:
             if row["status"] == "retired":
                 raise ToolError("no: restore the rule first")
             values = fields(
-                **{k: changes.get(k, row[k]) for k in ("text", "kind", "scope", "scope_ref")}
+                **{
+                    k: changes.get(k, row[k])
+                    for k in ("text", "summary", "kind", "scope", "scope_ref")
+                }
             )
             if all(row[k] == value for k, value in values.items()):
                 raise ToolError("no: nothing to change")
+            updates = dict(values, status="edited", source="owner", pending=0, retired_by=None)
+            if all(row[k] == value for k, value in values.items() if k != "summary"):
+                updates = {"summary": values["summary"]}
             return self._change(
                 conn,
                 row,
-                dict(values, status="edited", source="owner", pending=0, retired_by=None),
+                updates,
                 note=note,
             )
 
@@ -538,12 +732,16 @@ class RuleService:
                 raise ToolError("no: invalid action")
             return self._change(conn, row, updates)
 
-    def suggest(self, rule_id, text, from_agent):
+    def suggest(self, rule_id, text, from_agent, base_version=_UNSET):
         self._person(owner=True)
         rule_text(text)
         validate_text(from_agent, "from_agent", required=True, limit=1000)
         with self.transaction() as conn:
-            row = row_for(conn, rule_id)
+            row = (
+                row_for(conn, rule_id)
+                if base_version is _UNSET
+                else self._versioned(conn, rule_id, base_version)
+            )
             cursor = conn.execute(
                 "INSERT INTO rule_suggestions(rule_id,text,from_agent,base_version,status,stamp_user,created_at) VALUES (?,?,?,?,'open',?,?)",
                 (row["id"], text, from_agent, row["version"], self.principal.user_id, now()),
@@ -614,3 +812,105 @@ class RuleService:
                 },
             )
         return result
+
+
+def instructions_for(ctx, *, budget=render.INSTRUCTIONS_BUDGET):
+    """Fail open without binding, serving, creating stores or emitting events."""
+    try:
+        if (
+            ctx.principal.person
+            or budget <= 0
+            or getattr(ctx.gateway, "rules_inject_off", False)
+            or not ctx.principal.policy.tool_visible("rules_get")
+        ):
+            return ""
+        with checks.deadline(INSTRUCTIONS_TIMEOUT):
+            try:
+                snapshot = effective_rules(
+                    ctx, bind=False, emit=False, timeout=checks.remaining(INSTRUCTIONS_TIMEOUT)
+                )
+            except checks.StoreLost:
+                text = render.instructions([], ctx.principal.actor, store_lost=True)
+                return text if render.length(text) <= budget else ""
+            if not snapshot["rules"]:
+                return ""
+            text = render.instructions(
+                snapshot["rules"],
+                ctx.principal.actor,
+                snapshot["rules_seq"],
+                served=snapshot["served"],
+                mode=checks.mode(ctx.gateway, ctx.principal),
+                budget=budget,
+                check_deadline=lambda: checks.remaining(INSTRUCTIONS_TIMEOUT),
+            )
+            return text if render.length(text) <= budget else ""
+    except Exception as exc:
+        log_failure(logger, "rules instruction injection failed", exc)
+        return ""
+
+
+def effective_rules(ctx, *, bind=False, emit=False, timeout=0.1):
+    """Read an agent's complete authorized set on independent read-only snapshots.
+
+    Only reconciliation writes. This function never constructs RuleService or
+    creates a store and never records served; injection can use it directly.
+    """
+    if ctx.principal.person:
+        raise ToolError("no: effective=true is for agent connections")
+    directory = Path(ctx.workspace_dir())
+    checks.reconcile(
+        ctx.db, ctx.principal.workspace_id, directory, timeout=timeout, bind=bind, emit=emit
+    )
+    if not (directory / "rules.sqlite3").exists():
+        return {"rules": [], "seq": 0, "rules_seq": None, "served": None, "empty": True}
+    visible_boards, linked_repos, visible_repos = set(), set(), set()
+    if (directory / "boards.sqlite3").exists():
+        with checks.connection(directory / "boards.sqlite3", timeout=timeout) as conn:
+            conn.execute("BEGIN")
+            for board in conn.execute("SELECT slug,wing,archived FROM boards"):
+                checks.remaining(timeout)
+                if not board["archived"] and ctx.principal.policy.can_read_wing(board["wing"]):
+                    visible_boards.add(board["slug"])
+            for repo in conn.execute(
+                "SELECT r.repo,b.slug FROM board_repos r JOIN boards b ON b.id=r.board_id"
+            ):
+                checks.remaining(timeout)
+                linked_repos.add(repo["repo"])
+                if repo["slug"] in visible_boards:
+                    visible_repos.add(repo["repo"])
+    with checks.connection(directory / "rules.sqlite3", timeout=timeout) as conn:
+        conn.execute("BEGIN")
+        rows = conn.execute(
+            "SELECT * FROM rules WHERE agent IN (?, '*') AND status IN ('accepted','edited') ORDER BY id",
+            (ctx.principal.actor,),
+        ).fetchall()
+        selected = []
+        for row in rows:
+            checks.remaining(timeout)
+            visible = row["scope"] == "global" or (
+                row["scope"] == "board" and row["scope_ref"] in visible_boards
+            )
+            if row["scope"] == "repo":
+                visible = row["scope_ref"] in visible_repos or (
+                    ctx.principal.policy.trust == "trusted" and row["scope_ref"] not in linked_repos
+                )
+            if visible:
+                # The enforcement view contains only the owner's effective text.
+                value = rule_json(row, include_display=False)
+                value.update(agent_text=None, agent_text_by=None, pending=0)
+                if (
+                    str(value["updated_by"]).startswith("conn:")
+                    and value["updated_by"] != ctx.principal.actor
+                ):
+                    value["updated_by"] = None
+                selected.append(value)
+        served = conn.execute(
+            "SELECT * FROM agent_served WHERE agent=?", (ctx.principal.actor,)
+        ).fetchone()
+        return {
+            "rules": selected,
+            "seq": sequence(conn),
+            "rules_seq": rules_sequence(conn, ctx.principal.actor),
+            "served": dict(served) if served is not None else None,
+            "empty": False,
+        }

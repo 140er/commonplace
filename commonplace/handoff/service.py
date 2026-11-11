@@ -62,12 +62,13 @@ from __future__ import annotations
 import logging
 import secrets
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from dataclasses import dataclass, replace
 from typing import Optional
 
-from . import launchers, palace_mirror, thread_store, transcripts, writer
-from .authority import require_launch_authority
+from . import launchers, palace_mirror, search_index, thread_store, transcripts, writer
+from .authority import HandoffPermissionError, require_launch_authority
 from .db import HandoffDBError, HandoffLeaseError
 from .models import (
     EVENT_FAILED,
@@ -105,6 +106,8 @@ class HandoffService:
         events,
         call_tool=None,
         save_fact=None,
+        can_read=None,
+        progress_can_read=None,
         prompt_dir: str = "",
     ):
         self.control_db = control_db
@@ -114,9 +117,15 @@ class HandoffService:
         self.events = events
         self.call_tool = call_tool
         self.save_fact = save_fact
+        self.can_read = can_read
+        self.progress_can_read = progress_can_read
         self.prompt_dir = prompt_dir
         self.db.set_document_store(store_for)
         self._mirror_lock = threading.Lock()
+        self._mirror_condition = threading.Condition(self._mirror_lock)
+        self._index_states = {}
+        self._index_active = set()
+        self._index_timers = {}
         self._mirror_pool = None
         self._mirror_jobs: list = []
         self._fact_lock = threading.Lock()
@@ -130,6 +139,8 @@ class HandoffService:
         meta = request.meta
         if not meta.thread_id or not meta.thread_id.strip():
             raise ValueError("thread_id must not be empty")
+        if meta.thread_id.startswith(("import-private:", "capture:", "capture-fork:")):
+            raise ValueError("thread_id uses a reserved namespace")
         workspace_id = principal.workspace_id
         # Retry events a failed delivery left queued in this workspace.
         self.events.deliver_pending(workspace_id=workspace_id)
@@ -231,7 +242,7 @@ class HandoffService:
                 parent_stored_id=parent_id,
             )
 
-            self._mirror_later(principal, stored, lambda: thread_store.chunk_messages(messages))
+            self._mirror_later(principal, stored, store)
 
             doc = writer.build_doc(
                 messages,
@@ -281,9 +292,7 @@ class HandoffService:
             reason = "thread storage failed"
             self._emit(EVENT_FAILED, principal, handoff, decision="error", reason=reason)
             return HandoffResult("compact", handoff, reason=reason)
-        # Mirroring all durable chunks also repairs a previous mirror failure;
-        # immutable chunk ids make these retries idempotent.
-        self._mirror_later(principal, stored, lambda: store.chunks(stored.id))
+        self._mirror_later(principal, stored, store)
         self._extract_later(principal, stored)
         return None
 
@@ -303,6 +312,7 @@ class HandoffService:
                     stored.workspace_id != principal.workspace_id
                     or not principal.policy.has_scope("threads:read")
                     or not principal.policy.can_read_wing(stored.wing)
+                    or (self.can_read is not None and not self.can_read(principal, stored.id))
                 ):
                     return
                 store = self.store_for(stored.workspace_id)
@@ -337,6 +347,11 @@ class HandoffService:
         """Bound shutdown waiting across both background indexes."""
         with self._mirror_lock, self._fact_lock:
             self._background_closed = True
+            for timer in self._index_timers.values():
+                timer.cancel()
+            self._index_timers.clear()
+            self._index_active.clear()
+            self._mirror_condition.notify_all()
             jobs = [*self._mirror_jobs, *self._fact_jobs]
             pools = [self._mirror_pool, self._fact_pool]
         futures_wait(jobs, timeout=timeout)
@@ -344,7 +359,7 @@ class HandoffService:
             if pool is not None:
                 pool.shutdown(wait=False, cancel_futures=True)
 
-    def _mirror_later(self, principal, stored, chunks) -> None:
+    def _mirror_later(self, principal, stored, store) -> None:
         """Mirror into Memory search in the background, one job at a time.
 
         Best effort and off the request path: the full thread is already safe
@@ -355,7 +370,7 @@ class HandoffService:
 
         def job():
             try:
-                palace_mirror.mirror(self.call_tool, principal, stored, chunks())
+                palace_mirror.mirror_pending(self.call_tool, principal, stored, store)
             except Exception:
                 pass
 
@@ -369,11 +384,91 @@ class HandoffService:
             self._mirror_jobs.append(self._mirror_pool.submit(job))
             self._mirror_jobs = [f for f in self._mirror_jobs if not f.done()]
 
-    def wait_for_mirrors(self, timeout: Optional[float] = None) -> None:
-        """Block until queued mirror jobs finish (tests and shutdown)."""
+    def index_later(self, workspace_id, stored_ids=()) -> None:
+        """Enroll sources and coalesce one asynchronous workspace sweep."""
+        try:
+            if not search_index.enabled() or self.call_tool is None:
+                return
+            if stored_ids:
+                store = self.store_for(workspace_id)
+                for stored_id in stored_ids:
+                    stored = store.get(stored_id)
+                    if stored is not None and stored.workspace_id == workspace_id:
+                        store.begin_mirror(stored_id, -1, bootstrap=-1)
+            with self._mirror_lock:
+                if self._background_closed:
+                    return
+                state = self._index_states.setdefault(workspace_id, search_index.State())
+                state.dirty = True
+                if workspace_id in self._index_active:
+                    return
+                self._index_active.add(workspace_id)
+                state.state = "running"
+                self._submit_index(workspace_id)
+        except Exception:
+            pass
+
+    def index_status(self, workspace_id, *, principal=None):
+        """Project authenticated progress; local operators explicitly stay unscoped."""
+        if principal is not None:
+            return search_index.projected_status(self, workspace_id, principal)
+        counts = self.store_for(workspace_id).index_counts(workspace_id)
         with self._mirror_lock:
-            jobs = list(self._mirror_jobs)
-        futures_wait(jobs, timeout=timeout)
+            state = self._index_states.get(workspace_id, search_index.State())
+            return {
+                **counts,
+                "state": state.state if search_index.enabled() else "off",
+                "units_written": state.units_written,
+            }
+
+    def _submit_index(self, workspace_id):
+        if self._mirror_pool is None:
+            self._mirror_pool = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="handoff-mirror"
+            )
+        self._index_timers.pop(workspace_id, None)
+        self._mirror_jobs = [f for f in self._mirror_jobs if not f.done()]
+        self._mirror_jobs.append(self._mirror_pool.submit(self._index_job, workspace_id))
+
+    def _index_job(self, workspace_id):
+        state = self._index_states[workspace_id]
+        again = search_index.sweep(self, workspace_id, state)
+        with self._mirror_condition:
+            if (again or state.dirty) and not self._background_closed and search_index.enabled():
+                timer = threading.Timer(
+                    search_index.PAUSE_SECONDS, self._resume_index, args=(workspace_id,)
+                )
+                timer.daemon = True
+                self._index_timers[workspace_id] = timer
+                timer.start()
+            else:
+                self._index_active.discard(workspace_id)
+            self._mirror_condition.notify_all()
+
+    def _resume_index(self, workspace_id):
+        with self._mirror_condition:
+            if self._background_closed:
+                self._index_active.discard(workspace_id)
+                self._index_timers.pop(workspace_id, None)
+            else:
+                self._submit_index(workspace_id)
+            self._mirror_condition.notify_all()
+
+    def wait_for_mirrors(self, timeout: Optional[float] = None) -> None:
+        """Drain mirrors, including delayed sweep continuations."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            remaining = None if deadline is None else max(0, deadline - time.monotonic())
+            with self._mirror_condition:
+                jobs = [f for f in self._mirror_jobs if not f.done()]
+                if not jobs and not self._index_active:
+                    return
+                if remaining == 0:
+                    return
+                if not jobs:
+                    self._mirror_condition.wait(remaining)
+                    continue
+            futures_wait(jobs, timeout=remaining)
 
     def _superseded(self, workspace_id: str, key: str, lease_token: str, handoff: Handoff):
         with self.control_db._lock:
@@ -429,8 +524,11 @@ class HandoffService:
 
     def relaunch(self, principal, handoff_id: str) -> HandoffResult:
         require_launch_authority(principal)
+        person = getattr(principal, "person", False)
+        if not person and principal.policy.write_wing in ("inbox", "wing_inbox"):
+            raise HandoffPermissionError("restricted connections cannot relaunch handoffs")
         with self.control_db._lock:
-            handoff = self._authorized(principal, handoff_id, owner_only=True)
+            handoff = self._authorized(principal, handoff_id, owner_only=person)
             if handoff.state != "launch_failed":
                 raise HandoffDBError("handoff is not ready to relaunch")
             snapshot = self._snapshots.get((handoff.workspace_id, handoff.idempotency_key))

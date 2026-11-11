@@ -74,7 +74,7 @@ Exits `1` when one or more files could not be mined (a stale-drawer purge failed
 
 ## `mempalace search`
 
-Find anything by semantic search.
+Find memories using vector and lexical candidates, then hybrid ranking.
 
 ```bash
 mempalace search "query"
@@ -89,6 +89,7 @@ mempalace search "query" --results 10
 | `--wing` | all | Filter by wing |
 | `--room` | all | Filter by room |
 | `--results` | `5` | Number of results |
+| `--candidate-strategy` | `union` | `union` merges vector and lexical candidates; `vector` selects vector candidates only |
 
 ## `mempalace split`
 

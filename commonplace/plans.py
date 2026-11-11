@@ -7,6 +7,7 @@ import os
 import stat
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -88,10 +89,10 @@ def set_plan(db, user_id: str, name: str, *, actor: str) -> None:
         db.audit(action="plan.set", decision="ok", user_id=actor, reason=name, target_ids=[user_id])
 
 
-def assign_signup_plan(db, user_id: str, workspace_id: str, *, via: str) -> None:
+def assign_signup_plan(db, user_id: str, workspace_id: str, *, via: str, conn=None) -> None:
     if not enabled():
         return
-    with db._lock, db._tx() as conn:
+    with db._lock, db._tx() if conn is None else nullcontext(conn) as conn:
         result = conn.execute(
             "INSERT OR IGNORE INTO account_plans(user_id, plan, set_by, set_at) VALUES (?,?,?,?)",
             (user_id, FREE.name, f"signup:{via}", _now().isoformat()),
@@ -116,11 +117,16 @@ def storage_message(plan: Plan) -> str:
 
 
 def transcription_message(plan: Plan) -> str:
-    minutes = plan.transcription_seconds // 60
+    seconds = plan.transcription_seconds
+    if seconds < 60:
+        nl = f"{seconds} seconde" + ("" if seconds == 1 else "n")
+        en = f"{seconds} second" + ("" if seconds == 1 else "s")
+    else:
+        nl, en = f"{seconds // 60} minuten", f"{seconds // 60} minutes"
     return (
-        f"Je hebt de {minutes} minuten spraak-naar-tekst van vandaag gebruikt. "
+        f"Je hebt de {nl} spraak-naar-tekst van vandaag gebruikt. "
         "Morgen (00:00 UTC) kan het weer. / "
-        f"You've used today's {minutes} minutes of voice transcription. "
+        f"You've used today's {en} of voice transcription. "
         "It resets tomorrow at 00:00 UTC."
     )
 
@@ -195,15 +201,17 @@ def transcription_used(db, user_id: str) -> int:
     return row["seconds"] if row else 0
 
 
-def use_transcription(db, user_id: str, seconds: int) -> None:
-    """The future server transcription endpoint (Moonshine/Whisper) must call
-    use_transcription with the clip length before transcribing.
+def use_transcription(db, user_id: str, seconds: int) -> Optional[str]:
+    """Atomically reserve whole seconds before transcribing.
+
+    Return the charged UTC day, or None for unmetered accounts. On model failure,
+    refund that reservation against its original day, even across midnight.
     """
     if not enabled():
-        return
+        return None
     plan = get_plan(db, user_id)
     if plan is None or plan.transcription_seconds is None:
-        return
+        return None
     if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds < 0:
         raise ValueError("seconds must be a non-negative integer")
     today = _now().date()
@@ -223,6 +231,18 @@ def use_transcription(db, user_id: str, seconds: int) -> None:
         conn.execute(
             "DELETE FROM transcription_usage WHERE day < ?",
             ((today - timedelta(days=40)).isoformat(),),
+        )
+    return today.isoformat()
+
+
+def refund_transcription(db, user_id: str, seconds: int, day: Optional[str]) -> None:
+    """Release a failed request's reservation, regardless of later plan changes."""
+    if day is None:
+        return
+    with db._lock, db._tx() as conn:
+        conn.execute(
+            "UPDATE transcription_usage SET seconds = seconds - ? WHERE user_id = ? AND day = ?",
+            (seconds, user_id, day),
         )
 
 

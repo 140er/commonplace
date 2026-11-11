@@ -23,6 +23,7 @@ _CHAT_PRESET = {
     "write_wing": "inbox",
     "trust": "standard",
 }
+DEFAULT_CLIENT_PRESET = _CHAT_PRESET
 CLIENT_PRESETS = {
     "claude-code": _CODING_PRESET,
     "codex": _CODING_PRESET,

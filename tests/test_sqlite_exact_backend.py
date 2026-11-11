@@ -779,6 +779,10 @@ def test_open_then_search_during_external_commits_has_no_closed_errors(tmp_path,
             finish.wait(30)
         assert not errors
         assert len(searches) == rounds * 10
+    except threading.BrokenBarrierError as barrier_error:
+        if errors:
+            raise errors[0] from barrier_error
+        raise
     finally:
         start.abort()
         finish.abort()
@@ -795,6 +799,119 @@ def test_open_then_search_during_external_commits_has_no_closed_errors(tmp_path,
         responses.close()
     assert not any(thread.is_alive() for thread in threads)
     assert external.exitcode == 0
+
+
+@pytest.mark.parametrize("backend_name", ["sqlite_exact", "compact"])
+@pytest.mark.parametrize("writer_starts", [True, False], ids=["writer-starts", "writer-closes"])
+def test_read_only_open_recovers_when_writer_crosses_sidecar_probes(
+    tmp_path, monkeypatch, backend_name, writer_starts
+):
+    """The two real file probes can straddle a complete writer lifecycle change."""
+    from mempalace.backends import get_backend_class
+
+    backend_type = get_backend_class(backend_name)
+    writer_backend, reader_backend = backend_type(), backend_type()
+    path = str(tmp_path)
+    writer = writer_backend.get_collection(path, "records", create=True)
+    writer.add(ids=["a"], documents=["alpha"], embeddings=[[1.0, 0.0]])
+    if writer_starts:
+        writer_backend.close_palace(path)
+    else:
+        writer.add(ids=["b"], documents=["beta"], embeddings=[[0.0, 1.0]])
+
+    db_path = reader_backend._db_path(path)
+    wal, shm = f"{db_path}-wal", f"{db_path}-shm"
+    real_isfile = os.path.isfile
+    assert (real_isfile(wal), real_isfile(shm)) == (not writer_starts, not writer_starts)
+    observations = []
+
+    def isfile_across_writer_change(filename):
+        exists = real_isfile(filename)
+        if os.fspath(filename) == wal and not observations:
+            # Preserve the real result, then let another connection change both files
+            # before the reader probes -shm. No synthetic sidecar or Boolean result.
+            observations.append(exists)
+            if writer_starts:
+                later = writer_backend.get_collection(path, "records")
+                later.add(ids=["b"], documents=["beta"], embeddings=[[0.0, 1.0]])
+            else:
+                writer_backend.close_palace(path)
+            assert (real_isfile(wal), real_isfile(shm)) == (writer_starts, writer_starts)
+        return exists
+
+    monkeypatch.setattr(sqlite_exact_module.os.path, "isfile", isfile_across_writer_change)
+    errors = []
+    try:
+        try:
+            reader = reader_backend.get_collection(path, "records", options={"read_only": True})
+        except BackendError as exc:
+            errors.append(str(exc))
+        assert observations == [not writer_starts], "The real writer interleaving must occur"
+        assert not errors, f"Coherent sidecars after writer transition were rejected: {errors}"
+        assert reader._handle.immutable is not writer_starts
+        assert reader.get(ids=["b"]).documents == ["beta"]
+        assert reader.query(query_embeddings=[[0.0, 1.0]], n_results=1).ids == [["b"]]
+    finally:
+        reader_backend.close()
+        writer_backend.close()
+
+
+@pytest.mark.parametrize("backend_name", ["sqlite_exact", "compact"])
+@pytest.mark.parametrize("suffix", ["-wal", "-shm"])
+def test_read_only_open_still_rejects_persistent_incomplete_sidecars(
+    tmp_path, monkeypatch, backend_name, suffix
+):
+    from mempalace.backends import get_backend_class
+
+    backend = get_backend_class(backend_name)()
+    backend.get_collection(str(tmp_path), "records", create=True)
+    db_path = backend._db_path(str(tmp_path))
+    backend.close()
+    lone = tmp_path / (os.path.basename(db_path) + suffix)
+    lone.write_bytes(b"incomplete sidecar")
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()}
+    original_state = SQLiteExactBackend._wal_sidecar_state
+    probes = []
+
+    def bounded_state(path):
+        probes.append(path)
+        assert len(probes) <= 3, "Incomplete-sidecar retries must remain bounded"
+        return original_state(path)
+
+    def forbidden_connect(*args, **kwargs):
+        pytest.fail("An incomplete pair must be rejected before any SQLite connection")
+
+    monkeypatch.setattr(SQLiteExactBackend, "_wal_sidecar_state", staticmethod(bounded_state))
+    monkeypatch.setattr(sqlite_exact_module, "connect", forbidden_connect)
+    with pytest.raises(BackendError, match="incomplete WAL sidecar set"):
+        backend._connect_read_only(db_path)
+    assert len(probes) == 3
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
+
+
+@pytest.mark.parametrize("active_writer", [True, False])
+def test_read_only_open_does_not_wait_for_coherent_sidecars(tmp_path, monkeypatch, active_writer):
+    backend, writer = _collection(tmp_path)
+    writer.add(ids=["a"], documents=["alpha"], embeddings=[[1.0, 0.0]])
+    db_path = backend._db_path(str(tmp_path))
+    if not active_writer:
+        backend.close_palace(str(tmp_path))
+
+    def unexpected_sleep(seconds):
+        pytest.fail("A coherent sidecar observation must not wait")
+
+    monkeypatch.setattr(sqlite_exact_module.time, "sleep", unexpected_sleep)
+    try:
+        conn, immutable = backend._connect_read_only(db_path)
+        try:
+            assert immutable is not active_writer
+            assert conn.execute("SELECT document FROM documents").fetchall() == [("alpha",)]
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                conn.execute("DELETE FROM documents")
+        finally:
+            conn.close()
+    finally:
+        backend.close()
 
 
 def test_sqlite_exact_read_only_open_skips_schema_init_and_refuses_writes(tmp_path):
@@ -1267,17 +1384,19 @@ def test_search_union_uses_sqlite_exact_lexical_search(tmp_path, monkeypatch):
 
     col = get_collection(str(tmp_path), create=True)
     col.add(
-        ids=["d1", "d2", "d3", "rare"],
+        ids=["d1", "d2", "d3", "d4", "rare"],
         documents=[
             "ordinary support note",
             "ordinary billing note",
             "ordinary project note",
+            "ordinary deployment note",
             "rareterm rareterm rareterm policy note",
         ],
         metadatas=[
             {"wing": "w", "room": "r", "source_file": "/tmp/d1.md", "chunk_index": 0},
             {"wing": "w", "room": "r", "source_file": "/tmp/d2.md", "chunk_index": 0},
             {"wing": "w", "room": "r", "source_file": "/tmp/d3.md", "chunk_index": 0},
+            {"wing": "w", "room": "r", "source_file": "/tmp/d4.md", "chunk_index": 0},
             {"wing": "w", "room": "r", "source_file": "/tmp/rare.md", "chunk_index": 0},
         ],
     )
@@ -1321,7 +1440,7 @@ def test_search_closets_use_lexical_not_vector_on_sqlite_exact(tmp_path, monkeyp
 
     called = {"query": 0, "lex": 0}
     orig_query = SQLiteExactCollection.query
-    orig_lex = SQLiteExactCollection.lexical_search
+    orig_lex = SQLiteExactCollection.union_lexical_search
 
     def wrapped_query(self, *args, **kwargs):
         if self._collection_name == "mempalace_closets":
@@ -1334,7 +1453,7 @@ def test_search_closets_use_lexical_not_vector_on_sqlite_exact(tmp_path, monkeyp
         return orig_lex(self, *args, **kwargs)
 
     monkeypatch.setattr(SQLiteExactCollection, "query", wrapped_query)
-    monkeypatch.setattr(SQLiteExactCollection, "lexical_search", wrapped_lex)
+    monkeypatch.setattr(SQLiteExactCollection, "union_lexical_search", wrapped_lex)
 
     result = search_memories("meshkit", str(tmp_path), n_results=1)
     assert "error" not in result
@@ -1342,7 +1461,8 @@ def test_search_closets_use_lexical_not_vector_on_sqlite_exact(tmp_path, monkeyp
     assert called["query"] == 0
 
 
-def test_search_union_reports_unsupported_lexical_capability(monkeypatch, tmp_path):
+@pytest.mark.parametrize("strategy", [None, "union"])
+def test_search_union_falls_back_on_unsupported_lexical_capability(monkeypatch, tmp_path, strategy):
     import mempalace.searcher as searcher
 
     class NoLexicalCollection:
@@ -1368,10 +1488,13 @@ def test_search_union_reports_unsupported_lexical_capability(monkeypatch, tmp_pa
         "anything",
         str(tmp_path),
         n_results=1,
-        candidate_strategy="union",
+        **({"candidate_strategy": strategy} if strategy else {}),
     )
 
-    assert result["unsupported_capability"] == "supports_lexical_search"
+    assert "error" not in result
+    assert "candidate_strategy_fallback" not in result
+    assert result["lexical_skipped"] == "lexical_unbounded_for_filter"
+    assert result["results"][0]["drawer_id"] == "a"
 
 
 def test_search_vector_disabled_fallback_is_chroma_only(tmp_path, monkeypatch):
@@ -1383,6 +1506,35 @@ def test_search_vector_disabled_fallback_is_chroma_only(tmp_path, monkeypatch):
 
     assert result["unsupported_capability"] == "chroma_hnsw_fallback"
     assert result["backend"] == "sqlite_exact"
+
+
+def test_readonly_lexical_scope_survives_legacy_fts_rowid_drift(tmp_path):
+    backend, col = _collection(tmp_path)
+    col.add(
+        ids=["needle", "other"],
+        documents=["ZXQ739251 port", "ZXQ739251 port"],
+        metadatas=[{"wing": "target"}, {"wing": "other"}],
+        embeddings=[[1.0, 0.0]] * 2,
+    )
+    backend.close_palace(str(tmp_path))
+    path = tmp_path / "sqlite_exact.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE docs_fts SET rowid = rowid + 1000")
+        conn.execute("DELETE FROM meta WHERE key = 'fts5_rowid_synced'")
+    readonly = backend.get_collection(
+        palace=PalaceRef(id=str(tmp_path), local_path=str(tmp_path)),
+        collection_name="mempalace_drawers",
+        create=False,
+        options={"read_only": True},
+    )
+    assert [
+        h.id
+        for h in readonly.union_lexical_search(query="ZXQ739251", where={"wing": "target"}).hits
+    ] == ["needle"]
+    result = readonly.lexical_search(query="ZXQ739251", where={"wing": "target"})
+    assert [hit.id for hit in result.hits] == ["needle"]
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT min(rowid) FROM docs_fts").fetchone()[0] >= 1000
 
 
 def test_concurrent_first_open_single_connection_no_leak(tmp_path, monkeypatch):
@@ -2568,3 +2720,22 @@ def test_sqlite_exact_recency_indexes_are_additive_and_skipped_read_only(tmp_pat
             assert col.get_recent(limit=25, where=aliases).ids == expected["wing"]
         finally:
             backend.close_palace(palace)
+
+
+def test_scope_local_lexical_reads_observe_own_and_peer_writes(tmp_path):
+    backend, col = _collection(tmp_path)
+    col.add(ids=["a"], documents=["marigold"], embeddings=[[1.0, 0.0]])
+    assert {h.id for h in col.union_lexical_search(query="marigold").hits} == {"a"}
+    col.add(ids=["b"], documents=["marigold"], embeddings=[[1.0, 0.0]])
+    peer, other = _collection(tmp_path, create=False)
+    other.add(ids=["c"], documents=["marigold"], embeddings=[[1.0, 0.0]])
+    assert {h.id for h in col.union_lexical_search(query="marigold").hits} == {"a", "b", "c"}
+    closets = backend.get_collection(
+        palace=PalaceRef(id=str(tmp_path), local_path=str(tmp_path)),
+        collection_name="mempalace_closets",
+        create=True,
+    )
+    closets.add(ids=["x"], documents=["marigold"], embeddings=[[1.0, 0.0]])
+    assert {h.id for h in closets.union_lexical_search(query="marigold", closet=True).hits} == {"x"}
+    assert {h.id for h in col.union_lexical_search(query="marigold").hits} == {"a", "b", "c"}
+    peer.close_palace(str(tmp_path))

@@ -11,7 +11,7 @@ GET  /api/handoffs?task=#142              threads:read    list
 GET  /api/handoffs/<id>                   threads:read
 POST /api/handoffs/<id>/successor         handoff:write   {agent_ref, url?, thread_id?}
 POST /api/handoffs/<id>/launch-failed     handoff:write   {error} (max 1 KB JSON body)
-POST /api/handoffs/<id>/relaunch          owner
+POST /api/handoffs/<id>/relaunch          owner or original trusted connection
 GET  /api/threads/<id>                    threads:read    StoredThread
 GET  /api/threads/<id>/messages?start=&end=   threads:read
 POST /api/threads/<id>/recall             threads:read    {query, limit?, follow_chain?}
@@ -27,6 +27,9 @@ import json
 import math
 from dataclasses import fields, is_dataclass, replace
 from urllib.parse import parse_qs, unquote, urlsplit
+
+from commonplace.extensions import ToolContext
+from commonplace.rules.enforce import RulesRefresh, rest_write
 
 from .authority import HandoffPermissionError, require_launch_authority
 from .db import HandoffDBError
@@ -157,6 +160,7 @@ def _read_json(handler, limit: int = MAX_BODY_BYTES, *, allow_empty: bool = Fals
         raise _RequestError(400, "invalid JSON") from None
     if not isinstance(data, dict):
         raise _RequestError(400, "JSON object required")
+    data.pop("rules_seq", None)
     return data
 
 
@@ -249,7 +253,7 @@ class _API:
     def handle(self, handler) -> None:
         # An unread body must never become the next request on this connection.
         handler._handoff_body_read = False
-        principal = self.ctx.gateway.authenticate(handler.headers.get("Authorization"))
+        principal = self.ctx.gateway.principal_for(handler)
         if principal is None:
             handler.close_connection = True
             handler._send_json(
@@ -262,6 +266,8 @@ class _API:
             target = urlsplit(handler.path)
             query = parse_qs(target.query, keep_blank_values=True)
             status, result = self.dispatch(handler, principal, target.path, query)
+        except RulesRefresh as error:
+            status, result = 428, error.payload
         except _RequestError as error:
             status, result = error.status, {"error": error.message}
         except HandoffPermissionError as error:
@@ -330,11 +336,17 @@ class _API:
 
     def thread(self, principal, thread_id: str):
         record = self.ctx.recall.thread(principal, thread_id)
-        if record.workspace_id != principal.workspace_id or not principal.policy.can_read_wing(
-            record.wing
-        ):
+        if not self._thread_row_readable(principal, record):
             _missing()
         return record
+
+    def _thread_row_readable(self, principal, record):
+        return record.workspace_id == principal.workspace_id and (
+            principal.policy.has_scope(SCOPE_THREADS_READ)
+            and principal.policy.can_read_wing(record.wing)
+            or principal.policy.has_scope("memory:import:read")
+            and self.ctx.recall.can_read(principal, record.id)
+        )
 
     def dispatch(self, handler, principal, path: str, query: dict):
         method = handler.command
@@ -389,12 +401,14 @@ class _API:
             ):
                 if parts[1] == "relaunch":
                     require_launch_authority(principal)
-                    self.require(principal, owner=True)
                     self.handoff(principal, record_id, write=True)
-                    _object(_read_json(handler, allow_empty=True), set())
-                    return 200, self.result(
-                        principal, self.ctx.service.relaunch(principal, record_id)
-                    )
+                    body = _read_json(handler, allow_empty=True)
+                    ctx = ToolContext(principal=principal, gateway=self.ctx.gateway)
+                    with rest_write(ctx, handler, "relaunch", body):
+                        _object(body, set())
+                        return 200, self.result(
+                            principal, self.ctx.service.relaunch(principal, record_id)
+                        )
                 self.require(principal, SCOPE_HANDOFF)
                 self.handoff(principal, record_id, write=True)
                 if parts[1] == "launch-failed":
@@ -417,7 +431,12 @@ class _API:
         _missing()
 
     def threads(self, handler, principal, parts: list[str], query: dict):
-        self.require(principal, SCOPE_THREADS_READ)
+        # The row authorization below also admits separately consented import views.
+        if not principal.policy.has_scope(SCOPE_THREADS_READ) and not (
+            principal.policy.has_scope("memory:import:read")
+            and self.ctx.recall.import_reader(principal)
+        ):
+            _missing()
         method = handler.command
         thread_id = parts[0]
         action = parts[1] if len(parts) == 2 else ""
@@ -443,9 +462,7 @@ class _API:
         if action == "chain":
             chain = []
             for row in self.ctx.recall.chain(principal, thread_id):
-                if row.workspace_id != principal.workspace_id or not principal.policy.can_read_wing(
-                    row.wing
-                ):
+                if not self._thread_row_readable(principal, row):
                     break
                 chain.append({**_public(row), "provenance": thread_provenance(row)})
             return 200, chain

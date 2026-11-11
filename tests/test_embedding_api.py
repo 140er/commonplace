@@ -8,6 +8,7 @@ endpoint settings. No server required — ``llm_client``'s ``urlopen`` is mocked
 
 import json
 
+import numpy as np
 import pytest
 
 import mempalace.embedding as embedding
@@ -298,6 +299,34 @@ def test_raises_on_non_contiguous_indices(monkeypatch):
         ef(["a", "b"])
 
 
+@pytest.mark.parametrize(
+    "indices",
+    [
+        (None, 1),
+        (0, None),
+        ("opaque-response-marker", 1),
+        ([], 1),
+        ({"opaque-response-marker": "ignored"}, 1),
+        (None, None),
+    ],
+    ids=["leading-null", "trailing-null", "string", "list", "object", "two-nulls"],
+)
+def test_malformed_index_types_raise_masked_embedding_error(monkeypatch, indices):
+    rows = [{"index": index, "embedding": [1.0, 0.0]} for index in indices]
+    monkeypatch.setattr("mempalace.llm_client.urlopen", _responding({"data": rows}))
+    ef = embedding.OpenAICompatEmbeddingFunction(SECRET_URL, "m")
+
+    with pytest.raises(embedding.EmbeddingAPIError, match="cannot align embeddings") as raised:
+        ef(["a", "b"])
+
+    message = str(raised.value)
+    _assert_masked(message)
+    assert "opaque-response-marker" not in message
+    result = embedding.model_error_result(raised.value)
+    assert result["error_class"] == "EmbeddingAPIError"
+    _assert_masked(result["details"])
+
+
 def test_raises_on_http_protocol_exception(monkeypatch):
     # BadStatusLine / IncompleteRead — common with local/overloaded servers.
     from http.client import HTTPException
@@ -435,3 +464,95 @@ def test_describe_device_reports_openai_compat_endpoint(monkeypatch):
 def test_describe_device_openai_compat_without_url(monkeypatch):
     monkeypatch.setattr("mempalace.config.MempalaceConfig", lambda *a, **k: _FakeCfg(None, "small"))
     assert embedding.describe_device() == "openai-compat"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_rejects_nonfinite_parsed_vectors(monkeypatch, value):
+    monkeypatch.setattr(
+        "mempalace.llm_client.post_json",
+        lambda *a, **kw: {"data": [{"index": 0, "embedding": [value, 1.0]}]},
+    )
+    ef = embedding.OpenAICompatEmbeddingFunction(SECRET_URL, "m")
+    with pytest.raises(embedding.EmbeddingAPIError) as raised:
+        ef(["a"])
+    _assert_masked(str(raised.value))
+
+
+@pytest.mark.parametrize("vector", [[], [1e300, 1.0], [1e-300, 1.0], [10**1000, 1]])
+def test_rejects_empty_or_unrepresentable_vectors(monkeypatch, vector):
+    monkeypatch.setattr(
+        "mempalace.llm_client.urlopen",
+        _responding({"data": [{"index": 0, "embedding": vector}]}),
+    )
+    ef = embedding.OpenAICompatEmbeddingFunction(SECRET_URL, "m")
+    with pytest.raises(embedding.EmbeddingAPIError) as raised:
+        ef(["a"])
+    _assert_masked(str(raised.value))
+
+
+@pytest.mark.parametrize("magnitude", [1e30, 1e-30])
+def test_normalizes_extreme_finite_vectors_and_preserves_zero_rows(monkeypatch, magnitude):
+    monkeypatch.setattr(
+        "mempalace.llm_client.urlopen",
+        _responding(
+            {
+                "data": [
+                    {"index": 0, "embedding": [magnitude, 0.0]},
+                    {"index": 1, "embedding": [0.0, 0.0]},
+                ]
+            }
+        ),
+    )
+    ef = embedding.OpenAICompatEmbeddingFunction("http://h", "m")
+    np.testing.assert_allclose(ef(["nonzero", "zero"]), [[1.0, 0.0], [0.0, 0.0]], atol=0)
+
+
+def test_rejects_dimension_change_across_sub_batches_without_persistent_state(monkeypatch):
+    batches = []
+
+    def respond(req, timeout=None):
+        batch = json.loads(req.data)["input"]
+        batches.append(len(batch))
+        width = 2 if len(batch) == 64 else 3
+        return _responding(
+            {"data": [{"index": i, "embedding": [1.0] * width} for i in range(len(batch))]}
+        )(req)
+
+    monkeypatch.setattr("mempalace.llm_client.urlopen", respond)
+    ef = embedding.OpenAICompatEmbeddingFunction(SECRET_URL, "m")
+    with pytest.raises(embedding.EmbeddingAPIError) as raised:
+        ef([f"t{i}" for i in range(65)])
+    assert batches == [64, 1]
+    _assert_masked(str(raised.value))
+    monkeypatch.setattr("mempalace.llm_client.urlopen", _fake_urlopen(dim=5))
+    result = ef(["retry"])
+    assert np.asarray(result).shape == (1, 5)
+    np.testing.assert_allclose(np.linalg.norm(result, axis=1), [1.0], rtol=1e-6)
+
+
+def test_orders_and_normalizes_65_inputs_across_sub_batches(monkeypatch):
+    batches = []
+
+    def respond(req, timeout=None):
+        batch = json.loads(req.data)["input"]
+        batches.append(batch)
+        rows = [
+            {"index": i, "embedding": [float(text[1:]) + 1.0, 1.0]} for i, text in enumerate(batch)
+        ]
+        return _responding({"data": list(reversed(rows))})(req)
+
+    monkeypatch.setattr("mempalace.llm_client.urlopen", respond)
+    texts = [f"t{i}" for i in range(65)]
+    result = embedding.OpenAICompatEmbeddingFunction("http://h", "m")(texts)
+    assert [len(batch) for batch in batches] == [64, 1]
+    assert [text for batch in batches for text in batch] == texts
+    expected = np.asarray([[i + 1.0, 1.0] for i in range(65)])
+    expected /= np.linalg.norm(expected, axis=1, keepdims=True)
+    assert np.asarray(result).shape == (65, 2)
+    assert np.isfinite(result).all()
+    np.testing.assert_allclose(result, expected, rtol=1e-6)
+
+
+def test_empty_input_does_not_contact_endpoint(monkeypatch):
+    monkeypatch.setattr("mempalace.llm_client.post_json", lambda *a, **kw: pytest.fail("HTTP"))
+    assert embedding.OpenAICompatEmbeddingFunction("http://h", "m")([]) == []

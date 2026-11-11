@@ -3,7 +3,7 @@ if __name__ != "mempalace.mcp_server":
     raise ImportError(f"{__name__} is an implementation fragment; import mempalace.mcp_server")
 
 
-from ..stored_text import INDEX_SPANS, IndexSource, public_metadata
+from ..stored_text import INDEX_SPANS, KEYWORD_ONLY, IndexSource, public_metadata
 
 # ==================== WRITE TOOLS ====================
 
@@ -27,7 +27,7 @@ def _response_safe_meta(meta):
     safe_meta = public_metadata(_safe_meta(meta))
     if not safe_meta.get("last_modified") and safe_meta.get("filed_at"):
         safe_meta["last_modified"] = safe_meta["filed_at"]
-    if safe_meta.get("source_file"):
+    if safe_meta.get("source_file") and _provenance.current() is None:
         safe_meta["source_file"] = Path(safe_meta["source_file"]).name
     # ``source_dir_ino`` is bookkeeping for ``sync``, which reads the metadata
     # directly. It says nothing a caller can use and it describes the host's
@@ -38,6 +38,83 @@ def _response_safe_meta(meta):
     # passes a record it goes on to write through here today.
     safe_meta.pop("source_dir_ino", None)
     return safe_meta
+
+
+def read_associations(kind: str, identifier: str, expect=None):
+    """Read complete current metadata only; never create optional collections.
+
+    Physical ids take precedence over logical handles, as in drawer reads.
+    Chroma proves every chunk, including legacy parents, in a read snapshot.
+    Other backends support exact physical ids only, failing closed for logical
+    handles. A second request compares the concrete descriptors.
+    """
+    if kind not in {"drawer", "closet"} or not isinstance(identifier, str) or not identifier:
+        return {"associations": None}
+    if _is_chroma_backend():
+        from ..backends.chroma_sqlite import sqlite_drawer_rows
+
+        found = sqlite_drawer_rows(
+            _config.palace_path,
+            "mempalace_closets" if kind == "closet" else _config.collection_name,
+            drawer_id=identifier,
+            metadata_only=True,
+            logical=kind == "drawer",
+        )
+        if found is None:
+            return {"associations": None}
+        rows = [_association_descriptor(rid, meta) for rid, _, meta in found[1]]
+    else:
+        from ..palace import get_closets_collection, get_collection
+
+        if kind == "closet":
+            col = get_closets_collection(_config.palace_path, create=False, read_only=True)
+        else:
+            col = get_collection(
+                _config.palace_path,
+                collection_name=_config.collection_name,
+                create=False,
+                backend=_selected_backend_name(),
+                read_only=True,
+            )
+        found = col.get(ids=[identifier], include=["metadatas"])
+        rows = _association_descriptors(found)
+        if not rows and kind == "drawer":
+            # The generic collection contract has no ordering or snapshot token.
+            # Even an empty terminal page cannot prove that offset paging did
+            # not skip a chunk during concurrent changes. Keep exact physical
+            # ids supported, but omit logical citations without complete proof.
+            return {"associations": None}
+
+    rows.sort(key=lambda row: row["id"])
+    if not rows or len({r["id"] for r in rows}) != len(rows):
+        return {"associations": None}
+    if expect is not None and rows != expect:
+        return {"associations": None}
+    return {"associations": rows}
+
+
+def _association_descriptor(rid, meta):
+    return {
+        "id": rid,
+        **{
+            key: (meta or {}).get(key)
+            for key in (
+                "wing",
+                "room",
+                "source_file",
+                "parent_drawer_id",
+                "parent_entry_id",
+                "chunk_index",
+            )
+        },
+    }
+
+
+def _association_descriptors(found):
+    ids, metas = found.get("ids") or [], found.get("metadatas") or []
+    if len(ids) != len(metas):
+        raise ValueError("Incomplete association metadata")
+    return [_association_descriptor(rid, meta) for rid, meta in zip(ids, metas)]
 
 
 def _content_preview(content):
@@ -500,6 +577,95 @@ def tool_add_drawer(
     source_seq_start: int = None,
     source_seq_end: int = None,
 ):
+    """File verbatim content; caller input never selects internal write policy."""
+    return _write_drawer(
+        wing,
+        room,
+        content,
+        source_file=source_file,
+        added_by=added_by,
+        source_thread=source_thread,
+        source_seq_start=source_seq_start,
+        source_seq_end=source_seq_end,
+    )
+
+
+def write_mirror_units(thread_id: str, units: list):
+    """Authenticated internal operation; not an MCP tool or client argument."""
+    from ..ids import make_mirror_unit_id
+
+    if not isinstance(units, list) or not 1 <= len(units) <= 64:
+        raise ValueError("Mirror batches must contain between 1 and 64 units")
+    prepared = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            raise ValueError("Invalid mirror unit")
+        start, end, part = (unit.get(key) for key in ("seq_start", "seq_end", "part"))
+        kind, text = unit.get("message_class"), unit.get("text")
+        if (
+            any(type(value) is not int for value in (start, end, part))
+            or not 0 <= start <= end
+            or part < 0
+            or kind not in {"conversation", "tool_call", "tool_output", "system"}
+            or not isinstance(text, str)
+            or not text
+            or len(text) > 4000
+        ):
+            raise ValueError("Invalid mirror unit")
+        source_range(thread_id, start, end)
+        text.encode("utf-8")
+        source = f"handoff:{thread_id}#v2:{start}-{end}:{kind}:{part}"
+        prepared.append(
+            dict(
+                wing="private_threads",
+                room=thread_id,
+                content=text,
+                source_file=source,
+                source_thread=thread_id,
+                source_seq_start=start,
+                source_seq_end=end,
+                added_by=f"handoff:{start}-{end}:{len(text)}",
+                lexical_only=kind in {"tool_output", "system"},
+                _mempalace_index_spans=unit.get("index_spans"),
+                drawer_id=make_mirror_unit_id(thread_id, start, end, kind, text),
+            )
+        )
+    from ..palace import mine_yield_point
+
+    committed = {}
+    for arguments in prepared:
+        if arguments["drawer_id"] in committed:
+            continue
+        # Handled units include idempotent replays. The loop holds no collection
+        # locally across a yield; each unit re-fetches through _get_collection.
+        if committed and mine_yield_point():
+            refusal = _mcp_tool_preflight_refusal(None, "mempalace_add_drawer")
+            if refusal is not None:
+                return {"success": False, "error": refusal["error"]["message"]}
+        with _write_stall_watch("mempalace_add_drawer"):
+            result = _write_drawer(**arguments)
+        if not result.get("success"):
+            return result
+        committed[arguments["drawer_id"]] = result["drawer_id"]
+    return {
+        "success": True,
+        "drawer_ids": [committed[arguments["drawer_id"]] for arguments in prepared],
+    }
+
+
+def _write_drawer(
+    wing: str,
+    room: str,
+    content: str,
+    source_file: str = None,
+    added_by: str = "mcp",
+    source_thread: str = None,
+    source_seq_start: int = None,
+    source_seq_end: int = None,
+    lexical_only: bool = False,
+    _mempalace_index_spans: str = None,
+    drawer_id: str = None,
+):
     """File verbatim content into a wing/room. Checks for duplicates first.
 
     Content above ``chunk_size`` is split into bounded per-chunk drawers
@@ -514,9 +680,14 @@ def tool_add_drawer(
     ``source_thread`` plus ``source_seq_start``/``source_seq_end`` record the
     chat messages these words came from. A retry of identical content keeps
     the first write's source.
+
+    ``lexical_only`` is a server-side policy: compact stores the drawer without
+    a vector. Other backends retain their normal embedding behavior.
     """
     global _metadata_cache
     try:
+        if not isinstance(lexical_only, bool):
+            raise ValueError("lexical_only must be a boolean")
         source_thread, source_seq_start, source_seq_end = source_range(
             source_thread, source_seq_start, source_seq_end
         )
@@ -533,7 +704,7 @@ def tool_add_drawer(
     if not col:
         return _collection_error_or_no_palace()
 
-    drawer_id = make_drawer_id_from_content(wing, room, content)
+    drawer_id = drawer_id or make_drawer_id_from_content(wing, room, content)
 
     _wal_log(
         "add_drawer",
@@ -551,7 +722,7 @@ def tool_add_drawer(
     )
 
     chunk_size = _config.chunk_size
-    index_source = IndexSource(content)
+    index_source = IndexSource(content, {INDEX_SPANS: _mempalace_index_spans})
     base_meta = {
         "wing": wing,
         "room": room,
@@ -560,6 +731,8 @@ def tool_add_drawer(
         "filed_at": utc_now_iso(),
         "id_recipe": ID_RECIPE,
     }
+    if lexical_only and getattr(col, "supports_keyword_only", False) is True:
+        base_meta[KEYWORD_ONLY] = True
     if source_thread:
         base_meta["source_thread"] = source_thread
         if source_seq_start is not None:
@@ -591,7 +764,20 @@ def tool_add_drawer(
     try:
         existing = col.get(ids=idempotency_probe_ids, include=["metadatas"])
         if _get_result_ids(existing):
-            outcome = {"success": True, "reason": "already_exists", "drawer_id": drawer_id}
+            # Fresh-write fields depend only on this request and current chunk
+            # configuration. The gateway can hide replay status for unreadable
+            # wings without exposing the existing row's storage details.
+            chunks = max(1, (len(content) + chunk_size - 1) // chunk_size)
+            outcome = {
+                "success": True,
+                "reason": "already_exists",
+                "drawer_id": drawer_id,
+                "wing": wing,
+                "room": room,
+                "chunks": chunks,
+            }
+            if chunks > 1:
+                outcome["chunk_ids"] = [f"{drawer_id}_chunk_{i:06d}" for i in range(chunks)]
             stored = next(iter(existing.get("metadatas") or []), None) or {}
             if stored.get("source_thread"):
                 # The first write's source is kept; say which, so a caller
@@ -1067,7 +1253,196 @@ def tool_mine(
             _invalidate_overview_caches()
 
 
-def tool_delete_by_source(source_file: str, dry_run: bool = True):
+def _delete_scope(scope, kind):
+    """Strictly validate the internal delete contract; None is local/unscoped."""
+    if scope is None:
+        return None
+    if not isinstance(scope, dict):
+        raise ValueError("thread_scope is invalid")
+    if scope == {"probe": True} and scope.get("probe") is True:
+        return "probe"
+    if set(scope) != {"allow"} or not isinstance(scope["allow"], dict):
+        raise ValueError("thread_scope is invalid")
+    allow = scope["allow"]
+    if kind == "tunnel":
+        if set(allow) != {"source", "target"} or not all(isinstance(allow[k], dict) for k in allow):
+            raise ValueError("thread_scope is invalid")
+    else:
+        keys = {"pairs", "roomless_ids", "expect"} if kind == "source" else {"pairs"}
+        if (
+            set(allow) != keys
+            or not isinstance(allow.get("pairs"), list)
+            or not all(
+                isinstance(p, list) and len(p) == 2 and all(isinstance(v, str) for v in p)
+                for p in allow["pairs"]
+            )
+        ):
+            raise ValueError("thread_scope is invalid")
+        if kind == "source" and (
+            not isinstance(allow["roomless_ids"], list)
+            or not all(isinstance(v, str) for v in allow["roomless_ids"])
+            or not isinstance(allow["expect"], dict)
+            or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in allow["expect"].items()
+            )
+        ):
+            raise ValueError("thread_scope is invalid")
+    return allow
+
+
+def _source_drawer_state(col, drawer_id):
+    if not drawer_id:
+        return "missing"
+    try:
+        record = _collection_logical_drawer_record(col, drawer_id)
+        if record is None:
+            return "missing"
+        meta = record["metadata"]
+        pair = [meta.get("wing"), meta.get("room")]
+        return pair if all(isinstance(v, str) for v in pair) else "error"
+    except Exception:
+        return "error"
+
+
+def _roomless_snapshot(kind, rid, meta, drawer_id, drawer, row=None):
+    payload = [kind, rid, meta, drawer_id, drawer, row]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _source_delete_inventory(col, source_file):
+    from commonplace.handoff.provenance_refs import REFUSE, refs
+
+    from ..backends.base import CollectionNotInitializedError
+    from ..palace import _derived_rows, get_closets_collection, open_aaak_collection
+    from ..revisions import load_drawer_revisions
+
+    drawers = _derived_rows(col, source_file)
+    drawer_ids = [rid for rid, _ in drawers]
+    try:
+        closets = get_closets_collection(_config.palace_path, create=False)
+    except CollectionNotInitializedError:
+        closets = None
+    aaak = open_aaak_collection(_config.palace_path)
+    kinds = {
+        "closet": _derived_rows(closets, source_file) if closets is not None else [],
+        "aaak": _derived_rows(aaak, source_file, drawer_ids) if aaak is not None else [],
+    }
+    revisions = [
+        r
+        for r in load_drawer_revisions(_config.palace_path)
+        if r.get("drawer_id") in drawer_ids
+        or (r.get("metadata") or {}).get("source_file") == source_file
+    ]
+    kinds["revision"] = [(r["revision_id"], r.get("metadata") or {}) for r in revisions]
+    revision_rows = {r["revision_id"]: r for r in revisions}
+    pairs, roomless = set(), []
+    for _, meta in drawers:
+        pair = (meta.get("wing"), meta.get("room"))
+        if all(isinstance(v, str) for v in pair):
+            pairs.add(pair)
+    for kind, rows in kinds.items():
+        for rid, meta in rows:
+            pair = (meta.get("wing"), meta.get("room"))
+            if all(isinstance(v, str) for v in pair):
+                pairs.add(pair)
+                continue
+            row = revision_rows.get(rid) if kind == "revision" else None
+            drawer_id = row.get("drawer_id") if row is not None else rid if kind == "aaak" else None
+            drawer = _source_drawer_state(col, drawer_id)
+            parsed = refs(meta.get("source_file"))
+            roomless.append(
+                {
+                    "kind": kind,
+                    "id": rid,
+                    "drawer_id": drawer_id,
+                    "drawer": drawer,
+                    "tokens": [] if parsed is REFUSE else list(parsed.tokens),
+                    "refused": parsed is REFUSE,
+                    "expect": _roomless_snapshot(kind, rid, meta, drawer_id, drawer, row),
+                }
+            )
+    return drawers, {"pairs": [list(p) for p in sorted(pairs)], "roomless": roomless}
+
+
+def _scoped_delete_by_source(col, source_file, dry_run, scope):
+    from ..palace import _delete_derived_ids, _derived_rows, drawers_removed, purge_source_closets
+
+    if scope == "probe":
+        _, probe = _source_delete_inventory(col, source_file)
+        return {"success": True, "probe": probe}
+    allow_rooms = {tuple(p) for p in scope["pairs"]}
+    roomless_ids = set(scope["roomless_ids"])
+
+    def unchanged(kind, rid, meta, drawer_id, row):
+        key = kind + ":" + str(rid)
+        return key in roomless_ids and scope["expect"].get(key) == _roomless_snapshot(
+            kind, rid, meta, drawer_id, _source_drawer_state(col, drawer_id), row
+        )
+
+    drawers = [
+        (rid, meta)
+        for rid, meta in _derived_rows(col, source_file)
+        if (meta.get("wing"), meta.get("room")) in allow_rooms
+    ]
+    sample = []
+    for _, meta in drawers:
+        pair = {"wing": meta["wing"], "room": meta["room"]}
+        if pair not in sample and len(sample) < 5:
+            sample.append(pair)
+    count = len(drawers)
+    if dry_run:
+        closets = purge_source_closets(
+            _config.palace_path,
+            source_file,
+            commit=False,
+            allow_rooms=allow_rooms,
+            roomless_ids=roomless_ids,
+            roomless_check=unchanged,
+        )
+        return {
+            "success": True,
+            "dry_run": True,
+            "source_file": source_file,
+            "match_count": count,
+            "closet_match_count": closets,
+            "sample": sample,
+            "hint": (
+                "No drawers were deleted. Re-run with dry_run=false to remove "
+                f"these {count} drawer(s) and {closets} index entr(y/ies)."
+            )
+            if count
+            else "No drawers match this source_file.",
+        }
+    if not count:
+        return {"success": True, "dry_run": False, "source_file": source_file, "deleted": 0}
+    _wal_log(
+        "delete_by_source", {"source_file": source_file, "match_count": count, "sample": sample}
+    )
+    # Recheck revision rows under their lock while every current drawer still exists.
+    # HTTP's palace write lease covers this entire call, including other index rows.
+    purged = drawers_removed(
+        _config.palace_path,
+        aaak_ids=[rid for rid, _ in drawers],
+        aaak_source=source_file,
+        closet_sources=[source_file],
+        revision_ids=[rid for rid, _ in drawers],
+        revision_source=source_file,
+        allow_rooms=allow_rooms,
+        roomless_ids=roomless_ids,
+        roomless_check=unchanged,
+    )
+    _delete_derived_ids(col, [rid for rid, _ in drawers])
+    _invalidate_overview_caches()
+    return {
+        "success": True,
+        "dry_run": False,
+        "source_file": source_file,
+        "deleted": count,
+        **purged,
+    }
+
+
+def tool_delete_by_source(source_file: str, dry_run: bool = True, thread_scope: dict = None):
     """Delete every drawer whose ``source_file`` metadata matches exactly.
 
     Bulk cleanup for benchmark/eval files (ShareGPT dumps,
@@ -1096,9 +1471,17 @@ def tool_delete_by_source(source_file: str, dry_run: bool = True):
     # rows mined from non-ASCII paths that arrived via a cp1252 stdin.
     source_file = strip_lone_surrogates(source_file)
 
+    try:
+        scope = _delete_scope(thread_scope, "source")
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+
     col = _get_collection()
     if not col:
         return _collection_error_or_no_palace()
+
+    if scope is not None:
+        return _scoped_delete_by_source(col, source_file, dry_run, scope)
 
     where = {"source_file": source_file}
     try:
@@ -1361,6 +1744,53 @@ def tool_get_drawers(drawer_ids: list):
     }
 
 
+def _drawer_page_remaining(allowed, end):
+    from time import monotonic
+
+    if allowed is not None and monotonic() >= end:
+        raise TimeoutError("drawer page deadline expired")
+
+
+def _hydrate_scoped_drawer_page(page, allowed, end, *, col=None, connection=None):
+    if allowed is None:
+        if connection is not None:
+            return _fill_drawer_previews_from_sqlite(page, connection=connection)
+        _fill_drawer_previews(col, page)
+        return True
+    from ..backends.chroma_sqlite import sqlite_documents_for_ids
+    from ..read_scope import descriptor
+
+    physical = _page_physical_ids(page)
+    documents = {}
+    for start in range(0, len(physical), 500):
+        _drawer_page_remaining(allowed, end)
+        batch = physical[start : start + 500]
+        if connection is not None:
+            fetched = sqlite_documents_for_ids(
+                _config.palace_path, _config.collection_name, batch, _connection=connection
+            )
+            if fetched is None:
+                raise ValueError("drawer documents unavailable")
+            documents.update(fetched)
+        else:
+            fetched = col.get(ids=batch, include=["metadatas", "documents"])
+            keys, metas, docs = fetched["ids"], fetched["metadatas"], fetched["documents"]
+            if (
+                len(keys) != len(metas)
+                or len(keys) != len(docs)
+                or len(keys) != len(batch)
+                or set(keys) != set(batch)
+            ):
+                raise ValueError("drawer hydration incomplete")
+            for key, meta, doc in zip(keys, metas, docs):
+                if allowed.get(key) != descriptor(key, meta):
+                    raise ValueError("drawer association changed")
+                documents[key] = doc or ""
+    _drawer_page_remaining(allowed, end)
+    _apply_drawer_previews(page, documents)
+    return True
+
+
 def tool_list_drawers(
     wing: str = None,
     room: str = None,
@@ -1368,6 +1798,7 @@ def tool_list_drawers(
     before: str = None,
     limit: int = 20,
     offset: int = 0,
+    thread_scope: dict = None,
 ):
     """List logical drawers with pagination.
 
@@ -1392,12 +1823,49 @@ def tool_list_drawers(
     except ValueError as e:
         return {"error": str(e)}
 
+    empty = {"drawers": [], "total": 0, "count": 0, "offset": offset, "limit": limit}
+    allowed, end = None, None
+    if thread_scope is not None:
+        from ..read_scope import valid_descriptors
+
+        if (
+            not isinstance(thread_scope, dict)
+            or set(thread_scope) != {"allow", "timeout"}
+            or not isinstance(thread_scope["allow"], list)
+            or not all(valid_descriptors(batch) for batch in thread_scope["allow"])
+        ):
+            return empty
+        from time import monotonic
+
+        budget = thread_scope["timeout"]
+        if not isinstance(budget, (int, float)) or not 0 < budget <= 660:
+            return empty
+        end = monotonic() + budget
+        allowed = {row["id"]: row for batch in thread_scope["allow"] for row in batch}
+        if not allowed:
+            return empty
+
     try:
+
+        def remaining():
+            if allowed is not None and monotonic() >= end:
+                raise TimeoutError("drawer page deadline expired")
+
         known = _palace_known_wings() if wing else frozenset()
         where = build_where_filter(wing, room, known=known) or None
 
         def make_page(ids, metadatas):
-            kept = [(i, m) for i, m in zip(ids, metadatas) if not is_bookkeeping(m, i)]
+            from ..read_scope import descriptor
+
+            remaining()
+            if len(ids) != len(metadatas):
+                raise ValueError("incomplete drawer metadata")
+            kept = [
+                (i, m)
+                for i, m in zip(ids, metadatas)
+                if not is_bookkeeping(m, i)
+                and (allowed is None or i in allowed and allowed[i] == descriptor(i, m))
+            ]
             drawers = _collapse_drawer_rows([i for i, _ in kept], [], [m for _, m in kept])
             if since_dt is not None or before_dt is not None:
                 drawers = [
@@ -1423,24 +1891,64 @@ def tool_list_drawers(
             # share a recovered SQLite snapshot. Close it before any SDK fallback.
             with sqlite_metadata_snapshot(_config.palace_path, _config.collection_name) as conn:
                 if conn is not None:
-                    listed = sqlite_list_id_metadata(
-                        _config.palace_path, _config.collection_name, where=where, _connection=conn
-                    )
+                    if allowed is None:
+                        listed = sqlite_list_id_metadata(
+                            _config.palace_path,
+                            _config.collection_name,
+                            where=where,
+                            _connection=conn,
+                        )
+                    else:
+                        conn.set_progress_handler(lambda: int(monotonic() >= end), 1000)
+                        listed = ([], [])
+                        keys = list(allowed)
+                        for start in range(0, len(keys), 500):
+                            remaining()
+                            batch = sqlite_list_id_metadata(
+                                _config.palace_path,
+                                _config.collection_name,
+                                where=where,
+                                ids=keys[start : start + 500],
+                                _connection=conn,
+                            )
+                            if batch is None:
+                                raise ValueError("drawer metadata unavailable")
+                            listed[0].extend(batch[0])
+                            listed[1].extend(batch[1])
                     if listed is not None:
                         result = make_page(*listed)
-                        if _fill_drawer_previews_from_sqlite(result["drawers"], connection=conn):
+                        if _hydrate_scoped_drawer_page(
+                            result["drawers"], allowed, end, connection=conn
+                        ):
                             return result
 
         col = _get_collection()
         if not col:
-            return _collection_error_or_no_palace()
-        ids, _documents, metadatas = _fetch_drawer_rows(col, where=where, include=["metadatas"])
+            return empty if allowed is not None else _collection_error_or_no_palace()
+        if allowed is None:
+            ids, _documents, metadatas = _fetch_drawer_rows(
+                col, where=where, page_size=500, include=["metadatas"]
+            )
+        else:
+            ids, metadatas = [], []
+            keys = list(allowed)
+            for start in range(0, len(keys), 500):
+                remaining()
+                fetched = col.get(
+                    ids=keys[start : start + 500],
+                    include=["metadatas"],
+                    **({"where": where} if where else {}),
+                )
+                if len(fetched["ids"]) != len(fetched["metadatas"]):
+                    raise ValueError("incomplete drawer metadata")
+                ids.extend(fetched["ids"])
+                metadatas.extend(fetched["metadatas"])
         result = make_page(ids, metadatas)
-        _fill_drawer_previews(col, result["drawers"])
+        _hydrate_scoped_drawer_page(result["drawers"], allowed, end, col=col)
         return result
     except Exception as e:
         logger.exception("tool_list_drawers failed")
-        return {"error": str(e)}
+        return empty if thread_scope is not None else {"error": str(e)}
 
 
 # Stamps that say how the source file was read. Text a caller writes into a

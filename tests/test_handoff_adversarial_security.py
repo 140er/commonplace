@@ -33,6 +33,7 @@ from commonplace.handoff.models import (
 from commonplace.handoff.wiring import install
 from commonplace.policy import Policy
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._mirror_drain import drain_service
 
 TEXT_MARKER = "security_transcript_891c691396424873"
 SECRET_MARKER = "security_secret_731b519981d54e42"
@@ -629,7 +630,12 @@ def test_session_login_link_cookie_flags_and_revocation(security, monkeypatch):
     assert all(
         flag in headers["Set-Cookie"] for flag in ("HttpOnly", "SameSite=Lax", "Path=/", "Secure")
     )
-    assert security.request("GET", "/app/login?" + urlencode({"t": link}), token=None)[0] == 400
+    status, _, replay_headers = security.request(
+        "GET", "/app/login?" + urlencode({"t": link}), token=None
+    )
+    assert status == 302
+    assert replay_headers["Location"] == "/app/?signin=expired"
+    assert "Set-Cookie" not in replay_headers
     assert (
         security.request("GET", "/app/settings/memory", token=None, headers={"Cookie": cookie})[0]
         == 200
@@ -1208,8 +1214,8 @@ def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):
 
     def capture(principal, name, arguments):
         result = ctx.call_tool(principal, name, arguments)
-        if name == "mempalace_add_drawer":
-            written.append(result["drawer_id"])
+        if name == "write_mirror_units":
+            written.extend(result["drawer_ids"])
         return result
 
     ctx.service.call_tool = capture
@@ -1227,7 +1233,7 @@ def test_normal_memory_tools_cannot_bypass_thread_read_scope(hub):
                 "messages",
             ),
         )
-        ctx.service.wait_for_mirrors(timeout=60)
+        drain_service(ctx.service)
         assert result.action == "handoff" and written
         _, response = hub.call(writer_token, "mempalace_get_drawer", drawer_id=written[0])
         assert TEXT_MARKER in response

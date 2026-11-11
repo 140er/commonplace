@@ -1,4 +1,6 @@
 -- Commonplace boards: data model
+-- Illustrative design sketch, not the executable schema.
+-- See commonplace/boards/schema.sql and commonplace/boards/store.py for the current schema and migrations.
 -- SQLite, one file per workspace: <palace>/boards.sqlite3, next to the knowledge graph.
 -- Design: docs/boards/DESIGN.md. API: docs/boards/API.md.
 --
@@ -48,9 +50,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     position      REAL NOT NULL,                    -- float, so a drag rewrites one row
     assignee      TEXT,                             -- actor ref; in todo it reserves the card for that actor
     claim_until   TEXT,                             -- agents only, while status = 'doing'; people's cards never expire
-    ask           TEXT,                             -- set while status = 'review': the question for the person
+    claim_expired_at TEXT,
+    agent_parent TEXT,
+    proposal_status TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected')),
+    proposed_to TEXT,
+    approved_by TEXT,
+    review_kind TEXT,
+    review_context TEXT,
+    ask           TEXT,                             -- set while status = 'review': the question for the recipient
     ask_options   TEXT,                             -- JSON array of short choices, or NULL for free text
-    ask_to        TEXT,                             -- actor ref of the person asked (default: board owner)
+    ask_to        TEXT,                             -- recipient actor ref (authorized coordinator or person; legacy default: owner)
     return_to     TEXT,                             -- actor ref the card goes back to after the decision
     flags         TEXT,                             -- JSON array from the §9 injection check, e.g. ["curl_pipe"]
     version       INTEGER NOT NULL DEFAULT 1,       -- bumped on every change; web UI sends it back on drag
@@ -78,6 +87,7 @@ CREATE TABLE IF NOT EXISTS task_events (
     kind       TEXT NOT NULL CHECK (kind IN (
                    'add', 'edit', 'move', 'comment', 'claim', 'renew', 'release',
                    'expire', 'handoff', 'ask', 'decide', 'link', 'unlink')),
+    context    TEXT,
     text       TEXT,                                -- verbatim comment, handoff note, ask or reply
     from_status TEXT,
     to_status   TEXT,

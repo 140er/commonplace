@@ -219,7 +219,7 @@ def test_service_tool_classification():
 # --- helpers for HTTP-lifecycle tests ---
 
 
-def _capture_httpd(monkeypatch):
+def _capture_httpd(monkeypatch, ready=None):
     """Capture the httpd instance run_server creates.
 
     run_server defines a local ``class _Server(ThreadingHTTPServer)``; by
@@ -237,6 +237,11 @@ def _capture_httpd(monkeypatch):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             holders.append(self)
+
+        def serve_forever(self, poll_interval=0.5):
+            if ready is not None:
+                ready.set()
+            return super().serve_forever(poll_interval=min(poll_interval, 0.01))
 
     monkeypatch.setattr(daemon, "ThreadingHTTPServer", _CapturingServer)
     return holders
@@ -276,11 +281,12 @@ def _start_server(tmp_path, monkeypatch, execute_fn):
     palace = tmp_path / "palace"
     palace.mkdir()
     monkeypatch.setattr(service, "execute_job", execute_fn)
-    holders = _capture_httpd(monkeypatch)
+    ready = threading.Event()
+    holders = _capture_httpd(monkeypatch, ready)
 
     # Capture any exception run_server raises in its thread. Without this a
-    # startup crash is invisible: the poll below would just spin for 30s and
-    # fail with a bare ``assert client is not None`` giving no cause.
+    # startup crash is invisible: the readiness wait would time out without
+    # explaining why the server never became ready.
     server_error: list = []
 
     def _serve():
@@ -288,22 +294,19 @@ def _start_server(tmp_path, monkeypatch, execute_fn):
             daemon.run_server(palace_path=str(palace), port=0)
         except BaseException as exc:  # noqa: BLE001 - re-surfaced to the test thread
             server_error.append(exc)
+            ready.set()
 
     thread = threading.Thread(target=_serve, name="test-daemon-server", daemon=True)
     thread.start()
-    client = None
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        if server_error:
-            raise AssertionError(f"run_server crashed during startup: {server_error[0]!r}")
-        client = daemon.get_client_if_running(str(palace))
-        if client is not None:
-            break
-        time.sleep(0.05)
+    assert ready.wait(30), "daemon did not reach its serving loop within 30s"
+    if server_error:
+        raise AssertionError(f"run_server crashed during startup: {server_error[0]!r}")
+    client = daemon.get_client_if_running(str(palace))
     if client is None:
         raise AssertionError(
-            "daemon did not become ready within 30s "
-            f"(thread_alive={thread.is_alive()}, httpd_bound={bool(holders)}, "
+            "daemon did not respond after signaling readiness "
+            f"(thread_alive={thread.is_alive()}, server_error={server_error!r}, "
+            f"httpd_bound={bool(holders)}, "
             f"endpoint_exists={daemon.endpoint_path(str(palace)).exists()})"
         )
     return client, thread, palace, holders
@@ -1660,6 +1663,7 @@ def test_get_client_if_running_uses_short_probe_timeout(monkeypatch):
     assert captured["timeout"] == daemon.HOOK_PROBE_TIMEOUT
 
 
+@pytest.mark.timing
 def test_wedged_daemon_probe_stays_under_hook_budget(tmp_path, monkeypatch):
     """A socket that accepts and never answers must not burn the 500ms budget."""
     import socket
