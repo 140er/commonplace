@@ -565,7 +565,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
-  - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form.
+  - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
@@ -1693,7 +1693,7 @@ Format (read by `commonplace orch docs-check`):
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 
-  - A background refresh never replaces an edit, hand-off or ask form open in the card panel, including one opened while the refresh's card read was in flight. On Needs me the item's detail waits (paused) while a hand-off form is open; Cancel, a saved hand-off or choosing another item gives the panel back, and on a card route the panel redraws from a fresh card read.
+  - A background refresh never replaces an edit, hand-off or ask form open in the card panel, including one opened while the refresh's card read was in flight. On Needs me (including a hash the router does not recognise, which draws it too) the item's detail waits (paused) while a hand-off form is open; Cancel, a saved hand-off, choosing another item or a filter that drops the item gives the panel back and focuses the item heading, and a read that failed meanwhile is repeated. J and K do not move the selection while a form is open, wherever focus is. Closing the panel does not read a card, so the close itself does not reopen it; a later change to the Needs me payload re-selects the item and opens the panel again, as before. When a filter leaves no items, focus goes to the filter button. On a card route the panel redraws from a fresh card read.
 
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
 

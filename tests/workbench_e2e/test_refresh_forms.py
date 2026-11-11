@@ -4,7 +4,8 @@ Each case drives the real app: open a card, open a form in its panel, let a back
 refresh run (another card changes, so the event feed wakes the board), and read the panel.
 """
 
-from tests.workbench_e2e.scenarios import settle
+from playwright.sync_api import expect
+
 from tests.workbench_e2e.seed import request
 
 CARD = "A-131"
@@ -19,6 +20,14 @@ def _wait(page, predicate, timeout=8000):
         page.wait_for_timeout(50)
         waited += 50
     return predicate()
+
+
+def _quiet(page):
+    """Two event-feed polls came back: the opening render has no refresh left in flight."""
+    for _ in range(2):
+        page.wait_for_event(
+            "response", lambda response: "/api/events" in response.url, timeout=10000
+        )
 
 
 def _refresh_probe(page):
@@ -37,15 +46,19 @@ def _wake(seed, text="refresh me"):
 
 
 def _refreshed(page, seen, before):
+    """Card routes: the refresh ran and finished, since the next poll starts only after the redraw.
+
+    Needs me draws without being awaited, so its cases wait on what they expect to see instead.
+    """
     assert _wait(page, lambda: len(seen) > before), "no background refresh ran"
-    settle(page, 600)
+    page.wait_for_event("request", lambda req: "/api/events" in req.url, timeout=10000)
 
 
 def _open_card(ui, seed):
     page = ui.open(f"#/card/{seed.number(CARD)}")
     page.wait_for_selector('#card-panel [data-action="handoff"]')
     # Let the opening poll finish so only the refresh a case triggers runs afterwards.
-    settle(page, 2500)
+    _quiet(page)
     return page
 
 
@@ -131,15 +144,26 @@ def _let_claim_run_out(seed, cid):
         )
 
 
-def _open_needs_handoff(ui, seed):
+def _form(page):
+    return page.locator('#card-panel form[data-form="handoff"]')
+
+
+def _open_needs_handoff(ui, seed, *, both=False):
     _let_claim_run_out(seed, STALE)
+    if both:
+        _let_claim_run_out(seed, STALE_TOO)
     page = ui.open("#/needs")
     page.click(f'[data-needs-select="{seed.number(STALE)}"]')
     page.click('#card-panel [data-action="need-requeue"]')
     page.wait_for_selector('#card-panel form[data-form="handoff"]')
     page.fill('#card-panel form[data-form="handoff"] [name="note"]', TYPED)
-    settle(page, 2500)
+    _quiet(page)
     return page
+
+
+def _detail_is_back(page):
+    expect(_form(page)).to_have_count(0)
+    expect(page.locator('#card-panel [data-action="need-requeue"]')).to_have_count(1)
 
 
 def test_needs_handoff_form_survives_queue_change(ui, app):
@@ -150,16 +174,84 @@ def test_needs_handoff_form_survives_queue_change(ui, app):
     _let_claim_run_out(app, STALE_TOO)
     _wake(app)
     assert _wait(page, lambda: len(seen) > before), "no background refresh ran"
-    assert _wait(
-        page, lambda: page.locator(f'[data-needs-select="{app.number(STALE_TOO)}"]').count() == 1
-    ), "the queue did not change"
-    settle(page, 600)
+    # The list and the detail are drawn in one pass, so the new row means the detail was handled too.
+    expect(page.locator(f'[data-needs-select="{app.number(STALE_TOO)}"]')).to_have_count(1)
     assert _handoff_text(page) == TYPED
 
 
 def test_needs_cancel_closes_the_form(ui, app):
     page = _open_needs_handoff(ui, app)
     page.get_by_role("button", name="Cancel").click()
-    settle(page, 600)
-    assert page.locator('#card-panel form[data-form="handoff"]').count() == 0
-    assert page.locator('#card-panel [data-action="need-requeue"]').count() == 1
+    _detail_is_back(page)
+
+
+def test_needs_saved_handoff_gives_the_panel_back(ui, app):
+    page = _open_needs_handoff(ui, app)
+    _form(page).get_by_role("button", name="Hand off").click()
+    expect(_form(page)).to_have_count(0)
+    expect(page.locator(f'[data-needs-select="{app.number(STALE)}"]')).to_have_count(0)
+    # The detail is drawn again: an item, or the empty prompt when nothing is left selected.
+    expect(page.locator("#card-panel [data-needs-title], #card-panel p.empty")).to_have_count(1)
+
+
+def test_needs_choosing_another_item_replaces_the_form(ui, app):
+    page = _open_needs_handoff(ui, app, both=True)
+    page.click(f'[data-needs-select="{app.number(STALE_TOO)}"]')
+    expect(_form(page)).to_have_count(0)
+    expect(page.locator("#card-panel [data-needs-title]")).to_have_count(1)
+
+
+def test_needs_filter_that_drops_the_item_replaces_the_form(ui, app):
+    page = _open_needs_handoff(ui, app)
+    page.click('[data-needs-filter="approvals"]')
+    expect(_form(page)).to_have_count(0)
+    expect(page.locator("#card-panel [data-needs-title]")).to_have_count(1)
+
+
+def test_ask_form_cancel_returns_to_the_card(ui, app):
+    page = _open_card(ui, app)
+    page.select_option("#card-status", "review")
+    page.click('#card-panel [data-action="panel-move"]')
+    page.wait_for_selector('#card-panel form[data-form="review"]')
+    page.get_by_role("button", name="Cancel").click()
+    expect(page.locator('#card-panel form[data-form="review"]')).to_have_count(0)
+    expect(page.locator('#card-panel [data-action="handoff"]')).to_have_count(1)
+
+
+def test_needs_j_and_k_leave_an_open_form_alone(ui, app):
+    page = _open_needs_handoff(ui, app, both=True)
+    page.focus(f'[data-needs-select="{app.number(STALE_TOO)}"]')
+    page.keyboard.press("j")
+    page.keyboard.press("k")
+    assert _handoff_text(page) == TYPED
+
+
+def test_closing_the_panel_while_the_form_is_open_keeps_it_closed(ui, app):
+    """A failed card read leaves the selection without a card; closing the panel must not read it back open."""
+    page = _open_needs_handoff(ui, app)
+    seen = _refresh_probe(page)
+    card = f"**/api/cards/{app.number(STALE)}"
+    failed, reads = [], []
+    page.route(card, lambda route: (failed.append(1), route.abort())[1])
+    before = len(seen)
+    _let_claim_run_out(app, STALE_TOO)
+    _wake(app)
+    assert _wait(page, lambda: failed), "the card read did not fail"
+    page.unroute(card)
+    page.on(
+        "request",
+        lambda req: (
+            reads.append(req.url) if req.url.endswith(f"/api/cards/{app.number(STALE)}") else None
+        ),
+    )
+    assert len(seen) > before
+    # Escape is ignored while typing: leave the field first.
+    page.evaluate("() => document.activeElement.blur()")
+    page.keyboard.press("Escape")
+    expect(page.locator("#card-panel")).to_be_hidden()
+    # Two frames: a read started by closing the panel would be issued by now.
+    page.evaluate(
+        "() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))"
+    )
+    assert reads == []
+    expect(page.locator("#card-panel")).to_be_hidden()

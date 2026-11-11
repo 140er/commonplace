@@ -647,6 +647,8 @@ function boardsView() {
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
+// Needs me draws on `#/needs`, and on `#/` for a hash the router does not recognise.
+const onNeeds = () => state.base === "#/needs" || state.base === "#/";
 // A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
 const panelForm = () => root.querySelector("#card-panel form.form-tile");
 async function cardPanel(number, epoch, { keepForm = false } = {}) {
@@ -745,7 +747,7 @@ function handoffForm(card, prefill = {}) {
   const panel = root.querySelector("#card-panel"); panel.hidden = false;
   panel.innerHTML = `<form class="form-tile" data-form="handoff" data-card="${card.number}"${prefill.connectionsOnly ? ' data-connections-only="true"' : ""}><input type="hidden" name="version" value="${e(card.version)}"><h2>Hand off #${card.number}</h2><label>To<input name="to" value="${e(prefill.to || "")}"${prefill.connectionsOnly ? ' pattern="conn:.+" title="Use conn: followed by the agent name"' : ""} required></label><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(card.status_line || card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="cancel-form">Cancel</button></form>`;
   // On Needs me the panel holds the item's detail: it waits while the form is open.
-  if (state.base === "#/needs") state.needsUI?.pause(true);
+  if (onNeeds()) state.needsUI?.pause(true);
 }
 function phonePushView(data) {
   const home = "Phone notifications cover only your home workspace. Cards in other workspaces never notify this phone.";
@@ -1512,7 +1514,7 @@ root.addEventListener("click", async (event) => {
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
       // Needs me redraws the item's detail; a card route reads the card again.
-      const needs = state.base === "#/needs" ? state.needsUI : null;
+      const needs = onNeeds() ? state.needsUI : null;
       if (needs?.paused()) needs.pause(false); else await refresh();
     }
     else if (action === "older-messages") await olderMessages();
@@ -1527,7 +1529,7 @@ root.addEventListener("click", async (event) => {
       if (epoch !== state.screen) return;
       const panel = root.querySelector("#card-panel");
       // On Needs me the panel holds the item's detail: it waits while settings use the panel.
-      const needs = state.base === "#/needs" ? state.needsUI : null;
+      const needs = onNeeds() ? state.needsUI : null;
       needs?.pause(true);
       panel.hidden = false;
       panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
@@ -1605,7 +1607,7 @@ root.addEventListener("submit", async (event) => {
     else if (kind === "review") await move(state.card.number, "review", { ...payload, options: payload.options.split("\n").map((v) => v.trim()).filter(Boolean) });
     else if (kind === "handoff") await mutate(`card-${Number(form.dataset.card)}`, async () => {
       await api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { ...payload, version: Number(payload.version), options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } });
-      if (state.base === "#/needs") state.needsUI?.pause(false);
+      if (onNeeds()) state.needsUI?.pause(false);
     });
     else if (kind === "board") await mutate("new-board", async () => {
       const slug = payload.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100) || `space-${Date.now().toString(36)}`;
