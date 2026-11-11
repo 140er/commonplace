@@ -85,14 +85,14 @@ def world(hub):
     )
 
 
-def ask(w, question="Ship the release?"):
+def ask(w, question="Ship the release?", recipient=None):
     card = w.asker.ask(
         f"{question} Choose one of the options.",
         options=OPTIONS,
         board="work",
         context="The release notes are ready for review.",
     )
-    assert card["ask_to"] == f"user:{w.hub.admin}"
+    assert card["ask_to"] == f"user:{recipient or w.hub.admin}"
     return card["number"], card["version"]
 
 
@@ -242,11 +242,16 @@ def test_a3_token_cannot_decide_another_persons_ask(world):
     status, refused = rest_decide(w, token, card["number"], for_member["version"])
     assert status == 403 and REFUSAL in refused["error"]
 
-    # Another owner's app cannot answer an ask addressed to the first owner.
+    # Another owner's app cannot answer an ask addressed to a different owner.
     status, other = mint(w, cookie=cookie_for(hub, "co-owner@example.com"), decide=True)
     assert status == 201 and other["connection"]["decide"] is True
-    number, version = ask(w)
-    status, refused = rest_decide(w, other["token"], number, version)
+    # Asks go to the first owner by membership time, which can tie within a second.
+    addressed = w.asker._owner_actor().removeprefix("user:")
+    apps = {hub.admin: token, co_owner: other["token"]}
+    token = apps[addressed]
+    stranger = apps[co_owner if addressed == hub.admin else hub.admin]
+    number, version = ask(w, recipient=addressed)
+    status, refused = rest_decide(w, stranger, number, version)
     assert status == 403 and REFUSAL in refused["error"]
     assert w.owner.task_show(number)["status"] == "review"
     assert w.owner.task_show(card["number"])["status"] == "review"
