@@ -52,7 +52,7 @@ class ChangedTests:
 
 
 def _module_names(path: str) -> list[str]:
-    """Test-name stems a source path can own: ``pkg/sub/mod.py`` -> ``sub_mod``, ``mod``."""
+    """Test-name stems a source path can own, most qualified first: ``pkg/sub/mod.py`` -> ``sub_mod``, ``mod``."""
     parts = list(PurePosixPath(path).with_suffix("").parts)
     if parts and parts[-1] == "__init__":
         parts.pop()
@@ -85,16 +85,18 @@ def select_tests(
         if path.startswith(f"{tests_dir}/"):
             unmapped.append(path)
             continue
-        names = _module_names(path)
-        hits = {
-            candidate
-            for candidate in available
-            for name in names
-            if (stem := PurePosixPath(candidate).stem) == f"test_{name}"
-            or stem.startswith(f"test_{name}_")
-        }
-        if hits:
-            chosen |= hits
+        # Most qualified name first; a bare module name (``stacks``) is only a fallback, so
+        # ``guards/hooks.py`` does not pull in every unrelated ``test_hooks_*`` file.
+        for name in _module_names(path):
+            hits = {
+                candidate
+                for candidate in available
+                if (stem := PurePosixPath(candidate).stem) == f"test_{name}"
+                or stem.startswith(f"test_{name}_")
+            }
+            if hits:
+                chosen |= hits
+                break
         else:
             unmapped.append(path)
     return ChangedTests(tuple(sorted(chosen)), tuple(unmapped))
@@ -136,7 +138,8 @@ def tool_path(repo_root: Path | str, current: str | None = None) -> str:
     """PATH with this work tree's own tool directories first.
 
     A linked worktree has its own ``.venv``; its ruff and pytest must win over
-    whatever the shell that ran ``git push`` happens to have.
+    whatever the shell that ran ``git push`` happens to have. The running
+    interpreter's own directory comes next, for a hook pointed at another env.
     """
     root = Path(repo_root)
     own = [
@@ -145,6 +148,7 @@ def tool_path(repo_root: Path | str, current: str | None = None) -> str:
             root / ".venv" / "bin",
             root / ".venv" / "Scripts",
             root / "node_modules" / ".bin",
+            Path(sys.executable).parent,  # tools installed beside the interpreter in use
         )
         if path.is_dir()
     ]

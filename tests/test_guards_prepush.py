@@ -91,7 +91,13 @@ def test_a_changed_test_file_selects_itself(tree):
 
 def test_a_package_module_maps_by_package_and_module_name(tree):
     got = prepush.select_tests(tree, ["commonplace/guards/stacks.py"])
-    assert got.files == ("tests/test_guards_stacks.py", "tests/test_stacks_extra.py")
+    assert got.files == ("tests/test_guards_stacks.py",)
+
+
+def test_the_bare_module_name_is_only_a_fallback(tree):
+    assert prepush.select_tests(tree, ["commonplace/other/stacks.py"]).files == (
+        "tests/test_stacks_extra.py",
+    )
 
 
 def test_a_top_level_module_maps_to_its_exact_and_suffixed_tests_only(tree):
@@ -229,11 +235,12 @@ def test_budget_runs_out_mid_tests_and_names_what_was_not_confirmed(repo, monkey
     assert "QUICK CHECK INCOMPLETE" in text
 
 
-def test_a_tool_missing_from_the_worktree_is_skipped_loudly(repo):
+def test_a_tool_missing_from_the_worktree_is_skipped_loudly(repo, monkeypatch):
+    monkeypatch.setattr(sys, "executable", str(repo / "bin" / "python"))
     report, text = _run(repo, env={"PATH": str(repo / "empty")})
     lint = next(o for o in report.outcomes if o.name == "lint ruff")
     assert lint.status == "skipped" and "ruff is not installed" in lint.detail
-    assert report.exit_code == 0 and "QUICK CHECK INCOMPLETE" in text
+    assert "[SKIPPED] lint ruff" in text
 
 
 def test_a_pushed_commit_that_is_not_checked_out_skips_file_steps(repo):
@@ -279,12 +286,11 @@ def test_tool_path_puts_the_worktrees_own_bins_first(tmp_path):
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     (tmp_path / "node_modules" / ".bin").mkdir(parents=True)
     path = prepush.tool_path(tmp_path, "/usr/bin").split(os.pathsep)
-    assert path == [
-        str(tmp_path / ".venv" / "bin"),
-        str(tmp_path / "node_modules" / ".bin"),
-        "/usr/bin",
-    ]
-    assert prepush.tool_path(tmp_path / "bare", "/usr/bin") == "/usr/bin"
+    assert path[:2] == [str(tmp_path / ".venv" / "bin"), str(tmp_path / "node_modules" / ".bin")]
+    assert path[-1] == "/usr/bin"
+    assert str(Path(sys.executable).parent) in path
+    bare = prepush.tool_path(tmp_path / "bare", "/usr/bin").split(os.pathsep)
+    assert str(tmp_path / "bare" / ".venv" / "bin") not in bare
 
 
 def test_a_linked_worktree_runs_its_own_ruff_not_the_one_on_path(repo, tmp_path, monkeypatch):
@@ -356,3 +362,14 @@ def test_the_module_runs_as_a_script_from_the_worktree(repo):
     )
     assert proc.returncode == 0, proc.stderr
     assert "QUICK CHECK" in proc.stderr
+
+
+def test_a_tool_beside_the_interpreter_in_use_is_found(repo, monkeypatch):
+    """A hook pointed at another environment (COMMONPLACE_PYTHON) still finds that env's ruff."""
+    other = repo.parent / "other-env" / "bin"
+    _fake_ruff(other.parent.parent / "other-env-root")  # unrelated, must not be used
+    _write(other / "ruff", FAKE_TOOL, 0o755)
+    monkeypatch.setattr(sys, "executable", str(other / "python"))
+    report, _ = _run(repo, env={"PATH": "", "TOOL_LOG": os.environ["TOOL_LOG"]})
+    lint = next(o for o in report.outcomes if o.name == "lint ruff")
+    assert lint.status == "passed"
