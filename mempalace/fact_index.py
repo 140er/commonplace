@@ -151,6 +151,8 @@ def candidates(
     scope_sql = visible_sql + temporal_sql
     scope_params = [*visible_params, *temporal_params]
     scope_cte = ""
+    # The scoped statistics CTE follows ``words`` and consumes the scope once;
+    # ``scope_params`` is empty when the caller is unrestricted.
     params = [*words, *scope_params, common_term_fraction]
     scope_filter, scope_gate = "", "1"
     scope_exists = "1"

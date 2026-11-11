@@ -107,7 +107,9 @@ filters before limiting seeds and when expanding selected keys' history.
 Exact readable statistics cost work in proportion to the readable scope: a
 restricted caller's search reads that scope's docids on every call. Work no
 longer grows with unreadable facts, but a derived, scope-keyed statistics index
-would be needed to make it constant for very wide scopes.
+would be needed to make it constant for very wide scopes. Measured on a growing
+readable wing: about 25 VM steps per added fact that does not match the query and
+about 235 per matching fact (develop: constant and about 115).
 
 Dutch stop words are out of scope; there is currently no Dutch locale. Without
 an applicable configured locale, non-English glue can still produce weak matches.

@@ -391,9 +391,12 @@ def _fts_candidate_rows(
     ``chroma.sqlite3``'s full-text index uses the trigram tokenizer, so a
     query term matches inside other words: ``aven`` hits ``haven't`` and
     ``Avenue``, and a short name can have tens of thousands of such matches.
-    Read at most ``_FTS_SCAN_CAP`` matches, newest first, after applying the
-    scope. Rank that pool with local BM25 before :func:`_whole_words_first`;
-    FTS5's built-in rank uses unreadable rows' statistics. ``filter_sql`` is appended to the
+    Read at most ``_FTS_SCAN_CAP`` matches in FTS rank order (documents
+    matching more query terms first). With a ``filter_sql`` scope they are the
+    newest in-scope matches, ordered by local BM25, because FTS rank uses the
+    statistics of unreadable rows too; a scope with more matches than the cap
+    drops its oldest ones before that ordering. The pool is picked by
+    :func:`_whole_words_first`. ``filter_sql`` is appended to the
     WHERE clause and may refer to ``embedding_fulltext_search.rowid``.
     ``stop_words`` are left out of the full-text query: they match nearly
     every drawer and would make the ranking score the whole palace.
@@ -412,11 +415,22 @@ def _fts_candidate_rows(
     """
     params = (" OR ".join(tokens), collection_name, *filter_params)
     words = set(tokens)
+    # FTS5's rank weighs terms by whole-index counts, so a search restricted by
+    # ``filter_sql`` must not order or cut its candidates by it: unreadable rows
+    # would shape the order. A restricted search reads the newest in-scope
+    # matches and orders that pool by local BM25. An unrestricted one reads
+    # everything anyway and keeps the index's own rank.
+    restricted = bool(filter_sql.strip())
     ranked = conn.execute(
-        match_sql + " ORDER BY embedding_fulltext_search.rowid DESC LIMIT ?",
+        match_sql
+        + (
+            " ORDER BY embedding_fulltext_search.rowid DESC LIMIT ?"
+            if restricted
+            else " ORDER BY embedding_fulltext_search.rank LIMIT ?"
+        ),
         (*params, _FTS_SCAN_CAP),
     ).fetchall()
-    if limit is not None and len(ranked) > limit:
+    if restricted and limit is not None and len(ranked) > limit:
         # Everything in scope is picked anyway when it fits the limit, so only
         # a larger pool needs ordering. The scores read just this pool.
         scores = bm25_scores(query, [text or "" for _, text in ranked], stop_words=stop_words)

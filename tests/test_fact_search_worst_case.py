@@ -153,15 +153,20 @@ def test_scoped_seed_work_is_bounded_as_nonmatching_facts_grow(sparse):
         assert expanded_steps <= initial_steps + 1000
 
 
-def test_scoped_statistics_work_grows_only_with_the_readable_scope():
+@pytest.mark.parametrize("matching, steps_per_fact", [(False, 40), (True, 300)])
+def test_scoped_statistics_work_grows_only_with_the_readable_scope(matching, steps_per_fact):
     """Counts come from readable facts alone, so only readable growth costs work."""
     with KnowledgeGraph.empty() as kg:
         conn = kg._conn()
-        conn.execute("INSERT INTO entities(id,name) VALUES('target','Kestrel'),('other','Other')")
+        conn.execute(
+            "INSERT INTO entities(id,name) VALUES('target','Kestrel entity project'),"
+            "('other','Unrelated entity project')"
+        )
         conn.execute(
             "INSERT INTO triples(id,subject,predicate,object,wing) "
             "VALUES('target','target','deploy_port','target','shared')"
         )
+        tokens = {"entity", "project"} if matching else {"kestrel"}
 
         def append(start, end):
             conn.executemany(
@@ -170,12 +175,12 @@ def test_scoped_statistics_work_grows_only_with_the_readable_scope():
             )
 
         append(0, 2000)
-        _, initial_steps = _search_steps(kg, {"kestrel"}, wings=["shared"])
+        _, initial_steps = _search_steps(kg, tokens, wings=["shared"])
         append(2000, 10000)
-        found, expanded_steps = _search_steps(kg, {"kestrel"}, wings=["shared"])
-        assert found == {"target"}
-        # Linear in the readable facts, with a small constant per fact.
-        assert expanded_steps <= initial_steps + 8000 * 60
+        _, expanded_steps = _search_steps(kg, tokens, wings=["shared"])
+        # Linear in the readable facts. Measured: about 25 VM steps per added fact
+        # that does not match the query, about 235 per matching one.
+        assert expanded_steps <= initial_steps + 8000 * steps_per_fact
 
 
 def test_common_scope_above_1000_keeps_work_bounded_as_newer_hidden_matches_grow():

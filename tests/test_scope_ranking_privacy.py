@@ -127,3 +127,16 @@ def test_lexical_fallback_with_vectors_disabled_ranks_within_scope(tmp_path):
     assert "budget roof secrets" not in texts and "an unrelated gardening diary" not in texts
     assert all(r["similarity"] is None for r in out["results"])
     assert all(r["rank_components"]["vector_weight"] == 0.0 for r in out["results"])
+
+
+def test_unrestricted_degraded_fallback_keeps_the_index_rank(tmp_path, monkeypatch):
+    """With no scope there is nothing hidden: FTS rank picks the pool, no local pass."""
+    drawers = [_public_drawer(f"lantern note{i}", f"l{i}") for i in range(6)]
+    palace = _palace(tmp_path / "all", drawers)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("an unrestricted search ranks nothing locally")
+
+    monkeypatch.setattr(chroma_sqlite, "bm25_scores", refuse)
+    out = _bm25_only_via_sqlite("lantern", palace, n_results=3, max_candidates=3)
+    assert len(out["results"]) == 3
