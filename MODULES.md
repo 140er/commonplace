@@ -244,6 +244,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
 
+  - The Admin machine requester list, its addable agents and the owner-only edit, in the Admin and runner guides.
+
 
   - `docs/admin.md` is the authoritative current Admin API and partial-rollout contract, linked from the existing board API and agent connection guide.
 
