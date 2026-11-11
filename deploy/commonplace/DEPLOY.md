@@ -38,10 +38,10 @@ when relocating it so Compose manages the existing container and network. Leave
 
 The service publishes only `127.0.0.1:8765`. Caddy terminates TLS and proxies
 requests to that listener. The container runs as `10001:10001`, mounts its
-persistent data at `/data`, and has a 20 GiB memory limit (26 GiB memory plus
-swap). Use a local
-filesystem with working SQLite/Chroma locks, encrypted storage where
-required, and an off-host backup. Never rebuild or initialize an existing
+persistent data at `/data`, and has a 20 GiB memory limit with 6 GiB swap
+(`memswap_limit: 26g` is memory plus swap). Use a local filesystem with
+working SQLite/Chroma locks, encrypted storage where required, and an
+off-host backup. Never rebuild or initialize an existing
 data directory during an application update.
 
 The image preloads the local MiniLM embedding model as the runtime user.
