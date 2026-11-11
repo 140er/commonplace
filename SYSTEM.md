@@ -429,6 +429,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
   - Agent tokens with an owner role are refused.
 
+- **The app shows who coordinates.**
+
+  - Project settings > Orchestrator reads the read-only checkpoint for role `main` and says in words who holds the lease, when it runs out and how much work is open, in doubt or unstarted. A signed-in owner can End lease (a confirm first); it calls the same `force-release` as the CLI and MCP, so members, agent tokens and other workspaces are refused. Ending a lease changes no step: unfinished work stays listed and becomes in doubt when the next coordinator claims.
+
 - **Channels.**
 
   - `live` and `exp:<name>`.

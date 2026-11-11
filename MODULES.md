@@ -1697,6 +1697,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 
+  - **Coordinator status:** Project settings > Orchestrator reads the read-only checkpoint (`roles/main/checkpoint`) and shows who holds the lease, when it runs out, the accepted config version and counts of open, in-doubt and unstarted work; only a signed-in owner sees End lease, behind a confirm, and ending it leaves unfinished steps listed. A board without orchestration, or one the person cannot read, shows nothing.
+
   - **Browser GitHub connection:** Needs shows local GitHub connection state and validated PR links; selection and session teardown discard connection state.
 
   - **Connection lifecycle proof:** Versioned fixture cards preserve the loading assertion; stopped Needs controllers clear the detail DOM as well as cached connection state.
@@ -1727,6 +1729,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
+
+  - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals and escaping; `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
 
 ## browser-github-grants
 
