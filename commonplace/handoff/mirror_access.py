@@ -11,9 +11,9 @@ from . import provenance_refs
 from .hallway_fields import NUMERIC_KEYS, public_row
 from .models import MIRROR_WING
 from .recall import Recall
+from .thread_store import legacy_match_keys, room_match_value
 
 _DROP = object()
-_UNBUILT = object()
 
 
 class _ResponseAccess:
@@ -22,7 +22,6 @@ class _ResponseAccess:
     def __init__(self, gateway, principal):
         self.gateway, self.principal = gateway, principal
         self.rooms, self.records, self.parsed, self.private = {}, {}, {}, {}
-        self.sources = _UNBUILT
 
     def recall(self):
         ctx = self.gateway.handoff
@@ -97,49 +96,56 @@ class _ResponseAccess:
         return bool(rows) and any(self(row.id) for row in rows)
 
     def exact_source_readable(self, value, names):
-        """A value equal to a stored source ID, or naming the same extracted
-        ``mcp:`` remainder as one, is shown only to readers of every such thread.
+        """A value equal to a stored source ID (after NFKC), or naming an ``mcp:``
+        remainder that a legacy (non-canonical) stored source resolves to, is
+        shown only to readers of every such thread.
 
-        Covers sources whose ``mcp:`` is not the leading namespace (``xmcp:``, a
-        leading space or a percent-encoded namespace), which prefix matching
-        cannot see. The index is built once per response. When it cannot be
-        built, only source-like (colon-bearing) values are hidden.
+        Both are indexed store lookups, cached for this response. If a lookup
+        fails, every value that is not a bare thread ID is hidden.
         """
-        index = self._source_index()
-        if index is None:
-            return ":" not in unicodedata.normalize("NFKC", value)
-        exact, extracted = index
-        threads = list(exact.get(unicodedata.normalize("NFKC", value), ()))
+        rows = self._lookup(
+            ("value", unicodedata.normalize("NFKC", value)),
+            lambda store, workspace: store.by_source_value(workspace, value),
+        )
+        legacy = self._lookup(
+            ("legacy",),
+            lambda store, workspace: [
+                (key, thread)
+                for thread, source in store.legacy_sources(workspace)
+                for key in legacy_match_keys(source)
+            ],
+        )
+        if rows is None or legacy is None:
+            return provenance_refs.is_thread_id(value)
+        threads = [row.id for row in rows]
         for name in names:
-            threads.extend(extracted.get(name, ()))
+            if name.startswith("mcp:"):
+                target = room_match_value(name)
+                threads.extend(thread for key, thread in legacy if target.startswith(key))
         return all(self(thread) for thread in threads)
 
-    def _source_index(self):
-        if self.sources is _UNBUILT:
-            self.sources = None
+    def _lookup(self, key, fetch):
+        """One cached store lookup; no handoff store means no stored sources,
+        and a failed lookup is None."""
+        if key not in self.private:
+            self.private[key] = None
             try:
-                ctx = self.gateway.handoff
-                checks.remaining(0)
-                store = (
-                    ctx._stores.get(self.principal.workspace_id)
-                    if checks._deadline.get() is not None
-                    else ctx.store_for(self.principal.workspace_id)
-                )
-                if store is None:
-                    return None
-                exact, extracted = {}, {}
-                for thread, source in store.source_ids(self.principal.workspace_id):
-                    normal = unicodedata.normalize("NFKC", source)
-                    exact.setdefault(normal, []).append(thread)
-                    if "mcp" in normal.lower() or "%" in normal:
-                        # The same extraction the room resolver applies.
-                        for name in provenance_refs.room_references(source) or ():
-                            if name.startswith("mcp:"):
-                                extracted.setdefault(name, []).append(thread)
-                self.sources = (exact, extracted)
+                ctx = getattr(self.gateway, "handoff", None)
+                if ctx is None:
+                    self.private[key] = []
+                else:
+                    checks.remaining(0)
+                    store = (
+                        ctx._stores.get(self.principal.workspace_id)
+                        if checks._deadline.get() is not None
+                        else ctx.store_for(self.principal.workspace_id)
+                    )
+                    self.private[key] = (
+                        [] if store is None else fetch(store, self.principal.workspace_id)
+                    )
             except Exception:
                 pass
-        return self.sources
+        return self.private[key]
 
     def source_readable(self, token):
         """A room naming source IDs is shown only to readers of every thread filed

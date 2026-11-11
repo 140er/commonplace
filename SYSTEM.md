@@ -1730,25 +1730,41 @@ stored lower-case thread, so its readers keep the room. A T3 source ID may conta
 any character (`mcp:github.com/o/r`, spaces, quotes), so each `mcp:` occurrence
 (any case) names the whole remaining value, which is resolved through the
 workspace thread store: every stored source ID, or hash-variant base, that is a
-prefix of that remainder counts, including `mcp:<source>_notes`. A stored source
-is keyed as NFKC first, then its `#sha256:` variant base, then the namespace
-folded; the room's whole value is NFKC-normalised with its namespace folded and
-never cut at a hash marker. The namespace folds `mcp` in any case after NFKC.
-The tested stored spellings that match `mcp:x` are `MCP:x`, `Mcp:x`, a fullwidth
-`ｍｃｐ:x`, and the mixed-width `mｃｐ:x`, `mcｐ:x` and `mｃｐ：x`; any other
-ASCII and fullwidth mix folds the same way through NFKC. A stored `mcp:x#`
-matches a room `mcp:x#sha256:...`, a stored variant marked with a fullwidth
-number sign matches its base, and a bare stored `mcp:` source is a prefix of
-every `mcp:` value (it fails closed). Only the namespace case-folds: the rest of
-a source ID is an exact identity, so `mcp:Probe` and `mcp:probe` are different
-sources, and `#SHA256:` is not a variant marker (thread IDs, by contrast, match
-in any case). A room value is also hidden when its whole NFKC value equals a
-stored source ID, or when its extracted `mcp:` remainder equals the remainder
-extracted from a stored source the same way, and the reader cannot read every
-such thread. This covers stored sources whose `mcp:` is not the leading
-namespace (`xmcp:x`, a leading space or no-break space, a percent-encoded
-namespace). The equality index is built once per response; when it cannot be
-built, only colon-bearing room values are hidden. One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
+prefix of that remainder counts, including `mcp:<source>_notes`. Source IDs are
+compared after NFKC; only the namespace case-folds. A stored source is keyed as
+NFKC first, then its variant base (cut at `#sha256:` in any case), then the
+namespace folded; the room's whole value is NFKC-normalised with its namespace
+folded and never cut at a hash marker. The tested stored spellings that match
+`mcp:x` are `MCP:x`, `Mcp:x`, a fullwidth `ｍｃｐ:x`, and the mixed-width
+`mｃｐ:x`, `mcｐ:x` and `mｃｐ：x`; any other ASCII and fullwidth mix folds the
+same way through NFKC. A stored `mcp:x#` matches a room `mcp:x#sha256:...`, a
+stored variant marked with a fullwidth number sign or an upper-case marker
+matches its base, and a bare stored `mcp:` source is a prefix of every `mcp:`
+value (it fails closed). Apart from the namespace, case is exact: `mcp:Probe`
+and `mcp:probe` are different sources (thread IDs, by contrast, match in any
+case).
+
+Filing a thread or naming a successor thread accepts only canonical thread IDs:
+the ID equals its NFKC form, has no control or format characters, no leading or
+trailing whitespace and no percent-encoding, names `mcp:` (any case, after NFKC)
+only as its leading namespace, and writes any `#sha256:` marker in lower case.
+Other IDs are refused with a `thread_id ...` error before any side effect. T3
+thread IDs (`[A-Za-z0-9][A-Za-z0-9._:@-]*`) and their `mcp:` forms pass. Each
+stored thread is keyed in an indexed side table (`thread_source_keys`: NFKC
+source, match key, legacy flag), written with the thread and backfilled for
+older stores; a room check probes the room's candidate prefixes and its whole
+NFKC value with indexed lookups, cached for the response. Sources filed before
+this check that are not canonical are legacy rows: they form a small index built
+once per response from those rows only, keyed by every `mcp:` remainder the room
+resolver could extract after percent-decoding and NFKC rounds with control and
+format characters removed and trailing whitespace stripped, cut at a variant
+marker in any case; rooms are matched against it by prefix. A room value equal
+to any stored source ID after NFKC is also hidden from readers who cannot read
+that thread. If a source lookup fails, every value that is not a bare thread ID
+is hidden. Write-side room checks share one reader per gateway call, final
+tunnel pages share one reader, and a checkpoint takes at most 500 items.
+
+One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
 check (`provenance_refs.room_references`, used through
 `mirror_access.private_thread_reference`) cover every route that returns or
 writes a room or topic. Reads: drawer reads, search (structured and
@@ -1803,7 +1819,11 @@ over the citation length limit) are also hidden from every reader. Wing names
 are outside this check: a wing named like a thread ID is filtered by wing policy
 alone.
 
-Known residuals. The diary probe and the read are two worker calls: a hidden
+Known residuals. A legacy stored source whose `mcp:` is not the leading
+namespace (for example `xmcp:x`, filed before thread IDs were checked) still
+counts as naming `mcp:x`, so a room `mcp:x` is hidden from readers who can read
+a canonical `mcp:x` thread but not that legacy twin; no new such twin can be
+filed. The diary probe and the read are two worker calls: a hidden
 entry filed between them with a `filed_at` older than the newest `last_n`
 entries is neither excluded nor in the window, so `total` can count it once.
 Its words and topic are never returned. `mcp:` source IDs in knowledge-graph

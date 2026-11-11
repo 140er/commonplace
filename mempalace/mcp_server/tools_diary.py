@@ -652,6 +652,8 @@ def tool_checkpoint(items, diary=None, dedup_threshold=0.9, added_by=None):
     out = {"added": [], "duplicates": [], "errors": []}
     if not isinstance(items, list):
         return {"error": "items must be a list of {wing, room, content} objects"}
+    if len(items) > 500:
+        return {"error": "checkpoint takes at most 500 items"}
     # Drawer attribution: an explicit ``added_by`` wins; otherwise fall back to
     # the diary's ``agent_name`` (the agent filing this session); otherwise the
     # legacy ``"checkpoint"`` label. A blank, whitespace-only, or non-string

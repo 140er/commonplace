@@ -257,6 +257,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The handoff guide uses generic agent, provider and model placeholders and names the T3 home directory rather than a host-specific variable.
+
   - The handoff guide counts rooms and diary topics naming a thread through a link, mcp: form, embedded or fullwidth ID, or a resolving T3 source ID as that thread's room.
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
@@ -448,6 +450,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - The checkpoint schema caps `items` at 500 (`maxItems`), and the tool refuses larger batches.
+
   - Search rows (including unified media/code search) and `check_duplicate` matches carry a drawer's `topic` when it has one, so the gateway can hide diary entries whose topic names an unreadable thread from search, CLI search and duplicate checks.
 
   - Diary reads accept a server-only `thread_scope` (declared with `x-mempalace-server-only`, so `tools/list` omits it): `probe` lists at most 1000 entry topics from metadata only and names the serving store, and `exclude_topics` with that `source` skips those entries before counting and windowing on the same store (the SQLite fast path or the collection); a store change in either direction or any other scope is refused, an empty exclusion list leaves the SQLite page path unchanged, and an over-limit probe names the limit.
@@ -564,6 +568,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - Thread-ID canonicalisation regressions refuse every non-canonical reviewer form at filing and successor registration, accept T3-shaped IDs, hide legacy rows on every read, and bound the store queries of a 500-drawer batch.
 
   - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls; count rows prove diary totals, search counters and duplicate flags describe only visible rows, and a partial source-family reader is refused; source IDs containing each character the old token scan stopped at, upper-case IDs, a client `thread_scope`, store pinning, probe faults, unavailable memory, hidden-topic diary words on search, CLI search, media/code search, duplicate checks and REST search, `mcp` namespace spellings, non-leading `mcp:` sources (`xmcp:`, leading space or no-break space, percent-encoded namespace), the topic cap and the empty-exclusion fast path have their own rows.
 
@@ -909,6 +915,8 @@ Format (read by `commonplace orch docs-check`):
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
 
 - **Promises:**
+
+  - Write-side room checks (`_check_thread_room`, `_drawer_wings` and the checkpoint loop) share one reader per gateway call, and a checkpoint takes at most 500 items.
 
   - The write-side room check shares the handoff thread-reference check, including diary and checkpoint diary topics, so a room or topic naming an unreadable thread in any form is refused as not found.
 
@@ -1356,7 +1364,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - `provenance_refs.THREAD_ID` is the one thread-ID definition (stores, recall and scans). `room_references` names the lower-cased thread IDs and the whole remaining value after each `mcp:` in a room, topic or link across the raw value and repeated decode/NFKC rounds until stable, and returns None for undecodable or still-changing values; `private_thread_reference` resolves source IDs through `by_source_prefix` (a stored `source_match_key`, NFKC then variant base then namespace folded, must prefix the room's whole `room_match_value`; candidates are narrowed on the first character only; a bare `mcp:` matches every value); `exact_source_readable` also hides a value equal to a stored source ID, or naming the same extracted `mcp:` remainder, using an equality index built once per response (every stored source or hash-variant base that begins the value) and hides any value naming a thread the reader cannot read, in rooms, diary topics and read_wing room filtering. The gate recounts diary `total`/`showing` and recomputes `is_duplicate` after dropping rows. Ordinary words such as `thr_deadline` name no thread.
+  - `provenance_refs.THREAD_ID` is the one thread-ID definition (stores, recall and scans). `room_references` names the lower-cased thread IDs and the whole remaining value after each `mcp:` in a room, topic or link across the raw value and repeated decode/NFKC rounds until stable, and returns None for undecodable or still-changing values; `private_thread_reference` resolves source IDs through `by_source_prefix` (every stored source or hash-variant base that is a prefix of the room's whole `room_match_value`, probed by indexed prefix lookups on `source_match_key`: NFKC, then the variant base cut at `#sha256:` in any case, then the namespace folded; a bare `mcp:` matches every value); `exact_source_readable` also hides a value equal to a stored source ID after NFKC, or naming an `mcp:` remainder a legacy stored source resolves to, using indexed store lookups cached per response, and hides any value naming a thread the reader cannot read, in rooms, diary topics and read_wing room filtering. `thread_id_error` refuses non-canonical thread IDs at filing and successor registration, and `thread_source_keys` indexes every stored source by NFKC value, match key and legacy flag. The gate recounts diary `total`/`showing` and recomputes `is_duplicate` after dropping rows. Ordinary words such as `thr_deadline` name no thread.
 
   - The final search gate proves source_path like source_file, including nested folded copies and media path/title aliases, and omits acquisition counts and truncation flags for every reader, since acquisition precedes thread authorization. Body text and arbitrary provenance labels are not scanned for private words.
 

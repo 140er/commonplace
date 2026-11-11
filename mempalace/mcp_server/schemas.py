@@ -646,6 +646,7 @@ TOOLS = {
             "properties": {
                 "items": {
                     "type": "array",
+                    "maxItems": 500,
                     "description": "Verbatim items to file. Each is {wing, room, content} — content is the exact words, never summarized.",
                     "items": {
                         "type": "object",

@@ -17,6 +17,7 @@ Every write and every refusal goes to the audit log (ids only, never text).
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import copy
 import hashlib
 import http.client
@@ -178,6 +179,12 @@ class Hidden(Exception):
     def __init__(self, result: dict):
         super().__init__(result.get("error", ""))
         self.result = result
+
+
+# Write-side room checks share one reader per gateway call.
+_WRITE_ACCESS = contextvars.ContextVar("commonplace_write_access", default=None)
+# Same bound as drawer batches.
+CHECKPOINT_MAX_ITEMS = 500
 
 
 class WorkerUnavailable(Exception):
@@ -487,6 +494,14 @@ class Mediator:
 
     # ── tools/call ──
     def _tools_call(self, principal: Principal, request: dict) -> dict:
+        # One room-check reader per call, shared by every write-side check.
+        token = _WRITE_ACCESS.set({})
+        try:
+            return self._tools_call_scoped(principal, request)
+        finally:
+            _WRITE_ACCESS.reset(token)
+
+    def _tools_call_scoped(self, principal: Principal, request: dict) -> dict:
         req_id = request.get("id")
         params = request.get("params")
         params = params if isinstance(params, dict) else {}
@@ -748,6 +763,8 @@ class Mediator:
             return self._scope_delete_hallway(principal, name, args)
         if name == "mempalace_checkpoint":
             items = args.get("items")
+            if isinstance(items, list) and len(items) > CHECKPOINT_MAX_ITEMS:
+                raise Denied(f"checkpoint takes at most {CHECKPOINT_MAX_ITEMS} items")
             for item in items if isinstance(items, list) else ():
                 if isinstance(item, dict):
                     self._check_thread_room(principal, item.get("wing"), item.get("room"))
@@ -1491,7 +1508,13 @@ class Mediator:
     def _check_thread_room(self, principal, wing, room):
         from .handoff.mirror_access import reader, unreadable_room
 
-        if unreadable_room(reader(self.gateway, principal), wing, room):
+        scope = _WRITE_ACCESS.get()
+        access = None if scope is None else scope.get(id(principal))
+        if access is None:
+            access = reader(self.gateway, principal)
+            if scope is not None:
+                scope[id(principal)] = access
+        if unreadable_room(access, wing, room):
             raise Hidden({"success": False, "error": "Room not found"})
 
     def _drawer_wings(self, principal, ids: list) -> dict:

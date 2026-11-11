@@ -4,6 +4,8 @@ import json
 import logging
 import re
 import secrets
+import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,6 +24,64 @@ def deep_encoded(identifier, layers=4):
 
 
 UNPROVABLE = {"undecodable", "deep_encoded"}
+TAB, NEWLINE, ZWSP = "\t", "\n", "\u200b"
+# form -> (stored source from "probe-<hex>", room from the stored thread).
+# Filing now refuses every one of these sources except the canonical control F;
+# rows stored before that are matched by the resolver's own extraction.
+LEGACY_FORMS = {
+    "mcp_source_r7_a_xmcp_suffix": (
+        lambda p: "xmcp:" + p,
+        lambda t: "mcp:" + probe_id(t) + "_notes",
+    ),
+    "mcp_source_r7_b_xmcp_variant": (
+        lambda p: "xmcp:" + p + "#sha256:0123abcd",
+        lambda t: "mcp:" + probe_id(t),
+    ),
+    "mcp_source_r7_c_xmcp_variant_room": (
+        lambda p: "xmcp:" + p,
+        lambda t: "mcp:" + probe_id(t) + "#sha256:0123abcd",
+    ),
+    "mcp_source_r7_d_space_suffix": (
+        lambda p: " mcp:" + p,
+        lambda t: "mcp:" + probe_id(t) + "_notes",
+    ),
+    "mcp_source_r7_e_encoded_suffix": (
+        lambda p: "mcp:" + p + "%2Ftail",
+        lambda t: "mcp:" + probe_id(t) + "/tail_notes",
+    ),
+    "mcp_source_r7_f_canonical_encoded_room": (
+        lambda p: "mcp:" + p + "/tail",
+        lambda t: "mcp:" + probe_id(t) + "%2Ftail_notes",
+    ),
+    "mcp_source_r7_g_trailing_tab": (
+        lambda p: "mcp:" + p + TAB,
+        lambda t: "mcp:" + probe_id(t),
+    ),
+    "mcp_source_r7_h_trailing_newline": (
+        lambda p: "mcp:" + p + NEWLINE,
+        lambda t: "mcp:" + probe_id(t),
+    ),
+    "mcp_source_r7_i_encoded_variant": (
+        lambda p: "mcp:" + p + "%23sha256%3A0123abcd",
+        lambda t: "mcp:" + probe_id(t),
+    ),
+    "mcp_source_r7_o_zero_width_namespace": (
+        lambda p: "m" + ZWSP + "cp:" + p,
+        lambda t: "mcp:" + probe_id(t),
+    ),
+    "mcp_source_r7_r1_upper_marker": (
+        lambda p: "mcp:" + p + "#SHA256:0123abcd",
+        lambda t: "mcp:" + probe_id(t),
+    ),
+    "mcp_source_r7_v_leading_tab": (
+        lambda p: TAB + "mcp:" + p,
+        lambda t: "mcp:" + probe_id(t),
+    ),
+    "mcp_source_r7_x_encoded_tab": (
+        lambda p: "mcp:" + p + "%09",
+        lambda t: "mcp:" + probe_id(t),
+    ),
+}
 SOURCE_CHARS = {
     "space": " ",
     "slash": "/",
@@ -76,6 +136,8 @@ FORMS = {
     "mcp_source_percent_namespace": lambda t: t.source_thread_id,
     # The room names the same extracted mcp: remainder as a non-leading source.
     "mcp_source_xmcp_canonical_room": lambda t: "mcp:" + probe_id(t),
+    # Legacy stored sources (filed before IDs were checked), resolved by key.
+    **{form: room for form, (_, room) in LEGACY_FORMS.items()},
     # A percent sign behind NFKC: decoding must repeat until the value is stable.
     "double_encoded": lambda t: "%EF%BC%85" + "74" + t.id[1:],
     # Still changing after the decode/NFKC round bound: hidden from every reader.
@@ -124,6 +186,7 @@ SOURCE_SPELLINGS = {
     "mcp_source_leading_nbsp": lambda p: "\u00a0mcp:" + p,
     "mcp_source_percent_namespace": lambda p: "%6dcp:" + p,
     "mcp_source_xmcp_canonical_room": lambda p: "xmcp:" + p,
+    **{form: source for form, (source, _) in LEGACY_FORMS.items()},
 }
 NAMESPACE_SOURCES = {
     "mcp_source_upper_namespace": "MCP:",
@@ -369,6 +432,9 @@ def test_thread_blind_reader_never_receives_thread_identity(
         "mcp_source_xmcp",
         "mcp_source_percent_namespace",
         "mcp_source_xmcp_canonical_room",
+        "mcp_source_r7_a_xmcp_suffix",
+        "mcp_source_r7_e_encoded_suffix",
+        "mcp_source_r7_g_trailing_tab",
         "double_encoded",
     ],
 )
@@ -821,3 +887,137 @@ def test_plain_read_does_not_decode_diary_metadata(hub, collection, monkeypatch)
     page = read("probe", wing="shared", thread_scope={"exclude_topics": [], "source": "sqlite"})
     assert [entry["topic"] for entry in page["entries"]] == ["general"], page
     assert decoded == [False], decoded  # Only the page itself is hydrated.
+
+
+def handoff_service(side_effect):
+    from commonplace.handoff.service import HandoffService
+
+    return HandoffService(
+        control_db=SimpleNamespace(_lock=threading.Lock()),
+        handoff_db=SimpleNamespace(set_document_store=lambda _: None),
+        settings=SimpleNamespace(),
+        store_for=side_effect,
+        events=SimpleNamespace(deliver_pending=side_effect),
+    )
+
+
+class ReachedSideEffect(Exception):
+    """The thread ID got past validation."""
+
+
+def reached(*args, **kwargs):
+    raise ReachedSideEffect()
+
+
+def filer(hub):
+    token = hub.token("thread-filer", profile="full", scopes=["handoff:write"], trust="trusted")
+    return hub.db.authenticate_token(token)
+
+
+def outcome(call):
+    try:
+        call()
+    except Exception as error:  # noqa: BLE001 - the outcome is the assertion
+        return error
+    return None
+
+
+REFUSED_FORMS = sorted(set(LEGACY_FORMS) - {"mcp_source_r7_f_canonical_encoded_room"})
+
+
+@pytest.mark.parametrize("form", REFUSED_FORMS)
+def test_filing_refuses_non_canonical_thread_ids(hub, form):
+    from commonplace.handoff.models import HandoffRequest, ThreadMeta
+
+    source = LEGACY_FORMS[form][0]("probe-" + secrets.token_hex(6))
+    request = HandoffRequest(ThreadMeta(source), "[]", transcript_format="messages")
+    error = outcome(lambda: handoff_service(reached).run(filer(hub), request))
+    assert type(error) is ValueError and str(error).startswith("thread_id "), error
+
+
+@pytest.mark.parametrize("form", REFUSED_FORMS)
+def test_successor_refuses_non_canonical_thread_ids(hub, form):
+    from commonplace.handoff.models import SuccessorRef
+
+    source = LEGACY_FORMS[form][0]("probe-" + secrets.token_hex(6))
+    ref = SuccessorRef(agent_ref="t3:successor", thread_id=source)
+    error = outcome(lambda: handoff_service(reached).register_successor(filer(hub), "hof_x", ref))
+    assert type(error) is ValueError and str(error).startswith("thread_id "), error
+
+
+@pytest.mark.parametrize(
+    "thread_id",
+    [
+        "mcp:source-id",
+        "mcp:3f2c9a1e-7b4d-4c2a-9e1f-0a1b2c3d4e5f",
+        "3f2c9a1e-7b4d-4c2a-9e1f-0a1b2c3d4e5f",
+        "MCP:x",
+        "mcp:x/tail",
+        "session.2026-11-11@host:1",
+        "mcp:x#sha256:" + "0" * 64,
+    ],
+)
+def test_filing_accepts_canonical_thread_ids(hub, thread_id):
+    """T3 thread IDs ([A-Za-z0-9][A-Za-z0-9._:@-]*) and their mcp: forms pass."""
+    from commonplace.handoff.models import HandoffRequest, ThreadMeta
+
+    request = HandoffRequest(ThreadMeta(thread_id), "[]", transcript_format="messages")
+    error = outcome(lambda: handoff_service(reached).run(filer(hub), request))
+    assert type(error) is ReachedSideEffect, error
+
+
+def statement_counter(hub):
+    store = hub.gateway.handoff.store_for(hub.workspace)
+    statements = []
+    store._conn.set_trace_callback(statements.append)
+    return store, statements
+
+
+def test_batch_room_checks_issue_a_bounded_number_of_queries(hub, collection, config, blind):
+    """500 drawers in one delete call: one reader, cached indexed lookups."""
+    seed(collection, config, "general")
+    ids = [f"bulk-{i}" for i in range(500)]
+    collection.add(
+        ids=ids,
+        documents=[f"Bulk words {i}" for i in range(500)],
+        metadatas=[{"wing": "shared", "room": f"room-{i % 5}"} for i in range(500)],
+    )
+    store, statements = statement_counter(hub)
+    try:
+        raw = mcp(hub, blind[1], "mempalace_delete_drawers", drawer_ids=ids)
+    finally:
+        store._conn.set_trace_callback(None)
+    assert collection.get(ids=ids[:1])["ids"] == [], raw[:400]
+    assert len(statements) <= 30, (len(statements), statements[:10])
+
+
+def test_checkpoint_item_count_is_bounded(hub, blind):
+    items = [{"wing": "shared", "room": "general", "content": f"x{i}"} for i in range(501)]
+    raw = mcp(hub, blind[1], "mempalace_checkpoint", items=items)
+    assert "at most 500 items" in raw, raw[:400]
+
+
+def test_source_lookup_failure_hides_every_non_thread_room(
+    hub, collection, config, blind, monkeypatch
+):
+    from commonplace.handoff.thread_store import ThreadStore
+
+    source = "probe-" + secrets.token_hex(6)
+    store_thread(hub, "bare", actor=hub.admin, wing="private_chats", source=source)
+    seed(collection, config, source)
+
+    def failed(self, workspace_id, value):
+        raise RuntimeError("lookup unavailable")
+
+    monkeypatch.setattr(ThreadStore, "by_source_value", failed, raising=False)
+    monkeypatch.setattr(ThreadStore, "source_ids", failed, raising=False)
+    raw = mcp(hub, blind[1], "mempalace_list_rooms", wing="shared")
+    assert source not in raw and "general" not in raw, raw[:400]
+
+
+def test_colonless_source_equal_room_is_hidden(hub, collection, config, blind):
+    source = "probe-" + secrets.token_hex(6)
+    store_thread(hub, "bare", actor=hub.admin, wing="private_chats", source=source)
+    seed(collection, config, source)
+    raw = mcp(hub, blind[1], "mempalace_list_rooms", wing="shared")
+    assert source not in raw, raw[:400]
