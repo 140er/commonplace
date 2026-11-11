@@ -331,12 +331,17 @@ class LiveStub(install.StagedHost):
     def __init__(self):
         super().__init__(uid=1234, gid=1234)
         self.chowns = []
+        self.owned = set()
 
     def euid(self):
         return 0
 
+    def owner_of(self, path):
+        return (self.uid, self.gid) if str(path) in self.owned else (-1, -1)
+
     def chown(self, path, uid, gid):
         self.chowns.append((str(path), uid, gid))
+        self.owned.add(str(path))
 
 
 def test_second_install_is_a_noop(root, runtime, capsys):
@@ -805,7 +810,7 @@ def test_install_places_the_python_packages_and_a_pth(root, runtime):
 def test_install_verifies_the_import_after_placing_it(root, runtime):
     host = LiveStub()
     installed(root, runtime, host=host)
-    check = ("/usr/bin/python3", "-I", "-c", "import commonplace.compute.target_helper")
+    check = ("/usr/bin/python3", "-I", "-B", "-c", "import commonplace.compute.target_helper")
     assert host.commands.count(check) == 1
     assert host.commands.index(check) < host.commands.index(("sshd", "-t"))
     again = len(host.commands)
@@ -923,3 +928,158 @@ def test_uninstall_needs_no_install_arguments(root, runtime):
         "etc/ssh/sshd_config",
         "etc/ssh/sshd_config.d",
     }
+
+
+# --- fix round 2: recorded before created, bytecode tolerance ---
+
+
+def new_installer(root, host, runtime):
+    return install.Installer(
+        install.InstallOptions(
+            root=root,
+            workspace="fixture-script-workspace",
+            gateway="gw1",
+            node="node1",
+            controller_key=install.parse_controller_key(KEY),
+        ),
+        host,
+        runtime_source=runtime,
+    )
+
+
+@pytest.mark.parametrize(
+    "after_mkdir", [False, True], ids=["fails-before-mkdir", "fails-after-mkdir"]
+)
+@pytest.mark.parametrize("then", ["install", "uninstall"])
+def test_an_interrupted_mkdir_leaves_a_recorded_directory_and_both_converge(
+    root, runtime, monkeypatch, after_mkdir, then
+):
+    initial = snapshot(root, mtimes=False)
+    real = install._mkdir
+    hits = []
+
+    def flaky(path, mode=0o755):
+        if (
+            Path(path).name == "commonplace-compute"
+            and Path(path).parent.name == "lib"
+            and not hits
+        ):
+            hits.append(path)
+            if after_mkdir:
+                real(path, mode)
+            raise OSError("synthetic mkdir failure")
+        return real(path, mode)
+
+    monkeypatch.setattr(install, "_mkdir", flaky)
+    with pytest.raises(OSError, match="synthetic"):
+        new_installer(root, install.StagedHost(), runtime).install()
+    monkeypatch.setattr(install, "_mkdir", real)
+    manifest = json.loads((root / "etc/commonplace/compute-install-manifest.json").read_text())
+    assert {"kind": "dir", "path": "/var/lib/commonplace-compute"} in manifest["items"]
+    if then == "install":
+        assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY) == 0
+        assert {str(p.relative_to(root)) for p in root.rglob("*")} == expected_paths()
+    assert run(root, "uninstall", runtime) == 0
+    assert snapshot(root, mtimes=False) == initial
+
+
+def test_an_interrupted_chown_is_repaired_on_the_next_install_and_removed_by_uninstall(
+    root, runtime
+):
+    initial = snapshot(root, mtimes=False)
+
+    class FailingChown(LiveStub):
+        failed = False
+
+        def chown(self, path, uid, gid):
+            if not self.failed:
+                self.failed = True
+                raise OSError("synthetic chown failure")
+            super().chown(path, uid, gid)
+
+    host = FailingChown()
+    with pytest.raises(OSError, match="synthetic"):
+        new_installer(root, host, runtime).install()
+    assert host.chowns == []
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 0
+    workspace = str(root / "var/lib/commonplace-compute")
+    assert workspace in {path for path, _, _ in host.chowns}  # the dir that missed its chown
+    assert {str(p.relative_to(root)) for p in root.rglob("*")} == expected_paths()
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert snapshot(root, mtimes=False) == initial
+
+
+def test_an_interrupted_account_creation_is_recorded_and_converges(root, runtime):
+    initial = snapshot(root, mtimes=False)
+
+    class FailingUseradd(install.StagedHost):
+        failed = False
+
+        def run(self, argv):
+            if argv[0] == "useradd" and not self.failed:
+                self.failed = True
+                raise install.InstallError("synthetic useradd failure")
+            super().run(argv)
+
+    host = FailingUseradd()
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 1
+    manifest = json.loads((root / "etc/commonplace/compute-install-manifest.json").read_text())
+    assert any(item["kind"] == "account" for item in manifest["items"])
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 0
+    assert [c[0] for c in host.commands].count("useradd") == 1
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert snapshot(root, mtimes=False) == initial
+
+
+def write_bytecode(root):
+    cache = root / LIB / "commonplace/compute/__pycache__"
+    cache.mkdir(mode=0o755)
+    (cache / "target_helper.cpython-312.pyc").write_bytes(b"\x00pyc")
+    (cache / "__init__.cpython-312.pyc").write_bytes(b"\x00pyc")
+    os.chmod(cache, 0o775)  # python creates these with the caller's umask, not ours
+    top = root / LIB / "mempalace/__pycache__"
+    top.mkdir()
+    (top / "__init__.cpython-312.pyc").write_bytes(b"\x00pyc")
+
+
+def test_bytecode_written_into_the_placed_tree_does_not_break_reinstall(root, runtime):
+    host = installed(root, runtime)
+    write_bytecode(root)
+    commands = list(host.commands)
+    before = snapshot(root)
+    code = run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host)
+    assert code == 0
+    assert host.commands == commands
+    assert snapshot(root) == before
+
+
+def test_uninstall_removes_the_bytecode_it_did_not_install(root, runtime):
+    initial = snapshot(root, mtimes=False)
+    installed(root, runtime)
+    write_bytecode(root)
+    assert run(root, "uninstall", runtime) == 0
+    assert snapshot(root, mtimes=False) == initial
+
+
+def test_real_changes_to_the_placed_sources_are_still_detected(root, runtime, capsys):
+    installed(root, runtime)
+    write_bytecode(root)
+    (root / LIB / "commonplace/compute/target_helper.py").write_text("# tampered\n")
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY) == 1
+    assert "uninstall first" in capsys.readouterr().err
+    (root / LIB / "commonplace/compute/extra.py").write_text("# new file\n")
+    assert run(root, "uninstall", runtime) == 1
+    assert "changed since install" in capsys.readouterr().err
+
+
+def test_staged_inventory_can_ignore_bytecode_only_on_request(tmp_path):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "a.py").write_text("x = 1\n")
+    plain = install.staged_inventory(tree, ignore_bytecode=True)
+    (tree / "__pycache__").mkdir()
+    (tree / "__pycache__" / "a.cpython-312.pyc").write_bytes(b"x")
+    os.chmod(tree / "__pycache__", 0o775)
+    assert install.staged_inventory(tree, ignore_bytecode=True) == plain
+    with pytest.raises(install.InstallError):
+        install.staged_inventory(tree)
