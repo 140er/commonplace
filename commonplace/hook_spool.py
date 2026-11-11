@@ -279,11 +279,11 @@ class Spool:
                     continue
                 try:
                     upload(item)
-                except Transient as error:
+                except (Transient, Halt) as error:
                     failures = (
                         state.get("failures", 0) + 1 if state.get("head") == item["key"] else 1
                     )
-                    if failures >= MAX_ATTEMPTS:
+                    if isinstance(error, Transient) and failures >= MAX_ATTEMPTS:
                         self._set_aside(path, f"gave up after {failures} attempts: {error}")
                         state = {}
                         continue
