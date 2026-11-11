@@ -247,6 +247,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `docs/admin.md` is the authoritative current Admin API and partial-rollout contract, linked from the existing board API and agent connection guide.
 
+  - `docs/admin.md` and `docs/runner.md` point owners to Settings > Runner machines for enrolling, attesting and editing the wings of runner machines.
+
 
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
   - Public Space endpoint and error documentation alongside legacy board routes.
