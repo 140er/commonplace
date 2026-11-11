@@ -809,4 +809,4 @@ def test_worker_scope_documentation_states_card_guidance(signup_hub, owners):
     _ready(signup_hub, owners["A"])
     text = (Path(__file__).resolve().parents[1] / "docs" / "runner.md").read_text()
     assert "Card scope from the spawn message is guidance only." in text
-    assert "A worker can claim any startable todo card in its write wing." in text
+    assert "A worker can claim any startable todo card on a granted wing's boards." in text

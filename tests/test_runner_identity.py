@@ -131,7 +131,9 @@ def test_w4_worker_cannot_claim_outside_its_write_wing(signup_hub, identity_owne
         ok, text = _take(hub, machine["worker_token"], **arguments)
         assert not ok, text
         # Reads and writes share one grant now, so an ungranted board is simply hidden.
-        assert "card not found" in text or "cannot change this board" in text
+        assert any(
+            m in text for m in ("card not found", "board not found", "cannot change this board")
+        )
         after = _show(hub, owner, number)
         for key in ("status", "assignee", "claim_until", "version"):
             assert after[key] == before[key]

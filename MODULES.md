@@ -247,6 +247,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `docs/admin.md` is the authoritative current Admin API and partial-rollout contract, linked from the existing board API and agent connection guide.
 
+  - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
+
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
 
