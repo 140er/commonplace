@@ -176,7 +176,7 @@ def test_chosen_reviewer_applies_even_on_a_board_without_review_gate(hub, env, m
 def test_assignee_cannot_review_own_work_unless_owner_chose_them(hub, env, members):
     _token, _agent, _person, _cookie, owner = env
     ada, bob = members["ada"], members["bob"]
-    card = owner.task_add("Ada builds", board="work", reviewer=bob["ref"])
+    card = owner.task_add("Ada builds", board="work", body=REVIEW_CONTEXT, reviewer=bob["ref"])
     ada["service"].task_update(card["number"], version=card["version"], status="doing")
     review = ada["service"].task_update(card["number"], status="done")
     assert review["status"] == "review" and review["ask_to"] == bob["ref"]
@@ -184,7 +184,9 @@ def test_assignee_cannot_review_own_work_unless_owner_chose_them(hub, env, membe
     with pytest.raises(ToolError, match="only the chosen reviewer"):
         ada["service"].decide(review["number"], choice="Accept the completed work", then="done")
     # The owner explicitly naming the assignee is the one way to self-review.
-    own = owner.task_add("Bob builds and reviews", board="work", reviewer=bob["ref"])
+    own = owner.task_add(
+        "Bob builds and reviews", board="work", body=REVIEW_CONTEXT, reviewer=bob["ref"]
+    )
     bob["service"].task_update(own["number"], version=own["version"], status="doing")
     assert bob["service"].task_update(own["number"], status="done")["status"] == "done"
 
@@ -198,7 +200,9 @@ def test_a_person_without_a_reviewer_still_finishes_directly(hub, env, members):
 
 def test_owner_cannot_skip_the_chosen_reviewer_by_moving_to_done(hub, env, members):
     _token, _agent, _person, _cookie, owner = env
-    card = owner.task_add("Owner moves", board="work", reviewer=members["ada"]["ref"])
+    card = owner.task_add(
+        "Owner moves", board="work", body=REVIEW_CONTEXT, reviewer=members["ada"]["ref"]
+    )
     moved = owner.task_update(card["number"], version=card["version"], status="doing")
     review = owner.task_update(moved["number"], status="done")
     assert review["status"] == "review" and review["ask_to"] == members["ada"]["ref"]
