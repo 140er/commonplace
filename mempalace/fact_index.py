@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import sqlite3
 
 from . import fact_provenance
 
@@ -116,6 +117,19 @@ def _create(conn):
     )
 
 
+def _install_log(conn):
+    """Register ``mempalace_log`` once per connection.
+
+    SQLite refuses to redefine an existing function while any statement on the
+    connection is still stepping, and the graph's connection is shared across
+    threads, so re-registering on every scoped search fails under load.
+    """
+    try:
+        conn.execute("SELECT mempalace_log(1.0)").fetchone()
+    except sqlite3.OperationalError:
+        conn.create_function("mempalace_log", 1, math.log, deterministic=True)
+
+
 def candidates(
     conn,
     tokens,
@@ -216,7 +230,7 @@ def candidates(
         # FTS5's rank weighs terms by whole-index counts, which include facts
         # the caller cannot read. Weigh by readable counts instead: matched
         # terms' IDF, then shorter facts first among equals.
-        conn.create_function("mempalace_log", 1, math.log, deterministic=True)
+        _install_log(conn)
         relevance = (
             "-(SELECT sum(mempalace_log((stats.documents + 1.0)/(ts.doc + 0.5))) "
             "FROM term_matches m JOIN term_stats ts ON ts.term=m.term CROSS JOIN stats "
