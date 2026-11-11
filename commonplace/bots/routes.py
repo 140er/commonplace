@@ -1,4 +1,5 @@
-"""``/api/bots``: a person's bots, their threads and memory. Person sessions only.
+"""``/api/bots``: a person's bots, their threads and memory. Person sessions, or the person's own
+app holding ``bots:chat`` (``bots:confirm`` for confirm).
 
     GET    /api/bots                       {bots, model:{ready,label,code}, can_configure}
     POST   /api/bots                       {name, job?, instructions?, board?} -> 201 {bot}
@@ -21,7 +22,7 @@ import json
 import queue
 import time
 
-from commonplace import redact
+from commonplace import bots_grant, redact
 from commonplace.boards.service import BoardService
 from commonplace.bots import auth, blocks, limits, modelcfg, store, turn, updates
 from commonplace.extensions import ToolContext, ToolError
@@ -379,10 +380,36 @@ HANDLERS = {
 }
 
 
-def _guarded(gateway, h, run):
+def _audit(gateway, h, app, tool):
+    """One row per write request made through an app connection: ids and the outcome only."""
+    status = getattr(h, "_bots_status", 200)
+    gateway.db.audit(
+        action=bots_grant.AUDIT_WRITE,
+        decision="ok" if status < 400 else "refused",
+        workspace_id=app.workspace_id,
+        user_id=app.user_id,
+        connection_id=app.connection_id,
+        auth=app.auth,
+        tool=tool,
+    )
+
+
+def _guarded(gateway, h, run, tool="", scope=None):
     principal = auth.person(gateway, h)
     if principal is None:
         return
+    app = auth.app(h)
+    if app is not None and scope and not app.policy.has_scope(scope):
+        _error(h, 403, "scope_required", "This app needs another permission for that.")
+        return
+    if app is not None and h.command != "GET":
+        send_response = h.send_response
+
+        def remember(code, *args):
+            h._bots_status = code
+            return send_response(code, *args)
+
+        h.send_response = remember
     try:
         run(principal)
     except store.Missing:
@@ -395,21 +422,31 @@ def _guarded(gateway, h, run):
         _error(h, 409, "conflict", "Conflict")
     except TimeoutError:
         _error(h, 429, "busy", "Busy, try again")
+    finally:
+        if app is not None and h.command != "GET":
+            _audit(gateway, h, app, tool)
+
+
+# Tails that need more than bots:chat from an app connection.
+SCOPES = {("POST", "confirm"): bots_grant.CONFIRM_SCOPE}
 
 
 def install(gateway) -> None:
     def dispatch(method):
         def handle(h):
             parts = path_parts(h, PREFIX)
-            handler = (
-                HANDLERS.get((method, parts[1] if len(parts) > 1 else None)) if parts else None
-            )
+            tail = parts[1] if len(parts) > 1 else None
+            handler = HANDLERS.get((method, tail)) if parts else None
             if handler is None:
                 return _guarded(
                     gateway, h, lambda _principal: _error(h, 404, "not_found", "Not found")
                 )
             _guarded(
-                gateway, h, lambda principal: handler(gateway, h, principal, parts[0], parts[2:])
+                gateway,
+                h,
+                lambda principal: handler(gateway, h, principal, parts[0], parts[2:]),
+                tool=f"{method} {tail or 'bot'}",
+                scope=SCOPES.get((method, tail)),
             )
 
         return handle
@@ -418,7 +455,9 @@ def install(gateway) -> None:
         "GET", "/api/bots", lambda h: _guarded(gateway, h, lambda p: _listing(gateway, h, p))
     )
     gateway.add_route(
-        "POST", "/api/bots", lambda h: _guarded(gateway, h, lambda p: _create(gateway, h, p))
+        "POST",
+        "/api/bots",
+        lambda h: _guarded(gateway, h, lambda p: _create(gateway, h, p), tool="POST bots"),
     )
     for method in ("GET", "POST", "PATCH", "DELETE"):
         gateway.add_prefix_route(method, PREFIX, dispatch(method))
