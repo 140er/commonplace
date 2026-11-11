@@ -175,16 +175,21 @@ Inside it, in this order:
    (`path_overlap` or `path_contract_too_large`); a card that does not run is
    checked when it starts. Without a runner database there is nothing to lock
    and the change does not create it. Unreadable stored contracts count as `**`. One start spends a budget
-   of 2 500 000 work units: each running card's stored size is billed before its
-   contract is parsed, each wildcard segment that has to be compiled costs 150,
-   and a comparison costs pairs times the shallower side's deepest glob times the
-   heaviest segment (one unit per segment plus one per 32 characters). The
-   slowest of thirteen shapes measured on the development host took 0.83 s;
-   beyond the budget it
+   of 2 200 000 work units, calibrated on the development host at about 0.3
+   microseconds per unit: each running card's stored size is billed before its
+   contract is parsed (1, plus 8 per glob, 1 per `/` and 1 per 32 characters),
+   each wildcard segment compiled is billed by what compiling costs (70, plus 2
+   per character, 21 per `*` and 20 per `[`), and a comparison costs pairs times
+   the shallower side's deepest glob times the heaviest segment of either side.
+   Running into the budget took 0.4 to 0.8 s for each measured shape on that
+   host (the slowest 0.74 s); the measured set is not exhaustive. Beyond the
+   budget it
    refuses with `path_contract_too_large` (details `card`, `paths`,
    `other_paths`, `budget`). `card_start` on a board without an orchestrator
    config runs the same check before the job is inserted. Only runner starts
-   are checked: a card a connection takes by hand is not, its holder may
+   and edits that add globs to a running card are checked: a card a connection
+   takes by hand is not (and one `task_update` that adds globs and claims the
+   card skips the add re-check), its holder may
    clear or narrow its own contract (the owner-only rule needs a runner job;
    globs it adds are checked against the other running cards),
    and a `doing` claim held by a person does not hold a start. Cards without a

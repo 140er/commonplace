@@ -184,8 +184,9 @@ def test_long_single_segment_contracts_are_charged_by_length():
         while True:
             assert contracts.first_overlap(mine, theirs, budget) is None
             cards += 1
-    assert cards == contracts.MAX_STEPS // (64 * 64 * weight) == 101
-    assert cards < contracts.MAX_STEPS // (64 * 64)  # charging segments only would allow 610
+    compiles = sum(contracts._compile_units(text) for text in {g.split("/")[0] for g in mine})
+    assert cards == (contracts.MAX_STEPS - compiles) // (64 * 64 * weight)
+    assert cards < contracts.MAX_STEPS // (64 * 64) // 4  # charging segments only: 537
 
 
 def _stored(globs):
@@ -218,6 +219,42 @@ def test_unreadable_and_empty_running_contracts_are_billed_and_read_as_expected(
     assert found == (1, ["**"], ("src/a.py", "**"))
 
 
+def test_tiny_globs_are_billed_per_glob():
+    """Reviewer shape T1: 64 short literal globs per running card. Each glob costs real work
+    to read, expand and canonicalise, so about 3 700 such cards use up the budget; billing
+    one unit per glob let the loop go on for about 16 000."""
+    running = [(k, json.dumps([f"c{k}_{j}x" for j in range(64)])) for k in range(6000)]
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(["src/a.py"], running, contracts.Budget())
+    assert 3000 < info.value.key < 4500
+
+
+def test_long_distinct_wildcard_globs_are_billed_by_length():
+    """Reviewer shape T2: 64 distinct 185-character wildcard globs per running card (the
+    validator accepts them). Compiling one costs about 140 us, so the budget runs out after
+    under a hundred such cards; a flat per-pattern charge let it go on for about 240."""
+    running = [
+        (
+            k,
+            _stored(
+                [("?" * 179) + "{" + f"{k:03d}{j:02d}a,{k:03d}{j:02d}b" + "}" for j in range(32)]
+            ),
+        )
+        for k in range(240)
+    ]
+    contracts._MATCHERS.clear()
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(["src/a.py"], running, contracts.Budget())
+    assert info.value.key < 120
+
+
+def test_compile_charge_follows_length_stars_and_classes():
+    plain = contracts._compile_units("?" * 20)
+    assert contracts._compile_units("?" * 185) > 3 * plain
+    assert contracts._compile_units("*a" * 90) > 10 * contracts._compile_units("?" * 180) // 4
+    assert contracts._compile_units("[a-z]" * 35) > contracts._compile_units("?" * 175)
+
+
 def test_the_new_cards_own_stored_size_is_billed_first():
     mine = [f"src/{i}/*.py" for i in range(8)]
     cost = contracts.size_units(mine)
@@ -229,7 +266,7 @@ def test_the_new_cards_own_stored_size_is_billed_first():
 
 def test_distinct_wildcard_patterns_are_charged_for_compiling():
     """Reviewer shape Q2: 64 globs of 8 segments, each segment a distinct wildcard pattern,
-    against a literal glob. Every pattern is compiled once and billed COMPILE_UNITS, so the
+    against a literal glob. Every pattern is compiled once and billed by its length, so the
     budget is gone after a few dozen running cards and only a bounded number was compiled."""
 
     def digits(n):
@@ -254,16 +291,16 @@ def test_distinct_wildcard_patterns_are_charged_for_compiling():
     with pytest.raises(contracts.TooLarge) as info:
         contracts.first_overlap_running(mine, running, contracts.Budget())
     assert info.value.key < 100
-    assert len(contracts._MATCHERS) <= contracts.MAX_STEPS // contracts.COMPILE_UNITS
+    assert (
+        len(contracts._MATCHERS) <= contracts.MAX_STEPS // contracts.COMPILE_UNITS
+    )  # a loose bound
     # A pattern that is already compiled is not billed again.
     first = contracts.Budget()
     contracts.first_overlap(["*.py"], ["a.py"], first)
     again = contracts.Budget()
     contracts.first_overlap(["*.py"], ["a.py"], again)
-    assert (
-        contracts.MAX_STEPS - first.left
-        == contracts.MAX_STEPS - again.left + contracts.COMPILE_UNITS
-    )
+    assert contracts._compile_units("*.py") == 70 + 2 * 4 + 21
+    assert again.left - first.left == contracts._compile_units("*.py")
 
 
 def test_live_cards_needs_an_explicit_hold():

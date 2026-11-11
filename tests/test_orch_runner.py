@@ -2007,20 +2007,20 @@ def _deep_paths(card_no, deep):
 
 def test_c389_deep_contracts_refuse_within_the_step_budget(world):
     """Permitted contracts (64 globs, 89 segments) cost 4 096 x 89 work units per running
-    card: each start compares the cards that already run, so the eighth start is the first
-    to run out of budget (the seventh has six to compare, which fits)."""
+    card: each start compares the cards that already run, so the seventh start is the first
+    to run out of budget (the sixth has five to compare, which fits)."""
     deep = "/".join(["?"] * 88)
-    cards = [world.card() for _ in range(8)]
+    cards = [world.card() for _ in range(7)]
     for number, card in enumerate(cards):
         _declare(world, card, *contracts.normalize(_deep_paths(number, deep)))
     world.configure(max_agents=10)
     lease = world.claim(world.a)
-    for number, card in enumerate(cards[:7]):
+    for number, card in enumerate(cards[:6]):
         world.orch_start(world.a, lease, card, f"s{number}")
-    exc = refused("path_contract_too_large", world.orch_start, world.a, lease, cards[7], "s7")
+    exc = refused("path_contract_too_large", world.orch_start, world.a, lease, cards[6], "s6")
     assert exc.details["budget"] == contracts.MAX_STEPS
-    assert f"card #{cards[7]}" in str(exc) and str(contracts.MAX_STEPS) in str(exc)
-    assert world.jobs_for(cards[7]) == []
+    assert f"card #{cards[6]}" in str(exc) and str(contracts.MAX_STEPS) in str(exc)
+    assert world.jobs_for(cards[6]) == []
 
 
 def test_c389_unreadable_stored_paths_show_as_any_and_do_not_break_edits(world):

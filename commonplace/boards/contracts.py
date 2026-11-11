@@ -22,8 +22,9 @@ this check exists to prevent. So:
 - one start spends a budget of ``MAX_STEPS`` work units, set from timings on one host
   (see SYSTEM.md for the measured figures; a slower host takes proportionally longer).
   It bills every running card's stored size (``size_units``) before that card's contract
-  is parsed or expanded, ``COMPILE_UNITS`` for each wildcard segment it has to compile,
-  and each comparison as pairs times the shallower side's deepest glob times the heaviest
+  is parsed or expanded, each wildcard segment it has to compile by what compiling costs
+  (``_compile_units``: a base, plus per character, per ``*`` and per ``[``), and each
+  comparison as pairs times the shallower side's deepest glob times the heaviest
   segment of either side (one unit per segment plus one per ``SEGMENT_CHARS`` characters,
   because a segment's cost grows with its length). Beyond the budget it fails closed
   (``TooLarge``) instead of holding the runner lock.
@@ -42,9 +43,15 @@ MAX_GLOBS = 32  # globs in one update
 MAX_EXPANSIONS = 64  # alternatives one glob may expand to
 MAX_STORED = 64  # globs stored per card, after expansion
 MAX_GLOB_LENGTH = 200
-MAX_STEPS = 2_500_000  # work units one start may spend (the measured time is in the docs)
+MAX_STEPS = 2_200_000  # work units one start may spend (the measured time is in the docs)
 SEGMENT_CHARS = 32  # characters that add one work unit to a segment
-COMPILE_UNITS = 150  # work units billed for compiling one wildcard segment
+# Compiling a wildcard segment is billed by what it costs: a base, plus per character, per
+# `*` and per `[` (stars and classes dominate; measured on one host, about 0.3 us per unit).
+COMPILE_UNITS = 70
+COMPILE_CHAR_UNITS = 2
+COMPILE_STAR_UNITS = 21
+COMPILE_CLASS_UNITS = 20
+GLOB_UNITS = 8  # work units to read, expand and canonicalise one stored glob
 MAX_MATCHERS = 8192  # compiled wildcard segments kept
 _WILDCARDS = frozenset("*?[{}")
 ANY = ("**",)
@@ -223,11 +230,22 @@ def globs_overlap(a: str, b: str) -> bool:
 
 
 def size_units(stored) -> int:
-    """Work units to read a stored contract (JSON text or a list of globs): one, plus one
-    per glob, per ``/`` and per ``SEGMENT_CHARS`` characters. A start bills this for every
-    running card before it parses or expands that card's contract."""
+    """Work units to read a stored contract (JSON text or a list of globs): one, plus
+    ``GLOB_UNITS`` per glob, one per ``/`` and one per ``SEGMENT_CHARS`` characters. A start
+    bills this for every running card before it parses or expands that card's contract."""
     text = stored if isinstance(stored, str) else json.dumps(stored)
-    return 1 + text.count('"') // 2 + text.count("/") + len(text) // SEGMENT_CHARS
+    globs = text.count('"') // 2
+    return 1 + GLOB_UNITS * globs + text.count("/") + len(text) // SEGMENT_CHARS
+
+
+def _compile_units(text: str) -> int:
+    """Work units to compile one wildcard segment."""
+    return (
+        COMPILE_UNITS
+        + COMPILE_CHAR_UNITS * len(text)
+        + COMPILE_STAR_UNITS * text.count("*")
+        + COMPILE_CLASS_UNITS * text.count("[")
+    )
 
 
 def _prepare(globs):
@@ -244,7 +262,7 @@ def _compile_charge(pairs, budget: Budget) -> None:
     for _, segments in pairs:
         for text, wild in segments:
             if wild and text != "**" and text not in _MATCHERS:
-                budget.take(COMPILE_UNITS)
+                budget.take(_compile_units(text))
                 _matcher(text)
 
 
