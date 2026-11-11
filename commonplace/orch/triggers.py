@@ -6,8 +6,13 @@ only for them); other boards are never scanned. The sweep reads committed
 failed after its commit is still found.
 
 Firing rule (``durable.FIRING_EVENT``): ``to_status='todo' AND (from_status IS NULL OR
-from_status!='todo')``, or the plan-approval row ``kind='edit' AND choice='approve plan'
-AND to_status='todo'``.
+from_status!='todo')``, the plan-approval row ``kind='edit' AND choice='approve plan'
+AND to_status='todo'``, or an origin release ``kind='decide' AND choice='release
+origin'`` (a released card that already waited in todo has no new todo transition).
+
+A firing event whose start cannot even be planned (``prepare`` refuses, or the config
+lacks the role the start needs) is a coded miss that advances the cursor, like any other
+refusal; only infrastructure errors leave the cursor.
 
 Cursor protocol (board events live in ``boards.sqlite3``, the cursor in
 ``runner.sqlite3``, so no transaction spans both):
@@ -61,7 +66,7 @@ from commonplace.runner import jobs, registry
 from commonplace.runner.predicate import requester_ok
 from commonplace.sessions import person_principal
 
-from . import durable, runner_bridge, store as orch_store
+from . import durable, runner_bridge, schema, store as orch_store
 
 logger = logging.getLogger(__name__)
 BATCH = 50
@@ -178,17 +183,35 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
         for event in events:
             principal, ref, refusal = _actor(gateway, ws, event, machine)
             _barrier("sweep_after_requester", conn)
-            plan = runner_bridge.prepare(
-                gateway,
-                ws,
-                board_row=board_row,
-                card_row=cards[event["task_id"]],
-                version=version,
-                principal=principal,
-                requested_by=ref or "unknown",
-                person=False,
-                split_start=on,
-            )
+            try:
+                plan = runner_bridge.prepare(
+                    gateway,
+                    ws,
+                    board_row=board_row,
+                    card_row=cards[event["task_id"]],
+                    version=version,
+                    principal=principal,
+                    requested_by=ref or "unknown",
+                    person=False,
+                    split_start=on,
+                )
+            except (runner_bridge.StartRefused, LookupError, schema.ConfigError) as exc:
+                # A start that cannot even be planned is a coded miss for this event,
+                # not an infrastructure error: leaving the cursor would block the board.
+                code = exc.code if isinstance(exc, runner_bridge.StartRefused) else "config_invalid"
+                if code == "config_invalid":
+                    log_failure(logger, "orchestrator trigger start could not be planned", exc)
+                trigger = runner_bridge.TriggerRef(event["id"], cursor, gen, ref)
+                if not runner_bridge.trigger_miss(
+                    js, board, event["task_id"], trigger, code, now=now
+                ):
+                    results.append({"event": event["id"], "dropped": True})
+                    break
+                cursor = event["id"]
+                results.append(
+                    {"event": event["id"], "card": event["task_id"], "job": None, "miss": code}
+                )
+                continue
             _barrier("sweep_before_start", conn)
             outcome = runner_bridge.fenced_start(
                 js,
@@ -239,17 +262,21 @@ def _reconcile(js, st, board, now):
             n = len(split.attempts(conn, row["id"])) + 1
             event = {"stamp_user": row["stamp_user"], "stamp_connection": row["stamp_connection"]}
             principal, ref, refusal = _actor(gateway, ws, event, machine)
-            plan = runner_bridge.prepare(
-                gateway,
-                ws,
-                board_row=b,
-                card_row=cards[row["id"]],
-                version=version,
-                principal=principal,
-                requested_by=ref or "unknown",
-                person=False,
-                split_start=True,
-            )
+            try:
+                plan = runner_bridge.prepare(
+                    gateway,
+                    ws,
+                    board_row=b,
+                    card_row=cards[row["id"]],
+                    version=version,
+                    principal=principal,
+                    requested_by=ref or "unknown",
+                    person=False,
+                    split_start=True,
+                )
+            except (runner_bridge.StartRefused, LookupError, schema.ConfigError) as exc:
+                log_failure(logger, "orchestrator split retry could not be planned", exc)
+                continue
             outcome = runner_bridge.fenced_start(
                 js,
                 plan,

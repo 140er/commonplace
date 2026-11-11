@@ -185,8 +185,10 @@ and recent-start guards still apply. These are existing limits of admission.
 Only boards with an accepted live `[runner]` config are swept, on each wake-up
 and on each runner lease. The sweep reads committed `task_events` after the
 board's cursor and fires when a card moves into `todo` from another status
-(`add`, `move`, `decide`) and on the plan-approval row. An event emission that
-failed after commit is still found.
+(`add`, `move`, `decide`), on the plan-approval row and on an origin release
+(`decide` with choice `release origin`), so a restricted-origin card that waited
+in `todo` starts once it is released. An event emission that failed after
+commit is still found.
 
 - **Cursor.** Accepting a config that adds `[runner]` commits the board's
   cursor as unset with a new generation; arming then sets it to the current
@@ -199,8 +201,10 @@ failed after commit is still found.
   `requester_not_allowed`. Members' moves do not start work.
 - **Misses.** Every refusal (`assigned`, `not_todo`, `started_recently`,
   `busy`, `plan_pending`, …) is recorded as a coded miss and shown on resume;
-  the cursor moves past it. Only infrastructure errors leave the cursor for the
-  next sweep. A refused card is not retried automatically, even when the
+  the cursor moves past it. A start that cannot be planned is a miss too
+  (`not_configured`, or `config_invalid` when the config lacks the role the
+  start needs), so one card never blocks the board's later cards. Only
+  infrastructure errors leave the cursor for the next sweep. A refused card is not retried automatically, even when the
   refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
   checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
 
