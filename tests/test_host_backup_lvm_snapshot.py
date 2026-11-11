@@ -33,7 +33,15 @@ STUBS = {
     """,
     "lvremove": r"""
         echo "lvremove $*" >> "$CALLS"
+        n=$(cat "$STATE/lvremove-count" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$STATE/lvremove-count"
+        [ "$n" -gt "${LVREMOVE_FAILS:-0}" ] || { echo "Logical volume is in use." >&2; exit 5; }
         name="${@: -1}"; rm -f "$STATE/lv-${name#*/}"
+    """,
+    "sync": r"""echo "sync" >> "$CALLS" """,
+    "udevadm": r"""echo "udevadm $*" >> "$CALLS" """,
+    "dmsetup": r"""
+        echo "dmsetup $*" >> "$CALLS"
+        [ -z "${DMSETUP_OK:-}" ] || rm -f "$BACKUP_MAPPER_DIR/${@: -1}"
     """,
     "vgs": r"""
         echo "vgs $*" >> "$CALLS"
@@ -103,6 +111,7 @@ def host(tmp_path):
         "BACKUP_RESTIC_REST_PASSWORD_FILE": str(tmp_path / "rest-password"),
         "BACKUP_HOOK": str(bin_dir / "hook"),
         "BACKUP_CLOSE_RETRY_SLEEP_S": "0",
+        "BACKUP_LVREMOVE_RETRY_SLEEP_S": "0",
         "BACKUP_RESTIC_HOST": "testhost",
         "BACKUP_HOOK_LOCK_NAME": ".hook-backup.lock",
         "VG_FREE_BYTES": str(200 * GIB),
@@ -198,6 +207,82 @@ def test_cleanup_retries_busy_mapper_close_then_removes_snapshot(host):
         c.split()[0] for c in host.calls() if c.split()[0] in {"umount", "cryptsetup", "lvremove"}
     ]
     assert order == ["umount", "cryptsetup", "cryptsetup", "cryptsetup", "lvremove"]
+
+
+def test_cleanup_settles_devices_after_umount_before_closing(host):
+    host.add_lv("nightlysnap1")
+    host.open_mapper("nightlysnap1")
+    (host.path / "state" / "mounted").touch()
+    host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=$SNAP_NAME; MNT=$MNT_BASE/x; MOUNTED=1; UNLOCKED=1\n"
+        "mkdir -p $LOG_DIR; : >> $LOG\ncleanup_snap"
+    )
+    order = [
+        c.split()[0] + (" settle" if c.startswith("udevadm settle") else "") for c in host.calls()
+    ]
+    order = [
+        c for c in order if c in {"umount", "sync", "udevadm settle", "cryptsetup", "lvremove"}
+    ]
+    assert order[:4] == ["umount", "sync", "udevadm settle", "cryptsetup"]
+
+
+def test_cleanup_tolerates_a_slow_mapper_release_with_the_default_retry_budget(host):
+    host.add_lv("nightlysnap1")
+    host.open_mapper("nightlysnap1")
+    result = host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=$SNAP_NAME; UNLOCKED=1\n"
+        "mkdir -p $LOG_DIR; : >> $LOG\ncleanup_snap; echo rc=$?",
+        CLOSE_FAILS="25",
+    )
+    assert "rc=0" in result.stdout, result.stderr
+    assert len(host.calls_for("cryptsetup")) == 26
+    assert host.calls_for("dmsetup") == []
+    assert len(host.calls_for("lvremove")) == 1
+
+
+def test_cleanup_falls_back_to_dmsetup_remove_for_its_own_mapper(host):
+    host.add_lv("nightlysnap1")
+    host.open_mapper("nightlysnap1")
+    result = host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=$SNAP_NAME; UNLOCKED=1; CLOSE_ATTEMPTS=3\n"
+        "mkdir -p $LOG_DIR; : >> $LOG\ncleanup_snap; echo rc=$?",
+        CLOSE_FAILS="99",
+        DMSETUP_OK="1",
+    )
+    assert "rc=0" in result.stdout, result.stderr
+    assert host.calls_for("dmsetup") == ["dmsetup remove --retry nightlysnap1"]
+    assert len(host.calls_for("lvremove")) == 1
+
+
+def test_cleanup_never_runs_dmsetup_against_the_live_srv_mapper(host):
+    host.open_mapper("srv")
+    host.run(
+        "init_run; MAP=srv; UNLOCKED=1; SNAP_NAME=nightlysnap1; CLOSE_ATTEMPTS=1\n"
+        "mkdir -p $LOG_DIR; : >> $LOG\ncleanup_snap",
+        DMSETUP_OK="1",
+    )
+    assert host.calls_for("dmsetup") == [] and host.calls_for("cryptsetup") == []
+    assert (host.path / "mapper" / "srv").exists()
+
+
+def test_cleanup_retries_lvremove(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=none\nmkdir -p $LOG_DIR; : >> $LOG\ncleanup_snap; echo rc=$?",
+        LVREMOVE_FAILS="2",
+    )
+    assert "rc=0" in result.stdout, result.stderr
+    assert len(host.calls_for("lvremove")) == 3 and not host.lv_exists("nightlysnap1")
+
+
+def test_cleanup_fails_only_after_lvremove_retries_are_exhausted(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=none\nmkdir -p $LOG_DIR; : >> $LOG\ncleanup_snap; echo rc=$?",
+        LVREMOVE_FAILS="99",
+    )
+    assert "rc=1" in result.stdout, result.stderr
+    assert len(host.calls_for("lvremove")) == 5
 
 
 def test_cleanup_keeps_snapshot_when_mapper_never_closes(host):
@@ -318,6 +403,16 @@ def test_snapshot_route_runs_restic_from_snapshot_and_cleans_up(host):
     assert (host.path / "log" / "result").read_text().startswith("PASS")
     proof = json.loads((host.path / "log" / "lvm-proof.json").read_text())
     assert proof["restic_snapshot_id"] == "deadbeefcafe" and proof["cleanup_ok"] == 1
+
+
+def test_retried_cleanup_after_good_backup_is_still_pass(host):
+    result = host.run(CLOSE_FAILS="5", LVREMOVE_FAILS="1")
+    assert result.returncode == 0, result.stderr
+    assert (host.path / "log" / "result").read_text().startswith("PASS")
+    assert len(host.calls_for("cryptsetup")) == 6 and len(host.calls_for("lvremove")) == 2
+    proof = json.loads((host.path / "log" / "lvm-proof.json").read_text())
+    assert proof["cleanup_ok"] == 1 and proof["fail_reason"] == ""
+    assert host.hook_runs() == []
 
 
 def test_restic_check_failure_fails_without_fallback_and_still_cleans_up(host):

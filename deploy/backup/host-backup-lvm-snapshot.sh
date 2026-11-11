@@ -52,8 +52,13 @@ VG_HEADROOM_G="${BACKUP_VG_HEADROOM_G:-4}"
 FREEZE_BUDGET_S="${BACKUP_FREEZE_BUDGET_S:-10}"
 LVCREATE_MAX_S=7
 UNLOCK_TIMEOUT_S="${BACKUP_UNLOCK_TIMEOUT_S:-45}"
-CLOSE_ATTEMPTS="${BACKUP_CLOSE_ATTEMPTS:-6}"
-CLOSE_RETRY_SLEEP_S="${BACKUP_CLOSE_RETRY_SLEEP_S:-1}"
+# The mapper can stay "in use" for a while after umount (udev and the kernel
+# release it asynchronously); a 6x1s loop reported FAIL although close worked
+# seconds later. Retry generously and fail cleanup only when it still fails.
+CLOSE_ATTEMPTS="${BACKUP_CLOSE_ATTEMPTS:-30}"
+CLOSE_RETRY_SLEEP_S="${BACKUP_CLOSE_RETRY_SLEEP_S:-2}"
+LVREMOVE_ATTEMPTS="${BACKUP_LVREMOVE_ATTEMPTS:-5}"
+LVREMOVE_RETRY_SLEEP_S="${BACKUP_LVREMOVE_RETRY_SLEEP_S:-2}"
 # Logs and evidence live on the root fs: writes to /srv block while it is frozen.
 LOG_DIR="${BACKUP_LOG_DIR:-/var/log/lvm-snapshot-backup}"
 LOCK_DIR="${BACKUP_LOCK_DIR:-$SRV/commonplace/backups}"
@@ -156,12 +161,19 @@ Path(e["JSON"]).write_text(json.dumps(data, indent=2) + "\n")
 PY
 }
 
+# Flush and let udev finish its work on the just-released devices. Best effort.
+settle_devices() {
+    sync || true
+    ! command -v udevadm >/dev/null 2>&1 || timeout 30 udevadm settle >>"$LOG" 2>&1 || true
+}
+
 # ---- cleanup: only this run's snapshot, mapper and mount ----
-# Order: thaw, umount, cryptsetup close (retried: the mapper is briefly "still
-# in use" right after umount), lvremove. Idempotent; returns non-zero when
-# something is left behind.
+# Order: thaw, umount, sync + udevadm settle, cryptsetup close (retried: the
+# mapper stays "in use" for a while after umount), a last dmsetup remove --retry,
+# then lvremove (retried). Idempotent; returns non-zero only when something is
+# still left behind after all retries.
 cleanup_snap() {
-    local rc=0 attempt closed origin
+    local rc=0 attempt closed origin removed
     thaw
 
     if (( MOUNTED )) || { [[ -n "$MNT" ]] && findmnt -rn "$MNT" >/dev/null 2>&1; }; then
@@ -175,6 +187,7 @@ cleanup_snap() {
             log "WARN umount $MNT failed (lazy too)"
             rc=1
         fi
+        settle_devices
     fi
 
     if (( UNLOCKED )) || [[ -n "$MAP" && -e "$MAPPER_DIR/$MAP" ]]; then
@@ -196,6 +209,12 @@ cleanup_snap() {
                 log "cryptsetup close $MAP attempt $attempt: still in use"
                 (( attempt == CLOSE_ATTEMPTS )) || sleep "$CLOSE_RETRY_SLEEP_S"
             done
+            if (( ! closed )) && command -v dmsetup >/dev/null 2>&1; then
+                # Last resort, still only this run's reserved-prefix mapper.
+                log "cryptsetup close $MAP failed $CLOSE_ATTEMPTS times; dmsetup remove --retry"
+                dmsetup remove --retry "$MAP" >>"$LOG" 2>&1 || true
+                [[ -e "$MAPPER_DIR/$MAP" ]] || closed=1
+            fi
             if (( closed )); then
                 UNLOCKED=0
             else
@@ -217,11 +236,24 @@ cleanup_snap() {
             if [[ "$origin" != "$ORIGIN_LV" ]]; then
                 log "REFUSING to lvremove $VG/$SNAP_NAME: origin '$origin' is not $ORIGIN_LV"
                 rc=1
-            elif lvremove -y "$VG/$SNAP_NAME" >>"$LOG" 2>&1; then
-                log "lvremove $VG/$SNAP_NAME"
             else
-                log "WARN lvremove $VG/$SNAP_NAME failed"
-                rc=1
+                removed=0
+                for (( attempt = 1; attempt <= LVREMOVE_ATTEMPTS; attempt++ )); do
+                    if lvremove -y "$VG/$SNAP_NAME" >>"$LOG" 2>&1; then
+                        log "lvremove $VG/$SNAP_NAME (attempt $attempt)"
+                        removed=1
+                        break
+                    fi
+                    log "lvremove $VG/$SNAP_NAME attempt $attempt failed"
+                    if (( attempt < LVREMOVE_ATTEMPTS )); then
+                        sleep "$LVREMOVE_RETRY_SLEEP_S"
+                        settle_devices
+                    fi
+                done
+                if (( ! removed )); then
+                    log "WARN lvremove $VG/$SNAP_NAME failed after $LVREMOVE_ATTEMPTS attempts"
+                    rc=1
+                fi
             fi
         fi
     fi

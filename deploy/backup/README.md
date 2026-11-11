@@ -28,12 +28,17 @@ well under a second, then runs restic from an LVM snapshot of the LUKS
    `/etc /srv /var/lib/caddy`, the hook's excludes, `--one-file-system`. The
    snapshot is bind-mounted over `/srv` read-only inside an `unshare --mount`
    namespace only; the live `/srv` is unchanged. Then `restic check`.
-7. Cleanup (always, through an EXIT trap): umount, `cryptsetup close` with short
-   retries (the mapper is briefly busy right after umount), then `lvremove` of
-   this run's snapshot only. The name must start with the reserved prefix
-   `nightlysnap` and the LV must be a snapshot of `srv`; `data/srv` and the
-   `srv` mapper are never touched. The snapshot is kept, and the run fails, if
-   the mapper cannot be closed.
+7. Cleanup (always, through an EXIT trap): umount, `sync` and `udevadm settle`,
+   `cryptsetup close` retried up to 30 times 2 s apart (the mapper can stay "in
+   use" for a while after umount), a last `dmsetup remove --retry` on this run's
+   mapper, then `lvremove` of this run's snapshot (up to 5 attempts). Only when
+   close or lvremove still fail after all that does cleanup fail the run; a good
+   backup plus check followed by a retried-but-successful cleanup is PASS. The
+   snapshot name must start with the reserved prefix `nightlysnap` and the LV
+   must be a snapshot of `srv`; `data/srv` and the `srv` mapper are never
+   touched. The snapshot is kept if the mapper cannot be closed.
+   Tunables: `BACKUP_CLOSE_ATTEMPTS`, `BACKUP_CLOSE_RETRY_SLEEP_S`,
+   `BACKUP_LVREMOVE_ATTEMPTS`, `BACKUP_LVREMOVE_RETRY_SLEEP_S`.
 
 No `forget`/`prune` (the repository is append-only; retention runs elsewhere)
 and no notifications. Fallback releases both locks first so the hook can lock. After
