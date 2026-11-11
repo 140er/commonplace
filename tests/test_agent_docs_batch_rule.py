@@ -1,6 +1,6 @@
 """The batch merge rule lives in the agent docs every agent reads (AGENTS.md and CLAUDE.md).
 
-On 11 Nov 2026 the rule existed only as a board-card comment, conditional on a tooling card, so agent
+The rule decided on 10 Nov 2026 existed only as a board-card comment, conditional on a tooling card, so agent
 briefs kept telling builders to wait for a full-suite run per PR. These tests keep the rule in both
 files and the two files identical, so no agent reads a different policy.
 """
@@ -14,7 +14,7 @@ SECTION = "## Testing and merging (batch merge rule)"
 
 def _section(name: str) -> str:
     text = (ROOT / name).read_text(encoding="utf-8")
-    assert SECTION in text, f"{name} lacks the batch merge rule section"
+    assert text.count(SECTION) == 1, f"{name} must hold the batch merge rule section exactly once"
     body = text.split(SECTION, 1)[1]
     return body.split("\n## ", 1)[0]
 
