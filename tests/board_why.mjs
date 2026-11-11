@@ -6,7 +6,10 @@ const waiting = url((await readFile(new URL('waiting.js', root), 'utf8')).replac
 const source = await readFile(new URL('board.js', root), 'utf8');
 const { cardTags, boardView } = await import(url(source.replace("'./api.js'", JSON.stringify(api)).replace("'./waiting.js'", JSON.stringify(waiting))));
 const { waitingSection, whyStrip } = await import(waiting);
-const detailsSource = (await readFile(new URL('details.js', root), 'utf8')).replace('"./api.js"', JSON.stringify(api)).replace('"./waiting.js"', JSON.stringify(waiting));
+const sibling = async (name) => url((await readFile(new URL(name, root), 'utf8')).replace(/(['"])\.\/api\.js\1/, JSON.stringify(api)));
+const blockers = await sibling('blockers.js');
+const cardlinks = await sibling('cardlinks.js'), cardruns = await sibling('cardruns.js');
+const detailsSource = (await readFile(new URL('details.js', root), 'utf8')).replace('"./api.js"', JSON.stringify(api)).replace('"./cardlinks.js"', JSON.stringify(cardlinks)).replace('"./cardruns.js"', JSON.stringify(cardruns)).replace('"./waiting.js"', JSON.stringify(waiting)).replace('"./blockers.js"', JSON.stringify(blockers));
 const { renderDetails } = await import(url(detailsSource));
 const base = { number: 3, board: 'atlas', version: 1, title: 'Card', body: '', events: [], status: 'todo', need: 'idle', assignee: null };
 const reasons = {
