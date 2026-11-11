@@ -221,7 +221,7 @@ Only a signed-in workspace owner whose policy reads the `topology` wing gets an 
 
 ## The map in the app
 
-The owner opens the map from **Compute map** in the rail (`#/compute-map`). It is drawn as SVG by `commonplace/web/static/topology-map.js` with `topology-layout.js` (layout, pan and zoom maths) and `topology-icons.js` (one icon per node kind, drawn for this app). Nothing is loaded from another origin.
+The owner opens the map from **Compute map** under **Workspace** in the account menu, or from the command palette (`#/compute-map`). It is drawn as SVG by `commonplace/web/static/topology-map.js` with `topology-layout.js` (layout, pan and zoom maths) and `topology-icons.js` (one icon per node kind, drawn for this app). Nothing is loaded from another origin.
 
 - **Devices** are icons with the name and the role underneath. A stale device is faded with a dashed outline and says "stale"; a device with an open conflict says "conflict"; a device that a link or route names but that has no facts is drawn as an unknown device that says "not recorded".
 - **Links** are lines with a status mark at each end. A status is a shape and a word as well as a colour: circle for up, triangle for degraded, square for down, ring for unknown. Each mark and each device carries its status as text for a screen reader and as a tooltip, and the legend names the four shapes. Two methods between the same two devices run side by side.

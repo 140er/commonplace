@@ -8,9 +8,9 @@ const scene = params.get("scene") || "map";
 const steps = Number(params.get("steps") || 99);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const board = { slug: "atlas", name: "Atlas", agents_working: 1 };
-document.querySelector("#board-nav").outerHTML = renderRail({ workspace: "Northwind", user: "Maya", boards: [board], board, view: "map", needs: 2, can_admin: true }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-document.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board });
-document.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ board, view: "map", needs: 2 });
+document.querySelector("#board-nav").outerHTML = renderRail({ workspace: "Northwind", user: "Maya", view: "map", needs: 2, can_admin: true }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+document.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board, needs: 2, can_admin: true });
+document.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ view: "map" });
 
 const EMPTY = { graph: { wing: "topology", nodes: [], links: [], routes: [] }, status: { nodes: {}, links: {} } };
 let payload = scene === "empty" ? EMPTY : scene === "large" ? largeFixture(300) : fixture();

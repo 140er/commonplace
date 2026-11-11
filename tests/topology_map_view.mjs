@@ -578,16 +578,19 @@ test("screen: show() again starts clean and an old answer cannot draw into the n
   screen.stop();
 });
 
-test("wiring: the app mounts the map in one place and the rail links to it for the owner", async () => {
+test("wiring: the app mounts the map in one place and the account menu links to it for the owner", async () => {
   const app = await read("app.js");
   assert.match(app, /import \{ createTopologyMap \} from "\.\/topology-map\.js";/);
   assert.equal(app.split("createTopologyMap(").length - 1, 1);
   assert.match(app, /state\.base === "#\/compute-map"\) \{\n\s+if \(!background\) topologyScreen\(\);/);
   assert.match(await read("index.html"), /<link rel="stylesheet" href="\/app\/topology\.css">/);
   const rail = await import("../commonplace/web/static/rail.js");
-  const owner = rail.renderRail({ can_admin: true, view: "map" });
-  assert.match(owner, /<a class="nav" href="#\/compute-map" data-nav="map" aria-current="page">[\s\S]*?Compute map<\/a>/);
-  assert.doesNotMatch(rail.renderRail({ can_admin: false }), /compute-map/);
+  // Under Workspace in the account menu, on the desktop rail and in the phone's menu alike.
+  for (const render of [rail.renderRail, rail.renderPhoneBar]) {
+    assert.match(render({ can_admin: true }), /<a href="#\/console">Console<\/a><a href="#\/compute-map">Compute map<\/a><\/div>/);
+    assert.doesNotMatch(render({ can_admin: false }), /compute-map/);
+  }
+  assert.match(app, /state\.base === "#\/compute-map" \? "map"/);
   const css = await read("topology.css");
   for (const state of ui.STATES) assert.ok(css.includes(`.topo-dot.s-${state}`));
   assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, "colours come from the workbench tokens");
