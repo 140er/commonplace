@@ -108,9 +108,10 @@ def effects(conn, present: dict, user_id: str) -> dict:
         "AND o.user_id != m.user_id AND o.user_id NOT IN "
         "(SELECT user_id FROM account_deletions WHERE state = 'purged'){})"
     )
+    members, owners = others.format(""), others.format(" AND o.role = 'owner'")
     rows = conn.execute(
         f"SELECT m.workspace_id AS id, w.name AS name, m.role AS role, "
-        f"{others.format('')} AS others, {others.format(''' AND o.role = 'owner' ''')} AS owners "
+        f"{members} AS others, {owners} AS owners "
         "FROM memberships m JOIN workspaces w ON w.id = m.workspace_id "
         "WHERE m.user_id = ? ORDER BY w.created_at, w.id",
         (user_id,),

@@ -1,5 +1,6 @@
 """Account deletion: off by default, explicit, and it never touches another person's data."""
 
+import calendar
 import json
 import sqlite3
 import time
@@ -130,7 +131,7 @@ def test_request_starts_a_grace_period_and_can_be_withdrawn(enabled):
     assert status == 200 and body["state"] == "pending"
     requested = time.strptime(body["requested_at"], "%Y-%m-%dT%H:%M:%SZ")
     due = time.strptime(body["purge_after"], "%Y-%m-%dT%H:%M:%SZ")
-    assert time.mktime(due) - time.mktime(requested) == deletion.DEFAULT_GRACE_DAYS * DAY
+    assert calendar.timegm(due) - calendar.timegm(requested) == deletion.DEFAULT_GRACE_DAYS * DAY
 
     # Asking twice changes nothing, and the account keeps working during the grace period.
     assert ask(site, site.alice, site.alice_home, "alice@example.test", session=session)[1] == body
