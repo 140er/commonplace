@@ -46,6 +46,9 @@ class Tool:
     label: Callable[["Turn", dict], str]  # plain line for action lines and confirm chips
     scope: str = "any"  # "project": only for bots with a board (General: a `project` argument)
     available: Callable[["Turn"], bool] | None = None
+    # Raises NotYourWords (or a refusal) before anything is stored or labelled; for a confirm
+    # tool it runs before the pending action is created and again before `run` on /confirm.
+    check: Callable[["Turn", dict], None] | None = None
 
 
 @dataclass

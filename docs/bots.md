@@ -159,7 +159,12 @@ arguments.
 
 **Writing a tool.** `commonplace/bots/tools.py` defines `Tool` (name, description, a closed
 JSON Schema, kind `read` / `routine` / `confirm`, `run`, `label`, scope, `available`),
-`Result` and `register()`. A `project`-scope tool acts on the bot's own project; for a bot
+`Result` and `register()`. An optional `check(turn, args)` (the last field) runs after
+argument validation and before anything is labelled, stored or written: a confirm tool that
+writes the person's text calls `turn.words()` there, so model text is refused before a
+pending action or chip exists. `/confirm` rebuilds the turn with the message that asked for
+the action (even when newer messages exist) and calls `check` again before `run`; a routine
+tool's `check` also runs before `run`. A `project`-scope tool acts on the bot's own project; for a bot
 without one the model must name a readable project in a `project` argument, and
 `Turn.board(args)` returns it. Tool modules are listed in `bots.TOOL_MODULES` and imported at
 install; a missing module is skipped.

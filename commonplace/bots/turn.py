@@ -298,6 +298,8 @@ class TurnRun:
             args = tools.validate(tools.schema_for(tool, turn), args)
             if tool.scope == "project":
                 turn.board(args)
+            if tool.check is not None:
+                tool.check(turn, args)  # before a pending action, a chip or any write
             label = tool.label(turn, args)
             self._put(
                 "action", {"step": step, "tool": tool.name, "label": label, "state": "running"}
@@ -521,6 +523,8 @@ def confirm(gateway, principal, bot_id, pending_id, accept) -> dict:
         result, code = tools.Result(False, say=REFUSALS["failed"]), "failed"
     else:
         try:
+            if tool.check is not None:
+                tool.check(turn, args)  # against the message that asked for it
             result = tool.run(turn, args)
         except tools.NotYourWords:
             result, code = tools.Result(False, say=REFUSALS["not_your_words"]), "not_your_words"

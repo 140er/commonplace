@@ -829,7 +829,7 @@ def test_a_one_character_span_is_not_the_persons_words(bots_hub, fake):
 # Gate round 2 regressions
 
 
-def test_a_large_context_still_fits_one_budget_with_the_newest_notes(bots_hub, fake):
+def test_a_large_context_still_fits_one_budget_with_the_newest_notes(bots_hub, fake, monkeypatch):
     hub = bots_hub
     configure(hub)
     bot = bot_of(hub)
@@ -842,15 +842,25 @@ def test_a_large_context_still_fits_one_budget_with_the_newest_notes(bots_hub, f
     for n in range(20):
         ask = bots.add_user_message(bot["id"], hub.admin, "h" * 8000, f"history-{n:04d}")
         bots.add_bot_message(bot["id"], hub.admin, ask["id"], "r" * 8000)
+    # Twenty maximum notes alone fit the default budget; the snapshot and history do not.
     _, events = talk(hub, "What is up?")
     assert names(events)[-1] == "done"
     sent = fake.calls[0]
     assert sent["size"] <= limits.BOT_MAX_INPUT_CHARS
     content = sent["messages"][0]["content"]
-    assert notes[-1]["text"] in content and notes[-2]["text"] in content
-    assert notes[0]["text"] not in content
-    assert '"memory_left_out": ' in content and '"memory_left_out": 0' not in content
+    assert all(note["text"] in content for note in notes)
     assert "What is up?" in content
+    # With less room the oldest notes are the ones left out, whole, and the model is told.
+    monkeypatch.setattr(limits, "BOT_MAX_INPUT_CHARS", 20_000)
+    _, events = talk(hub, "And now?", "request-0002")
+    assert names(events)[-1] == "done"
+    sent = fake.calls[1]
+    assert sent["size"] <= 20_000
+    content = sent["messages"][0]["content"]
+    kept = [n for n in notes if n["text"] in content]
+    assert kept and kept == notes[-len(kept) :] and len(kept) < len(notes)
+    assert f'"memory_left_out": {len(notes) - len(kept)}' in content
+    assert "And now?" in content
 
 
 def test_tool_results_that_would_overflow_are_bounded(bots_hub, fake, extra_tools):
@@ -862,7 +872,8 @@ def test_tool_results_that_would_overflow_are_bounded(bots_hub, fake, extra_tool
             description="Read a lot",
             schema={"type": "object", "properties": {}, "additionalProperties": False},
             kind="read",
-            run=lambda turn, args: tools.Result(True, {"text": "x" * 100_000}),
+            # Many short strings: each passes the redactor, together they are huge.
+            run=lambda turn, args: tools.Result(True, {"rows": ["x" * 500] * 200}),
             label=lambda turn, args: "Read a lot",
         )
     )
@@ -949,3 +960,60 @@ def test_after_a_redaction_shift_the_stream_stops_and_done_carries_the_reply(
     assert deltas == ["Key " + secret[:12]]  # nothing more after the shift
     assert "[redacted:anthropic_key]" in stored and secret not in stored
     assert any("code=redaction_shift" in r.getMessage() for r in caplog.records)
+
+
+def test_a_confirm_tool_checks_the_persons_words_before_any_chip(bots_hub, fake, extra_tools):
+    hub = bots_hub
+    configure(hub)
+    runs = []
+
+    def run(turn, args):
+        runs.append(turn.words(args["text"]))
+        return tools.Result(True)
+
+    extra_tools(
+        tools.Tool(
+            name="send_note",
+            description="Send a note",
+            schema={
+                "type": "object",
+                "properties": {"text": {"type": "string", "maxLength": 200}},
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+            kind="confirm",
+            run=run,
+            label=lambda turn, args: "Send a note",
+            check=lambda turn, args: turn.words(args["text"]),
+        )
+    )
+    fake.script = [[call("send_note", text="words the model made up")], [("text", "No.")]]
+    bot, events = talk(hub, "Send the team a note: release moves to Friday")
+    refused = [d for e, d in events if e == "action" and d["state"] != "running"]
+    assert [(d["state"], d["code"]) for d in refused] == [("refused", "not_your_words")]
+    assert not [e for e, _ in events if e == "block"]
+    with sqlite3.connect(hub.store()._path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM bot_pending").fetchone()[0] == 0
+    fake.script = [[call("send_note", text="release moves to Friday")], [("text", "Tap OK.")]]
+    _, events = talk(hub, "Send the team a note: release moves to Friday", "request-0002")
+    [block] = [d for e, d in events if e == "block"]
+    assert block["type"] == "confirm" and block["state"] == "open"
+    fake.script = [[("text", "Sure.")]]
+    talk(hub, "Something newer", "request-0003")  # a newer message must not be checked against
+    status, body, _ = confirm(hub, bot["id"], block["pending"])
+    assert status == 200 and body["message"]["blocks"][0]["ok"] is True
+    assert runs == ["release moves to Friday"]
+
+
+def test_the_per_process_turn_cap(bots_hub, fake, monkeypatch):
+    hub = bots_hub
+    configure(hub)
+    monkeypatch.setattr(limits, "TURNS_PER_PROCESS", 1)
+    gate = threading.Event()
+    fake.script = [[gate]]
+    first = Stream(hub, hub.owner, bot_of(hub)["id"], "Hello there", "request-0001")
+    assert first.next()[0] == "ack"
+    other = Stream(hub, hub.member, bot_of(hub, hub.member)["id"], "Hi", "request-0002")
+    assert (other.status, other.json()["code"]) == (429, "busy")
+    gate.set()
+    first.until_end()
