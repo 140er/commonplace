@@ -203,7 +203,9 @@ def test_nudge_goes_to_the_lease_holder_before_the_seat(board):
         )
     board.card("Doing one", "doing")
     board.sweep(minutes(0))
-    assert board.sweep(minutes(20))[0]["data"]["coordinator"] == "conn:lead"
+    sent = board.sweep(minutes(20))
+    assert len(sent) == 1
+    assert sent[0]["data"]["coordinator"] == "conn:lead"
 
 
 def test_no_recipient_means_no_nudge(board):
@@ -219,7 +221,9 @@ def test_expired_claims_and_pending_checks_are_counted(board):
     board.sql("UPDATE tasks SET checks='pending' WHERE id=?", checks)
     board.setting({"minutes": 40})
     board.sweep(minutes(0))
-    data = board.sweep(minutes(40))[0]["data"]
+    sent = board.sweep(minutes(40))
+    assert len(sent) == 1
+    data = sent[0]["data"]
     assert (data["doing"], data["checks"], data["expired"]) == (2, 1, 2)
     assert stuck
 
@@ -243,7 +247,9 @@ def test_wake_reaches_only_the_coordinator_with_board_stuck_counts(board):
     board.card("Doing one", "doing")
     board.card("Todo one")
     board.sweep(minutes(0))
-    nudge = board.sweep(minutes(20))[0]
+    sent = board.sweep(minutes(20))
+    assert len(sent) == 1
+    nudge = sent[0]
     with h.db._lock:
         rows = [
             dict(r)
@@ -261,3 +267,14 @@ def test_wake_reaches_only_the_coordinator_with_board_stuck_counts(board):
     assert "1 doing, 0 checks pending, 0 expired claims, 1 todo" in payload["message"]
     assert "No card finished in the last 20 minutes." in payload["message"]
     assert payload["url"].startswith("http")
+
+
+def test_timer_is_forgotten_when_actionable_work_ends(board):
+    card = board.card("Open work")
+    assert board.sweep(minutes(0)) == []
+    board.sql("UPDATE tasks SET assignee='user:someone' WHERE id=?", card)
+    assert board.sweep(minutes(10)) == []
+    board.sql("UPDATE tasks SET assignee=NULL WHERE id=?", card)
+    assert board.sweep(minutes(100)) == []
+    assert board.sweep(minutes(119)) == []
+    assert len(board.sweep(minutes(120))) == 1
