@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`
 - **Owns:**
 
+  - The control-database `project_model_catalog` table, created beside the model settings, holds each board's list of models owners can pick for projects.
+
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
 - **Promises:**

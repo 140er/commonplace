@@ -10,7 +10,7 @@
   - The optional read-only runner input to shared usage accounting.
 
 
-  - Project orchestrator seats, project model choices, project limits, project wings and optional hosted plans.
+  - Project orchestrator seats, project model choices with each board's model list (`models.catalog`, `catalog_add`; board-scoped, a choice outside the list is refused with `unknown_model`), the owner-only Needs me `model_roles` items for the start roles of the accepted config with no model (`models.missing_roles`), project limits, project wings and optional hosted plans.
 
 - **Promises:**
 
@@ -30,9 +30,13 @@
 
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
+  - A project panel (`projects/panel.py`, `panel_routes.py`, format `commonplace.panel/1`, documented in `docs/project-panels.md`): a few highlight lines and http(s) action links per project, stored beside its board and read by anyone who can read the project. Setting or clearing it, over `PUT /api/projects/<slug>/panel`, needs the board-write authority and the rules check; the project view payload is unchanged.
+
   - **Browser GitHub connection:** Signup plan assignment accepts the provisioning transaction to preserve atomic GitHub ownership reservation.
 
 - **How it fails:**
+
+  - A panel with an unknown field, markup, control characters, an over-limit list or string, or a link that is not absolute http(s) without credentials is refused with 400 `invalid_panel`; over 4096 bytes is 413 `panel_too_large`; a read-only or add-cards-only connection is 403 `not_allowed`; nothing is stored on refusal.
 
   - Snapshot failures leave observation state untouched. Missing seats yield history only; changed bindings cancel old reports. Unknown authorization errors retain fixed-code retries without exposing exception text.
   - Corrupt existing input still raises; accounting does not create an empty substitute store or clamp actual use to its cap.
@@ -51,3 +55,5 @@
   - `tests/workbench_g4_projects.mjs` (case `models_submit_before_loads`) holds that the project settings models form saves, and reloads with the stored values, while the page's other reads are still pending.
 
   - `tests/test_projects_seat_lease.py` drives the settings routes and the seat's own MCP calls: take, hold, renew and release with no config, plus refusals without trust, after demotion or switch-off, for another project's seat, for another role and outside the wing.
+
+  - `tests/test_projects_panel.py` covers the format limits, unsafe link schemes, a stored panel read back, refusals for read-only, add-cards-only, anonymous and other-workspace callers, and a project without a panel left unchanged.

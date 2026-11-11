@@ -21,6 +21,8 @@
 
   - Enabled coordinator startup context includes unsplit inbox counts, without migrating boards.
 
+  - `session_start` takes `rules=index`: a compact list (key, section, scope, size hint, title) of the effective rules instead of full texts. The default `rules=full` is unchanged.
+
   - Accounts exist only after verification; sessions are cookie-bound and revocable; mail is configured only through the environment.
 
   - Successful email verification expires an older host-only session before setting a configured shared-domain session, so the older cookie cannot shadow the new one.
