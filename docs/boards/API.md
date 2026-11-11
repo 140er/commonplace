@@ -91,9 +91,9 @@ Unrestricted top-level cards start in `todo` and can start with `claim=true`, `s
 
 An owner-appointed independent board coordinator can deliberately release restricted origin with `task_approve(approve=true, reason=...)`, including while holding a doing card. It must remain live in this workspace with memory read/write, board-wing read/write and visible `space_read`, `space_post`, `task_approve` and `needs_me`; `decide` is not required. A creator and all its descendants are excluded even after promotion; independently appointed creator ancestors remain eligible. Unsafe lineage and unverified creator stamps fail closed for agent decisions and markers. Origin-only release requires a nonempty reason of at most 500 characters, changes neither holder nor lease, and preserves pending proposal/plan review. It grants no self-review, negative-decision or escalation right.
 
-Only a signed-in workspace owner has recovery fallback: an absent/non-live configured record or a verified independent record missing a required grant permits origin release. A live creator, descendant, unsafe lineage or an unverifiable creator stamp with a live configured record instead yields `origin_configuration` with `configure_coordinator`, blocking owner release. For invalid stamps, clear the coordinator first; clearing is board-wide and affects recovery for other cards too. Owner-role tokens have no person fallback. Owner recovery of pending proposals takes two actions, origin release then separate review. Agent and owner origin items use the approvals bucket with `need=release`, `approval_kind=origin` and `actions=["approve"]`; owner configuration uses `need=you` and no approve action. Explicit person-targeted reviews remain independently visible.
+Only a signed-in workspace owner has recovery fallback: an absent/non-live configured record or a verified independent record missing a required grant permits origin release. A live creator, descendant, unsafe lineage or an unverifiable creator stamp with a live configured record instead yields `origin_configuration` with `configure_coordinator` in Needs me. The owner may still release such a card explicitly with `task_approve`, as with any card awaiting release; moving a card releases it implicitly only with no live coordinator. Clearing a coordinator is board-wide and affects recovery for other cards too. Owner-role tokens have no person fallback. Owner recovery of pending proposals takes two actions, origin release then separate review. Agent and owner origin items use the approvals bucket with `need=release`, `approval_kind=origin` and `actions=["approve"]`; owner configuration uses `need=you` and no approve action. Explicit person-targeted reviews remain independently visible.
 
-When exactly one board is visible, `board` may be omitted. With several visible boards, pass its slug or repository explicitly; the server never silently chooses a different space. Agent assignees and handoff recipients must be active connections in this workspace with `memory:write` and visibility of the board. Connection names and IDs resolve to the same verified actor. A missing, revoked, expired or inaccessible recipient is refused before the card changes.
+When exactly one board is visible, `board` may be omitted. With several visible boards, pass its slug or repository explicitly; the server never silently chooses a different space. Agent assignees and handoff recipients must be active connections in this workspace with `memory:write` and visibility of the board. Connection names and IDs resolve to the same verified actor. A missing, revoked, expired or inaccessible recipient is refused before the card changes. `task_handoff` also accepts `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool. The owner and the live board coordinator may take over (`task_take_next task=#n`) or drop (status-only `task_update status=backlog`) a released todo reservation held by another connection. A workspace owner may move a released restricted-origin todo card directly to done. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor.
 
 Connection ancestry uses the existing nullable `connections.parent_id` foreign key (`token add --parent <connection>`). Authentication exposes `parent_agent`; cards expose the creator's `agent_parent`. A parent's card assigned to its active direct child is immediately ready; `claim=true` starts that child's claim. Self-created child cards instead have `status=backlog`, `proposal_status=pending`, `proposed_to=<direct parent>`, and the child as assignee. These fields are server-stamped, not client inputs. Agents cannot claim, promote, complete, or hand off pending/rejected proposals. Nested proposals may be approved by their direct parent or owning top-level root, not an arbitrary intermediate ancestor. A root has no approval role solely from ancestry on an advisory plan review.
 
@@ -109,7 +109,7 @@ An authority change, owner decision 5 Nov 2026: `task_approve task=#n approve=tr
 | Restricted non-root parent or restricted creator-parent | no |
 | Holder, unrelated agent or top-level claimer | no |
 
-Within approval decisions, only approval writes `approved_by`, and only when the new approver releases and the stored value no longer does. An owner moving restricted work to todo or doing also records an owner release. Reject never writes this column. Stored release markers are checked against current membership, activity and permissions; every agent marker is void while that agent holds the card. Approving a proposal also drops the plan label. The plan label is advisory, and a doing holder may drop it. Backlog plan-labelled cards and review-without-ask cards no longer derive need=plan. Nullable `escalated_to` is migrated additively; schema.sql is unchanged.
+Within approval decisions, only approval writes `approved_by`, and only when the new approver releases and the stored value no longer does. An owner moving restricted work to todo or doing also records an owner release. Reject never writes this column. Stored release markers are checked against current membership, activity and permissions. An agent marker is void while that agent holds the card unless it is the live coordinator or the card's history records its `release origin` decision and it keeps every release grant and its independence from the creator. Cards awaiting release return `awaiting_release: true`. Approving a proposal also drops the plan label. The plan label is advisory, and a doing holder may drop it. Backlog plan-labelled cards and review-without-ask cards no longer derive need=plan. Nullable `escalated_to` is migrated additively; schema.sql is unchanged.
 
 ### task_heartbeat
 
@@ -231,6 +231,30 @@ Ends the caller's hold and gives the card to someone else. `note` is required, s
 | a person, e.g. `avery` | `review`, with `note` as the ask | — (comes back to the caller after the decision) |
 
 `options` (people only) requires two to six distinct choices. A substantive question and context are required; free-text replies remain available in addition to the options.
+
+### Structured decision blocks
+
+`ask` also accepts structured options: each entry of `options` is a label, or an object
+`{"label", "detail"?, "preview"?}`. `detail` is a short explanation (up to 280 characters);
+`preview` is plain text (up to 1200 characters and 24 lines: a mockup, a snippet, sample copy)
+that the app shows side by side in a fixed-width font. A structured list needs two to six
+distinct labels; unknown keys, empty or non-text values and control characters are refused.
+
+```json
+{"question": "Which header should the app use?",
+ "context": "Both variants pass the layout checks.",
+ "options": [
+   {"label": "Compact header", "detail": "One row; search moves into the menu.",
+    "preview": "[logo]  Boards  Memory   (o)"},
+   {"label": "Tall header", "preview": "[logo]\nBoards  Memory  [ search ]"},
+   "Keep the current header"]}
+```
+
+The labels are stored in `ask_options` as for a plain ask, so routing, events and `decide` do
+not change: the person answers with one label, and a choice that was not offered is refused.
+The card adds `ask_blocks`, one `{label, detail?, preview?}` per offered label (an empty list
+for a plain ask); it is cleared with the ask. `task_show` prints each option's detail and
+preview under the ask line. `task_handoff` and `task_update` take plain labels only.
 
 ```
 ok #145 → user:avery  review
@@ -732,3 +756,23 @@ new-user migration and desktop synchronization are deferred.
 
 Workspace owners can inspect members and connections through the separate
 [Admin GET API](../admin.md); board actions retain their existing authority.
+
+## After Done: Archive, carry on and the Pocket
+
+A done card is final. Four actions follow it, all `POST` with the card `version` and open to signed-in
+people only (workspace owner or member). Connections get 403 `no: only a signed-in person can ...`. There
+are no MCP tools for them yet.
+
+| Route | Body | Result |
+| --- | --- | --- |
+| `/api/cards/<n>/archive` | `version` | The card, `archived: true`. Only a done card; archiving twice changes nothing. |
+| `/api/cards/<n>/restore` | `version` | The card, `archived: false`, back in Done. |
+| `/api/cards/<n>/follow-up` | `version`, optional `title`, `body` | 201 `{origin, card}`: a new backlog card on the same board, linked by `follow_up_of` / `follow_ups`. Only from a done card. |
+| `/api/cards/<n>/pocket` | `version`, `text` | The card with the fact pinned (verbatim, up to 2000 characters, at most 25 per card, no duplicates). |
+| `/api/cards/<n>/unpocket` | `version`, `pin` | The card without that fact. The row stays in storage, marked unpinned. |
+
+Archive hides, it never deletes. Archived cards leave `GET /api/boards/<slug>/cards` and the board
+`counts` (the board reports `archived` separately), stay readable through `GET /api/cards/<n>` and
+`GET /api/boards/<slug>/cards?archived=1`, and refuse updates and Pocket changes until restored.
+Every card carries `final`, `archived`, `archived_at`, `archived_by`, `follow_up_of`, `follow_ups`,
+`pocket` and the caller's `can_archive`, `can_restore`, `can_follow_up` and `can_pocket`.
