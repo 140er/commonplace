@@ -1,6 +1,7 @@
 """Apply thread read boundaries to every outgoing mirror drawer."""
 
 import math
+import unicodedata
 from pathlib import Path
 
 from commonplace.policy import canonical_wing
@@ -12,6 +13,7 @@ from .models import MIRROR_WING
 from .recall import Recall
 
 _DROP = object()
+_UNBUILT = object()
 
 
 class _ResponseAccess:
@@ -20,6 +22,7 @@ class _ResponseAccess:
     def __init__(self, gateway, principal):
         self.gateway, self.principal = gateway, principal
         self.rooms, self.records, self.parsed, self.private = {}, {}, {}, {}
+        self.sources = _UNBUILT
 
     def recall(self):
         ctx = self.gateway.handoff
@@ -92,6 +95,51 @@ class _ResponseAccess:
             return self(token.lower())
         rows = self._source_rows(token)
         return bool(rows) and any(self(row.id) for row in rows)
+
+    def exact_source_readable(self, value, names):
+        """A value equal to a stored source ID, or naming the same extracted
+        ``mcp:`` remainder as one, is shown only to readers of every such thread.
+
+        Covers sources whose ``mcp:`` is not the leading namespace (``xmcp:``, a
+        leading space or a percent-encoded namespace), which prefix matching
+        cannot see. The index is built once per response. When it cannot be
+        built, only source-like (colon-bearing) values are hidden.
+        """
+        index = self._source_index()
+        if index is None:
+            return ":" not in unicodedata.normalize("NFKC", value)
+        exact, extracted = index
+        threads = list(exact.get(unicodedata.normalize("NFKC", value), ()))
+        for name in names:
+            threads.extend(extracted.get(name, ()))
+        return all(self(thread) for thread in threads)
+
+    def _source_index(self):
+        if self.sources is _UNBUILT:
+            self.sources = None
+            try:
+                ctx = self.gateway.handoff
+                checks.remaining(0)
+                store = (
+                    ctx._stores.get(self.principal.workspace_id)
+                    if checks._deadline.get() is not None
+                    else ctx.store_for(self.principal.workspace_id)
+                )
+                if store is None:
+                    return None
+                exact, extracted = {}, {}
+                for thread, source in store.source_ids(self.principal.workspace_id):
+                    normal = unicodedata.normalize("NFKC", source)
+                    exact.setdefault(normal, []).append(thread)
+                    if "mcp" in normal.lower() or "%" in normal:
+                        # The same extraction the room resolver applies.
+                        for name in provenance_refs.room_references(source) or ():
+                            if name.startswith("mcp:"):
+                                extracted.setdefault(name, []).append(thread)
+                self.sources = (exact, extracted)
+            except Exception:
+                pass
+        return self.sources
 
     def source_readable(self, token):
         """A room naming source IDs is shown only to readers of every thread filed
@@ -179,6 +227,9 @@ def private_thread_reference(access, value):
     """A value naming any thread this reader cannot read is not shown to them."""
     names = provenance_refs.room_references(value)
     if names is None:
+        return True
+    exact = getattr(access, "exact_source_readable", None)
+    if isinstance(value, str) and exact is not None and not exact(value, names):
         return True
     source = getattr(access, "source_readable", None)
     return any(

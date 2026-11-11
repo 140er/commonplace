@@ -791,6 +791,15 @@ class ThreadStore:
                 for thread in ids
             ]
 
+    def source_ids(self, workspace_id: str) -> list[tuple[str, str]]:
+        """Every stored thread's ID and source ID in this workspace."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, source_thread_id FROM threads WHERE workspace_id=? ORDER BY id",
+                (workspace_id,),
+            ).fetchall()
+            return [(row[0], row[1]) for row in rows]
+
     def list_source_range(self, workspace_id, prefix, *, after=None, limit):
         """Page a literal source namespace in binary identity order."""
         if not prefix.endswith(":"):

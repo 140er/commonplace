@@ -1733,12 +1733,22 @@ workspace thread store: every stored source ID, or hash-variant base, that is a
 prefix of that remainder counts, including `mcp:<source>_notes`. A stored source
 is keyed as NFKC first, then its `#sha256:` variant base, then the namespace
 folded; the room's whole value is NFKC-normalised with its namespace folded and
-never cut at a hash marker. The namespace folds `mcp` in any case after NFKC, so
-the covered spellings all match `mcp:x`: `MCP:x`, `Mcp:x`, a fullwidth `mcp`,
-mixed-width ASCII `m` with fullwidth `cp` or `p`, and a fullwidth colon. A
-stored `mcp:x#` matches a room `mcp:x#sha256:...`, a stored variant marked with
-a fullwidth number sign matches its base, and a bare stored `mcp:` source is a
-prefix of every `mcp:` value (it fails closed). One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
+never cut at a hash marker. The namespace folds `mcp` in any case after NFKC.
+The tested stored spellings that match `mcp:x` are `MCP:x`, `Mcp:x`, a fullwidth
+`ｍｃｐ:x`, and the mixed-width `mｃｐ:x`, `mcｐ:x` and `mｃｐ：x`; any other
+ASCII and fullwidth mix folds the same way through NFKC. A stored `mcp:x#`
+matches a room `mcp:x#sha256:...`, a stored variant marked with a fullwidth
+number sign matches its base, and a bare stored `mcp:` source is a prefix of
+every `mcp:` value (it fails closed). Only the namespace case-folds: the rest of
+a source ID is an exact identity, so `mcp:Probe` and `mcp:probe` are different
+sources, and `#SHA256:` is not a variant marker (thread IDs, by contrast, match
+in any case). A room value is also hidden when its whole NFKC value equals a
+stored source ID, or when its extracted `mcp:` remainder equals the remainder
+extracted from a stored source the same way, and the reader cannot read every
+such thread. This covers stored sources whose `mcp:` is not the leading
+namespace (`xmcp:x`, a leading space or no-break space, a percent-encoded
+namespace). The equality index is built once per response; when it cannot be
+built, only colon-bearing room values are hidden. One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
 check (`provenance_refs.room_references`, used through
 `mirror_access.private_thread_reference`) cover every route that returns or
 writes a room or topic. Reads: drawer reads, search (structured and

@@ -69,6 +69,13 @@ FORMS = {
     "mcp_source_trailing_hash": lambda t: "mcp:" + probe_id(t) + "#sha256:0123abcd",
     # A fullwidth number sign in the stored variant marker is a variant after NFKC.
     "mcp_source_fullwidth_hash_variant": lambda t: "mcp:" + probe_id(t),
+    # Sources whose mcp: is not the leading namespace; the room equals the source.
+    "mcp_source_xmcp": lambda t: t.source_thread_id,
+    "mcp_source_leading_space": lambda t: t.source_thread_id,
+    "mcp_source_leading_nbsp": lambda t: t.source_thread_id,
+    "mcp_source_percent_namespace": lambda t: t.source_thread_id,
+    # The room names the same extracted mcp: remainder as a non-leading source.
+    "mcp_source_xmcp_canonical_room": lambda t: "mcp:" + probe_id(t),
     # A percent sign behind NFKC: decoding must repeat until the value is stable.
     "double_encoded": lambda t: "%EF%BC%85" + "74" + t.id[1:],
     # Still changing after the decode/NFKC round bound: hidden from every reader.
@@ -112,6 +119,11 @@ SOURCE_SPELLINGS = {
     "mcp_source_ascii_m_fullwidth_cp_colon": lambda p: "m\uff43\uff50\uff1a" + p,
     "mcp_source_trailing_hash": lambda p: "mcp:" + p + "#",
     "mcp_source_fullwidth_hash_variant": lambda p: "mcp:" + p + "\uff03sha256:abc",
+    "mcp_source_xmcp": lambda p: "xmcp:" + p,
+    "mcp_source_leading_space": lambda p: " mcp:" + p,
+    "mcp_source_leading_nbsp": lambda p: "\u00a0mcp:" + p,
+    "mcp_source_percent_namespace": lambda p: "%6dcp:" + p,
+    "mcp_source_xmcp_canonical_room": lambda p: "xmcp:" + p,
 }
 NAMESPACE_SOURCES = {
     "mcp_source_upper_namespace": "MCP:",
@@ -354,6 +366,9 @@ def test_thread_blind_reader_never_receives_thread_identity(
         "mcp_source_ascii_m_fullwidth_cp",
         "mcp_source_trailing_hash",
         "mcp_source_fullwidth_hash_variant",
+        "mcp_source_xmcp",
+        "mcp_source_percent_namespace",
+        "mcp_source_xmcp_canonical_room",
         "double_encoded",
     ],
 )
