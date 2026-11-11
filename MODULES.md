@@ -607,6 +607,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
 
+  - The settings harnesses (`tests/test_settings_load.py`, `tests/commonplace_refresh_render.mjs`) stub `mountToolPolicy`, and the route inventory in `tests/test_commonplace_public_surface.py` lists `/api/tool-policy`.
+
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
   - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
