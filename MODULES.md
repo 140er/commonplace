@@ -563,7 +563,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
-  - The webhook timeout test holds handler dispatch with an event and joins request workers during cleanup; receipt and signed payload assertions belong to successful delivery tests.
+  - The webhook timeout test holds handler dispatch with an event and joins request workers during cleanup; receipt and signed payload assertions belong to successful delivery tests. `tests/test_handoff_launchers_slow_host.py` with `tests/_slow_webhook_plugin.py` re-runs the timeout and a success test with every request worker starting 0.5 s late.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 

@@ -12,7 +12,7 @@ entry was written.
 
 ## Decisions
 
-- **Webhook timeout verification:** A real socket timeout can precede request handling. The timeout test holds handler dispatch with an event, joins its request workers on cleanup and keeps the 50 ms timeout; successful-delivery tests verify the request and exact signed payload. Launcher behavior is unchanged.
+- **Webhook timeout verification:** A real socket timeout can precede request handling. The timeout test holds handler dispatch with an event, joins its request workers on cleanup and keeps the 50 ms timeout; successful-delivery tests verify the request and exact signed payload. A slow-host regression re-runs the timeout test with every request worker starting late. Launcher behavior is unchanged.
 
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
