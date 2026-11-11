@@ -1212,7 +1212,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
-  - `tests/test_runner_write_wings.py` (write-set starts, refusals, owner authority, private wings, defaults, migration) and the browser check `tests/workbench_e2e/test_runner_write_wings.py`.
+  - `tests/test_runner_write_wings.py` (write-set starts, refusals, owner authority, private wings, defaults, migration) and the browser check `tests/workbench_e2e/test_runner_write_wings.py`. `tests/test_runner_owner_screens.py` (refusal names the wings, owner-only routes, no token storage/logging in `runners.js`) and the browser check `tests/workbench_e2e/test_runner_owner_screens.py` (enroll, one-time tokens, attest, wings edit).
 
 
 ## orch
@@ -1666,6 +1666,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
   - The owner Settings > Runner machines section (`runners.js`): each machine's read and write wings, and the write-access control that patches `write_wings`.
+  - The owner Settings > Runner machines screens (`runners.js`): enroll with one-time tokens, per-machine attest, read-wings edit, and each machine's write wings.
 
 - **Promises:**
 

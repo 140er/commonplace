@@ -112,6 +112,11 @@ Machine activity uses machine contact, with worker contact shown separately.
 Working means recent contact; idle/quiet means no recent contact; unused means
 never contacted. Attestation never proves a live or verified runner.
 
+Owners enroll, attest and edit the wings of machines in the app's Settings >
+Runner machines section; the controls call the owner-only `/api/runners` routes and are
+not part of this read-only Admin view. One-time tokens shown at enrollment never reach
+storage, logs or any later render.
+
 `limits` returns `orchestration_enabled`, `workspace_max_agents:null`,
 `workspace_limit_source:"not_configured"`, `projects`, `machines`, `pagination`.
 Each project includes `id`, `slug`, `name`, `configured_max_agents`,
