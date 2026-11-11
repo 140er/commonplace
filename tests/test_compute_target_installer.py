@@ -1,0 +1,670 @@
+"""Compute target installer: plan, idempotent install and manifest-driven uninstall.
+
+Everything runs against a temporary ``--root`` with the recording ``StagedHost``:
+no account is created, nothing is mounted and no system file is touched. Ownership
+is only applied by a live host, so these tests assert modes and the recorded system
+commands; owner checks need a disposable root VM.
+"""
+
+import base64
+import hashlib
+import json
+import os
+import shutil
+import stat
+import struct
+import subprocess
+from dataclasses import asdict
+from pathlib import Path
+
+import pytest
+
+from commonplace.compute import target_installer as install
+from commonplace.compute.script_sandbox import ScriptTargetConfig
+from commonplace.compute.target_helper import TARGET_CONFIG_PATH, TARGET_HELPER_COMMAND
+
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="Linux target provisioning")
+
+WIRE = struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32) + bytes(range(32))
+KEY = "ssh-ed25519 " + base64.b64encode(WIRE).decode("ascii")
+PRINCIPAL = hashlib.sha256(WIRE).hexdigest()
+IDENTITY = ["--workspace", "fixture-script-workspace", "--gateway", "gw1", "--node", "node1"]
+SCRATCH_UNIT = "var-lib-commonplace\\x2dcompute-scratch.mount"
+RUNTIME_UNIT = "opt-commonplace\\x2dcompute-runtime.mount"
+
+
+def fake_runtime(base):
+    base = Path(base)
+    (base / "stdlib" / "encodings").mkdir(parents=True)
+    (base / "stdlib" / "test").mkdir()
+    (base / "stdlib" / "__pycache__").mkdir()
+    (base / "dynload").mkdir()
+    (base / "stdlib" / "os.py").write_text("# fake os\n")
+    (base / "stdlib" / "encodings" / "__init__.py").write_text("# fake\n")
+    (base / "stdlib" / "test" / "skipped.py").write_text("# excluded\n")
+    (base / "stdlib" / "__pycache__" / "os.cpython-312.pyc").write_bytes(b"x")
+    (base / "dynload" / "_fake.cpython-312-x86_64-linux-gnu.so").write_bytes(b"\x7fELF so")
+    (base / "python3").write_bytes(b"\x7fELF fake python")
+    (base / "libm.so.6").write_bytes(b"\x7fELF libm")
+    (base / "ld.so").write_bytes(b"\x7fELF loader")
+    return install.RuntimeSpec(
+        binary=base / "python3",
+        libs=(
+            ("lib/x86_64-linux-gnu/libm.so.6", base / "libm.so.6"),
+            ("lib64/ld-linux-x86-64.so.2", base / "ld.so"),
+        ),
+        stdlib=base / "stdlib",
+        dynload=base / "dynload",
+        version=(3, 12),
+    )
+
+
+RUNTIME_TREE = {
+    "usr",
+    "usr/bin",
+    "usr/bin/python3",
+    "usr/lib",
+    "usr/lib/python312.zip",
+    "usr/lib/python3.12",
+    "usr/lib/python3.12/lib-dynload",
+    "usr/lib/python3.12/lib-dynload/_fake.cpython-312-x86_64-linux-gnu.so",
+    "lib",
+    "lib/x86_64-linux-gnu",
+    "lib/x86_64-linux-gnu/libm.so.6",
+    "lib64",
+    "lib64/ld-linux-x86-64.so.2",
+    "job",
+    "proc",
+    "dev",
+    "tmp",
+}
+
+
+def expected_paths():
+    src = "opt/commonplace-compute/runtime-src/"
+    return {
+        "etc",
+        "etc/commonplace",
+        "etc/commonplace/compute-authorized-keys",
+        "etc/commonplace/compute-install-manifest.json",
+        "etc/commonplace/compute-script-target-v1.json",
+        "etc/ssh",
+        "etc/ssh/sshd_config",
+        "etc/ssh/sshd_config.d",
+        "etc/ssh/sshd_config.d/60-commonplace-compute.conf",
+        "etc/systemd",
+        "etc/systemd/system",
+        "etc/systemd/system/" + SCRATCH_UNIT,
+        "etc/systemd/system/" + RUNTIME_UNIT,
+        "opt",
+        "opt/commonplace-compute",
+        "opt/commonplace-compute/runtime",
+        "opt/commonplace-compute/runtime-src",
+        *(src + name for name in RUNTIME_TREE),
+        "usr",
+        "usr/local",
+        "usr/local/libexec",
+        "usr/local/libexec/commonplace-compute",
+        "usr/local/libexec/commonplace-compute/helper-entry",
+        "var",
+        "var/lib",
+        "var/lib/commonplace-compute",
+        "var/lib/commonplace-compute/attempts",
+        "var/lib/commonplace-compute/inputs",
+        "var/lib/commonplace-compute/scratch",
+    }
+
+
+@pytest.fixture
+def root(tmp_path):
+    path = tmp_path / "root"
+    (path / "etc/ssh/sshd_config.d").mkdir(parents=True)
+    (path / "etc/ssh/sshd_config").write_text(
+        "Include /etc/ssh/sshd_config.d/*.conf\nAcceptEnv LANG LC_*\n"
+    )
+    return path
+
+
+@pytest.fixture
+def runtime(tmp_path):
+    spec = fake_runtime(tmp_path / "host")
+    return lambda: spec
+
+
+def snapshot(root, *, mtimes=True):
+    result = {}
+    for path in sorted(root.rglob("*")):
+        info = path.lstat()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        stamp = info.st_mtime_ns if mtimes else None
+        result[str(path.relative_to(root))] = (stat.S_IMODE(info.st_mode), stamp, digest)
+    return result
+
+
+def run(root, command, runtime, *extra, host=None, pin=None):
+    args = [command, "--root", str(root), *extra]
+    return install.main(args, host=host or install.StagedHost(), runtime_source=runtime, pin=pin)
+
+
+def installed(root, runtime, *extra, host=None, pin=None):
+    host = host or install.StagedHost()
+    code = run(
+        root, "install", runtime, *IDENTITY, "--controller-key", KEY, *extra, host=host, pin=pin
+    )
+    assert code == 0
+    return host
+
+
+def test_plan_lists_every_action_and_touches_nothing(root, runtime, capsys):
+    before = snapshot(root)
+    host = install.StagedHost()
+    code = run(root, "plan", runtime, *IDENTITY, "--controller-key", KEY, host=host)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert snapshot(root) == before and host.commands == []
+    for needle in (
+        "account commonplace-compute",
+        "dir /var/lib/commonplace-compute 0700",
+        "dir /var/lib/commonplace-compute/attempts 0700",
+        "dir /var/lib/commonplace-compute/inputs 0700",
+        "tmpfs-mount /var/lib/commonplace-compute/scratch size=32M nr_inodes=4096",
+        "runtime-tree /opt/commonplace-compute/runtime-src",
+        "ro-bind-mount /opt/commonplace-compute/runtime",
+        "file /usr/local/libexec/commonplace-compute/helper-entry 0755",
+        "authorized-key /etc/commonplace/compute-authorized-keys",
+        "sshd-dropin /etc/ssh/sshd_config.d/60-commonplace-compute.conf",
+        f"target-config {TARGET_CONFIG_PATH} 0644",
+    ):
+        assert needle in out, needle
+    assert KEY not in out  # the public key is data, the plan names only its fingerprint
+    assert PRINCIPAL in out
+    assert "approval-keys" not in out
+
+
+def test_plan_includes_the_pin_step_only_when_a_keyset_is_given(root, runtime, capsys):
+    run(root, "plan", runtime, *IDENTITY, "--controller-key", KEY, "--approval-keyset", "/keys/set")
+    assert "approval-keys /keys/set (seam: awaiting #431 format)" in capsys.readouterr().out
+
+
+def test_install_creates_exactly_the_expected_tree_and_modes(root, runtime):
+    host = installed(root, runtime)
+    seen = {str(p.relative_to(root)) for p in root.rglob("*")}
+    assert seen == expected_paths()
+    modes = {name: stat.S_IMODE((root / name).lstat().st_mode) for name in seen}
+    private = "var/lib/commonplace-compute"
+    for name in (private, private + "/attempts", private + "/inputs", private + "/scratch"):
+        assert modes[name] == 0o700, name
+    assert modes["etc/commonplace"] == 0o755
+    assert modes["etc/commonplace/compute-script-target-v1.json"] == 0o644
+    assert modes["etc/commonplace/compute-authorized-keys"] == 0o644
+    assert modes["etc/commonplace/compute-install-manifest.json"] == 0o600
+    assert modes["usr/local/libexec/commonplace-compute/helper-entry"] == 0o755
+    assert modes["etc/ssh/sshd_config.d/60-commonplace-compute.conf"] == 0o644
+    for name in expected_paths():
+        if name.startswith("opt/commonplace-compute/runtime-src/"):
+            assert not modes[name] & 0o022, name  # runtime_inventory rejects group/world write
+    # Only the installer's own targets plus the preexisting sshd_config; no foreign files.
+    assert [c[0] for c in host.commands].count("useradd") == 1
+
+
+def test_config_has_exact_fields_and_binds_the_key_and_runtime(root, runtime):
+    installed(root, runtime)
+    raw = json.loads((root / "etc/commonplace/compute-script-target-v1.json").read_text())
+    assert set(raw) == set(ScriptTargetConfig.__dataclass_fields__)
+    config = ScriptTargetConfig(**raw)
+    assert config.enabled is True
+    assert (config.workspace, config.gateway, config.node) == (
+        "fixture-script-workspace",
+        "gw1",
+        "node1",
+    )
+    assert config.key_principal == PRINCIPAL
+    assert config.workspace_root == "/var/lib/commonplace-compute"
+    assert config.scratch_root == "/var/lib/commonplace-compute/scratch"
+    assert config.runtime_root == "/opt/commonplace-compute/runtime"
+    assert config.runtime_digest == install.staged_inventory(
+        root / "opt/commonplace-compute/runtime-src"
+    )
+    assert config.cgroup_root.startswith("/sys/fs/cgroup/user.slice/user-")
+    assert config.cgroup_root.endswith("/commonplace-compute-helper.scope/fixture")
+    assert config.controller_contract == "controller-ssh-permit-v1"
+    assert TARGET_CONFIG_PATH == "/" + "etc/commonplace/compute-script-target-v1.json"
+
+
+def test_sshd_dropin_authorized_key_and_entry_content(root, runtime):
+    installed(root, runtime)
+    dropin = (root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf").read_text().splitlines()
+    block = [line.strip() for line in dropin if line.strip() and not line.startswith("#")]
+    assert block[0] == "Match User commonplace-compute"
+    assert block[-1] == "Match all"
+    for line in (
+        "ExposeAuthInfo yes",
+        "ForceCommand /usr/local/libexec/commonplace-compute/helper-entry",
+        "AuthorizedKeysFile /etc/commonplace/compute-authorized-keys",
+        "AuthenticationMethods publickey",
+        "PasswordAuthentication no",
+        "PermitTTY no",
+        "AllowTcpForwarding no",
+        "AllowAgentForwarding no",
+        "PermitUserEnvironment no",
+    ):
+        assert line in block, line
+    assert not any(line.startswith("AcceptEnv") for line in block)
+    keys = (root / "etc/commonplace/compute-authorized-keys").read_text()
+    assert keys == "restrict " + KEY + "\n"
+    entry = root / "usr/local/libexec/commonplace-compute/helper-entry"
+    text = entry.read_text()
+    assert text.startswith("#!/bin/sh\n")
+    assert f"exec {TARGET_HELPER_COMMAND}\n" in text
+    assert "Delegate=yes" in text and "+cpu +memory +pids" in text
+    assert subprocess.run(["sh", "-n", str(entry)]).returncode == 0
+
+
+def test_live_host_commands_and_unit_content(root, runtime):
+    host = LiveStub()
+    installed(root, runtime, host=host)
+    assert host.commands[0][:4] == ("useradd", "--system", "--user-group", "--home-dir")
+    assert "--no-create-home" in host.commands[0] and host.commands[0][-1] == "commonplace-compute"
+    names = [c for c in host.commands if c[0] == "systemctl"]
+    assert ("systemctl", "daemon-reload") in names
+    assert ("systemctl", "enable", "--now", SCRATCH_UNIT) in names
+    assert ("systemctl", "enable", "--now", RUNTIME_UNIT) in names
+    assert ("sshd", "-t") in host.commands
+    assert ("systemctl", "reload", "ssh.service") in names
+    scratch = (root / "etc/systemd/system" / SCRATCH_UNIT).read_text()
+    assert "Type=tmpfs" in scratch
+    assert "Options=mode=0700,uid=1234,gid=1234,size=32M,nr_inodes=4096,nosuid,nodev" in scratch
+    runtime_unit = (root / "etc/systemd/system" / RUNTIME_UNIT).read_text()
+    assert "What=/opt/commonplace-compute/runtime-src" in runtime_unit
+    assert "Options=bind,ro" in runtime_unit
+    owned = {path for path, uid, gid in host.chowns}
+    assert {
+        "/var/lib/commonplace-compute",
+        "/var/lib/commonplace-compute/attempts",
+        "/var/lib/commonplace-compute/inputs",
+        "/var/lib/commonplace-compute/scratch",
+    } <= {p.removeprefix(str(root)) for p in owned}
+    assert all(uid == gid == 1234 for _, uid, gid in host.chowns)
+
+
+class LiveStub(install.StagedHost):
+    """Pretends to be root on a real host but only records; never executes anything."""
+
+    live = True
+
+    def __init__(self):
+        super().__init__(uid=1234, gid=1234)
+        self.chowns = []
+
+    def euid(self):
+        return 0
+
+    def chown(self, path, uid, gid):
+        self.chowns.append((str(path), uid, gid))
+
+
+def test_second_install_is_a_noop(root, runtime, capsys):
+    host = installed(root, runtime)
+    before, commands = snapshot(root), list(host.commands)
+    manifest = (root / "etc/commonplace/compute-install-manifest.json").read_bytes()
+    capsys.readouterr()
+    code = run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host)
+    assert code == 0
+    assert "already installed; nothing to do" in capsys.readouterr().out
+    assert snapshot(root) == before
+    assert host.commands == commands
+    assert (root / "etc/commonplace/compute-install-manifest.json").read_bytes() == manifest
+
+
+def test_changed_settings_refuse_instead_of_overwriting(root, runtime, capsys):
+    installed(root, runtime)
+    before = snapshot(root)
+    code = run(root, "install", runtime, *IDENTITY[:-1], "node2", "--controller-key", KEY)
+    assert code == 1
+    assert "uninstall first" in capsys.readouterr().err
+    assert snapshot(root) == before
+
+
+def test_uninstall_restores_root_to_its_initial_state(root, runtime):
+    initial = snapshot(root, mtimes=False)
+    host = installed(root, runtime)
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert snapshot(root, mtimes=False) == initial
+    assert ("userdel", "commonplace-compute") in host.commands
+
+
+def test_uninstall_restores_an_empty_root(tmp_path, runtime):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    host = install.StagedHost()
+    # With no sshd_config the staged install skips the sshd preflight and creates its own dirs.
+    assert run(empty, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 0
+    assert (empty / "etc/commonplace/compute-script-target-v1.json").is_file()
+    assert run(empty, "uninstall", runtime, host=host) == 0
+    assert list(empty.rglob("*")) == []
+
+
+def test_uninstall_stops_units_and_reloads_sshd(root, runtime):
+    host = LiveStub()
+    installed(root, runtime, host=host)
+    host.commands.clear()
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert ("systemctl", "disable", "--now", RUNTIME_UNIT) in host.commands
+    assert ("systemctl", "disable", "--now", SCRATCH_UNIT) in host.commands
+    assert ("systemctl", "reload", "ssh.service") in host.commands
+    assert host.commands.index(
+        ("systemctl", "disable", "--now", RUNTIME_UNIT)
+    ) < host.commands.index(("userdel", "commonplace-compute"))
+
+
+def test_uninstall_keeps_attempt_evidence_unless_discarded(root, runtime, capsys):
+    installed(root, runtime)
+    claim = root / "var/lib/commonplace-compute/attempts/claim0"
+    claim.mkdir()
+    (claim / "claim.json").write_text("{}")
+    before = snapshot(root)
+    assert run(root, "uninstall", runtime) == 1
+    assert "evidence" in capsys.readouterr().err
+    assert snapshot(root) == before
+    assert run(root, "uninstall", runtime, "--discard-workspace-data") == 0
+    assert not (root / "var").exists()
+
+
+def test_uninstall_leaves_files_changed_after_install(root, runtime, capsys):
+    installed(root, runtime)
+    dropin = root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf"
+    dropin.write_text(dropin.read_text() + "# operator edit\n")
+    assert run(root, "uninstall", runtime) == 1
+    assert "changed since install" in capsys.readouterr().err
+    assert dropin.exists()
+    assert (root / "etc/commonplace/compute-install-manifest.json").exists()
+    dropin.unlink()  # operator resolves it; uninstall now finishes
+    assert run(root, "uninstall", runtime) == 0
+    assert not (root / "opt").exists() and not (root / "var").exists()
+
+
+def test_real_install_refuses_without_root(root, runtime):
+    class NotRoot(LiveStub):
+        def euid(self):
+            return 1000
+
+    host = NotRoot()
+    before = snapshot(root)
+    with pytest.raises(install.InstallError, match="must run as root"):
+        install.Installer(
+            install.InstallOptions(
+                root=root,
+                workspace="w",
+                gateway="g",
+                node="n",
+                controller_key=install.parse_controller_key(KEY),
+            ),
+            host,
+            runtime_source=runtime,
+        ).install()
+    assert snapshot(root) == before and host.commands == [] and host.chowns == []
+
+
+def test_cli_without_root_prefix_selects_the_live_host_and_refuses(monkeypatch, runtime, capsys):
+    class NotRoot(LiveStub):
+        def euid(self):
+            return 1000
+
+    monkeypatch.setattr(install, "LiveHost", NotRoot)
+    code = install.main(["install", *IDENTITY, "--controller-key", KEY], runtime_source=runtime)
+    assert code == 1
+    assert "must run as root" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv, message",
+    [
+        ([], "controller key"),
+        (["--controller-key-file", "/nonexistent/key.pub"], "controller key"),
+        (["--controller-key", "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQ"], "ed25519"),
+        (["--controller-key", 'command="id" ' + KEY], "ed25519"),
+        (["--controller-key", KEY + "\n" + KEY], "single"),
+        (["--controller-key=-----BEGIN OPENSSH PRIVATE KEY-----"], "ed25519"),
+        (["--controller-key", "ssh-ed25519 AAAA"], "ed25519"),
+    ],
+)
+def test_missing_or_unsuitable_controller_key_is_refused(root, runtime, capsys, argv, message):
+    before = snapshot(root)
+    host = install.StagedHost()
+    code = run(root, "install", runtime, *IDENTITY, *argv, host=host)
+    err = capsys.readouterr().err
+    assert code in (1, 2)
+    assert message in err
+    assert snapshot(root) == before and host.commands == []
+    assert "PRIVATE KEY" not in err
+
+
+def test_private_key_material_is_never_echoed(root, runtime, tmp_path, capsys):
+    secret = tmp_path / "secret.pem"
+    secret.write_text(
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nTOPSECRETBODY\n-----END OPENSSH PRIVATE KEY-----\n"
+    )
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key-file", str(secret)) == 1
+    captured = capsys.readouterr()
+    assert "TOPSECRETBODY" not in captured.out + captured.err
+    assert "PRIVATE KEY" not in captured.out + captured.err
+
+
+def test_key_file_is_accepted_and_comment_is_dropped(root, runtime, tmp_path):
+    key_file = tmp_path / "controller.pub"
+    key_file.write_text(KEY + " controller@example.test\n")
+    code = run(root, "install", runtime, *IDENTITY, "--controller-key-file", str(key_file))
+    assert code == 0
+    assert (
+        root / "etc/commonplace/compute-authorized-keys"
+    ).read_text() == "restrict " + KEY + "\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["AcceptEnv SSH_USER_AUTH", "AcceptEnv LANG SSH_*", "AcceptEnv *"],
+)
+def test_sshd_accepting_the_auth_info_variable_is_refused(root, runtime, capsys, line):
+    (root / "etc/ssh/sshd_config.d/10-other.conf").write_text(line + "\n")
+    before = snapshot(root)
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY) == 1
+    assert "SSH_USER_AUTH" in capsys.readouterr().err
+    assert snapshot(root) == before
+
+
+def test_sshd_without_dropin_include_is_refused(root, runtime, capsys):
+    (root / "etc/ssh/sshd_config").write_text("Port 22\n")
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY) == 1
+    assert "sshd_config.d" in capsys.readouterr().err
+
+
+def test_foreign_files_and_accounts_are_never_adopted(root, runtime, capsys):
+    foreign = root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf"
+    foreign.write_text("# somebody else's\n")
+    before = snapshot(root)
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY) == 1
+    assert "not installed by this installer" in capsys.readouterr().err
+    assert snapshot(root) == before
+
+    foreign.unlink()
+
+    class Existing(install.StagedHost):
+        def account_exists(self, name):
+            return True
+
+    host = Existing()
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 1
+    assert "account commonplace-compute already exists" in capsys.readouterr().err
+    assert host.commands == []
+
+
+def test_pin_seam_is_called_with_the_keyset_path_before_activation(root, runtime):
+    calls = []
+
+    def pin(path):
+        calls.append(path)
+        assert not (root / "etc/commonplace/compute-script-target-v1.json").exists()
+
+    installed(root, runtime, "--approval-keyset", "/keys/owner.set", pin=pin)
+    assert calls == ["/keys/owner.set"]
+    assert (root / "etc/commonplace/compute-script-target-v1.json").is_file()
+
+
+def test_pin_seam_defaults_to_not_implemented_and_blocks_activation(root, runtime, capsys):
+    with pytest.raises(NotImplementedError, match="awaiting #431 format"):
+        install.pin_approval_keys("/keys/owner.set")
+    code = run(
+        root, "install", runtime, *IDENTITY, "--controller-key", KEY, "--approval-keyset", "/k"
+    )
+    assert code == 1
+    assert "awaiting #431 format" in capsys.readouterr().err
+    # The helper stays disabled: no config was written, so activation never happened.
+    assert not (root / "etc/commonplace/compute-script-target-v1.json").exists()
+
+
+def test_install_resumes_after_a_failed_pin_and_pins_once(root, runtime):
+    calls = []
+    assert (
+        run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, "--approval-keyset", "/k")
+        == 1
+    )
+    code = run(
+        root,
+        "install",
+        runtime,
+        *IDENTITY,
+        "--controller-key",
+        KEY,
+        "--approval-keyset",
+        "/k",
+        pin=calls.append,
+    )
+    assert code == 0 and calls == ["/k"]
+    assert {str(p.relative_to(root)) for p in root.rglob("*")} == expected_paths()
+    assert (
+        run(
+            root,
+            "install",
+            runtime,
+            *IDENTITY,
+            "--controller-key",
+            KEY,
+            "--approval-keyset",
+            "/k",
+            pin=lambda path: pytest.fail("pinned twice"),
+        )
+        == 0
+    )
+    assert run(root, "uninstall", runtime) == 0
+
+
+def test_failed_sshd_validation_rolls_back_the_dropin(root, runtime, capsys):
+    class Broken(LiveStub):
+        def run(self, argv):
+            super().run(argv)
+            if tuple(argv) == ("sshd", "-t"):
+                raise install.InstallError("sshd rejected the configuration")
+
+    host = Broken()
+    code = run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host)
+    assert code == 1
+    assert not (root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf").exists()
+    assert ("systemctl", "reload", "ssh.service") not in host.commands
+    assert not (root / "etc/commonplace/compute-script-target-v1.json").exists()
+
+
+def test_install_can_be_resumed_after_an_interruption(root, runtime):
+    class Interrupt(install.StagedHost):
+        def run(self, argv):
+            super().run(argv)
+            if argv[0] == "systemctl" and "enable" in argv:
+                raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=Interrupt())
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY) == 0
+    assert {str(p.relative_to(root)) for p in root.rglob("*")} == expected_paths()
+    assert run(root, "uninstall", runtime) == 0
+    assert {str(p.relative_to(root)) for p in root.rglob("*")} == {
+        "etc",
+        "etc/ssh",
+        "etc/ssh/sshd_config",
+        "etc/ssh/sshd_config.d",
+    }
+
+
+def test_installed_config_is_what_the_sandbox_fixture_loads(root, runtime):
+    """COMMONPLACE_COMPUTE_SANDBOX_FIXTURE can point at the config this installer writes."""
+    host = installed(root, runtime)
+    config_path = root / "etc/commonplace/compute-script-target-v1.json"
+    settings = ScriptTargetConfig(**json.loads(config_path.read_text()))
+    assert settings.workspace == "fixture-script-workspace"  # the fixture test's reserved identity
+    assert asdict(settings) == json.loads(config_path.read_text())
+    from commonplace.compute.target_helper import TargetHelper
+
+    helper = TargetHelper(settings, key_principal=settings.key_principal)
+    assert helper.config.scratch_root == settings.workspace_root + "/scratch"
+    assert host.commands  # the staged host recorded what a live install would run
+
+
+def test_install_prints_the_fixture_variable(root, runtime, capsys):
+    run(root, "install", runtime, *IDENTITY, "--controller-key", KEY)
+    out = capsys.readouterr().out
+    assert (
+        f"COMMONPLACE_COMPUTE_SANDBOX_FIXTURE={root.resolve()}/etc/commonplace/compute-script-target-v1.json"
+        in out
+    )
+
+
+def test_systemd_escaping_matches_systemd_escape():
+    assert install.systemd_escape_path("/var/lib/commonplace-compute/scratch") == SCRATCH_UNIT[:-6]
+    assert install.systemd_escape_path("/a b/c") == "a\\x20b-c"
+    assert install.systemd_escape_path("/.c") == "\\x2ec"
+
+
+def test_parse_ldd_ignores_the_vdso_and_keeps_the_loader():
+    text = (
+        "\tlinux-vdso.so.1 (0x00007ffc)\n"
+        "\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f0)\n"
+        "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f1)\n"
+        "\t/lib64/ld-linux-x86-64.so.2 (0x00007f2)\n"
+        "\tlibmissing.so => not found\n"
+    )
+    assert install.parse_ldd(text) == [
+        "/lib/x86_64-linux-gnu/libm.so.6",
+        "/lib/x86_64-linux-gnu/libc.so.6",
+        "/lib64/ld-linux-x86-64.so.2",
+    ]
+    with pytest.raises(install.InstallError, match="not found"):
+        install.parse_ldd(text, strict=True)
+
+
+def test_runtime_tree_is_reproducible_and_excludes_tests_and_bytecode(tmp_path):
+    spec = fake_runtime(tmp_path / "host")
+    first, second = tmp_path / "a", tmp_path / "b"
+    install.build_runtime_tree(first, spec)
+    install.build_runtime_tree(second, spec)
+    assert install.staged_inventory(first) == install.staged_inventory(second)
+    import zipfile
+
+    names = zipfile.ZipFile(first / "usr/lib/python312.zip").namelist()
+    assert sorted(names) == ["encodings/__init__.py", "os.py"]
+    for path in first.rglob("*"):
+        assert not stat.S_IMODE(path.lstat().st_mode) & 0o022
+
+
+@pytest.mark.skipif(
+    not (Path("/usr/bin/ldd").exists() and Path("/usr/bin/python3").exists()),
+    reason="needs a host python3 and ldd",
+)
+def test_host_runtime_discovery_builds_a_self_contained_tree(tmp_path):
+    spec = install.discover_runtime("/usr/bin/python3")
+    tree = tmp_path / "tree"
+    install.build_runtime_tree(tree, spec)
+    version = "%d%d" % spec.version
+    assert (tree / "usr/bin/python3").is_file()
+    assert (tree / f"usr/lib/python{version}.zip").is_file()
+    assert any(dest.endswith(("libc.so.6",)) for dest, _ in spec.libs)
+    assert not any(path.is_symlink() for path in tree.rglob("*"))
+    assert len(install.staged_inventory(tree)) == 64
+    shutil.rmtree(tree)
