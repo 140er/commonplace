@@ -245,6 +245,7 @@ def engine(config=None):
     models = (config or load_config()).models
     with _engine_lock:
         # A new configuration replaces the engine, so settings never go stale.
+        # close() takes the old engine's lock, so it waits for a running transcription.
         if _engine is not None and _engine.models != models:
             _engine.close()
             _engine = None
