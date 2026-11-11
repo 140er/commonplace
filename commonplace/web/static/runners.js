@@ -114,6 +114,7 @@ export async function runnerAction(button) {
   });
 }
 
-export function clearRunnerSecret(root) {
-  root.querySelector("[data-runner-reveal]")?.replaceChildren();
-}
+// Leaving the route or the page drops the tokens; the app shell needs no hook for this.
+const clearSecret = () => document.querySelector("[data-runner-reveal]")?.replaceChildren();
+window.addEventListener("hashchange", clearSecret);
+window.addEventListener("pagehide", clearSecret);

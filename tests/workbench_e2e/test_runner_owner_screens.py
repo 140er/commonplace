@@ -113,6 +113,20 @@ def test_owner_enrolls_attests_and_edits_wings_without_the_console(hub, chromium
         rows = page.request.get(origin + "/api/runners").json()["machines"]
         saved = next(r for r in rows if r["id"] == machine_id)
         assert saved["wings"] == WINGS and saved["binding_state"] == "unbound"
+
+        # Leaving the route without dismissing also drops the tokens.
+        section.get_by_text("Add runner", exact=True).click()
+        form = section.locator('[data-form="runner-enroll"]')
+        form.get_by_label("Label").fill("second-machine")
+        form.get_by_label("Projects").fill("demo")
+        form.get_by_label("Topics").fill("worker")
+        form.get_by_role("button", name="Enroll runner").click()
+        token = secrets.locator("[data-runner-token=worker]").input_value()
+        assert token
+        page.evaluate("location.hash = '#/'")
+        page.evaluate("location.hash = '#/settings'")
+        expect(section.locator("[data-runner]")).to_have_count(2)
+        assert token not in page.content() and not section.locator("[data-runner-token]").count()
         assert not errors
     finally:
         context.close()
