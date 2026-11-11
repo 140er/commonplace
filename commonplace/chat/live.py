@@ -85,19 +85,20 @@ def mark_read(gateway, principal, board, messages) -> None:
         return
     try:
         db = gateway.db
+        key = (principal.workspace_id, board["slug"], principal.actor)
+        newest = max(message["id"] for message in messages)
+        stamp = control_db._iso(control_db._now())
         with db._lock:
-            db._conn.execute(
-                "INSERT INTO chat_live_reads (workspace_id,board,actor,message_id,read_at) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(workspace_id,board,actor) DO UPDATE SET "
-                "message_id=excluded.message_id, read_at=excluded.read_at "
-                "WHERE excluded.message_id > chat_live_reads.message_id",
-                (
-                    principal.workspace_id,
-                    board["slug"],
-                    principal.actor,
-                    max(message["id"] for message in messages),
-                    control_db._iso(control_db._now()),
-                ),
+            conn = db._conn
+            conn.execute(
+                "INSERT OR IGNORE INTO chat_live_reads "
+                "(workspace_id,board,actor,message_id,read_at) VALUES (?,?,?,0,?)",
+                (*key, stamp),
+            )
+            conn.execute(
+                "UPDATE chat_live_reads SET message_id=?,read_at=? "
+                "WHERE workspace_id=? AND board=? AND actor=? AND message_id<?",
+                (newest, stamp, *key, newest),
             )
     except Exception as exc:
         log_failure(logger, "chat read cursor failed", exc)
