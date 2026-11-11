@@ -1117,7 +1117,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_gateway.py`, `tests/test_commonplace_control_db.py`, `tests/test_commonplace_policy.py`, `tests/test_hub_` files.
 
-  - `tests/test_cards_decide_scope.py` covers granting, refusal, other people's asks, revocation and audit; `tests/test_cards_decide_scope_browser.py` covers the consent and Agents UI (needs Playwright).
+  - `tests/test_cards_decide_scope.py` covers granting, refusal, other people's asks, revocation and audit; `tests/test_cards_decide_scope_browser.py` covers the consent and Agents UI (needs Playwright; skipped without it, except that `CP_BROWSER_E2E=1` makes a missing Playwright fail).
 
 
 ## sessions-and-sign-in
