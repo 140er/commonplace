@@ -600,6 +600,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - `tests/test_orch_organigram.py` covers reporting lines (valid tree, cycle, unknown parent), escalation to the role a step's owner reports to, reassignment only along the line, owner-only kinds and a config without lines; `tests/spaces_surfaces.json` carries `orch_reassign_step`.
+
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
   - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
@@ -1543,6 +1545,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Canonical Space create in the checked REST write inventory.
+
+  - `orch_reassign_step` in the checked write inventory.
 
   - The project panel write `PUT /api/projects/<slug>/panel` (`project_panel_set`) in the checked REST write inventory.
 
