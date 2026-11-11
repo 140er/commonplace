@@ -105,7 +105,8 @@ project orchestrator seats and board coordinators are refused when granting
 (the button is not offered on their rows), and refused again when answering.
 Assigning a connection as a board coordinator removes its grant; unassigning it
 does not bring the grant back, even when the grant and the assignment happen at
-the same moment. The button appears only on your own, unexpired connections;
+the same moment. That holds because removing or replacing a coordinator also
+clears that connection's grant in the same step, before the change is saved. The button appears only on your own, unexpired connections;
 **Stop answering** also works on an expired connection. Members see no consent box and the CLI refuses it. Agent tokens
 cannot grant it to themselves or anyone else: granting needs your signed-in
 browser session.

@@ -1927,6 +1927,9 @@ class BoardService:
                     for candidate in [db.authenticate_connection(row["id"])]
                 ):
                     unbound.append(coordinator)
+                    # Before the NULL write: a grant left by a failed clear must not
+                    # come back when the app stops coordinating.
+                    self._clear_coordinator_grant(coordinator, "coordinator unbound")
                     coordinator = None
                     conn.execute("UPDATE boards SET coordinator=NULL WHERE id=?", (b["id"],))
             if changed or unbound:
@@ -2010,6 +2013,12 @@ class BoardService:
                     raise ToolError(
                         "no: coordinator must be an active agent with access to this board"
                     )
+            previous = b["coordinator"]
+            if previous and previous != actor:
+                # Replacing or unassigning: clear the previous coordinator's grant
+                # before COMMIT, so a grant that survived a failed clear never
+                # comes back when it stops coordinating. A failed clear rolls back.
+                self._clear_coordinator_grant(previous, "coordinator removed")
             conn.execute("UPDATE boards SET coordinator=? WHERE id=?", (actor, b["id"]))
             if actor is not None and actor.startswith("conn:"):
                 # A coordinator is agent machinery: assigning one ends any stored
@@ -3877,6 +3886,16 @@ class BoardService:
             and person.policy.can_read_wing(wing)
             and person.policy.can_write_wing(wing)
         )
+
+    def _clear_coordinator_grant(self, actor, reason):
+        """Clear a ``conn:`` coordinator's stored cards:decide grant (errors propagate)."""
+        if not actor or not actor.startswith("conn:"):
+            return
+        try:
+            row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+        except ControlError:
+            return  # no such connection: nothing to clear
+        self.ctx.db.clear_decide(row["id"], reason=reason, user_id=self.principal.user_id)
 
     def coordinator_actors(self):
         """Every board coordinator actor in this workspace (archived boards included)."""

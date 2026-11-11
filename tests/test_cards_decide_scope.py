@@ -1057,3 +1057,108 @@ def test_r16_the_in_transaction_clear_survives_a_kill_after_the_commit(world, mo
     assert (
         "cards:decide" not in json.loads(hub.db.connection(cid, hub.workspace)["policy"])["scopes"]
     )
+
+
+# ── review round 4: removal paths clear a leftover grant before COMMIT ──
+
+
+def _stored_decide(hub, cid):
+    return "cards:decide" in json.loads(hub.db.connection(cid, hub.workspace)["policy"])["scopes"]
+
+
+def test_r17_unassigning_clears_a_grant_left_by_a_failed_post_commit_clear(world, monkeypatch):
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    real = hub.db.clear_decide
+    calls = []
+
+    def window_grant_then_failed_post_commit(connection_id, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            removed = real(connection_id, **kwargs)  # the in-transaction clear
+            # A grant whose coordinator read ran before the assignment committed.
+            hub.db.set_connection_decide(cid, True, actor=person, workspace_ref=hub.workspace)
+            return removed
+        raise RuntimeError("post-commit clear failed")
+
+    monkeypatch.setattr(hub.db, "clear_decide", window_grant_then_failed_post_commit)
+    with pytest.raises(RuntimeError, match="post-commit"):
+        w.owner.board_set("work", "conn:coordinator-app")
+    monkeypatch.undo()
+    assert _stored_decide(hub, cid)  # the leftover grant this round removes
+    w.owner.board_set("work", None)
+    assert not _stored_decide(hub, cid)
+    number, version = _owner_ask(hub, asker=w.asker)
+    status, body = rest_decide(w, token, number, version)
+    assert status == 403, body
+
+
+def test_r18_unassigning_clears_a_grant_left_by_a_request_that_died(world, monkeypatch):
+    from commonplace.web import agents
+
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    real = agents.coordinators
+    calls = []
+
+    def assign_then_die(gateway, principal):
+        calls.append(1)
+        if len(calls) == 1:
+            snapshot = real(gateway, principal)
+            w.owner.board_set("work", "conn:coordinator-app")
+            return snapshot
+        raise RuntimeError("killed between the grant write and the re-check")
+
+    monkeypatch.setattr(agents, "coordinators", assign_then_die)
+    try:
+        api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
+    except Exception:
+        pass  # the request dies after the grant write
+    monkeypatch.undo()
+    assert _stored_decide(hub, cid)
+    w.owner.board_set("work", None)
+    number, version = _owner_ask(hub, asker=w.asker)
+    status, body = rest_decide(w, token, number, version)
+    assert status == 403, body
+
+
+def test_r19_replacing_a_coordinator_clears_its_leftover_grant(world):
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    _other, _other_id = _coordinator_app(hub, "other-coordinator")
+    w.owner.board_set("work", "conn:coordinator-app")
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    hub.db.set_connection_decide(cid, True, actor=person, workspace_ref=hub.workspace)
+    w.owner.board_set("work", "conn:other-coordinator")
+    assert not _stored_decide(hub, cid)
+    number, version = _owner_ask(hub, asker=w.asker)
+    status, body = rest_decide(w, token, number, version)
+    assert status == 403, body
+
+
+def test_r20_auto_unbind_clears_a_leftover_grant(world):
+    w = world
+    hub = w.hub
+    token = hub.token(
+        "team-app",
+        profile="full",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["*"],
+        write_wings=["shared", "inbox"],
+        trust="trusted",
+    )
+    cid = hub.gateway.authenticate(f"Bearer {token}").connection_id
+    w.owner.board_set("team", "conn:team-app")
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    # The leftover state from a failed clear: a grant stored while it coordinates.
+    hub.db.set_connection_decide(cid, True, actor=person, workspace_ref=hub.workspace)
+    w.owner.board_own_wing("team")  # the app cannot coordinate the new wing: auto-unbind
+    assert "conn:team-app" not in w.owner.coordinator_actors()
+    assert not _stored_decide(hub, cid)
+    number, version = _owner_ask(hub, board="team", asker=w.asker)
+    status, body = rest_decide(w, token, number, version)
+    assert status == 403, body
