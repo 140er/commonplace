@@ -206,6 +206,7 @@ The request is compared with the map as it is now, fact by fact:
 | a runner, about itself | new | applied at once |
 | a runner, about itself | same value | refreshed: one more observation, a later expiry |
 | a runner, about itself | different value | proposed |
+| a runner, the `status` of its own link | different value | written at once as an observation (the optional path report of Live status); counted as `observed` |
 | a runner, about anything else | new or different | proposed |
 | any other agent | new or different | proposed |
 | any other agent | same value | nothing; counted as `unchanged` |
@@ -214,7 +215,7 @@ The request is compared with the map as it is now, fact by fact:
 
 A runner is the worker connection of an enabled machine whose grant includes the `topology` wing; its observer is `runner` with the machine id. "About itself" is a node whose `runner_id` is that machine, a new node the runner declares with its own `runner_id`, and a link with such a node at either end. Routes, other nodes, and binding itself to a node that already exists are not about itself.
 
-Everything proposed in one call is one proposal and one decision. The reply holds `applied` and `proposal` (each `null` or a row) and `unchanged`. The same observer proposing exactly the same change while its decision is still open gets that proposal back instead of a second card. The decision is opened before anything is written: when it cannot be opened (no board the caller may write), the call fails and stores no fact.
+Everything proposed in one call is one proposal and one decision. The reply holds `applied` and `proposal` (each `null` or a row), `unchanged` and `observed`. The same observer proposing exactly the same change while its decision is still open gets that proposal back instead of a second card. The decision is opened before anything is written: when it cannot be opened (no board the caller may write), the call fails and stores no fact.
 
 ### The decision
 

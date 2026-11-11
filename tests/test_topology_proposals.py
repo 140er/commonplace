@@ -270,11 +270,32 @@ def test_runner_self_report_applies_without_a_question(world):
 
     # A rerun changes nothing and asks nothing; it only refreshes what was seen.
     again = proposals.propose(ctx(world, worker), items=[own, link], evidence=EVIDENCE)
-    assert again == {"applied": None, "proposal": None, "unchanged": 5}
+    assert again == {"applied": None, "proposal": None, "unchanged": 5, "observed": 0}
     assert node["fields"]["os"]["provenance"][0]["seen_count"] == 1
     seen = store.get_node(topo(world), "runner-one")["fields"]["os"]["provenance"][0]
     assert seen["seen_count"] == 2
     assert len(proposals.listing(ctx(world))) == 1
+
+
+def test_runner_reports_its_own_link_status_without_a_question(world):
+    machine_id, worker = runner(world)
+    own = {"node": "runner-one", "fields": {"kind": "server", "runner_id": machine_id}}
+    link = {"link": ["runner-one", "hub", "direct"], "fields": {"status": "up"}}
+    proposals.propose(ctx(world, worker), items=[own, link], evidence=EVIDENCE)
+    down = {"link": ["runner-one", "hub", "direct"], "fields": {"status": "down"}}
+    result = proposals.propose(ctx(world, worker), items=[down], evidence="ping hub: timeout")
+    assert result == {"applied": None, "proposal": None, "unchanged": 1, "observed": 1}
+    assert store.get_link(topo(world), "runner-one", "hub", "direct")["values"]["status"] == "down"
+    assert len(proposals.listing(ctx(world))) == 1
+    # Another machine's link, or an agent's report of this one, is still the owner's call.
+    other = {"link": ["web1", "hub", "direct"], "fields": {"status": "up"}}
+    seed(world, [WEB1, other])
+    other["fields"]["status"] = "down"
+    assert proposals.propose(ctx(world, worker), items=[other], evidence=EVIDENCE)["proposal"]
+    up = {"link": ["runner-one", "hub", "direct"], "fields": {"status": "up"}}
+    assert proposals.propose(ctx(world), items=[up], evidence=EVIDENCE)["proposal"]["state"] == (
+        "pending"
+    )
 
 
 def test_runner_change_and_facts_about_others_need_the_owner(world):
@@ -443,7 +464,7 @@ def test_invalid_requests_are_refused_before_anything_is_stored(world):
     assert proposals.listing(ctx(world)) == before
     assert not [c for c in board(world).task_list(board="work")]
     unchanged = proposals.propose(ctx(world), items=[WEB1], evidence=EVIDENCE)
-    assert unchanged == {"applied": None, "proposal": None, "unchanged": 2}
+    assert unchanged == {"applied": None, "proposal": None, "unchanged": 2, "observed": 0}
 
 
 # ── Undo ──────────────────────────────────────────────────────────────────

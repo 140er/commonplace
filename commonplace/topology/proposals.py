@@ -212,7 +212,8 @@ def _about_itself(subject, own) -> bool:
 
 
 def _plan(items, remove, current, machine_id, owner):
-    """Split a request into ``(direct changes, refreshed facts, proposed changes, unchanged)``.
+    """Split a request into direct changes, facts to observe again, proposed changes and
+    the counts of unchanged facts and of live status reports.
 
     A change is ``{subject, predicate, before, after}``; ``None`` means no value.
     """
@@ -229,7 +230,7 @@ def _plan(items, remove, current, machine_id, owner):
         if "kind" not in current.get(subject, {}) and (subject, "kind") not in written:
             raise TopologyError("no: the first write for a node needs its kind")
     own = _own_nodes(facts, current, machine_id) if machine_id else set()
-    direct, refreshed, proposed, unchanged = [], [], [], 0
+    direct, refreshed, proposed, unchanged, observed = [], [], [], 0, 0
     for subject, predicate, value in facts:
         before = current.get(subject, {}).get(predicate)
         change = {"subject": subject, "predicate": predicate, "before": before, "after": value}
@@ -239,6 +240,11 @@ def _plan(items, remove, current, machine_id, owner):
             unchanged += 1
         elif owner or (before is None and machine_id and _about_itself(subject, own)):
             direct.append(change)
+        elif machine_id and predicate == "status" and _about_itself(subject, own):
+            # A path report is a live observation that expires in minutes, not a change
+            # to the map's shape: the store weighs it against other observers.
+            refreshed.append((subject, predicate, value))
+            observed += 1
         else:
             proposed.append(change)
     removed = set()
@@ -258,7 +264,7 @@ def _plan(items, remove, current, machine_id, owner):
                 "after": None,
             }
             (direct if owner else proposed).append(change)
-    return _ordered(direct), refreshed, _ordered(proposed), unchanged
+    return _ordered(direct), refreshed, _ordered(proposed), unchanged, observed
 
 
 def _ordered(changes) -> list:
@@ -492,8 +498,9 @@ def _still_true(changes, current) -> bool:
 def propose(ctx, items=None, remove=None, evidence=None, ttl_seconds=None, board=None) -> dict:
     """Write what may be written at once and open one owner decision for the rest.
 
-    Returns ``{"applied", "proposal", "unchanged"}``: the applied change and the pending
-    proposal (each ``None`` or its public row) and how many facts already had the value.
+    Returns ``{"applied", "proposal", "unchanged", "observed"}``: the applied change and
+    the pending proposal (each ``None`` or its public row), how many facts already had the
+    value, and how many live status reports of a runner's own links were written.
     Refusals raise ``TopologyError`` or ``ToolError`` before anything is stored.
     """
     observer, machine_id = _caller(ctx)
@@ -504,9 +511,11 @@ def propose(ctx, items=None, remove=None, evidence=None, ttl_seconds=None, board
     settle(ctx.gateway, principal.workspace_id)
     topo = store.open_topology(ctx.gateway, principal.workspace_id)
     owner = observer.kind == "owner"
-    direct, refreshed, proposed, unchanged = _plan(items, remove, _current(topo), machine_id, owner)
+    direct, refreshed, proposed, unchanged, observed = _plan(
+        items, remove, _current(topo), machine_id, owner
+    )
     options = _decision(proposed) if proposed else None
-    result = {"applied": None, "proposal": None, "unchanged": unchanged}
+    result = {"applied": None, "proposal": None, "unchanged": unchanged, "observed": observed}
     common = {
         "observer": observer,
         "actor": principal.actor,

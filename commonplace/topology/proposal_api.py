@@ -61,6 +61,8 @@ def _tool(ctx, args):
             else f"proposal {row['id']} with {_count(row)} waits for the owner: "
             f"#{row['card']} {card_url(ctx, row['card'])}"
         )
+    if result["observed"]:
+        lines.append(f"{result['observed']} status report(s) written")
     if result["unchanged"]:
         lines.append(f"{result['unchanged']} already on the map")
     return "\n".join(lines)
