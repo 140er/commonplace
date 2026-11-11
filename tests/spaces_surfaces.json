@@ -1366,11 +1366,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -1508,12 +1508,15 @@
           "name": "task_heartbeat"
         },
         {
-          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise.",
+          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise. Snoozed cards are left out unless include_snoozed=true.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
               "board": {
                 "type": "string"
+              },
+              "include_snoozed": {
+                "type": "boolean"
               },
               "mine": {
                 "type": "boolean"
@@ -1554,6 +1557,38 @@
           "name": "task_show"
         },
         {
+          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner or the card's assignee. It wakes by itself.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "after_card": {
+                "description": "Wake when this card on the same board is done (instead of until).",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              },
+              "timezone": {
+                "description": "IANA name, e.g. Europe/Amsterdam.",
+                "type": "string"
+              },
+              "until": {
+                "description": "ISO 8601 date and time, e.g. 2026-11-12T09:00 (needs timezone) or 2026-11-12T09:00+01:00.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "task_snooze"
+        },
+        {
           "description": "Claim ready work reserved for you or available in your board scope, highest priority first. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
           "inputSchema": {
             "additionalProperties": false,
@@ -1572,6 +1607,25 @@
             "type": "object"
           },
           "name": "task_take_next"
+        },
+        {
+          "description": "End a card's snooze now (workspace owner or the card's assignee).",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "task_unsnooze"
         },
         {
           "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
@@ -1658,13 +1712,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -1673,6 +1720,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -1878,7 +1932,9 @@
       "task_heartbeat",
       "task_list",
       "task_show",
+      "task_snooze",
       "task_take_next",
+      "task_unsnooze",
       "task_update",
       "thread_chain",
       "thread_get",
@@ -2385,11 +2441,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -2527,12 +2583,15 @@
           "name": "task_heartbeat"
         },
         {
-          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise.",
+          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise. Snoozed cards are left out unless include_snoozed=true.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
               "board": {
                 "type": "string"
+              },
+              "include_snoozed": {
+                "type": "boolean"
               },
               "mine": {
                 "type": "boolean"
@@ -2573,6 +2632,38 @@
           "name": "task_show"
         },
         {
+          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner or the card's assignee. It wakes by itself.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "after_card": {
+                "description": "Wake when this card on the same board is done (instead of until).",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              },
+              "timezone": {
+                "description": "IANA name, e.g. Europe/Amsterdam.",
+                "type": "string"
+              },
+              "until": {
+                "description": "ISO 8601 date and time, e.g. 2026-11-12T09:00 (needs timezone) or 2026-11-12T09:00+01:00.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "task_snooze"
+        },
+        {
           "description": "Claim ready work reserved for you or available in your board scope, highest priority first. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2591,6 +2682,25 @@
             "type": "object"
           },
           "name": "task_take_next"
+        },
+        {
+          "description": "End a card's snooze now (workspace owner or the card's assignee).",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "task_unsnooze"
         },
         {
           "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
@@ -2677,13 +2787,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -2692,6 +2795,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -2765,7 +2875,9 @@
       "task_heartbeat",
       "task_list",
       "task_show",
+      "task_snooze",
       "task_take_next",
+      "task_unsnooze",
       "task_update"
     ]
   },
@@ -4136,11 +4248,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -4278,12 +4390,15 @@
           "name": "task_heartbeat"
         },
         {
-          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise.",
+          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise. Snoozed cards are left out unless include_snoozed=true.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
               "board": {
                 "type": "string"
+              },
+              "include_snoozed": {
+                "type": "boolean"
               },
               "mine": {
                 "type": "boolean"
@@ -4324,6 +4439,38 @@
           "name": "task_show"
         },
         {
+          "description": "Snooze a Backlog or Todo card so it is not offered as work: until a time (until as an ISO date and time plus a timezone, or with an offset) or until another card on the board is done (after_card). Workspace owner or the card's assignee. It wakes by itself.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "after_card": {
+                "description": "Wake when this card on the same board is done (instead of until).",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              },
+              "timezone": {
+                "description": "IANA name, e.g. Europe/Amsterdam.",
+                "type": "string"
+              },
+              "until": {
+                "description": "ISO 8601 date and time, e.g. 2026-11-12T09:00 (needs timezone) or 2026-11-12T09:00+01:00.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "task_snooze"
+        },
+        {
           "description": "Claim ready work reserved for you or available in your board scope, highest priority first. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
           "inputSchema": {
             "additionalProperties": false,
@@ -4342,6 +4489,25 @@
             "type": "object"
           },
           "name": "task_take_next"
+        },
+        {
+          "description": "End a card's snooze now (workspace owner or the card's assignee).",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "task_unsnooze"
         },
         {
           "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
@@ -4428,13 +4594,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -4443,6 +4602,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -4641,7 +4807,9 @@
       "task_heartbeat",
       "task_list",
       "task_show",
+      "task_snooze",
       "task_take_next",
+      "task_unsnooze",
       "task_update",
       "thread_chain",
       "thread_get",

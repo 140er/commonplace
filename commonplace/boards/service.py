@@ -933,6 +933,10 @@ class BoardService:
                 release=self._needs_person_release,
                 approver=lambda row: approval_role or self._approval_role(q, row),
             )
+            from commonplace.snooze import store as snooze
+
+            if snoozed := snooze.active(conn, row["id"]):
+                result["snoozed"] = snoozed
             if self._restricted_origin(row):
                 result["restricted"] = True
             if self._awaits_origin_release(row):
@@ -986,8 +990,11 @@ class BoardService:
             and (row["restricted_origin"] == 0 or self._origin_released(row))
             and not _plan_waiting(row)
         )
+        from commonplace.snooze import store as snooze
+
         return why.waiting(
             {**dict(row), "split_stuck": stuck},
+            snoozed=snooze.active(conn, row["id"]),
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,
@@ -1043,7 +1050,10 @@ class BoardService:
     def _refuse_waiting(self, conn, row):
         from commonplace.boards import why
         from commonplace.boards.store import CardRefused
+        from commonplace.snooze import store as snooze
 
+        if snoozed := snooze.active(conn, row["id"]):
+            raise CardRefused("snoozed", snoozed["text"] + "; unsnooze it first to start it now")
         if self._orchestration_on is True:
             reason = self._waiting(conn, row)
             if reason is not None and reason["code"] in why.REFUSING:
@@ -1600,6 +1610,10 @@ class BoardService:
                 actor="system",
                 **{"from": "doing", "to": "doing", "target": row["assignee"]},
             )
+        from commonplace.snooze import store as snooze
+
+        for row in snooze.wake_due(conn, snooze.clock(), board["id"]):
+            self._emit(conn, row["id"], "card.woke", actor="system")
 
     def _get(self, conn, ref):
         row = task_row(conn, ref)
@@ -2289,9 +2303,19 @@ class BoardService:
             return self._message(row)
 
     def task_list(
-        self, board=None, status=None, mine=False, *, all_statuses=False, top_level=False
+        self,
+        board=None,
+        status=None,
+        mine=False,
+        *,
+        all_statuses=False,
+        top_level=False,
+        include_snoozed=False,
     ):
+        from commonplace.snooze import store as snooze
+
         cutoff = stale_before()
+        shown = all_statuses or include_snoozed
         with self._projection(), self.transaction() as conn, ExitStack() as reads:
             boards = [self._board(conn, board)] if board is not None else self._visible_boards(conn)
             if status is not None and status not in STATUSES:
@@ -2316,6 +2340,8 @@ class BoardService:
                     (b["id"],),
                 ):
                     task = task_row(conn, row["id"])
+                    if not shown and snooze.active(conn, task["id"]):
+                        continue
                     if task["status"] not in (
                         (status,)
                         if status
@@ -3038,6 +3064,8 @@ class BoardService:
         )
 
     def task_take_next(self, board=None, task=None):
+        from commonplace.snooze import store as snooze
+
         type_holder = self._type_holder(self.principal.actor)
         top = self._top_level_taker()
         narrow = _restricted(self.principal) and not top
@@ -3074,7 +3102,9 @@ class BoardService:
                         if self._orchestration_on is True
                         else ""
                     )
-                    + "ORDER BY assignee IS NULL,priority,position,id",
+                    + "AND NOT "
+                    + snooze.snoozed_sql()
+                    + " ORDER BY assignee IS NULL,priority,position,id",
                     (
                         b["id"],
                         self.principal.actor,
@@ -3082,6 +3112,7 @@ class BoardService:
                         self.principal.actor,
                         self.principal.actor,
                         *((self.principal.actor, self.principal.actor) if narrow else ()),
+                        snooze.now_stamp(),
                     ),
                 )
                 for found in candidates:
@@ -3161,6 +3192,50 @@ class BoardService:
                 conn.execute("UPDATE tasks SET return_to=NULL WHERE id=?", (row["id"],))
                 result["return_to"] = None
             return result
+
+    def task_snooze(self, task, until=None, timezone=None, after_card=None):
+        """Hide an open card from todo lists, take-next and starts until a time or until
+        another card is done (``commonplace.snooze``). Owner or assignee only."""
+        from commonplace.snooze import store as snooze
+
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, row=row)
+            self._snooze_authority(row)
+            when = snooze.clock()
+            record = snooze.set_snooze(
+                conn,
+                row,
+                until=until,
+                tz=timezone,
+                after_card=after_card,
+                actor=self.principal.actor,
+                now=when,
+            )
+            self._log(conn, row["id"], "comment", text=record["text"])
+            self._emit(conn, row["id"], "card.snoozed", snoozed=record)
+            return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def task_unsnooze(self, task):
+        """End a card's snooze now. Owner or assignee only; refused when it is not snoozed."""
+        from commonplace.boards.store import CardRefused
+        from commonplace.snooze import store as snooze
+
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, row=row)
+            self._snooze_authority(row)
+            if not snooze.clear(conn, row, actor=self.principal.actor, now=snooze.clock()):
+                raise CardRefused("not_snoozed", "this card is not snoozed", status=409)
+            self._log(conn, row["id"], "comment", text="Snooze ended by " + self.principal.actor)
+            self._emit(conn, row["id"], "card.woke", by=self.principal.actor)
+            return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def _snooze_authority(self, row):
+        from commonplace.snooze import store as snooze
+
+        if not snooze.allowed(self.principal, row):
+            raise ToolError("no: only a workspace owner or the card's assignee can snooze it")
 
     def _position(self, conn, row, updates, before=None, after=None):
         if before is None and after is None:
