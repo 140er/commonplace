@@ -242,6 +242,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - `docs/embedding-service.md` documents the opt-in shared embedding service: the switch, the failure mode, the memory bounds and the measured saving.
+
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
 
   - The OAuth contract records the displayed callback origin, numeric-host tightening and required pre-deploy registration inventory.
@@ -407,6 +409,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `benchmarks/embedding_service_memory.py` reports the memory of N embedding processes with a model each and with one shared embedding service (Linux, installed MiniLM only).
+
   - Release email login waits for the accessible signed-in Board region after identity checks; step failure details retain exception messages through the shared credential redactor.
 
   - Import release checks retain owner listing and exact read-back and require the write-only bearer to receive the not-found response without metadata.
@@ -482,6 +486,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `mempalace/embedding_service.py` is an opt-in shared embedding service (`embedding_service` / `MEMPALACE_EMBEDDING_SERVICE`, off by default): one process holds the `minilm` or `embeddinggemma` model and serves it over an owner-only Unix socket, returning the in-process function's float32 values unchanged. Texts stay on the machine and are neither logged nor kept; memory is bounded by one model and caps on concurrent runs, connections, request bytes and texts. `embeddinggemma2` and `openai-compat` are never routed to it. See `docs/embedding-service.md`.
+
   - Local CLI and gated gateway CLI use the same pure drawer formatter, preserving headers, match scores, folded-copy labels, body whitespace conventions, empty results and BM25 fallback output. The gateway explicitly selects flat rows even when they carry import-authorization metadata; the owner default remains unchanged.
 
   - Drawer retries retain replay status for readable owners while also returning request-derived fresh-write fields, allowing the gateway to hide replay status for unreadable wings.
@@ -534,6 +540,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - With the embedding service switched on and down, callers raise `EmbeddingServiceUnavailableError` (a model error). They do not load the model themselves and never use another model or provider. Search ranks lexical candidates and marks the result `degraded: "lexical"` with a warning (the CLI prints the reason on stderr); backends without a bounded lexical index return the error. Writes that embed are refused; reads that do not embed keep working. A service asked for a model it does not hold refuses.
+
   - Changed locus values or sort values invalidate authorization; unavailable snapshots expose no partial graph.
 
   - Unknown order keys fail closed; unrelated overview bookkeeping and tunnel compatibility exceptions remain unchanged.
@@ -561,6 +569,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - `tests/test_embedding_service.py`: bit-identical vectors (stub model and real MiniLM), the unchanged default, refusals and limits, concurrent callers within the inference cap, socket ownership, search degrade and write refusal against a palace, and one model load across several processes.
 
   - Exact and Compact numeric/boolean witnesses and locus-less ordering cases compare with unchanged local readers.
 
@@ -598,6 +608,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - `tests/test_embedding_service.py` runs a real service on a temporary Unix socket (skipped where the platform has none) with a stub model, plus real-MiniLM cases that skip when the model is not installed and never download it; it is on the real-embedding list in `tests/conftest.py`.
 
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
@@ -1007,6 +1019,8 @@ Format (read by `commonplace orch docs-check`):
   - The untrusted write limit and the first-backfill allowance are environment configuration (`COMMONPLACE_WRITE_LIMIT*`, `COMMONPLACE_BACKFILL_*`); the allowance is counted durably per connection and per workspace.
 
 - **Promises:**
+
+  - `MEMPALACE_EMBEDDING_SERVICE` (the opt-in shared embedding service's socket path) is on the worker environment allowlist; unset, workers embed in-process as before.
 
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
