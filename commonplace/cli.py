@@ -892,6 +892,62 @@ def cmd_workspace_encrypt(args) -> int:
     return 0
 
 
+def cmd_workspace_keyslot_check(args) -> int:
+    from .workspace_keyslots import check_keyslot
+
+    def resolve(ref):
+        db = _db(args)
+        try:
+            return db.workspace(ref)["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            check_keyslot(
+                _data_dir(args),
+                args.workspace,
+                key_store=args.key_store,
+                slot=args.slot,
+                key_file=args.key_file,
+                authorize=resolve,
+            ),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def cmd_workspace_keyslot_rewrap(args) -> int:
+    from .workspace_keyslots import rewrap_keyslot
+
+    def authorize(ref):
+        db = _db(args)
+        try:
+            workspace = db.workspace(ref)
+            db.require_owner(workspace["id"], db.user(args.by)["id"])
+            return workspace["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            rewrap_keyslot(
+                _data_dir(args),
+                args.workspace,
+                key_store=args.key_store,
+                slot=args.slot,
+                new_key_file=args.new_key_file,
+                unlock_slot=args.unlock_slot,
+                unlock_key_file=args.unlock_key_file,
+                authorize=authorize,
+            ),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_doctor(args) -> int:
     from .store_switch import doctor_workspace
 
@@ -1049,6 +1105,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--server-key-file", required=True)
     s.add_argument("--recovery-key-file", required=True)
     s.set_defaults(func=cmd_workspace_encrypt)
+    s = ws.add_parser("keyslot-check")
+    s.add_argument("workspace")
+    s.add_argument("--key-store", required=True)
+    s.add_argument("--slot", choices=("server", "recovery"), required=True)
+    s.add_argument("--key-file", required=True)
+    s.set_defaults(func=cmd_workspace_keyslot_check)
+    s = ws.add_parser("keyslot-rewrap")
+    s.add_argument("workspace")
+    s.add_argument("--by", required=True)
+    s.add_argument("--key-store", required=True)
+    s.add_argument("--slot", choices=("server", "recovery"), required=True)
+    s.add_argument("--new-key-file", required=True)
+    s.add_argument("--unlock-slot", choices=("server", "recovery"), required=True)
+    s.add_argument("--unlock-key-file", required=True)
+    s.set_defaults(func=cmd_workspace_keyslot_rewrap)
     s = ws.add_parser("store")
     s.add_argument("workspace")
     s.add_argument("store", choices=("v1", "compact"))
@@ -1209,7 +1280,8 @@ def main(argv=None) -> int:
         errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
         if args.command in {"connect", "backup", "restore"} or (
-            args.command == "workspace" and args.action in {"store", "prune-stores", "encrypt"}
+            args.command == "workspace"
+            and args.action in {"store", "prune-stores", "encrypt", "keyslot-rewrap"}
         ):
             return args.func(args)
         if args.func is cmd_serve:

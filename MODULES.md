@@ -1855,7 +1855,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## backup-and-encryption
 
-- **Paths:** `commonplace/backup_status.py`, `commonplace/backup.py`, `commonplace/backup_online.py`, `commonplace/backup_supervisor.py`, `commonplace/backup_pause.py`, `commonplace/admission.py`, `commonplace/workspace_encryption.py`
+- **Paths:** `commonplace/backup_status.py`, `commonplace/backup.py`, `commonplace/backup_online.py`, `commonplace/backup_supervisor.py`, `commonplace/backup_pause.py`, `commonplace/admission.py`, `commonplace/workspace_encryption.py`, `commonplace/workspace_keyslots.py`
 - **Owns:**
 
   - Offline and online verified backups and restores of the data directory, the gateway pause socket and run fence, the admission gate for store/file creators and the successor registry, the restore marker, and opt-in workspace SQLite encryption.
@@ -1872,7 +1872,11 @@ Format (read by `commonplace orch docs-check`):
 
   - A restore publishes a verified copy into a new directory and never overwrites; the restore marker blocks config-driven work until the owner acknowledges.
 
+  - workspace_keyslots.py checks a keyslot credential against its slot and the workspace databases without writing, and re-wraps the unchanged data key for one slot under a new credential: offline, owner-authorized, atomic, other slots kept byte for byte. The recovery slot can re-create a lost server slot. Output and errors carry no key bytes. Runbook: `docs/recovery/encrypted-workspace.md`.
+
 - **How it fails:**
+
+  - A keyslot re-wrap refuses a wrong unlock credential, a new credential that already opens a slot, a key that opens no database, an unknown record format and a running service; every refusal and an interrupted publish leave the previous record in place. It is not revocation: the data key does not change.
 
   - Receipt publication faults emit a fixed diagnostic and preserve the backup result; unsafe or noncanonical records fail independently per mode without paths or raw exception text.
 
@@ -1883,6 +1887,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_backup_status.py` covers atomic replacement faults, backup independence and hook exit-2 alias rejection; `tests/test_admin_instance_api.py` observes no-follow/nonblocking flags and per-mode reader faults.
 
   - `tests/test_backups.py`, `tests/test_backup_snapshot_deadline.py`, `tests/test_commonplace_w5_backup.py`, `tests/test_backup_online.py`, `tests/test_backup_online_enumeration.py`, `tests/test_backup_hook_online.py`, `tests/test_backup_pause.py`, `tests/test_backup_cli_fence.py`, `tests/test_admission_gate.py`, `tests/test_orch_store.py`.
+
+  - `tests/test_workspace_encryption.py` covers migration, fail-closed opens, the keyless byte-copy backup and restore, and a recovery-slot reopen; `tests/test_workspace_keyslots.py` covers the keyslot check, credential rotation, the restore-then-recreate-server-slot drill, each refusal with its message, and that the CLI prints no key material.
 
 
 ## skills
