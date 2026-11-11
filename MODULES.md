@@ -275,10 +275,13 @@ Format (read by `commonplace orch docs-check`):
 
   - Live-sync and capture instructions document the generic `agent-log` source for agents without a native transcript.
   - Public Space endpoint and error documentation alongside legacy board routes.
+  - `docs/design/RULES.md` documents the `rules_feedback` tool, its limits and its evidence routes.
 
   - `docs/boards/API.md` describes structured decision blocks: the `{label, detail, preview}` option shape, its bounds, and the `ask_blocks` card field; `docs/boards/schema.sql` lists the column.
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
+
+  - `docs/transcript-capture.md` documents the capture hook's offline spool: bounds, drop log, backoff and the `hook_spool` status and drain commands.
 
   - `CONTRIBUTING.md` documents the hook install, the pre-push quick check and its budget, and the per-worktree environment.
 
@@ -610,6 +613,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - `tests/test_card_snooze.py` and the regenerated `tests/spaces_surfaces.json` (two snooze tools, `include_snoozed`).
+  - `tests/test_commonplace_deck_bots.py` (`commonplace_deck_bots.mjs`) covers draft hand-off in both looks, Deck tile and strip markup, project work status mapping, week-bounded completion groups, escaped text and the read-only project sheet lifecycle.
+
   - The navigation tests follow the bots-first rail: `tests/workbench_shell_wiring.mjs`, `tests/workbench_chat_wiring.mjs`, `tests/commonplace_home_render.mjs`, `tests/commonplace_board_defaults_render.mjs`, `tests/card_log_links.mjs`, `tests/admin_ui.mjs` and the phone scenarios of `tests/workbench_e2e/test_keys.py` no longer expect project rows, a Needs me or Console rail entry or a Chat tab (the phone Chat button is the dock toggle in the header).
 
   - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
@@ -617,6 +622,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_chat_model_stream.py` runs the streaming model transport against loopback fake Anthropic and OpenAI-compatible servers; `tests/test_bots_turn.py` drives bot turns over real HTTP with a scripted model and one loopback fake provider.
 
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
+
+  - `tests/commonplace_deck.mjs` also covers the Workspace section that Deck adds to Settings (Deck only, Admin for admins only).
 
   - `tests/test_commonplace_deck.py` (`commonplace_deck.mjs`): the Deck switch, bar, phone tabs, screen registry, Look section and shell wiring.
 
@@ -635,6 +642,10 @@ Format (read by `commonplace orch docs-check`):
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
+
+  - `tests/test_commonplace_hook_spool.py` covers the offline spool, ordered upload, backoff, retry after failure, a crash between upload and delete against the real gateway, and the hook time budget; the existing capture hook test spools into a temporary home.
+
+
 
   - Chromium project-connect regressions verify visible shared-memory and other conflict statuses, dialog dismissal and unchanged explicit retry bodies.
   - Restricted-search refill regressions cover hidden ranked prefixes, counter suppression, exhaustion, work bounds, unchanged every-wing calls, restricted CLI-compatible search, filters and deadline failures; the same fixture reports information-only latency.
@@ -655,6 +666,7 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_routines.py` pins routine creation per due time on a fake clock, restart recovery and owner-only access.
 
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
+  - `tests/test_commonplace_rules_evidence.py` and the `rules_feedback` entries of `tests/spaces_surfaces.json` pin evidence writes, refusals, workspace isolation, bounded growth and old-database migration.
 
   - `tests/test_commonplace_goals.py` covers the goals tree, its owner-only writes, the additive schema and the card-context chain budget.
 
@@ -1105,6 +1117,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - `http_util.log_failure` logs the exception type and stack locations only; for sqlite3/sqlcipher3 errors it adds `sqlite_errorname`/`sqlite_errorcode` and the message only when it is one of SQLite's fixed texts (`SQLITE_MESSAGES`), never other exception text.
+
   - Private-chat pagination preserves invalid-params and filter errors; incomplete validation or listing faults fail closed without raw exceptions.
 
   - Invalid filters retain worker error results, invalid pagination retains JSON-RPC invalid-params, and incomplete membership proof remains an empty page.
@@ -1207,7 +1221,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## cli-and-client
 
-- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/client_hooks.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
+- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/client_hooks.py`, `commonplace/hook_spool.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
 - **Owns:**
 
   - The `runner report` argument parser; the command itself lives in `commonplace/runner/report.py`.
@@ -1241,6 +1255,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The native startup hook gives the hub `client_hooks.HUB_TIMEOUT_S` (0.4 s) and then fails open to the follow-up notice.
 
+  - The capture hook only writes its payload verbatim to a private local spool (`hook_spool.py`: atomic, owner-only, bounded by item count and bytes) and starts a detached uploader; it never waits on the network. Uploads go oldest first, retry with exponential backoff, send a `client_op_id` per item and offset, and remove an item only after the hub confirmed it. A full spool drops the oldest items and logs each drop; unuploadable items are kept under `rejected/`.
+
   - The native startup hook adds a missing-rules notice unless its context opens with a complete effective rule set.
 
   - `commonplace review-rules` prints the effective rules as a reviewer prompt block that is never empty, and `--verify` accepts a verdict only when its last `Rules checked:` line names the current complete set.
@@ -1259,14 +1275,14 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_search_index_progress.py` covers local status, run and explicit capture enrolment.
 
-  - `tests/test_commonplace_cli.py`, `tests/test_commonplace_client.py`, `tests/test_commonplace_client_hooks.py`, `tests/test_commonplace_client_install.py`, `tests/test_commonplace_onboarding.py`.
+  - `tests/test_commonplace_cli.py`, `tests/test_commonplace_client.py`, `tests/test_commonplace_client_hooks.py`, `tests/test_commonplace_hook_spool.py`, `tests/test_commonplace_client_install.py`, `tests/test_commonplace_onboarding.py`.
 
   - `tests/test_rules_enforcement_points.py` covers the hook's missing-rules notice and the `review-rules` block, verdict check and exit statuses.
 
 
 ## boards
 
-- **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/routines.py`, `commonplace/callstack.py`
+- **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/routines.py`, `commonplace/callstack.py`, `tests/test_boards_store_locking.py`
 - **Owns:**
 
   - Card snoozes: `task_snooze` / `task_unsnooze` and the `snoozed` card view and waiting reason (`why.py`), the `card_snoozes` table, take-next and list filtering and the lazy wake in `_expire`; the rules live in `commonplace/snooze/` (see card-snooze).
@@ -1289,6 +1305,8 @@ Format (read by `commonplace orch docs-check`):
   - Routines (`routines.py`, `/api/routines`): an owner-defined name, card template, schedule and owner that create one card per due time through `BoardService.task_add`, with a history of runs linking to the cards. Due times come from the shared `schedule_time.py`.
 
 - **Promises:**
+
+  - `BoardStore` runs its schema script and migration once per file per process; a warm construction only reads (file identity, `PRAGMA schema_version`, pending `legacy_origin` rows), so read-only callers never take the write lock; card writes set `pr_repo` with `pr_url`, and only a resolvable `pr_repo` backfill or a pending `legacy_origin` row makes a warm open migrate. Every connection waits 10 s on a busy database, `create=False` included; only an explicit `timeout=` shortens it (the rules deploy migration, 0.2 s).
 
   - Goals are owner-written plain single-line text (title 100, detail 400 characters, at most 200 goals, 6 levels). A card's goal context never exceeds `goals.BUDGET` (1200) characters: higher goals are dropped from the top level down and counted in `omitted`; the card's own goal always stays. Goal tables are created idempotently, so older boards databases keep working and a missing table reads as no goal.
 
@@ -1357,6 +1375,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - A writer holding the boards lock longer than the 10 s busy timeout still fails the reader or writer with `OperationalError` (`SQLITE_BUSY` in the log). A file replaced or altered by DDL from elsewhere reruns the migration on the next construction.
+
   - Hidden metadata is absent; hidden repo collisions are forbidden; unsupported shapes execute no domain method.
   - Report routing defers one event durably before advancing the global cursor; authorization retries indefinitely with fixed inspection code and persisted count/since, independent of HTTP attempts. Control persistence failures retain unacknowledged work.
 
@@ -1369,6 +1389,8 @@ Format (read by `commonplace orch docs-check`):
   - A successful pass resets the backoff; stopping interrupts the wait, and a closed database still ends the dispatcher.
 
 - **Tests:**
+
+  - `tests/test_boards_store_locking.py` holds a `BEGIN IMMEDIATE` on `boards.sqlite3` while the trigger sweep, the stall check, the durable board read and the gateway's `open_store` plus a board read succeed, and covers the `create=False` busy wait, the migration rerun after DDL or a replaced file, a pending `legacy_origin` and `log_failure`'s SQLite error name and message allowlist.
 
   - `tests/test_spaces_contract.py` covers DTOs, isolation, authority, collisions and side effects.
   - `tests/test_project_reports.py::test_enqueue_deferral_raw_progress_and_backoff`, `test_send_retry_accounting_and_identity` and `test_auth_retry_inspection_beyond_latest_100` pin durable retries and inspection.
@@ -1626,6 +1648,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
+  - Rule evidence (`commonplace/rules/evidence.py`): bounded `rule_events` plus `rule_stats` counters per workspace, written by `rules_feedback` (MCP) and `/api/rules/<id>/feedback` (REST).
+
   - The pre-push quick check (`guards/prepush.py`): changed-file selection, the shared time budget and the report of what it skipped; and the hook installer (`guards/hooks.py`) whose scripts resolve each worktree's own environment.
 
   - `commonplace.guards.pretool`, a PreToolUse command that refuses git-hook bypasses (`docs/hook-bypass-guard.md`).
@@ -1642,11 +1666,17 @@ Format (read by `commonplace orch docs-check`):
 
   - The quick check names itself a quick check, reports every skipped or cut-off step, and fails the push only when a check it ran failed. The installed hooks work in a fresh linked worktree or say how to set it up.
 
+  - Evidence never changes a rule or its sequence. Agents write with `memory:write` and read back only their own events plus the rule's counters; people read all events, only owners write. `rules_feedback` is an exempt write: a report, not an instruction.
+
 - **How it fails:**
+
+  - The deploy migration opens an unbound `boards.sqlite3` with a 0.2 s busy timeout on purpose: a locked file fails that workspace fast and is logged, and the next start retries it.
 
   - Missing and stale served sequences retain the 428 refresh payload.
 
   - Redaction can miss a sensitive detail; flags are hints, not blocks.
+
+  - Evidence tables are created additively in `migrate()`; events are capped (50 per writer, 200 per rule) while counters keep the full history, so a pruned event is no longer readable but still counted.
 
   - A test whose name matches no changed module is not selected, so the quick check can pass while a distant test would fail; a cut-off step is reported, not retried; a worktree with no environment blocks the hook with the setup command.
 
@@ -1656,7 +1686,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_rules_index.py` pins index completeness and size, keyed get with unknown keys, partial reads not serving, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
-  - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
+  - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_rules_evidence.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
 
   - `tests/test_rules_enforcement_points.py` holds one skip-detecting check per enforcement point (injection, session hook, write sequence check, reviewers); `docs/design/RULES.md` maps each point to its tests.
 
@@ -1867,6 +1897,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Memory tools and routes under the caller's policy, search index progress, workspace store generations and cutovers, and opt-in chat capture.
 
+  - The capture runner classifies hub and transcript failures that a retry can fix (`CaptureUnavailable`: network, 5xx, 408, 409, transcript changed during read) and refused credentials (`CaptureAuth`, 401/403, which pause the spool without giving items up) apart from permanent ones, and `sync_file` accepts an idempotency key sent as `client_op_id`.
+
   - The generic `agent-log` capture source: any agent appends JSONL records carrying `agent` and `session_id`, and the capture identity is `<agent>:<session_id>`.
 
 - **Promises:**
@@ -2075,12 +2107,14 @@ Format (read by `commonplace orch docs-check`):
 
 ## topology
 
-- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`
+- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`, `tests/test_topology_status.py`
 - **Owns:**
 
   - The topology store behind the Compute map: nodes, links and site routes as structured `(subject, predicate, object)` facts in the workspace's `topology` wing, in the workspace file `topology.sqlite3` (`topology_facts`, `topology_observations`, `topology_conflicts`). `docs/topology.md` is the contract: node kinds, link methods, routes, provenance, expiry, conflicts, the secret filter and the Python read and write signatures.
 
   - `model.py` is the allow-list: every field and its shape, the observer, lifetimes, subjects and the secret filter. `store.py` holds `TopologyStore` (one workspace's file, opened like `bots.sqlite3`; `open_topology` caches one per workspace on the gateway) and writes and reads: `upsert` (and the node, link and route forms), `retract`, `resolve_conflict`, `get_node`, `get_link`, `get_route`, `read_graph`, `list_conflicts`, `history`.
+
+  - `status.py` derives live status for machines, nodes and both ends of every link from signals the hub already keeps (the runner connections' last use, the chat relay's last poll, started and underway runner jobs) and the optional `status` path report of a link. `read_status(gateway, workspace_id, graph=, now=, config=)` is the one read; `derive` and `machine_status` are the pure core; `StatusConfig` holds the thresholds (arguments or `COMMONPLACE_TOPOLOGY_*` variables). No probing; a machine or path with no signal is `unknown`, never green. Rules, gaps and the signal list: `docs/topology.md`, "Live status".
 - **Promises:**
 
   - Every fact keeps who observed it, when, from what verbatim evidence, and when it expires. A stale value leaves `values` and is still readable with `stale: true`; nothing is deleted.
@@ -2092,15 +2126,17 @@ Format (read by `commonplace orch docs-check`):
   - The schema is additive and each write is one transaction. The store does not authorize: callers check the `topology` wing with the existing wing grants. A store is one workspace's file, so reads never cross workspaces; the control database holds no topology text.
 - **How it fails:**
 
-  - A value outside the allow-list, a broken route chain or secret-looking text raises `TopologyError` (`SecretRefused` for secrets) before anything is stored. A workspace without `topology.sqlite3` reads as an empty map, and reading does not create the file.
+  - A threshold set to a non-whole or inconsistent number (green not below red) raises `TopologyError`. A value outside the allow-list, a broken route chain or secret-looking text raises `TopologyError` (`SecretRefused` for secrets) before anything is stored. A workspace without `topology.sqlite3` reads as an empty map, and reading does not create the file.
 - **Tests:**
 
   - `tests/test_topology_store.py` covers upsert and read back with provenance and expiry, refreshes, allow-list refusals, stale facts and route hops, conflicts and their resolutions, the authoritative write, retraction, secret refusals, workspace isolation, an old workspace without the file, reopening, a moved workspace directory, a crash inside a write and the wing grant.
 
+  - `tests/test_topology_status.py` walks a machine and a link end through green, orange, red and green on a fake clock, covers a machine that never reported, start in progress, revoked and disabled machines, the newest signal winning, thresholds from arguments and the environment, path report ageing, one of several paths failing, stale link facts, the hub's real signals (connection use, chat poll, runner jobs), the single read with and without a supplied graph and workspace isolation.
+
 
 ## bots
 
-- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tools/bots_overhead.py`
+- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_machines.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tools/bots_overhead.py`
 - **Owns:**
 
   - The web-app part of `docs/bots.md` also says where Projects, Needs me and Console moved (the Workspace group of the account menu) and that the Bots count is the number of questions waiting on the person.
@@ -2117,6 +2153,10 @@ Format (read by `commonplace orch docs-check`):
 
   - `blocks.HYDRATORS` fills stored block references (`work`, `decision`, `action`, `setup`, `confirm`) with the reader's own view through `BoardService`; an invisible or missing item becomes `gone`, an unknown type is returned as stored. `modelcfg.resolve` turns the chat front settings into a model or one of `needs_configuration`, `needs_turn_on`, `key_missing`.
 
+  - `machines` is the only thing bot code knows about machines: `list_machines`, `start_agent`, `start_status`, `cancel_start`, `run_command` and `register_provider`. Providers are merged and each machine names its own capabilities. The built-in provider calls the runner's own functions (registry, `card_start`, `card_start_status`, `card_start_cancel`, the start options) and adds no authority of its own.
+
+  - `tools_machines` registers the machine tools: `list_machines` (read, stores a `machines` block hydrated per reader), `start_work` and `stop_work` (confirm tools with server-built labels; a start passes `request_key = <request id>:<step>` so the runner deduplicates it), and `run_command`, which is only offered while some machine reports that it can run commands. It also makes the `work` block read `working` while an agent start for the item is in flight.
+
 - **Promises:**
 
   - A bot and its thread belong to one person; every store method takes the user id and answers `Missing` for another person's bot, so a foreign id looks like an unknown one (404).
@@ -2127,7 +2167,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Text bounds count the raw characters (what is stored), so padding cannot exceed them; text that cannot be stored as UTF-8 is `invalid`. A pending confirmation past its expiry can only become `expired`, whatever the requested state.
 
-  - A turn's `ack` leaves before any model work; text is relayed while the provider still sends; a dropped client never stops a turn. Every tool runs as the person, re-resolved per call, with an audit row `bot:<tool>`; written text must be a verbatim span of the person's message (`not_your_words`). `confirm` tools only create a pending action, run once by compare-and-set on `/confirm`. A request id is never run twice: replay reads the store, a request without reply and without a running turn is stored as `failed:interrupted` with its journal. Bot model requests count in the control table `bot_model_calls` (numbers only) and `chat.store.counts_today` includes them, so bots and project chat share one daily budget and the per-minute `USER_RATE`. A turn takes its unit atomically with the daily check just before sending (`chat.store.take_bot_call`) and gives it back if nothing was sent. Running turns hold a renewed lease in `bot_leases`, so a turn in another hub process is never marked interrupted; a late reply is logged (`code=late_reply`), not stored twice. Streamed text is redacted over the whole reply so far and only its settled part is sent; the step cap is its own code `steps`; a confirm whose `ref` cannot be read creates nothing (`unreadable`). `context.Context.messages` fits every request to `BOT_MAX_INPUT_CHARS` with the transport's own size formula (new message, system prompt, tool schemas and tool rounds first; then memory newest first, whole notes only; the snapshot; history newest first); a message that cannot fit is `too_long` before any request; tool results are cut to 4,000 characters. `Tool.check` (optional) runs before a pending action, chip or write is made, and again on `/confirm` against the original message.
+  - A turn's `ack` leaves before any model work; text is relayed while the provider still sends; a dropped client never stops a turn. Every tool runs as the person, re-resolved per call, with an audit row `bot:<tool>`; written text must be a verbatim span of the person's message (`not_your_words`). `confirm` tools only create a pending action, run once by compare-and-set on `/confirm`. A request id is never run twice: replay reads the store, a request without reply and without a running turn is stored as `failed:interrupted` with its journal. Bot model requests count in the control table `bot_model_calls` (numbers only) and `chat.store.counts_today` includes them, so bots and project chat share one daily budget and the per-minute `USER_RATE`. A turn takes its unit atomically with the daily check just before sending (`chat.store.take_bot_call`) and gives it back if nothing was sent. Running turns hold a renewed lease in `bot_leases`, so a turn in another hub process is never marked interrupted; a late reply is logged (`code=late_reply`), not stored twice. Streamed text is redacted over the whole reply so far and only its settled part is sent; the step cap is its own code `steps`; a confirm whose `ref` cannot be read creates nothing (`unreadable`). `context.Context.messages` fits every request to `BOT_MAX_INPUT_CHARS` with the transport's own size formula (new message, system prompt, tool schemas and tool rounds first; then memory newest first, whole notes only; the snapshot; history newest first); a message that cannot fit is `too_long` before any request; tool results are cut to 4,000 characters. `Tool.check` (optional) runs before a pending action, chip or write is made, and again on `/confirm` against the original message. On `/confirm`, `check` runs before the compare-and-set, so a fixable refusal leaves the action open; `register()` refuses a confirm tool with free-text arguments and no `check`; a successful `Result.say` is the confirmed action's event text; a tool call to a tool not offered is refused `invalid` and the turn continues.
+
+  - A person is offered exactly the machines the runner would let them start on (today workspace owners; a member gets an empty list and a plain reason). Revoked and switched-off machines are never listed, an unattested one is listed as `unbound` and cannot start, and `verified` is always false. No credential, token or host name appears in any value `machines` returns.
 
 - **How it fails:**
 
@@ -2137,6 +2179,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Before the stream starts: 400 `invalid`, 404, 409 `busy` (this bot already has a running turn) or `conflict` (request id with other text), 429 `busy` (person or process cap). After the user message is stored, every outcome is a stream event and a stored bot message with a fixed sentence per code; provider text never reaches the person. A model that is not usable gives a stored `setup` block and no request.
 
+  - A refused machine request raises `machines.Refused` with the runner's stable code and a plain sentence; `run_command` raises `machines.Unsupported` until a provider reports the capability.
+
 - **Tests:**
 
   - `tests/test_bots_store.py` covers bounds, append-only triggers, idempotent sends and conflicts, one reply, paging, unread, the action journal, pending compare-and-set, forwards and work lookups, memory tombstones, per-user isolation and reopening the store.
@@ -2144,6 +2188,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_bots_updates.py` covers each update (needs you, ready, done, an orchestrator reply, verbatim and marked), exactly-once on redelivery and on a repeated transition, only the filing or forwarding bot, no message for another person or for someone who lost access, no store write for a card no bot filed, a failing store never breaking the card write, roster state and unread, redacted titles, log hygiene and the schema upgrade of an existing file.
 
   - `tests/test_bots_turn.py` covers a turn over real HTTP with a scripted model and one loopback fake provider: `ack` before model work, a delta while the provider holds back, tool round trips as the person, `not_your_words`, confirm once / decline / expiry / foreign person, replay of finished and running requests, interrupted turns, stop, a dropped client, setup without a model, the shared daily and per-minute budget, the step cap, the turn deadline, caps, a member's refusal, and no conversation text in the control database, audit rows or logs.
+
+  - `tests/test_bots_machines.py` covers who sees which machines (owner, member, revoked, unattested, another workspace), one runner job per request key, refusals with the runner's code, cancelling queued and launched starts, `run_command` being unsupported, merged providers and that no credential leaks, plus the tools: a start waits for a tap and runs once, labels are server-built, refusals are plain sentences, stopping a queued start works and a launched one is reported, the machines block hydrates per reader, and `run_command` is not offered without a capable provider.
 
   - `tests/test_bots_api.py` covers defaults per readable project, create/rename/archive and the 50-bot bound, thread paging, block hydration and status words, waiting decisions, read marks, memory, redacted display, and 404 for another person, another workspace and agent tokens.
 
@@ -2156,9 +2202,13 @@ Format (read by `commonplace orch docs-check`):
 
   - The card panel offers Release with a required reason on cards awaiting release, the handoff form names the orchestrator and pool recipients, and refused card actions appear inside the open panel.
 
+  - Deck bots (`deck-bots.css`, `bots.js`): the opt-in roster becomes responsive tiles and an open conversation becomes a bot-chip strip over a centred thread. Project bots offer a read-only work glance using the existing person-scoped project read route. The `cmmn.deck.draft` session key fills the named bot’s composer exactly once in either look, preserving other bots’ drafts. Classic additions stay hidden and every new CSS selector is scoped to Deck.
+
   - The ledger lines of the card panel's Runs list in `cardruns.js`: end status, tokens, cost and log pointer of a started run.
 
   - Bots-first navigation (`routes.js`, `rail.js`, `app.js`): a bare visit resolves to `#/bots` for a person who has a project (the first-run screen stays for one who has none); the rail and the phone tabs list Bots and Memory only, with the Bots count taken from the roster (`waitingTotal` in `bots.js`); Projects, Needs me and Console sit in a "Workspace" group of the account menu (desktop rail and phone top bar), beside Rules, Workspace settings and Admin. `boardRoute` keeps the old landing board for shared card links and the exit from Admin; every earlier deep link resolves as before.
+
+  - Deck settings (`deck.css`, `toolsHTML` in `deck.js`): in the Deck look Settings is one column of cards, the shell dialog and the shared `.opt` / `.blockbtn` buttons take the Deck tokens, and on a phone, which has no account menu, Settings opens with a Workspace section linking Needs me, Projects, Memory, Console, Rules and (for admins) Admin.
 
   - The opt-in Deck look (`deck.js`, `deck.css`, `fonts/inter-latin.woff2`): one per-browser switch (`localStorage` key `cmmn.ui`, the Look section in Settings, or `?ui=deck` / `?ui=classic` once). On, the shell draws the Deck top bar and phone tabs instead of the rail, with the workspace tools in the account menu, and `deck.css` re-tokens every screen; every rule in it is scoped to `:root[data-ui="deck"]`, so the file is inert while the switch is off. Deck-only screens register in `SCREENS` and are reached through `state.deck` in the shell.
 
