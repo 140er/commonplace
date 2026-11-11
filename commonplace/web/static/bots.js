@@ -191,7 +191,11 @@ export function projectWork(item) {
     if (item.review_kind !== "decision") status = "ready";
     else if (item.need === "you") status = "needs_you";
     else { status = "blocked"; note = "Waiting for an answer"; }
-  } else if (item.waiting) { status = "blocked"; note = item.waiting.text || ""; }
+  } else if (item.waiting) {
+    status = "blocked";
+    note = item.waiting.text || "";
+    if (item.waiting.code === "claim_expired") note = note.replace("hand the card off", "hand the task off");
+  }
   else status = item.status === "doing" ? "working" : "queued";
   return { ...item, status, note: oneLine(note || item.status_line) };
 }
@@ -639,7 +643,7 @@ export function createBots({
         const result = await api(`/api/boards/${enc(s.bot.board)}/cards`);
         if (alive(token) && s.botId === id && s.sheet === sheet) sheet.items = [...(result.cards || []), ...(result.children || [])];
       } catch { if (alive(token) && s.sheet === sheet) sheet.error = "unavailable"; }
-      if (alive(token) && s.sheet === sheet) { sheet.loading = false; paintSheet(); }
+      if (alive(token) && s.sheet === sheet) { sheet.loading = false; sheet.painted = false; paintSheet(); }
       return;
     }
     s.sheet = { kind, busy: false, error: "", confirmArchive: false, memories: kind === "bot" ? null : undefined, painted: false };

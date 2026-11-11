@@ -114,6 +114,7 @@ test('project status mapping follows bot work blocks, including precedence over 
   for (const [input, expected] of cases) assert.equal(projectWork(input).status, expected);
   assert.equal(projectWork({ status: 'review', review_kind: 'decision', need: 'other', status_line: 'Old note' }).note, 'Waiting for an answer');
   assert.equal(projectWork({ status: 'todo', status_line: 'One\ntwo' }).note, 'One two');
+  assert.equal(projectWork({ status: 'doing', waiting: { code: 'claim_expired', text: 'Claim expired; hand the card off' } }).note, 'Claim expired; hand the task off');
 });
 
 test('project groups use titles and chips, include only this week’s dated completions, and escape text', () => {
@@ -149,7 +150,6 @@ test('glance reads the person’s project API once, includes children, and close
   } });
   await h.ui.show('atlas');
   h.ui.click({ dataset: { botsAction: 'project' } }); await settle();
-  assert.match(h.regions.sheet.innerHTML, /Parent work[^]*|Child work/);
   assert.ok(h.regions.sheet.innerHTML.includes('Parent work') && h.regions.sheet.innerHTML.includes('Child work'));
   assert.deepEqual(h.calls.filter(([path]) => path.startsWith('/api/boards/')), [['/api/boards/northwind/cards', 'GET']]);
   h.ui.keydown({ key: 'Escape', preventDefault() {} });
