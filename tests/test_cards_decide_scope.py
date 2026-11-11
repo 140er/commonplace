@@ -180,6 +180,8 @@ def test_a1_owner_pat_with_scope_answers_own_ask_over_rest_and_mcp(world):
 
 def test_a1_owner_oauth_with_scope_answers_own_ask(world):
     w = world
+    status, _, raw = Client(w.hub).request("GET", "/.well-known/oauth-authorization-server")
+    assert status == 200 and "cards:decide" in json.loads(raw)["scopes_supported"]
     grant = oauth_grant(w.hub)
     assert SCOPE_TEXT in unescape(grant.page)
     assert "cards:decide" in grant.issued["scope"].split()

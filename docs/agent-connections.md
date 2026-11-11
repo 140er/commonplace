@@ -96,7 +96,8 @@ it the separate `cards:decide` scope. The consent text says:
 - **OAuth:** the client requests `memory:read memory:write cards:decide`; you
   tick the box on the authorization form. An unticked box or an unsolicited
   tick grants nothing, and requesting `cards:decide` without both memory scopes
-  is refused with `invalid_scope`.
+  is refused with `invalid_scope`. Authorization-server metadata advertises
+  `cards:decide`; it is never a default scope.
 
 Only a workspace owner can grant it, only to their own top-level connection.
 Members see no consent box, child agents and runner or seat connections cannot

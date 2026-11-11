@@ -493,7 +493,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   (`"decide": true`) or through `PATCH /api/connections/<id>`; OAuth clients get it
   only when the owner ticks the consent box, and the request must also carry
   `memory:read` and `memory:write`. Members see an owner-only notice and a forged
-  tick grants nothing. `create_token` refuses the scope unless the holder is the
+  tick grants nothing. Authorization-server metadata advertises the scope; OAuth
+  defaults never include it. `create_token` refuses the scope unless the holder is the
   acting owner and the connection is top-level; the CLI refuses it; person
   policies, profile defaults and seat or runner policies never include it.
 - Answering: the connection must be a live PAT or OAuth connection of a current
