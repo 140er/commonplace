@@ -94,7 +94,9 @@ versions, cursors, leases, jobs and events. No area seats, tokens, subscriptions
 or runtime are created; activation belongs to a later slice.
 
 Model routing has two slots, `main` and `worker`, set per project by the owner
-(`PUT /api/projects/<board>/models`).
+(`PUT /api/projects/<board>/models`) from the workspace's model list. A role the
+accepted config uses that has no model raises one owner item in Needs me; a start
+refused as `model_unresolved` names that role and where to set it.
 
 ## Versions and experiments
 
@@ -215,9 +217,21 @@ commit is still found.
 - **Failing sweeps.** Two failed sweeps of a board in a row emit one
   `orch.trigger.failing` event (app and webhooks), and the owner's `needs_me`
   lists the board under `orchestrator_failing` until a sweep succeeds. Only
-  the exception type is stored. A refused card is not retried automatically, even when the
-  refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
-  checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
+  the exception type is stored.
+- **Transient refusals are retried.** On a board without workspace
+  orchestration, a todo start refused as `at_cap`, `project_limit`, `busy`,
+  `settings_unavailable`, `config_changed`, `worker_unavailable` or
+  `started_recently` is recorded as a miss, advances the cursor as before, and
+  is started again by the sweep after 1, 5, 15, 30 and 60 minutes (same request
+  key as the first start, so a start that landed meanwhile is never doubled).
+  Each refused retry adds a miss; after the fifth the start is marked exhausted
+  with a `retry_exhausted` miss. Any other refusal (a card that left `todo`,
+  grants, the actor, an unresolved model, a pending restore) is final and not
+  retried. The attempts live in `orch_start_retries` (`pending`, `started`,
+  `refused`, `exhausted`). With orchestration on, root cards keep the split
+  reconciliation (three attempts at 10, 30 and 90 minutes). A card left in
+  `exhausted` or `refused` stays in the checkpoint's unstarted list; move it to
+  `todo` again to start it.
 
 ## Durable orchestrator
 
