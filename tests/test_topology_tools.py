@@ -423,3 +423,21 @@ def test_rest_refuses_without_the_grant_and_bad_input(env, seeded, http):  # noq
 def test_the_owner_reads_the_topology_by_default(env, seeded, http):  # noqa: F811
     status, body, _ = http("GET", "/api/topology/route?target=example.test", principal=env.person)
     assert status == 200 and body["hosted_on"]["key"] == "app1"
+
+
+# ── Loading ───────────────────────────────────────────────────────────────
+def test_a_module_whose_package_is_missing_is_skipped_but_a_broken_import_is_not(
+    monkeypatch, tmp_path
+):
+    from commonplace import extensions
+
+    monkeypatch.setattr(extensions, "MODULES", ("commonplace.no_such_package.extension",))
+    assert extensions.load_modules() == []
+    monkeypatch.setattr(extensions, "MODULES", ("commonplace.topology.no_such_module",))
+    assert extensions.load_modules() == []
+    # An import that fails inside a module that exists is still an error.
+    (tmp_path / "broken_extension_probe.py").write_text("import a_dependency_that_is_not_there\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(extensions, "MODULES", ("broken_extension_probe",))
+    with pytest.raises(ModuleNotFoundError):
+        extensions.load_modules()
