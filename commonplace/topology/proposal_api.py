@@ -128,11 +128,11 @@ def install(gateway):
             # The next read of the proposals settles it again.
             log_failure(logger, "topology proposal not settled", exc)
 
-    previous = getattr(gateway, "_topology_decided", None)
-    if previous is not None:
-        events.remove_listener(previous)
-    gateway._topology_decided = decided
-    events.add_listener(decided)
+    if getattr(gateway, "_topology_decided", None) is None:
+        gateway._topology_decided = decided
+        events.add_listener(decided)
+        # A closed hub must not keep answering events of another one.
+        gateway.db.add_pre_close_callback(lambda: events.remove_listener(decided))
 
 
 register(

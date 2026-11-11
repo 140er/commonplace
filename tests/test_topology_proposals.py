@@ -526,6 +526,13 @@ def test_mcp_reply_names_the_decision(world):
     assert call(world, "topology_propose", evidence=EVIDENCE, nope=1)["result"]["isError"]
 
 
+def test_listener_leaves_with_its_hub(world):
+    listener = world.gateway._topology_decided
+    assert listener in events._listeners
+    world.db.close()
+    assert listener not in events._listeners
+
+
 def test_old_workspace_reads_empty_and_creates_nothing(world):
     assert proposals.listing(ctx(world)) == []
     proposals.settle(world.gateway, world.workspace)
