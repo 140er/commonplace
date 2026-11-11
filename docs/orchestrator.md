@@ -246,6 +246,18 @@ failed after commit is still found.
   same second as that entry cannot be ordered, so the card is listed). Cards are
   classified read-only as `held`, `expired` or `not_held_by_caller`; only the
   caller's own held cards get a heartbeat.
+- **Builders started outside the runner.** A lead that starts a builder itself
+  (for example a T3 thread) journals it: `orch_journal_intent` with kind
+  `thread` and the card, then `orch_journal_record` with state `started` once
+  the builder runs (a `holder_attested` note can name the thread). The
+  checkpoint's `jobs` then lists that builder with `source: "journal"`, the
+  card, step key, assignee, claim end, detail and evidence, for as long as the
+  step is unfinished and unvoided and the card is in `doing` on this board
+  under a live claim. It stays listed when a new lease epoch marks the step
+  `in_doubt`. An intent without a recorded start, a card that left `doing` or
+  whose claim expired, and steps of another board or role are not listed.
+  Runner jobs carry `source: "runner"`. The list is derived on every read;
+  the hub does not check that the thread exists.
 
 ## Restore
 
