@@ -277,6 +277,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Documents enabled blockers, waiting payloads, stable split keys and bounded runner retry delivery.
 
+  - The board API guide lists every waiting reason in precedence order, which of them refuse a claim, and the board `waiting_notes` sentences.
+
   - Documentation describes shipped behaviour; design notes are marked as proposals.
 
   - Project documentation explains opt-in start authority, shared admission, seat consent and the card-webhook delivery residual.
@@ -692,6 +694,8 @@ Format (read by `commonplace orch docs-check`):
   - Public presence witnesses reach real worker acquisition branches and real search fan-out before comparing hidden and absent worlds. Private protocol tests cover descriptor revalidation, bounded batches and metadata-only reads.
 
   - Space profile/tool snapshots retain split and inbox visibility and card-schema additions, with current origin-release descriptions. Legacy NULL-origin and untrusted-policy controls isolate each predicate independently.
+
+   - Waiting-reason app tests drive the real `board.js`, `details.js` and `waiting.js` modules through Node against the server sentences.
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Owner rejection of person-targeted restricted proposals with a healthy coordinator preserves origin state; owner fallback still refuses rejection. Existing release, connection, default-client and delayed-approval contracts supply explicit recovery reasons and separate required proposal review.
@@ -1121,6 +1125,8 @@ Format (read by `commonplace orch docs-check`):
   - Metadata uses an exact active slug on a plain store connection; list retains expiry and create retains rules enforcement.
   - Non-done to done transitions capture metadata in the source transaction. Unavailable report settings reject before status or lesson writes; new boards without a coordinator remain history only. Raw events retain their existing matching and authorization.
 
+  - Waiting reasons beyond blockers, person, release and capacity (`claim_expired`, `plan_review`, `no_agent`, `checks_pending`) share `boards.why`; only the claim-refusing codes in `why.REFUSING` stop a claim, and board lists add `waiting_notes`.
+
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
   - Trusted agents retain their title/body edit alternative on unassigned restricted-origin todo cards. Coordinator-derived edits require verified independence: creators, descendants and unsafe lineage cannot use that exception. Content edits never release origin or grant claims.
@@ -1152,6 +1158,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_spaces_contract.py` covers DTOs, isolation, authority, collisions and side effects.
   - `tests/test_project_reports.py::test_enqueue_deferral_raw_progress_and_backoff`, `test_send_retry_accounting_and_identity` and `test_auth_retry_inspection_beyond_latest_100` pin durable retries and inspection.
+
+  - `tests/test_cards_waiting_reasons.py` with `tests/board_why.mjs` covers each waiting reason (pure, card view, board summary) and its app rendering.
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
@@ -1689,6 +1697,8 @@ Format (read by `commonplace orch docs-check`):
   - The Connect checklist renders the supplied webhook event recommendation, including card moves and optional card creation, with escaped values.
 
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
+
+  - `waiting.js` shows the server's waiting sentence as a board tag and in the card details, and a strip of `waiting_notes` above the board; it adds no sentences of its own.
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.

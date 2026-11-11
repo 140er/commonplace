@@ -599,6 +599,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   checks them before starting. Views use the pure `boards.why` predicate in
   blocker/person/release/cap order; explicit claims share its waiting text.
   Dependency waiting alone does not enter `needs_me`.
+
+- `boards.why` is the single source of waiting sentences. Besides blockers, person, release and capacity it explains an expired claim, a plan awaiting review, no connected agent and pending checks; only the first four refuse a claim or start. Board lists add `waiting_notes` built from the same counts.
 - `boards.sqlite3` adds `task_blockers` and `card_splits`. Keyed children use
   `split:<parent>:<key>` labels; key checks and inserts share the board write
   transaction. Inbox reads include open unsplit roots, excluding children and
