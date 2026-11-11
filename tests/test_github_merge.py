@@ -1609,14 +1609,35 @@ def test_a_failed_callback_commit_releases_no_other_owners_marker(merging, monke
     assert len(s.remote.issued) == 1 and not rows(s, "github_confirmations")
 
 
+@pytest.mark.parametrize("where", ["commit", "body"])
 def test_a_failed_commit_of_the_callbacks_record_still_revokes_the_issued_token(
-    merging, monkeypatch
+    merging, monkeypatch, where
 ):
+    import sqlite3
+
     s = merging
+    worker = s.gateway.github
     connect(s)
     s.remote.scope = "public_repo"
     flow = begin_consent(s)
-    fired, restore = fail_commit_once(s, monkeypatch, lambda: len(rows(s, "github_confirmations")))
+    if where == "commit":
+        fired, restore = fail_commit_once(
+            s, monkeypatch, lambda: len(rows(s, "github_confirmations"))
+        )
+    else:
+        real_encrypt, fired = worker.store.encrypt, []
+
+        def encrypt(conn, uid, kind, value):
+            if kind == "confirmation":
+                fired.append(True)
+                raise sqlite3.OperationalError("database is locked (synthetic)")
+            return real_encrypt(conn, uid, kind, value)
+
+        monkeypatch.setattr(worker.store, "encrypt", encrypt)
+
+        def restore():
+            monkeypatch.setattr(worker.store, "encrypt", real_encrypt)
+
     try:
         finish(s, flow)
     except Exception:  # noqa: BLE001 - a synthetic failure may close the connection
