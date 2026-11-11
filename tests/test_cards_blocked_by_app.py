@@ -103,7 +103,10 @@ def test_blocker_on_a_card_the_user_cannot_read_is_refused_without_leaking(hub):
     seen = invoke(service.task_update, own, blocked_by=[hidden])
     absent = invoke(service.task_update, own, blocked_by=[missing])
     assert seen[0] == 400 and seen[1]["code"] == "other_board" == absent[1]["code"]
-    assert str(hidden) not in seen[1]["error"].replace(f"#{hidden} is not", "")
+    # Apart from the caller's own number, the answer is identical to the missing-card one.
+    assert seen[1]["error"].replace(f"#{hidden}", "#N") == absent[1]["error"].replace(
+        f"#{missing}", "#N"
+    )
     assert service.task_show(own)["blocked_by"] == []
 
 
