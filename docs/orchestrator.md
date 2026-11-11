@@ -94,7 +94,9 @@ versions, cursors, leases, jobs and events. No area seats, tokens, subscriptions
 or runtime are created; activation belongs to a later slice.
 
 Model routing has two slots, `main` and `worker`, set per project by the owner
-(`PUT /api/projects/<board>/models`).
+(`PUT /api/projects/<board>/models`) from the workspace's model list. A role the
+accepted config uses that has no model raises one owner item in Needs me; a start
+refused as `model_unresolved` names that role and where to set it.
 
 ## Versions and experiments
 
@@ -311,9 +313,21 @@ commit is still found.
 - **Failing sweeps.** Two failed sweeps of a board in a row emit one
   `orch.trigger.failing` event (app and webhooks), and the owner's `needs_me`
   lists the board under `orchestrator_failing` until a sweep succeeds. Only
-  the exception type is stored. A refused card is not retried automatically, even when the
-  refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
-  checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
+  the exception type is stored.
+- **Transient refusals are retried.** On a board without workspace
+  orchestration, a todo start refused as `at_cap`, `project_limit`, `busy`,
+  `settings_unavailable`, `config_changed`, `worker_unavailable` or
+  `started_recently` is recorded as a miss, advances the cursor as before, and
+  is started again by the sweep after 1, 5, 15, 30 and 60 minutes (same request
+  key as the first start, so a start that landed meanwhile is never doubled).
+  Each refused retry adds a miss; after the fifth the start is marked exhausted
+  with a `retry_exhausted` miss. Any other refusal (a card that left `todo`,
+  grants, the actor, an unresolved model, a pending restore) is final and not
+  retried. The attempts live in `orch_start_retries` (`pending`, `started`,
+  `refused`, `exhausted`). With orchestration on, root cards keep the split
+  reconciliation (three attempts at 10, 30 and 90 minutes). A card left in
+  `exhausted` or `refused` stays in the checkpoint's unstarted list; move it to
+  `todo` again to start it.
 
 ## Durable orchestrator
 
@@ -321,7 +335,10 @@ commit is still found.
   held, after release or expiry, or when the owner forces it. The token is
   returned once. TTL 1800 s, renewed by fenced writes and `orch_heartbeat`;
   waits are sliced to at most 10 minutes with heartbeats. Expiry only fences.
-  A lost token means waiting for expiry or an owner force.
+  A lost token means waiting for expiry or an owner force. A board without
+  `[runner]` has one possible holder: its own project seat, once an owner
+  trusted it in Project settings, for its seat role (`main`). A project seat
+  never claims another board's lease.
 - **Journal.** `intent → started → waiting → done | failed | in_doubt`;
   `in_doubt` moves on to `done`, `failed` or `needs_person`. A job maps to its
   step as: queued, leased or starting → `waiting`; started → `done`;
@@ -354,9 +371,22 @@ commit is still found.
   checkpoint: open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses,
   and the unstarted `todo` cards of each configured board (a `todo` card with no
   active job and no job started after it last entered `todo`; a start in the
-  same second as that entry cannot be ordered, so the card is listed). Cards are
+  same second as that entry cannot be ordered, so the card is listed; they come
+  most urgent `priority` first). Cards are
   classified read-only as `held`, `expired` or `not_held_by_caller`; only the
   caller's own held cards get a heartbeat.
+- **Builders started outside the runner.** A lead that starts a builder itself
+  (for example a T3 thread) journals it: `orch_journal_intent` with kind
+  `thread` and the card, then `orch_journal_record` with state `started` once
+  the builder runs (a `holder_attested` note can name the thread). The
+  checkpoint's `jobs` then lists that builder with `source: "journal"`, the
+  card, step key, assignee, claim end, detail and evidence, for as long as the
+  step is unfinished and unvoided and the card is in `doing` on this board
+  under a live claim. It stays listed when a new lease epoch marks the step
+  `in_doubt`. An intent without a recorded start, a card that left `doing` or
+  whose claim expired, and steps of another board or role are not listed.
+  Runner jobs carry `source: "runner"`. The list is derived on every read;
+  the hub does not check that the thread exists.
 
 ## Restore
 

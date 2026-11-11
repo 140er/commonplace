@@ -38,6 +38,10 @@ at the same location so the service can restart.
 
 `--source claude-code:ROOT` and `--source codex:ROOT` narrow selection; defaults
 are `~/.claude/projects` and `~/.codex/sessions`.
+`--source agent-log:ROOT` syncs any other agent through the
+[agent-log format](transcript-capture.md#any-other-agent-the-agent-log-source); it has no
+default root and uses its own `COMMONPLACE_CAPTURE_TOKEN_AGENT_LOG`, from a connection
+with client `agent-log`.
 Native scans skip symlinks and wait for complete records.
 Legacy `--memory` synchronization is disabled; memory-once is not available yet.
 Memory roots are not inspected, even when retained in old configuration.
@@ -103,6 +107,27 @@ shows `Backfill: active, X of 5000 attempts` or
 Free's server cadence still applies. Additional backfill exposure is bounded by
 about 5,000 × (512 KiB + one record); retries also consume attempts.
 
+### Server-side limits
+
+Untrusted capture and import connections have a steady write limit of 120 writes per
+hour (`COMMONPLACE_WRITE_LIMIT`, `COMMONPLACE_WRITE_LIMIT_SECONDS`). A refused write returns
+`429` with `Retry-After`, and the client backs off that token. The per-minute request
+limit of the connection always applies.
+
+When only that steady write limit refuses a `POST /api/capture` or `/api/import`, the
+server spends a bounded first-backfill allowance instead, so a first open of a space
+can catch up. It is counted durably, not by stream, so restarts, new thread ids and
+offset 0 do not re-arm it:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `COMMONPLACE_BACKFILL_PER_CONNECTION` | 5000 | Extra writes per connection, once, never renewed |
+| `COMMONPLACE_BACKFILL_WINDOW_SECONDS` | 86400 | The connection's allowance closes this long after first use |
+| `COMMONPLACE_BACKFILL_PER_SPACE` | 20000 | Extra writes across all connections of a workspace |
+| `COMMONPLACE_BACKFILL_SPACE_PERIOD_SECONDS` | 2592000 | The workspace cap renews only after this period |
+
+Set a count to `0` to switch the allowance off. Invalid values stop the gateway at startup.
+
 The sync event feed contains settings and timing signals, without transcript or
 memory content. Paid and unrestricted instances long-poll for up to 25 seconds;
 Free polls at its next window. Workspace members can see sync toggles and request
@@ -156,7 +181,20 @@ and `delete_hallway` take no room and are not checked yet.
 Fact mutations (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived
 facts are not room-checked. A member with fact-write permissions but no source-thread
 read access can mutate those hidden facts. Invalidate's `closed` count is a yes/no
-oracle for hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section, fan-out ranks and counts can reflect hidden hits, and gating runs after a bounded fetch of at most 100 candidates, so hidden hits can take candidate slots.
+oracle for hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section.
+
+Restricted structured Memory search gates ranked hits before limiting the reply.
+Explicit-wing and fan-out searches retry with doubled prefixes until readable hits
+fill the requested limit, candidates run out, or the 100-candidate bound is reached
+(at most eight worker searches on one deadline). Replies omit candidate and filter
+totals; any result count describes only returned readable hits. Readable hits beyond
+the bound can still be missed, and ranking is not independent of hidden candidates.
+Every-wing principals keep their existing path; restricted CLI-compatible search
+acquires structured hits and reuses the refill before its final gate and rendering.
+This makes no timing privacy claim.
+Standalone worker helpers retain their original response shape and authorization
+gates. Refill runs with an attached gateway handoff context, and pinned-wing
+searches preserve the original worker reply unless it contains structured hits.
 
 Mirror copies do not count as duplicates for anyone. Similarity dedup exclusion (D5) is
 verified on compact, sqlite_exact and chroma.

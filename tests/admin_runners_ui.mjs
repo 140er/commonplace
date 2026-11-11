@@ -27,7 +27,7 @@ function region() {
     },
   };
 }
-function fixture({ machines, wings = ['shared', 'team'], fail = {} } = {}) {
+function fixture({ machines, wings = ['shared', 'team'], fail = {}, wingsGate = null } = {}) {
   const regions = {}, listeners = {}, calls = [];
   const host = {
     innerHTML: '',
@@ -37,11 +37,12 @@ function fixture({ machines, wings = ['shared', 'team'], fail = {} } = {}) {
   };
   const state = { machines: machines ?? [machine()], copied: [] };
   const api = async (path, options = {}) => {
-    calls.push({ path, method: options.method || 'GET', body: options.body });
+    calls.push({ path, method: options.method || 'GET', body: options.body});
+    (calls.timeouts ??= {})[`${options.method || 'GET'} ${path}`] = options.timeoutMs;
     const key = `${options.method || 'GET'} ${path}`;
     if (fail[key]) throw Object.assign(new Error(fail[key]), { status: 409 });
     if (path === '/api/runners' && !options.method) return { machines: state.machines };
-    if (path === '/api/connections') return { wings, connections: [] };
+    if (path === '/api/connections') { await wingsGate; return { wings, connections: [] }; }
     if (path === '/api/runners' && options.method === 'POST') return { machine_id: 'mach_0123456789abcdef', machine_token: TOKENS.machine, worker_token: TOKENS.worker, binding_state: 'unbound' };
     return { ok: true };
   };
@@ -141,6 +142,77 @@ const field = (name, value, type = 'text', checked = false) => ({ name, value, t
   assert.equal(f.regions.status.dataset.state, 'error');
   f.block.stop();
   assert.equal(f.host.innerHTML, '');
+}
+// 4b. Revoke asks first, names the machine, then calls DELETE once; the list reloads and the machine offers nothing more.
+{
+  const f = fixture({ machines: [machine()] });
+  f.block.show(f.host); await flush();
+  assert.match(f.regions.list.innerHTML, /data-runner-action="revoke" data-runner-id="mach_aaaaaaaaaaaaaaaa"/);
+  await f.click({ runnerAction: 'revoke', runnerId: 'mach_aaaaaaaaaaaaaaaa' });
+  assert.ok(!f.calls.some(c => c.method === 'DELETE'), 'the first click only asks');
+  assert.match(f.regions.list.innerHTML, /Revoke bench-1\?/);
+  await f.click({ runnerAction: 'revoke-cancel', runnerId: 'mach_aaaaaaaaaaaaaaaa' });
+  assert.ok(!f.calls.some(c => c.method === 'DELETE')); assert.doesNotMatch(f.regions.list.innerHTML, /revoke-confirm/);
+  await f.click({ runnerAction: 'revoke', runnerId: 'mach_aaaaaaaaaaaaaaaa' });
+  f.state.machines = [machine({ revoked_at: '2026-11-11T00:00:00Z', enabled: false })];
+  await f.click({ runnerAction: 'revoke-confirm', runnerId: 'mach_aaaaaaaaaaaaaaaa' });
+  assert.deepEqual(f.calls.filter(c => c.method === 'DELETE').map(c => c.path), ['/api/runners/mach_aaaaaaaaaaaaaaaa']);
+  assert.match(f.regions.status.textContent, /revoked/); assert.equal(f.regions.status.dataset.state, 'ok');
+  assert.doesNotMatch(f.regions.list.innerHTML, /data-runner-action="revoke/);
+  f.block.stop();
+}
+// 4c. A failed revoke surfaces the server's words and leaves the machine as it was.
+{
+  const f = fixture({ fail: { 'DELETE /api/runners/mach_aaaaaaaaaaaaaaaa': 'a signed-in workspace owner is required' } });
+  f.block.show(f.host); await flush();
+  await f.click({ runnerAction: 'revoke', runnerId: 'mach_aaaaaaaaaaaaaaaa' });
+  await f.click({ runnerAction: 'revoke-confirm', runnerId: 'mach_aaaaaaaaaaaaaaaa' });
+  assert.equal(f.regions.status.textContent, 'a signed-in workspace owner is required');
+  assert.equal(f.regions.status.dataset.state, 'error');
+  assert.match(f.regions.list.innerHTML, /data-runner-action="revoke" /, 'confirmation closed; machine still offers Revoke');
+  f.block.stop();
+}
+// 4d. Revoking the machine whose tokens are still on screen removes the panel; the setup text is there and carries no token.
+{
+  const f = fixture({ machines: [] });
+  f.block.show(f.host); await flush();
+  await f.submit('enroll', undefined, [field('label', 'bench-2'), field('projects', 'demo'), field('topics', 'worker'), field('wings', 'shared', 'checkbox', true), field('max_runtime_mode', 'approval-required'), field('max_in_flight', '1')]);
+  const panel = f.regions.reveal.innerHTML;
+  assert.match(panel, /token_env/); assert.match(panel, /runner check/);
+  assert.equal(panel.split(TOKENS.machine).length - 1, 1, 'the machine token appears once, in its own field'); assert.equal(panel.split(TOKENS.worker).length - 1, 1);
+  f.state.machines = [machine({ machine_id: 'mach_0123456789abcdef', label: 'bench-2' })];
+  await f.click({ runnerAction: 'dismiss' }); // panel closed: tokens gone
+  assert.doesNotMatch(f.regions.reveal.innerHTML, /CANARY/);
+  await f.submit('enroll', undefined, [field('label', 'bench-2'), field('projects', 'demo'), field('topics', 'worker'), field('wings', 'shared', 'checkbox', true), field('max_runtime_mode', 'approval-required'), field('max_in_flight', '1')]);
+  assert.match(f.regions.reveal.innerHTML, /CANARY/);
+  await f.click({ runnerAction: 'revoke', runnerId: 'mach_0123456789abcdef' });
+  await f.click({ runnerAction: 'revoke-confirm', runnerId: 'mach_0123456789abcdef' });
+  assert.equal(f.regions.reveal.innerHTML, '', 'revoking the machine clears its tokens from the page');
+  f.block.stop();
+}
+
+// 4e. A stuck wings read never holds the machine list: it renders at once, wing pickers wait, then fill in.
+{
+  let release; const wingsGate = new Promise(resolve => { release = resolve; });
+  const f = fixture({ wingsGate });
+  f.block.show(f.host); await flush();
+  assert.doesNotMatch(f.regions.list.innerHTML, /Loading runner machines/);
+  assert.ok(f.calls.timeouts['GET /api/runners'] > 0 && f.calls.timeouts['GET /api/connections'] > 0, 'both reads are bounded by a timeout');
+  assert.match(f.regions.list.innerHTML, /bench-1/);
+  assert.match(f.regions.list.innerHTML, /Loading wings/); assert.doesNotMatch(f.regions.list.innerHTML, /type="checkbox"/);
+  release(); await flush();
+  assert.match(f.regions.list.innerHTML, /name="wings" value="shared" checked/);
+  assert.match(f.regions['enroll-slot'].innerHTML, /name="wings" value="team"/);
+  f.block.stop();
+}
+// 4f. A failed machine read replaces the loading text instead of leaving it up.
+{
+  const f = fixture({ fail: { 'GET /api/runners': 'boom' } });
+  f.block.show(f.host); await flush();
+  assert.doesNotMatch(f.regions.list.innerHTML, /Loading runner machines/);
+  assert.match(f.regions.list.innerHTML, /could not be loaded/);
+  assert.equal(f.regions.status.textContent, 'boom'); assert.equal(f.regions.status.dataset.state, 'error');
+  f.block.stop();
 }
 assert.deepEqual(leaks, [], 'nothing is written to local or session storage');
 assert.doesNotMatch(ledger.join('\n'), /CANARY/, 'tokens are never logged');
