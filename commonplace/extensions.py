@@ -49,7 +49,10 @@ MODULES = (
     "commonplace.console",
     "commonplace.chat",
     "commonplace.holds",
+    "commonplace.agent_schedules",
+    "commonplace.routines",
     "commonplace.projects",
+    "commonplace.bots",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})
@@ -70,6 +73,8 @@ class LocalTool:
     kind: str = "read"  # "read" or "write"; writes are audited
     profiles: frozenset = ALL_PROFILES
     trusted_only: bool = False  # refused to untrusted tokens
+    # An explicitly granted scope that admits an untrusted token anyway.
+    untrusted_scope: Optional[str] = None
     owner_only: bool = False  # only workspace owners
     # Optional live gate, e.g. "only while this workspace uses the feature".
     # False hides the tool exactly like a tool the token can't use.

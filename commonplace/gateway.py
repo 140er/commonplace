@@ -28,6 +28,7 @@ import os
 import re
 import secrets
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from time import monotonic, sleep
 from typing import Callable, Optional
@@ -38,7 +39,7 @@ from mempalace.config import normalize_wing_name
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, plans, privacy, ratelimit, sessions, urls
+from . import backfill_allowance, events, extensions, plans, privacy, ratelimit, sessions, urls
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
@@ -53,6 +54,9 @@ HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
 STARTUP_TIMEOUT_S = 0.08
 MAX_FANOUT_WINGS = 64
+# The public worker schema caps each ranked prefix at 100 hits. Doubling
+# from a minimum limit of one takes at most eight searches per request.
+MAX_SEARCH_CANDIDATES = 100
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
 
@@ -588,6 +592,7 @@ class Mediator:
             forwarded = dict(request)
             forwarded["params"] = {"name": name, "arguments": args}
             response = self.workers.post(principal, forwarded)
+            response = self._refill_search_response(principal, name, args, response, plan)
             response = self._after(principal, name, rule, args, response)
             if isinstance(plan, dict) and "facts" in plan:
                 result = _tool_result(response)
@@ -952,6 +957,12 @@ class Mediator:
                 return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
             if cli:
                 args["cli_compatible"] = False
+            if (
+                getattr(self.gateway, "handoff", None) is not None
+                and not policy.sees_all_wings
+                and not args.get("cli_compatible")
+            ):
+                return {**fact_result, "search_deadline": monotonic() + WORKER_TIMEOUT_S}
             return fact_result
         return {
             "respond": _with_search_facts(
@@ -1548,8 +1559,83 @@ class Mediator:
         except TimeoutError:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
 
+    def _refill_search_response(self, principal, name, args, response, plan):
+        """Preserve the first worker reply unless it carries structured search hits."""
+        deadline = plan.get("search_deadline") if isinstance(plan, dict) else None
+        if deadline is None:
+            return response
+        result = _tool_result(response)
+        if (
+            not isinstance(result, dict)
+            or result.get("error")
+            or not isinstance(result.get("results"), list)
+        ):
+            return response
+        return _replace_result(
+            response,
+            self._readable_search(principal, name, args, initial=result, deadline=deadline),
+        )
+
+    def _readable_search(self, principal, name, args, *, initial=None, deadline=None) -> dict:
+        """Fill from gated ranked prefixes, bounded by 100 candidates and one deadline."""
+        from .handoff.mirror_access import gate
+        from .rules import checks
+
+        end = deadline if deadline is not None else monotonic() + WORKER_TIMEOUT_S
+        # Deadline-bound drawer checks reuse only open stores, as in overview
+        # projection. Pinned-wing searches do not pass through that projection.
+        context = getattr(self.gateway, "handoff", None)
+        if context is not None:
+            with contextlib.suppress(Exception):
+                context.store_for(principal.workspace_id)
+        try:
+            with checks.deadline(max(0, end - monotonic())):
+                worker_args = dict(args)
+                result = initial
+                while True:
+                    checks.remaining(0)
+                    if result is None:
+                        result = self.workers.call_tool(principal, name, worker_args)
+                    if not isinstance(result, dict):
+                        raise WorkerUnavailable()
+                    if result.get("error") or not isinstance(result.get("results"), list):
+                        return result
+                    limit = max(1, min(int(args.get("limit", 5)), MAX_SEARCH_CANDIDATES))
+                    fetched = max(1, min(int(worker_args.get("limit", 5)), MAX_SEARCH_CANDIDATES))
+                    candidates = result["results"]
+                    result = gate(
+                        self.gateway,
+                        principal,
+                        "search",
+                        {
+                            **result,
+                            "results": [
+                                h
+                                for h in candidates
+                                if _scrub(h, principal.policy.can_read_wing) is not _DROP
+                            ],
+                        },
+                    )
+                    result = {**result, "results": result.get("results", [])[:limit]}
+                    # Worker diagnostics describe candidates before authorization.
+                    for key in ("total", "total_before_filter", "filtered_by_max_distance"):
+                        result.pop(key, None)
+                    if "count" in result:
+                        result["count"] = len(result["results"])
+                    checks.remaining(0)
+                    if (
+                        len(result["results"]) >= limit
+                        or len(candidates) < fetched
+                        or fetched == MAX_SEARCH_CANDIDATES
+                    ):
+                        return result
+                    worker_args["limit"] = min(fetched * 2, MAX_SEARCH_CANDIDATES)
+                    result = None
+        except TimeoutError:
+            return {"query": args.get("query", ""), "results": []}
+
     def _scoped_fan_out_search(self, principal, name, args) -> dict:
-        """One worker search and one ranking over the readable wing union."""
+        """Rank the readable wing union, refilling after drawer authorization."""
         from .handoff.models import MIRROR_WING
         from .handoff.overview import project
 
@@ -1571,7 +1657,16 @@ class Mediator:
         worker_args = {**args, "wings": wings}
         if args.get("cli_compatible"):
             worker_args["cli_compatible"] = False
-        result = self.workers.call_tool(principal, name, worker_args)
+        search = (
+            self._readable_search
+            if (
+                getattr(self.gateway, "handoff", None) is not None
+                and not principal.policy.sees_all_wings
+                and not worker_args.get("cli_compatible")
+            )
+            else self.workers.call_tool
+        )
+        result = search(principal, name, worker_args)
         if not isinstance(result, dict):
             raise WorkerUnavailable()
         if result.get("error"):
@@ -1935,6 +2030,9 @@ class Gateway:
         self.prefix_routes: list = []
         self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
         self.limiter = ratelimit.TokenBuckets()
+        self.write_limit, self.backfill = ratelimit.limits_from_env()
+        self.wall_clock = time.time
+        backfill_allowance.ensure_schema(db)
         self.storage_meter = plans.StorageMeter()
         allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
         self.allowed_hosts = (
@@ -2214,6 +2312,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         forwarded = ",".join(self.headers.get_all("X-Forwarded-For", []))
         ip = ratelimit.client_ip(self.client_address[0], forwarded)
         policies = []
+        topup = False
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
@@ -2233,18 +2332,53 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 (ratelimit.UNTRUSTED if untrusted else ratelimit.AUTHENTICATED, identity)
             )
             if untrusted and _write_request(self.command, path, request):
-                policies.append((ratelimit.WRITES, identity))
+                policies.append((self.server.gateway.write_limit, identity))
+                topup = (
+                    not principal.person
+                    and self.command == "POST"
+                    and path in ("/api/capture", "/api/import")
+                )
         # Short links replace the anonymous policy with their own budget.
         if self.command == "GET" and path.startswith("/s/"):
             policies.append((ratelimit.SHORT_LINKS, ip))
         elif principal is None:
             policies.append((ratelimit.ANONYMOUS, ip))
-        retry = self.server.gateway.limiter.check(policies)
+        gateway = self.server.gateway
+        retry = gateway.limiter.check(policies)
         if not retry:
             return False
+        if topup:
+            # A per-minute refusal wins: waiting that out, not the hourly limit, is what helps.
+            wait = self._backfill_allowance(principal, policies)
+            if wait == 0:
+                return False
+            retry = wait if wait > 0 else retry
         self.close_connection = True
         self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
         return True
+
+    def _backfill_allowance(self, principal, policies):
+        """Spend one first-backfill write when only the steady write limit refused.
+
+        Returns 0 on admission, the Retry-After of another budget that refused,
+        or -1 when the allowance is spent. Every other budget (per-minute
+        included) is still charged, and refunded if the allowance is spent.
+        """
+        gateway = self.server.gateway
+        others = [(limit, ident) for limit, ident in policies if limit is not gateway.write_limit]
+        wait = gateway.limiter.check(others)
+        if wait:
+            return wait
+        if backfill_allowance.admit(
+            gateway.db,
+            workspace_id=principal.workspace_id,
+            connection_id=principal.connection_id,
+            now=gateway.wall_clock(),
+            limits=gateway.backfill,
+        ):
+            return 0
+        gateway.limiter.refund(others)
+        return -1
 
     def _dispatch(self):
         self._response_started = False

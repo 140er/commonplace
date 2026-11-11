@@ -144,7 +144,10 @@ def test_search_hides_candidate_counts(case, wing, cli):
     assert owner.get("results")
     assert "total_before_filter" not in owner, "Pre-gate counts are never returned"
     result = call(case.w, case.actor, "search", cli_compatible=cli, **args)
-    assert result.get("results") == []
+    # Restricted searches refill the limit after authorization (#299), so a
+    # readable drawer may take the hidden match's place; the hidden one must not.
+    shown = json.dumps(result.get("results"))
+    assert case.record["drawer_id"] not in shown and "zqmutationfixture" not in shown
     assert "total_before_filter" not in result, "Hidden-candidate count leaked"
     if cli:
         assert set(result) <= {"cli_output", "query", "wings_searched", "results", "facts"}, (
