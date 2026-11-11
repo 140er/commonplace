@@ -110,6 +110,13 @@ Stop old processes before update and explicitly reinstall
 transcript-only or uninstall: unchanged service restart policies retry old rejected
 configs. No deployment, replacement importer or memory-coverage completion is claimed.
 
+The generic `agent-log` capture source extends feed token selection to its own
+capture token, still never an import credential. Its records name `agent` and
+`session_id`; the capture identity `<agent>:<session_id>` lives in the filing
+actor's private namespace, so privacy, opt-in, cadence and idempotency are those
+of the native sources. Native agent names are reserved and a stream cannot carry
+records of another agent or session. No Cursor database reader is claimed.
+
 ### Runner-start void semantics and limits
 
 - A same-step retry of an unvoided step returns the stored job; any mismatch is a 409 with the stored step.
@@ -256,12 +263,20 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - A runner lease carries `card_context`: the started card as the machine's worker connection may read it. The runner appends it to the launch message, so an agent starts from the card itself and not only from its number.
 - Fields, title and body are always present and verbatim. Asks, decisions and handoff notes, comments, blockers and related cards, linked evidence and linked memory text follow in that order while the block stays inside `COMMONPLACE_START_CONTEXT_TOKENS` (default 6000; 0 sends none).
 - Nothing is shortened or summarised: an item is kept or cut whole, and a cut section ends with a marker that counts the cut items and names the call that returns them. User text is JSON-quoted.
-- A card that cannot be read at lease time never fails the lease. `commonplace/runner/start_context.py` holds the assembly in one function with an ordered section list for later additions.
+- A card that cannot be read at lease time never fails the lease. `commonplace/runner/start_context.py` holds the assembly in one function with an ordered section list for later additions. A started card's own goal is never cut, like its title; the goals above it are a section after decisions and are cut from the top level down.
 
 ### Runner wings and the owner runner block
 
 - A runner machine's worker PAT reads and writes every wing in the machine grant and no other; its first wing is the default write wing. `startable()` accepts a card whose board wing is granted and otherwise refuses with `outside_worker_wing`, naming the board wing and the granted wings. Machines enrolled before this keep a first-wing-only worker policy until their wings are saved once (same wings do not reset the binding).
 - The Admin page's runner block lists, enrolls, attests and edits wings through the existing owner-only `/api/runners` routes. Enrollment tokens are shown once in a panel and never stored, logged or redrawn.
+
+### Run ledger
+
+- A run is one runner start. Its ledger row (`run_ledger` in `runner.sqlite3`) is written in the start's own transaction and follows its state; the table is additive and older starts get a row when the store opens.
+
+- The hub never measures, prices or estimates usage. Tokens, cost (millionths of a currency unit plus the currency), the log pointer and the run's end are only what the run's own enabled machine reported through `POST /api/runner/usage`; an unreported value stays NULL and reads "not reported".
+
+- A reported end changes neither the start job nor machine capacity nor the card (D3 stays open).
 
 ### Mirror and search-index test waits
 
@@ -324,6 +339,11 @@ optional `reviewer` argument to `task_add` and `task_update`.
 
 
 ### Project seat wake recommendations
+
+- Project Connect writes every HTTP 409 conflict to its persistent status. Shared-memory
+  and replacement conflicts retain their explanation and next step after dialog dismissal;
+  shared-memory consent and own-section conversion still require the existing explicit choices.
+  Other conflicts include the server's reason in the Orchestrator section of project settings.
 
 - Connect recommends a board-scoped webhook for `space_message` and `card.moved`, so messages and worker completion moves can wake the orchestrator.
 
@@ -664,6 +684,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
   granted scopes the connection still holds after policy and role intersection,
   so a withdrawn `cards:decide` never reappears in a refresh.
 
+- Test collection: the consent and Agents browser test skips without Playwright
+  (collecting `tests/` must never error); `CP_BROWSER_E2E=1` makes a missing
+  Playwright fail instead.
+
 ### Explicit imported-history reader consent
 
   - Imported view proofs share the response access checker with normalized citation and private-source authorization; thread-bound mutation and source-delete checks remain enforced.
@@ -774,6 +798,12 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Existing doing holders retain reporting, renewal, edits, finishing, escalation and release after label removal or retyping, preserving assignee and expiry. Revocation still denies authentication. Same-ID token rotation preserves grants; new IDs inherit none. Todo reservation is not acquisition; owner recovery remains todo → backlog → todo.
 - The app sets a card’s task type from the card details and each agent’s allowed types from Settings > Agents, both person-owner writes through the routes above. A refused typed pickup names the type and points the owner to Settings > Agents; automatic take still skips ineligible cards without an error.
 - Interim choices pending owner: untyped cards behave as today, member people may acquire for themselves, labels are free slugs, missing eligibility adds no notification, and stale full replacements may re-grant labels. Deferred groups remain catalog/multiple types/agent attachments; mapping versions/audit/grant API; runner fences/replay/terminalization; handoff/ask/approval routing and recovery/notifications; platform grants/browser settings; send/pay confirmation and secret protection. The full task-types release still requires those requirements or explicit owner-approved exclusions.
+
+### Goals tree in card context
+
+- The workspace has one small goals tree (6 levels, 200 goals, plain single-line text) that only a signed-in workspace owner writes, through the REST routes or the MCP tools `goal_set` and `card_goal`; every connection can read it with `goal_list`. A card points at at most one goal, and a goal that is archived stays in the context of cards already pointing at it.
+- `task_show` and `task_take_next` add the card's goal chain, top-level first, as `goals` only when a goal is set; cards without one are unchanged. The goal text fits a fixed 1200-character budget: higher goals are dropped from the top level down and counted, and the card's own goal always stays.
+- Interim choices pending owner: the tree is workspace-wide (no per-board goals), agents cannot point a card at a goal themselves, and there is no web goal picker yet.
 
 ### Opt-in blockers, waiting reasons and split delivery
 
@@ -963,6 +993,8 @@ every wake attempt failed. See `docs/chat.md`.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
 
+- **Bots web screens (S5):** `#/bots` and `#/bots/<id>` (`web/static/bots.js`, `botstream.js`, `bots.css`) talk only to the `/api/bots*` contract and the existing `POST /api/cards/<n>/decide`; they hold no conversation text beyond the open page, store nothing in the browser except an unsent draft in memory, and never send a model or mode choice. Every server string is escaped before it is drawn. A turn is streamed with `fetch` and a stream reader; a connection lost after the `ack` event is not a failure, the page polls `GET /api/bots/<id>/messages?after=` until `running` is false. The roster is polled every 15 s and an open thread every 5 s (1.5 s while a turn runs), both paused while the tab is hidden. A failed send keeps the text and retries under the same `request_id`. Work stays "work", "task" and "question" in the screen's wording.
+
 ## Numbers
 
 | Label | Number | Source |
@@ -993,7 +1025,7 @@ every wake attempt failed. See `docs/chat.md`.
 |---|---|---|---|
 | `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit, sign-up waitlist (`signup_waitlist`, additive) | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
-| `runner.sqlite3` | workspace | runner jobs; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
+| `runner.sqlite3` | workspace | runner jobs and their run ledger; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
 
 - Backups copy every SQLite file in the data directory (`commonplace/backup.py`).
@@ -1470,6 +1502,18 @@ every wake attempt failed. See `docs/chat.md`.
 - Owner-approved waiver ids, one per line as `W<n>: <scope>`.
 
 - None are approved yet.
+
+### Bots keep conversations in the workspace store
+
+Bot threads live only in the workspace file `bots.sqlite3`; the control database, logs, audit reasons and error strings never hold message, model or tool-argument text. A bot is not a principal: every read goes through the board services as the person it belongs to, and `/api/bots*` serves signed-in people only (agent tokens and machine credentials get 404, anonymous callers 401). Display text is redacted while the stored message stays verbatim and append-only. Roster previews are cut to 200 characters for display only. Input bounds count raw characters, never the stripped text, so verbatim storage and the limit agree. When a person already has 50 live bots, default bots for further projects are simply not created.
+
+### Bots hear about their work without being asked
+
+A hub event listener appends one short `event` message to a bot's thread when a card the bot filed needs its owner, is ready for review or is done, and when the project's orchestrator answers a post the bot forwarded (the first coordinator reply after it; the reply is stored verbatim and marked as the orchestrator's). It runs on the emitting thread after the commit, never raises, filters with one indexed lookup before any other work and does nothing for a card or post no bot is linked to. It speaks only in the bot that filed or forwarded the item and only while the owner can still see it (fresh person principal, same visibility check as webhooks). A work item posts when its status word changes and only for an event newer than the last one applied, decided and written in one transaction, so a redelivered, repeated, stale or racing event adds nothing; a forwarded post is answered once, by the coordinator's first reply after it, even when replies are handled out of order. Card titles are redacted and cut for display; logs carry a code and a stack location, never text. A start that never launched has no hub event, so no update is made for it.
+
+### After Done: archive hides, never deletes
+
+A done card is final. A signed-in person (owner or member) may archive it, carry on from it in a new linked backlog card, and pin key facts to its Pocket; connections may not. Archiving only flags the card in `card_archive`: it leaves board lists and counts but stays readable and restorable, and nothing is deleted (restore and unpin mark rows, they never remove them). Archived cards refuse updates and Pocket changes until restored. These routes are person-only, so they sit outside the agent-write rules inventory.
 
 ### Reassigning active work
 
@@ -2061,3 +2105,12 @@ private wings. The notice uses the actual filed destination after write-wing
 pinning; readable shared or inbox saves do not carry that notice. A save that
 succeeds privately but fails to link to a card includes the same notice in its
 saved-but-not-linked error.
+
+An ask may carry structured decision blocks: options given as `{label, detail,
+preview}`. The labels alone remain the offered options, so recipient routing,
+the event log, digests, push and `decide` treat a structured ask exactly like a
+plain one, and an answer is always one of the offered labels. Detail and preview
+are bounded plain text stored beside the ask (`ask_blocks`) and dropped whenever
+the offered options change. Previews are text, not images: the app's content
+security policy loads images from its own origin only, and there is no upload
+path for decision images yet.

@@ -3,7 +3,7 @@
     "mcp": {
       "tools": [
         {
-          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
+          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason. An option is a label, or {label, detail, preview} to show a short explanation and a plain-text preview side by side; the answer is always one of the labels.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -15,8 +15,34 @@
               },
               "options": {
                 "items": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "detail": {
+                          "maxLength": 280,
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 120,
+                          "type": "string"
+                        },
+                        "preview": {
+                          "maxLength": 1200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               "person_reason": {
@@ -112,6 +138,32 @@
             "type": "object"
           },
           "name": "board_set"
+        },
+        {
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
         },
         {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
@@ -223,6 +275,44 @@
             "type": "object"
           },
           "name": "fact_save"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -1802,6 +1892,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_goal",
       "card_split_done",
       "card_start",
       "card_start_cancel",
@@ -1809,6 +1900,8 @@
       "card_start_status",
       "decide",
       "fact_save",
+      "goal_list",
+      "goal_set",
       "handoff_start",
       "memory_get",
       "memory_link",
@@ -1893,7 +1986,7 @@
     "mcp": {
       "tools": [
         {
-          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
+          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason. An option is a label, or {label, detail, preview} to show a short explanation and a plain-text preview side by side; the answer is always one of the labels.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1905,8 +1998,34 @@
               },
               "options": {
                 "items": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "detail": {
+                          "maxLength": 280,
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 120,
+                          "type": "string"
+                        },
+                        "preview": {
+                          "maxLength": 1200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               "person_reason": {
@@ -1981,6 +2100,32 @@
           "name": "board_own_wing"
         },
         {
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
+        },
+        {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2017,6 +2162,44 @@
             "type": "object"
           },
           "name": "decide"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -2740,8 +2923,11 @@
       "board_add",
       "board_list",
       "board_own_wing",
+      "card_goal",
       "card_split_done",
       "decide",
+      "goal_list",
+      "goal_set",
       "memory_get",
       "memory_link",
       "memory_save",
@@ -2773,7 +2959,7 @@
     "mcp": {
       "tools": [
         {
-          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
+          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason. An option is a label, or {label, detail, preview} to show a short explanation and a plain-text preview side by side; the answer is always one of the labels.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2785,8 +2971,34 @@
               },
               "options": {
                 "items": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "detail": {
+                          "maxLength": 280,
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 120,
+                          "type": "string"
+                        },
+                        "preview": {
+                          "maxLength": 1200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               "person_reason": {
@@ -2882,6 +3094,32 @@
             "type": "object"
           },
           "name": "board_set"
+        },
+        {
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
         },
         {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
@@ -2993,6 +3231,44 @@
             "type": "object"
           },
           "name": "fact_save"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -4572,6 +4848,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_goal",
       "card_split_done",
       "card_start",
       "card_start_cancel",
@@ -4579,6 +4856,8 @@
       "card_start_status",
       "decide",
       "fact_save",
+      "goal_list",
+      "goal_set",
       "handoff_start",
       "memory_get",
       "memory_link",
