@@ -581,13 +581,14 @@ def test_U1_resolve_requires_person_owner_and_audit(signup_hub, owners):
 def test_W1_worker_claim_and_write_wing(signup_hub, owners):
     hub, owner = signup_hub, owners["A"]
     # Signup already supplies the public shared and inbox wings.
-    _cid, token, machine = _ready(hub, owner, wings=["shared", "inbox"])
+    _cid, token, machine = _ready(hub, owner, wings=["shared"])
     task = card(hub, owner)
     _accepted(_start(hub, machine, task, token=token))
     _ok(_tool(hub, machine["worker_token"], "task_show", task=task["number"]))
     _ok(_tool(hub, machine["worker_token"], "task_take_next", task=task["number"]))
     code, body = _start(hub, machine, card(hub, owner, board="inbox"), owner=owner)
-    assert code == 403 and body["error"].endswith("outside_worker_wing"), (code, body)
+    assert code == 403 and "outside_worker_wing" in body["error"], (code, body)
+    assert "board wing 'inbox'" in body["error"] and "'shared'" in body["error"], body
 
 
 def test_W2_worker_cannot_escalate(signup_hub, owners):
