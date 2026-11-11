@@ -1379,18 +1379,23 @@ class BoardService(lifecycle.LifecycleMixin):
     def _recorded_release(self, row, approver):
         """A completed release outlives a later appointment, never the approver's own grants.
 
-        The marker names the approver's connection. A name stays unique in its workspace after
-        revocation, so a revoked approver's name is never handed to another connection; the
-        workspace id scopes the lookup, so another workspace's same-named agent does not match.
+        The marker names its approver by connection name, so it counts only for the connection
+        that was already there when it was recorded: a connection holding the name that was
+        created afterwards (the name freed by a revocation) never inherits the release.
         """
         if not self._release_grants(approver, row["board_wing"]):
+            return False
+        name = approver.actor[5:]
+        try:
+            created = self.ctx.db.connection(name, self.principal.workspace_id)["created_at"]
+        except (ControlError, ValueError, TypeError):
             return False
         with self.store.connection() as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM task_events WHERE task_id=? AND kind='decide' "
-                    "AND choice='release origin' AND stamp_connection=? LIMIT 1",
-                    (row["id"], approver.actor[5:]),
+                    "AND choice='release origin' AND stamp_connection=? AND created_at>=? LIMIT 1",
+                    (row["id"], name, created),
                 ).fetchone()
                 is not None
             )
