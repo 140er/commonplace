@@ -173,8 +173,8 @@ Verify health, search, cards and a new backup.
 uv run pytest -q -p no:cacheprovider tests/test_commonplace_deploy.py
 uv run ruff check .
 uv run ruff format --check .
-bash -n backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh
-shellcheck backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh
+bash -n backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh deploy/backup/host-backup-lvm-snapshot.sh
+shellcheck backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh deploy/backup/host-backup-lvm-snapshot.sh
 ```
 
 ## Deploy
