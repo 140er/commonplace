@@ -338,8 +338,16 @@ def machinery(hub):
 def test_agent_machinery_cannot_be_granted_and_is_refused_at_use_anyway(bots_hub):
     hub = bots_hub
     for label, token, cid in machinery(hub):
-        with pytest.raises(control_db.ControlError):
-            grant(hub, cid, hub.hub.admin)
+        if (
+            label == "coordinator"
+        ):  # only the board store knows coordinators: the REST layer refuses
+            status, body, _ = hub.request(
+                hub.owner, "PATCH", f"/api/connections/{cid}", {"bots_chat": True}
+            )
+            assert (status, body["error"]) == (409, bots_grant.AGENT_TEXT)
+        else:
+            with pytest.raises(control_db.ControlError):
+                grant(hub, cid, hub.hub.admin)
         assert CHAT not in hub.principal(token).policy.scopes, label
         # Even a row that claims the scope (an older build, a manual edit) gets nothing.
         set_policy_scopes(hub, cid, CHAT, CONFIRM)
