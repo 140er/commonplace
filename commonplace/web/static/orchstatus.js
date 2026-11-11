@@ -51,7 +51,7 @@ export function orchStatusHTML(view, e, {canEnd = false, confirming = false, bus
   if (!view) return `<p role="status" data-orch-status>${e(status || ORCH_COPY.loadError)}</p>`;
   const {lease, config} = view, counts = orchCounts(view), live = Boolean(lease?.live);
   const unsettled = [...(view.in_doubt || []), ...(view.needs_person || [])];
-  const parts = [plural(counts.open, "step open", "steps open"), `${plural(counts.inDoubt, "in doubt", "in doubt")}`];
+  const parts = [plural(counts.open, "step open", "steps open"), `${counts.inDoubt >= LIST_CAP ? `${LIST_CAP}+` : counts.inDoubt} in doubt`];
   if (counts.needsPerson) parts.push(plural(counts.needsPerson, "needs a person", "need a person"));
   parts.push(plural(counts.unstarted, "Todo card not started", "Todo cards not started"));
   const configLine = config ? `Accepted config: version ${e(config.version)}.` : "No orchestrator config is accepted yet.";
