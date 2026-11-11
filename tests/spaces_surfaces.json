@@ -114,7 +114,7 @@
           "name": "board_set"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1346,6 +1346,13 @@
                 ],
                 "type": "string"
               },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+              },
               "status": {
                 "enum": [
                   "todo",
@@ -1631,6 +1638,13 @@
                   "low"
                 ],
                 "type": "string"
+              },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
               },
               "question": {
                 "type": "string"
@@ -1948,7 +1962,7 @@
           "name": "board_own_wing"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2332,6 +2346,13 @@
                 ],
                 "type": "string"
               },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+              },
               "status": {
                 "enum": [
                   "todo",
@@ -2618,6 +2639,13 @@
                 ],
                 "type": "string"
               },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+              },
               "question": {
                 "type": "string"
               },
@@ -2818,7 +2846,7 @@
           "name": "board_set"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4050,6 +4078,13 @@
                 ],
                 "type": "string"
               },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+              },
               "status": {
                 "enum": [
                   "todo",
@@ -4335,6 +4370,13 @@
                   "low"
                 ],
                 "type": "string"
+              },
+              "reviewer": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
               },
               "question": {
                 "type": "string"

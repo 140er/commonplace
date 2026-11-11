@@ -3,6 +3,7 @@
 import json
 import logging
 
+from commonplace.decide_grant import DECIDE_SCOPE
 from commonplace.extensions import (
     ALL_PROFILES,
     WORK_PROFILES,
@@ -27,6 +28,11 @@ PRIORITY = {
     "type": "string",
     "enum": list(PRIORITIES),
     "description": "Owner person only. Omit on a new card for the default (normal).",
+}
+REVIEWER = {
+    "type": ["string", "null"],
+    "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; "
+    "null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
 }
 
 
@@ -242,6 +248,7 @@ def add(
     owner=False,
     write=False,
     available=None,
+    untrusted_scope=None,
 ):
     input_schema = {
         "type": "object",
@@ -275,7 +282,7 @@ def add(
                 "callstack takes the JSON from python -m commonplace.callstack.",
                 "task_handoff": "Hand off work with a note, or ask a person and end the turn.",
                 "ask": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
-                "decide": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+                "decide": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
                 "needs_me": "Read the visible decision queue and origin releases. Eligible coordinators receive origin work without decide authority; signed-in owners receive release or configuration recovery only when needed. Ask authority remains separate.",
             }[name],
             input_schema=input_schema,
@@ -289,6 +296,7 @@ def add(
             kind="write" if write else "read",
             profiles=WORK_PROFILES if work else ALL_PROFILES,
             trusted_only=trusted,
+            untrusted_scope=untrusted_scope,
             owner_only=owner,
             available=available,
         )
@@ -393,6 +401,7 @@ def register_tools():
                 "description": "Owner person only; empty string clears. Omit to preserve the type.",
             },
             "priority": PRIORITY,
+            "reviewer": REVIEWER,
             "labels": ARRAY,
             "blocked_by": {
                 "type": "array",
@@ -440,6 +449,7 @@ def register_tools():
                 "description": "Owner person only; empty string clears. Omit to preserve the type.",
             },
             "priority": PRIORITY,
+            "reviewer": REVIEWER,
             "labels": ARRAY,
             "blocked_by": {
                 "type": "array",
@@ -501,6 +511,7 @@ def register_tools():
         ("task",),
         available=lambda p, gateway: p.role == "owner" or receives_asks(p, gateway),
         trusted=True,
+        untrusted_scope=DECIDE_SCOPE,
         write=True,
     )
     add(
