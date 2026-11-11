@@ -179,12 +179,10 @@ def test_write_set_change_is_audited_and_resets_the_binding(signup_hub, owners):
     ]
 
 
-def _refused(response):
-    """The write-set refusal itself, not just any error."""
+def _refused(response, text="no: this connection cannot change this board"):
+    """The specific refusal (by default the write-set one), not just any error."""
     assert response.get("result", {}).get("isError"), response
-    assert (
-        response["result"]["content"][0]["text"] == "no: this connection cannot change this board"
-    ), response
+    assert response["result"]["content"][0]["text"] == text, response
 
 
 def test_submissions_follow_read_scope_not_the_write_set(signup_hub, owners):
@@ -215,10 +213,12 @@ def test_submissions_follow_read_scope_not_the_write_set(signup_hub, owners):
             "UPDATE tasks SET status='doing', assignee=? WHERE id=?", (actor, assigned["number"])
         )
     _ok(_tool(hub, worker, "ask", task=assigned["number"], **question))
-    response = _tool(hub, worker, "task_comment", task=unreadable["number"], text="Synthetic.")
-    assert "error" in response or response["result"].get("isError"), response
-    response = _tool(hub, worker, "ask", board="shared", **question)
-    assert "error" in response or response["result"].get("isError"), response
+    # Unreadable wings stay invisible rather than refused.
+    _refused(
+        _tool(hub, worker, "task_comment", task=unreadable["number"], text="Synthetic."),
+        "no: card not found",
+    )
+    _refused(_tool(hub, worker, "ask", board="shared", **question), "no: board not found")
 
 
 def _task_row(hub, owner, number):
