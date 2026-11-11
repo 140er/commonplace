@@ -3,6 +3,8 @@
 - **Paths:** `tests/`
 - **Owns:**
 
+  - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
+
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
 
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
@@ -74,6 +76,8 @@
   - Card339 regressions exercise MCP and HTTP routing, owner fallback, person queue visibility, withdrawal history and authorization refusals. The pinned Space tool contract records the optional person_reason parameter and matching ask/review descriptions without changing tool names or profile visibility.
 
   - `tests/test_commonplace_subagent_asks.py` covers released-card questions and coordinator routing, answers, escalation and recovery.
+
+  - `tests/test_commonplace_decision_blocks.py` and its Node harness `tests/commonplace_decision_blocks.mjs` cover structured asks from the MCP call through `needs_me` and the decide route to the Needs me blocks, with refusal controls for options that were not offered and for malformed blocks.
 
   - Shared fixtures and harnesses and every test file not listed in another block.
   - Shared fixtures and harnesses and every test file not listed in another block, including binding-epoch migration, direct fences, lock-entry instrumentation and bounded reset races.

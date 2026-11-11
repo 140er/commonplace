@@ -82,12 +82,16 @@
 
   - All agent asks and review questions default to the authorized live board coordinator. Explicit person_reason is audited and routes to the owner; completion reviews and person handoffs retain their route. Missing or unavailable coordinators fall back to the owner without rewriting asks. Only a currently authorized coordinator may withdraw its own agent-directed decision to todo/doing; recipient, requester and current board appointment are checked. Person decisions and other requesters remain protected, and agents cannot answer their own asks. Withdrawal preserves history.
 
+  - `ask` accepts structured decision blocks (`boards/decision_blocks.py`): each option is a label or `{label, detail, preview}`, with 2 to 6 distinct labels, detail up to 280 characters and a plain-text preview up to 1200 characters and 24 lines. Labels stay in `ask_options`, so routing, events and `decide` are unchanged; the card adds `ask_blocks` (empty for a plain ask), which is cleared whenever the offered options change.
+
 - **How it fails:**
 
   - Hidden metadata is absent; hidden repo collisions are forbidden; unsupported shapes execute no domain method.
   - Report routing defers one event durably before advancing the global cursor; authorization retries indefinitely with fixed inspection code and persisted count/since, independent of HTTP attempts. Control persistence failures retain unacknowledged work.
 
   - A swallowed emission loses a notification but not the change (the trigger sweep reads `task_events`); webhook delivery retries and records failures.
+
+  - A structured option with an unknown key, non-text or control characters, a missing or duplicate label, or text over its bound is refused with a `no:` message and nothing is stored; a decision naming a label that was not offered is refused and the ask stays open.
 
   - Non-closure ProgrammingError follows the same recovery path as every other unexpected dispatcher-pass exception: it is contained and logged without its private message, then waits on the stop event for 5 s, doubling after consecutive errors up to 300 s, before continuing.
 
@@ -109,5 +113,7 @@
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
   - `tests/test_commonplace_subagent_asks.py` and `tests/test_commonplace_agent_asks.py` check generic question routing, owner fallback, explicit person reasons, recipient authority and withdrawal guards through MCP and HTTP.
+
+  - `tests/test_commonplace_decision_blocks.py` checks structured asks end to end: blocks reach the person's `needs_me`, the chosen label returns to the asker, options that were not offered and malformed or oversized blocks are refused, plain asks are unchanged, and a later ask never inherits earlier blocks.
 
   - `tests/test_card_lifecycle.py` holds archive/restore (hide, never delete), carry-on follow-ups and the Pocket, with owner, member, connection and anonymous authorization over the service and REST.

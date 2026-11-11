@@ -30,7 +30,11 @@
 
 
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
+
+  - Live-sync and capture instructions document the generic `agent-log` source for agents without a native transcript.
   - Public Space endpoint and error documentation alongside legacy board routes.
+
+  - `docs/boards/API.md` describes structured decision blocks: the `{label, detail, preview}` option shape, its bounds, and the `ask_blocks` card field; `docs/boards/schema.sql` lists the column.
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 

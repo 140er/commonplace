@@ -100,6 +100,8 @@
   - **Connection recovery:** Callbacks reopen the selected Needs item; GitHub-only status failures preserve card actions, and connections in another workspace show an explicit disconnect control.
 
   - Needs me renders origin/configuration as approvals, requires a release reason and posts directly; coordinator configuration navigates to existing settings without mutating a card. Proposal Decline and plan Reject controls follow reject permission independently of approve permission and use the existing rejection handler.
+
+  - Needs me shows a structured ask (`ask_blocks`, `web/static/decision-blocks.js`) as side-by-side option blocks under the question: optional plain-text preview, the answer button, optional detail. The button answers with the option's label exactly like a plain option; plain asks keep their footer buttons, and blocks that do not match the offered labels are not drawn.
   - Shell needItems includes approvals when counting each project and retaining selected details on refresh; release ranks between person decisions and plan review.
 
 - **How it fails:**
@@ -129,6 +131,8 @@
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
 
   - `tests/workbench_e2e/test_refresh_forms.py` drives a real browser: an open hand-off form (also one opened mid-refresh) and a comment in progress survive a background refresh, the panel updates once the form is cancelled, and on Needs me a queue change leaves an open hand-off form alone and Cancel closes it.
+
+  - `tests/commonplace_decision_blocks.mjs` (run by `tests/test_commonplace_decision_blocks.py`) checks that a structured ask renders one block per option in the Needs me body, escapes option text, answers with the option's label through the decide route, and falls back to plain buttons for plain or mismatched blocks.
 
   - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals and escaping; `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
 

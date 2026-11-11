@@ -111,6 +111,13 @@ Stop old processes before update and explicitly reinstall
 transcript-only or uninstall: unchanged service restart policies retry old rejected
 configs. No deployment, replacement importer or memory-coverage completion is claimed.
 
+The generic `agent-log` capture source extends feed token selection to its own
+capture token, still never an import credential. Its records name `agent` and
+`session_id`; the capture identity `<agent>:<session_id>` lives in the filing
+actor's private namespace, so privacy, opt-in, cadence and idempotency are those
+of the native sources. Native agent names are reserved and a stream cannot carry
+records of another agent or session. No Cursor database reader is claimed.
+
 ### Runner-start void semantics and limits
 
 - A same-step retry of an unvoided step returns the stored job; any mismatch is a 409 with the stored step.
@@ -1487,6 +1494,10 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 
 - None are approved yet.
 
+### Bots keep conversations in the workspace store
+
+Bot threads live only in the workspace file `bots.sqlite3`; the control database, logs, audit reasons and error strings never hold message, model or tool-argument text. A bot is not a principal: every read goes through the board services as the person it belongs to, and `/api/bots*` serves signed-in people only (agent tokens and machine credentials get 404, anonymous callers 401). Display text is redacted while the stored message stays verbatim and append-only. Roster previews are cut to 200 characters for display only. Input bounds count raw characters, never the stripped text, so verbatim storage and the limit agree. When a person already has 50 live bots, default bots for further projects are simply not created.
+
 ### After Done: archive hides, never deletes
 
 A done card is final. A signed-in person (owner or member) may archive it, carry on from it in a new linked backlog card, and pin key facts to its Pocket; connections may not. Archiving only flags the card in `card_archive`: it leaves board lists and counts but stays readable and restorable, and nothing is deleted (restore and unpin mark rows, they never remove them). Archived cards refuse updates and Pocket changes until restored. These routes are person-only, so they sit outside the agent-write rules inventory.
@@ -2081,3 +2092,12 @@ private wings. The notice uses the actual filed destination after write-wing
 pinning; readable shared or inbox saves do not carry that notice. A save that
 succeeds privately but fails to link to a card includes the same notice in its
 saved-but-not-linked error.
+
+An ask may carry structured decision blocks: options given as `{label, detail,
+preview}`. The labels alone remain the offered options, so recipient routing,
+the event log, digests, push and `decide` treat a structured ask exactly like a
+plain one, and an answer is always one of the offered labels. Detail and preview
+are bounded plain text stored beside the ask (`ask_blocks`) and dropped whenever
+the offered options change. Previews are text, not images: the app's content
+security policy loads images from its own origin only, and there is no upload
+path for decision images yet.

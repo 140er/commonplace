@@ -1,9 +1,11 @@
 ## memory-and-search
 
-- **Paths:** `commonplace/memory_tools.py`, `commonplace/search_index_api.py`, `commonplace/store_embed.py`, `commonplace/store_switch.py`, `commonplace/workspace_store.py`, `commonplace/capture.py`, `commonplace/capture_client.py`
+- **Paths:** `commonplace/memory_tools.py`, `commonplace/search_index_api.py`, `commonplace/store_embed.py`, `commonplace/store_switch.py`, `commonplace/workspace_store.py`, `commonplace/capture.py`, `commonplace/capture_client.py`, `commonplace/agent_log.py`
 - **Owns:**
 
   - Memory tools and routes under the caller's policy, search index progress, workspace store generations and cutovers, and opt-in chat capture.
+
+  - The generic `agent-log` capture source: any agent appends JSONL records carrying `agent` and `session_id`, and the capture identity is `<agent>:<session_id>`.
 
 - **Promises:**
 
@@ -16,6 +18,8 @@
   - Owner HTTP progress always forwards the authenticated principal, returns only readable progress and disables response caching.
 
   - Reads and writes respect the caller's wings and scopes; store cutovers are backup-gated and restartable; capture is explicit and append-only.
+
+  - An agent-log record is stored verbatim in the filing actor's private capture namespace; every record must name the agent and session of its stream, so a stream cannot carry foreign provenance, and native agent names are reserved.
 
 - **How it fails:**
 
@@ -33,4 +37,4 @@
 
   - When only the steady untrusted write limit refuses a capture or import write, a bounded first-backfill allowance is spent instead: per connection once (closing after its window, never renewed) and per workspace (renewing only after its period), never keyed by stream, so restarts and new streams cannot re-arm it. The per-minute budgets still apply and are refunded on refusal; other routes and trusted connections keep their limits. `tests/test_commonplace_public_surface.py::test_first_backfill_of_realistic_size_is_not_throttled_by_the_steady_limit` is red on `origin/develop`.
 
-  - `tests/test_commonplace_memory.py`, `tests/test_commonplace_capture.py`, `tests/test_workspace_store_switch.py`.
+  - `tests/test_commonplace_memory.py`, `tests/test_commonplace_capture.py`, `tests/test_commonplace_agent_log.py`, `tests/test_workspace_store_switch.py`.

@@ -5,6 +5,8 @@
 
   - Agent context handoff to a fresh agent and append-only native session continuity.
 
+  - Protected-reference recognition also covers private `agent-log` capture identities (`capture:<actor>:agent-log:<agent>:<session>`), without widening the import domain.
+
 - **Promises:**
 
   - Thread-store storage budgets read `page_size` and `page_count` as integers, so a budgeted write in an encrypted (SQLCipher) workspace is checked instead of failing with a type error.

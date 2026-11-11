@@ -9,6 +9,8 @@
 
   - The extension seam lists `commonplace.agent_schedules`, installed after holds.
 
+  - The extension list ends with `commonplace.bots`, which installs the person-only `/api/bots` routes.
+
   - The extension list also loads `commonplace.routines`, which starts its worker with the other background workers and stops it before the control database closes.
 
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
