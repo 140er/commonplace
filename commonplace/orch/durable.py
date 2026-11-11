@@ -1223,6 +1223,75 @@ def _derived(step, job_state):
     return step
 
 
+THREAD_JOB_STATES = ("started", "waiting", "in_doubt", "needs_person")
+
+
+def _thread_jobs(ctx, st, board_row, role, steps, now) -> list[dict]:
+    """Builders started outside the runner (kind ``thread``), derived read-only from
+    two facts that must both hold: the journal recorded the start of an unvoided,
+    unfinished thread step for a card (``started`` or ``waiting``; it stays listed
+    when a later epoch marks the step ``in_doubt``), and that card is in ``doing``
+    on this board under a live claim. Newest first, at most ``MAX_LIST``."""
+    found = [
+        row
+        for row in steps
+        if row["kind"] == "thread"
+        and row["card"] is not None
+        and row["voided_at"] is None
+        and row["state"] in THREAD_JOB_STATES
+    ]
+    if not found:
+        return []
+    # Filter by the card's claim before capping, so stale open steps never crowd out
+    # a live builder.
+    numbers = sorted({row["card"] for row in found})
+    doing = {}
+    with BoardStore(ctx.workspace_dir()).connection() as conn:
+        for start in range(0, len(numbers), 500):
+            chunk = numbers[start : start + 500]
+            for row in conn.execute(
+                "SELECT id, assignee, claim_until FROM tasks WHERE board_id=? AND status='doing' "
+                "AND assignee IS NOT NULL AND assignee!='' AND claim_expired_at IS NULL "
+                "AND (claim_until IS NULL OR claim_until>?) AND id IN ("
+                + ",".join("?" * len(chunk))
+                + ")",
+                (board_row["id"], now, *chunk),
+            ):
+                doing[row["id"]] = row
+    found = [row for row in found if row["card"] in doing][-MAX_LIST:]
+    if not found:
+        return []
+    marks = ",".join("?" * len(found))
+    with st.connection() as conn:
+        started = dict(
+            conn.execute(
+                "SELECT step_key, MIN(at) FROM orch_journal WHERE board=? AND role=? "
+                "AND event='record' AND state IN ('started','waiting') "
+                f"AND step_key IN ({marks}) GROUP BY step_key",
+                (board_row["slug"], role, *(row["step_key"] for row in found)),
+            ).fetchall()
+        )
+    return [
+        {
+            "id": None,
+            "task_number": row["card"],
+            "state": row["state"],
+            "outcome_code": row["code"],
+            "thread_id": None,
+            "started_at": started[row["step_key"]],
+            "updated_at": row["updated_at"],
+            "step_key": row["step_key"],
+            "source": "journal",
+            "assignee": doing[row["card"]]["assignee"],
+            "claim_until": doing[row["card"]]["claim_until"],
+            "detail": row["detail"],
+            "evidence": json.loads(row["evidence"]) if row["evidence"] else None,
+        }
+        for row in reversed(found)
+        if row["step_key"] in started
+    ]
+
+
 def _checkpoint(ctx, st, board_row, role, now, cards):
     board = board_row["slug"]
     with st.connection() as conn:
@@ -1279,6 +1348,10 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
                 inbox_note = {"inbox": note}
     except Exception as exc:
         log_failure(logger, "checkpoint inbox unavailable", exc)
+    job_rows = [
+        *({**dict(row), "source": "runner"} for row in job_rows),
+        *_thread_jobs(ctx, st, board_row, role, steps, now),
+    ]
     return {
         **inbox_note,
         "board": board,

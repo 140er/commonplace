@@ -1212,12 +1212,14 @@ Format (read by `commonplace orch docs-check`):
 
 ## orch
 
-- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_docs_obligations.py`
+- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_docs_obligations.py`
 - **Owns:**
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
 
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
+
+  - The read-only mapping from journaled thread starts and doing-card claims to checkpoint jobs.
 
 - **Promises:**
 
@@ -1240,6 +1242,8 @@ Format (read by `commonplace orch docs-check`):
 
   - First void and queued/leased cancellation share one transaction; repeats preserve actor/time and one journal event while tools emit per-call feed notifications.
 
+  - Checkpoint `jobs` also lists builders started outside the runner (`source=journal`): an unvoided, unfinished `thread` step whose start was recorded for a card, while that card is in `doing` on the same board under a live claim. Runner jobs carry `source=runner`. The view is derived on read and never stored.
+
 
 - **How it fails:**
 
@@ -1257,6 +1261,8 @@ Format (read by `commonplace orch docs-check`):
   - The `tests/test_orch_` files listed in Paths and `tests/test_docs_obligations.py`; R22 in `tests/test_orch_checks.py` covers misplaced labels, missing files, accepted label forms and repository-root resolution.
 
   - R1, R1b, R1d, R1e, R8b, R10a and R11e map to `tests/test_orch_acceptance.py`.
+
+  - `tests/test_orch_checkpoint_threads.py` covers journaled thread starts as checkpoint jobs: the recorded start plus a live doing claim, board and role scoping, in-doubt visibility after a new epoch and the absence of writes.
 
 
 ## projects
