@@ -530,8 +530,9 @@ def test_diary_read_stays_on_the_store_its_probe_used(hub, collection, monkeypat
     visible_diary_entry(collection)
     read = mcp_server.tool_diary_read
     probe = read("probe", wing="shared", thread_scope={"probe": True})
-    assert probe["topics"] == ["general"] and probe["source"] in ("sqlite", "collection"), probe
-    scope = {"exclude_topics": ["general"], "source": probe["source"]}
+    assert probe.get("topics") == ["general"], probe
+    assert probe.get("source") in ("sqlite", "collection"), probe
+    scope = {"exclude_topics": ["general"], "source": probe.get("source")}
     assert read("probe", wing="shared", thread_scope=scope)["entries"] == []
     monkeypatch.setattr(mcp_server, "_sqlite_diary_read", lambda *a, **k: None)
     pinned = {"exclude_topics": [], "source": "sqlite"}
