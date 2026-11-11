@@ -357,6 +357,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Images run the gateway as an unprivileged user on a mounted data directory; examples hold placeholders, never real hosts or secrets; deploy holds an active transient unit reference through fresh invocation, snapshot and backup verification, then releases it, including on trapped exits.
 
+  - The host compose example gives the gateway 20 GiB of memory with 6 GiB swap (`mem_limit: 20g`, `memswap_limit: 26g`) so large memory workspaces are not OOM-killed (#275); this is temporary headroom until the root-cause fix ships.
+
 - **How it fails:**
 
   - Missing execution proof, stale snapshots, failed verification or reference creation/release refuse deployment; SIGKILL can leave a transient reference holder for operator cleanup.
