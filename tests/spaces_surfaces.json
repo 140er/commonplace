@@ -980,6 +980,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -1859,6 +1906,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",
@@ -3750,6 +3798,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -4622,6 +4717,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",

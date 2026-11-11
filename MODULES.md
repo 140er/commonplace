@@ -1400,7 +1400,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## orch
 
-- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
+- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_orch_organigram.py`, `tests/test_docs_obligations.py`
 - **Owns:**
 
   - A `model_unresolved` start refusal names the role and board and where an owner sets the model (`details.role`, `details.config_role`, `details.board`); `Config.start_roles` and `split_role` give the roles a start can run to `prepare()` and to Needs me.
@@ -1410,6 +1410,8 @@ Format (read by `commonplace orch docs-check`):
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
 
   - The read-only mapping from journaled thread starts and doing-card claims to checkpoint jobs.
+
+  - `commonplace/orch/organigram.py`: the reporting line (`parent`) between a config's roles, the checkpoint `escalations` of a role's direct reports and `orch_reassign_step` (`tests/test_orch_organigram.py`).
 
 - **Promises:**
 
@@ -1423,6 +1425,8 @@ Format (read by `commonplace orch docs-check`):
   - Empty disabled sweeps avoid config resolution, checkpoint inbox context is best effort, and failed inbox snapshots keep committed leases launchable using pinned instructions.
 
   - Lease snapshot failures log sanitized diagnostics without exception messages.
+
+  - Escalation and delegation follow the reporting line: unsettled steps of direct reports appear only in the checkpoint of the role they report to, and only that role's lease holder (or the owner, by void) takes a step back. Runner-start, gate and hold steps stay owner-only; a config without `parent` keys behaves as before.
 
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
