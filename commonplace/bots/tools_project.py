@@ -26,6 +26,8 @@ from commonplace.chat import front
 from commonplace.extensions import ToolError
 
 LIST_LIMIT = 20
+QUESTION_LIMIT = 8  # a tool result is cut at 4,000 characters, so rows stay short
+OPTIONS_SHOWN = 6
 TITLE_LIMIT = 200
 NOTES_SHOWN = 3
 NOTE_CHARS = 500
@@ -222,7 +224,7 @@ def _list_work(turn, args):
         total += 1
         if len(shown) < LIST_LIMIT:
             shown.append(
-                {"number": card["number"], "title": _clip(card["title"], 200), "status": status}
+                {"number": card["number"], "title": _clip(card["title"], 80), "status": status}
             )
     return Result(
         True,
@@ -266,7 +268,7 @@ def _list_decisions(turn, args):
     reader = blocks.Reader(turn.gateway, turn.principal())
     questions, refs = [], []
     for ask in asks:
-        if ask.get("board") != board or len(questions) >= LIST_LIMIT:
+        if ask.get("board") != board or len(questions) >= QUESTION_LIMIT:
             continue
         stored = {"type": "decision", "card": ask["number"]}
         view = blocks.decision(reader, stored)
@@ -276,8 +278,8 @@ def _list_decisions(turn, args):
         questions.append(
             {
                 "ref": ask["number"],
-                "question": _clip(view["question"], 300),
-                "options": [_clip(option, 200) for option in view["options"]],
+                "question": _clip(view["question"], 200),
+                "options": [_clip(option, 80) for option in view["options"][:OPTIONS_SHOWN]],
             }
         )
     return Result(True, {"questions": questions}, blocks=tuple(refs))
@@ -291,6 +293,10 @@ def _filing(turn, args) -> tuple[str, str]:
     body = turn.words(args["body"]) if "body" in args else turn.message["text"]
     title = turn.words(args["title"]) if "title" in args else _first_line(body)[:TITLE_LIMIT]
     return title, body
+
+
+def _check_filing(turn, args):
+    _filing(turn, args)
 
 
 def _create_work_label(turn, args):
@@ -373,6 +379,11 @@ def _decision(turn, args, version=None):
     return card, choice, turn.words(reply) if reply is not None else None
 
 
+def _check_answer(turn, args):
+    """Before a chip exists, and again at the tap (then with the frozen ``version``)."""
+    _decision(turn, args, args.get("version"))
+
+
 def _answer_decision_label(turn, args):
     card, choice, reply = _decision(turn, args)
     question = card["ask"] or card["title"]
@@ -387,6 +398,12 @@ def _answer_decision(turn, args):
     _, choice, reply = _decision(turn, args, version)
     turn.boards().decide(args["ref"], choice=choice, reply=reply, version=version)
     return Result(True, {"answered": True}, blocks=({"type": "decision", "card": args["ref"]},))
+
+
+def _check_approve(turn, args):
+    card = _item(turn, turn.board(args), args["ref"])
+    if args.get("version") is not None and card["version"] != args["version"]:
+        raise Plain(CHANGED)
 
 
 def _approve_work_label(turn, args):
@@ -413,10 +430,13 @@ def _slug(name) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60].strip("-")
 
 
+def _check_project(turn, args):
+    if not _slug(turn.words(args["name"])):
+        raise Plain(NAME_EMPTY)
+
+
 def _create_project_label(turn, args):
     name = turn.words(args["name"])
-    if not _slug(name):
-        raise Plain(NAME_EMPTY)
     return f"Create a new project “{_clip(name, 80)}”"
 
 
@@ -518,6 +538,7 @@ register(
         kind="routine",
         run=_create_work,
         label=_create_work_label,
+        check=_check_filing,
         scope="project",
     )
 )
@@ -602,6 +623,7 @@ register(
         kind="confirm",
         run=_answer_decision,
         label=_answer_decision_label,
+        check=_check_answer,
         scope="project",
     )
 )
@@ -616,6 +638,7 @@ register(
         kind="confirm",
         run=_approve_work,
         label=_approve_work_label,
+        check=_check_approve,
         scope="project",
     )
 )
@@ -630,5 +653,6 @@ register(
         kind="confirm",
         run=_create_project,
         label=_create_project_label,
+        check=_check_project,
     )
 )
