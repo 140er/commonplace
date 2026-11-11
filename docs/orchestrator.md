@@ -185,8 +185,10 @@ and recent-start guards still apply. These are existing limits of admission.
 Only boards with an accepted live `[runner]` config are swept, on each wake-up
 and on each runner lease. The sweep reads committed `task_events` after the
 board's cursor and fires when a card moves into `todo` from another status
-(`add`, `move`, `decide`) and on the plan-approval row. An event emission that
-failed after commit is still found.
+(`add`, `move`, `decide`), on the plan-approval row and on an origin release
+(`decide` with choice `release origin`), so a restricted-origin card that waited
+in `todo` starts once it is released. An event emission that failed after
+commit is still found.
 
 - **Cursor.** Accepting a config that adds `[runner]` commits the board's
   cursor as unset with a new generation; arming then sets it to the current
@@ -199,8 +201,21 @@ failed after commit is still found.
   `requester_not_allowed`. Members' moves do not start work.
 - **Misses.** Every refusal (`assigned`, `not_todo`, `started_recently`,
   `busy`, `plan_pending`, …) is recorded as a coded miss and shown on resume;
-  the cursor moves past it. Only infrastructure errors leave the cursor for the
-  next sweep. A refused card is not retried automatically, even when the
+  the cursor moves past it. A start that cannot be planned is a miss too
+  (`not_configured`, `unknown_role`, or `config_invalid`), so one card never
+  blocks the board's later cards. Only infrastructure errors leave the cursor
+  for the next sweep.
+- **No-progress wake.** After a clean sweep, a board with actionable open
+  work (not blocked, not waiting on a person), a free slot, an unstarted card
+  or an expired claim, and no card done for `minutes` (default 20; 0 turns it
+  off) emits one `board.stalled` event (app and webhooks) naming the doing,
+  unstarted and expired cards. The next nudge waits another `minutes`; a done
+  card resets the count; after three nudges in a row the owner's `needs_me`
+  lists the board under `orchestrator_stalled`.
+- **Failing sweeps.** Two failed sweeps of a board in a row emit one
+  `orch.trigger.failing` event (app and webhooks), and the owner's `needs_me`
+  lists the board under `orchestrator_failing` until a sweep succeeds. Only
+  the exception type is stored. A refused card is not retried automatically, even when the
   refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
   checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
 
@@ -210,7 +225,10 @@ failed after commit is still found.
   held, after release or expiry, or when the owner forces it. The token is
   returned once. TTL 1800 s, renewed by fenced writes and `orch_heartbeat`;
   waits are sliced to at most 10 minutes with heartbeats. Expiry only fences.
-  A lost token means waiting for expiry or an owner force.
+  A lost token means waiting for expiry or an owner force. A board without
+  `[runner]` has one possible holder: its own project seat, once an owner
+  trusted it in Project settings, for its seat role (`main`). A project seat
+  never claims another board's lease.
 - **Journal.** `intent → started → waiting → done | failed | in_doubt`;
   `in_doubt` moves on to `done`, `failed` or `needs_person`. A job maps to its
   step as: queued, leased or starting → `waiting`; started → `done`;
@@ -243,9 +261,22 @@ failed after commit is still found.
   checkpoint: open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses,
   and the unstarted `todo` cards of each configured board (a `todo` card with no
   active job and no job started after it last entered `todo`; a start in the
-  same second as that entry cannot be ordered, so the card is listed). Cards are
+  same second as that entry cannot be ordered, so the card is listed; they come
+  most urgent `priority` first). Cards are
   classified read-only as `held`, `expired` or `not_held_by_caller`; only the
   caller's own held cards get a heartbeat.
+- **Builders started outside the runner.** A lead that starts a builder itself
+  (for example a T3 thread) journals it: `orch_journal_intent` with kind
+  `thread` and the card, then `orch_journal_record` with state `started` once
+  the builder runs (a `holder_attested` note can name the thread). The
+  checkpoint's `jobs` then lists that builder with `source: "journal"`, the
+  card, step key, assignee, claim end, detail and evidence, for as long as the
+  step is unfinished and unvoided and the card is in `doing` on this board
+  under a live claim. It stays listed when a new lease epoch marks the step
+  `in_doubt`. An intent without a recorded start, a card that left `doing` or
+  whose claim expired, and steps of another board or role are not listed.
+  Runner jobs carry `source: "runner"`. The list is derived on every read;
+  the hub does not check that the thread exists.
 
 ## Restore
 
