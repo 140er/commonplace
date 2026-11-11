@@ -31,6 +31,7 @@ import { createMemory } from "./memory.js";
 import { createPalette } from "./palette.js";
 import { mountOnboarding } from "./onboarding.js";
 import { createCardMenu } from "./cardmenu.js";
+import { applyDeck, createDeck } from "./deck.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
 const shellStyles = `
     .shell #content { flex:1; min-height:0; overflow:auto; }
@@ -60,6 +61,7 @@ if (signinParams.has("signin") || signinParams.has("next")) {
   history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
 }
 let providersPromise;
+applyDeck();
 
 const root = document.querySelector("#root");
 const state = {
@@ -72,6 +74,12 @@ const state = {
   phonePushPending: false, underChat: null, fromChat: null, detailsSheet: false, rebase: null,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
+// The opt-in Deck look: its bar, its own screens and the Look switch in Settings (deck.js).
+state.deck = createDeck({
+  root, api, title: (text) => title(text), screen: () => state.screen,
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, go: (hash) => { location.hash = hash; } }),
+  reload: () => { if (state.me) void route(); },
+});
 let adminUI = null;
 let consoleUI = null, botsUI = null, chatUI = null, detailsUI = null, boardDispose = null;
 const statuses = ["backlog", "todo", "doing", "review", "done"];
@@ -387,9 +395,11 @@ function navigation() {
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
-  boardNav.outerHTML = renderRail({ can_admin: state.me.can_admin === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-  root.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true });
-  root.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
+  const rail = { can_admin: state.me.can_admin === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
+  // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
+  boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  root.querySelector("#phone-bar").innerHTML = state.deck?.top() || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true });
+  root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
   root.querySelector(".shell")?.setAttribute("data-view", view);
@@ -399,6 +409,9 @@ function showError(text) {
   state.error = text;
   const box = root.querySelector("#screen-error");
   if (box) { box.hidden = !text; box.innerHTML = `<div class="message error">${e(text)}<button data-action="retry">Retry</button></div>`; }
+  const panel = root.querySelector("#card-panel");
+  panel?.querySelector("[data-panel-error]")?.remove();
+  if (panel && !panel.hidden && text) panel.insertAdjacentHTML("afterbegin", `<div class="message error" role="alert" data-panel-error>${e(text)}</div>`);
 }
 function title(text, actions = "") {
   root.querySelector("#title").textContent = text;
@@ -655,6 +668,10 @@ function boardsView() {
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
+function releaseControl(card) {
+  if (!card.awaiting_release || !card.can_approve) return "";
+  return `<form class="callout info" data-form="release-origin" data-card="${card.number}"><h3>Waiting for release</h3><p>Nobody can start this card until it is released.</p><label>Reason<input name="reason" required maxlength="500"></label><button class="blockbtn" data-release-origin>Release</button></form>`;
+}
 // Needs me draws on `#/needs`, and on `#/` for a hash the router does not recognise.
 const onNeeds = () => state.base === "#/needs" || state.base === "#/";
 // A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
@@ -688,7 +705,10 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     // Keep the existing versioned ask actions and call tree reachable on card routes.
     // Only an ask waiting on this person needs these versioned answer controls; Activity already lists the rest (m10).
     const asks = card.ask != null && card.ask_to === state.me.actor ? `<ol class="log">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") })}</ol>` : "";
-    if (tab === "details") panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `${asks}${callTree(card)}`);
+    if (tab === "details") {
+      panel.querySelector(".ctx-body")?.insertAdjacentHTML("afterbegin", releaseControl(card));
+      panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `${asks}${callTree(card)}`);
+    }
     restore(saved);
     await shown;
     if (request !== state.panelRequest || epoch !== state.screen) return;
@@ -773,7 +793,7 @@ function reviewForm() {
 function handoffForm(card, prefill = {}) {
   voice.stop();
   const panel = root.querySelector("#card-panel"); panel.hidden = false;
-  panel.innerHTML = `<form class="form-tile" data-form="handoff" data-card="${card.number}"${prefill.connectionsOnly ? ' data-connections-only="true"' : ""}><input type="hidden" name="version" value="${e(card.version)}"><h2>Hand off #${card.number}</h2><label>To<input name="to" value="${e(prefill.to || "")}"${prefill.connectionsOnly ? ' pattern="conn:.+" title="Use conn: followed by the agent name"' : ""} required></label><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(card.status_line || card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="cancel-form">Cancel</button></form>`;
+  panel.innerHTML = `<form class="form-tile" data-form="handoff" data-card="${card.number}"${prefill.connectionsOnly ? ' data-connections-only="true"' : ""}><input type="hidden" name="version" value="${e(card.version)}"><h2>Hand off #${card.number}</h2><label>To<input name="to" list="handoff-recipients" value="${e(prefill.to || "")}"${prefill.connectionsOnly ? ' pattern="conn:.+" title="Use conn: followed by the agent name"' : ""} required></label><datalist id="handoff-recipients"><option value="orchestrator">This project's coordinator</option><option value="anyone">Return to the pool</option><option value="owner">Workspace owner</option></datalist><p class="set-note">Use orchestrator, anyone for the pool, owner, or an agent name.</p><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(card.status_line || card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="cancel-form">Cancel</button></form>`;
   // On Needs me the panel holds the item's detail: it waits while the form is open.
   if (onNeeds()) state.needsUI?.pause(true);
 }
@@ -822,6 +842,7 @@ async function settingsView(epoch) {
   content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : failed("Plan", plan)}${orchestration.status === "fulfilled" ? '<section class="settings-section"><h2>Agent orchestration</h2><div data-workspace-orchestration></div></section>' : failed("Agent orchestration", orchestration)}${voice.settings()}${chatSettings.status === "fulfilled" ? `<section class="settings-section"><h2>Chat</h2><p>${e(chatSettings.value.front.enabled && chatSettings.value.front.provider !== "none" ? `Answers by ${chatSettings.value.front.provider}/${chatSettings.value.front.model}` : chatSettings.value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(chatSettings.value.usage.used_today)} · Yours: ${e(chatSettings.value.usage.user_used_today)}</p>${chatSettings.value.usage.last_error ? `<p role="status">Last model error: ${e(chatSettings.value.usage.last_error)}</p>` : ""}</section>` : failed("Chat", chatSettings)}${connections.status === "fulfilled" ? agentsView(connections.value) : `<section class="settings-section"><h2>Agents</h2>${failed("Agents", connections)}</section>`}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section>${phonePush.status === "fulfilled" ? phonePushView(phonePush.value) : `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${failed("Phone notifications", phonePush)}</section>`}<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : failed("Webhooks", hooks)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
   if (orchestration.status === "fulfilled") mountWorkspaceOrchestration(content.querySelector("[data-workspace-orchestration]"), {api, e, enabled: orchestration.value.enabled, current: () => epoch === state.screen});
   mountAgentSchedules(content.querySelector("[data-agent-schedules]"), {api, e, current: () => epoch === state.screen});
+  state.deck?.settings(content);
   restore(saved);
 }
 
@@ -1098,6 +1119,8 @@ async function refresh({ background = false, events = [] } = {}) {
       if (!background) consoleScreen();
     } else if (state.base === "#/settings") {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
+    } else if (state.deck?.owns(state.base)) {
+      await state.deck.show(state.base, { background, epoch });
     } else if (state.base === "#/decide") {
       if (state.queue) queueApply(state.queue.ready ? { type: "sync", cards: decideQueue(state.needs) } : { type: "load", cards: decideQueue(state.needs) });
       queueNoteOffline();
@@ -1109,7 +1132,7 @@ async function refresh({ background = false, events = [] } = {}) {
     } else state.workbenchChat?.dispose();
     restore(saved); play();
     if (state.base.startsWith("#/space/")) void hydrateSpaceTasks();
-    if (state.route.startsWith("#/card/") && !(background && panelForm())) await cardPanel(Number(state.route.slice(7)), epoch, { keepForm: background });
+    if (state.route.startsWith("#/card/") && !(background && (panelForm() || root.querySelector('form[data-form="release-origin"]')))) await cardPanel(Number(state.route.slice(7)), epoch, { keepForm: background });
     showError("");
     return true;
   } catch (error) {
@@ -1319,6 +1342,8 @@ async function route() {
   if (!state.me) return;
   remember();
   let hash = location.hash || "#/";
+  // The Deck look has its own home; the classic one resolves "#/" to a project below.
+  if (hash === "#/" && state.deck?.on()) { hash = state.deck.home(); history.replaceState(history.state, "", hash); }
   // A shared card link (first screen of the visit) needs a screen behind the card.
   const direct = state.screen === 0 && /^#\/card\/[1-9]\d*$/.test(hash);
   if (hash === "#/" || hash === "#/chat" || direct) {
@@ -1341,7 +1366,9 @@ async function route() {
   if (direct) { state.base = boardRoute({ boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|today|compute)$/.test(hash) ? hash : "#/");
+    // Today and Compute exist in the Deck look only; without it they are an unknown address.
+    if (/^#\/(?:today|compute)$/.test(state.base) && !state.deck?.owns(state.base)) state.base = "#/";
     state.card = null;
   } else if (state.base === "#/admin") {
     state.base = boardRoute({ boards: state.boards, last });
@@ -1350,6 +1377,7 @@ async function route() {
   if (previousBase === "#/admin") adminUI?.stop();
   if (previousBase.startsWith("#/console") && !state.base.startsWith("#/console")) consoleUI?.stop();
   if (previousBase.startsWith("#/bots") && !state.base.startsWith("#/bots")) botsUI?.stop();
+  if (state.base !== previousBase) state.deck?.leave();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
   }
@@ -1658,6 +1686,7 @@ root.addEventListener("submit", async (event) => {
     });
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "review") await move(state.card.number, "review", { ...payload, options: payload.options.split("\n").map((v) => v.trim()).filter(Boolean) });
+    else if (kind === "release-origin") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/approve`, { method: "POST", body: { approve: true, version: state.card.version, reason: payload.reason } }));
     else if (kind === "handoff") await mutate(`card-${Number(form.dataset.card)}`, async () => {
       await api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { ...payload, version: Number(payload.version), options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } });
       if (onNeeds()) state.needsUI?.pause(false);
