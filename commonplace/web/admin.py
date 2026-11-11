@@ -419,38 +419,74 @@ def orchestrators(conn, board_conn, workspace_id, context):
 
 
 REQUESTER_LIMIT = 32
+CANDIDATE_LIMIT = 100
 
 
 def requester_views(conn, workspace_id, context, raw):
-    """Name and state of a machine's stored requester ids; ids of other workspaces stay unnamed."""
+    """Name and state of a machine's stored requester ids, as the owner may write them back.
+
+    The state follows the start check: only an active, trusted, personal-token agent counts.
+    Ids of other workspaces stay unnamed."""
     try:
         refs = json.loads(raw or "[]")
     except ValueError:
-        return []
+        return [], 0
+    refs = [ref for ref in refs if isinstance(ref, str)]
     result = []
-    for ref in [ref for ref in refs if isinstance(ref, str)][:REQUESTER_LIMIT]:
+    for ref in refs:
+        if len(result) == REQUESTER_LIMIT:
+            break
+        if identifier(ref) is None:
+            continue
         context.remaining()
         row = select(
             conn,
             context,
-            "SELECT name FROM connections WHERE id=? AND workspace_id=?",
+            "SELECT name,auth,policy FROM connections WHERE id=? AND workspace_id=?",
             (ref, workspace_id),
         ).fetchone()
-        live = current_connection(conn, workspace_id, context, cid=ref) is not None
+        live = (
+            row is not None
+            and row["auth"] == "pat"
+            and Policy.from_json(row["policy"]).trust == "trusted"
+            and current_connection(conn, workspace_id, context, cid=ref) is not None
+        )
         result.append(
             {
-                "id": display(ref),
+                "id": ref,
                 "name": display(row["name"]) if row else None,
                 "state": "active" if live else "inactive",
             }
         )
-    return result
+    return result, len(refs)
+
+
+def attach_requesters(conn, workspace_id, context, items):
+    """Add each listed machine's requesters; only the machines on the page are resolved."""
+    if not items or "requesters" not in columns(conn, context, "runner_machines"):
+        for item in items:
+            item.update(requesters=[], requesters_total=0)
+        return
+    for item in items:
+        context.remaining()
+        row = select(
+            conn,
+            context,
+            "SELECT requesters FROM runner_machines WHERE id=? AND workspace_id=?",
+            (item["id"], workspace_id),
+        ).fetchone()
+        views, total = requester_views(
+            conn, workspace_id, context, row["requesters"] if row else "[]"
+        )
+        item.update(requesters=views, requesters_total=total)
 
 
 def requester_candidates(conn, workspace_id, context):
-    """Active trusted workspace agents an owner may name as requesters (what the write accepts)."""
+    """Active trusted workspace agents an owner may name as requesters (what the write accepts).
+
+    Returns the first CANDIDATE_LIMIT and whether more exist."""
     if not has_table(conn, context, "runner_connections"):
-        return []
+        return [], False
     rows = select(
         conn,
         context,
@@ -470,18 +506,18 @@ def requester_candidates(conn, workspace_id, context):
             Policy.from_json(row["policy"]).trust == "trusted"
         ):
             result.append({"id": identifier(row["id"]), "name": display(row["name"])})
-    return result[:100]
+            if len(result) > CANDIDATE_LIMIT:
+                break
+    return result[:CANDIDATE_LIMIT], len(result) > CANDIDATE_LIMIT
 
 
 def machines(conn, workspace_id, context, *, active_only=False):
     if not has_table(conn, context, "runner_machines"):
         return []
-    has_requesters = "requesters" in columns(conn, context, "runner_machines")
     rows = select(
         conn,
         context,
         "SELECT m.id,m.label,m.enabled,m.revoked_at,m.binding_state,m.max_in_flight,"
-        + ("m.requesters," if has_requesters else "'[]' AS requesters,")
         + "m.max_starts_per_hour,m.created_at,mc.last_used_at AS machine_last_used_at,"
         "wc.last_used_at AS worker_last_used_at FROM runner_machines m "
         "LEFT JOIN connections mc ON mc.id=m.machine_connection_id AND mc.workspace_id=m.workspace_id "
@@ -511,9 +547,6 @@ def machines(conn, workspace_id, context, *, active_only=False):
                 "max_in_flight": row["max_in_flight"],
                 "max_starts_per_hour": row["max_starts_per_hour"],
                 "created_at": timestamp(row["created_at"]),
-                "requesters": []
-                if active_only
-                else requester_views(conn, workspace_id, context, row["requesters"]),
             }
         )
     return result
@@ -584,9 +617,9 @@ def runtime(gateway, workspace_id, context, after):
                         after,
                         lambda r: (r["created_at"], r["id"]),
                     )
-                    value["requester_candidates"] = requester_candidates(
-                        conn, workspace_id, context
-                    )
+                    attach_requesters(conn, workspace_id, context, value["items"])
+                    candidates, more = requester_candidates(conn, workspace_id, context)
+                    value.update(requester_candidates=candidates, requester_candidates_more=more)
             context.remaining()
             result[source] = {"state": "ready", **value}
         except Exception as exc:

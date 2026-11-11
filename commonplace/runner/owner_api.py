@@ -65,7 +65,12 @@ def register(gateway):
         if not (
             (not parts and method == "POST")
             or (len(parts) == 1 and method in ("PATCH", "DELETE"))
-            or (len(parts) == 2 and method == "POST" and parts[1] in ("attest", "rotate"))
+            or (
+                len(parts) == 2
+                and method == "POST"
+                and parts[1] in ("attest", "rotate", "requesters")
+            )
+            or (len(parts) == 3 and method == "DELETE" and parts[1] == "requesters")
         ):
             send_json(h, 404, {"error": "not found"})
             return
@@ -81,6 +86,16 @@ def register(gateway):
             elif method == "PATCH":
                 result = _view(
                     registry.patch(gateway.db, owner, parts[0], _wings(gateway, owner, data))
+                )
+                status = 200
+            elif parts[1:2] == ["requesters"] and method == "DELETE":
+                result = _view(registry.remove_requester(gateway.db, owner, parts[0], parts[2]))
+                status = 200
+            elif parts[1:2] == ["requesters"]:
+                if set(data) != {"requester"} or not isinstance(data["requester"], str):
+                    raise ValueError("requester must be a connection id")
+                result = _view(
+                    registry.add_requester(gateway.db, owner, parts[0], data["requester"])
                 )
                 status = 200
             elif method == "DELETE":
@@ -101,6 +116,9 @@ def register(gateway):
                     raise ValueError("credential must be machine or worker")
                 result = registry.rotate(gateway.db, owner, parts[0], data["credential"])
                 status = 200
+        except PermissionError:
+            send_json(h, 403, {"error": "a signed-in workspace owner is required"})
+            return
         except registry.NotFound as exc:
             send_json(h, 404, {"error": str(exc)})
             return

@@ -1,6 +1,6 @@
 # Optional machine runner
 
-The owner [Admin overview](admin.md) shows recorded machine and worker contact separately, unverified attestation, and machine grants. It sends no runner probe or control request. The owner can add and remove a machine's requesters there; that edit uses the owner-only `PATCH /api/runners/<machine-id>` and the same checks as any other grant edit.
+The owner [Admin overview](admin.md) shows recorded machine and worker contact separately, unverified attestation, and machine grants. It sends no runner probe or control request. The owner can add and remove a machine's requesters there; each edit adds or removes one requester through the owner-only `POST /api/runners/<machine-id>/requesters` and `DELETE /api/runners/<machine-id>/requesters/<connection-id>`, with the same checks as any other grant edit.
 
 The runner lets a signed-in workspace owner or a granted coordinator request an agent start for a card the machine's worker could claim. It is inert by default: no machine means no change; an `unbound` machine refuses every start, including the owner's, and leases return 204. No config or service activation ships enabled. D1–D3 below remain open.
 

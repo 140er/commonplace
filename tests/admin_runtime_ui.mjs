@@ -43,6 +43,7 @@ try {
   } else if(process.argv[2]==='requesters') {
     const machines=(requesters)=>({state:'ready',count:2,has_more:false,requester_candidates:[{id:'conn_a',name:'planner <a>'},{id:'conn_b',name:'planner-b'}],items:[{id:'mach_1',label:'<Machine>',enabled:true,binding_state:'unbound',max_in_flight:1,max_starts_per_hour:2,requesters},{id:'mach_2',label:'Gone',enabled:false,revoked_at:'2026-01-01T00:00:00Z',binding_state:'unbound',requesters:[]}]});
     const payload=requesters=>({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0},machines:machines(requesters)});
+    const capped=machines([{id:'conn_a',name:'planner <a>',state:'active'}]);capped.items[0].requesters_total=40;capped.requester_candidates_more=true;
     find('runtime').resolve(payload([{id:'conn_a',name:'planner <a>',state:'active'},{id:'conn_old',name:'retired',state:'inactive'}]));await flush();
     let html=section(host.innerHTML,'runtime');
     assert.match(html,/planner &lt;a&gt;/);assert.match(html,/retired[^<]*inactive/);assert.doesNotMatch(html,/<a>/);
@@ -50,22 +51,25 @@ try {
     assert.doesNotMatch(html,/data-admin-action="requester-add"[^>]*data-admin-requester="conn_a"/,'a chosen requester is not offered again');
     assert.doesNotMatch(html,/data-admin-machine="mach_2"/,'a revoked machine has no controls');
     const write=(action,machine,requester)=>listeners.get('click')({target:{closest:()=>({dataset:{adminSection:'runtime',adminAction:action,adminMachine:machine,adminRequester:requester}})}});
-    const patches=()=>requests.filter(r=>r.options?.method==='PATCH');
+    const writes=()=>requests.filter(r=>r.options?.method&&r.options.method!=='GET');
     write('requester-add','mach_1','conn_b');
-    assert.equal(patches().length,1);assert.equal(patches()[0].path,'/api/runners/mach_1');
-    assert.deepEqual(patches()[0].options.body,{requesters:['conn_a','conn_old','conn_b']});
-    write('requester-add','mach_1','conn_b');assert.equal(patches().length,1,'one write per machine at a time');
-    patches()[0].resolve({});await flush();
+    assert.equal(writes().length,1);assert.equal(writes()[0].path,'/api/runners/mach_1/requesters');assert.equal(writes()[0].options.method,'POST');
+    assert.deepEqual(writes()[0].options.body,{requester:'conn_b'},'an add names one agent, never the list the page shows');
+    write('requester-add','mach_1','conn_b');assert.equal(writes().length,1,'one write per machine at a time');
+    writes()[0].resolve({});await flush();
     const reload=requests.filter(r=>r.path.includes('/runtime')).length;assert.equal(reload,2,'the list is read again after a save');
     find('runtime').resolve(payload([{id:'conn_a',name:'planner <a>',state:'active'},{id:'conn_old',name:'retired',state:'inactive'},{id:'conn_b',name:'planner-b',state:'active'}]));await flush();
     assert.match(section(host.innerHTML,'runtime'),/Requesters saved/);
     write('requester-remove','mach_1','conn_old');
-    assert.deepEqual(patches()[1].options.body,{requesters:['conn_a','conn_b']});
-    patches()[1].reject(Object.assign(new Error('Request failed (400)'),{status:400,payload:{error:'private detail'}}));await flush();
+    assert.equal(writes()[1].path,'/api/runners/mach_1/requesters/conn_old');assert.equal(writes()[1].options.method,'DELETE');
+    assert.equal(writes()[1].options.body,undefined);
+    writes()[1].reject(Object.assign(new Error('Request failed (400)'),{status:400,payload:{error:'private detail'}}));await flush();
     html=section(host.innerHTML,'runtime');
     assert.match(html,/Could not save requesters/);assert.doesNotMatch(html,/private detail/);
+    find('runtime');ui.refreshSection('runtime');find('runtime').resolve({...payload([{id:'conn_a',name:'planner <a>',state:'active'}]),machines:capped});await flush();
+    html=section(host.innerHTML,'runtime');assert.match(html,/Showing 1 of 40 requesters/);assert.match(html,/Showing the first 2 trusted agents/);
     // Fail closed: once the session is no longer an owner, nothing is written.
-    me={...me,can_admin:false};const before=patches().length;write('requester-remove','mach_1','conn_a');assert.equal(patches().length,before);
+    me={...me,can_admin:false};const before=writes().length;write('requester-remove','mach_1','conn_a');assert.equal(writes().length,before);
   } else if(process.argv[2]==='page-error') {
     const payload={workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Existing project'}],count:101,has_more:true,next_cursor:'page-two'},machines:{state:'ready',items:[],count:0}};
     find('runtime').resolve(payload);await flush();

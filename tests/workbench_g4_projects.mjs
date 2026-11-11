@@ -425,6 +425,37 @@ const cases = {
     assert.equal(field(again, "main_model").getAttribute("value"), "model-a");
     host.remove(); again.remove();
   },
+  // Card 422: the handler is the same one once the slow reads fail or answer late, and it still saves.
+  async models_submit_after_reads_settle() {
+    for (const outcome of ["reject", "late"]) {
+      const calls = [], gates = [], field = (el, name) => el.querySelector(`[name="${name}"]`);
+      const slow = (value) => new Promise((resolve, reject) => gates.push(() => (outcome === "reject" ? reject(new Error("slow read failed")) : resolve(value))));
+      const api = async (path, options = {}) => {
+        calls.push({ path, method: options.method || "GET", body: options.body });
+        if (path.startsWith("/api/chat-settings")) return slow({ front: { provider: "none" }, local_models: [], hosted: [] });
+        if (path === "/api/connections") return slow({ connections: [] });
+        if (path.endsWith("/cards")) return slow({ cards: [], linked: [] });
+        if (path.startsWith("/api/chat/")) return path.endsWith("/status") ? { orchestrator: null } : { messages: [], replies: [] };
+        return { ...project, can_configure: true, limits: { max_agents: 3 }, models: options.method === "PUT" ? options.body : {} };
+      };
+      const host = doc.createElement("div"); doc.body.append(host);
+      const mounted = ui.mountProject(host, { slug: "ledger", api, e, settings: true, origin: "#/board/ledger" });
+      for (let turn = 0; turn < 20 && !host.querySelector("[data-project-models]"); turn++) await new Promise((r) => setTimeout(r, 0));
+      const form = host.querySelector("[data-project-models]"), handler = form.onsubmit;
+      assert.equal(typeof handler, "function", `${outcome}: bound before the reads settle`);
+      for (let turn = 0; turn < 20 && gates.length < 3; turn++) await new Promise((r) => setTimeout(r, 0));
+      for (const settle of gates) settle();
+      await mounted;
+      assert.equal(host.querySelector("[data-project-models]"), form, `${outcome}: the form is not redrawn`);
+      assert.equal(form.onsubmit, handler, `${outcome}: the handler is still attached`);
+      field(form, "worker_provider").value = "local"; field(form, "worker_model").value = "model-w";
+      await form.onsubmit({ preventDefault() {}, stopPropagation() {} });
+      const puts = calls.filter((c) => c.method === "PUT");
+      assert.equal(puts.length, 1, `${outcome}: one save`);
+      assert.deepEqual(puts[0].body, { main: null, worker: { provider: "local", model: "model-w" } });
+      host.remove();
+    }
+  },
   // I1: settings hand Back and Esc to the caller's onBack.
   async on_back() {
     assert.equal(typeof ui.openConnectDialog, "function", "openConnectDialog missing");

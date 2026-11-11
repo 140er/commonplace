@@ -319,6 +319,27 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
     return get_machine(db, owner.workspace_id, row["id"])
 
 
+def add_requester(db, owner, machine_id, ref):
+    """Add one requester to the stored list, vetting only that id (idempotent)."""
+    _owner(owner)
+    with db._lock, db._tx():
+        row = _active(db, owner, machine_id)
+        held = json.loads(row["requesters"])
+        if ref in held:
+            return row
+        return patch_in(db, owner, machine_id, {"requesters": [*held, ref]})
+
+
+def remove_requester(db, owner, machine_id, ref):
+    """Remove one requester from the stored list, never touching the others (idempotent)."""
+    _owner(owner)
+    with db._lock, db._tx():
+        row = _active(db, owner, machine_id)
+        if ref not in json.loads(row["requesters"]):
+            return row
+        return patch_in(db, owner, machine_id, {}, remove_requester=ref)
+
+
 def attest(db, owner, machine_id, binding):
     _owner(owner)
     with db._lock, db._tx():

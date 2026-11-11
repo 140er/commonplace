@@ -57,18 +57,20 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     return html;
   }
 
-  // Owner-only: who may ask a machine to start work. The server re-checks the owner and every addition.
+  // Owner-only: who may ask a machine to start work. Each change names one agent; the server re-checks the owner and vets an addition.
   function requesterContent(machines) {
-    const live = (machines.items || []).filter(r => !r.revoked_at);
-    if (!live.length) return '';
+    const unrevoked = (machines.items || []).filter(r => !r.revoked_at);
+    if (!unrevoked.length) return '';
     const offered = machines.requester_candidates || [];
     const button = (action, machine, ref, text, name) => `<button type="button" class="btn" data-admin-section="runtime" data-admin-action="${action}" data-admin-machine="${e(machine)}" data-admin-requester="${e(ref)}" aria-label="${e(text)} ${e(name)}"${writing.has(machine) ? ' disabled' : ''}>${e(text)}</button>`;
-    return '<h3>Machine requesters</h3><p>Requesters are the trusted agents allowed to ask a machine to start work. Only a workspace owner can change them.</p>' + live.map(r => {
+    return '<h3>Machine requesters</h3><p>Requesters are the trusted agents allowed to ask a machine to start work. Only a workspace owner can change them. Each Add or Remove changes that one agent and leaves the rest of the list as stored.</p>' + unrevoked.map(r => {
       const chosen = r.requesters || [], addable = offered.filter(c => !chosen.some(n => n.id === c.id));
       const name = n => n.name || n.id;
       return `<div data-admin-machine="${e(r.id)}"><h4>${value(r.label)}</h4>` +
         (chosen.length ? `<ul>${chosen.map(n => `<li>${value(name(n))}${n.state === 'active' ? '' : ' (inactive)'} ${button('requester-remove', r.id, n.id, 'Remove', name(n))}</li>`).join('')}</ul>` : '<p>No requesters.</p>') +
+        (r.requesters_total > chosen.length ? `<p>Showing ${e(chosen.length)} of ${e(r.requesters_total)} requesters; the rest stay as stored.</p>` : '') +
         (addable.length ? `<ul>${addable.map(c => `<li>${value(c.name)} ${button('requester-add', r.id, c.id, 'Add', c.name)}</li>`).join('')}</ul>` : '<p>No other trusted agents to add.</p>') +
+        (machines.requester_candidates_more ? `<p>Showing the first ${e(offered.length)} trusted agents.</p>` : '') +
         (notes.has(r.id) ? `<p role="status">${e(notes.get(r.id))}</p>` : '') + '</div>';
     }).join('');
   }
@@ -76,12 +78,14 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
   async function changeRequesters({ adminAction: action, adminMachine: machine, adminRequester: ref }) {
     const row = sections.get('runtime')?.data?.machines?.items?.find(r => r.id === machine);
     if (!eligible() || !row || row.revoked_at || !ref || writing.has(machine)) return;
-    const held = (row.requesters || []).map(r => r.id);
-    const next = action === 'requester-add' ? [...new Set([...held, ref])] : held.filter(id => id !== ref);
     const pageEpoch = epoch;
     writing.add(machine); notes.delete(machine); render();
     try {
-      await api(`/api/runners/${encodeURIComponent(machine)}`, { method: 'PATCH', body: { requesters: next }, timeoutMs: 10000 });
+      // One agent at a time: the server applies it to the stored list, never to the list this page shows.
+      const base = `/api/runners/${encodeURIComponent(machine)}/requesters`;
+      await (action === 'requester-add'
+        ? api(base, { method: 'POST', body: { requester: ref }, timeoutMs: 10000 })
+        : api(`${base}/${encodeURIComponent(ref)}`, { method: 'DELETE', timeoutMs: 10000 }));
       notes.set(machine, 'Requesters saved.');
     } catch (error) {
       notes.set(machine, error.status === 403 ? 'a signed-in workspace owner is required' : 'Could not save requesters. Try again.');

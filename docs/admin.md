@@ -108,19 +108,31 @@ filtering and current policy/wing access. It sends no webhook or liveness probe.
 Machines include `id`, `label`, `enabled`, `revoked_at`, `binding_state`,
 `verified:false`, `machine_last_used_at`, `worker_last_used_at`, `activity`,
 `worker_activity`, `max_in_flight`, `max_starts_per_hour`, `created_at` and
-`requesters` (at most 32 entries of `id`, `name`, `state`: `active` or
-`inactive`; a name is `null` for an id outside the workspace). The machines
-subresult also carries `requester_candidates`: the active trusted workspace
-agents (`id`, `name`; at most 100) an owner may add, with runner credentials,
-OAuth, untrusted and revoked connections left out.
+`requesters` (at most 32 entries of `id`, `name`, `state`) and `requesters_total`.
+`state` is `active` only while the agent would pass the start check (active,
+trusted, personal token); a name is `null` for an id outside the workspace. The
+machines subresult also carries `requester_candidates`: the active trusted
+workspace agents (`id`, `name`) an owner may add, with runner credentials, OAuth,
+untrusted and revoked connections left out. It holds at most 100 entries, and
+`requester_candidates_more` is true when more exist; the panel then says it shows
+only the first ones. Requesters are resolved only for the machines on the page.
 
 The runtime panel lists each unrevoked machine's requesters with **Remove** and
-**Add** buttons. They call the owner-only `PATCH /api/runners/<machine-id>` with
-the full `requesters` list, so a non-owner caller is refused (403) and nothing
-changes. The server vets only additions: an entry a machine already holds is kept
-even after it lapses, so an owner can still remove its neighbours. A save sends
-the list as the page last read it; a concurrent edit from another session is
-overwritten, and the page reads the list again after each save.
+**Add** buttons. Each button changes one agent on the stored list, never the list
+the page shows: `POST /api/runners/<machine-id>/requesters` with
+`{"requester":"<connection id>"}` vets that one id and appends it, and
+`DELETE /api/runners/<machine-id>/requesters/<connection id>` removes it. Both are
+owner-only (a caller that is not a signed-in person owner of the machine's
+workspace is refused with 403 or 404 and nothing changes), and both are idempotent,
+so a stale page can neither drop entries it cannot show nor give back one that
+another session removed. A machine may hold requesters beyond the 32 listed; the
+panel says how many it shows. An entry a machine already holds stays even after it
+lapses, so it can be removed or left while other entries change. A lapsed
+requester becomes effective again if its token is rotated, because rotation resets
+the expiry and the stored entry is unchanged; remove the entry to end it.
+`PATCH /api/runners/<machine-id>` with a full `requesters` list still exists for
+other clients and vets only the ids it adds.
+
 Machine activity uses machine contact, with worker contact shown separately.
 Working means recent contact; idle/quiet means no recent contact; unused means
 never contacted. Attestation never proves a live or verified runner.

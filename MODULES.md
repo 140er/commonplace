@@ -856,7 +856,7 @@ Format (read by `commonplace orch docs-check`):
 
   - test_admin_runtime_api.py and test_admin_runtime_ui.py are the twelve-row proof; test_admin_runtime_controls.py covers independent list cursors, absent tables, workspace filtering and completed-source survival.
 
-  - test_runner_requesters_admin.py, the requesters case of admin_runtime_ui.mjs and the models_submit_before_loads case of workbench_g4_projects.mjs are the proof for the Admin requester edit and the early models-form binding.
+  - test_runner_requesters_admin.py, the requesters case of admin_runtime_ui.mjs and the models_submit_before_loads case of workbench_g4_projects.mjs are the proof for the Admin requester edit and the early models-form binding; tests/workbench_e2e/test_project_models.py is the browser check of Save models with slow reads.
 
   - `test_admin_api.py` and `test_admin_ui.py` provide fourteen foundation rows; `admin_ui.mjs` exercises served navigation, production route/refresh wiring, request generations, expiry and body-decoding deadlines. `test_admin_controls.py` covers cursor binding, pagination, source budgets and gateway controls; `workbench_e2e/test_admin.py` covers real-browser owner/member navigation at three widths.
 
@@ -1185,7 +1185,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
-  - Admin lists each machine's requesters and the active trusted agents an owner may add, and edits them only through the owner-only runner PATCH; a grant edit vets added requesters and keeps ones the machine already holds.
+  - Admin lists each machine's requesters and the active trusted agents an owner may add, and edits them only through owner-only per-requester add and remove routes that act on the stored row under the registry lock; a grant edit vets added requesters and keeps ones the machine already holds.
 
 
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
@@ -1699,7 +1699,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 
-  - The Admin runtime panel lists each machine's requesters and the active trusted agents an owner may add; its one write is the owner-only runner PATCH, and the project settings models form binds its save handler before the page's slow reads.
+  - The Admin runtime panel lists each machine's requesters and the active trusted agents an owner may add; its one write is the owner-only add or remove of a single requester on the stored list, and the project settings models form binds its save handler before the page's slow reads.
 
   - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
   - The navigation-only instance flag falls back to false on read faults without breaking /api/me; receipt parent refreshes invalidate older mode generations.
@@ -1752,7 +1752,7 @@ Format (read by `commonplace orch docs-check`):
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 
-  - tests/test_runner_requesters_admin.py and the requesters case of tests/admin_runtime_ui.mjs hold the Admin requester list, candidates and owner-only edit.
+  - tests/test_runner_requesters_admin.py and the requesters case of tests/admin_runtime_ui.mjs hold the Admin requester list, candidates, the per-requester owner-only edit and the other-workspace refusal.
 
 
   - `tests/test_admin_api.py` covers person/role/workspace refusals, fixed lifecycle time, pagination, redaction and no writes/locks; `tests/test_admin_ui.py` and `tests/admin_ui.mjs` cover cold routing, independent deadlines, retries and disposal.
