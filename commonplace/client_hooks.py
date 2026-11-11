@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,16 @@ FOLLOWUP = (
     "Automatically call session_start now; if unavailable, call "
     "rules_get(effective=true, format=md) and memory_search for the current topic."
 )
+# session_start opens with the server's rules reply. Anything but a complete
+# set (unreadable, lost store, over the size cap, or no rules section at all)
+# gets this notice, so a session never starts as if no rules applied.
+RULES_MISSING = (
+    "The startup hook did not get the complete workspace rules. Workspace rules may apply: "
+    "before you plan or write, call rules_get(effective=true, format=md), "
+    "and tell the owner if it keeps failing."
+)
+_RULES_HEAD = re.compile(r"effective rules: [0-9]+\n")
+_RULES_MARKER = re.compile(r"^rules_seq (?:off|[0-9]+)$", re.MULTILINE)
 LOCAL_WARNING = (
     "A managed instruction or memory file has local-only changes. "
     "Save requested memory through Commonplace memory_save and new rules through rules_publish "
@@ -58,6 +69,8 @@ def _session(args, payload):
         or len(context.encode("utf-8")) > MAX_CONTEXT_BYTES
     ):
         raise ValueError
+    if _RULES_HEAD.match(context) is None or _RULES_MARKER.search(context) is None:
+        return GUIDANCE + "\n" + RULES_MISSING + "\n\n" + context
     return GUIDANCE + "\n\n" + context
 
 
