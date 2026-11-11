@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { renderNeedDetail } from '../commonplace/web/static/needs.js';
+import { renderNeedDetail, mergeReason } from '../commonplace/web/static/needs.js';
 const card = {number: 7, version: 1, board: 'work', title: 'Review', need: 'merge', actions: [], pr_url: 'https://github.com/example/project/pull/1', pr_state: 'open'};
 const absent = renderNeedDetail(card, {github: {state: 'absent'}});
 assert.ok(absent.includes('Connect GitHub'), 'an unconnected person must connect their own account');
@@ -58,10 +58,12 @@ assert.ok(errorDetail.innerHTML.includes('data-needs-approve') && errorDetail.in
 assert.ok(!errorDetail.innerHTML.includes('Could not load this card'));
 failedStatus.stop();
 
-// Merging through the person's own connection: a separate opt-in, public repositories only.
+// Merging through the person's own connection: a separate opt-in repo-scope grant, private repositories included.
 const ready = {...card, pr_head: 'a'.repeat(40)};
 const noConsent = renderNeedDetail(ready, {github: {state: 'connected', merge: false, login: 'test-person'}});
-assert.ok(noConsent.includes('Open PR') && noConsent.includes('data-needs-github="allow-merge"'), 'connected without consent offers Allow merging beside Open PR');
+assert.ok(noConsent.includes('Open PR') && noConsent.includes('data-needs-github="allow-merge"') && noConsent.includes('Connect GitHub with repo access to merge') && noConsent.includes('private ones included'), 'connected without the repo grant offers the explicit opt-in beside Open PR');
+assert.equal(mergeReason('github_merge_consent'), 'Connect GitHub with repo access to merge.');
+assert.ok(!mergeReason('github_private_repo').includes('private'), 'private repositories are no longer refused by name');
 assert.ok(!noConsent.includes('data-needs-github="merge"') && !noConsent.includes('arm-merge'), 'no Merge without the separate consent');
 const consented = renderNeedDetail(ready, {github: {state: 'connected', merge: true, login: 'test-person'}});
 assert.ok(consented.includes('data-needs-github="arm-merge"') && consented.includes('Open PR'));
@@ -77,10 +79,11 @@ assert.ok(done.includes('Merged') && !done.includes('arm-merge') && !done.includ
 assert.ok(!renderNeedDetail({...ready, pr_head: undefined}, {github: {state: 'connected', merge: true}}).includes('arm-merge'));
 const unsafe = renderNeedDetail({...ready, pr_url: 'https://evil.example/a/b/pull/1'}, {github: {state: 'connected', merge: true}});
 assert.ok(!unsafe.includes('arm-merge') && !unsafe.includes('allow-merge'), 'no merge controls without a safe github.com PR URL');
-const refused = renderNeedDetail(ready, {github: {state: 'connected', merge: true, notice: 'This repository is private, so Commonplace will not merge it. Use Open PR to merge it on GitHub.'}});
-assert.ok(refused.includes('role="alert"') && refused.includes('private') && refused.includes('Open PR'));
-const asking = renderNeedDetail(ready, {github: {state: 'merge_confirm', login: 'test-person', scopes: ['public_repo'], connect_enabled: true}});
-assert.ok(asking.includes('public_repo') && asking.includes('every public repository your GitHub account can write to') && asking.includes('organisation') && asking.includes('data-needs-github="confirm"') && asking.includes('Allow merging'));
+const refused = renderNeedDetail(ready, {github: {state: 'connected', merge: true, notice: mergeReason('github_merge_refused')}});
+assert.ok(refused.includes('role="alert"') && refused.includes('GitHub refused the merge') && refused.includes('Open PR'));
+const asking = renderNeedDetail(ready, {github: {state: 'merge_confirm', login: 'test-person', scopes: ['repo'], connect_enabled: true}});
+assert.ok(asking.includes('repo') && asking.includes('every repository your GitHub account can reach') && asking.includes('private and organisation repositories') && asking.includes('optional') && asking.includes('data-needs-github="confirm"') && asking.includes('Grant repo access'));
+assert.ok(renderNeedDetail(ready, {github: {state: 'absent'}}).includes('Connecting alone gives no merge rights'), 'Connect GitHub says the repo grant is a later opt-in');
 assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connected', merge: true}}).includes('arm-merge'));
 
 // The controller sends the card number only; the server resolves the PR and refuses by code.
@@ -95,7 +98,7 @@ assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connec
     calls.push([path, options.method, options.body]);
     if (path.startsWith('/api/cards/')) return {...ready, number: Number(path.split('/').at(-1))};
     if (path === '/api/github' && !options.method) return {state: 'connected', merge: true, csrf: 'synthetic-csrf', login: 'test-person'};
-    if (path === '/api/github/merge') { const err = new Error('github_private_repo'); err.status = 409; err.payload = {error: 'github_private_repo'}; throw err; }
+    if (path === '/api/github/merge') { const err = new Error('github_merge_refused'); err.status = 409; err.payload = {error: 'github_merge_refused'}; throw err; }
     return {holds: []};
   };
   mount2.addEventListener = (name, fn) => { if (name === 'click') clickHandler = fn; };
@@ -110,7 +113,7 @@ assert.ok(!renderNeedDetail({...ready, need: 'checks'}, {github: {state: 'connec
   assert.deepEqual(Object.keys(sent[2]).sort(), ['accept', 'acknowledge', 'card', 'csrf', 'head'].sort());
   assert.equal(sent[2].head, 'a'.repeat(40), 'the confirmed head travels with the request');
   assert.equal(sent[2].card, 7);
-  assert.ok(detail2.innerHTML.includes('This repository is private') && detail2.innerHTML.includes('Open PR'), 'a private repository leaves Open PR with a plain reason');
+  assert.ok(detail2.innerHTML.includes('GitHub refused the merge') && detail2.innerHTML.includes('Open PR'), 'a refusal leaves Open PR with a plain reason');
   assert.ok(!detail2.innerHTML.includes('Confirm merge'));
   ui2.stop();
 }

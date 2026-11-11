@@ -136,13 +136,13 @@ def begin_consent(s):
     code, headers, raw = write(s, "/api/github/merge-consent")
     assert code == 200, (code, raw)
     params = parse_qs(urlsplit(json.loads(raw)["authorize_url"]).query, keep_blank_values=True)
-    assert params["scope"] == ["public_repo"] and params["code_challenge_method"] == ["S256"]
+    assert params["scope"] == ["repo"] and params["code_challenge_method"] == ["S256"]
     return params["state"][0], headers["Set-Cookie"].split(";", 1)[0]
 
 
 def consent(s):
     """Run the separate opt-in to completion for the signed-in person."""
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     assert finish(s, begin_consent(s))[0] == 303
     assert status(s)["state"] == "merge_confirm"
     assert write(s, "/api/github/confirm", payload={"accept": True})[0] == 200
@@ -177,7 +177,7 @@ def stored_token(s):
 def pending_merge_consent(s):
     """Connected, then stopped at the Allow merging confirmation; returns the candidate token."""
     connect(s)
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     finish(s, begin_consent(s))
     assert status(s)["state"] == "merge_confirm"
     return s.remote.issued[-1]
@@ -215,16 +215,16 @@ def test_merge_consent_needs_connection_and_a_visible_card(merging):
     assert not rows(s, "github_connect_flows")
 
 
-def test_merge_consent_requests_public_repo_and_replaces_the_token_after_confirmation(merging):
+def test_merge_consent_requests_repo_scope_and_replaces_the_token_after_confirmation(merging):
     s = merging
     connect(s)
     first = s.remote.issued[0]
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     flow = begin_consent(s)
     assert rows(s, "github_connect_flows")[0]["purpose"] == "merge"
     finish(s, flow)
     pending = status(s)
-    assert pending["state"] == "merge_confirm" and pending["scopes"] == ["public_repo"]
+    assert pending["state"] == "merge_confirm" and pending["scopes"] == ["repo"]
     # Nothing is granted until the person accepts.
     stored = s.gateway.github.store.decrypt(
         s.db._conn, s.uid, "grant", rows(s, "github_grants")[0]["secret"]
@@ -236,7 +236,7 @@ def test_merge_consent_requests_public_repo_and_replaces_the_token_after_confirm
     assert after["state"] == "connected" and after.get("merge") is True
     grant = rows(s, "github_grants")[0]
     stored = s.gateway.github.store.decrypt(s.db._conn, s.uid, "grant", grant["secret"])
-    assert stored["scopes"] == ["public_repo"] and stored["token"] == s.remote.issued[-1]
+    assert stored["scopes"] == ["repo"] and stored["token"] == s.remote.issued[-1]
     revoked = [c[2]["json_body"]["access_token"] for c in s.remote.calls if c[0] == "DELETE"]
     assert revoked == [first]
 
@@ -244,7 +244,7 @@ def test_merge_consent_requests_public_repo_and_replaces_the_token_after_confirm
 def test_declined_merge_consent_leaves_the_empty_scope_grant(merging):
     s = merging
     connect(s)
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     finish(s, begin_consent(s))
     assert write(s, "/api/github/confirm", payload={"accept": False})[0] == 200
     assert status(s)["state"] == "connected" and status(s).get("merge") is False
@@ -255,8 +255,8 @@ def test_declined_merge_consent_leaves_the_empty_scope_grant(merging):
     assert reason(merge(s)) == "github_merge_consent"
 
 
-@pytest.mark.parametrize("scope", ["", "repo", "public_repo repo", "public_repo admin:org"])
-def test_merge_consent_callback_accepts_only_public_repo_and_revokes_the_rest(merging, scope):
+@pytest.mark.parametrize("scope", ["", "public_repo", "repo public_repo", "repo admin:org"])
+def test_merge_consent_callback_accepts_only_repo_and_revokes_the_rest(merging, scope):
     s = merging
     connect(s)
     s.remote.scope = scope
@@ -272,15 +272,15 @@ def test_merge_consent_callback_accepts_only_public_repo_and_revokes_the_rest(me
 def test_merge_consent_for_a_different_github_account_is_refused(merging):
     s = merging
     connect(s)
-    s.remote.scope, s.remote.subject = "public_repo", 999
+    s.remote.scope, s.remote.subject = "repo", 999
     finish(s, begin_consent(s))
     assert status(s)["state"] == "connected" and status(s).get("merge") is False
     assert not rows(s, "github_confirmations")
 
 
-def test_connect_flow_still_refuses_public_repo_scope(merging):
+def test_connect_flow_still_refuses_repo_scope(merging):
     s = merging
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     finish(s, begin(s))
     assert status(s)["state"] == "absent"
     assert not rows(s, "github_grants")
@@ -464,14 +464,23 @@ def test_github_refusals_stay_with_github_and_are_generic(merging, status_code, 
     assert reason(merge(s)) == error
 
 
-@pytest.mark.parametrize("repo_status", [200, 404])
-def test_private_repositories_fall_back_to_opening_the_pr(merging, repo_status):
+def test_private_repositories_merge_with_the_pinned_head_on_the_persons_repo_scope(merging):
     s = merging
     connect(s)
     consent(s)
-    s.remote.private = repo_status == 200
-    s.remote.repo_status = repo_status
-    assert reason(merge(s)) == "github_private_repo"
+    s.remote.private = True
+    assert merge(s)[0] == 200
+    (call,) = s.remote.merges()
+    assert call[2]["json_body"]["sha"] == HEAD
+    assert call[2]["token"] == s.remote.issued[-1]
+
+
+def test_a_repository_the_account_cannot_see_is_refused_without_merging(merging):
+    s = merging
+    connect(s)
+    consent(s)
+    s.remote.repo_status = 404
+    assert reason(merge(s)) == "github_merge_refused"
     assert not s.remote.merges()
 
 
@@ -1109,7 +1118,7 @@ def test_the_replaced_token_stays_recorded_until_it_is_revoked(merging, monkeypa
     s = merging
     connect(s)
     first = s.remote.issued[0]
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     finish(s, begin_consent(s))
     worker = s.gateway.github
     real, lost = worker._fence, {"on": False}
@@ -1256,7 +1265,7 @@ def test_disconnect_deletes_only_the_record_it_revoked(merging):
         # Stands in for any other record that took this one's place mid-revoke.
         value = {
             "token": "successor-token",
-            "scopes": ["public_repo"],
+            "scopes": ["repo"],
             "subject": "123",
             "login": "test-person",
             "expires_at": time.time() + 600,
@@ -1419,7 +1428,7 @@ def test_an_ordinary_failure_revoking_the_replaced_token_leaves_the_settlement_f
     s = merging
     connect(s)
     first = s.remote.issued[0]
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     finish(s, begin_consent(s))
     s.remote.on_revoke = failing_once(RuntimeError("synthetic failure revoking the replaced token"))
     post_confirm(s, True)
@@ -1594,7 +1603,7 @@ def fail_commit_once(s, monkeypatch, probe):
 def test_a_failed_callback_commit_releases_no_other_owners_marker(merging, monkeypatch):
     s = merging
     connect(s)
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     flow = begin_consent(s)
     # Another exchange is in flight when the COMMIT of this callback's own marking fails.
     s.db._conn.execute("UPDATE github_lifecycle SET active_exchanges=1 WHERE user_id=?", (s.uid,))
@@ -1618,7 +1627,7 @@ def test_a_failed_commit_of_the_callbacks_record_still_revokes_the_issued_token(
     s = merging
     worker = s.gateway.github
     connect(s)
-    s.remote.scope = "public_repo"
+    s.remote.scope = "repo"
     flow = begin_consent(s)
     if where == "commit":
         fired, restore = fail_commit_once(
@@ -1701,7 +1710,7 @@ def test_a_revoke_github_refuses_is_flagged_and_not_retried(merging, monkeypatch
     else:
         connect(s)
         target = s.remote.issued[0]
-        s.remote.scope = "public_repo"
+        s.remote.scope = "repo"
         finish(s, begin_consent(s))
     s.remote.status = 500
     assert post_confirm(s, path != "decline")[0] == 200

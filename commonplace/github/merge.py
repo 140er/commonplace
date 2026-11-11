@@ -13,7 +13,9 @@ from urllib.parse import quote
 from ..social.providers import SignInError
 from . import client
 
-SCOPE = "public_repo"
+# GitHub OAuth Apps cannot narrow this: it reaches every repository, private ones included,
+# that the person's own account can write to. The person opts in to it explicitly.
+SCOPE = "repo"
 API = "https://api.github.com/repos/"
 URL = re.compile(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)")
 # Preferred first; a repository's own settings decide which are allowed.
@@ -42,15 +44,13 @@ def pull_request(url):
 
 
 def merge(token, owner, repo, number, head):
-    """Merge only a clean, open, public-repository PR still at ``head``."""
+    """Merge only a clean, open PR still at ``head``, with the person's own permissions."""
     base = API + quote(owner, safe="") + "/" + quote(repo, safe="")
     status, _, repository = client.request("GET", base, token=token)
     if status == 401:
         raise SignInError("github_not_connected")
-    if status == 404 or (
-        status == 200 and isinstance(repository, dict) and repository.get("private") is not False
-    ):
-        raise SignInError("github_private_repo")
+    if status == 404:
+        raise SignInError("github_merge_refused")
     if status != 200 or not isinstance(repository, dict):
         raise SignInError("github_merge_failed")
     method = next((name for name, flag in METHODS if repository.get(flag) is True), None)

@@ -516,7 +516,7 @@ class GitHub:
                 raise SignInError("github_token")
             granted = scopes(value.get("scope"))
             merging = row["purpose"] == "merge"
-            # Only a merge flow may carry public_repo, and it must carry it.
+            # Only a merge flow may carry the repo scope, and it must carry it.
             if not granted <= {"read:user", "user:email"} | (
                 {pr_merge.SCOPE} if merging else set()
             ):
