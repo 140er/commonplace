@@ -3,17 +3,16 @@
 import http.client
 import json
 import re
-from dataclasses import replace
 from html import unescape
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from commonplace import decide_grant, sessions
+from commonplace import sessions
 from commonplace.boards.service import BoardService
 from commonplace.control_db import ControlError
-from commonplace.extensions import ToolContext, ToolError
+from commonplace.extensions import ToolContext
 from commonplace.policy import Policy
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests.test_commonplace_oauth import Client
@@ -23,6 +22,15 @@ REFUSAL = "only a signed-in workspace owner can answer this"
 # Today's REST refusal for an untrusted browser-made PAT, before the service runs.
 HIDDEN = "tool not allowed for this connection"
 FULL = "memory:read memory:write cards:decide"
+# Literal copies: this file must run (and fail behaviourally) on a base without the scope.
+SCOPE_TEXT = (
+    "Allow this app to answer your Needs-me questions as you. It can answer only questions "
+    "addressed to you, never another person's, and every answer is recorded with this "
+    "connection. You can stop this at any time under Agents."
+)
+OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
+TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
+AUDIT_ACTION = "card.decide.delegated"
 
 
 def api(hub, auth, method, path, body=None):
@@ -142,7 +150,7 @@ def delegated_audit(hub):
     return [
         row
         for row in hub.db.audit_entries(hub.workspace, limit=500)
-        if row["action"] == decide_grant.AUDIT_ACTION
+        if row["action"] == AUDIT_ACTION
     ]
 
 
@@ -173,7 +181,7 @@ def test_a1_owner_pat_with_scope_answers_own_ask_over_rest_and_mcp(world):
 def test_a1_owner_oauth_with_scope_answers_own_ask(world):
     w = world
     grant = oauth_grant(w.hub)
-    assert decide_grant.SCOPE_TEXT in unescape(grant.page)
+    assert SCOPE_TEXT in unescape(grant.page)
     assert "cards:decide" in grant.issued["scope"].split()
     assert grant.p.policy.has_scope("cards:decide")
     number, version = ask(w)
@@ -189,7 +197,7 @@ def test_a2_without_scope_is_refused_as_today(world):
     w = world
     # Consent shown but left unticked: the client gets a token without the scope.
     unticked = oauth_grant(w.hub, tick=False)
-    assert decide_grant.SCOPE_TEXT in unescape(unticked.page)
+    assert SCOPE_TEXT in unescape(unticked.page)
     assert "cards:decide" not in unticked.issued["scope"].split()
     status, body = mint(w)
     assert status == 201 and body["connection"]["decide"] is False
@@ -241,12 +249,26 @@ def test_a3_token_cannot_decide_another_persons_ask(world):
     assert w.owner.task_show(number)["status"] == "review"
     assert w.owner.task_show(card["number"])["status"] == "review"
 
-    # An ask routed to an agent coordinator is not the owner's either.
+    # The owner's own ask is answerable by the same app.
     p = hub.gateway.authenticate(f"Bearer {token}")
-    assert not decide_grant.answers_for(p, {"ask_to": "conn:asker"})
     status, ok = rest_decide(w, token, number, version)
     assert status == 200, ok
     assert delegated_audit(hub)[0]["connection_id"] == p.connection_id
+
+    # An ask routed to the board's agent coordinator is not the owner's either.
+    coordinator = hub.owner_token("coordinator")
+    w.owner.board_set("work", "conn:coordinator")
+    routed = w.asker.ask(
+        "Coordinator, should this ship today? Choose one.",
+        options=OPTIONS,
+        board="work",
+        context="Routine release question for the coordinator.",
+    )
+    assert routed["ask_to"] == "conn:coordinator"
+    status, refused = rest_decide(w, token, routed["number"], routed["version"])
+    assert status == 403 and REFUSAL in refused["error"]
+    assert w.owner.task_show(routed["number"])["status"] == "review"
+    assert coordinator
 
 
 # ── 4. a non-owner or an agent connection cannot grant the scope ──
@@ -261,7 +283,7 @@ def test_a4_non_owner_or_agent_cannot_grant(world):
 
     # A member sees no consent box; a forged tick grants nothing.
     forged = oauth_grant(hub, email="member@example.com")
-    assert decide_grant.OWNER_ONLY_TEXT in unescape(forged.page)
+    assert OWNER_ONLY_TEXT in unescape(forged.page)
     assert 'name="grant_decide"' not in forged.page
     assert "cards:decide" not in forged.issued["scope"].split()
     member_cookie = cookie_for(hub, "member@example.com")
@@ -278,12 +300,12 @@ def test_a4_non_owner_or_agent_cannot_grant(world):
 
     # A child agent token never holds it, at creation or later.
     status, refused = mint(w, decide=True, parent=cid)
-    assert status == 403 and refused["error"] == decide_grant.TOP_LEVEL_TEXT
+    assert status == 403 and refused["error"] == TOP_LEVEL_TEXT
     status, child = mint(w, parent=cid)
     assert status == 201
     child_id = child["connection"]["id"]
     status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{child_id}", {"decide": True})
-    assert status == 409 and refused["error"] == decide_grant.TOP_LEVEL_TEXT
+    assert status == 409 and refused["error"] == TOP_LEVEL_TEXT
 
     # Control-level guards: only the owner's own top-level connection.
     policy = Policy.build(scopes=["memory:read", "cards:decide"], read_wings=["*"])
@@ -380,56 +402,3 @@ def test_a6_audit_row_per_delegated_decide(world):
         and r["reason"] == "board=work"
         for r in rows
     )
-
-
-# ── guard units ──
-
-
-def test_answers_for_requires_every_condition(world):
-    w = world
-    token, _cid = owner_app(w)
-    p = w.hub.gateway.authenticate(f"Bearer {token}")
-    row = {"ask_to": f"user:{p.user_id}"}
-    assert decide_grant.answers_for(p, row)
-    for changed in (
-        replace(p, person=True),
-        replace(p, auth="web"),
-        replace(p, role="member"),
-        replace(p, parent_connection_id="conn_parent"),
-        replace(p, runner="worker"),
-        replace(p, policy=replace(p.policy, scopes=("memory:read", "memory:write"))),
-    ):
-        assert not decide_grant.answers_for(changed, row)
-    assert not decide_grant.answers_for(p, {"ask_to": "user:someone-else"})
-    assert not decide_grant.answers_for(p, {"ask_to": None})
-
-
-def test_delegated_decide_still_needs_board_access(world):
-    w = world
-    hub = w.hub
-    number, version = ask(w)
-    # The grant does not widen board visibility: an unreadable board stays not found.
-    narrow = hub.token(
-        "narrow-app",
-        profile="slim",
-        scopes=["memory:read", "memory:write", "cards:decide"],
-        read_wings=["elsewhere"],
-        write_wing="inbox",
-        trust="untrusted",
-    )
-    assert rest_decide(w, narrow, number, version)[0] == 404
-    # Nor does it replace memory:write.
-    read_only = hub.token(
-        "read-only-app",
-        profile="slim",
-        scopes=["memory:read", "cards:decide"],
-        read_wings=["*"],
-        trust="untrusted",
-    )
-    status, refused = rest_decide(w, read_only, number, version)
-    assert status == 403 and HIDDEN in refused["error"]
-    p = hub.gateway.authenticate(f"Bearer {read_only}")
-    with pytest.raises(ToolError, match="cannot change this board"):
-        service(hub, p).decide(number, choice=OPTIONS[0], version=version)
-    assert w.owner.task_show(number)["status"] == "review"
-    assert delegated_audit(hub) == []

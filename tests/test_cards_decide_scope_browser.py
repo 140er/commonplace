@@ -13,11 +13,18 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from commonplace import decide_grant, sessions
+from commonplace import sessions
 from tests._commonplace_helpers import hub_fixture as hub_fixture
 from tests.test_commonplace_oauth import Client
 
 SCOPE = "memory:read memory:write cards:decide"
+DECIDE = "cards:decide"
+# A literal copy, so the file runs (and fails behaviourally) on a base without the scope.
+SCOPE_TEXT = (
+    "Allow this app to answer your Needs-me questions as you. It can answer only questions "
+    "addressed to you, never another person's, and every answer is recorded with this "
+    "connection. You can stop this at any time under Agents."
+)
 
 
 async def _shot(target, name):
@@ -59,7 +66,7 @@ async def consent_and_agents(hub):
 
             # Consent screen: the scope is named, unticked by default, and grantable.
             await page.goto(base + client.authorize_path(cid, scope=SCOPE))
-            box = page.get_by_label(decide_grant.SCOPE_TEXT)
+            box = page.get_by_label(SCOPE_TEXT)
             await expect(box).to_be_visible()
             await expect(box).not_to_be_checked()
             await _shot(page, "consent.png")
@@ -71,7 +78,7 @@ async def consent_and_agents(hub):
             assert status == 200
             access = json.loads(raw)["access_token"]
             app = hub.gateway.authenticate("Bearer " + access)
-            assert app.policy.has_scope(decide_grant.DECIDE_SCOPE)
+            assert app.policy.has_scope(DECIDE)
 
             # Agents settings: the OAuth client shows the grant and a way to stop it.
             await page.goto(base + "/app/#/settings")
@@ -82,9 +89,7 @@ async def consent_and_agents(hub):
                 "Answers your Needs-me questions (cards:decide)"
             )
             # The create form offers the same consent for a new token.
-            form_box = section.locator(".agent-form").get_by_label(
-                decide_grant.SCOPE_TEXT, exact=False
-            )
+            form_box = section.locator(".agent-form").get_by_label(SCOPE_TEXT, exact=False)
             await expect(form_box).not_to_be_checked()
             await section.locator('.agent-form input[name="name"]').fill("phone-ui")
             await form_box.check()
@@ -96,14 +101,12 @@ async def consent_and_agents(hub):
             await expect(section.locator("[data-agent-token]")).to_have_count(0)
             await _shot(section.locator("[data-agent-list]"), "agents-granted.png")
             pat = hub.db.connection("phone-ui", hub.workspace)
-            assert decide_grant.DECIDE_SCOPE in json.loads(pat["policy"])["scopes"]
+            assert DECIDE in json.loads(pat["policy"])["scopes"]
 
             # Stop answering on the OAuth client: the row updates and the token loses it at once.
             await row.get_by_role("button", name="Stop answering").click()
             await expect(row.locator('[data-agent-decide="on"]')).to_have_count(0)
-            assert not hub.gateway.authenticate("Bearer " + access).policy.has_scope(
-                decide_grant.DECIDE_SCOPE
-            )
+            assert not hub.gateway.authenticate("Bearer " + access).policy.has_scope(DECIDE)
             # And on the PAT: the row then offers to allow it again.
             await pat_row.get_by_role("button", name="Stop answering").click()
             await expect(
@@ -111,7 +114,7 @@ async def consent_and_agents(hub):
             ).to_be_visible()
             await _shot(section.locator("[data-agent-list]"), "agents-stopped.png")
             pat = hub.db.connection("phone-ui", hub.workspace)
-            assert decide_grant.DECIDE_SCOPE not in json.loads(pat["policy"])["scopes"]
+            assert DECIDE not in json.loads(pat["policy"])["scopes"]
         finally:
             await browser.close()
 
