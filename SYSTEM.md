@@ -156,6 +156,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
 
+### Rules for reviewers and at session start
+
+- `commonplace review-rules` hands a reviewer the effective rules of the token it is run with, and `--verify` checks that a verdict repeats the current rule version. That line shows which rule set the reviewer was given; it does not show that the reviewer applied each rule. Review tools outside this repository have to call both steps themselves.
+
+- The session-start hook adds a notice when its context does not open with a complete rule set. It recognises the server's own first and last rule lines; a context that only quotes those lines as data still gets the notice.
+
 ### Operator-blind token slots: primitives with production locked
 
 - B3 is opt-in via the proposed `encryption.key_mode=token-v2` marker. This slice rejects that marker (and unknown key modes) with an encryption error before operator-held B2 keys or content are opened, including backup snapshots. Existing workspaces without the marker retain their existing behavior; no workspace is automatically migrated or modified.
@@ -805,6 +811,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
 
 - A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
+
+### Routines create cards on a schedule
+
+A routine (name, card template, schedule, owner) creates one card per due time. The worker claims a `routine_runs` row, unique per routine and due time, before it creates the card, and the card carries a marker label, so a restart between the claim and the card finds the existing card instead of making a second. Cards are made by `BoardService.task_add` as the routine's owner (a workspace owner), so priority, origin and authorization rules apply at run time; if the owner has lost ownership or the board is gone, the run is recorded as failed and five failed runs in a row pause the routine. A board is never created by a routine. After downtime at most three due times are made up; earlier ones become a single `skipped` history row. Time spent paused is not made up. Limits: 25 routines per workspace, 60-minute minimum interval, 200 history rows per routine. Only signed-in workspace owners read or change routines (`/api/routines`). Due times come from the shared pure `commonplace/schedule_time.py` (every N minutes or a cron, in an IANA time zone).
 
 ### Webhook dispatcher recovery
 
