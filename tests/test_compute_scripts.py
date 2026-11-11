@@ -292,3 +292,31 @@ def test_cleanup_without_nofollow_chmod(tmp_path, monkeypatch):
         os.close(fd)
     (tmp_path / "job").rmdir()
     assert not (tmp_path / "job").exists()
+
+
+def test_cleanup_restores_access_to_script_locked_directories(tmp_path):
+    import os
+
+    from commonplace.compute.target_helper import _remove_owned_job
+
+    # A script may leave directories with every permission removed, nested
+    # below one another and beside a symlink that must not be followed.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_bytes(b"not owned")
+    outside_mode = outside.stat().st_mode
+    locked = tmp_path / "job" / "locked"
+    (locked / "inner").mkdir(parents=True)
+    (locked / "inner" / "data").write_bytes(b"owned")
+    (tmp_path / "job" / "link").symlink_to(outside, target_is_directory=True)
+    (locked / "inner").chmod(0)
+    locked.chmod(0)
+    fd = os.open(tmp_path / "job", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        _remove_owned_job(fd)
+    finally:
+        os.close(fd)
+    (tmp_path / "job").rmdir()
+    assert not (tmp_path / "job").exists()
+    assert (outside / "keep").read_bytes() == b"not owned"
+    assert outside.stat().st_mode == outside_mode
