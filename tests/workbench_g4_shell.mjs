@@ -14,7 +14,10 @@ function slice(start, end) {
 }
 const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const apiUrl = url(await read('api.js'));
-const module = async (name) => import(url((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl))));
+const linksUrl = url(await read('cardlinks.js'));
+// A data: module cannot resolve "./x.js": every other sibling import loads from its file.
+const siblings = (source) => source.replace(/(from\s*)(['"])\.\/([\w-]+\.js)\2/g, (_all, from, _quote, name) => from + JSON.stringify(new URL(`../commonplace/web/static/${name}`, import.meta.url).href));
+const module = async (name) => import(url(siblings((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl)).replace(/(['"])\.\/cardlinks\.js\1/g, JSON.stringify(linksUrl)))));
 const e = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const board = { slug: 'alpha', name: 'Alpha' };
 const state = { me: { actor: 'user:one', people: { 'user:one': 'One' } }, boards: [board], needs: {}, base: '#/board/alpha', route: '#/board/alpha',
@@ -25,7 +28,7 @@ const nodes = {};
 for (const selector of ['#content', '#card-panel', '#title', '#head-actions', '.shell']) nodes[selector] = node();
 const root = { querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {} };
 let titleActions = '';
-const context = { root, state, e, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
+const context = { root, state, e, placeLifecycle: () => {}, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
   matchMedia: () => ({ matches: false }), remember: () => ({}), restore() {}, markOpenCard() {}, title(_text, actions) { titleActions = actions; }, voice: { stop() {} }, showError() {}, message: (text) => text };
 const run = (s) => runInNewContext(s, context);
 // The shell's board helpers (child cards, phone width); a shell without them only lists state.cards.
@@ -139,16 +142,34 @@ if (which === 'details-button') {
   assert.equal(detail.innerHTML, 'settings');
   ui.pause(false); assert.notEqual(detail.innerHTML, 'settings');
   ui.stop();
-  // The shell pauses Needs me while project settings use the panel on #/needs.
-  const handlers = {}, mounted = [];
+  // The shell pauses Needs me while project settings use the panel on #/needs. The real
+  // openProjectSettings runs here, with the real settingsOptions behind the injected module.
+  const projects = await module('projects');
+  const handlers = {}, mounted = [], refreshes = [];
   let paused = null;
   root.addEventListener = (type, fn) => { handlers[type] = fn; };
   state.base = '#/needs'; state.needsUI = { pause: (on) => { paused = on; } };
-  Object.assign(context, { consoleUI: null, api() {}, currentBoard: () => board, injected: async (host, options) => mounted.push(options) });
-  run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injected})'));
-  await handlers.click({ target: { closest: (s) => s.includes('.chat-recovery') ? null : { dataset: { action: 'coordinator', board: 'alpha' } } } });
+  Object.assign(context, { consoleUI: null, api() {}, onNeeds: () => state.base === '#/needs' || state.base === '#/', currentBoard: () => board, settingsOptions: projects.settingsOptions,
+    refresh: async (options) => { refreshes.push(JSON.parse(JSON.stringify(options))); },
+    injected: async (host, options) => mounted.push(options) });
+  run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));
+  run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injected, settingsOptions})'));
+  const click = (dataset) => handlers.click({ target: { closest: (s) => s.includes('.chat-recovery') ? null : { dataset } } });
+  await click({ action: 'coordinator', board: 'alpha' });
   assert.equal(paused, true);
   assert.equal(mounted.length, 1); assert.equal(typeof mounted[0].onBack, 'function');
+  assert.equal(mounted[0].focus, undefined, 'the coordinator button opens settings without a focus target');
+  // "Set the model" on a Needs me row opens that board's settings on that role's picker.
+  paused = null;
+  await click({ action: 'project-models', board: 'alpha', role: 'worker' });
+  assert.equal(paused, true, 'Needs me waits while settings use the panel');
+  assert.equal(mounted.length, 2, 'the click reaches the settings mount');
+  assert.equal(mounted[1].slug, 'alpha');
+  assert.equal(mounted[1].focus, 'models');
+  assert.equal(mounted[1].role, 'worker', "the row's role reaches the picker");
+  assert.equal(typeof mounted[1].onBack, 'function');
+  mounted[1].onBack();
+  assert.deepEqual(refreshes, [{ background: true }], 'Back re-reads the lists');
 } else {
   throw new Error(`unknown case ${which}`);
 }
