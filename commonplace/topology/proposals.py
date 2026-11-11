@@ -432,6 +432,18 @@ def _public(row) -> dict:
     }
 
 
+def _waiting(topo, observer, changes):
+    """This observer's open proposal of exactly these changes, so a rerun asks only once."""
+    with _reading(topo) as conn:
+        if conn is None:
+            return None
+        return conn.execute(
+            "SELECT * FROM topology_proposals WHERE state='pending' AND card IS NOT NULL "
+            "AND observer_kind=? AND observer_id=? AND changes=? ORDER BY created_at LIMIT 1",
+            (observer.kind, observer.id, model.encode(changes)),
+        ).fetchone()
+
+
 def _apply(topo, row) -> None:
     """Write a row's changes to the store. Safe to repeat after a crash in the middle."""
     changes = json.loads(row["changes"])
@@ -481,6 +493,7 @@ def propose(ctx, items=None, remove=None, evidence=None, ttl_seconds=None, board
     evidence = model.evidence_text(evidence)
     if ttl_seconds is not None:
         model.expiry("kind", model.clock(None), ttl_seconds)
+    settle(ctx.gateway, principal.workspace_id)
     topo = store.open_topology(ctx.gateway, principal.workspace_id)
     owner = observer.kind == "owner"
     direct, refreshed, proposed, unchanged = _plan(items, remove, _current(topo), machine_id, owner)
@@ -492,6 +505,21 @@ def propose(ctx, items=None, remove=None, evidence=None, ttl_seconds=None, board
         "evidence": evidence,
         "ttl_seconds": ttl_seconds,
     }
+    if proposed:
+        # Asked first: when no decision can be opened, nothing at all is written.
+        waiting = _waiting(topo, observer, proposed)
+        if waiting is None:
+            pending = _insert(topo, state="pending", origin="proposal", changes=proposed, **common)
+            try:
+                card, last_event = _open_decision(
+                    ctx, pending, observer, evidence, proposed, options, board
+                )
+            except BaseException:
+                _update(topo, pending, state="void", note="the decision could not be opened")
+                raise
+            _update(topo, pending, card=card, card_event=last_event)
+            waiting = _row(topo, pending)
+        result["proposal"] = _public(waiting)
     if direct:
         applied = _insert(
             topo,
@@ -507,17 +535,6 @@ def propose(ctx, items=None, remove=None, evidence=None, ttl_seconds=None, board
         store.upsert(
             topo, _items(refreshed), observer=observer, evidence=evidence, ttl_seconds=ttl_seconds
         )
-    if proposed:
-        pending = _insert(topo, state="pending", origin="proposal", changes=proposed, **common)
-        try:
-            card, last_event = _open_decision(
-                ctx, pending, observer, evidence, proposed, options, board
-            )
-        except BaseException:
-            _update(topo, pending, state="void", note="the decision could not be opened")
-            raise
-        _update(topo, pending, card=card, card_event=last_event)
-        result["proposal"] = _public(_row(topo, pending))
     return result
 
 

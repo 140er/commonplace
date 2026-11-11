@@ -79,8 +79,6 @@ def _send(h, call):
         send_json(h, status, {"error": message})
     except TopologyError as exc:
         send_json(h, 400, {"error": str(exc).removeprefix("no: ")})
-    except TypeError:
-        send_json(h, 400, {"error": "invalid arguments"})
     else:
         send_json(h, status, payload)
 
@@ -99,6 +97,8 @@ def install(gateway):
             if not parts and h.command == "POST":
                 body = read_json(h)
                 with rest_write(ctx, h, TOOL, body):
+                    if body.keys() - ARGUMENTS:
+                        raise HTTPError(400, "invalid arguments")
                     try:
                         return 201, proposals.propose(ctx, **body)
                     except TopologyError as exc:

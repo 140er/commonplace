@@ -123,6 +123,33 @@ def test_agent_proposal_is_one_decision_with_before_and_after(world):
     assert kinds.count("card.created") == 1
 
 
+def test_a_rerun_asks_only_once(world):
+    seed(world)
+    first, again = os_change(world), os_change(world)
+    assert again["id"] == first["id"] and again["card"] == first["card"]
+    assert len(proposals.listing(ctx(world), "pending")) == 1
+    other = os_change(world, "Linux 7.0")
+    assert other["id"] != first["id"]
+    answer(world, first, "Reject")
+    assert os_change(world)["id"] != first["id"]
+
+
+def test_no_decision_means_nothing_is_written(env):
+    machine_id, worker = runner(env)
+    with pytest.raises(ToolError, match="board not found"):
+        proposals.propose(
+            ctx(env, worker),
+            items=[
+                {"node": "runner-one", "fields": {"kind": "server", "runner_id": machine_id}},
+                {"node": "web1", "fields": {"kind": "server"}},
+            ],
+            evidence=EVIDENCE,
+            board="missing",
+        )
+    assert store.read_graph(topo(env))["nodes"] == []
+    assert [p["state"] for p in proposals.listing(ctx(env))] == ["void"]
+
+
 def test_approve_applies_and_keeps_history(world):
     seed(world)
     row = os_change(world)
