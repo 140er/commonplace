@@ -17,6 +17,10 @@ SCOPE_TEXT = (
     "person's, and only on boards you can write to."
 )
 OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
+NOT_YOURS_TEXT = (
+    "This connection belongs to another member. Only your own apps can answer your "
+    "Needs-me questions."
+)
 TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
 AGENT_TEXT = "Agent, runner and orchestrator connections cannot answer Needs-me questions."
 INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
@@ -42,10 +46,11 @@ def require_grantor(db, grantor, workspace_id, user_id) -> None:
         grantor is None
         or not getattr(grantor, "person", False)
         or grantor.workspace_id != workspace_id
-        or grantor.user_id != user_id
         or not eligible(db, grantor.user_id, workspace_id)
     ):
         raise GrantRefused(OWNER_ONLY_TEXT)
+    if grantor.user_id != user_id:
+        raise GrantRefused(NOT_YOURS_TEXT)
 
 
 def is_seat(db, connection_id, client) -> bool:

@@ -502,8 +502,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
   person owner. The CLI refuses it; person policies, profile defaults and seat or
   runner policies never include it. The grant route also refuses any current
   board coordinator (checked in the board store). Settings → Agents offers the
-  grant only on the viewing owner's own eligible, non-coordinator PATs, with the
-  consent text served from one source.
+  grant only on the viewing owner's own eligible, unexpired, non-coordinator
+  PATs, with the consent text served from one source. Withdrawing works on any
+  connection, also expired or revoked ones; another member's row gets its own
+  message.
 - Answering: the connection must be a live PAT or OAuth connection of a current
   owner, top-level, not a runner, hold the scope, and the ask's recipient must be
   exactly that owner. Project seats and board coordinators are refused. The app
@@ -518,7 +520,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   connection id, auth kind, board and card number. A failed audit write fails the
   answer. The audit log is append-only and a separate database, so if the board
   transaction rolls back after the row was written, a `card.decide.rolled_back`
-  row with `reason=audit_seq=<seq>` cancels it. Grants and withdrawals write
+  row with `reason=audit_seq=<seq>` cancels it. Window: an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails. No answer commits without its audit row; no
+  reconcile exists yet. Grants and withdrawals write
   `connection.decide.grant` and `connection.decide.revoke`.
 - Revocation: `PATCH {"decide": false}` (PAT or OAuth) or revoking the connection
   takes effect on the next request; policies load on every request and lose the
@@ -529,7 +532,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
     from `owner` to anything else (reason "ownership lost"); deleting a
     membership is refused by the foreign key while the user has connections;
   - coordinator assignment: `board_set` clears the grant of the connection it
-    assigns (reason "coordinator"); unassigning does not restore it;
+    assigns (reason "coordinator") inside its transaction and again after the
+    commit; the grant route re-reads coordinators after writing a grant and
+    withdraws it (409) if the app became one meanwhile. Unassigning does not
+    restore it;
   - expiry: rotating an expired PAT clears the grant (reason "expired"); rotating
     a live PAT keeps it. Expired tokens can still be rotated, as the connection
     docs describe.

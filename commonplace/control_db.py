@@ -743,10 +743,11 @@ class ControlDB:
                 decide_grant.require_grantor(self, actor, row["workspace_id"], row["user_id"])
             except decide_grant.GrantRefused as exc:
                 raise ControlError(str(exc)) from None
-            principal = self.authenticate_connection(row["id"])
-            if principal is not None and principal.runner is not None:
+            if decide_grant.is_runner(self, row["id"]):
                 raise RunnerLinkedError()
-            if principal is None:
+            # Withdrawing always works, also on expired or revoked connections;
+            # granting needs a live connection.
+            if allowed and self.authenticate_connection(row["id"]) is None:
                 raise ControlError(decide_grant.INACTIVE_TEXT)
             if allowed:
                 reason = decide_grant.refusal(self, row) or (

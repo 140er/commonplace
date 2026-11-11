@@ -1104,7 +1104,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, is refused for seats and board coordinators, needs `memory:write`, read access to the board's wing and the owner's person-level write access to it (not the app's own write wings), cannot escalate, and writes one `card.decide.delegated` audit row inside the board transaction (a failed write fails the answer; a later rollback appends `card.decide.rolled_back`). Without the scope, refusals are unchanged.
+  - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, is refused for seats and board coordinators, needs `memory:write`, read access to the board's wing and the owner's person-level write access to it (not the app's own write wings), cannot escalate, and writes one `card.decide.delegated` audit row inside the board transaction (a failed write fails the answer; a later rollback appends `card.decide.rolled_back`; an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails). Without the scope, refusals are unchanged.
 
   - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill. Subscription lookup exceptions log their type and stack locations while retaining fail-closed authority.
 
@@ -1675,7 +1675,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** only on rows the server marks `decide_grantable` (the viewing owner's own eligible PATs; never agents, runners, seats, board coordinators or other members' connections; the grant route refuses coordinators too); the consent copy comes from `decide_consent` in `GET /api/connections`; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
+  - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** only on rows the server marks `decide_grantable` (the viewing owner's own eligible, unexpired PATs; never agents, runners, seats, board coordinators or other members' connections; the grant route refuses coordinators too); the consent copy comes from `decide_consent` in `GET /api/connections`; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
 
   - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 

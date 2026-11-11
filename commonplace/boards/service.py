@@ -2027,6 +2027,13 @@ class BoardService:
                 )
             )
             result = {"board": b["slug"], "coordinator": actor}
+        if actor is not None and actor.startswith("conn:"):
+            # Again after the commit: a grant written while this transaction was
+            # open is removed too (the in-transaction clear covers a rollback).
+            coordinator_row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+            self.ctx.db.clear_decide(
+                coordinator_row["id"], reason="coordinator", user_id=self.principal.user_id
+            )
         if actor is not None:
             from commonplace import webhooks
 

@@ -2,7 +2,7 @@
 
 import logging
 
-from commonplace import decide_grant, import_grant, urls
+from commonplace import control_db, decide_grant, import_grant, urls
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import (
@@ -57,6 +57,11 @@ def decide_view(gateway, principal):
     return {"db": gateway.db, "viewer": principal, "coordinators": coordinators(gateway, principal)}
 
 
+def _expired(row):
+    expires = control_db._parse(row["expires_at"])
+    return expires is not None and expires <= control_db._now()
+
+
 def connection_view(row, db=None, *, viewer=None, coordinators=None):
     view = {
         key: row[key]
@@ -87,6 +92,7 @@ def connection_view(row, db=None, *, viewer=None, coordinators=None):
         and row["user_id"] == viewer.user_id
         and row["auth"] == "pat"
         and not row["revoked_at"]
+        and not _expired(row)
         and f"conn:{row['name']}" not in coordinators
         and decide_grant.refusal(db, row) is None
     )
@@ -114,6 +120,16 @@ def _update_decide(gateway, h, principal, row, data):
         # Specific, owner-safe reasons: inactive, runner-linked, agent or not top-level.
         send_json(h, 409, {"error": str(exc)})
         return
+    if data["decide"]:
+        # Re-read after the write: a coordinator assigned meanwhile loses the grant.
+        current = coordinators(gateway, principal)
+        if current is None or f"conn:{row['name']}" in current:
+            gateway.db.clear_decide(row["id"], reason="coordinator", user_id=principal.user_id)
+            if current is None:
+                send_json(h, 503, {"error": "Boards are unavailable; try again"})
+            else:
+                send_json(h, 409, {"error": decide_grant.AGENT_TEXT})
+            return
     fresh = gateway.db.connection(row["id"], principal.workspace_id)
     send_json(h, 200, {"connection": connection_view(fresh, **decide_view(gateway, principal))})
 

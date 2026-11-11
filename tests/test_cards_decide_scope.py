@@ -34,6 +34,10 @@ OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me quest
 TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
 AGENT_TEXT = "Agent, runner and orchestrator connections cannot answer Needs-me questions."
 INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
+NOT_YOURS_TEXT = (
+    "This connection belongs to another member. Only your own apps can answer your "
+    "Needs-me questions."
+)
 OAUTH_GRANT_TEXT = "An OAuth app gets this only through a fresh sign-in consent."
 AUDIT_ACTION = "card.decide.delegated"
 
@@ -907,3 +911,113 @@ def test_an_app_answers_only_in_its_own_workspace(world):
     assert status == 404
     assert second.task_show(card["number"])["status"] == "review"
     assert delegated_audit(hub) == []
+
+
+# ── review round 3: grant/assignment races, expired rows, other members ──
+
+
+def test_r12_a_grant_racing_a_coordinator_assignment_is_withdrawn(world, monkeypatch):
+    from commonplace.web import agents
+
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    real = agents.coordinators
+    calls = []
+
+    def stale_then_assign(gateway, principal):
+        # The grant request reads no coordinator; the owner's other request then
+        # assigns the app and commits before the grant is written.
+        calls.append(1)
+        if len(calls) == 1:
+            snapshot = real(gateway, principal)
+            w.owner.board_set("work", "conn:coordinator-app")
+            return snapshot
+        return real(gateway, principal)
+
+    monkeypatch.setattr(agents, "coordinators", stale_then_assign)
+    status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
+    monkeypatch.undo()
+    assert status == 409, refused
+    assert refused["error"] == AGENT_TEXT
+    assert (
+        "cards:decide" not in json.loads(hub.db.connection(cid, hub.workspace)["policy"])["scopes"]
+    )
+    w.owner.board_set("work", None)
+    number, version = _owner_ask(hub, asker=w.asker)
+    status, refused = rest_decide(w, token, number, version)
+    assert status == 403 and REFUSAL in refused["error"], refused
+
+
+def test_r13_a_grant_written_before_the_coordinator_commit_is_cleared(world, monkeypatch):
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    real = hub.db.clear_decide
+    calls = []
+
+    def grant_lands_inside_the_assignment(connection_id, **kwargs):
+        # The in-transaction clear runs, then a grant (whose coordinator check ran
+        # before this assignment committed) is written before the board COMMIT.
+        removed = real(connection_id, **kwargs)
+        calls.append(1)
+        if len(calls) == 1:
+            hub.db.set_connection_decide(cid, True, actor=person, workspace_ref=hub.workspace)
+        return removed
+
+    monkeypatch.setattr(hub.db, "clear_decide", grant_lands_inside_the_assignment)
+    w.owner.board_set("work", "conn:coordinator-app")
+    monkeypatch.undo()
+    assert (
+        "cards:decide" not in json.loads(hub.db.connection(cid, hub.workspace)["policy"])["scopes"]
+    )
+    w.owner.board_set("work", None)
+    number, version = _owner_ask(hub, asker=w.asker)
+    status, refused = rest_decide(w, token, number, version)
+    assert status == 403 and REFUSAL in refused["error"], refused
+
+
+def test_r14_expired_rows_are_not_offered_and_can_still_be_withdrawn(world):
+    w = world
+    hub = w.hub
+    status, body = mint(w)
+    plain = body["connection"]["id"]
+    _token, granted = owner_app(w)
+    with hub.db._lock:
+        hub.db._conn.execute(
+            "UPDATE connections SET expires_at=? WHERE id IN (?, ?)",
+            ("2000-01-01T00:00:00Z", plain, granted),
+        )
+    status, listing = api(hub, w.cookie, "GET", "/api/connections")
+    rows = {c["id"]: c for c in listing["connections"]}
+    assert rows[plain]["decide_grantable"] is False
+    assert rows[granted]["decide_grantable"] is False and rows[granted]["decide"] is True
+    status, body = api(hub, w.cookie, "PATCH", f"/api/connections/{granted}", {"decide": False})
+    assert status == 200, body
+    assert body["connection"]["decide"] is False
+    stored = json.loads(hub.db.connection(granted, hub.workspace)["policy"])
+    assert "cards:decide" not in stored["scopes"]
+    # Granting still needs a live connection.
+    status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{plain}", {"decide": True})
+    assert (status, refused["error"]) == (409, INACTIVE_TEXT)
+
+
+def test_r15_another_members_row_gets_its_own_message(world):
+    w = world
+    hub = w.hub
+    member = hub.db.create_user("member@example.com")
+    hub.db.add_member(hub.workspace, member, "member", actor=hub.admin)
+    token = hub.token(
+        "member-app",
+        user=member,
+        profile="slim",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["*"],
+        write_wing="inbox",
+        trust="untrusted",
+    )
+    cid = hub.gateway.authenticate(f"Bearer {token}").connection_id
+    status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
+    assert status == 409, refused
+    assert refused["error"] == NOT_YOURS_TEXT

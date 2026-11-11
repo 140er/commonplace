@@ -104,7 +104,9 @@ connection. Agent machinery never holds it: child agents, runner connections and
 project orchestrator seats and board coordinators are refused when granting
 (the button is not offered on their rows), and refused again when answering.
 Assigning a connection as a board coordinator removes its grant; unassigning it
-does not bring the grant back. The button appears only on your own connections. Members see no consent box and the CLI refuses it. Agent tokens
+does not bring the grant back, even when the grant and the assignment happen at
+the same moment. The button appears only on your own, unexpired connections;
+**Stop answering** also works on an expired connection. Members see no consent box and the CLI refuses it. Agent tokens
 cannot grant it to themselves or anyone else: granting needs your signed-in
 browser session.
 
@@ -126,7 +128,8 @@ addressed to another person or to an agent coordinator stay refused, as do
 escalation and boards the connection cannot read or write. The card history
 names the connection as the actor, and each answer writes an audit entry
 `card.decide.delegated` with the connection id and auth kind in the same step;
-if that audit write fails, the answer fails.
+if that audit write fails, the answer fails. The audit log and the cards are
+stored separately: an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails.
 
 To stop it, use **Stop answering** under **Settings → Agents** (PAT or OAuth), or
 `PATCH /api/connections/<id>` with `{"decide": false}`. The next request is
