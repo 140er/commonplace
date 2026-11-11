@@ -14,6 +14,7 @@ from mempalace.sqlite_crypto import connect, row_factory
 
 from . import decision_blocks
 from .display import need_for, plan_waiting
+from .goals import GOALS_SCHEMA
 from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
@@ -392,6 +393,7 @@ class BoardStore:
                 Path(__file__).with_name("schema.sql").read_text()
                 + BLOCKERS_SCHEMA
                 + LIFECYCLE_SCHEMA
+                + GOALS_SCHEMA
             )
             conn.execute("BEGIN IMMEDIATE")
             try:
