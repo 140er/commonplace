@@ -1067,7 +1067,9 @@ def test_real_changes_to_the_placed_sources_are_still_detected(root, runtime, ca
     (root / LIB / "commonplace/compute/target_helper.py").write_text("# tampered\n")
     assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY) == 1
     assert "uninstall first" in capsys.readouterr().err
-    (root / LIB / "commonplace/compute/extra.py").write_text("# new file\n")
+    extra = root / LIB / "commonplace/compute/extra.py"
+    extra.write_text("# new file\n")
+    os.chmod(extra, 0o644)
     assert run(root, "uninstall", runtime) == 1
     assert "changed since install" in capsys.readouterr().err
 
@@ -1076,6 +1078,8 @@ def test_staged_inventory_can_ignore_bytecode_only_on_request(tmp_path):
     tree = tmp_path / "tree"
     tree.mkdir()
     (tree / "a.py").write_text("x = 1\n")
+    os.chmod(tree / "a.py", 0o644)
+    os.chmod(tree, 0o755)
     plain = install.staged_inventory(tree, ignore_bytecode=True)
     (tree / "__pycache__").mkdir()
     (tree / "__pycache__" / "a.cpython-312.pyc").write_bytes(b"x")

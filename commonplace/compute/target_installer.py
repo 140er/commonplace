@@ -1,6 +1,9 @@
 """One-shot, idempotent, reversible Compute target installer.
 
-    python -m commonplace.compute.target_installer {plan,install,uninstall} ...
+    python -I -m commonplace.compute.target_installer {plan,install,uninstall} ...
+
+Run as root with an explicit trusted interpreter and -I (see docs/compute/RUNNING.md): plain
+`python -m` puts the current directory on sys.path.
 
 Provisions what target_helper.py and script_sandbox.py document as operator
 prerequisites: a dedicated account, a private workspace with attempts/inputs and a
@@ -261,12 +264,18 @@ def build_runtime_tree(destination, spec):
     _zip_stdlib(spec.stdlib, destination / f"usr/lib/python{major}{minor}.zip")
 
 
-def staged_inventory(root):
-    """runtime_inventory's digest for an unmounted tree (no root-owner/read-only checks)."""
+def staged_inventory(root, *, ignore_bytecode=False):
+    """runtime_inventory's digest for an unmounted tree (no root-owner/read-only checks).
+
+    ignore_bytecode skips __pycache__ and *.pyc, which any later import by root may add to a
+    tree of python sources; it is never used for the read-only runtime tree.
+    """
     entries = []
 
     def visit(directory, prefix):
         for name in sorted(os.listdir(directory)):
+            if ignore_bytecode and (name == "__pycache__" or name.endswith(".pyc")):
+                continue
             path = Path(directory, name)
             info = os.lstat(path)
             if info.st_mode & 0o022:
@@ -349,6 +358,9 @@ class Host:
     def chown(self, path, uid, gid):
         raise NotImplementedError
 
+    def owner_of(self, path):
+        raise NotImplementedError
+
     def mounted_inventory(self, mountpoint, source):
         raise NotImplementedError
 
@@ -399,6 +411,9 @@ class StagedHost(Host):
     def chown(self, path, uid, gid):
         pass
 
+    def owner_of(self, path):
+        return self.uid, self.gid  # staged runs never change ownership
+
     def mounted_inventory(self, mountpoint, source):
         return staged_inventory(source)
 
@@ -433,6 +448,10 @@ class LiveHost(Host):
 
     def chown(self, path, uid, gid):
         os.chown(path, uid, gid)
+
+    def owner_of(self, path):
+        info = os.stat(path, follow_symlinks=False)
+        return info.st_uid, info.st_gid
 
     def mounted_inventory(self, mountpoint, source):
         return runtime_inventory(mountpoint)
@@ -690,6 +709,10 @@ class Installer:
         return None
 
     def _dir(self, logical, mode, *, owner=False, shared=False):
+        """Each directory is recorded before it is created and chowned; a recorded directory that
+        is missing (an interrupted run) is simply created again. Only the directories that hold
+        the manifest itself are recorded right after mkdir, because the manifest cannot be
+        written before they exist."""
         changed, current = False, ""
         parts = [part for part in logical.split("/") if part]
         for index, part in enumerate(parts):
@@ -701,21 +724,24 @@ class Installer:
             if phys.exists():
                 if not phys.is_dir():
                     raise InstallError(f"{current} is not a directory")
-                if (
-                    last
-                    and self._item("dir", current)
-                    and stat.S_IMODE(phys.stat().st_mode) != mode
-                ):
+                recorded = self._item("dir", current) is not None
+                if last and recorded and stat.S_IMODE(phys.stat().st_mode) != mode:
                     os.chmod(phys, mode)
                     changed = True
-                continue
-            _mkdir(phys, mode if last else 0o755)
-            if last and owner:
+            else:
+                bootstrap = self.manifest_path.is_relative_to(phys)
+                if self._item("dir", current) is None:
+                    self.items.append({"kind": "dir", "path": current})
+                if not bootstrap:
+                    self._flush()
+                _mkdir(phys, mode if last else 0o755)
+                if bootstrap:
+                    self._flush()
+                changed = True
+                recorded = True
+            if last and owner and recorded and self.host.owner_of(phys) != self._ids():
                 self.host.chown(phys, *self._ids())
-            self.items.append({"kind": "dir", "path": current})
-            changed = True
-        if changed:
-            self._flush()
+                changed = True
         return changed
 
     def _file_conflict(self, logical, kind="file"):
@@ -792,24 +818,30 @@ class Installer:
 
     def _account(self):
         name = self.options.account
-        if self._item("account", name):
+        item = self._item("account", name)
+        if item is not None and item.get("created", True):
             return False
-        self.host.run(
-            [
-                "useradd",
-                "--system",
-                "--user-group",
-                "--home-dir",
-                WORKSPACE_ROOT,
-                "--no-create-home",
-                "--shell",
-                "/bin/sh",
-                "--comment",
-                "Commonplace compute target",
-                name,
-            ]
-        )
-        self.items.append({"kind": "account", "name": name})
+        if item is None:
+            item = {"kind": "account", "name": name, "created": False}
+            self.items.append(item)
+            self._flush()  # recorded before useradd: a crash cannot leave an untracked account
+        if not self.host.account_exists(name):
+            self.host.run(
+                [
+                    "useradd",
+                    "--system",
+                    "--user-group",
+                    "--home-dir",
+                    WORKSPACE_ROOT,
+                    "--no-create-home",
+                    "--shell",
+                    "/bin/sh",
+                    "--comment",
+                    "Commonplace compute target",
+                    name,
+                ]
+            )
+        item["created"] = True
         self._flush()
         return True
 
@@ -818,21 +850,24 @@ class Installer:
             return f"{logical} already exists and was not installed by this installer"
         return None
 
-    def _tree(self, logical, build):
+    def _tree(self, logical, build, *, ignore_bytecode=False):
         phys = self._phys(logical)
         item = self._item("tree", logical)
         if item and item.get("digest"):
-            if phys.is_dir() and staged_inventory(phys) == item["digest"]:
+            ignore = bool(item.get("ignore_bytecode"))
+            if phys.is_dir() and staged_inventory(phys, ignore_bytecode=ignore) == item["digest"]:
                 return False
             raise InstallError(f"{logical} changed since install; uninstall first")
         if item is None:
             item = {"kind": "tree", "path": logical, "digest": None}
+            if ignore_bytecode:
+                item["ignore_bytecode"] = True
             self.items.append(item)
             self._flush()
         elif phys.is_dir():
             shutil.rmtree(phys)  # an interrupted build we recorded ourselves
         build(phys)
-        item["digest"] = staged_inventory(phys)
+        item["digest"] = staged_inventory(phys, ignore_bytecode=ignore_bytecode)
         self._flush()
         return True
 
@@ -840,9 +875,10 @@ class Installer:
         logical = self._site_dir() + "/commonplace-compute.pth"
         changed, item = self._file(logical, (LIB_ROOT + "\n").encode(), 0o644)
         if not item.get("verified"):
-            # The ForceCommand entry needs exactly this import to work with only the stdlib.
+            # The ForceCommand entry needs exactly this import to work with only the stdlib. -B: as
+            # root this must not write bytecode into the placed tree.
             self.host.run(
-                ["/usr/bin/python3", "-I", "-c", "import commonplace.compute.target_helper"]
+                ["/usr/bin/python3", "-I", "-B", "-c", "import commonplace.compute.target_helper"]
             )
             item["verified"] = True
             self._flush()
@@ -1011,7 +1047,9 @@ class Installer:
                 "(stdlib only, no third party)",
                 lambda: self._tree_conflict(LIB_ROOT),
                 lambda: self._tree(
-                    LIB_ROOT, lambda phys: copy_python_packages(phys, self.package_source())
+                    LIB_ROOT,
+                    lambda phys: copy_python_packages(phys, self.package_source()),
+                    ignore_bytecode=True,
                 ),
             )
         )
@@ -1021,7 +1059,7 @@ class Installer:
                 "python-pth",
                 f"{site}/commonplace-compute.pth",
                 f"0644 root; adds {LIB_ROOT} for /usr/bin/python3, then checks "
-                "`/usr/bin/python3 -I -c import commonplace.compute.target_helper`",
+                "`/usr/bin/python3 -I -B -c import commonplace.compute.target_helper`",
                 lambda: self._file_conflict(f"{site}/commonplace-compute.pth"),
                 self._pth,
             )
@@ -1190,9 +1228,13 @@ class Installer:
         elif kind == "tree":
             phys = self._phys(path)
             if phys.is_dir():
-                if item.get("digest") and staged_inventory(phys) != item["digest"]:
+                ignore = bool(item.get("ignore_bytecode"))
+                if (
+                    item.get("digest")
+                    and staged_inventory(phys, ignore_bytecode=ignore) != item["digest"]
+                ):
                     raise InstallError(f"{path} changed since install; left in place")
-                shutil.rmtree(phys)
+                shutil.rmtree(phys)  # includes any __pycache__ later imports added
         elif kind in ("file", "unit"):
             phys = self._phys(path)
             if kind == "unit" and item.get("active"):
@@ -1205,7 +1247,8 @@ class Installer:
             if path == SSHD_DROPIN_PATH:
                 reloads.add("sshd")
         elif kind == "account":
-            self.host.run(["userdel", item["name"]])
+            if item.get("created", True) or self.host.account_exists(item["name"]):
+                self.host.run(["userdel", item["name"]])
         elif kind == "pin":
             self.out(f"note: the approval key pin for {path} is not reverted (format is #431's)")
 
