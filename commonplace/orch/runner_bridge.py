@@ -18,7 +18,8 @@ in this order: (trigger only) the ``(cursor, gen)`` re-check as the first statem
 current, ``plan`` label -> ``plan_pending``; 2. existing step (orch) or existing keyed
 job (person with a ``request_key``, trigger): a voided runner-start key refuses
 ``step_voided`` before matching; an unvoided exact match returns the stored job,
-a mismatch is a 409; then card/grant refusals; 3. path contracts (``path_overlap``, ``path_contract_too_large``); 4. the cap; 5. ``jobs.create_in`` and (orch)
+a mismatch is a 409; then card/grant refusals; 3. path contracts (``path_overlap``,
+``path_contract_too_large``); 4. the cap; 5. ``jobs.create_in`` and (orch)
 the step row, the lease re-check and renewal; (trigger) the cursor advance with the job
 or the miss row. A refusal after a write rolls back to a savepoint, so nothing partial
 is ever committed.
@@ -361,6 +362,14 @@ def _live_cards(conn, board: str, now: str, *, hold: bool) -> set:
     return {row[0] for row in rows.fetchall()}
 
 
+def runner_db_exists(gateway, workspace_id: str) -> bool:
+    """True when the workspace has a runner database. A workspace without one has no jobs,
+    so there is nothing a contract change could race, and nothing here creates it."""
+    from pathlib import Path
+
+    return (Path(gateway.workspace_dir(workspace_id)) / orch_store.DB_NAME).is_file()
+
+
 def has_live_job(gateway, workspace_id: str, board: str, card: int) -> bool:
     """True when ``card`` has a runner job that holds its contract (queued, leased,
     starting, uncertain or started, of any age). Read-only: it never creates the runner
@@ -369,9 +378,9 @@ def has_live_job(gateway, workspace_id: str, board: str, card: int) -> bool:
 
     from mempalace.sqlite_crypto import connect
 
-    path = Path(gateway.workspace_dir(workspace_id)) / orch_store.DB_NAME
-    if not path.is_file():
+    if not runner_db_exists(gateway, workspace_id):
         return False
+    path = Path(gateway.workspace_dir(workspace_id)) / orch_store.DB_NAME
     conn = connect(str(path), timeout=10, isolation_level=None)
     try:
         if not conn.execute(
@@ -388,7 +397,7 @@ def _cap_count(conn, plan: Plan, now: str) -> int:
 
 
 def contract_refusal(
-    conn, *, workspace_dir, board_slug: str, board_id: int, card: int, now: str
+    conn, *, workspace_dir, board_slug: str, board_id: int, card: int, now: str, paths=None
 ) -> StartRefused | None:
     """``path_overlap`` when ``card`` declares a path contract that overlaps the contract
     of another card of the board that holds a start: a runner job that has not failed or
@@ -399,13 +408,19 @@ def contract_refusal(
     unreadable stored contract counts as ``**``. A card with no contract, or running next
     to cards with none, is never refused; a comparison past the work budget refuses
     (``path_contract_too_large``) rather than hold the lock. A ``doing`` claim held by a
-    person (``user:``) does not hold a start."""
+    person (``user:``) does not hold a start. ``paths`` checks a contract that is about to be
+    stored (a running card that gains globs) instead of the one stored for ``card``. ``conn``
+    is None when the workspace has no runner database: there are no jobs then, so only
+    ``doing`` claims count."""
     from commonplace.projects import orchestration as orch
 
-    live = _live_cards(conn, board_slug, now, hold=False)
+    live = set() if conn is None else _live_cards(conn, board_slug, now, hold=False)
     with orch.board_read(workspace_dir) as boards:
-        row = boards.execute("SELECT paths FROM tasks WHERE id=?", (card,)).fetchone()
-        mine = contracts.parse(row["paths"] if row is not None else None)
+        if paths is not None:
+            mine = list(paths)
+        else:
+            row = boards.execute("SELECT paths FROM tasks WHERE id=?", (card,)).fetchone()
+            mine = contracts.parse(row["paths"] if row is not None else None)
         if mine is None:
             mine = list(contracts.ANY)
         if not mine:
@@ -419,52 +434,51 @@ def contract_refusal(
             )
         }
         running.discard(card)
-        declared = [
-            (r["id"], contracts.parse(r["paths"]))
-            for r in boards.execute(
-                "SELECT id, paths FROM tasks WHERE board_id=? AND paths IS NOT NULL ORDER BY id",
-                (board_id,),
-            )
-            if r["id"] in running
-        ]
-    budget = contracts.Budget()
-    for other, globs in declared:
-        if globs is None:
-            globs = list(contracts.ANY)
-        try:
-            pair = contracts.first_overlap(mine, globs, budget)
-        except contracts.TooLarge:
-            return StartRefused(
-                "path_contract_too_large",
-                f"comparing card #{card}'s path contract with the running cards' contracts "
-                f"needs more than {contracts.MAX_STEPS} comparison work units (stopped at "
-                f"running card #{other}); narrow the paths of #{card} or of #{other}",
-                card=other,
-                paths=mine,
-                other_paths=globs,
-                budget=contracts.MAX_STEPS,
-            )
-        if pair is not None:
-            head = (
-                f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of "
-                f"running card #{other}. "
-            )
-            if other in live:
-                how = (
-                    f"#{other} holds its contract while its job exists (a started job never "
-                    f"ends): narrow #{card}'s paths, or ask the workspace owner to clear "
-                    f"#{other}'s paths (task_update paths=[]) once its work is over; an agent "
-                    f"cannot clear them while the job exists"
+        ids, stored = sorted(running), []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            stored += [
+                (r["id"], r["paths"])
+                for r in boards.execute(
+                    "SELECT id, paths FROM tasks WHERE paths IS NOT NULL AND id IN "
+                    f"({','.join('?' * len(chunk))}) ORDER BY id",
+                    chunk,
                 )
-            else:
-                how = (
-                    f"#{other} is claimed by its holder (no runner job): start #{card} after "
-                    f"the holder finishes or releases #{other}, or narrow #{card}'s paths"
-                )
-            return StartRefused(
-                "path_overlap", head + how, card=other, paths=mine, other_paths=globs
-            )
-    return None
+            ]
+        stored.sort(key=lambda item: item[0])
+    try:
+        found = contracts.first_overlap_running(mine, stored, contracts.Budget())
+    except contracts.TooLarge as exc:
+        other = getattr(exc, "key", None)
+        where = f"stopped at running card #{other}" if other is not None else "before any"
+        return StartRefused(
+            "path_contract_too_large",
+            f"comparing card #{card}'s path contract with the running cards' contracts "
+            f"needs more than {contracts.MAX_STEPS} comparison work units ({where}); "
+            f"narrow the paths of #{card}" + (f" or of #{other}" if other is not None else ""),
+            card=other,
+            paths=mine,
+            budget=contracts.MAX_STEPS,
+        )
+    if found is None:
+        return None
+    other, globs, pair = found
+    head = (
+        f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of running card #{other}. "
+    )
+    if other in live:
+        how = (
+            f"#{other} holds its contract while its job exists (a started job never ends): "
+            f"narrow #{card}'s paths, or ask the workspace owner to clear #{other}'s paths "
+            f"(task_update paths=[]) once its work is over; an agent cannot clear them while "
+            f"the job exists"
+        )
+    else:
+        how = (
+            f"#{other} is claimed by its holder: start #{card} after the holder finishes or "
+            f"releases #{other}, or narrow #{card}'s paths"
+        )
+    return StartRefused("path_overlap", head + how, card=other, paths=mine, other_paths=globs)
 
 
 def _job(conn, job_id):
@@ -834,7 +848,8 @@ def orch_card_start(
     ``invalid_step_key``, ``invalid_request_key``, ``board_not_found``,
     ``card_not_found``, ``unknown_role``, ``not_allowed``, ``not_configured``,
     ``fenced``, ``restore_pending``, ``config_changed``, ``plan_pending``,
-    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``path_overlap``, ``path_contract_too_large``, ``at_cap``
+    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``path_overlap``,
+    ``path_contract_too_large``, ``at_cap``
     (switch off), ``project_limit`` (switch on), ``active_start``,
     ``started_recently``, ``busy``) or pass ``OrchError``s of ``resolve_in`` through."""
     principal = ctx.principal

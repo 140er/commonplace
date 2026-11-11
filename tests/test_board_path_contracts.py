@@ -1,5 +1,7 @@
 """Glob overlap rules of card path contracts (commonplace.boards.contracts)."""
 
+import json
+
 import pytest
 
 from commonplace.boards import contracts
@@ -122,6 +124,9 @@ def test_normalize_canonicalises_and_refuses_escapes():
         ["x{/a,b}"],
         ["x/{,/a}"],
         ["{a,{/b,c}}"],
+        ["{src,}/etc"],
+        ["{,}/etc"],
+        ["{,}/a"],
         ["src/{a"],
         ["src/{a}/x"],
         ["src/a}"],
@@ -181,6 +186,84 @@ def test_long_single_segment_contracts_are_charged_by_length():
             cards += 1
     assert cards == contracts.MAX_STEPS // (64 * 64 * weight) == 101
     assert cards < contracts.MAX_STEPS // (64 * 64)  # charging segments only would allow 610
+
+
+def _stored(globs):
+    return json.dumps(contracts.normalize(globs))
+
+
+def test_many_large_running_cards_are_charged_before_they_are_parsed():
+    """Reviewer shape L: a cheap new card against running cards of 64 stored globs of 89
+    segments. Each running card costs its stored size, so the budget runs out after a few
+    hundred of them; charging comparisons alone allowed about nineteen thousand."""
+    running = [
+        (k, json.dumps([("x/" * 88) + f"y{k:04d}{h:02d}" for h in range(64)])) for k in range(1000)
+    ]
+    budget = contracts.Budget()
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(["src/a.py"], running, budget)
+    assert 300 < info.value.key < 500
+    assert budget.left < 0
+    assert contracts.size_units(running[0][1]) > 6000  # the stored size, billed before parsing
+
+
+def test_unreadable_and_empty_running_contracts_are_billed_and_read_as_expected():
+    budget = contracts.Budget()
+    assert (
+        contracts.first_overlap_running(["src/a.py"], [(1, "[]"), (2, '["docs/**"]')], budget)
+        is None
+    )
+    assert 0 < contracts.MAX_STEPS - budget.left < 100
+    found = contracts.first_overlap_running(["src/a.py"], [(1, "not json")], contracts.Budget())
+    assert found == (1, ["**"], ("src/a.py", "**"))
+
+
+def test_the_new_cards_own_stored_size_is_billed_first():
+    mine = [f"src/{i}/*.py" for i in range(8)]
+    cost = contracts.size_units(mine)
+    contracts.first_overlap_running(mine, [], contracts.Budget(cost + 100))
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(mine, [], contracts.Budget(cost - 1))
+    assert not hasattr(info.value, "key")  # it ran out before any running card
+
+
+def test_distinct_wildcard_patterns_are_charged_for_compiling():
+    """Reviewer shape Q2: 64 globs of 8 segments, each segment a distinct wildcard pattern,
+    against a literal glob. Every pattern is compiled once and billed COMPILE_UNITS, so the
+    budget is gone after a few dozen running cards and only a bounded number was compiled."""
+
+    def digits(n):
+        out = []
+        for _ in range(13):
+            n, r = divmod(n, 3)
+            out.append("x?*"[r])
+        return "".join(reversed(out)) + "x" * 8
+
+    def card(k):
+        inputs = []
+        for i in range(32):
+            base = k * 32 + i
+            prefix = [digits(base * 7 + j) for j in range(7)]
+            group = "{" + digits(10**6 + base * 2) + "," + digits(10**6 + base * 2 + 1) + "}"
+            inputs.append("/".join(prefix) + "/" + group)
+        return _stored(inputs)
+
+    contracts._MATCHERS.clear()
+    running = [(k, card(k)) for k in range(100)]
+    mine = ["/".join(["x" * 20] * 7 + ["y" * 20])]
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(mine, running, contracts.Budget())
+    assert info.value.key < 100
+    assert len(contracts._MATCHERS) <= contracts.MAX_STEPS // contracts.COMPILE_UNITS
+    # A pattern that is already compiled is not billed again.
+    first = contracts.Budget()
+    contracts.first_overlap(["*.py"], ["a.py"], first)
+    again = contracts.Budget()
+    contracts.first_overlap(["*.py"], ["a.py"], again)
+    assert (
+        contracts.MAX_STEPS - first.left
+        == contracts.MAX_STEPS - again.left + contracts.COMPILE_UNITS
+    )
 
 
 def test_live_cards_needs_an_explicit_hold():

@@ -3314,33 +3314,58 @@ class BoardService:
             actor = self._update_acquisition_actor(prospective, args)
         return actor, self._type_holder(actor)
 
-    def _paths_change_by_agent(self, args):
-        """A contract change by anyone but the workspace owner. It takes the runner write
-        lock before the board transaction (runner, then board, like a start), so it cannot
-        land between a start's contract read and its job commit."""
-        return "paths" in args and not (self.principal.person and self.principal.role == "owner")
+    def _paths_change(self, args):
+        """Any contract change. It takes the runner write lock before the board
+        transaction (runner, then board, like a start), so it cannot land between a start's
+        contract read and its job commit, and a start cannot read half a change. A workspace
+        without a runner database has no jobs and nothing to race: the lock is skipped there
+        rather than creating the database."""
+        if "paths" not in args:
+            return False
+        from commonplace.orch import runner_bridge
+
+        return runner_bridge.runner_db_exists(self.ctx.gateway, self.principal.workspace_id)
 
     def _paths_update(self, row, args):
-        """Stored ``paths`` for a contract update. A card that has a runner job holds its
-        contract: only the workspace owner may clear or narrow it; anyone else who may edit
-        the card can only keep every glob and add more."""
+        """Stored ``paths`` for a contract update, inside the runner write lock. A card that
+        has a runner job holds its contract: only the workspace owner may clear or narrow
+        it; anyone else who may edit the card can only keep every glob and add more. A card
+        that counts as running (a live job, or a ``doing`` claim held by a connection) that
+        gains globs is checked like a start against the other running cards, whoever edits
+        it, so two running cards cannot be edited into an overlap."""
         update = contracts.column_update(args)
-        if not update or (self.principal.person and self.principal.role == "owner"):
+        if not update:
             return update
+        from commonplace.orch import runner_bridge
+        from commonplace.runner import jobs
+
+        new = json.loads(update["paths"])
         old = contracts.parse(row["paths"] if "paths" in row.keys() else None)
         if old is None:
             old = list(contracts.ANY)
-        if set(old) <= set(json.loads(update["paths"])):
-            return update
-        from commonplace.orch import runner_bridge
-
-        if runner_bridge.has_live_job(
+        live = runner_bridge.has_live_job(
             self.ctx.gateway, self.principal.workspace_id, row["board"], row["id"]
-        ):
+        )
+        owner = self.principal.person and self.principal.role == "owner"
+        if live and not owner and not set(old) <= set(new):
             raise ToolError(
                 f"no: #{row['id']} has a running job, so only the workspace owner can clear "
-                "or narrow its paths; ask the owner (adding globs is allowed)"
+                "or narrow its paths; ask the owner (adding globs is allowed unless it makes "
+                "the card overlap another running card)"
             )
+        claimed = row["status"] == "doing" and (row["assignee"] or "").startswith("conn:")
+        if set(new) - set(old) and (live or claimed):
+            refusal = runner_bridge.contract_refusal(
+                self._admission_conn,
+                workspace_dir=self.ctx.workspace_dir(),
+                board_slug=row["board"],
+                board_id=row["board_id"],
+                card=row["id"],
+                now=jobs._now(),
+                paths=new,
+            )
+            if refusal is not None:
+                raise refusal
         return update
 
     def task_update(self, task, *, version=None, **args):
@@ -3377,7 +3402,7 @@ class BoardService:
             "context",
             "person_reason",
         }
-        with self.transaction(runner_lock=self._paths_change_by_agent(args)) as conn:
+        with self.transaction(runner_lock=self._paths_change(args)) as conn:
             row, board = self._get(conn, task)
             # Coordination may refine available work without releasing its origin.
             # Keep this exception limited to title/body edits, never work transitions.
