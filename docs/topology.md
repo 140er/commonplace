@@ -204,14 +204,14 @@ from commonplace.topology import status
 status.read_status(gateway, workspace_id, *, graph=None, now=None, config=None) -> dict
 ```
 
-`graph` is a `store.read_graph` result the caller already holds (so the map and its status describe the same moment); when `None` the function reads the workspace's graph itself. `now` is an optional timezone-aware `datetime` (tests pass a fake clock). `config` is a `status.StatusConfig`; `None` means `StatusConfig.from_env()`. The caller authorizes (`policy.can_read_wing(TOPOLOGY_WING)`) before calling; the read opens no workspace other than `workspace_id` and creates no file.
+`graph` is a `store.read_graph` result the caller already holds (so the map and its status describe the same moment); when `None` the function reads the workspace's graph itself. `now` is an optional timezone-aware `datetime` (tests pass a fake clock). `config` is a `status.StatusConfig`; `None` means `StatusConfig.from_env()`. The caller authorizes (`policy.can_read_wing(TOPOLOGY_WING)`) before calling; the read opens no workspace other than `workspace_id` and creates no topology file.
 
 The pure core, which tests and other callers can use with their own signals, takes no gateway:
 
 ```python
 status.derive(graph, signals, *, now, config) -> dict      # signals: dict[machine_id, MachineSignals]
 status.machine_status(signals, *, now, config) -> dict     # one MachineSignals -> one status record
-status.collect_signals(gateway, workspace_id) -> dict[str, MachineSignals]   # the only reader of the hub's tables
+status.collect_signals(gateway, workspace_id, *, now) -> dict[str, MachineSignals]   # the only reader of the hub's tables
 ```
 
 The result:
@@ -236,6 +236,8 @@ A `STATUS` record:
  "last_signal_source": "<signal name>" | None,
  "age_s": 48 | None}
 ```
+
+A link's record is a `STATUS` plus `ends`; each end is a `STATUS` plus `basis` (`node` when the end's own node decided it, `path` when the path report did). `last_signal_at` and `age_s` of a link end are those of the record that decided it.
 
 The status words are the ones a link's `status` fact already uses, so a link's reported status and its derived status compare directly.
 
@@ -269,7 +271,7 @@ The newest signal is the latest of the signals below. A machine that never produ
 
 A path that is `down` while another link between the same two nodes (any direction, any other method) is `up` is `degraded` with reason `alternate_path_up`: the target is still reachable, one path is failing.
 
-**Link end.** An end shows the worse of its node's status and the path's status, ignoring `unknown`; when both are unknown the end is unknown. Worse means `down` over `degraded` over `up`. A node that is not a runner machine has no signals of its own, so its end shows the path report alone.
+**Link end.** An end shows the worse of its node's status and the path's status, ignoring `unknown`; when both are unknown the end is unknown, with the reason of the one that saw a signal (a stale report) when there is one. Worse means `down` over `degraded` over `up`. A node that is not a runner machine has no signals of its own, so its end shows the path report alone.
 
 **Link.** The link's own status is the worse of its two ends by the same rule.
 
