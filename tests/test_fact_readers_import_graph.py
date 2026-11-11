@@ -1,6 +1,6 @@
 """The fact readers must not reach ``commonplace.rules``.
 
-The quick pr-check selector follows imports, function-level ones included. A
+The quick affected-test selector follows imports, function-level ones included. A
 single ``from commonplace.rules import checks`` inside ``knowledge_graph`` made
 nearly every change reach most of the suite, so quick checks fell back to the
 full run. The read deadline lives in the stdlib-only ``mempalace.deadline``;
