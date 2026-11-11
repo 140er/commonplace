@@ -725,6 +725,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Waiting-reason app tests drive the real `board.js`, `details.js` and `waiting.js` modules through Node against the server sentences.
 
+  - Task-type app tests drive the real `tasktypes.js` and `details.js` modules through Node; refusal-reason tests run a matching agent, a non-matching agent and untyped cards through take, status start and take-next.
+
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Owner rejection of person-targeted restricted proposals with a healthy coordinator preserves origin state; owner fallback still refuses rejection. Existing release, connection, default-client and delayed-approval contracts supply explicit recovery reasons and separate required proposal review.
@@ -1811,6 +1813,8 @@ Format (read by `commonplace orch docs-check`):
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
 
   - The person-owner task-type API rejects non-object JSON with 400 and replaces a connection’s sorted allowlist atomically; GET never creates a boards store.
+
+  - `tasktypes.js` lets the owner set a card’s task type in the card details (empty clears it; others see it read-only) and edit each agent’s allowed types in Settings > Agents, loaded when the section is first opened. Both call the existing REST routes; the server stays the authority and refuses a pickup with the type named and the Settings > Agents next step.
 
   - The web app calls the same services as REST; it shows only what the signed-in person may read.
 
