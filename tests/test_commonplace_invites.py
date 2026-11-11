@@ -215,9 +215,10 @@ def test_signed_out_visitor_is_sent_to_sign_in_without_the_secret(world):
 def test_join_gives_member_rights_and_nothing_more(world):
     assert join(world, world.guest, invite(world)["secret"]).status == 303
     db, guest, workspace = world.db, world.guest, world.owner.workspace
-    assert [dict(m) for m in db.members(workspace)] == [
-        {"id": world.owner.id, "email": world.owner.email, "role": "owner"},
+    # Same-second memberships have no fixed order.
+    assert sorted((dict(m) for m in db.members(workspace)), key=lambda m: m["role"]) == [
         {"id": guest.id, "email": guest.email, "role": "member"},
+        {"id": world.owner.id, "email": world.owner.email, "role": "owner"},
     ]
     assert [c for c in db.connections(workspace) if c["user_id"] == guest.id] == []
     policy = sessions.person_principal(db, guest.id, workspace).policy
