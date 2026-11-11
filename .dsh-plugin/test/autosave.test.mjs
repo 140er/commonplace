@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test'
 
 import * as autosave from '../lib/autosave.js'
 import { TranscriptLog, recordFor, transcriptFileName } from '../lib/transcript.js'
-import { createAgent, createHost, tick, waitFor } from './host.mjs'
+import { createAgent, createHost, loopTurn, tick, waitFor } from './host.mjs'
 
 let dir
 beforeEach(async () => {
@@ -150,7 +150,9 @@ test('hooks run one at a time per session, and repeats already queued collapse',
   host.emit('agent/turn-stopping', { agent, turn: 1 })
   await waitFor(() => hookCalls(host).length === 1)
   for (let turn = 2; turn <= 5; turn += 1) host.emit('agent/turn-stopping', { agent, turn })
-  await tick(20)
+  // A build that did not wait would have spawned the second run by now: the
+  // transcript is already flushed, so nothing but promise reactions is left.
+  await loopTurn()
   assert.equal(hookCalls(host).length, 1, 'the second run waits for the first')
 
   release()
@@ -292,8 +294,8 @@ test('unloading waits for a hook still running', async () => {
   const unloading = host.unload().then(() => {
     unloaded = true
   })
-  // An unload that did not join the hook would already be done after a few turns of the loop.
-  await tick(20)
+  // An unload that did not join the hook would be done after one turn of the loop.
+  await loopTurn()
   assert.equal(unloaded, false, 'unload joined the in-flight hook')
 
   release()

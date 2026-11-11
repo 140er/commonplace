@@ -416,7 +416,9 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_claude_plugin_hook_config.py`, `tests/test_claude_plugin_hook_wrappers.py`, `tests/test_antigravity_plugin_manifest.py`, `tests/test_claude_marketplace_skills.py`, `tests/test_hooks_cli.py`.
 
-  - `.dsh-plugin/test/autosave.test.mjs` holds a hook run open until the test releases it (`until` in `.dsh-plugin/test/host.mjs`) to check that unloading joins a running hook and that queued runs collapse, instead of racing 40 and 60 ms timers; `tests/test_dsh_plugin.py` runs the two recall tests that assert a wall-clock budget as a separate `timing` test.
+  - `.dsh-plugin/test/autosave.test.mjs` holds a hook run open until the test releases it (`until` in `.dsh-plugin/test/host.mjs`) to check that unloading joins a running hook and that queued runs collapse, and checks what must not have happened after one event-loop turn (`loopTurn`), not after a timer.
+
+  - `.dsh-plugin/test/recall.test.mjs` checks cancellation and unload by whether the wait ends at all (`settles` with a 30 s hang guard), with the palace read held open and every plugin timer longer than the guard. Only the two first-assembly budget tests measure time; `tests/test_dsh_plugin.py` skips them in the functional run and runs them as `test_dsh_plugin_node_suite_budgets` in the `timing` lane (`pytest -o addopts= -m timing tests/test_dsh_plugin.py`).
 
 
 ## sites
@@ -472,7 +474,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Explicit tunnel probes page metadata without content, bind both endpoints and optional current drawer descriptors, and revalidate before follow hydration or recording.
 
-  - The MCP tunnel tools create, list, follow and delete tunnels in the server's configured palace: the room check and the tunnel file never fall back to the ambient default palace.
+  - The MCP tunnel tools create, list, follow and delete tunnels in the server's configured palace, and `mempalace_graph_stats` counts that palace's explicit tunnels on its client path: the room check and the tunnel file never fall back to the ambient default palace.
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
   - Display-label token scans deduplicate identities without rewriting labels or changing citation parsing.
@@ -891,9 +893,9 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_rules_inject.py` runs its functional tests on a frozen deadline clock, so a loaded host cannot spend the 80 ms injection budget and turn the injected text empty; `tests/test_commonplace_rules_inject_slow_host.py` with `tests/_slow_host_plugin.py` re-runs a functional selection with a clock that burns the whole budget on every read. The locked-store setup retries until background listener threads release the store.
 
-  - `tests/test_commonplace_agent_defaults.py` runs its functional tests on a frozen deadline clock with the functional worker transport, and runs the installed startup hook command with only `HUB_TIMEOUT_S` lifted to a hang guard; `tests/test_commonplace_agent_defaults_slow_host.py` re-runs the onboarding acceptance tests through `tests/_slow_host.py` with `tests/_slow_hub_plugin.py` (every gateway answer slower than the hook budget) and `tests/_slow_host_plugin.py`. The test HTTP clients in `tests/test_commonplace_email_auth.py` and the acceptance fixture use a named hang guard instead of a 3 s timeout.
+  - `tests/test_commonplace_agent_defaults.py` runs its three acceptance tests (warm startup, import flow, native startup hook) on a frozen deadline clock (`frozen_deadline_clock`, opt-in per test) with the functional worker transport, and runs the installed startup hook command, in each installed form (exec argv, POSIX string, encoded PowerShell), with only `HUB_TIMEOUT_S` lifted to a hang guard; `tests/test_commonplace_agent_defaults_slow_host.py` re-runs the acceptance tests through `tests/_slow_host.py` with `tests/_slow_hub_plugin.py`, so every gateway answer is slower than the hook budget. It does not starve the deadline clock, which those tests freeze. The test HTTP clients in `tests/test_commonplace_email_auth.py` and the acceptance fixture use a named hang guard instead of a 3 s timeout.
 
-  - `tests/test_mcp_tunnel_server_palace.py` checks the tunnel tools against the server's palace while a different, populated palace is the ambient default.
+  - `tests/test_mcp_tunnel_server_palace.py` checks the tunnel tools and the `mempalace_graph_stats` client path against the server's palace while a different, populated palace is the ambient default.
 
   - `tests/test_commonplace_rules_inject.py::test_locked_store_uses_remaining_deadline` checks locked-store fallback and remaining connection/statement waits with a fake clock; the separate timing test retains the informational wall-clock budget.
 

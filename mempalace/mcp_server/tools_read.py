@@ -1300,7 +1300,7 @@ def tool_graph_stats(thread_scope: dict = None):
     col = _get_collection()
     if not col:
         return _collection_error_or_no_palace()
-    return graph_stats(col=col)
+    return graph_stats(col=col, config=_config)
 
 
 def tool_mesh_peers():

@@ -144,11 +144,38 @@ export function render(assembly) {
 
 export const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Poll until `condition` holds; the limit only ends a test whose condition never comes true. */
-export async function waitFor(condition, { limitMs = 10_000 } = {}) {
-  const end = Date.now() + limitMs
+/** Ends a wait that never comes. It is not a budget: nothing asserts it is fast. */
+export const HANG_GUARD_MS = 30_000
+
+/** Poll until `condition` holds; the guard only ends a test whose condition never comes true. */
+export async function waitFor(condition) {
+  const end = Date.now() + HANG_GUARD_MS
   while (!condition()) {
     if (Date.now() > end) throw new Error('condition never became true')
     await tick(2)
   }
 }
+
+/**
+ * Whether `promise` settles on its own. The plugin code under test then has no
+ * timer left that could end the wait, so a build that waits never settles and
+ * the hang guard answers false, however fast or slow the host is.
+ */
+export async function settles(promise) {
+  let timer
+  const guard = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), HANG_GUARD_MS)
+  })
+  try {
+    return await Promise.race([promise.then(() => true, () => true), guard])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * One full turn of the event loop: every pending promise reaction and every
+ * I/O callback already due has run. A step the plugin takes without waiting
+ * on a timer has happened by then, on any host.
+ */
+export const loopTurn = () => new Promise((resolve) => setImmediate(resolve))

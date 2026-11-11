@@ -1,7 +1,9 @@
 """Fresh-user acceptance across MCP startup, local onboarding and canonical saves."""
 
+import base64
 import json
 import os
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -92,17 +94,16 @@ def fresh(hub, config, monkeypatch):
     )
 
 
-@pytest.fixture(autouse=True)
-def frozen_deadline_clock(request, monkeypatch):
+@pytest.fixture
+def frozen_deadline_clock(monkeypatch):
     # Startup gives rules and memory 80 ms and fails open to the follow-up
     # notice when it runs out, so a loaded host turns exact content into that
-    # notice. Functional tests here run on a clock that never advances; tests
-    # that drive the deadline patch their own clock after this one, and the
-    # budgets themselves are `timing` tests.
-    if request.node.get_closest_marker("timing") is None:
-        from commonplace.rules import checks
+    # notice. The acceptance tests that assert that content run on a clock
+    # that never advances; the deadline itself has its own deterministic and
+    # `timing` tests.
+    from commonplace.rules import checks
 
-        monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
 
 
 def _initialize(hub, connection):
@@ -187,11 +188,10 @@ def test_fresh_connections_get_canonical_startup_without_creating_stores(
     assert "effective rules: 0" in context and not _quoted_memories(context)
 
 
-@pytest.mark.usefixtures("functional_worker_transport")
+@pytest.mark.usefixtures("functional_worker_transport", "frozen_deadline_clock")
 def test_warm_initialize_and_session_share_authorized_data_but_only_explicit_read_serves_rules(
     hub, fresh
 ):
-    # Functional coverage on the frozen deadline clock (frozen_deadline_clock).
     _seed(hub, fresh)
     reader = fresh.connect("new-reader")
     before = _served(fresh)
@@ -300,7 +300,7 @@ def test_composed_startup_cannot_expand_tool_or_scope_grants(hub, fresh, missing
         assert render.quote(RULE) in context
 
 
-@pytest.mark.usefixtures("functional_worker_transport")
+@pytest.mark.usefixtures("functional_worker_transport", "frozen_deadline_clock")
 def test_onboarding_import_save_and_owner_approval_remain_one_canonical_flow(hub, fresh, tmp_path):
     from commonplace import onboarding
     from commonplace.client import ClientError
@@ -403,18 +403,41 @@ def _without_hub_budget(command):
 
     That allowance is pinned in tests/test_commonplace_client_hooks.py; here a
     loaded host must not turn the fetched context into the follow-up notice.
-    Everything else (interpreter, isolation, module arguments) is as installed.
+    Everything else (interpreter, isolation, module arguments) is as installed,
+    in every installed form: exec argv, a POSIX shell string, or the encoded
+    PowerShell command Windows gets.
     """
-    if isinstance(command, str):
-        if os.name == "nt":  # PowerShell-encoded; it cannot be rewritten here
-            return command
-        command = shlex.split(command)
-    assert command[1:4] == ["-I", "-m", "commonplace.client_hooks"], command
+    from commonplace import client_install
+
+    prefix = client_install._WINDOWS_COMMAND
+    windows = isinstance(command, str) and command.startswith(prefix)
+    if windows:
+        script = base64.b64decode(command[len(prefix) :]).decode("utf-16-le")
+        argv = [arg.replace("''", "'") for arg in re.findall(r"'((?:[^']|'')*)'", script)]
+    elif isinstance(command, str):
+        argv = shlex.split(command)
+    else:
+        argv = list(command)
+    assert argv[1:4] == ["-I", "-m", "commonplace.client_hooks"], argv
     lifted = (
         "import sys; from commonplace import client_hooks as hooks; "
         f"hooks.HUB_TIMEOUT_S = {HANG_GUARD_S!r}; sys.exit(hooks.main())"
     )
-    return [command[0], "-I", "-c", lifted, *command[4:]]
+    argv = [argv[0], "-I", "-c", lifted, *argv[4:]]
+    return client_install._windows_command(argv) if windows else argv
+
+
+def test_hub_budget_is_lifted_in_every_installed_command_form():
+    from commonplace import client_install
+
+    installed = ["/opt/py thon", "-I", "-m", "commonplace.client_hooks", "--url", "http://h/'x'"]
+    expected = _without_hub_budget(installed)
+    assert expected[:3] == ["/opt/py thon", "-I", "-c"] and expected[4:] == installed[4:]
+    assert f"HUB_TIMEOUT_S = {HANG_GUARD_S!r}" in expected[3]
+    assert _without_hub_budget(shlex.join(installed)) == expected
+    assert _without_hub_budget(client_install._windows_command(installed)) == (
+        client_install._windows_command(expected)
+    )
 
 
 def _run_hook(command, project, *, event="SessionStart"):
@@ -435,7 +458,7 @@ def _run_hook(command, project, *, event="SessionStart"):
     return json.loads(process.stdout)
 
 
-@pytest.mark.usefixtures("functional_worker_transport")
+@pytest.mark.usefixtures("functional_worker_transport", "frozen_deadline_clock")
 def test_default_cli_onboarding_installs_working_native_startup_and_warns_on_local_edits(
     hub, fresh, tmp_path, monkeypatch, capsys
 ):

@@ -66,3 +66,13 @@ def test_tunnel_tools_use_the_server_palace_not_the_ambient_default(server, conf
 
     assert mcp_server.tool_delete_tunnel(created["id"]) == {"deleted": created["id"]}
     assert mcp_server.tool_list_tunnels() == []
+
+
+def test_graph_stats_fallback_counts_the_server_palace_tunnels(server, monkeypatch):
+    mcp_server, ambient = server
+    created = mcp_server.tool_create_tunnel("shared", "source", "shared", "target")
+    assert "error" not in created, created
+    # The grouped sqlite read is unavailable on other backends (qdrant,
+    # pgvector, milvus) or after a read error; the client path answers then.
+    monkeypatch.setattr(mcp_server, "_sqlite_graph_stats", lambda: None)
+    assert mcp_server.tool_graph_stats()["explicit_tunnels"] == 1

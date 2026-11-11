@@ -1,4 +1,10 @@
-"""Onboarding acceptance gives the same answers on a host too slow for startup budgets."""
+"""Onboarding acceptance gives the same answers when the hub is slower than the hook allows.
+
+Every gateway answer takes longer than the startup hook's 0.4 s allowance
+(``tests/_slow_hub_plugin.py``). The deadline clock is not starved here: the
+acceptance tests run on a frozen deadline clock (``frozen_deadline_clock``), so
+a starved clock could not reach them.
+"""
 
 from tests._slow_host import run_under
 
@@ -10,5 +16,5 @@ ACCEPTANCE = [
 ]
 
 
-def test_onboarding_acceptance_passes_when_the_hub_and_every_clock_read_are_slow():
-    run_under(["tests._slow_hub_plugin", "tests._slow_host_plugin"], ACCEPTANCE)
+def test_onboarding_acceptance_passes_when_every_gateway_answer_is_slower_than_the_hook_budget():
+    run_under(["tests._slow_hub_plugin"], ACCEPTANCE)
