@@ -531,6 +531,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Direct B2 providers reject malformed metadata with encryption errors; marked-workspace refusals retain an explicit locked diagnostic.
 
+  - A symlinked keyslot record is refused at runtime open with its own message, not the generic unavailable one.
+
   - Operator-blind token-slot primitives accept strict versioned token/grant envelopes only; opt-in B3 metadata stays locked before any B2 key provider or database open.
 
   - User content is stored verbatim; ingest is append-only; search returns original words; nothing leaves the machine unless the user configured a provider.
@@ -1184,6 +1186,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
+
+  - `commonplace workspace keyslot-check` runs under the ordinary shared lock and writes nothing; `commonplace workspace keyslot-rewrap` takes the exclusive data lock itself, needs `--by` the workspace owner, and prints only state, slot names, a database count and the key id.
 
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
   - Opt-in backup reporting records only the final selected mode; check/cleanup/restore never report. Receipt failure preserves backup return/exception; test_backup_status.py covers both outcomes and fallback.

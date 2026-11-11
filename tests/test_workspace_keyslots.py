@@ -297,6 +297,21 @@ def test_key_that_opens_no_database_is_never_rewrapped(encrypted):
     assert message(ws) == TEXT
 
 
+def test_operator_blind_marker_stays_locked(encrypted):
+    """A workspace marked for token slots never reaches the server or recovery credential."""
+    ws = encrypted
+    config = workspace_path(ws["data"], ws["wid"]) / "workspace.json"
+    settings = json.loads(config.read_text())
+    settings["encryption"]["key_mode"] = "token-v2"
+    config.write_text(json.dumps(settings))
+    original = ws["record"].read_bytes()
+    with pytest.raises(crypto.EncryptionError, match="B3 remains locked"):
+        check(ws, "recovery", ws["recovery"])
+    with pytest.raises(crypto.EncryptionError, match="B3 remains locked"):
+        rewrap(ws, "server", credential(ws["tmp"] / "new.key"), "recovery", ws["recovery"])
+    assert ws["record"].read_bytes() == original
+
+
 def test_unencrypted_workspace_is_refused_and_still_opens_as_plain_sqlite(tmp_path, monkeypatch):
     pytest.importorskip("sqlcipher3")
     data = tmp_path / "data"
