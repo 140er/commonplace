@@ -18,7 +18,7 @@ import sys
 import time
 from typing import Iterable, Iterator, Optional
 
-from ..lexical import tokenize
+from ..lexical import bm25_scores, tokenize
 from ..stored_text import (
     FLAG,
     INDEX_SPANS,
@@ -327,7 +327,7 @@ def not_bookkeeping_sql(conn, row_id: str = "e.id") -> str:
     )
 
 
-# Most full-text matches the candidate pickers below read, best-ranked first.
+# Most in-scope full-text matches the candidate pickers below read.
 _FTS_SCAN_CAP = 50_000
 # A metadata filter matching at most this many drawers is evaluated by reading
 # those drawers' text instead of ranking the whole full-text match set.
@@ -391,11 +391,9 @@ def _fts_candidate_rows(
     ``chroma.sqlite3``'s full-text index uses the trigram tokenizer, so a
     query term matches inside other words: ``aven`` hits ``haven't`` and
     ``Avenue``, and a short name can have tens of thousands of such matches.
-    Taking the first ``limit`` matches in storage order handed the whole-word
-    BM25 re-rank the oldest substring hits, so the drawers that actually say
-    ``Aven`` never reached it. Matches are read in FTS rank order (documents
-    matching more query terms first), at most ``_FTS_SCAN_CAP`` of them, and
-    picked by :func:`_whole_words_first`. ``filter_sql`` is appended to the
+    Read at most ``_FTS_SCAN_CAP`` matches, newest first, after applying the
+    scope. Rank that pool with local BM25 before :func:`_whole_words_first`;
+    FTS5's built-in rank uses unreadable rows' statistics. ``filter_sql`` is appended to the
     WHERE clause and may refer to ``embedding_fulltext_search.rowid``.
     ``stop_words`` are left out of the full-text query: they match nearly
     every drawer and would make the ranking score the whole palace.
@@ -415,9 +413,14 @@ def _fts_candidate_rows(
     params = (" OR ".join(tokens), collection_name, *filter_params)
     words = set(tokens)
     ranked = conn.execute(
-        match_sql + " ORDER BY embedding_fulltext_search.rank LIMIT ?",
+        match_sql + " ORDER BY embedding_fulltext_search.rowid DESC LIMIT ?",
         (*params, _FTS_SCAN_CAP),
     ).fetchall()
+    if limit is not None and len(ranked) > limit:
+        # Everything in scope is picked anyway when it fits the limit, so only
+        # a larger pool needs ordering. The scores read just this pool.
+        scores = bm25_scores(query, [text or "" for _, text in ranked], stop_words=stop_words)
+        ranked = [row for _, row in sorted(zip(scores, ranked), key=lambda item: -item[0])]
     result = CandidateRows(_whole_words_first(ranked, tokens, limit))
     if len(ranked) < _FTS_SCAN_CAP:
         return result
