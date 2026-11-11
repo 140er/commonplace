@@ -38,7 +38,8 @@ when relocating it so Compose manages the existing container and network. Leave
 
 The service publishes only `127.0.0.1:8765`. Caddy terminates TLS and proxies
 requests to that listener. The container runs as `10001:10001`, mounts its
-persistent data at `/data`, and has a 3 GiB memory limit. Use a local
+persistent data at `/data`, and has a 20 GiB memory limit (26 GiB memory plus
+swap). Use a local
 filesystem with working SQLite/Chroma locks, encrypted storage where
 required, and an off-host backup. Never rebuild or initialize an existing
 data directory during an application update.

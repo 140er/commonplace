@@ -18,7 +18,8 @@ services:
       COMMONPLACE_BASE_URL: ${COMMONPLACE_BASE_URL:-https://hub.example.com}
     volumes:
       - ${COMMONPLACE_DATA_DIR:?Set COMMONPLACE_DATA_DIR to the persistent data directory}:/data
-    mem_limit: 3g
+    mem_limit: 20g
+    memswap_limit: 26g
     stop_grace_period: 60s
     healthcheck:
       test:
