@@ -29,12 +29,33 @@ def requesters(hub, owner, mach):
     return machine_row(hub, owner, mach)["requesters"]
 
 
-def add(hub, owner, mach, ref, **auth):
-    return edit(hub, owner, mach, "POST", "/requesters", {"requester": ref}, **auth)
+def version(hub, owner, mach):
+    return machine_row(hub, owner, mach)["grant_version"]
 
 
-def remove(hub, owner, mach, ref, **auth):
-    return edit(hub, owner, mach, "DELETE", "/requesters/" + ref, None, **auth)
+def call(hub, owner, mach, method, suffix, body, read, auth):
+    """One per-requester request; ``read`` is the grant version the caller read (None: no If-Match)."""
+    if not auth:
+        auth = {"cookie": owner["cookie"]}
+    headers = None if read is None else {"If-Match": str(read)}
+    return http(
+        hub.port,
+        method,
+        "/api/runners/" + mach["machine_id"] + suffix,
+        body=body,
+        headers=headers,
+        **auth,
+    )
+
+
+def add(hub, owner, mach, ref, read="now", **auth):
+    read = version(hub, owner, mach) if read == "now" else read
+    return call(hub, owner, mach, "POST", "/requesters", {"requester": ref}, read, auth)
+
+
+def remove(hub, owner, mach, ref, read="now", **auth):
+    read = version(hub, owner, mach) if read == "now" else read
+    return call(hub, owner, mach, "DELETE", "/requesters/" + ref, None, read, auth)
 
 
 def store(hub, mach, refs):
@@ -92,6 +113,7 @@ def test_admin_machine_rows_list_requesters(hub):
         {"id": MISSING, "name": None, "state": "inactive"},
     ]
     assert row["requesters_total"] == 7
+    assert isinstance(row["grant_version"], int) and row["grant_version"] >= 1
     assert "foreign-agent" not in json.dumps(data) and "token" not in json.dumps(row)
 
 
@@ -174,20 +196,120 @@ def test_add_and_remove_keep_entries_the_page_cannot_show(signup_hub, owners):
     assert hidden[32] in requesters(hub, owner, mach)
 
 
-def test_a_stale_page_cannot_regrant_a_removed_requester(signup_hub, owners):
+def test_adding_another_requester_does_not_undo_a_removal(signup_hub, owners):
     hub, owner = signup_hub, owners["A"]
     mach = enroll(hub, owner)
     x, _ = cli_token(owner, "planner-x")
     y, _ = cli_token(owner, "planner-y")
     z, _ = cli_token(owner, "planner-z")
     assert add(hub, owner, mach, x)[0] == 200 and add(hub, owner, mach, y)[0] == 200
-    # One session removes X; another session still shows [X, Y] and adds Z.
+    stale = version(hub, owner, mach)
+    # One session removes X; another session, still showing [X, Y], adds Z with the current version.
     assert remove(hub, owner, mach, x)[0] == 200
     assert add(hub, owner, mach, z)[0] == 200
     assert requesters(hub, owner, mach) == [y, z]
-    # A stale remove of an entry that is already gone changes nothing.
-    assert remove(hub, owner, mach, x)[0] == 200
+    # Removing an entry that is already gone changes nothing and is reported as unchanged.
+    status, body = remove(hub, owner, mach, x)
+    assert status == 200 and body["changed"] is False
     assert requesters(hub, owner, mach) == [y, z]
+    assert stale < version(hub, owner, mach)
+
+
+def test_a_stale_add_cannot_give_back_a_requester_another_owner_removed(signup_hub, owners):
+    hub, owner = signup_hub, owners["A"]
+    mach = enroll(hub, owner)
+    x, _ = cli_token(owner, "planner-x")
+    read = version(hub, owner, mach)  # the page lists X under Add
+    assert add(hub, owner, mach, x)[0] == 200  # another owner adds X ...
+    assert remove(hub, owner, mach, x)[0] == 200  # ... and then removes it
+    status, body = add(hub, owner, mach, x, read=read)
+    assert status == 409, (status, body)
+    assert requesters(hub, owner, mach) == []
+    # After reloading, the same add is a fresh decision.
+    assert add(hub, owner, mach, x)[0] == 200
+    assert requesters(hub, owner, mach) == [x]
+
+
+def test_a_stale_remove_cannot_take_out_a_requester_that_was_added_again(signup_hub, owners):
+    hub, owner = signup_hub, owners["A"]
+    mach = enroll(hub, owner)
+    x, _ = cli_token(owner, "planner-x")
+    assert add(hub, owner, mach, x)[0] == 200
+    read = version(hub, owner, mach)  # the page lists X under Remove
+    assert remove(hub, owner, mach, x)[0] == 200
+    assert add(hub, owner, mach, x)[0] == 200  # another owner decided again
+    status, body = remove(hub, owner, mach, x, read=read)
+    assert status == 409, (status, body)
+    assert requesters(hub, owner, mach) == [x]
+
+
+def test_a_per_requester_edit_needs_the_grant_version(signup_hub, owners):
+    hub, owner = signup_hub, owners["A"]
+    mach = enroll(hub, owner)
+    x, _ = cli_token(owner, "planner-x")
+    assert add(hub, owner, mach, x, read=None)[0] == 428
+    assert add(hub, owner, mach, x)[0] == 200
+    assert remove(hub, owner, mach, x, read=None)[0] == 428
+    assert requesters(hub, owner, mach) == [x]
+    status, body = call(hub, owner, mach, "POST", "/requesters", {"requester": x}, "abc", {})
+    assert status == 400, (status, body)
+
+
+def test_adding_a_held_requester_reports_no_change(signup_hub, owners):
+    hub, owner = signup_hub, owners["A"]
+    mach = enroll(hub, owner)
+    x, _ = cli_token(owner, "planner-x")
+    assert add(hub, owner, mach, x)[1]["changed"] is True
+    before = version(hub, owner, mach)
+    status, body = add(hub, owner, mach, x)
+    assert status == 200 and body["changed"] is False
+    assert version(hub, owner, mach) == before, "a no-op does not bump the version"
+
+
+def test_the_full_list_patch_takes_an_optional_version(signup_hub, owners):
+    hub, owner = signup_hub, owners["A"]
+    mach = enroll(hub, owner)
+    x, _ = cli_token(owner, "planner-x")
+    y, _ = cli_token(owner, "planner-y")
+    read = version(hub, owner, mach)
+
+    def patch_with(requested, read):
+        headers = None if read is None else {"If-Match": str(read)}
+        return http(
+            hub.port,
+            "PATCH",
+            "/api/runners/" + mach["machine_id"],
+            cookie=owner["cookie"],
+            body={"requesters": requested},
+            headers=headers,
+        )
+
+    assert patch_with([x], read)[0] == 200
+    status, body = patch_with([y], read)  # built before the first edit
+    assert status == 409, (status, body)
+    assert requesters(hub, owner, mach) == [x]
+    assert patch_with([y], version(hub, owner, mach))[0] == 200
+    assert requesters(hub, owner, mach) == [y]
+    # Without If-Match it still replaces the whole list.
+    assert patch_with([x], None)[0] == 200
+    assert requesters(hub, owner, mach) == [x]
+
+
+def test_requester_edits_are_audited_with_the_agent(signup_hub, owners):
+    hub, owner = signup_hub, owners["A"]
+    mach = enroll(hub, owner)
+    x, _ = cli_token(owner, "planner-x")
+    assert add(hub, owner, mach, x)[0] == 200
+    assert remove(hub, owner, mach, x)[0] == 200
+    entries = {
+        row["action"]: json.loads(row["target_ids"])
+        for row in hub.db.audit_entries(owner["workspace"])
+        if row["action"].startswith("runner.requester_")
+    }
+    assert entries == {
+        "runner.requester_add": [mach["machine_id"], x],
+        "runner.requester_remove": [mach["machine_id"], x],
+    }
 
 
 def test_adding_vets_only_the_added_entry(signup_hub, owners):
@@ -267,18 +389,22 @@ def test_an_owner_of_another_workspace_cannot_edit_requesters(signup_hub, owners
     theirs, _ = cli_token(outsider, "outsider-agent")
     assert add(hub, owner, mach, keep)[0] == 200
     auth = {"cookie": outsider["cookie"]}
+    read = version(hub, owner, mach)
     attempts = [
         edit(hub, owner, mach, body={"requesters": [theirs]}, **auth),
         edit(hub, owner, mach, body={"requesters": []}, **auth),
-        add(hub, owner, mach, theirs, **auth),
-        add(hub, owner, mach, keep, **auth),
-        remove(hub, owner, mach, keep, **auth),
+        add(hub, owner, mach, theirs, read=read, **auth),
+        add(hub, owner, mach, keep, read=read, **auth),
+        remove(hub, owner, mach, keep, read=read, **auth),
     ]
     for status, response in attempts:
         assert status in (403, 404), (status, response)
     assert requesters(hub, owner, mach) == [keep]
     # The machine's own owner cannot name another workspace's agent either.
-    for status, response in (add(hub, owner, mach, theirs), add(hub, outsider, mach, theirs)):
+    for status, response in (
+        add(hub, owner, mach, theirs),
+        add(hub, outsider, mach, theirs, read=read),
+    ):
         assert status in (400, 404), (status, response)
     assert requesters(hub, owner, mach) == [keep]
 
@@ -294,8 +420,8 @@ def test_registry_refuses_a_non_owner_on_its_own(signup_hub, owners):
     mid = mach["machine_id"]
     for call in (
         lambda: registry.patch(hub.db, caller, mid, {"requesters": []}),
-        lambda: registry.add_requester(hub.db, caller, mid, keep),
-        lambda: registry.remove_requester(hub.db, caller, mid, keep),
+        lambda: registry.add_requester(hub.db, caller, mid, keep, version=1),
+        lambda: registry.remove_requester(hub.db, caller, mid, keep, version=1),
     ):
         with pytest.raises(PermissionError):
             call()
@@ -303,7 +429,7 @@ def test_registry_refuses_a_non_owner_on_its_own(signup_hub, owners):
         person=False, role="owner", workspace_id=owner["workspace"], user_id=owner["user_id"]
     )
     with pytest.raises(PermissionError):
-        registry.remove_requester(hub.db, agent_caller, mid, keep)
+        registry.remove_requester(hub.db, agent_caller, mid, keep, version=1)
     assert requesters(hub, owner, mach) == [keep]
 
 

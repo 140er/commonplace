@@ -1185,7 +1185,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
-  - Admin lists each machine's requesters and the active trusted agents an owner may add, and edits them only through owner-only per-requester add and remove routes that act on the stored row under the registry lock; a grant edit vets added requesters and keeps ones the machine already holds.
+  - Admin lists each machine's requesters and the active trusted agents an owner may add, and edits them only through owner-only per-requester add and remove routes that act on the stored row under the registry lock and require the grant version the caller read (409 when stale); a grant edit vets added requesters and keeps ones the machine already holds.
 
 
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
@@ -1752,7 +1752,7 @@ Format (read by `commonplace orch docs-check`):
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 
-  - tests/test_runner_requesters_admin.py and the requesters case of tests/admin_runtime_ui.mjs hold the Admin requester list, candidates, the per-requester owner-only edit and the other-workspace refusal.
+  - tests/test_runner_requesters_admin.py and the requesters case of tests/admin_runtime_ui.mjs hold the Admin requester list, candidates, the per-requester owner-only edit with its version precondition and the other-workspace refusal.
 
 
   - `tests/test_admin_api.py` covers person/role/workspace refusals, fixed lifecycle time, pagination, redaction and no writes/locks; `tests/test_admin_ui.py` and `tests/admin_ui.mjs` cover cold routing, independent deadlines, retries and disposal.

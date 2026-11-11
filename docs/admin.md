@@ -107,7 +107,8 @@ filtering and current policy/wing access. It sends no webhook or liveness probe.
 
 Machines include `id`, `label`, `enabled`, `revoked_at`, `binding_state`,
 `verified:false`, `machine_last_used_at`, `worker_last_used_at`, `activity`,
-`worker_activity`, `max_in_flight`, `max_starts_per_hour`, `created_at` and
+`worker_activity`, `max_in_flight`, `max_starts_per_hour`, `grant_version`,
+`created_at` and
 `requesters` (at most 32 entries of `id`, `name`, `state`) and `requesters_total`.
 `state` is `active` only while the agent would pass the start check (active,
 trusted, personal token); a name is `null` for an id outside the workspace. The
@@ -119,19 +120,34 @@ only the first ones. Requesters are resolved only for the machines on the page.
 
 The runtime panel lists each unrevoked machine's requesters with **Remove** and
 **Add** buttons. Each button changes one agent on the stored list, never the list
-the page shows: `POST /api/runners/<machine-id>/requesters` with
-`{"requester":"<connection id>"}` vets that one id and appends it, and
-`DELETE /api/runners/<machine-id>/requesters/<connection id>` removes it. Both are
-owner-only (a caller that is not a signed-in person owner of the machine's
-workspace is refused with 403 or 404 and nothing changes), and both are idempotent,
-so a stale page can neither drop entries it cannot show nor give back one that
-another session removed. A machine may hold requesters beyond the 32 listed; the
-panel says how many it shows. An entry a machine already holds stays even after it
+the page shows:
+- `POST /api/runners/<machine-id>/requesters` with `{"requester":"<connection id>"}`
+  vets that one id and appends it.
+- `DELETE /api/runners/<machine-id>/requesters/<connection id>` removes it.
+
+Both are owner-only (a caller that is not a signed-in person owner of the machine's
+workspace is refused with 403 or 404 and nothing changes). Both require
+`If-Match: <grant_version>`, the machine's `grant_version` as the page read it from
+the runtime payload. A missing header is 428; a version that is no longer current
+is 409 and nothing changes, so a page that predates another owner's edit cannot
+add back a requester that owner removed, or remove one they added again. The page
+then says the machine changed and reads the list again. The version also moves for
+other grant edits, so a 409 can follow an unrelated change. A request that finds
+the list already in the asked state is 200 with `changed:false` (the page says
+"Already a requester."). Each change is audited as `runner.requester_add` or
+`runner.requester_remove` with the machine id and the agent id. A machine may hold
+requesters beyond the 32 listed; the panel says how many it shows, and an edit
+leaves the hidden ones alone. An entry a machine already holds stays even after it
 lapses, so it can be removed or left while other entries change. A lapsed
 requester becomes effective again if its token is rotated, because rotation resets
 the expiry and the stored entry is unchanged; remove the entry to end it.
+
 `PATCH /api/runners/<machine-id>` with a full `requesters` list still exists for
-other clients and vets only the ids it adds.
+other clients, and the Admin page does not use it. It replaces the whole list, so
+it is last-writer-wins unless the caller sends the optional
+`If-Match: <grant_version>` (409 on a mismatch), and it vets only the ids it adds.
+Never build its list from a view where `requesters_total` is greater than the
+listed entries: the hidden entries would be deleted.
 
 Machine activity uses machine contact, with worker contact shown separately.
 Working means recent contact; idle/quiet means no recent contact; unused means

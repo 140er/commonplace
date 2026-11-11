@@ -24,12 +24,20 @@ def test_save_models_while_reads_are_slow_and_after_reload(ui, app):
     form = page.locator("[data-project-models]")
     form.locator('[name="main_provider"]').fill("anthropic")
     form.locator('[name="main_model"]').fill("model-a")
-    with page.expect_response(
-        lambda r: r.request.method == "PUT" and r.url.endswith("/api/projects/atlas/models")
-    ) as saved:
-        form.get_by_role("button", name="Save models").click()
-    assert saved.value.status == 200
+    saves = []
+    page.on(
+        "response",
+        lambda r: (
+            saves.append(r.status)
+            if r.request.method == "PUT" and r.url.endswith("/api/projects/atlas/models")
+            else None
+        ),
+    )
+    form.get_by_role("button", name="Save models").click()
+    settle(page, 800)
+    # Without the handler the browser submits a GET and puts the values in the URL.
     assert "main_provider=" not in page.url, "the form must not navigate with its values in the URL"
+    assert saves == [200], f"exactly one successful save expected, got {saves}"
     page.locator("[data-project-model-status]").get_by_text("Project models saved.").wait_for()
     for pattern in SLOW:
         page.unroute(pattern)

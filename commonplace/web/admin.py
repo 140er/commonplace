@@ -518,7 +518,7 @@ def machines(conn, workspace_id, context, *, active_only=False):
         conn,
         context,
         "SELECT m.id,m.label,m.enabled,m.revoked_at,m.binding_state,m.max_in_flight,"
-        + "m.max_starts_per_hour,m.created_at,mc.last_used_at AS machine_last_used_at,"
+        + "m.max_starts_per_hour,m.grant_version,m.created_at,mc.last_used_at AS machine_last_used_at,"
         "wc.last_used_at AS worker_last_used_at FROM runner_machines m "
         "LEFT JOIN connections mc ON mc.id=m.machine_connection_id AND mc.workspace_id=m.workspace_id "
         "LEFT JOIN connections wc ON wc.id=m.worker_connection_id AND wc.workspace_id=m.workspace_id "
@@ -546,6 +546,7 @@ def machines(conn, workspace_id, context, *, active_only=False):
                 "worker_activity": status(row["worker_last_used_at"], context.now),
                 "max_in_flight": row["max_in_flight"],
                 "max_starts_per_hour": row["max_starts_per_hour"],
+                "grant_version": row["grant_version"],
                 "created_at": timestamp(row["created_at"]),
             }
         )

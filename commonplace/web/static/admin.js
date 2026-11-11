@@ -82,13 +82,16 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     writing.add(machine); notes.delete(machine); render();
     try {
       // One agent at a time: the server applies it to the stored list, never to the list this page shows.
-      const base = `/api/runners/${encodeURIComponent(machine)}/requesters`;
-      await (action === 'requester-add'
-        ? api(base, { method: 'POST', body: { requester: ref }, timeoutMs: 10000 })
-        : api(`${base}/${encodeURIComponent(ref)}`, { method: 'DELETE', timeoutMs: 10000 }));
-      notes.set(machine, 'Requesters saved.');
+      // If-Match carries the grant version this page read; a newer one means another edit came first.
+      const base = `/api/runners/${encodeURIComponent(machine)}/requesters`, headers = { 'If-Match': String(row.grant_version) };
+      const result = await (action === 'requester-add'
+        ? api(base, { method: 'POST', body: { requester: ref }, headers, timeoutMs: 10000 })
+        : api(`${base}/${encodeURIComponent(ref)}`, { method: 'DELETE', headers, timeoutMs: 10000 }));
+      notes.set(machine, result?.changed === false ? (action === 'requester-add' ? 'Already a requester.' : 'Already removed.') : 'Requesters saved.');
     } catch (error) {
-      notes.set(machine, error.status === 403 ? 'a signed-in workspace owner is required' : 'Could not save requesters. Try again.');
+      notes.set(machine, error.status === 403 ? 'a signed-in workspace owner is required'
+        : error.status === 409 ? 'This machine changed since the page loaded. The list was reloaded; try again.'
+        : 'Could not save requesters. Try again.');
     } finally { writing.delete(machine); }
     if (epoch !== pageEpoch || !live) return;
     render();
