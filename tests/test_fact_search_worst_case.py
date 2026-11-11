@@ -153,6 +153,25 @@ def test_scoped_seed_work_is_bounded_as_nonmatching_facts_grow(sparse):
         assert expanded_steps <= initial_steps + 1000
 
 
+def test_repeat_scoped_search_while_another_statement_is_open():
+    """The shared connection may have a statement mid-step (another thread, an
+    unfinished cursor); a second scoped search must still run."""
+    with KnowledgeGraph.empty() as kg:
+        conn = kg._conn()
+        conn.execute("INSERT INTO entities(id,name) VALUES('target','Kestrel entity project')")
+        conn.executemany(
+            "INSERT INTO triples(id,subject,predicate,object,wing) VALUES(?,?,?,?,?)",
+            [("target", "target", "deploy_port", "target", "shared")]
+            + [(f"t{i}", "target", "is_a", "target", "vault") for i in range(3)],
+        )
+        scope = {"wings": ["shared"], "sensitivities": ["internal"]}
+        first, _ = _search_steps(kg, {"kestrel"}, **scope)
+        pending = conn.execute("SELECT id FROM triples")
+        assert pending.fetchone() is not None  # rows remain: the statement is active
+        again, _ = _search_steps(kg, {"kestrel"}, **scope)
+        assert first == again == {"target"}
+
+
 @pytest.mark.parametrize("matching, steps_per_fact", [(False, 40), (True, 300)])
 def test_scoped_statistics_work_grows_only_with_the_readable_scope(matching, steps_per_fact):
     """Counts come from readable facts alone, so only readable growth costs work."""
