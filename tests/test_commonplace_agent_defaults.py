@@ -98,9 +98,9 @@ def fresh(hub, config, monkeypatch):
 def frozen_deadline_clock(monkeypatch):
     # Startup gives rules and memory 80 ms and fails open to the follow-up
     # notice when it runs out, so a loaded host turns exact content into that
-    # notice. The acceptance tests that assert that content run on a clock
-    # that never advances; the deadline itself has its own deterministic and
-    # `timing` tests.
+    # notice. Every test here that asserts startup content opts in and runs on
+    # a clock that never advances; the late-initialize test drives its own
+    # clock, and the deadline itself has deterministic and `timing` tests.
     from commonplace.rules import checks
 
     monkeypatch.setattr(checks, "monotonic", lambda: 0.0)
@@ -162,6 +162,7 @@ def _seed(hub, fresh):
     return writer
 
 
+@pytest.mark.usefixtures("functional_worker_transport", "frozen_deadline_clock")
 @pytest.mark.parametrize(
     "client,profile", [("claude", "standard"), ("codex", "slim"), ("custom-agent", "full")]
 )
@@ -259,6 +260,7 @@ def test_late_initialize_keeps_rules_and_explicit_read_recovers_exact_memory(
     assert any(row[0] == reader.principal.actor and row[1] == "served" for row in _served(fresh))
 
 
+@pytest.mark.usefixtures("functional_worker_transport", "frozen_deadline_clock")
 @pytest.mark.parametrize(
     "missing", ["rules_get", "memory_search", "memory_get", "mempalace_get_drawer", "read-scope"]
 )
