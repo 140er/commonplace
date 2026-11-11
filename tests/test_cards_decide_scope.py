@@ -431,7 +431,7 @@ def test_a6_audit_row_per_delegated_decide(world):
     )
 
 
-# ── review round 1: seats, write wings, audit timing, control layer, messages ──
+# ── seats, write wings, audit timing, control layer, messages ──
 
 
 def _seat(projects_hub):
@@ -812,7 +812,7 @@ def test_r7_consent_copy_has_one_source_and_names_the_scope(world):
     assert "answer your Needs-me questions as you" not in static.read_text()
 
 
-# ── moved from review probes: refresh, spellings, runners, other workspaces ──
+# ── refresh, spellings, runners, other workspaces ──
 
 
 def test_refresh_does_not_restore_a_withdrawn_grant(world):
@@ -920,7 +920,7 @@ def test_an_app_answers_only_in_its_own_workspace(world):
     assert delegated_audit(hub) == []
 
 
-# ── review round 3: grant/assignment races, expired rows, other members ──
+# ── grant/assignment races, expired rows, other members ──
 
 
 def test_r12_a_grant_racing_a_coordinator_assignment_is_withdrawn(world, monkeypatch):
@@ -1059,7 +1059,7 @@ def test_r16_the_in_transaction_clear_survives_a_kill_after_the_commit(world, mo
     )
 
 
-# ── review round 4: removal paths clear a leftover grant before COMMIT ──
+# ── removal paths clear a leftover grant before COMMIT ──
 
 
 def _stored_decide(hub, cid):
@@ -1087,7 +1087,7 @@ def test_r17_unassigning_clears_a_grant_left_by_a_failed_post_commit_clear(world
     with pytest.raises(RuntimeError, match="post-commit"):
         w.owner.board_set("work", "conn:coordinator-app")
     monkeypatch.undo()
-    assert _stored_decide(hub, cid)  # the leftover grant this round removes
+    assert _stored_decide(hub, cid)  # the leftover grant the unassign must remove
     w.owner.board_set("work", None)
     assert not _stored_decide(hub, cid)
     number, version = _owner_ask(hub, asker=w.asker)
@@ -1160,5 +1160,84 @@ def test_r20_auto_unbind_clears_a_leftover_grant(world):
     assert "conn:team-app" not in w.owner.coordinator_actors()
     assert not _stored_decide(hub, cid)
     number, version = _owner_ask(hub, board="team", asker=w.asker)
+    status, body = rest_decide(w, token, number, version)
+    assert status == 403, body
+
+
+def _failing_clear(*args, **kwargs):
+    raise RuntimeError("clear failed")
+
+
+def _board_wing(w, slug):
+    with w.owner.store.connection() as conn:
+        return conn.execute("SELECT wing FROM boards WHERE slug=?", (slug,)).fetchone()["wing"]
+
+
+def test_r21_a_failed_clear_rolls_back_the_unassign(world, monkeypatch):
+    w = world
+    hub = w.hub
+    _token, cid = _coordinator_app(hub)
+    w.owner.board_set("work", "conn:coordinator-app")
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    hub.db.set_connection_decide(cid, True, actor=person, workspace_ref=hub.workspace)
+    monkeypatch.setattr(hub.db, "clear_decide", _failing_clear)
+    with pytest.raises(RuntimeError, match="clear failed"):
+        w.owner.board_set("work", None)
+    monkeypatch.undo()
+    # The clear runs before the board COMMIT, so the removal rolled back with it.
+    assert "conn:coordinator-app" in w.owner.coordinator_actors()
+    assert _stored_decide(hub, cid)
+    # A retry with a working clear completes the removal and leaves no grant.
+    w.owner.board_set("work", None)
+    assert "conn:coordinator-app" not in w.owner.coordinator_actors()
+    assert not _stored_decide(hub, cid)
+
+
+def test_r22_a_failed_clear_rolls_back_the_auto_unbind(world, monkeypatch):
+    w = world
+    hub = w.hub
+    token = hub.token(
+        "team-app",
+        profile="full",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["*"],
+        write_wings=["shared", "inbox"],
+        trust="trusted",
+    )
+    cid = hub.gateway.authenticate(f"Bearer {token}").connection_id
+    w.owner.board_set("team", "conn:team-app")
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    hub.db.set_connection_decide(cid, True, actor=person, workspace_ref=hub.workspace)
+    wing_before = _board_wing(w, "team")
+    monkeypatch.setattr(hub.db, "clear_decide", _failing_clear)
+    with pytest.raises(RuntimeError, match="clear failed"):
+        w.owner.board_own_wing("team")
+    monkeypatch.undo()
+    assert _board_wing(w, "team") == wing_before
+    assert "conn:team-app" in w.owner.coordinator_actors()
+    assert _stored_decide(hub, cid)
+
+
+def test_r23_a_crash_after_the_clear_leaves_the_coordinator_without_a_grant(world, monkeypatch):
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    w.owner.board_set("work", "conn:coordinator-app")
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    hub.db.set_connection_decide(cid, True, actor=person, workspace_ref=hub.workspace)
+    real = hub.db.clear_decide
+
+    def clear_then_die(connection_id, **kwargs):
+        real(connection_id, **kwargs)  # its own control-DB commit, before the board COMMIT
+        raise RuntimeError("killed after the clear, before the board COMMIT")
+
+    monkeypatch.setattr(hub.db, "clear_decide", clear_then_die)
+    with pytest.raises(RuntimeError, match="killed"):
+        w.owner.board_set("work", None)
+    monkeypatch.undo()
+    # Fail closed: the removal rolled back, the grant stays cleared.
+    assert "conn:coordinator-app" in w.owner.coordinator_actors()
+    assert not _stored_decide(hub, cid)
+    number, version = _owner_ask(hub, asker=w.asker)
     status, body = rest_decide(w, token, number, version)
     assert status == 403, body

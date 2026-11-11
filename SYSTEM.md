@@ -536,10 +536,14 @@ playbooks and the original wider orchestration acceptance remain separate work.
     commit; the grant route re-reads coordinators after writing a grant and
     withdraws it (409) if the app became one meanwhile. Unassigning does not
     restore it, because every path that removes or replaces a coordinator
-    (`board_set` replace or unassign, and the auto-unbind when a board's wing
-    changes) clears that connection's grant inside the board transaction before
-    COMMIT: a grant left by a failed clear or a crash is gone before the app stops
-    coordinating, and a failed clear rolls the removal back;
+    (`board_set` replace or unassign, and the auto-unbind when the owner runs the
+    own-wing action and the app can no longer coordinate the board, whether or not
+    the wing changes) clears that connection's grant before the board commit. The
+    clear is its own control-database commit, ordered before the board COMMIT, not
+    one atomic transaction with it: a grant left by a failed clear or a crash is
+    gone before the app stops coordinating; a failed clear rolls the removal back;
+    a crash after the clear leaves the coordinator in place without a grant (fail
+    closed);
   - expiry: rotating an expired PAT clears the grant (reason "expired"); rotating
     a live PAT keeps it. Expired tokens can still be rotated, as the connection
     docs describe.

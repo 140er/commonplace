@@ -1927,8 +1927,9 @@ class BoardService:
                     for candidate in [db.authenticate_connection(row["id"])]
                 ):
                     unbound.append(coordinator)
-                    # Before the NULL write: a grant left by a failed clear must not
-                    # come back when the app stops coordinating.
+                    # Before the NULL write and the board COMMIT (the clear is its own
+                    # control-DB commit): a grant left by a failed clear must not come
+                    # back when the app stops coordinating. A failed clear rolls back.
                     self._clear_coordinator_grant(coordinator, "coordinator unbound")
                     coordinator = None
                     conn.execute("UPDATE boards SET coordinator=NULL WHERE id=?", (b["id"],))
@@ -2016,7 +2017,8 @@ class BoardService:
             previous = b["coordinator"]
             if previous and previous != actor:
                 # Replacing or unassigning: clear the previous coordinator's grant
-                # before COMMIT, so a grant that survived a failed clear never
+                # before the board COMMIT (the clear is its own control-DB commit, not
+                # atomic with this one), so a grant that survived a failed clear never
                 # comes back when it stops coordinating. A failed clear rolls back.
                 self._clear_coordinator_grant(previous, "coordinator removed")
             conn.execute("UPDATE boards SET coordinator=? WHERE id=?", (actor, b["id"]))
