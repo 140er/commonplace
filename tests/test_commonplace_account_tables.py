@@ -1,5 +1,6 @@
 """Every control table is classified for account export and deletion."""
 
+import re
 import sqlite3
 
 from commonplace import continuity
@@ -93,3 +94,39 @@ def test_secret_columns():
         assert tables.secret(column), column
     for column in ("token_hint", "email", "request_sha256", "topic", "name"):
         assert not tables.secret(column), column
+
+
+# Columns whose name suggests a credential but that hold none: kinds, counters,
+# times, content digests, a prefix shown in the app, the name of a key.
+REVIEWED_PLAIN = {
+    "auth",
+    "authorize_path",
+    "idempotency_key",
+    "key",
+    "key_ref",
+    "lease_until",
+    "release_at",
+    "report_auth_retry_count",
+    "report_auth_retry_since",
+    "request_sha256",
+    "session_sha256",
+    "token_hint",
+    "used_tokens",
+    "window_tokens",
+}
+SUSPICIOUS = re.compile(
+    r"token|key|secret|password|passwd|auth|hash|nonce|verifier|wrapped|lease|credential|cookie|sha"
+)
+
+
+def test_every_credential_like_control_column_is_redacted_or_reviewed(site):
+    with site.db._lock:
+        present = tables.present(site.db._conn)
+    unreviewed = sorted(
+        f"{table}.{column}"
+        for table, columns in present.items()
+        for column in columns
+        if SUSPICIOUS.search(column) and not tables.secret(column) and column not in REVIEWED_PLAIN
+    )
+    assert unreviewed == [], "redact these in tables._SECRET or review them as plain here"
+    assert not any(tables.secret(column) for column in REVIEWED_PLAIN)

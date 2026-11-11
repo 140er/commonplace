@@ -76,6 +76,25 @@ def give_alice_a_footprint(site):
             "'', 1, 2)",
             (connection,),
         )
+        # In the shared team: one row that is hers, and rows that are the team's.
+        run(
+            "INSERT INTO answer_holds(id, workspace_id, user_id, card, kind, body, release_at, "
+            "state, created_at, updated_at) VALUES ('hold_a', ?, ?, 1, 'decide', 'hers', 0, "
+            "'released', 0, 0)",
+            (site.team, site.alice),
+        )
+        run(
+            "INSERT INTO webhooks(id, workspace_id, connection_id, owner_actor, url, "
+            "secret_hash, event_id_key, kinds, active, start_seq, created_at) VALUES "
+            "('hook_team', ?, ?, 'conn:alice-agent', 'https://example.test/hook', 'h', 'k', "
+            "'[]', 1, 0, '2026-01-01T00:00:00Z')",
+            (site.team, connection),
+        )
+        run(
+            "INSERT INTO events(at, workspace_id, kind, subject, actor, data) VALUES "
+            "('2026-01-01T00:00:00Z', ?, 'card.created', '1', 'conn:alice-agent', '{}')",
+            (site.team,),
+        )
     sessions.create_login_link(db, "alice@example.test")
 
 
@@ -213,6 +232,13 @@ def test_purge_removes_the_account_and_leaves_everyone_else_intact(enabled):
         "oauth_tokens",
     ):
         assert dump[table] == [row for row in dump[table] if repr(site.bob) in row], table
+    # In the shared team her own row is gone; what belongs to the team stays, also
+    # where it names her connection.
+    assert dump["answer_holds"] == []
+    assert [row[0] for row in dump["webhooks"]] == [repr("hook_team")]
+    assert site.rows("SELECT actor FROM events WHERE workspace_id = ?", site.team) == [
+        {"actor": "conn:alice-agent"}
+    ]
     # What is left of her is a tombstone that can do nothing.
     assert site.rows("SELECT email, name, is_admin FROM users WHERE id = ?", site.alice) == [
         {"email": f"deleted-{site.alice}@account.invalid", "name": "", "is_admin": 0}
@@ -368,6 +394,49 @@ def test_an_interrupted_purge_is_resumed(enabled, monkeypatch):
     (result,) = deletion.purge_due(site.gateway)
     assert result["state"] == "purged"
     assert not (site.data_dir / "workspaces" / site.alice_home).exists()
+
+
+def test_a_member_who_joins_as_the_purge_starts_keeps_the_workspace(enabled, monkeypatch):
+    site = enabled
+    assert ask(site, site.alice, site.alice_home, "alice@example.test")[0] == 200
+    site.advance(15 * DAY)
+    carol = site.db.create_user("carol@example.test")
+    real, calls, removed = deletion.effects, [], []
+
+    def joined_meanwhile(conn, present, user_id):
+        calls.append(user_id)
+        if len(calls) == 2:  # after the account was disabled, before any file is removed
+            site.db.add_member(site.alice_home, carol, "member", actor=site.alice)
+        return real(conn, present, user_id)
+
+    monkeypatch.setattr(deletion, "effects", joined_meanwhile)
+    monkeypatch.setattr(deletion, "remove_workspace", lambda *args: removed.append(args))
+    before = site.tree(site.alice_home)
+    (result,) = deletion.purge_due(site.gateway)
+    assert removed == [] and site.tree(site.alice_home) == before
+    assert result["state"] == "purging"
+    assert [b["code"] for b in result["blocked"]] == ["sole_owner"]
+    assert site.rows("SELECT id FROM workspaces WHERE id = ?", site.alice_home)
+
+
+def test_with_the_switch_off_only_started_purges_are_finished(enabled, monkeypatch):
+    site = enabled
+    assert ask(site, site.alice, site.alice_home, "alice@example.test")[0] == 200
+    recent = site.session(site.root, site.db.create_workspace("root home", site.root))
+    site.db.add_member(site.team, site.root, "owner", actor=site.bob)
+    assert ask(site, site.bob, site.bob_home, "bob@example.test")[0] == 200
+    assert recent
+    site.advance(15 * DAY)
+    with site.db._lock:
+        site.db._conn.execute(
+            "UPDATE account_deletions SET state = 'purging' WHERE user_id = ?", (site.alice,)
+        )
+    monkeypatch.delenv("COMMONPLACE_ACCOUNT_DELETION")
+    assert deletion.unfinished(site.db)
+    results = deletion.purge_due(site.gateway, resume_only=not deletion.enabled())
+    assert [(r["user"], r["state"]) for r in results] == [(site.alice, "purged")]
+    assert state(site, site.bob)["state"] == "pending"
+    assert not deletion.unfinished(site.db)
 
 
 def test_remove_workspace_refuses_other_paths(site, tmp_path):

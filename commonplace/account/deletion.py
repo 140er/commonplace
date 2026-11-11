@@ -11,12 +11,17 @@ A purge runs once that date has passed, and only while nothing blocks it:
 
 - A workspace with no other member is deleted: its directory, every store
   generation and every control row.
-- In a workspace with other members nothing they can read changes. The
-  account's membership and connections stay as tombstones (member role,
-  revoked, no credential), so earlier work keeps one unambiguous author.
-- Every other row about the account is deleted. The ``users`` row stays as a
-  tombstone without name or address, disabled for good. The audit log is
-  append-only and holds ids, not content; it stays.
+- A workspace with other members keeps everything that belongs to the
+  workspace: its directory, its settings and every row keyed to it or to one
+  of its connections. The account's membership and connections stay as
+  tombstones (member role, revoked, no credential), so earlier work keeps one
+  unambiguous author.
+- Rows keyed to the account itself are deleted wherever they are, also when
+  they name a shared workspace: sessions, sign-in identities, plan and usage,
+  push subscriptions, and what ran on the person's behalf there (their sync
+  streams, chat jobs, held answers, agent schedules).
+- The ``users`` row stays as a tombstone without name or address, disabled
+  for good. The audit log is append-only and holds ids, not content; it stays.
 
 It is refused, and retried later, while the account is the only owner of a
 workspace that has other members, is the last instance administrator, still
@@ -24,9 +29,9 @@ holds a GitHub grant, or while the control database has a table that
 :mod:`.tables` does not classify. Refusing is the safe side: no other
 person's data is ever deleted or left without an owner.
 
-A purge that stops halfway is resumed: the account is disabled and marked
-``purging`` before the first file is removed, and every later step can be
-repeated.
+A purge that stops halfway is resumed, also after the operator switched
+deletion off again: the account is disabled and marked ``purging`` before the
+first file is removed, and every later step can be repeated.
 """
 
 from __future__ import annotations
@@ -238,16 +243,20 @@ def cancel(gateway, user_id: str) -> bool:
     return done
 
 
-def purge_due(gateway) -> list:
-    """Purge every request whose grace period is over. One failure stops only itself."""
+def purge_due(gateway, *, resume_only: bool = False) -> list:
+    """Purge every request whose grace period is over. One failure stops only itself.
+
+    ``resume_only`` finishes purges that already started and starts no new one.
+    """
     db = gateway.db
     with db._lock:
         due = [
             row["user_id"]
             for row in db._conn.execute(
                 "SELECT user_id FROM account_deletions WHERE state = 'purging' "
-                "OR (state = 'pending' AND purge_after <= ?) ORDER BY purge_after, user_id",
-                (_now(gateway).strftime(_FMT),),
+                "OR (state = 'pending' AND purge_after <= ? AND NOT ?) "
+                "ORDER BY purge_after, user_id",
+                (_now(gateway).strftime(_FMT), int(resume_only)),
             )
         ]
     results = []
@@ -299,7 +308,11 @@ def purge(gateway, user_id: str) -> dict:
             (json.dumps(doomed), user_id),
         )
     for workspace_id in doomed:
-        remove_workspace(gateway, workspace_id)
+        # Checked again right before the files go: someone may have joined since.
+        with db._lock:
+            found = effects(db._conn, tables.present(db._conn), user_id)
+        if workspace_id in {w["id"] for w in found["delete_workspaces"]}:
+            remove_workspace(gateway, workspace_id)
     with db._lock, db._tx() as conn:
         row = _row(conn, user_id)
         present = tables.present(conn)
@@ -367,8 +380,19 @@ def remove_workspace(gateway, workspace_id: str) -> None:
                 shutil.rmtree(path)
 
 
+def unfinished(db) -> bool:
+    with db._lock:
+        return (
+            db._conn.execute(
+                "SELECT 1 FROM account_deletions WHERE state = 'purging' LIMIT 1"
+            ).fetchone()
+            is not None
+        )
+
+
 class Sweeper:
-    """Runs :func:`purge_due` on a timer while deletion is enabled."""
+    """Runs :func:`purge_due` on a timer. With deletion switched off it only
+    finishes purges that had already started."""
 
     def __init__(self, gateway, interval_s: float = SWEEP_SECONDS):
         self.gateway = gateway
@@ -382,8 +406,7 @@ class Sweeper:
     def _run(self) -> None:
         while not self._stop.wait(self.interval_s):
             try:
-                if enabled():
-                    purge_due(self.gateway)
+                purge_due(self.gateway, resume_only=not enabled())
             except Exception as exc:
                 log_failure(LOG, "Account purge sweep failed", exc)
 

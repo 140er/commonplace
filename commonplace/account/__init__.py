@@ -120,7 +120,9 @@ def install(gateway):
     gateway.add_route("POST", "/api/account/deletion", delete)
     gateway.add_route("DELETE", "/api/account/deletion", delete)
 
-    if deletion.enabled() and getattr(gateway, "account_sweeper", None) is None:
+    # An account left halfway through a purge is finished even with the switch off.
+    wanted = deletion.enabled() or deletion.unfinished(gateway.db)
+    if wanted and getattr(gateway, "account_sweeper", None) is None:
         gateway.account_sweeper = deletion.Sweeper(gateway)
         gateway.db.add_pre_close_callback(gateway.account_sweeper.stop)
         gateway.account_sweeper.start()

@@ -125,6 +125,9 @@ KEPT = frozenset(
 )
 
 # Credentials and their digests are never exported, also not to their owner.
+# ``tests/test_commonplace_account_tables.py`` lists every control column
+# whose name suggests a credential and fails on one that is neither matched
+# here nor reviewed there.
 _SECRET = re.compile(r"hash|secret|wrapped|verifier|nonce|auth_header|lease_token|event_id_key")
 REDACTED = "[redacted]"
 
