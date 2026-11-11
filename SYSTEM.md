@@ -156,6 +156,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
 
+### Rules for reviewers and at session start
+
+- `commonplace review-rules` hands a reviewer the effective rules of the token it is run with, and `--verify` checks that a verdict repeats the current rule version. That line shows which rule set the reviewer was given; it does not show that the reviewer applied each rule. Review tools outside this repository have to call both steps themselves.
+
+- The session-start hook adds a notice when its context does not open with a complete rule set. It recognises the server's own first and last rule lines; a context that only quotes those lines as data still gets the notice.
+
 ### Operator-blind token slots: primitives with production locked
 
 - B3 is opt-in via the proposed `encryption.key_mode=token-v2` marker. This slice rejects that marker (and unknown key modes) with an encryption error before operator-held B2 keys or content are opened, including backup snapshots. Existing workspaces without the marker retain their existing behavior; no workspace is automatically migrated or modified.
@@ -287,6 +293,21 @@ The shipped agent skill teaches the same routing and withdrawal boundaries. The
 pinned MCP contract adds only optional `person_reason` to `ask` and `task_update`,
 with matching descriptions for `ask`, `task_update` and `decide`; tool names and
 visibility for slim, standard and full profiles remain unchanged.
+
+### Completion reviewer
+
+A card may name one reviewer of its completion, a current workspace member
+(`user:<id>`). Only a signed-in workspace owner chooses, changes or clears it
+(`reviewer` on `task_add` and `task_update`, and on the card REST routes); agents
+and members are refused. Without a reviewer nothing changes: the owner is asked
+and only an owner answers. With a reviewer, a move to Done by anyone but that
+member (an agent, the assignee or the owner) opens a completion review addressed
+to them even on a board that does not gate completions, and `decide` answers it
+only for that member. An assignee therefore reviews their own work only when the
+owner explicitly chose them. A reviewer who has left the workspace counts as no
+reviewer. Changing the reviewer re-addresses an open completion review, and the
+chosen reviewer sees it in `needs_me`. The pinned MCP contract adds only the
+optional `reviewer` argument to `task_add` and `task_update`.
 
 
 ### Project seat wake recommendations
@@ -787,6 +808,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
 
+### Routines create cards on a schedule
+
+A routine (name, card template, schedule, owner) creates one card per due time. The worker claims a `routine_runs` row, unique per routine and due time, before it creates the card, and the card carries a marker label, so a restart between the claim and the card finds the existing card instead of making a second. Cards are made by `BoardService.task_add` as the routine's owner (a workspace owner), so priority, origin and authorization rules apply at run time; if the owner has lost ownership or the board is gone, the run is recorded as failed and five failed runs in a row pause the routine. A board is never created by a routine. After downtime at most three due times are made up; earlier ones become a single `skipped` history row. Time spent paused is not made up. Limits: 25 routines per workspace, 60-minute minimum interval, 200 history rows per routine. Only signed-in workspace owners read or change routines (`/api/routines`). Due times come from the shared pure `commonplace/schedule_time.py` (every N minutes or a cron, in an IANA time zone).
+
 ### Webhook dispatcher recovery
 
 - Each delivery pass contains unexpected errors from reconciliation, due-delivery lookup and delivery.
@@ -924,7 +949,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 | Store | Scope | Holds | Backed up |
 |---|---|---|---|
-| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit | yes |
+| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit, sign-up waitlist (`signup_waitlist`, additive) | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
 | `runner.sqlite3` | workspace | runner jobs; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
