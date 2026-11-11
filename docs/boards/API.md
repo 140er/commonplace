@@ -646,10 +646,21 @@ the card version and append an edit history row. Existing card ownership,
 visibility and optimistic-version rules still apply.
 
 Enabled card views include `waiting` (null or one reason). Precedence is
-`blocked_by`, `waits_on_person`, `not_released`, then `project_limit` for a new
-agent. Reasons include `text`; blockers include same-board numbers and titles,
-and a project limit includes `used` and `cap`. Board lists include a `waiting`
-count by code. A blocked-card wait alone does not appear in `needs_me`.
+`blocked_by`, `waits_on_person`, `claim_expired` (a `doing` card whose claim
+passed; the assignee is kept and its next update renews it), `plan_review` (the
+`plan` label asks for review), `not_released`, `no_agent` (a `todo` card while no
+live agent connection can write the board's wing), then `project_limit` for a new
+agent, and last `checks_pending` (a `doing` or `review` card whose checks are
+pending). Every reason carries a plain-sentence `text` from one function
+(`boards.why`), so the app and the API cannot disagree; blockers include
+same-board numbers and titles, and a project limit includes `used` and `cap`.
+Only `blocked_by`, `waits_on_person`, `plan_review` and `not_released` refuse an
+explicit claim or start; the others only explain. Board lists include a `waiting`
+count by code and `waiting_notes`, a list of `{code, count, text}` sentences that
+say why cards wait and why few agents are working (for example `Agent limit
+reached (1 of 1 working): 2 cards wait for a free slot.`). The app shows the card
+sentence as a tag on the board and under "Why this card waits" in the details, and
+the notes in a strip above the board. A blocked-card wait alone does not appear in `needs_me`.
 Explicit claims use the same waiting text for blocker and project-cap refusals;
 existing-agent admission exemptions still apply. Board tags show the blocker
 title or occupied-slot count instead of advertising a waiting card as available.

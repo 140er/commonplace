@@ -281,6 +281,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The board API guide describes the app's Blocked by section and the plain refusal sentences for blocker edits.
 
+  - The board API guide lists every waiting reason in precedence order, which of them refuse a claim, and the board `waiting_notes` sentences.
+
   - Documentation describes shipped behaviour; design notes are marked as proposals.
 
   - Project documentation explains opt-in start authority, shared admission, seat consent and the card-webhook delivery residual.
@@ -704,6 +706,8 @@ Format (read by `commonplace orch docs-check`):
   - Space profile/tool snapshots retain split and inbox visibility and card-schema additions, with current origin-release descriptions. Legacy NULL-origin and untrusted-policy controls isolate each predicate independently.
 
   - Blocker app tests drive the real `blockers.js` and `details.js` modules through Node and the REST add/clear path through the hub, so UI and API stay in step.
+
+  - Waiting-reason app tests drive the real `board.js`, `details.js` and `waiting.js` modules through Node against the server sentences.
 
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
@@ -1141,6 +1145,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Blocker refusals (`self`, `cycle`, `other_board`, `invalid_blockers`, `blocker_graph_too_large`) carry a plain sentence; a blocker on a card the caller cannot read gets the same `other_board` answer as a missing number.
 
+  - Waiting reasons beyond blockers, person, release and capacity (`claim_expired`, `plan_review`, `no_agent`, `checks_pending`) share `boards.why`; only the claim-refusing codes in `why.REFUSING` stop a claim, and board lists add `waiting_notes`.
+
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
   - Trusted agents retain their title/body edit alternative on unassigned restricted-origin todo cards. Coordinator-derived edits require verified independence: creators, descendants and unsafe lineage cannot use that exception. Content edits never release origin or grant claims.
@@ -1174,6 +1180,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_project_reports.py::test_enqueue_deferral_raw_progress_and_backoff`, `test_send_retry_accounting_and_identity` and `test_auth_retry_inspection_beyond_latest_100` pin durable retries and inspection.
 
   - `tests/test_cards_blocked_by_app.py` with `tests/blockers_ui.mjs` covers the app's blocker section, the REST add/clear round trip, todo and take-next skipping blocked cards, and plain refusals.
+
+  - `tests/test_cards_waiting_reasons.py` with `tests/board_why.mjs` covers each waiting reason (pure, card view, board summary) and its app rendering.
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
@@ -1725,6 +1733,8 @@ Format (read by `commonplace orch docs-check`):
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
 
   - `blockers.js` renders the card-details Blocked by section (blocker title, Waiting or Done, Clear, Add blocker by card number) only when card views carry `blocked_by`, and edits the list through the card `PATCH`.
+
+  - `waiting.js` shows the server's waiting sentence as a board tag and in the card details, and a strip of `waiting_notes` above the board; it adds no sentences of its own.
 
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 

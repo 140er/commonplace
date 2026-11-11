@@ -1,4 +1,5 @@
 import { escape as e, actor, elapsed } from './api.js';
+import { whyStrip, waitingText } from './waiting.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
 const ITEM = '.card[data-card]';
@@ -16,12 +17,7 @@ function author(ref, board) {
 }
 export function cardTags(card, { me, board = {}, messages = [] } = {}) {
   const tags = [];
-  if (card.waiting) {
-    const w = card.waiting;
-    if (w.code === 'blocked_by') tags.push('Waiting on ' + w.blockers.map((b) => `#${b.number}: ${b.title}`).join(', '));
-    else if (w.code === 'project_limit') tags.push(`Waiting for a free slot: ${w.used} of ${w.cap}`);
-    else tags.push(w.text);
-  }
+  if (card.waiting) tags.push(waitingText(card));
   if (isBlocked(card, me)) tags.push('Blocked');
   else if (card.need === 'you' || (card.status === 'review' && card.ask && card.ask_to === me && card.review_kind !== 'completion')) tags.push('Needs me');
   if (card.message_id) tags.push(chatTag(card, messages));
@@ -73,6 +69,9 @@ const styles = `
 .workbench-board .seg button { border: 0; background: none; min-height: 30px; padding: 0 10px; color: var(--text-2); font-size: 13px; font-weight: 500; }
 .workbench-board .seg button + button { border-left: 1px solid var(--line); }
 .workbench-board .seg button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
+.workbench-board .why-strip { margin: 12px 14px 0; padding: 8px 12px; border-radius: var(--r); background: var(--wait-bg); color: var(--wait); font-size: 12.5px; line-height: 17px; }
+.workbench-board .why-strip h2 { margin: 0 0 2px; font-size: 12.5px; font-weight: 650; }
+.workbench-board .why-strip ul { margin: 0; padding-left: 18px; }
 .workbench-board .col-jump { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
 .workbench-board .col-jump button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: 20px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text-2); font-size: 13px; font-weight: 600; }
 .workbench-board .col-jump button .n { font-weight: 600; }
@@ -195,7 +194,7 @@ export function boardView({ board, cards = [], me, filter = 'all', selected, mes
   const backlog = visible.filter((c) => c.status === 'backlog'), count = (s) => visible.filter((c) => c.status === s).length;
   const form = adding ? addCardForm({ people, sheet, canPrioritize }) : '';
   const steps = !cards.length ? `<section class="empty-strip" aria-label="Get started"><ol class="steps"><li class="is-next"><span class="num" aria-hidden="true">1</span><div><h2>Add your first card</h2><p>A card is one piece of work. Write it like a to-do.</p><button class="btn primary" data-action="new-card">${icon(PLUS)}Add card</button></div></li><li><span class="num" aria-hidden="true">2</span><div><h2>Connect an agent</h2><p>An agent is an AI helper that works on cards. The first one becomes the orchestrator.</p><button class="btn" data-action="connect-agent">Connect an agent</button></div></li><li><span class="num" aria-hidden="true">3</span><div><h2>Ask for something</h2><p>Write in chat. The orchestrator turns requests into cards.</p><button class="btn" data-action="open-chat">Write in chat <kbd>/</kbd></button></div></li></ol></section>` : '';
-  return `<div class="workbench-board">${steps}<div class="board-tools"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div></div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
+  return `<div class="workbench-board">${steps}${whyStrip(board)}<div class="board-tools"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div></div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
     // The selected card is never one of the hidden Done cards: its column opens instead.
     const list = visible.filter((c) => c.status === s), done = s === 'done', all = done && (doneAll || list.findIndex((c) => c.number === selected) >= DONE_SHOWN), more = done && !all ? list.length - DONE_SHOWN : 0;
     const body = list.length ? list.map((c) => (done ? doneView : cardView)(c, options, c.number === stopIn(list, selected))).join('') : s === 'todo' ? `<button type="button" class="add-ghost" data-action="new-card">${icon(PLUS)}Add card</button>` : '<p class="empty-col">Nothing yet</p>';

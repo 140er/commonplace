@@ -984,7 +984,29 @@ class BoardService:
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,
+            claim_expired=bool(
+                row["status"] == "doing" and row["claim_until"] and row["claim_until"] <= now()
+            ),
+            plan_review=_plan_waiting(row),
+            agents=self._agent_connected(row["board_wing"]),
         )
+
+    def _agent_connected(self, wing):
+        """Whether any live agent connection can write ``wing``; None when unreadable."""
+        cache = getattr(self, "_projection_cache", None)
+        cache = cache if cache is not None else {}
+        key = ("agent", wing)
+        if key not in cache:
+            try:
+                cache[key] = any(
+                    (q := self._live_connection(c["id"])) is not None
+                    and q.policy.can_write_wing(wing)
+                    for c in self.ctx.db.connections(self.principal.workspace_id)
+                    if not c["revoked_at"]
+                )
+            except (ControlError, ValueError, TypeError):
+                return None
+        return cache[key]
 
     def _usage(self, boards, runner, row):
         from commonplace.projects import orchestration as orch
@@ -1012,11 +1034,12 @@ class BoardService:
         )
 
     def _refuse_waiting(self, conn, row):
+        from commonplace.boards import why
         from commonplace.boards.store import CardRefused
 
         if self._orchestration_on is True:
             reason = self._waiting(conn, row)
-            if reason is not None and reason["code"] != "project_limit":
+            if reason is not None and reason["code"] in why.REFUSING:
                 raise CardRefused(reason["code"], reason["text"])
 
     def orchestrator_inbox(self, board):
@@ -1783,20 +1806,25 @@ class BoardService:
                         from commonplace.boards import why
 
                         summary = dict.fromkeys(why.CODES, 0)
-                        for found in conn.execute(
+                        waiting_ids = conn.execute(
                             "SELECT id FROM tasks WHERE board_id=? AND status!='done' "
                             + ("AND parent_number IS NULL" if top_level else ""),
                             (board["id"],),
-                        ).fetchall():
-                            reason = self._waiting(
-                                conn,
-                                task_row(conn, found["id"]),
-                                usage=waiting_usage,
-                                runner=runner,
-                            )
-                            if reason:
-                                summary[reason["code"]] += 1
+                        ).fetchall()
+                        with self._projection():
+                            for found in waiting_ids:
+                                reason = self._waiting(
+                                    conn,
+                                    task_row(conn, found["id"]),
+                                    usage=waiting_usage,
+                                    runner=runner,
+                                )
+                                if reason:
+                                    summary[reason["code"]] += 1
                         result[-1]["waiting"] = summary
+                        result[-1]["waiting_notes"] = why.notes(
+                            summary, used=waiting_usage.used, cap=waiting_usage.cap
+                        )
             return result
 
     def space_metadata(self, slug):
