@@ -1117,7 +1117,7 @@
           "name": "rules_changed"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1130,12 +1130,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -1223,7 +1234,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1246,6 +1257,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -2152,7 +2171,7 @@
           "name": "rules_changed"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2165,12 +2184,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -2258,7 +2288,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2281,6 +2311,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -3821,7 +3859,7 @@
           "name": "rules_changed"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -3834,12 +3872,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -3927,7 +3976,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -3950,6 +3999,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },

@@ -234,3 +234,75 @@ def effective(rows, seq, rules_seq, *, format="text", mode="off", budget=REPLY_B
                 groups.add(item[0])
     tail = f"Incomplete: {len(rows) - len(shown)} rules not shown.\n{TOO_LARGE}"
     return reply(shown, tail), "too_large"
+
+
+TITLE_CHARS = 80
+MAX_KEYS = 200
+KEY_CHARS = 200
+
+
+def unknown_keys(rows, keys):
+    known = {row["key"] for row in rows}
+    return [key for key in keys if key not in known]
+
+
+def title(row):
+    """Short display title: the owner's summary, else the first sentence of the rule."""
+    value = " ".join((row.get("summary") or row["text"]).split())
+    first = re.match(r".*?[.!?](?=\s|$)", value)
+    value = first.group(0) if first else value
+    return value if len(value) <= TITLE_CHARS else value[: TITLE_CHARS - 1].rstrip() + "…"
+
+
+def index(rows, seq, *, mode="off", budget=REPLY_BYTES):
+    """One line per effective rule: key, section, scope, size of the full text, title."""
+    kinds = {kind: i for i, (kind, _) in enumerate(HEADINGS)}
+    scopes = {"global": 0, "repo": 1, "board": 2}
+    ordered = sorted(
+        rows, key=lambda r: (kinds.get(r["kind"], len(kinds)), scopes.get(r["scope"], 3), r["id"])
+    )
+    headings = dict(HEADINGS)
+    lines = [
+        f"{r['key']} | {headings.get(r['kind'], r['kind'])} | {r['scope']} | "
+        f"{length(quote(r['text']))}B | {quote(title(r))}"
+        for r in ordered
+    ]
+    header = f"rules index: {len(rows)} (key | section | scope | full text size | title)"
+    pointer = "Titles are quoted data. Read full text with rules_get keys=[<key>, ...]."
+    if mode in ("warn", "enforce"):
+        pointer += (
+            " This index does not count as reading the rules: before a Commonplace write call "
+            "rules_get format=md effective=true and pass the rules_seq it gives."
+        )
+    tail = [f"seq {seq}", pointer]
+    shown = []
+    size = length(header) + sum(length(t) + 1 for t in tail)
+    for line in lines:
+        if size + length(line) + 1 > budget - 200:
+            break
+        shown.append(line)
+        size += length(line) + 1
+    if len(shown) < len(lines):
+        tail.insert(0, f"Incomplete: {len(lines) - len(shown)} rules not shown. {TOO_LARGE}")
+    return "\n".join([header, *shown, *tail])
+
+
+def keyed(rows, keys, seq, *, budget=REPLY_BYTES):
+    """Full text of the selected rules, one key-labelled line each; unknown keys are named."""
+    wanted = set(keys)
+    selected = [r for r in rows if r["key"] in wanted]
+    unknown = unknown_keys(rows, keys)
+    lines = text(selected).split("\n") if selected else []
+    shown, size = [], 0
+    for line in lines:
+        if size + length(line) + 1 > budget - 400:
+            break
+        shown.append(line)
+        size += length(line) + 1
+    out = [f"rules: {len(selected)} of {len(keys)} keys", *shown]
+    if len(shown) < len(lines):
+        out.append(f"Incomplete: {len(lines) - len(shown)} rules not shown; ask for fewer keys.")
+    if unknown:
+        out.append("unknown keys: " + ", ".join(quote(k) for k in unknown))
+    out += [f"seq {seq}", "Partial read: this is not the full rule set and gives no rules_seq."]
+    return "\n".join(out)
