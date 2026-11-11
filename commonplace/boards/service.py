@@ -1376,7 +1376,12 @@ class BoardService:
         return self._can_release_origin(q, row)
 
     def _recorded_release(self, row, approver):
-        """A completed release outlives a later appointment, never the approver's own grants."""
+        """A completed release outlives a later appointment, never the approver's own grants.
+
+        The marker names the approver's connection. A name stays unique in its workspace after
+        revocation, so a revoked approver's name is never handed to another connection; the
+        workspace id scopes the lookup, so another workspace's same-named agent does not match.
+        """
         if not self._release_grants(approver, row["board_wing"]):
             return False
         with self.store.connection() as conn:

@@ -3,6 +3,7 @@
 import pytest
 
 from commonplace import sessions
+from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.policy import Policy
 from commonplace.projects.types import SEAT_CLIENT
@@ -333,6 +334,17 @@ def test_recorded_release_lapses_when_the_approver_is_revoked(hub, fresh):
     hub.db.revoke(coordinator.id, actor=fresh.user, workspace_ref=fresh.workspace)
     assert fresh.owner.task_show(number).get("awaiting_release") is True
     refuse(fresh.owner, number, lambda: seat.work.task_take_next(task=number))
+
+
+def test_a_revoked_approvers_name_cannot_be_taken_again_in_its_workspace(hub, fresh):
+    creator, coordinator, number = released(hub, fresh)
+    creator.work.task_handoff(number, coordinator.principal.actor, NOTE)
+    fresh.owner.board_set("work", fresh.connect("replacement").principal.actor)
+    hub.db.revoke(coordinator.id, actor=fresh.user, workspace_ref=fresh.workspace)
+    # The recorded release names its approver; the name cannot pass to a new connection.
+    with pytest.raises(ControlError, match="already exists"):
+        fresh.connect("coordinator", trust="standard")
+    assert fresh.owner.task_show(number).get("awaiting_release") is True
 
 
 def test_recorded_release_by_a_creator_descendant_is_not_authority(hub, fresh):
