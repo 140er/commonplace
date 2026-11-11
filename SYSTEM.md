@@ -183,6 +183,14 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - `rules_get keys=[...]` returns the selected rules in full, one key-labelled line each, and names unknown keys. Both are partial reads: they never record the set as served and give no `rules_seq`, so a checked connection must still read the full set before a write. In warn or enforce mode the index says so.
 - The default of both tools is unchanged, and replies stay within the existing reply size bound.
 
+### Shared embedding service (opt-in, default off)
+
+- Each embedding process loads its own model copy. `mempalace.embedding_service` holds the `minilm` or `embeddinggemma` model once and serves it over an owner-only Unix socket; `embedding_service` / `MEMPALACE_EMBEDDING_SERVICE` routes `get_embedding_function` through it. Off by default, so nothing changes until an operator turns it on. `embeddinggemma2` and `openai-compat` are never routed.
+- The service runs the in-process embedding function and returns its float32 values unchanged, and the calling function keeps the in-process class's name and config, so a palace cannot tell which path wrote a vector and the switch needs no re-embedding in either direction.
+- Down means refused, not replaced: a caller does not load the model itself (that would restore the per-process copies in exactly the outage where memory is short) and never uses another model or a remote provider. Search ranks bounded lexical candidates and marks the result degraded; writes that embed are refused until the service returns.
+- Memory is bounded by one model and caps on concurrent runs, connections, request bytes and texts, not by the number of callers. Texts are neither logged nor kept.
+- Residual: nothing starts or supervises the service; an operator runs `python -m mempalace.embedding_service`. The gateway process's own skill-selection model and the store-switch rollback embedder still load their own copy.
+
 ### Chroma session rebuilds
 
 - If a session's cached palace database disappears, invalidate that palace's shared Chroma System before constructing another client.
