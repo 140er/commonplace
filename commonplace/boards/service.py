@@ -17,7 +17,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
-from . import priority as priorities, reviewer as reviewers, task_types
+from . import lifecycle, priority as priorities, reviewer as reviewers, task_types
 from .digest import digest
 from .display import (
     _waiting_on_person as _display_waiting,
@@ -523,7 +523,7 @@ def needs_me(
     return result
 
 
-class BoardService:
+class BoardService(lifecycle.LifecycleMixin):
     def __init__(self, ctx, *, store=True):
         self.ctx = ctx
         self.principal = ctx.principal
@@ -965,6 +965,7 @@ class BoardService:
                 release=self._needs_person_release,
                 approver=lambda row: approval_role or self._approval_role(q, row),
             )
+            result.update(lifecycle.card_fields(conn, row, q))
             if self._restricted_origin(row):
                 result["restricted"] = True
             if self._awaits_origin_release(row):
@@ -1451,15 +1452,25 @@ class BoardService:
         return self._can_release_origin(q, row)
 
     def _recorded_release(self, row, approver):
-        """A completed release outlives a later appointment, never the approver's own grants."""
+        """A completed release outlives a later appointment, never the approver's own grants.
+
+        The marker names its approver by connection name, so it counts only for the connection
+        that was already there when it was recorded: a connection holding the name that was
+        created afterwards (the name freed by a revocation) never inherits the release.
+        """
         if not self._release_grants(approver, row["board_wing"]):
+            return False
+        name = approver.actor[5:]
+        try:
+            created = self.ctx.db.connection(name, self.principal.workspace_id)["created_at"]
+        except (ControlError, ValueError, TypeError):
             return False
         with self.store.connection() as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM task_events WHERE task_id=? AND kind='decide' "
-                    "AND choice='release origin' AND stamp_connection=? LIMIT 1",
-                    (row["id"], approver.actor[5:]),
+                    "AND choice='release origin' AND stamp_connection=? AND created_at>=? LIMIT 1",
+                    (row["id"], name, created),
                 ).fetchone()
                 is not None
             )
@@ -1943,6 +1954,7 @@ class BoardService:
                         r["status"]: r["n"]
                         for r in conn.execute(
                             "SELECT status,count(*) n FROM tasks WHERE board_id=? "
+                            "AND id NOT IN (SELECT task_id FROM card_archive WHERE archived=1) "
                             + ("AND parent_number IS NULL " if top_level else "")
                             + "GROUP BY status",
                             (board["id"],),
@@ -1957,6 +1969,7 @@ class BoardService:
                         "coordinator": board["coordinator"],
                         "can_configure": self.principal.role == "owner",
                         "counts": counts,
+                        "archived": lifecycle.archived_count(conn, board["id"]),
                         "agents_working": len(limits.working(conn, board["id"])),
                     }
                 )
@@ -2442,14 +2455,23 @@ class BoardService:
             return self._message(row)
 
     def task_list(
-        self, board=None, status=None, mine=False, *, all_statuses=False, top_level=False
+        self,
+        board=None,
+        status=None,
+        mine=False,
+        *,
+        all_statuses=False,
+        top_level=False,
+        archived=False,
     ):
+        """Archived cards are hidden unless ``archived`` asks for exactly those."""
         cutoff = stale_before()
         with self._projection(), self.transaction() as conn, ExitStack() as reads:
             boards = [self._board(conn, board)] if board is not None else self._visible_boards(conn)
             if status is not None and status not in STATUSES:
                 raise ToolError("no: invalid status")
             result = []
+            hidden = lifecycle.archived_ids(conn)
             runner = _UNSET
             if self._orchestration_on is True:
                 from commonplace.projects import split
@@ -2469,11 +2491,13 @@ class BoardService:
                     (b["id"],),
                 ):
                     task = task_row(conn, row["id"])
+                    if (task["id"] in hidden) != archived:
+                        continue
                     if task["status"] not in (
                         (status,)
                         if status
                         else STATUSES
-                        if all_statuses
+                        if all_statuses or archived
                         else ("todo", "doing", "review")
                     ) and not (mine and status is None and task["proposal_status"] == "pending"):
                         continue
@@ -3795,6 +3819,7 @@ class BoardService:
         }
         with self.transaction() as conn:
             row, board = self._get(conn, task)
+            lifecycle.refuse_if_archived(conn, row)
             # Coordination may refine available work without releasing its origin.
             # Keep this exception limited to title/body edits, never work transitions.
             content_edit = (

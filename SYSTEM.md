@@ -177,6 +177,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Thread-store storage budgets convert SQLCipher's text `page_size` (and `page_count`) to integers, so budgeted writes in encrypted workspaces are checked rather than failing with a type error.
 
 
+### Compact rules index
+
+- `session_start rules=index` and `rules_get effective=true format=index` list each effective rule as key, section, scope, size of the full text and a short quoted title (the owner summary, else the first sentence), so a large rule set costs a few kilobytes instead of the whole text.
+- `rules_get keys=[...]` returns the selected rules in full, one key-labelled line each, and names unknown keys. Both are partial reads: they never record the set as served and give no `rules_seq`, so a checked connection must still read the full set before a write. In warn or enforce mode the index says so.
+- The default of both tools is unchanged, and replies stay within the existing reply size bound.
+
 ### Chroma session rebuilds
 
 - If a session's cached palace database disappears, invalidate that palace's shared Chroma System before constructing another client.
@@ -378,6 +384,10 @@ optional `reviewer` argument to `task_add` and `task_update`.
 
 - Absent token expiry requires dated `COMMONPLACE_GITHUB_NONEXPIRING_EVIDENCE` in `YYYY-MM-DD|OAuth App|client-id|expiration disabled` form. Before enabling, record fresh-account/prior-login scope, header and expiry outcomes plus ingress/callback/backend no-secret logging canaries. Live GitHub OAuth behavior remains unproven. Merge, repository consent, refresh and reconciliation remain deferred.
 
+### Generic agent skills
+
+- `skills/untangle-codebase` is a repository-independent skill: it names no host, path, person or product of this system, and its helper only reads files. A test keeps its front matter, required sections and absence of local paths checked, and the Claude marketplace copy must match the canonical files byte for byte. It changes no stored data and is never installed or enabled by the system itself.
+
 ### Optional agent orchestration
 
 - **Default off.**
@@ -525,6 +535,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - **The app shows who coordinates.**
 
   - Project settings > Orchestrator reads the read-only checkpoint for role `main` and says in words who holds the lease, when it runs out and how much work is open, in doubt or unstarted. A signed-in owner can End lease (a confirm first); it calls the same `force-release` as the CLI and MCP, so members, agent tokens and other workspaces are refused. Ending a lease changes no step: unfinished work stays listed and becomes in doubt when the next coordinator claims.
+
+- **A project can show its own panel.**
+
+  - A project panel (`commonplace.panel/1`, `docs/project-panels.md`) is a few text highlight lines and http(s) action links, set with `PUT /api/projects/<slug>/panel` by the owner or an agent with board-write authority and shown at the top of the project's board. It is untrusted: unknown fields, markup, control characters, over-limit sizes (4096 bytes) and non-http(s) links are refused, and the page draws only escaped text. A project without a panel is unchanged.
 
 - **Channels.**
 
@@ -737,6 +751,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - For a verified thread index, search finds the scoped BM25 cutoff using the FTS rank iterator, then includes every hit at or above that cutoff before ordering by BM25, thread ID and chunk index.
 
+- Fact and vector-disabled drawer ranking for a restricted caller use statistics of the readable scope only (document count, term frequencies, candidate pool); FTS5 rank and whole-index vocabulary counts are used only when the caller can read everything. Hidden facts or drawers therefore cannot change a visible order or score.
+
 - The top rowids are materialized before fetching canonical chunk fields.
 
 - Each ID batch keeps the same limit and the final merge uses the same ordering.
@@ -882,7 +898,7 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 - A completed origin release outlives later appointment changes. A stored agent marker stays valid when the card's history records that agent's `release origin` decision and the agent remains independent of the creator with every release grant, including while it holds the card. Revocation, lost grants, creator lineage and markers with no recorded decision still lapse.
 - The signed-in workspace owner may explicitly release any card awaiting origin release, including with a live coordinator or while coordinator configuration is needed. Implicit release by moving a card stays limited to boards with no live coordinator. Cards awaiting release expose `awaiting_release`, and the card panel offers Release with a required reason.
 - The owner and the live board coordinator may take over or drop a released todo reservation held by another connection. Unreleased cards, doing cards, pending/rejected proposals and person decisions stay protected.
-- Handoff recipients accept `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool; a board with no coordinator and an unknown recipient get a refusal naming the valid choices. A workspace owner may close a released restricted-origin todo card directly, and refused card actions appear inside the open card panel. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor on any route (update, web move or handoff).
+- Handoff recipients accept `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool; a board with no coordinator and an unknown recipient get a refusal naming the valid choices. Known limit: these four words are reserved, so an agent named one of them cannot be handed a card by name. A workspace owner may close a released restricted-origin todo card directly, and refused card actions appear inside the open card panel. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor on any route (update, web move or handoff).
 - A creator may cancel its own todo reservation with a status-only `task_update status=backlog`, including after a handoff when origin release has lapsed. Cancellation clears the assignee without changing provenance or the approval marker, and does not authorize activation. Another connection's reservation, pending/rejected proposals and person decisions remain protected.
 - The signed-in owner receives one approvals item per origin awaiting person recovery. An absent/non-live configured record, or a verified independent record lacking any required release grant, yields approval_kind=origin, need=release and actions=[approve]. Live creator/descendant conflicts, unsafe lineage or an unverifiable stamp with any live configured record yield origin_configuration, need=you and actions=[configure_coordinator], with can_approve=false on that queue item; the card itself still offers the owner Release. Owner-role tokens receive no person fallback. An independent fully eligible coordinator yields no owner origin item or notice.
 - Configuration navigates to existing board settings. An invalid creator stamp requires clearing the coordinator before existing owner recovery; this is board-wide and sends other unreleased cards on that board to owner recovery too. Changing to another live coordinator cannot cure an invalid stamp.
@@ -1164,8 +1180,23 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
   bounds acquisition; this contract makes no timing or constant-time claim.
 - Imported holder-room counts can include rows outside a consented range,
   as before this projection; content reads retain their separate range gate.
-  Search `total_before_filter` can include hidden candidates inside a visible
-  wing before the response gate filters them.
+- Restricted structured drawer searches gate each ranked prefix before
+  applying the requested result limit, for explicit wings and fan-out alike.
+  A short readable page retries with doubled worker limits until filled,
+  the worker returns a short prefix, or the 100-candidate bound is reached.
+  At most eight worker searches share one existing request deadline; ranking
+  still uses the same joint wing pool. Readable hits beyond that bound may
+  remain unavailable. Every-wing principals keep their existing search path.
+- Refill requires an attached gateway handoff context; standalone worker
+  helpers retain their exact response shape and existing authorization gates.
+  Pinned-wing searches retain the original forwarded worker response, including
+  protocol errors and opaque replies, and refill only structured search hits.
+  The first search and every refill share the same deadline and call bound.
+- Restricted structured responses omit `total`, `total_before_filter` and
+  `filtered_by_max_distance`; any `count` describes only returned readable
+  hits. No hidden-candidate count or refill diagnostic is returned. Restricted
+  CLI-compatible search acquires structured hits, so it uses the same refill
+  before the final gate and rendering.
 - Other overview, legacy
   provenance and owner search-index progress remain separate residuals.
 
@@ -1432,6 +1463,10 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 - Owner-approved waiver ids, one per line as `W<n>: <scope>`.
 
 - None are approved yet.
+
+### After Done: archive hides, never deletes
+
+A done card is final. A signed-in person (owner or member) may archive it, carry on from it in a new linked backlog card, and pin key facts to its Pocket; connections may not. Archiving only flags the card in `card_archive`: it leaves board lists and counts but stays readable and restorable, and nothing is deleted (restore and unpin mark rows, they never remove them). Archived cards refuse updates and Pocket changes until restored. These routes are person-only, so they sit outside the agent-write rules inventory.
 
 ### Reassigning active work
 
