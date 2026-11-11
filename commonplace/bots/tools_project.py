@@ -50,6 +50,7 @@ PRIORITY_OWNER_ONLY = "Only the project owner can set a priority."
 BAD_POSITION = "Put it before or after another open task in the same column, not both."
 BAD_NEIGHBOUR = "That position is not possible. Pick another task in the same column."
 NAME_TAKEN = "There is already a project with a similar name. Pick another name."
+NEW_BOT = "Project created. Its bot appears in your list of bots."
 NAME_UNAVAILABLE = "That name cannot be used. Pick another name."
 NAME_EMPTY = "Give the project a name with at least one letter or number."
 CREATE_DENIED = "You are not allowed to create projects here. Ask the workspace owner."
@@ -115,6 +116,26 @@ def _status(card) -> tuple[str, str]:
         return blocks.work_status(card)
     except (KeyError, ValueError):
         return "queued", ""
+
+
+class _Words:
+    """Status words as the work block shows them. Another module makes a queued item read
+    ``working`` while an agent start for it is in flight, so queued items are looked up
+    through the block hydrator (at most ``LOOKUPS`` per call; the rest keep the plain word)."""
+
+    LOOKUPS = 40
+
+    def __init__(self, turn):
+        self.reader = blocks.Reader(turn.gateway, turn.principal())
+        self.left = self.LOOKUPS
+
+    def __call__(self, card) -> tuple[str, str]:
+        status, note = _status(card)
+        if status == "queued" and self.left > 0:
+            self.left -= 1
+            shown = blocks.hydrate(self.reader, [_work_block(card["number"])])[0]
+            status = shown.get("status", status)
+        return status, note
 
 
 def _item(turn, board, ref, *, question=False) -> dict:
@@ -201,8 +222,9 @@ def _project_status(turn, args):
         return Result(False, say=NOT_FOUND)
     counts = Counter({status: 0 for status in STATUSES})
     working = []
+    words = _Words(turn)
     for card in _items(turn, board):
-        status = _status(card)[0]
+        status = words(card)[0]
         counts[status] += 1
         if status == "working" and len(working) < 5:
             working.append({"number": card["number"], "title": _clip(card["title"], 80)})
@@ -229,8 +251,9 @@ def _list_work(turn, args):
     board = turn.board(args)
     wanted = args.get("status")
     shown, total = [], 0
+    words = _Words(turn)
     for card in _items(turn, board):
-        status = _status(card)[0]
+        status = words(card)[0]
         if (status != wanted) if wanted else (status == "done"):
             continue
         total += 1
@@ -250,7 +273,7 @@ def _list_work(turn, args):
 def _work_detail(turn, args):
     board = turn.board(args)
     card = _item(turn, board, args["ref"])
-    status, note = _status(card)
+    status, note = _Words(turn)(card)
     comments = [e for e in card.get("events", ()) if e.get("kind") == "comment" and e.get("text")]
     links = [{"label": "Pull request", "url": card["pr_url"]}] if card.get("pr_url") else []
     data = {
@@ -332,7 +355,7 @@ def _create_work(turn, args):
     card = turn.boards().task_add(title=title, body=body, board=board, status="todo", **extra)
     turn.store().work_add(turn.bot["id"], turn.user_id, board, card["number"], turn.message["id"])
     data = {"number": card["number"], "title": _clip(card["title"], 200)}
-    data["status"] = _status(card)[0]
+    data["status"] = _Words(turn)(card)[0]
     if note:
         data["note"] = note
     return Result(True, data, blocks=(_work_block(card["number"]),))
@@ -421,7 +444,12 @@ def _answer_decision(turn, args):
         raise Plain(CHANGED)
     _, choice, reply = _decision(turn, args, version)
     turn.boards().decide(args["ref"], choice=choice, reply=reply, version=version)
-    return Result(True, {"answered": True}, blocks=({"type": "decision", "card": args["ref"]},))
+    return Result(
+        True,
+        {"answered": True},
+        blocks=({"type": "decision", "card": args["ref"]},),
+        say="Your answer was sent.",
+    )
 
 
 def _check_approve(turn, args):
@@ -444,7 +472,12 @@ def _approve_work(turn, args):
     if version is None or card["version"] != version:
         raise Plain(CHANGED)
     turn.boards().task_approve(card["number"], approve=args["approve"], version=version)
-    return Result(True, {"approved": args["approve"]}, blocks=(_work_block(card["number"]),))
+    return Result(
+        True,
+        {"approved": args["approve"]},
+        blocks=(_work_block(card["number"]),),
+        say="Approved." if args["approve"] else "Declined.",
+    )
 
 
 # Projects
@@ -482,7 +515,8 @@ def _create_project(turn, args):
         raise Plain(REFUSED) from None
     return Result(
         True,
-        {"created": True, "note": "The project's bot appears in your list of bots."},
+        {"created": True, "note": NEW_BOT},
+        say=NEW_BOT,
     )
 
 

@@ -717,6 +717,7 @@ def test_a_decision_is_answered_end_to_end_with_one_tap(project_hub, fake):
         "ok": True,
     }
     assert body["message"]["blocks"][1]["answer"] == OPTIONS[0]
+    assert body["message"]["text"] == "Your answer was sent."
     shown = owner.task_show(number)
     assert shown["status"] != "review"
     assert [e["choice"] for e in shown["events"] if e["kind"] == "decide"] == [OPTIONS[0]]
@@ -821,6 +822,10 @@ def test_confirm_tools_run_only_through_confirm_once_with_the_frozen_version(pro
     [again] = blocks_of(evs)
     assert confirm(hub, bot["id"], again["pending"])[0] == 200
     assert "plan" not in owner.task_show(plan)["labels"]
+    assert (
+        hub.get(hub.owner, f"/api/bots/{bot['id']}/messages")[1]["messages"][-1]["text"]
+        == "Approved."
+    )
     assert audit(hub, "approve_work") == [(hub.admin, "deny"), (hub.admin, "ok")]
 
 
@@ -863,6 +868,7 @@ def test_create_project_waits_for_a_tap_and_its_bot_appears(project_hub, fake):
     assert [s["slug"] for s in as_person(hub).board_list()] == ["work"]
     status, body, _ = confirm(hub, bot["id"], pending["pending"])
     assert status == 200 and body["message"]["blocks"][0]["ok"] is True
+    assert body["message"]["text"] == tp.NEW_BOT
     roster = hub.by_board(hub.owner)
     assert roster["garden-shed"]["name"] == "Garden Shed"
 
@@ -1063,3 +1069,22 @@ def test_creating_a_project_follows_what_the_board_service_allows(project_hub, f
     # A member may create a project today, exactly as the board service allows it.
     assert body["message"]["blocks"][0]["ok"] is True
     assert "garden-shed" in [b["slug"] for b in as_person(hub, hub.member_user).board_list()]
+
+
+def test_queued_work_with_a_start_in_flight_reads_working_as_its_block_does(
+    project_hub, monkeypatch
+):
+    from commonplace.bots import machines, tools_machines
+
+    hub = project_hub
+    number = as_person(hub).task_add(title="Waiting for a machine", board="work")["number"]
+    turn = direct(hub)
+    assert tools.REGISTRY["list_work"].run(turn, {}).data["work"][0]["status"] == "queued"
+    inflight = sorted(tools_machines.IN_FLIGHT)[0]
+    monkeypatch.setattr(machines, "start_status", lambda *args: [{"state": inflight}])
+    data = tools.REGISTRY["list_work"].run(turn, {}).data
+    assert [(w["number"], w["status"]) for w in data["work"]] == [(number, "working")]
+    detail = tools.REGISTRY["work_detail"].run(turn, {"ref": number}).data
+    assert detail["status"] == "working"
+    status = tools.REGISTRY["project_status"].run(turn, {}).data
+    assert (status["tasks"]["working"], status["tasks"]["queued"]) == (1, 0)
