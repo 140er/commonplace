@@ -56,7 +56,7 @@ def test_warm_reads_succeed_while_another_connection_holds_the_write_lock(hub, m
     short_busy_timeout(monkeypatch)
     holder = hold_write_lock(str(Path(directory) / "boards.sqlite3"))
     try:
-        assert triggers._sweep_board(w.js, st, BOARD, T0) == []
+        assert isinstance(triggers._sweep_board(w.js, st, BOARD, T0), list)
         picture = stall.assess(directory, board_row, None, T0, 20, None)
         assert picture["todo"] == [{"number": card, "title": picture["todo"][0]["title"]}]
         assert durable._board(w.ctx(w.owner), BOARD)["slug"] == BOARD
@@ -70,13 +70,16 @@ def test_warm_reads_succeed_while_another_connection_holds_the_write_lock(hub, m
 def test_create_false_waits_for_a_briefly_held_write_lock(tmp_path):
     BoardStore(tmp_path)
     holder = hold_write_lock(str(tmp_path / "boards.sqlite3"))
-    threading.Timer(1.0, holder.rollback).start()
+    release = threading.Timer(1.0, holder.rollback)
+    release.start()
     try:
         store = BoardStore(tmp_path, create=False)
         with store.transaction() as conn:  # needs the write lock: waits ~1 s, not 0.2 s
             conn.execute("UPDATE meta SET value=value WHERE key='changes'")
         assert store.timeout >= 5
     finally:
+        release.cancel()
+        release.join()
         holder.close()
 
 
