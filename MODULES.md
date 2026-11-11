@@ -1248,6 +1248,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Web feeds and webhooks share the current-principal event visibility rule; non-owner person feeds omit boardless/private events and use readable-log sequence numbers.
 
+  - `space_read` by a board's current orchestrator connection advances that board's chat read cursor (`chat/live.py`) after the read; the page it returns is unchanged, and reads by people or other agents record nothing.
+
   - Owner assignments to active agent connections claim the card with a lease and a claim event.
 
   - Immediate assignment claims apply to todo cards; handoffs of doing cards return to todo without starting the replacement worker.
@@ -1743,7 +1745,11 @@ Format (read by `commonplace orch docs-check`):
 
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
+  - The live delivery state of a person's newest chat message (`chat/live.py`, shown by `web/static/chatlive.js`): the control-database tables `chat_live_posts` (the event that carried a message) and `chat_live_reads` (how far a board's orchestrator has read), and the `live` object in the chat page.
+
 - **Promises:**
+
+  - The live state (`idle`, `delivered`, `working`, `answered`, `no_agent`, `no_answer`) is read from stored facts only: the wake delivery row, the orchestrator's own `space_read` and a later agent message. It calls no model or outside service, stores ids and times but no message text, describes only the caller's own message, stays inside the caller's workspace, and gives the agent's read time only to a caller who may see that agent.
 
   - Chat status counts cards in needs-me while ignoring per-board coordinator notices.
   - Opt-in phone needs-you evaluation includes actionable Approvals, so owner origin recovery still notifies after coordinator revocation.
@@ -1756,11 +1762,14 @@ Format (read by `commonplace orch docs-check`):
 
   - Without a provider or runner the chat shows a receipt and no answer; push delivery failures are recorded, not retried forever.
 
+  - A message nobody picks up turns into `no_answer` (60 seconds after a successful wake, 5 minutes without a wake hook or after a read without a reply, at once when every wake attempt failed) and a board without a usable orchestrator shows `no_agent`; a failed read-cursor write is logged and never fails the agent's `space_read`.
+
   - An empty or invalid voice setting stops startup with a message naming the setting, and a missing model at load time is an error; neither falls back to another model.
 
 - **Tests:**
 
   - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
+  - `tests/test_chat_live.py` covers delivery to the orchestrator, every live state, a member beside an owner and two workspaces with the same board and message id; `tests/test_chat_live_view.py` (`tests/chat_live_view.mjs`) covers the pane's text per state and role and that states and the answer arrive through the poll.
   - `tests/test_commonplace_voice.py` covers the instance switch, model settings, invalid-setting errors and the free-plan cap at, over and under its limit.
   - Coordinator-revocation recovery verifies the origin approval item and retains notification, priority and duplicate-suppression assertions.
 
@@ -1965,6 +1974,8 @@ Format (read by `commonplace orch docs-check`):
   - The card panel's Runs section (`cardruns.js`) lists the card's start jobs with Cancel and the owner's Resolve choice, and offers the owner a Start agent control fed by the options route, with plain words for each refusal.
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
+
+  - The chat pane's live delivery block (`chatlive.js`, mounted by `chat.js`): one line per server state with owner or member wording, shown in place of the timed "Working on it…" guess whenever the chat page carries `live`.
 
   - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
 
