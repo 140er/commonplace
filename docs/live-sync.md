@@ -156,7 +156,7 @@ and `delete_hallway` take no room and are not checked yet.
 Fact mutations (`kg_invalidate`, `kg_supersede`, `kg_save` merges, and single-valued supersedes through `kg_save` or `fact_save`) on thread-derived
 facts are not room-checked. A member with fact-write permissions but no source-thread
 read access can mutate those hidden facts. Invalidate's `closed` count is a yes/no
-oracle for hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`.
+oracle for hidden values. This pre-existing write-side exposure is accepted for follow-up alongside `delete_by_source`, `delete_tunnel` and `delete_hallway`. Presence is not hidden either: taxonomy and aggregate counts can show stored-thread ids and per-thread counts to callers who can read the private section.
 
 Restricted structured Memory search gates ranked hits before limiting the reply.
 Explicit-wing and fan-out searches retry with doubled prefixes until readable hits
@@ -164,8 +164,9 @@ fill the requested limit, candidates run out, or the 100-candidate bound is reac
 (at most eight worker searches on one deadline). Replies omit candidate and filter
 totals; any result count describes only returned readable hits. Readable hits beyond
 the bound can still be missed, and ranking is not independent of hidden candidates.
-Every-wing principals and captured CLI search keep their existing paths; structured
-CLI gating can reuse the refill before rendering. This makes no timing privacy claim.
+Every-wing principals keep their existing path; restricted CLI-compatible search
+acquires structured hits and reuses the refill before its final gate and rendering.
+This makes no timing privacy claim.
 Standalone worker helpers retain their original response shape and authorization
 gates. Refill runs with an attached gateway handoff context, and pinned-wing
 searches preserve the original worker reply unless it contains structured hits.

@@ -981,9 +981,9 @@ playbooks and the original wider orchestration acceptance remain separate work.
   The first search and every refill share the same deadline and call bound.
 - Restricted structured responses omit `total`, `total_before_filter` and
   `filtered_by_max_distance`; any `count` describes only returned readable
-  hits. No hidden-candidate count or refill diagnostic is returned. Captured
-  CLI search retains its existing separate path until structured CLI gating
-  is applied; that path can then use the same refill before rendering.
+  hits. No hidden-candidate count or refill diagnostic is returned. Restricted
+  CLI-compatible search acquires structured hits, so it uses the same refill
+  before the final gate and rendering.
 - Other overview, legacy
   provenance and owner search-index progress remain separate residuals.
 
