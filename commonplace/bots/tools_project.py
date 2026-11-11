@@ -20,14 +20,17 @@ from commonplace.boards.service import (
     SpaceMissing,
     VersionClash,
 )
-from commonplace.bots import blocks
+from commonplace.bots import blocks, context
 from commonplace.bots.tools import Result, Tool, register
 from commonplace.chat import front
 from commonplace.extensions import ToolError
 
 LIST_LIMIT = 20
-QUESTION_LIMIT = 8  # a tool result is cut at 4,000 characters, so rows stay short
+QUESTION_LIMIT = 12
 OPTIONS_SHOWN = 6
+# A tool result is cut at ``context.TOOL_RESULT_CHARS``; rows are added only while the whole
+# serialised result stays under this, and the result says how many were left out.
+RESULT_BUDGET = context.TOOL_RESULT_CHARS - 600
 TITLE_LIMIT = 200
 NOTES_SHOWN = 3
 NOTE_CHARS = 500
@@ -42,11 +45,12 @@ REFUSED = (
     "That was not done. You may not have permission for it here, or the work is in a state that "
     "does not allow it. Ask the project owner if you need it."
 )
-OWNER_ONLY = "Only the project owner can do that."
+FORBIDDEN = "You are not allowed to do that here. Ask the project owner if you need it."
 PRIORITY_OWNER_ONLY = "Only the project owner can set a priority."
 BAD_POSITION = "Put it before or after another open task in the same column, not both."
 BAD_NEIGHBOUR = "That position is not possible. Pick another task in the same column."
 NAME_TAKEN = "There is already a project with a similar name. Pick another name."
+NAME_UNAVAILABLE = "That name cannot be used. Pick another name."
 NAME_EMPTY = "Give the project a name with at least one letter or number."
 CREATE_DENIED = "You are not allowed to create projects here. Ask the workspace owner."
 NOTHING_CHANGED = "Say what to change: a priority, or a position before or after another task."
@@ -71,22 +75,16 @@ class Plain(ToolError):
 
 
 def _plain(exc) -> str:
-    """One plain sentence for a service refusal; the service's own text never leaves here."""
+    """One plain sentence for a service refusal, mapped on its type; anything unrecognised
+    gets the neutral sentence. The service's own text never leaves here."""
     if isinstance(exc, Plain):
         return str(exc)
     if isinstance(exc, VersionClash):
         return CHANGED
-    text = str(exc).lower()
-    if "not found" in text:
+    if isinstance(exc, SpaceMissing):
         return NOT_FOUND
-    if "priority" in text:
-        return PRIORITY_OWNER_ONLY
-    if "position target" in text:
-        return BAD_NEIGHBOUR
-    if "before or after" in text:
-        return BAD_POSITION
-    if "owner" in text:
-        return OWNER_ONLY
+    if isinstance(exc, SpaceForbidden):
+        return FORBIDDEN
     return REFUSED
 
 
@@ -173,6 +171,20 @@ def _orchestrator(turn, board) -> dict:
     }
 
 
+def _fits(data) -> bool:
+    return len(context.tool_result(Result(True, data))) <= RESULT_BUDGET
+
+
+def _take(rows, wrap) -> list:
+    """The leading ``rows`` for which ``wrap(rows)`` still fits the result budget."""
+    kept = []
+    for row in rows:
+        if not _fits(wrap([*kept, row])):
+            break
+        kept.append(row)
+    return kept
+
+
 def _items(turn, board) -> list[dict]:
     return turn.boards().task_list(board=board, all_statuses=True, top_level=True)
 
@@ -193,7 +205,7 @@ def _project_status(turn, args):
         status = _status(card)[0]
         counts[status] += 1
         if status == "working" and len(working) < 5:
-            working.append({"number": card["number"], "title": _clip(card["title"], 120)})
+            working.append({"number": card["number"], "title": _clip(card["title"], 80)})
     waiting = [
         f"{note['count']} task{'' if note['count'] == 1 else 's'} {WAIT_TEXT[note['code']]}"
         for note in entry.get("waiting_notes", ())
@@ -226,10 +238,11 @@ def _list_work(turn, args):
             shown.append(
                 {"number": card["number"], "title": _clip(card["title"], 80), "status": status}
             )
+    kept = _take(shown, lambda rows: {"work": rows, "left_out": 0})
     return Result(
         True,
-        {"work": shown, "more": total > len(shown)},
-        blocks=tuple(_work_block(item["number"]) for item in shown),
+        {"work": kept, "left_out": total - len(kept)},
+        blocks=tuple(_work_block(item["number"]) for item in kept),
     )
 
 
@@ -240,22 +253,21 @@ def _work_detail(turn, args):
     status, note = _status(card)
     comments = [e for e in card.get("events", ()) if e.get("kind") == "comment" and e.get("text")]
     links = [{"label": "Pull request", "url": card["pr_url"]}] if card.get("pr_url") else []
-    return Result(
-        True,
-        {
-            "number": card["number"],
-            "title": _clip(card["title"], 200),
-            "status": status,
-            "priority": card.get("priority"),
-            "note": _clip(note or card.get("status_line"), NOTE_CHARS),
-            "latest_notes": [
-                {"text": _clip(e["text"], NOTE_CHARS), "at": e["at"]}
-                for e in comments[-NOTES_SHOWN:]
-            ],
-            "links": links,
-        },
-        blocks=(_work_block(card["number"]),),
-    )
+    data = {
+        "number": card["number"],
+        "title": _clip(card["title"], 200),
+        "status": status,
+        "priority": card.get("priority"),
+        "note": _clip(note or card.get("status_line"), NOTE_CHARS),
+        "links": links,
+    }
+    newest = [
+        {"text": _clip(e["text"], NOTE_CHARS), "at": e["at"]}
+        for e in reversed(comments[-NOTES_SHOWN:])
+    ]
+    notes = _take(newest, lambda rows: {**data, "latest_notes": rows})
+    data["latest_notes"] = notes[::-1]
+    return Result(True, data, blocks=(_work_block(card["number"]),))
 
 
 @_guarded
@@ -265,24 +277,26 @@ def _list_decisions(turn, args):
         asks = turn.boards().needs_me()["asks"]
     except ToolError:
         asks = []  # a member without the needs-me tool has none waiting
+    here = [ask for ask in asks if ask.get("board") == board]
     reader = blocks.Reader(turn.gateway, turn.principal())
-    questions, refs = [], []
-    for ask in asks:
-        if ask.get("board") != board or len(questions) >= QUESTION_LIMIT:
-            continue
-        stored = {"type": "decision", "card": ask["number"]}
-        view = blocks.decision(reader, stored)
+    rows = []
+    for ask in here[:QUESTION_LIMIT]:
+        view = blocks.decision(reader, {"type": "decision", "card": ask["number"]})
         if view.get("gone") or not view["open"]:
             continue
-        refs.append(stored)
-        questions.append(
+        rows.append(
             {
                 "ref": ask["number"],
                 "question": _clip(view["question"], 200),
                 "options": [_clip(option, 80) for option in view["options"][:OPTIONS_SHOWN]],
             }
         )
-    return Result(True, {"questions": questions}, blocks=tuple(refs))
+    kept = _take(rows, lambda part: {"questions": part, "left_out": 0})
+    return Result(
+        True,
+        {"questions": kept, "left_out": len(here) - len(kept)},
+        blocks=tuple({"type": "decision", "card": row["ref"]} for row in kept),
+    )
 
 
 # Filing and steering
@@ -333,6 +347,16 @@ def _prioritize_work(turn, args):
     if "before" in fields and "after" in fields:
         return Result(False, say=BAD_POSITION)
     card = _item(turn, board, args["ref"])
+    if "priority" in fields:
+        try:
+            priorities.owner_value(turn.principal(), fields["priority"])
+        except ToolError:
+            raise Plain(PRIORITY_OWNER_ONLY) from None
+    for key in ("before", "after"):
+        if key in fields:
+            other = _item(turn, board, fields[key])
+            if other["number"] == card["number"] or other["status"] != card["status"]:
+                raise Plain(BAD_NEIGHBOUR)
     updated = turn.boards().task_update(args["ref"], version=card["version"], **fields)
     return Result(
         True,
@@ -448,8 +472,10 @@ def _create_project(turn, args):
         raise Plain(NAME_EMPTY)
     try:
         turn.boards().board_add(slug=slug, name=name)
-    except (SpaceExists, SpaceMissing):
+    except SpaceExists:
         raise Plain(NAME_TAKEN) from None
+    except SpaceMissing:
+        raise Plain(NAME_UNAVAILABLE) from None
     except SpaceForbidden:
         raise Plain(CREATE_DENIED) from None
     except SpaceError:

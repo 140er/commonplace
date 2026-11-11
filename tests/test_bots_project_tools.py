@@ -9,8 +9,8 @@ import threading
 import pytest
 
 from commonplace import events
-from commonplace.boards.service import BoardService
-from commonplace.bots import tools, tools_project as tp
+from commonplace.boards.service import BoardService, SpaceForbidden, SpaceMissing, VersionClash
+from commonplace.bots import context, tools, tools_project as tp
 from commonplace.chat import front, model_stream
 from commonplace.extensions import ToolError
 from commonplace.runner import chat_relay
@@ -232,7 +232,7 @@ def test_list_work_shows_at_most_twenty_and_filters_by_status(project_hub, fake)
 
     _, evs = ask(hub, fake, "What is open?", call("list_work"))
     data = results(fake)[0]["data"]
-    assert len(data["work"]) == 20 and data["more"] is True
+    assert len(data["work"]) == 20 and data["left_out"] == 2
     assert set(data["work"][0]) == {"number", "title", "status"}
     shown = blocks_of(evs)
     assert len(shown) == 20 and {b["type"] for b in shown} == {"work"}
@@ -247,7 +247,7 @@ def test_list_work_shows_at_most_twenty_and_filters_by_status(project_hub, fake)
     )
     data = results(fake)[0]["data"]
     assert [(w["number"], w["status"]) for w in data["work"]] == [(busy, "working")]
-    assert data["more"] is False
+    assert data["left_out"] == 0
     ask(hub, fake, "What is done?", call("list_work", status="done"), request_id="request-0003")
     assert results(fake)[0]["data"]["work"] == []
     ask(hub, fake, "Bad filter", call("list_work", status="finished"), request_id="request-0004")
@@ -841,7 +841,7 @@ def test_a_member_cannot_approve_or_answer_and_nothing_changes(project_hub, fake
     for block in blocks_of(evs):
         status, body, _ = confirm(hub, bot["id"], block["pending"], auth=hub.member)
         assert status == 200
-        assert body["message"]["text"] == tp.OWNER_ONLY
+        assert body["message"]["text"] == tp.REFUSED
         assert body["message"]["blocks"][0]["ok"] is False
     assert "plan" in owner.task_show(plan)["labels"]
     assert owner.task_show(decision)["status"] == "review"
@@ -954,3 +954,112 @@ def test_audit_rows_and_logs_hold_no_conversation_text(project_hub, fake, caplog
     }
     assert all(marker not in repr(row) for row in rows)
     assert all(marker not in record.getMessage() for record in caplog.records)
+
+
+# Result size, refusal wording and project creation
+
+
+def fitted(result):
+    text = context.tool_result(result)
+    assert len(text) < context.TOOL_RESULT_CHARS and context.CUT not in text
+    assert json.loads(text.split(": ", 1)[1])["ok"] is True
+    return result.data
+
+
+def test_the_worst_case_of_every_read_tool_fits_the_result_cut(project_hub):
+    hub = project_hub
+    owner = as_person(hub)
+    wide = '"' * 300  # quotes are escaped when serialised, the worst case for length
+    for index in range(25):
+        owner.task_add(title=wide + str(index), board="work")
+    for _ in range(14):
+        number = owner.task_add(title=wide, board="work", claim=True)["number"]
+        owner.task_update(
+            number,
+            status="review",
+            question=wide,
+            context="The implementation is complete and the affected tests have passed.",
+            options=['"' * 110 + str(n) for n in range(6)],
+        )
+    for _ in range(6):
+        owner.task_add(title=wide, board="work", claim=True)
+    note = owner.task_add(title=wide, board="work", claim=True)["number"]
+    for index in range(4):
+        owner.task_comment(note, '"' * 400 + str(index))
+    turn = direct(hub)
+    run = lambda name, args=None: tools.REGISTRY[name].run(turn, args or {})  # noqa: E731
+
+    data = fitted(run("list_work"))
+    assert 0 < len(data["work"]) <= 20 and data["left_out"] == 46 - len(data["work"])
+    data = fitted(run("list_decisions"))
+    assert data["questions"] and data["left_out"] == 14 - len(data["questions"])
+    assert all(len(q["options"]) <= 6 for q in data["questions"])
+    data = fitted(run("work_detail", {"ref": note}))
+    assert 0 < len(data["latest_notes"]) <= 3 and data["latest_notes"][-1]["text"].endswith("3")
+    data = fitted(run("project_status"))
+    assert len(data["working_on"]) == 5
+
+
+def test_a_refusal_is_worded_from_its_type_never_from_its_text():
+    assert tp._plain(VersionClash({})) == tp.CHANGED
+    assert tp._plain(SpaceMissing()) == tp.NOT_FOUND
+    assert tp._plain(SpaceForbidden("no: anything")) == tp.FORBIDDEN
+    for text in ("no: priority owner position target card not found", "no: something else"):
+        assert tp._plain(ToolError(text)) == tp.REFUSED
+
+
+def test_a_position_target_must_be_open_work_of_the_same_project_and_column(project_hub, fake):
+    hub = project_hub
+    configure(hub)
+    owner = as_person(hub)
+    hub.add_board("garden", "Garden")
+    mine = owner.task_add(title="Mine", board="work")["number"]
+    other = owner.task_add(title="Other project", board="garden")["number"]
+    busy = owner.task_add(title="Busy", board="work", claim=True)["number"]
+    _, evs = ask(
+        hub,
+        fake,
+        "Reorder",
+        call("prioritize_work", "c1", ref=mine, before=other),
+        call("prioritize_work", "c2", ref=mine, after=busy),
+        call("prioritize_work", "c3", ref=mine, before=mine),
+    )
+    assert [r["refused"] for r in results(fake)] == [
+        tp.NOT_FOUND,
+        tp.BAD_NEIGHBOUR,
+        tp.BAD_NEIGHBOUR,
+    ]
+    assert [s for _, s, _ in outcomes(evs)] == ["refused"] * 3
+
+
+def test_creating_a_project_follows_what_the_board_service_allows(project_hub, fake):
+    hub = project_hub
+    configure(hub)
+    as_person(hub).board_add(slug="vault-x", name="Vault X", wing="private_vault")
+    bot, evs = ask(
+        hub,
+        fake,
+        "Please create a project called Vault X",
+        project_call("Vault X"),
+        auth=hub.member,
+    )
+    [pending] = blocks_of(evs)
+    body = confirm(hub, bot["id"], pending["pending"], auth=hub.member)[1]
+    assert (body["message"]["text"], body["message"]["blocks"][0]["ok"]) == (
+        tp.NAME_UNAVAILABLE,
+        False,
+    )
+
+    bot, evs = ask(
+        hub,
+        fake,
+        "Please create a project called Garden Shed",
+        project_call("Garden Shed"),
+        auth=hub.member,
+        request_id="request-0002",
+    )
+    [pending] = blocks_of(evs)
+    body = confirm(hub, bot["id"], pending["pending"], auth=hub.member)[1]
+    # A member may create a project today, exactly as the board service allows it.
+    assert body["message"]["blocks"][0]["ok"] is True
+    assert "garden-shed" in [b["slug"] for b in as_person(hub, hub.member_user).board_list()]
