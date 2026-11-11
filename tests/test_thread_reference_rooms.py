@@ -1006,13 +1006,33 @@ def test_source_lookup_failure_hides_every_non_thread_room(
     store_thread(hub, "bare", actor=hub.admin, wing="private_chats", source=source)
     seed(collection, config, source)
 
+    reached = []
+
     def failed(self, workspace_id, value):
+        reached.append(value)
         raise RuntimeError("lookup unavailable")
 
-    monkeypatch.setattr(ThreadStore, "by_source_value", failed, raising=False)
-    monkeypatch.setattr(ThreadStore, "source_ids", failed, raising=False)
+    monkeypatch.setattr(ThreadStore, "by_source_value", failed)
     raw = mcp(hub, blind[1], "mempalace_list_rooms", wing="shared")
+    assert reached, "the failing lookup was never reached"
     assert source not in raw and "general" not in raw, raw[:400]
+
+
+def test_unloaded_store_under_deadline_hides_source_equal_room(hub):
+    """A workspace with threads whose store is not open cannot be read inside a
+    request deadline: the room must stay hidden, never shown as naming no thread."""
+    from commonplace.rules import checks
+
+    source = "probe-" + secrets.token_hex(6)
+    store_thread(hub, "bare", actor=hub.admin, wing="private_chats", source=source)
+    ctx = hub.gateway.handoff
+    ctx._stores.pop(hub.workspace, None)
+    assert ctx.has_threads(hub.workspace)
+    principal = SimpleNamespace(workspace_id=hub.workspace)
+    with checks.deadline(5):
+        access = mirror_access._ResponseAccess(hub.gateway, principal)
+        assert not access.exact_source_readable(source, [source])
+        assert ctx._stores.get(hub.workspace) is None
 
 
 def test_colonless_source_equal_room_is_hidden(hub, collection, config, blind):

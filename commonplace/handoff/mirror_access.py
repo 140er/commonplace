@@ -125,8 +125,8 @@ class _ResponseAccess:
         return all(self(thread) for thread in threads)
 
     def _lookup(self, key, fetch):
-        """One cached store lookup; no handoff store means no stored sources,
-        and a failed lookup is None."""
+        """One cached store lookup; no handoff (or a workspace without threads)
+        means no stored sources, and a failed or unreadable lookup is None."""
         if key not in self.private:
             self.private[key] = None
             try:
@@ -148,9 +148,10 @@ class _ResponseAccess:
                         if checks._deadline.get() is not None
                         else ctx.store_for(self.principal.workspace_id)
                     )
-                    self.private[key] = (
-                        [] if store is None else fetch(store, self.principal.workspace_id)
-                    )
+                    # Under a deadline an unloaded store of a workspace that has
+                    # threads cannot be read in time: fail closed, like _source_rows.
+                    if store is not None:
+                        self.private[key] = fetch(store, self.principal.workspace_id)
             except Exception:
                 pass
         return self.private[key]
