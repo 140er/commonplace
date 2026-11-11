@@ -13,7 +13,7 @@ DECIDE_SCOPE = "cards:decide"
 SCOPE_TEXT = (
     "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
     "It can answer only questions addressed to you, never another person's, and only on "
-    "boards it may write to. Every answer is recorded with this connection. You can stop "
+    "boards you can write to. Every answer is recorded with this connection. You can stop "
     "this at any time under Agents."
 )
 OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."

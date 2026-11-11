@@ -504,10 +504,12 @@ playbooks and the original wider orchestration acceptance remain separate work.
   eligible rows, with the consent text served from one source.
 - Answering: the connection must be a live PAT or OAuth connection of a current
   owner, top-level, not a runner, hold the scope, and the ask's recipient must be
-  exactly that owner. Project seats and board coordinators are refused. It still
-  needs read and write access to the board's wing (`can_write_wing`); the grant
-  replaces only the trust-based restriction, so default inbox-writing apps
-  answer only on inbox boards. It cannot escalate or answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
+  exactly that owner. Project seats and board coordinators are refused. The app
+  needs `memory:write` and read access to the board's wing; write access is the
+  owner's **person-level** access (`_owner_writes`: the owner's current person
+  policy can write the board's wing), so it answers wherever the owner could in
+  the browser, regardless of the app's own `inbox` write wing, and is refused
+  where the owner cannot write. It cannot escalate or answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
   tool lists stay unchanged.
 - Audit: the board event committed with the answer names the connection. After
   that commit every delegated answer writes `audit_log` action

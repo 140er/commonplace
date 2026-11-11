@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from urllib.parse import urlparse
 
-from commonplace import decide_grant, events, privacy
+from commonplace import decide_grant, events, privacy, sessions
 from commonplace.callstack import LIMITS
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
@@ -3722,10 +3722,13 @@ class BoardService:
                 if not p.person and not delegated:
                     raise ToolError("no: only a signed-in workspace owner can answer this")
             if delegated:
-                # The owner's grant replaces agent write trust, never board visibility
-                # or the connection's own write wings.
-                if not p.policy.can_read_wing(board["wing"]) or not p.policy.can_write_wing(
-                    board["wing"]
+                # The app holds memory:write and may see the board, and its owner,
+                # as a person, may write the board's wing: what the owner could
+                # decide in the browser. The app's own write wings do not apply.
+                if (
+                    not p.policy.has_scope("memory:write")
+                    or not p.policy.can_read_wing(board["wing"])
+                    or not self._owner_writes(board["wing"])
                 ):
                     raise ToolError("no: this connection cannot change this board")
             else:
@@ -3827,6 +3830,18 @@ class BoardService:
             except Exception as exc:
                 log_failure(logger, "delegated decide audit failed", exc)
         return result
+
+    def _owner_writes(self, wing):
+        """Whether the app's person, signed in, could write this wing right now."""
+        p = self.principal
+        person = sessions.person_principal(self.ctx.db, p.user_id, p.workspace_id)
+        return bool(
+            person is not None
+            and person.role == "owner"
+            and person.policy.has_scope("memory:write")
+            and person.policy.can_read_wing(wing)
+            and person.policy.can_write_wing(wing)
+        )
 
     def _agent_connection(self, conn, p):
         """A project seat or any board's coordinator: agent machinery, not an owner's app."""

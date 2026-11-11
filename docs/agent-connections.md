@@ -87,7 +87,7 @@ By default only you, signed in to the web app, can answer a Needs-me question.
 To let one of your own apps (for example a phone or car app) answer them, grant
 it the separate `cards:decide` scope. The consent text says:
 
-> Allow this app to answer your Needs-me questions as you (scope cards:decide). It can answer only questions addressed to you, never another person's, and only on boards it may write to. Every answer is recorded with this connection. You can stop this at any time under Agents.
+> Allow this app to answer your Needs-me questions as you (scope cards:decide). It can answer only questions addressed to you, never another person's, and only on boards you can write to. Every answer is recorded with this connection. You can stop this at any time under Agents.
 
 - **PAT:** tick that box when you create the connection, or use **Allow
   answering Needs-me** on an existing top-level connection. Through the API,
@@ -107,11 +107,11 @@ answering. Members see no consent box and the CLI refuses it. Agent tokens
 cannot grant it to themselves or anyone else: granting needs your signed-in
 browser session.
 
-The app answers only on boards it may write to. Connections created under
-**Settings → Agents** and OAuth connections write only to the `inbox` wing, so
-by default they can answer asks on boards in that wing only. For other boards,
-use a connection whose write wings include the board's wing, then grant it
-here.
+The app answers on the boards you could answer on yourself in the browser:
+any board it can see whose wing you, signed in, can write. Its own write wings
+(`inbox` for connections made here and for OAuth apps) do not limit answers. It
+still needs `memory:write`, cannot answer in another workspace, and is refused
+on boards whose wing you cannot write.
 
 If you stop being a workspace owner, every stored `cards:decide` grant on your
 connections is removed; becoming owner again does not bring it back.

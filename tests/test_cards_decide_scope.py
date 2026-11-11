@@ -27,7 +27,7 @@ FULL = "memory:read memory:write cards:decide"
 SCOPE_TEXT = (
     "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
     "It can answer only questions addressed to you, never another person's, and only on "
-    "boards it may write to. Every answer is recorded with this connection. You can stop "
+    "boards you can write to. Every answer is recorded with this connection. You can stop "
     "this at any time under Agents."
 )
 OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
@@ -509,29 +509,32 @@ def test_r1_board_coordinator_never_answers_as_the_owner(world):
     assert delegated_audit(hub) == []
 
 
-def test_r2_delegated_answer_needs_write_access_to_the_board(world):
+def test_r2_answers_where_the_owner_can_write_as_a_person(world, monkeypatch):
     w = world
     hub = w.hub
-    inbox_app, _cid = owner_app(w)
-    # Default app: it writes only inbox, so the shared-wing board is refused.
+    app, cid = owner_app(w)
+    # The app itself writes only inbox; the owner, signed in, writes the team board.
+    assert not hub.gateway.authenticate(f"Bearer {app}").policy.can_write_wing("shared")
     number, version = ask(w, "Team board question?", board="team")
-    status, refused = rest_decide(w, inbox_app, number, version)
-    assert status == 403 and "cannot change this board" in refused["error"], refused
-    assert w.owner.task_show(number)["status"] == "review"
-    # An app that may write the board's wing answers it once the owner grants it.
-    writer = hub.token(
-        "team-app",
-        profile="slim",
+    status, card = rest_decide(w, app, number, version)
+    assert status == 200, card
+    assert [r["connection_id"] for r in delegated_audit(hub)] == [cid]
+
+    # Refused where the owner, as a person, could not write the board's wing.
+    narrow = Policy.build(
+        profile="full",
         scopes=["memory:read", "memory:write"],
         read_wings=["*"],
-        write_wings=["shared"],
-        trust="standard",
+        write_wings=["inbox"],
+        trust="trusted",
     )
-    wid = hub.gateway.authenticate(f"Bearer {writer}").connection_id
-    assert api(hub, w.cookie, "PATCH", f"/api/connections/{wid}", {"decide": True})[0] == 200
-    status, card = rest_decide(w, writer, number, version)
-    assert status == 200, card
-    assert [r["connection_id"] for r in delegated_audit(hub)] == [wid]
+    monkeypatch.setattr(sessions, "person_policy", lambda role=None: narrow)
+    number, version = ask(w, "Second team question?", board="team")
+    status, refused = rest_decide(w, app, number, version)
+    assert status == 403 and "cannot change this board" in refused["error"], refused
+    monkeypatch.undo()
+    assert w.owner.task_show(number)["status"] == "review"
+    assert len(delegated_audit(hub)) == 1
 
 
 def test_r3_no_audit_row_for_an_answer_that_rolls_back(world, monkeypatch):
