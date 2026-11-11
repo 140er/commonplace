@@ -2,7 +2,7 @@
 
 The single source of truth for the Compute map: machines, how they reach each other, and how a website is routed to the app that serves it. Everything is a structured fact in the workspace's `topology` wing. The map, the agent tools and the live status all read from this store; nothing else holds a second copy.
 
-Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`.
+Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`. How agents write and the owner approves is under Proposals below.
 
 ## Facts
 
@@ -187,6 +187,82 @@ A record:
 A route's `hops` is a list of `{"link", "from", "to", "method", "known", "stale", "status"}`.
 
 `read_graph` returns `{"wing", "nodes", "links", "routes", "conflicts"}`. A conflict is `{"conflict_id", "subject", "predicate", "state", "created_at", "resolved_by", "resolved_at", "current", "contender"}`, where both values have the field shape above. `history` returns every value a subject held, newest first, each with `predicate`, `state` and `superseded_by`.
+
+## Proposals: agents write, the owner approves
+
+Agents do not call the store. They hand in facts through one tool, `topology_propose`, and the hub decides what may be written at once and what the owner must approve. Code: `commonplace/topology/proposals.py` (the rules) and `commonplace/topology/proposal_api.py` (the tool, the routes and the decision listener). Tests: `tests/test_topology_proposals.py`.
+
+```
+topology_propose(items=[...], remove=[...], evidence="...", ttl_seconds=None, board=None)
+POST /api/topology/proposals      the same arguments as JSON
+```
+
+`items` are the write items of the store. `remove` lists subjects to take off the map (`"route:example.test"`), or `{"subject": "node:web1", "field": "os"}` for one field. `evidence` is required and kept verbatim. The caller needs write access to the `topology` wing; the observer comes from the authenticated caller, never from the arguments.
+
+The request is compared with the map as it is now, fact by fact:
+
+| Caller | Fact | What happens |
+| --- | --- | --- |
+| a runner, about itself | new | applied at once |
+| a runner, about itself | same value | refreshed: one more observation, a later expiry |
+| a runner, about itself | different value | proposed |
+| a runner, about anything else | new or different | proposed |
+| any other agent | new or different | proposed |
+| any other agent | same value | nothing; counted as `unchanged` |
+| the signed-in owner | new, different or removed | applied at once, as the authoritative value |
+| anyone but the owner | removed | proposed |
+
+A runner is the worker connection of an enabled machine whose grant includes the `topology` wing; its observer is `runner` with the machine id. "About itself" is a node whose `runner_id` is that machine, a new node the runner declares with its own `runner_id`, and a link with such a node at either end. Routes, other nodes, and binding itself to a node that already exists are not about itself.
+
+Everything proposed in one call is one proposal and one decision. The reply holds `applied` and `proposal` (each `null` or a row) and `unchanged`.
+
+### The decision
+
+A proposal opens one ask for the workspace owner through the ordinary ask path, so it shows up in "needs you" like any other question. It carries two structured options:
+
+- **Approve**, with the map after the change as its preview;
+- **Reject**, with the map before the change as its preview.
+
+```
+Before:                 After:
+node web1               node web1
+  os: Linux 6.8           os: Linux 6.9
+  role: (not set)         role: web server
+```
+
+A removed value reads `(removed)`. The ask's context holds the proposal id, the observer and the evidence. Nothing is cut short: a change that does not fit one preview is refused with "propose it in smaller parts", so the owner never approves a line they could not read.
+
+The owner answers the card as they answer any ask. Then:
+
+- **Approve** applies the change with the proposing observer and its evidence as provenance, as an authoritative write (`replace=True`). The old values stay in history.
+- **Reject**, or a written reply without a choice, changes nothing. The old fact stays.
+- The proposal is **void**, and nothing is applied, when the card was edited, withdrawn or asked again before the owner answered it, when the answer does not come from a workspace owner, or when the map no longer matches the "before" that was shown. A void proposal can simply be proposed again.
+
+Only the owner can answer: the board's decide path refuses everyone else, and the proposal checks the answer again against the card's own history. An owner's connection that holds `cards:decide` answers on the owner's behalf, as for any ask.
+
+The answer is applied when the card is decided. If the hub stopped in between, the next read of the proposals settles it; applying is safe to repeat.
+
+### History and undo
+
+Every applied change, a runner's self-report and an owner's own write included, is kept as a row with each fact's value before and after.
+
+```
+GET  /api/topology/proposals[?state=pending|applied|rejected|void|undone]
+GET  /api/topology/proposals/<id>
+POST /api/topology/proposals/<id>/undo        the signed-in workspace owner only
+```
+
+A row: `id`, `state`, `origin` (`proposal`, `self_report` or `owner`), `observer`, `proposed_by`, `evidence`, `changes` (`subject`, `predicate`, `before`, `after`; `null` means no value), `card`, `created_at`, `decided_by`, `decided_at`, `note`, `undone_by`, `undone_at`. Reading needs read access to the `topology` wing.
+
+Undo puts back what the change replaced: a changed or removed value is written again as the owner's authoritative value, and a subject or field the change added is retracted. A fact that changed again since is left alone and listed under `skipped`. Undo deletes nothing; the undone values stay in the store's history.
+
+### The secret filter
+
+A proposal passes the same filter as a write (`model.facts_for`, `model.evidence_text`) before a row or a decision card exists. A refused proposal stores nothing and asks nothing, and the refusal names the field and the kind of secret, never the value.
+
+### Storage
+
+Proposals are rows of `topology_proposals` in `topology.sqlite3`, next to the facts. The table is added to an existing file by the first proposal; a workspace without proposals reads as an empty list and reading creates nothing.
 
 ## Existing workspaces
 

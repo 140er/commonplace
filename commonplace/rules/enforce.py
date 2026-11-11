@@ -18,7 +18,7 @@ CHECKED_WRITES = frozenset(
     "orch_config_propose orch_config_accept orch_config_write orch_config_reject "
     "orch_exp_retire orch_restore_ack orch_resume orch_force_release orch_card_start "
     "orch_journal_intent orch_journal_record orch_gate_open orch_gate_record "
-    "orch_void_step".split()
+    "orch_void_step topology_propose".split()
 )
 
 # Explicit names make a newly exposed write fail the public-surface contract.
@@ -86,6 +86,7 @@ REST_ROUTES = (
     RestRoute("boards.rest", "POST", "/api/boards", "board_add"),
     RestRoute("boards.rest", "PATCH", "/api/boards/<slug>", "board_set"),
     RestRoute("boards.rest", "POST", "/api/boards/<slug>/chat", "space_post"),
+    RestRoute("topology.proposal_api", "POST", "/api/topology/proposals", "topology_propose"),
     RestRoute("memory_tools", "POST", "/api/memory", "memory_save"),
     RestRoute("memory_tools", "POST", "/api/facts", "fact_save"),
     RestRoute("handoff.api", "POST", "/api/handoffs/<id>/relaunch", "relaunch"),

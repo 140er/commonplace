@@ -1008,7 +1008,7 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 | `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit, sign-up waitlist (`signup_waitlist`, additive) | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
 | `runner.sqlite3` | workspace | runner jobs and their run ledger; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
-| `topology.sqlite3` | workspace | Compute map facts: nodes, links, site routes, their observations (observer, verbatim evidence, expiry) and conflict records; never secrets | yes |
+| `topology.sqlite3` | workspace | Compute map facts: nodes, links, site routes, their observations (observer, verbatim evidence, expiry) and conflict records; proposals and applied changes with each fact's value before and after (`topology_proposals`); never secrets | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
 
 - Backups copy every SQLite file in the data directory (`commonplace/backup.py`).
@@ -1488,7 +1488,7 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 
 ### Topology is one store of structured facts
 
-The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Contract: `docs/topology.md`.
+The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Agents write through `topology_propose`: a runner's new facts about itself apply at once, every other addition, change or removal is one proposal that the workspace owner approves or rejects as an ordinary ask, and every applied change keeps its before and after so the owner can undo it. Contract: `docs/topology.md`.
 
 ### Bots keep conversations in the workspace store
 

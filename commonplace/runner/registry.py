@@ -23,6 +23,7 @@ WORKER_TOOLS = (
     "task_heartbeat",
     "task_handoff",
     "ask",
+    "topology_propose",
 )
 GRANT_KEYS = {
     "label",

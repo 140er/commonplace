@@ -1805,6 +1805,65 @@
           "name": "task_update"
         },
         {
+          "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "type": "string"
+              },
+              "evidence": {
+                "description": "What you saw, verbatim (command output, a config line).",
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "items": {
+                "description": "{\"node\": key, \"fields\": {...}}, {\"link\": [from, to, method], \"fields\": {...}} or {\"route\": site, \"hops\": [link ids]}.",
+                "items": {
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "remove": {
+                "description": "node:<key>, link:<from>><to>:<method> or route:<site>; {subject, field} removes one field.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "subject"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "ttl_seconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "name": "topology_propose"
+        },
+        {
           "description": "Add webhooks",
           "inputSchema": {
             "additionalProperties": false,
@@ -1976,6 +2035,7 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_propose",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
@@ -4761,6 +4821,65 @@
           "name": "task_update"
         },
         {
+          "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "type": "string"
+              },
+              "evidence": {
+                "description": "What you saw, verbatim (command output, a config line).",
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "items": {
+                "description": "{\"node\": key, \"fields\": {...}}, {\"link\": [from, to, method], \"fields\": {...}} or {\"route\": site, \"hops\": [link ids]}.",
+                "items": {
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "remove": {
+                "description": "node:<key>, link:<from>><to>:<method> or route:<site>; {subject, field} removes one field.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "subject"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "ttl_seconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "name": "topology_propose"
+        },
+        {
           "description": "Add webhooks",
           "inputSchema": {
             "additionalProperties": false,
@@ -4925,6 +5044,7 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_propose",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
