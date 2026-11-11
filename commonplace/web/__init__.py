@@ -230,9 +230,10 @@ def install(gateway):
             },
         )
 
-    from . import admin, agents, task_types
+    from . import admin, agents, invites, task_types
 
     admin.install(gateway)
+    invites.install(gateway)
     agents.install(gateway)
     task_types.install(gateway)
 

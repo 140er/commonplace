@@ -251,6 +251,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
 
+  - `docs/invites.md` is the contract for workspace invites, joining, switching workspaces and what a member can reach; `docs/admin.md` describes the Admin invite block.
+
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
 
@@ -576,6 +578,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - `tests/test_commonplace_invite_canary.py` is the second-user canary suite: after a real invite and join, the member's own session calls every MemPalace tool and every `/api/` GET route and must neither see nor change canaries filed in private wings, a private captured chat thread and a second workspace; owner controls prove each canary is live. `tests/test_commonplace_invites.py` and `tests/test_invites_ui.py` (`tests/invites_ui.mjs`) hold the invite, join, expiry, reuse, revoke and refusal cases.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
@@ -946,6 +950,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `/app/join` counts against the per-address credential rate limit, like `/app/login`.
+
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
@@ -1056,12 +1062,16 @@ Format (read by `commonplace orch docs-check`):
 
 ## sessions-and-sign-in
 
-- **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/oauth/`, `commonplace/social/`
+- **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/invites.py`, `commonplace/mailer.py`, `commonplace/oauth/`, `commonplace/social/`
 - **Owns:**
+
+  - Workspace invites (`commonplace/invites.py`): the `workspace_invites` table, making, listing, revoking and accepting an invite, and the list of a person's own memberships.
 
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
 
 - **Promises:**
+
+  - An invite secret is returned once and stored only as a SHA-256. Accepting marks the invite used and adds a `member` membership in one transaction, so an invite admits at most one person; unknown, used, revoked and expired secrets are refused alike, and an invite dies when its maker stops being an owner. Accepting grants no connection, token or scope.
 
   - OAuth authentication strips loaded private/admin scope when current workspace membership is not exactly owner, independently of token scope narrowing.
 
@@ -1088,6 +1098,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - `tests/test_commonplace_email_auth.py`, `tests/test_commonplace_oauth.py`, `tests/test_commonplace_agents_oauth_revoke.py`, `tests/test_commonplace_social.py`, `tests/test_commonplace_session.py`.
+
+  - `tests/test_commonplace_invites.py` covers invite, join, expiry, reuse, the two-person race, revoke, email binding, malformed secrets and every cross-user refusal over public HTTP.
 
 
 ## cli-and-client
@@ -1757,6 +1769,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
 
+  - Invite routes (`commonplace/web/invites.py`): owner-only `/api/invites`, the `/app/join` page behind an invite link, and `/api/workspaces` with its switch. The Admin invite block and the palette's workspace switcher live in `static/invites.js`.
+
   - Runtime switch/orchestrator/machine read projectors, effective limits, stuck facts and separate legacy needs-me rendering in the existing Admin lifecycle.
 
 
@@ -1783,6 +1797,8 @@ Format (read by `commonplace orch docs-check`):
   - The navigation-only instance flag falls back to false on read faults without breaking /api/me; receipt parent refreshes invalidate older mode generations.
 
   - The runner block never stores, logs or redraws enrollment tokens: they live only in a dismissible panel that sign-out, session expiry and leaving Admin also clear.
+
+  - `/api/invites` answers only a signed-in owner of the active workspace; members and owner tokens get 403 and another workspace's invite id answers 404. `/app/join` moves the secret from the address into an HttpOnly cookie, joins only on a same-origin confirming POST from a signed-in person, and then replaces the session. The invite block shows a new link once and never stores, logs or redraws it. `/api/workspaces/switch` accepts only the caller's own memberships and answers 404 for anything else.
 
   - Admin validates runtime metadata, probes optional columns, filters inactive grants and preserves paginated rows with source-specific retry errors.
 
@@ -1838,6 +1854,8 @@ Format (read by `commonplace orch docs-check`):
   - Rendering errors surface in the browser; the server state is unaffected.
 
 - **Tests:**
+
+  - `tests/test_commonplace_invites.py`, `tests/test_invites_ui.py` (with `tests/invites_ui.mjs`) and `tests/test_commonplace_invite_canary.py` cover the invite routes, the join page, the Admin invite block, the workspace switcher and the second-user canaries.
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 
