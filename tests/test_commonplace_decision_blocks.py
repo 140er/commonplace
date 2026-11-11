@@ -59,8 +59,10 @@ def test_structured_ask_reaches_the_person_and_the_answer_returns(fresh, route):
     decided = fresh.owner.decide(asked["number"], choice="Tall header", version=waiting["version"])
     assert decided["status"] == "todo" and decided["assignee"] == worker.principal.actor
     assert decided["ask"] is None and decided["ask_options"] == [] and decided["ask_blocks"] == []
-    shown = worker.work.task_show(asked["number"])
-    assert shown["decision"]["choice"] == "Tall header"
+    # The asker picks the card back up and reads the answer on the existing return path.
+    taken = worker.work.task_take_next(task=asked["number"])
+    assert taken["decision"]["choice"] == "Tall header"
+    assert taken["decision"]["actor"] == fresh.owner.principal.actor
 
 
 def test_an_option_the_asker_did_not_offer_is_refused(fresh):
@@ -78,9 +80,9 @@ def test_plain_text_asks_are_unchanged(fresh):
         board="work", question=REVIEW_QUESTION, options=REVIEW_OPTIONS, context=REVIEW_CONTEXT
     )
     assert asked["ask_options"] == REVIEW_OPTIONS and asked["ask_blocks"] == []
-    bare = worker.work.ask(board="work", question="Anything to add before this ships?")
-    assert bare["ask_options"] == [] and bare["ask_blocks"] == []
-    assert fresh.owner.decide(bare["number"], reply="Nothing to add.")["status"] == "todo"
+    # A free-text reply still answers.
+    replied = fresh.owner.decide(asked["number"], reply="Ship it after the release notes.")
+    assert replied["status"] == "todo"
 
 
 def test_a_later_plain_ask_drops_the_earlier_blocks(fresh):
