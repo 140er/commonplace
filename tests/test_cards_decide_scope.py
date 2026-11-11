@@ -458,6 +458,11 @@ def test_r1_seats_are_never_granted_and_never_answer(projects_hub):
     seat_id, seat_token = _seat(h)
     status, refused = api(hub, h.owner, "PATCH", f"/api/connections/{seat_id}", {"decide": True})
     assert status == 409 and refused["error"] == AGENT_TEXT, refused
+    # Still a seat after it stops coordinating the board.
+    person = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+    service(hub, person).board_set("work", None)
+    status, refused = api(hub, h.owner, "PATCH", f"/api/connections/{seat_id}", {"decide": True})
+    assert status == 409 and refused["error"] == AGENT_TEXT, refused
     status, listing = api(hub, h.owner, "GET", "/api/connections")
     seat_row = next(c for c in listing["connections"] if c["id"] == seat_id)
     assert seat_row["decide"] is False and seat_row["decide_grantable"] is False
@@ -510,6 +515,15 @@ def test_r1_board_coordinator_is_never_granted(world):
     status, listing = api(hub, w.cookie, "GET", "/api/connections")
     row = next(c for c in listing["connections"] if c["id"] == cid)
     assert row["decide"] is False and row["decide_grantable"] is False
+    # A grant stored by other means (an older build) still never answers.
+    with hub.db._lock:
+        row = hub.db._conn.execute("SELECT policy FROM connections WHERE id=?", (cid,)).fetchone()
+        policy = json.loads(row["policy"])
+        policy["scopes"] = sorted(set(policy["scopes"]) | {"cards:decide"})
+        hub.db._conn.execute(
+            "UPDATE connections SET policy=? WHERE id=?", (json.dumps(policy), cid)
+        )
+    assert hub.gateway.authenticate(f"Bearer {token}").policy.has_scope("cards:decide")
     number, version = _owner_ask(hub, asker=w.asker)
     status, refused = rest_decide(w, token, number, version)
     assert status == 403 and REFUSAL in refused["error"], refused
