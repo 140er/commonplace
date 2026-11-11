@@ -1448,7 +1448,7 @@ Format (read by `commonplace orch docs-check`):
 
 ## orch
 
-- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
+- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_factory.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
 - **Owns:**
 
   - A `model_unresolved` start refusal names the role and board and where an owner sets the model (`details.role`, `details.config_role`, `details.board`); `Config.start_roles` and `split_role` give the roles a start can run to `prepare()` and to Needs me.
@@ -1459,7 +1459,11 @@ Format (read by `commonplace orch docs-check`):
 
   - The read-only mapping from journaled thread starts and doing-card claims to checkpoint jobs.
 
+  - The optional `[factory]` merge policy of a config (`factory.py`): gate requirement, named checks with their pass and never-pass outcomes, full-suite cadence; its canonical form, summary lines, the journal's merge guard and the checkpoint's gate counts.
+
 - **Promises:**
+
+  - A config without `[factory]` keeps its canonical form, render, journal behavior and checkpoint keys; `factory` appears in `orch_config_get` and the checkpoint only when the accepted version declares it. Timeout, skip and error outcomes can never be declared a pass. The hub enforces the gate requirement only; checks and batch cadence are declared data.
 
   - Up to eight distinct area sub-orchestrators sit directly under one parentless orchestrator; areas remain preview-only across live and experiment accept/write paths. No-area graph rules and main/worker model slots remain unchanged.
 
@@ -1487,6 +1491,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - With `[factory]` and `gate.required = true`, a new `merge` step without a card is refused `factory_card_required` and one whose card's newest unvoided gate is not `gate_pass` is refused `factory_gate_required` (409, details: the gate); nothing is written. A `[factory]` that contradicts itself is refused `factory_contradiction` at propose, write and accept.
+
   - Area topology returns stable field paths and schema codes; acceptance returns area_not_supported before effects, preserving proposals, accepted rows, cursors, leases, jobs and events without echoing config content.
 
   - Refusals become coded misses shown on resume; an unproven external effect becomes `needs_person`; infrastructure errors leave the trigger cursor in place for the next sweep.
@@ -1501,6 +1507,8 @@ Format (read by `commonplace orch docs-check`):
 
 
 - **Tests:**
+
+  - `tests/test_orch_factory.py` covers the `[factory]` schema (a valid policy, each contradiction, structure refusals, diff and the experiment rule), the policy in `orch_config_get`, render and the checkpoint with gate counts, the merge guard for every gate verdict, another card's gate, void and retry, a newly accepted version changing what is enforced, and a board without a policy.
 
   - `tests/test_orch_areas.py` covers area roundtrips, ordered topology errors, frozen experiments, owner boundaries and complete refusal snapshots through store, MCP, REST and local CLI.
 
@@ -2129,7 +2137,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/commonplace_decision_blocks.mjs` (run by `tests/test_commonplace_decision_blocks.py`) checks that a structured ask renders one block per option in the Needs me body, escapes option text, answers with the option's label through the decide route, and falls back to plain buttons for plain or mismatched blocks.
 
-  - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals and escaping; `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
+  - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals, escaping and the Merge policy list with its gate counts (absent without a policy); `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
 
   - `api.js` joins a refusal's `error` and `next_step` and words a 403 without a JSON body; `tests/test_commonplace_owner_403_message.py` and `tests/owner_403_message.mjs` cover it.
 

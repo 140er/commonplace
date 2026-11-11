@@ -175,8 +175,20 @@ def config_get(ctx, board, version=None, channel="live"):
         "board": board,
         "channel": channel,
         "accepted": accepted.public(body=True) if accepted else None,
+        **_factory(accepted),
         "versions": [row.public() for row in st.versions(board)[:MAX_VERSIONS]],
     }
+
+
+def _factory(version) -> dict:
+    """``{"factory": ...}`` when the accepted version declares a merge policy, else ``{}``."""
+    try:
+        policy = version.config().factory if version else None
+    except ValueError:
+        policy = None
+    if policy is None:
+        return {}
+    return {"factory": {"policy": policy.to_dict(), "summary": policy.summary()}}
 
 
 def config_render(ctx, board, version=None, channel="live"):
