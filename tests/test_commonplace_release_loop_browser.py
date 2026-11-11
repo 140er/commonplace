@@ -110,7 +110,7 @@ def test_refused_handoff_is_visible_in_the_card_panel(hub, fresh):
         assert await present(page, "#card-panel [data-panel-error]"), (
             "the refusal is not shown in the card panel the owner is looking at"
         )
-        assert "recipient" in await page.inner_text("#card-panel [data-panel-error]")
+        assert "recipient" in (await page.inner_text("#card-panel [data-panel-error]")).lower()
 
     run(hub, fresh, number, check)
     status, card = api(hub, fresh.cookie, "GET", f"/api/cards/{number}")
