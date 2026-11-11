@@ -1187,6 +1187,7 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - A machine's worker policy reads and writes exactly its granted wings (first is the default write wing); starts on any other board wing are refused with a message naming the board wing and the granted wings, and the worker cannot write to an ungranted wing through any tool.
+  - A `card_start` on a board without an orchestrator config refuses with `path_overlap` inside the runner write transaction when the card's path contract overlaps a running card's; `jobs.create` takes an optional `guard(conn, now)` for such start-time checks.
 
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
@@ -1251,7 +1252,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
-  - A configured start is refused with `path_overlap` while a running card of the board declares an overlapping path contract; cards without a contract are never refused by it.
+  - A start is refused with `path_overlap` while a running card of the board (a live job whatever its status, or doing with a connection assignee) declares an overlapping path contract; the check runs in the write lock for configured and unconfigured boards alike, and cards without a contract are never refused by it.
 
   - Configured starts share project admission with claims and plain jobs when workspace orchestration is enabled; boards without a `[runner]` config retain earlier behavior with the workspace switch off.
 

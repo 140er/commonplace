@@ -154,11 +154,14 @@ Inside it, in this order:
    (409) wins over matching or changed requests. Other kinds retain
    `step_conflict`. For an unvoided exact match the stored job is returned;
    any mismatch is a 409 with the stored step or job.
-3b. **Path contracts.** A card with `paths` (repo-relative globs, set with
-   `task_update`) is refused with `path_overlap` (409; details `card`, `paths`,
-   `other_paths`) while another card of the board that holds a start (same
-   rule as the cap's count) declares a glob that can match the same path.
-   Cards without a contract never conflict.
+3b. **Path contracts.** A card with `paths` (canonical repo-relative globs, set
+   with `task_update`) is refused with `path_overlap` (409; details `card`,
+   `paths`, `other_paths`) while another card of the board that holds a start
+   declares a glob that can match the same path. Holding a start means a live
+   runner job (whatever the card's status) or `doing` with a connection
+   assignee. The contracts are read inside the write lock. `card_start` on a
+   board without an orchestrator config runs the same check before the job is
+   inserted. Cards without a contract never conflict.
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with

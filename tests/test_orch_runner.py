@@ -1710,3 +1710,90 @@ def test_c389_contract_round_trips_and_is_validated(world):
         with pytest.raises(ToolError, match="path"):
             world.update(card, paths=bad)
     assert world.update(card, paths=[])["paths"] == []
+
+
+def _set_status(world, card, status):
+    with BoardStore(world.gw.workspace_dir(world.ws)).transaction() as conn:
+        conn.execute("UPDATE tasks SET status=? WHERE id=?", (status, card))
+
+
+def test_c389_done_card_with_a_live_job_still_blocks(world):
+    """A builder can move its card to done while its job still counts as running; the
+    card keeps its contract until the job is gone."""
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/api/**")
+    _declare(world, second, "src/api/users.py")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    _set_status(world, first, "done")
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+    assert world.jobs_for(second) == []
+
+
+def test_c389_unconfigured_board_owner_start_is_refused(world):
+    """card_start on a board without an orchestrator config checks contracts too."""
+    first, second = world.card(board=PLAIN), world.card(board=PLAIN)
+    _declare(world, first, "src/api/**")
+    _declare(world, second, "src/api/users.py")
+    world.person_start(first)
+    exc = refused("path_overlap", world.person_start, second)
+    assert exc.details["card"] == first
+    assert world.jobs_for(second) == []
+
+
+def test_c389_unconfigured_board_agent_start_is_refused(world):
+    first, second = world.card(board=PLAIN), world.card(board=PLAIN)
+    _declare(world, first, "src/api/**")
+    _declare(world, second, "src/{api,web}/users.py")
+    tools.card_start(world.ctx(world.a), first, world.machine_id, "demo", "worker")
+    refused(
+        "path_overlap",
+        tools.card_start,
+        world.ctx(world.a),
+        second,
+        world.machine_id,
+        "demo",
+        "worker",
+    )
+    assert world.jobs_for(second) == []
+
+
+def test_c389_unconfigured_board_disjoint_and_no_contract_start(world):
+    cards = [world.card(board=PLAIN) for _ in range(4)]
+    _declare(world, cards[0], "src/api/**")
+    _declare(world, cards[1], "docs/**")
+    world.person_start(cards[0])
+    world.person_start(cards[1])
+    world.person_start(cards[2])  # no contract: unchanged
+    assert len(world.all_jobs()) == 3
+
+
+def test_c389_contracts_are_read_inside_the_lock(world, monkeypatch):
+    """A contract declared after the pre-transaction snapshot is still seen."""
+    first, second = world.card(), world.card()
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    real = runner_bridge.prepare
+
+    def declare_after_prepare(*args, **kwargs):
+        plan = real(*args, **kwargs)
+        _declare(world, first, "pkg/**")
+        _declare(world, second, "pkg/mod.py")
+        return plan
+
+    monkeypatch.setattr(runner_bridge, "prepare", declare_after_prepare)
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+
+
+def test_c389_contract_is_canonical_when_stored(world):
+    card = world.card()
+    assert world.update(card, paths=["src//api/./x/", ".", "a/b/../c"])["paths"] == [
+        "src/api/x",
+        "**",
+        "a/c",
+    ]
+    for bad in (["../x"], ["a/../.."], ["*/../x"]):
+        with pytest.raises(ToolError, match="path"):
+            world.update(card, paths=bad)

@@ -105,8 +105,6 @@ class Plan:
     orchestration_on: bool = False
     workers: frozenset = frozenset()
     workspace_dir: str | None = None
-    contract: tuple = ()  # the card's path contract (globs)
-    contracts: tuple = ()  # (card, globs) of the board's other cards that declare one
 
     @property
     def role(self) -> schema.Role:
@@ -283,15 +281,6 @@ def prepare(
                 (board_row["id"],),
             ).fetchall()
         )
-        declared = tuple(
-            (row["id"], tuple(globs))
-            for row in conn.execute(
-                "SELECT id, paths FROM tasks WHERE board_id=? AND id!=? AND status!='done' "
-                "AND paths IS NOT NULL",
-                (board_row["id"], card_row["id"]),
-            ).fetchall()
-            if (globs := contracts.parse(row["paths"]))
-        )
     cap = config.max_agents if limit is None else min(config.max_agents, limit)
     return Plan(
         board=board_row["slug"],
@@ -312,8 +301,6 @@ def prepare(
         orchestration_on=on,
         workers=workers,
         workspace_dir=gateway.workspace_dir(workspace_id),
-        contract=tuple(contracts.parse(card_row["paths"] if "paths" in card_row.keys() else None)),
-        contracts=declared,
     )
 
 
@@ -355,40 +342,65 @@ def request_key_for(path: str, *, role=None, step_key=None, event=None, request_
 # -------------------------------------------------------------- fenced start
 
 
-def _running(conn, plan: Plan, now: str) -> set:
-    """Cards that hold a start on the board: live runner jobs and doing cards that have
-    a ``conn:`` assignee."""
+def _live_cards(conn, board: str, now: str) -> set:
+    """Cards with a live runner job on ``board``: queued, leased, starting or uncertain,
+    or started within the hold, whatever the card's own status says."""
     rows = conn.execute(
         "SELECT DISTINCT task_number FROM runner_jobs WHERE board_slug=? AND "
         "(state IN ('queued','leased','starting','uncertain') "
         "OR (state='started' AND started_at>?))",
-        (plan.board, jobs._after(now, -jobs.STARTED_HOLD_SECONDS)),
+        (board, jobs._after(now, -jobs.STARTED_HOLD_SECONDS)),
     ).fetchall()
-    return {row[0] for row in rows} | set(plan.doing)
+    return {row[0] for row in rows}
 
 
 def _cap_count(conn, plan: Plan, now: str) -> int:
-    return len(_running(conn, plan, now))
+    return len(_live_cards(conn, plan.board, now) | set(plan.doing))
 
 
-def _contract_refusal(conn, plan: Plan, now: str) -> StartRefused | None:
-    """Refuse a card whose path contract overlaps a running card's. Cards with no
-    contract, and running cards with none, never conflict."""
-    if not plan.contract or not plan.contracts:
-        return None
-    running = _running(conn, plan, now) - {plan.card}
-    for card, globs in plan.contracts:
-        if card not in running:
-            continue
-        pair = contracts.first_overlap(plan.contract, globs)
+def contract_refusal(
+    conn, *, workspace_dir, board_slug: str, board_id: int, card: int, now: str
+) -> StartRefused | None:
+    """``path_overlap`` when ``card`` declares a path contract that overlaps the contract
+    of another card of the board that holds a start: a live runner job (whatever the
+    card's status) or ``doing`` with a ``conn:`` assignee. Call it inside the runner
+    write transaction (``conn``): the contracts are read there, next to the live jobs.
+    A card with no contract, or running next to cards with none, is never refused."""
+    from commonplace.projects import orchestration as orch
+
+    live = _live_cards(conn, board_slug, now)
+    with orch.board_read(workspace_dir) as boards:
+        row = boards.execute("SELECT paths FROM tasks WHERE id=?", (card,)).fetchone()
+        mine = contracts.parse(row["paths"] if row is not None else None)
+        if not mine:
+            return None
+        running = live | {
+            r["id"]
+            for r in boards.execute(
+                "SELECT id FROM tasks WHERE board_id=? AND status='doing' "
+                "AND assignee LIKE 'conn:%'",
+                (board_id,),
+            )
+        }
+        running.discard(card)
+        declared = [
+            (r["id"], contracts.parse(r["paths"]))
+            for r in boards.execute(
+                "SELECT id, paths FROM tasks WHERE board_id=? AND paths IS NOT NULL ORDER BY id",
+                (board_id,),
+            )
+            if r["id"] in running
+        ]
+    for other, globs in declared:
+        pair = contracts.first_overlap(mine, globs)
         if pair is not None:
             return StartRefused(
                 "path_overlap",
-                f"card #{plan.card} declares {pair[0]!r}, which overlaps {pair[1]!r} of "
-                f"running card #{card}; start it after #{card} finishes or narrow the paths",
-                card=card,
-                paths=list(plan.contract),
-                other_paths=list(globs),
+                f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of "
+                f"running card #{other}; start it after #{other} finishes or narrow the paths",
+                card=other,
+                paths=mine,
+                other_paths=globs,
             )
     return None
 
@@ -469,7 +481,14 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
     if plan.refusal is not None:
         raise StartRefused(plan.refusal, f"card is not startable: {plan.refusal}")
     # 3. path contracts: no two running cards own the same files.
-    overlap = _contract_refusal(conn, plan, now)
+    overlap = contract_refusal(
+        conn,
+        workspace_dir=plan.workspace_dir,
+        board_slug=plan.board,
+        board_id=plan.board_id,
+        card=plan.card,
+        now=now,
+    )
     if overlap is not None:
         raise overlap
     # 4. cap.
