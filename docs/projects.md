@@ -135,7 +135,16 @@ in Project settings, choosing machines and confirming trust. The API is
 `{"confirm":true,"machines":["<machine-id>"]}`. Trust allows the seat to request
 starts, inspect status, cancel its own starts, read permitted project data and
 repository rules, release/approve and annotate cards, and stamp trusted submissions.
-It does not allow board creation or handoff launch. Invalid grants return 400,
+It does not allow board creation or handoff launch.
+
+A trusted seat can also hold the orchestrator lease of its own board and role
+(`orch_resume`, `orch_heartbeat`, the journal and gates) with no further setup:
+no orchestrator config and no server-side step. Starts on such a board still use
+`card_start`; `orch_card_start` needs an accepted config with `[runner]`. Before
+trust the seat is refused `not_allowed` with a pointer to Project settings; it is
+never allowed on another project's board.
+
+Invalid grants return 400,
 unknown machines 404, and revoked/disabled machines or conflicting authority 409.
 A database lock timeout returns 409 `busy`. The whole change rolls back. Only signed-in workspace owners may use this route.
 

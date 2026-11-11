@@ -458,23 +458,39 @@ def _board(ctx, board):
 
 def _snapshot(ctx, st, board, role):
     """Pre-transaction control snapshot: live config with [runner], role, machine and
-    the caller's requester authority (lock order: control reads before runner.sqlite3)."""
+    the caller's requester authority (lock order: control reads before runner.sqlite3).
+    Without ``[runner]`` only the board's own trusted project seat passes, for its seat
+    role; the version it returns may then be ``None``."""
     principal = ctx.principal
     if getattr(principal, "runner", None) is not None:
         raise DurableError("not_allowed", 403, "requester not allowed")
     _check_role(role)
     with st.connection() as conn:
         version = orch_store.accepted_in(conn, board)
-    if version is None:
-        raise DurableError("not_configured", 409, "board has no orchestrator config")
-    try:
-        config = version.config()
-    except ValueError:
-        raise DurableError("config_invalid", 409, "live config does not parse") from None
-    if not config.has_runner:
-        raise DurableError("not_configured", 409, "board has no orchestrator config")
+    config = None
+    if version is not None:
+        try:
+            config = version.config()
+        except ValueError:
+            raise DurableError("config_invalid", 409, "live config does not parse") from None
+    seat = None if principal.person else _seat(ctx)
+    if config is None or not config.has_runner:
+        # No machine grants authority here: only the board's own trusted seat coordinates.
+        if seat is None or seat[:2] != (board, role):
+            raise DurableError("not_configured", 409, "board has no orchestrator config")
+        if not seat[2]:
+            raise DurableError(
+                "not_allowed",
+                403,
+                "this seat is not trusted yet; a workspace owner approves its start "
+                "permissions in Project settings",
+            )
+        return version
     if role not in config.roles:
         raise DurableError("unknown_role", 404, "role not found")
+    if seat is not None and seat[0] != board:
+        # A project seat coordinates its own board, whatever a machine grants it.
+        raise DurableError("not_allowed", 403, "requester not allowed")
     machine = registry.get_machine(ctx.db, principal.workspace_id, config.runner.machine)
     if machine is None or machine["revoked_at"]:
         raise DurableError("not_allowed", 403, "requester not allowed")
@@ -483,8 +499,25 @@ def _snapshot(ctx, st, board, role):
     return version
 
 
+def _seat(ctx):
+    """``(board, role, trusted)`` of the project seat this live PAT holds, else ``None``."""
+    from commonplace.projects import seats
+
+    principal = ctx.principal
+    cid = getattr(principal, "connection_id", None)
+    live = ctx.db.authenticate_connection(cid) if cid else None
+    if live is None or live.auth != "pat" or live.workspace_id != principal.workspace_id:
+        return None
+    held = seats.held_by(ctx.db, principal.workspace_id, live.connection_id)
+    return None if held is None else (*held, live.policy.trust == "trusted")
+
+
 def _same_version(conn, board, version):
     current = orch_store.accepted_in(conn, board)
+    if version is None:  # a seat's lease on a board without a config
+        if current is not None:
+            raise DurableError("config_changed", 409, "live config changed; retry")
+        return
     if current is None or (current.version, current.sha256) != (version.version, version.sha256):
         raise DurableError("config_changed", 409, "live config changed; retry")
 

@@ -325,6 +325,10 @@ visibility for slim, standard and full profiles remain unchanged.
 
   - Connect alone never grants this trust.
 
+  - A trusted project seat may hold the orchestrator lease of its own board and seat role while the board has no `[runner]` config; no config or requester edit is needed. Its direct starts are unchanged. Demotion, switch-off or revocation ends that authority at the next lease call.
+
+  - A project seat never claims another board's lease, also when that board's runner machine lists it as a requester.
+
 - **Lock order.**
 
   - Control snapshots precede waits.
@@ -691,7 +695,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 | Question | Default |
 |---|---|
 | Who approves a config | The owner only. |
-| Who may hold an orchestrator lease | A principal that passes `requester_ok` for the configured machine (a listed trusted PAT or the person owner). |
+| Who may hold an orchestrator lease | A principal that passes `requester_ok` for the configured machine (a listed trusted PAT or the person owner); a project seat only on its own board. Without `[runner]`: only the board's own trusted project seat, for its seat role. |
 | Lease TTL | 1800 s (G). |
 | Wait budgets | Guesses until measured (see Numbers). |
 | CLI acts as owner | Yes, through data-dir access. |
