@@ -242,6 +242,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The board API guide documents `task_snooze`, `task_unsnooze`, `include_snoozed`, the `snoozed` waiting reason and `/api/card-snooze`; the contract lists `card.snoozed` and `card.woke`.
+
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
 
   - The OAuth contract records the displayed callback origin, numeric-host tightening and required pre-deploy registration inventory.
@@ -598,6 +600,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - `tests/test_card_snooze.py` and the regenerated `tests/spaces_surfaces.json` (two snooze tools, `include_snoozed`).
 
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
@@ -994,6 +998,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
 
+  - The extension seam lists `commonplace.snooze`, installed after agent_schedules.
+
   - Canonical Space REST aliases mapped to existing board tool authority.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
@@ -1220,6 +1226,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/routines.py`, `commonplace/callstack.py`
 - **Owns:**
 
+  - Card snoozes: `task_snooze` / `task_unsnooze` and the `snoozed` card view and waiting reason (`why.py`), the `card_snoozes` table, take-next and list filtering and the lazy wake in `_expire`; the rules live in `commonplace/snooze/` (see card-snooze).
+
   - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest.
 
   - Canonical Space REST response projection and typed creation refusals.
@@ -1325,6 +1333,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/runner/`, `docs/runner.md`
 - **Owns:**
 
+  - A card start is refused with `snoozed` while the card is snoozed (`predicate.startable`, `NOT_CLAIMABLE`).
+
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
 
 
@@ -1397,6 +1407,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
 - **Owns:**
+
+  - The no-progress nudge (`stall.py`) and the unstarted-todo list (`durable.py`) ignore snoozed cards.
 
   - A `model_unresolved` start refusal names the role and board and where an owner sets the model (`details.role`, `details.config_role`, `details.board`); `Config.start_roles` and `split_role` give the roles a start can run to `prepare()` and to Needs me.
 
@@ -1532,6 +1544,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `commonplace/rules/`, `commonplace/guards/`, `commonplace/privacy.py`, `commonplace/redact.py`
 - **Owns:**
+
+  - `task_snooze` and `task_unsnooze` in the checked write inventory.
 
   - Canonical Space create in the checked REST write inventory.
 

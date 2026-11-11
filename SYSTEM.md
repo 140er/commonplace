@@ -1398,6 +1398,7 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
   - Approval of the waiver list below is a manual owner review.
 
 - **Scheduled prompts:** A schedule's prompt is delivered as an owner-authored message on the board the agent coordinates, through the ordinary `space_message` wake; delivery is at most once per due time (a missed or interrupted due time is recorded, never replayed), is re-authorised at each due time, and is limited to coordinators. Non-coordinator agents have no existing prompt channel that avoids creating a card, so they are not supported yet. The worker polls every 30 seconds, so a prompt can arrive up to that much after its due time.
+- **Card snooze:** A Backlog or Todo card can be snoozed until a time or until another card is done; it is hidden from work offers, never started, and wakes once (also after a restart) through a lazy wake on board reads plus a worker that polls every 30 seconds. Only the owner or the assignee snoozes. Free-text conditions and snoozing a thread are not built; a runner-configured board does not auto-start a card on wake (a wake is not a todo event).
 
 ## Open dependencies (D1–D3)
 
