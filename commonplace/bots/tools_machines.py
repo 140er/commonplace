@@ -6,11 +6,14 @@ server-built label, and the person's tap runs exactly that. Everything goes thro
 sentence. Running commands is only offered while some machine reports that it can.
 """
 
-from commonplace import redact
+import logging
+
 from commonplace.bots import blocks, machines
 from commonplace.bots.tools import Result, Tool, register
 from commonplace.extensions import ToolError
+from commonplace.redact import redact
 
+LOG = logging.getLogger(__name__)
 NOT_VERIFIED = "Attested by the workspace owner, not verified by Commonplace."
 IN_FLIGHT = frozenset(("queued", "leased", "starting"))
 LISTED = 8  # machines handed to the model; the block shows them all
@@ -24,7 +27,7 @@ MACHINE = {
 
 
 def _clean(text, limit=80) -> str:
-    return redact.redact(text)[0][:limit]
+    return redact(text)[0][:limit]
 
 
 def _task(turn, args) -> dict:
@@ -145,17 +148,22 @@ def _stop(turn, args):
         return Result(False, say=refusal)
     principal = turn.principal()
     cancelled, requested = [], []
-    try:
-        for row in live:
+    shown = ({"type": "work", "card": args["ref"]},)
+    for row in live:
+        try:
             state = machines.cancel_start(turn.gateway, principal, row["job"])["state"]
-            (cancelled if state == "cancelled" else requested).append(row["job"])
-    except machines.Refused as exc:
-        return Result(False, say=exc.text)
-    return Result(
-        True,
-        {"cancelled": cancelled, "cancel_requested": requested},
-        blocks=({"type": "work", "card": args["ref"]},),
-    )
+        except machines.Refused as exc:
+            if not (cancelled or requested):
+                return Result(False, say=exc.text)
+            done = len(cancelled) + len(requested)
+            return Result(
+                False,
+                {"cancelled": cancelled, "cancel_requested": requested},
+                blocks=shown,
+                say=f"I cancelled {done} of {len(live)} starts, but not the rest: {exc.text}",
+            )
+        (cancelled if state == "cancelled" else requested).append(row["job"])
+    return Result(True, {"cancelled": cancelled, "cancel_requested": requested}, blocks=shown)
 
 
 # run_command: only offered while some machine can run commands
@@ -273,7 +281,8 @@ def _status_aware(core):
             return shown
         try:
             rows = machines.start_status(reader.gateway, reader.principal, stored["card"])
-        except Exception:
+        except Exception as exc:  # the block stays as the core hydrator made it
+            LOG.warning("work block start lookup failed: %s", type(exc).__name__)
             return shown
         if any(row["state"] in IN_FLIGHT for row in rows):
             return {**shown, "status": "working"}

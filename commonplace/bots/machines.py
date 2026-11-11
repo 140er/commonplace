@@ -21,6 +21,7 @@ LOG = logging.getLogger(__name__)
 
 TRUSTS = ("owner_attested", "unbound")
 LIVE = frozenset(("queued", "leased", "starting"))
+QUIET = frozenset(("not_allowed", "card_not_found"))
 
 SENTENCES = {
     "no_machine": "No machine is ready to start this task right now.",
@@ -49,6 +50,7 @@ SENTENCES = {
     "already_finished": "That agent has already launched or finished, so it can't be stopped from here.",
     "uncertain": "It isn't clear whether that agent launched; a workspace owner has to resolve it.",
     "changed": "That start changed while I was working on it; check its status and try again.",
+    "machine_not_configured": "That machine has no project or kind of work set up yet. An owner can fix that in the runner settings.",
     "unsupported": "Running commands on machines is not available yet.",
 }
 # Runner refusal texts ("no: <text>" or a Conflict message) that have no code of their own.
@@ -195,6 +197,8 @@ class RunnerProvider:
             else:
                 row = self._choose(ctx, card, machine)
                 projects, topics = grant_values(row, "projects"), grant_values(row, "topics")
+                if not projects or not topics:
+                    raise Refused("machine_not_configured")
                 # The board's own name when the machine allows it, else the owner's first grant.
                 project = board["slug"] if board["slug"] in projects else projects[0]
                 args = {"machine": row["id"], "project": project, "topic": topics[0]}
@@ -215,7 +219,11 @@ class RunnerProvider:
         ctx = ToolContext(principal, gateway)
         try:
             rows = tools.card_start_status(ctx, card)
-        except ToolError:
+        except ToolError as exc:
+            code = _refusal(exc).code
+            # Not allowed or not visible is the normal answer for a reader who may not use machines.
+            if code not in QUIET:
+                LOG.warning("start status failed: %s", code)
             return []
         return [
             {key: row[key] for key in ("job", "machine_label", "state", "updated_at")}
@@ -341,7 +349,7 @@ def start_status(gateway, principal, card) -> list:
     rows = []
     for provider in providers():
         rows.extend(provider.start_status(gateway, principal, card))
-    return sorted(rows, key=lambda row: row["updated_at"])
+    return sorted(rows, key=lambda row: row.get("updated_at") or "")
 
 
 def cancel_start(gateway, principal, job) -> dict:
