@@ -177,6 +177,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Thread-store storage budgets convert SQLCipher's text `page_size` (and `page_count`) to integers, so budgeted writes in encrypted workspaces are checked rather than failing with a type error.
 
 
+### Compact rules index
+
+- `session_start rules=index` and `rules_get effective=true format=index` list each effective rule as key, section, scope, size of the full text and a short quoted title (the owner summary, else the first sentence), so a large rule set costs a few kilobytes instead of the whole text.
+- `rules_get keys=[...]` returns the selected rules in full, one key-labelled line each, and names unknown keys. Both are partial reads: they never record the set as served and give no `rules_seq`, so a checked connection must still read the full set before a write. In warn or enforce mode the index says so.
+- The default of both tools is unchanged, and replies stay within the existing reply size bound.
+
 ### Chroma session rebuilds
 
 - If a session's cached palace database disappears, invalidate that palace's shared Chroma System before constructing another client.
@@ -657,6 +663,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - OAuth token and refresh responses (and the stored token rows) carry only the
   granted scopes the connection still holds after policy and role intersection,
   so a withdrawn `cards:decide` never reappears in a refresh.
+
+- Test collection: the consent and Agents browser test skips without Playwright
+  (collecting `tests/` must never error); `CP_BROWSER_E2E=1` makes a missing
+  Playwright fail instead.
 
 ### Explicit imported-history reader consent
 
@@ -1169,8 +1179,23 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
   bounds acquisition; this contract makes no timing or constant-time claim.
 - Imported holder-room counts can include rows outside a consented range,
   as before this projection; content reads retain their separate range gate.
-  Search `total_before_filter` can include hidden candidates inside a visible
-  wing before the response gate filters them.
+- Restricted structured drawer searches gate each ranked prefix before
+  applying the requested result limit, for explicit wings and fan-out alike.
+  A short readable page retries with doubled worker limits until filled,
+  the worker returns a short prefix, or the 100-candidate bound is reached.
+  At most eight worker searches share one existing request deadline; ranking
+  still uses the same joint wing pool. Readable hits beyond that bound may
+  remain unavailable. Every-wing principals keep their existing search path.
+- Refill requires an attached gateway handoff context; standalone worker
+  helpers retain their exact response shape and existing authorization gates.
+  Pinned-wing searches retain the original forwarded worker response, including
+  protocol errors and opaque replies, and refill only structured search hits.
+  The first search and every refill share the same deadline and call bound.
+- Restricted structured responses omit `total`, `total_before_filter` and
+  `filtered_by_max_distance`; any `count` describes only returned readable
+  hits. No hidden-candidate count or refill diagnostic is returned. Restricted
+  CLI-compatible search acquires structured hits, so it uses the same refill
+  before the final gate and rendering.
 - Other overview, legacy
   provenance and owner search-index progress remain separate residuals.
 
@@ -1437,6 +1462,10 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 - Owner-approved waiver ids, one per line as `W<n>: <scope>`.
 
 - None are approved yet.
+
+### After Done: archive hides, never deletes
+
+A done card is final. A signed-in person (owner or member) may archive it, carry on from it in a new linked backlog card, and pin key facts to its Pocket; connections may not. Archiving only flags the card in `card_archive`: it leaves board lists and counts but stays readable and restorable, and nothing is deleted (restore and unpin mark rows, they never remove them). Archived cards refuse updates and Pocket changes until restored. These routes are person-only, so they sit outside the agent-write rules inventory.
 
 ### Reassigning active work
 

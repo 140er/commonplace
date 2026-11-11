@@ -383,8 +383,13 @@ class BoardStore:
         self.create = create
         self.path = str(directory / "boards.sqlite3")
         with self.connection() as conn:
+            from .lifecycle import SCHEMA as LIFECYCLE_SCHEMA
+
             conn.executescript(
-                Path(__file__).with_name("schema.sql").read_text() + BLOCKERS_SCHEMA + GOALS_SCHEMA
+                Path(__file__).with_name("schema.sql").read_text()
+                + BLOCKERS_SCHEMA
+                + LIFECYCLE_SCHEMA
+                + GOALS_SCHEMA
             )
             conn.execute("BEGIN IMMEDIATE")
             try:
