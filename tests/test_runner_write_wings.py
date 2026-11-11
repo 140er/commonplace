@@ -179,6 +179,14 @@ def test_write_set_change_is_audited_and_resets_the_binding(signup_hub, owners):
     ]
 
 
+def _refused(response):
+    """The write-set refusal itself, not just any error."""
+    assert response.get("result", {}).get("isError"), response
+    assert (
+        response["result"]["content"][0]["text"] == "no: this connection cannot change this board"
+    ), response
+
+
 def test_submissions_follow_read_scope_not_the_write_set(signup_hub, owners):
     """Characterises existing behaviour (unchanged by write_wings): comments and asks are
     submissions, gated by the worker's read wings rather than its write set."""
@@ -193,9 +201,20 @@ def test_submissions_follow_read_scope_not_the_write_set(signup_hub, owners):
     }
     _ok(_tool(hub, worker, "task_comment", task=readable["number"], text="Synthetic note."))
     _ok(_tool(hub, worker, "ask", board="notes", **question))
-    # Asking about an existing card hands it off, which needs write access to its wing.
-    response = _tool(hub, worker, "ask", task=readable["number"], **question)
-    assert "error" in response or response["result"].get("isError"), response
+    # Asking about an existing unassigned card hands it off, which needs write access.
+    _refused(_tool(hub, worker, "ask", task=readable["number"], **question))
+    # A card assigned to the worker can be handed off by asking, outside the write set too.
+    from commonplace.boards.store import BoardStore
+
+    actor = hub.db.authenticate_connection(
+        _machine_row(hub, owner, machine)["worker_connection_id"]
+    ).actor
+    assigned = card(hub, owner, board="notes")
+    with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET status='doing', assignee=? WHERE id=?", (actor, assigned["number"])
+        )
+    _ok(_tool(hub, worker, "ask", task=assigned["number"], **question))
     response = _tool(hub, worker, "task_comment", task=unreadable["number"], text="Synthetic.")
     assert "error" in response or response["result"].get("isError"), response
     response = _tool(hub, worker, "ask", board="shared", **question)
@@ -237,9 +256,10 @@ def test_worker_cannot_rewrite_its_own_question_on_a_read_only_board(signup_hub,
     ).actor
     before = _task_row(hub, owner, asked)
     assert before["status"] == "review" and before["return_to"] == actor, before
-    response = _tool(hub, worker, "task_update", task=asked, title="Worker rewrote its question")
-    assert "error" in response or response["result"].get("isError"), response
+    _refused(_tool(hub, worker, "task_update", task=asked, title="Worker rewrote its question"))
     assert _task_row(hub, owner, asked)["title"] == before["title"]
+    # Linking through the tool is refused by the same check, before any link is written.
+    _refused(_tool(hub, worker, "task_update", task=asked, link="drawer_synthetic"))
     # The memory-link path has the same own-card bypass; the worker has no link tool, so
     # check the store with its principal directly.
     from commonplace.boards.store import BoardStore
@@ -330,6 +350,31 @@ def test_restricted_connections_keep_lessons_in_their_write_wing(signup_hub, own
             "UPDATE tasks SET status='doing', assignee=? WHERE id=?", (actor, task["number"])
         )
     assert _lesson_wing(hub, owner, agent, task) == "inbox"
+
+
+def test_untrusted_connections_keep_lessons_in_their_write_wing(signup_hub, owners):
+    """The untrusted half of the restricted rule: a lesson on a card in an extra write wing
+    still goes to the connection's own write wing."""
+    hub, owner = signup_hub, owners["A"]
+    _enroll(hub, owner, wings=WINGS)
+    agent_id, agent = cli_token(
+        owner,
+        "untrusted-agent",
+        profile="standard",
+        trust="untrusted",
+        read_wings=",".join(WINGS),
+        write_wing="compute",
+        write_wings="notes",
+    )
+    actor = hub.db.authenticate_connection(agent_id).actor
+    task = card(hub, owner, board="notes")
+    from commonplace.boards.store import BoardStore
+
+    with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET status='doing', assignee=? WHERE id=?", (actor, task["number"])
+        )
+    assert _lesson_wing(hub, owner, agent, task) == "compute"
 
 
 def test_registry_permission_error_is_a_403_not_a_500(signup_hub, owners, monkeypatch):
