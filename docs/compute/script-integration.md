@@ -93,3 +93,8 @@ read-only runtime. The positive test skips only when no fixture is configured;
 a configured fixture must pass prerequisite checks and execute successfully.
 Synthetic wire tests do not replace this verification. The application must stay
 disabled without independent runtime verification.
+
+`python -m commonplace.compute.target_installer` provisions this fixture in one root
+invocation and writes the protected config; see RUNNING.md. The installer is
+idempotent and reversible but unverified on a real host until a disposable VM run;
+confined execution additionally needs the bubblewrap `--disable-userns` fix.
