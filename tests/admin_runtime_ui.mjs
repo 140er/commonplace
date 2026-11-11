@@ -110,6 +110,16 @@ try {
     writes()[1].resolve({changed:true,grant_version:9});await flush();
     write('requester-add','conn_c');
     assert.deepEqual(sent(),['7','8','9'],'early reload: the third edit sends the version the second returned');
+    writes()[2].reject(Object.assign(new Error('x'),{status:500}));await flush();
+    reads().at(-1).resolve(runtime(9,seen));await flush();
+    // Newer: a reload that already shows another session's later edit (version 10) is not rolled back by our answer (8).
+    requests.length=0;
+    ui.refreshSection('runtime');reads().at(-1).resolve(runtime(7,[]));await flush();
+    write('requester-add','conn_a');
+    ui.refreshSection('runtime');reads().at(-1).resolve(runtime(10,seen));await flush();
+    writes()[0].resolve({changed:true,grant_version:8});await flush();
+    write('requester-add','conn_b');
+    assert.deepEqual(sent(),['7','10'],'a newer version read by the page is kept');
   } else if(process.argv[2]==='page-error') {
     const payload={workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Existing project'}],count:101,has_more:true,next_cursor:'page-two'},machines:{state:'ready',items:[],count:0}};
     find('runtime').resolve(payload);await flush();
