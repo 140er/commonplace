@@ -2007,7 +2007,11 @@ def test_other_agents_cannot_move_review(hub, env, surface, needs_review, member
                 {"version": before["version"], "status": status},
             )
             assert code == 403
-        assert "card is waiting on a person" in str(refused)
+        if surface == "rest" and status == "done":  # The REST Done refusal explains itself.
+            assert refused["code"] == "done_refused" and refused["next_step"], refused
+            assert "waiting for a person's decision" in refused["error"], refused
+        else:
+            assert "card is waiting on a person" in str(refused)
         assert owner.task_show(number) == before
         assert number in {card["number"] for card in owner.needs_me()["asks"]}
 
