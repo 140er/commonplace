@@ -583,6 +583,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
+  - `tests/test_runner_start_context.py` is the measurement and the contract of a start prompt's card context; `tests/test_runner_start.py` allows `card_context` beside the identifier keys of a lease.
+
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
@@ -1345,6 +1347,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_orch_areas.py` covers area roundtrips, ordered topology errors, frozen experiments, owner boundaries and complete refusal snapshots through store, MCP, REST and local CLI.
 
   - Lease authority without `[runner]` belongs only to the board's own trusted project seat for its seat role (`not_configured` for everyone else, `not_allowed` with the Project settings hint for that seat before trust); a seat is refused `not_allowed` on other boards. Covered by `tests/test_projects_seat_lease.py`.
+
+  - `tests/test_orch_runner.py` pins the lease keys of a plain start: the identifiers plus `card_context`; the pinned message of a configured start stays unchanged, the card context travels beside it.
 
   - The `tests/test_orch_` files listed in Paths and `tests/test_docs_obligations.py`; R22 in `tests/test_orch_checks.py` covers misplaced labels, missing files, accepted label forms and repository-root resolution.
 
