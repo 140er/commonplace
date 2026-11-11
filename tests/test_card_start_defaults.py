@@ -124,7 +124,7 @@ def test_a_member_is_refused_with_a_clear_message_and_no_job(world, member):
         assert status in (403, 404), payload
         assert payload["error"]
     status, payload = options(member, card)
-    assert status == 403
+    assert status == 403, (status, payload)
     assert "workspace owner" in payload["error"]
     assert world.all_jobs() == []
 

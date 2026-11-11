@@ -80,4 +80,5 @@ def register(gateway):
 
     gateway.add_route("POST", "/api/card-starts", route)
     gateway.add_route("GET", "/api/card-starts", route)
+    gateway.add_route("GET", "/api/card-starts/options", route)
     gateway.add_prefix_route("POST", "/api/card-starts/", route)
