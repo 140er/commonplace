@@ -66,7 +66,8 @@ class SnoozeWorker:
         return woken
 
     def _workspace(self, workspace_id: str, when: datetime) -> int:
-        directory = self.gateway.workspace_dir(workspace_id)
+        # Not gateway.workspace_dir: that creates the directory, and a pass must not.
+        directory = str(self.gateway.supervisor.workspace_dir(workspace_id))
         if not os.path.exists(os.path.join(directory, "boards.sqlite3")):
             return 0
         with orch.board_read(directory) as conn:

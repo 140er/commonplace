@@ -483,3 +483,12 @@ def test_schedule_time_at_resolves_wall_times_and_offsets():
             times.at(bad, ams)
     with pytest.raises(ValueError):
         times.at("2030-01-01T09:00")
+
+
+def test_a_pass_creates_no_directory_for_a_workspace_without_boards(hub, fake_clock):
+    user = hub.db.create_user("empty@example.test")
+    empty = hub.db.create_workspace("empty", user, personal=True)
+    path = hub.gateway.supervisor.workspace_dir(empty)
+    assert not path.exists()
+    assert SnoozeWorker(hub.gateway, start=False, now=lambda: fake_clock.epoch).run_once() == 0
+    assert not path.exists()
