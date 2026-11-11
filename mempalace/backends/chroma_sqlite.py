@@ -1479,7 +1479,8 @@ def sqlite_diary_rows(
             # Ordered here, not in SQL: text order is not instant order across
             # naive local and UTC timestamps. One agent's diary is small.
             stamped = conn.execute("SELECT e.id, stamp.string_value " + scope, params).fetchall()
-            if topics_limit is not None or exclude_topics is not None:
+            # An empty exclusion list leaves the page unchanged; skip the decode.
+            if topics_limit is not None or exclude_topics:
                 ids = [row_id for row_id, _ in stamped]
                 metas = _decoded_rows(conn, ids, with_row_ids=True, metadata_only=True)
                 if len(metas) != len(ids):

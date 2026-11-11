@@ -177,7 +177,11 @@ _DIARY_TOPIC_LIMIT = 1000
 
 def _topic_probe_result(topics, source):
     if len(topics) > _DIARY_TOPIC_LIMIT:
-        return {"error": "diary topic probe limit exceeded", "probe_fault": True}
+        return {
+            "error": "diary topic probe limit exceeded",
+            "probe_fault": True,
+            "topic_limit": _DIARY_TOPIC_LIMIT,
+        }
     return {"topics": topics, "source": source}
 
 
@@ -288,6 +292,9 @@ def tool_diary_read(agent_name: str, last_n: int = 10, wing: str = "", thread_sc
         if store == "sqlite":
             # The probe ran on SQLite; never count on a different store.
             return {"error": "diary store changed during read", "probe_fault": True}
+    elif _sqlite_diary_read(agent_name, 1, wing, {"probe": True}) is not None:
+        # The probe ran on the collection, but SQLite would serve now.
+        return {"error": "diary store changed during read", "probe_fault": True}
     col = _get_collection()
     if not col:
         return _collection_error_or_no_palace()

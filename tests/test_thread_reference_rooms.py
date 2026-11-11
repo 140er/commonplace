@@ -54,6 +54,13 @@ FORMS = {
     **{f"mcp_source_{name}": (lambda t: t.source_thread_id) for name in SOURCE_CHARS},
     "mcp_source_underscore": lambda t: f"{t.source_thread_id}_notes",
     "mcp_source_letter": lambda t: f"{t.source_thread_id}x",
+    # The stored namespace in another spelling; rooms resolve it the same way.
+    "mcp_source_upper_namespace": lambda t: t.source_thread_id,
+    "mcp_source_mixed_namespace": lambda t: "MCP:" + t.source_thread_id[4:],
+    "mcp_source_fullwidth_namespace": lambda t: "mcp:" + t.source_thread_id[4:],
+    "mcp_source_fullwidth_room": lambda t: "\uff4d\uff43\uff50\uff1a" + t.source_thread_id[4:],
+    # A bare stored "mcp:" is a prefix of every mcp: room, so it fails closed.
+    "mcp_source_bare_namespace": lambda t: "mcp:probe-" + t.id[4:],
     # A percent sign behind NFKC: decoding must repeat until the value is stable.
     "double_encoded": lambda t: "%EF%BC%85" + "74" + t.id[1:],
     # Still changing after the decode/NFKC round bound: hidden from every reader.
@@ -78,15 +85,29 @@ DIARY_TEXT = "Diary words about the plan"
 
 def secret(thread, form):
     """The identity that must not reach a non-reader, in any spelling."""
+    if form == "mcp_source_bare_namespace":
+        return "probe-" + thread.id[4:]
     if form.startswith("mcp_source"):
         # The ASCII-safe part: JSON escapes quotes and backslashes in the rest.
         return re.search(r"probe-[0-9a-f]+", thread.source_thread_id)[0]
     return thread.id[4:].upper() if form == "upper_case" else thread.id[4:]
 
 
+NAMESPACE_SOURCES = {
+    "mcp_source_upper_namespace": "MCP:",
+    "mcp_source_mixed_namespace": "Mcp:",
+    "mcp_source_fullwidth_namespace": "\uff4d\uff43\uff50:",
+    "mcp_source_fullwidth_room": "mcp:",
+}
+
+
 def store_thread(hub, form, *, actor, wing, source=None):
     probe = f"mcp:probe-{secrets.token_hex(6)}"
     char = SOURCE_CHARS.get(form.removeprefix("mcp_source_"))
+    if form in NAMESPACE_SOURCES:
+        source = source or NAMESPACE_SOURCES[form] + probe[4:]
+    elif form == "mcp_source_bare_namespace":
+        source = source or "mcp:"
     source = source or (
         probe + char + "tail"
         if form.startswith("mcp_source") and char is not None
@@ -150,6 +171,34 @@ def agent(hub, name, scopes, wings=("*",)):
 def blind(hub):
     """Sees every wing but cannot read any thread."""
     return agent(hub, "thread-blind", SCOPES)
+
+
+@pytest.fixture(autouse=True)
+def media_route(monkeypatch):
+    """Let unified media/code search run on the test palace and embedder."""
+    from mempalace import embedding
+    from mempalace.config import MempalaceConfig
+    from mempalace.searcher import media_search
+
+    class MediaConfig(MempalaceConfig):
+        @property
+        def embedding_model(self):
+            return "embeddinggemma2"
+
+    monkeypatch.setattr(media_search, "MempalaceConfig", MediaConfig)
+    original = embedding.get_embedding_function
+
+    class CodeQueries:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self.inner, name)
+
+        def embed_code_query(self, input):
+            return self.inner.embed_query(input)
+
+    monkeypatch.setattr(embedding, "get_embedding_function", lambda: CodeQueries(original()))
 
 
 @pytest.fixture
@@ -277,6 +326,9 @@ def test_thread_blind_reader_never_receives_thread_identity(
         "upper_case",
         "mcp_source",
         "mcp_source_slash",
+        "mcp_source_upper_namespace",
+        "mcp_source_fullwidth_namespace",
+        "mcp_source_bare_namespace",
         "double_encoded",
     ],
 )
@@ -377,7 +429,9 @@ def test_room_references_names_every_form():
             assert provenance_refs.room_references(make(Thread)) is None, form
             continue
         names = provenance_refs.room_references(make(Thread))
-        if form.startswith("mcp_source"):
+        if form == "mcp_source_bare_namespace":
+            assert any(n.startswith("mcp:") for n in names), form
+        elif form.startswith("mcp_source"):
             assert any(n.startswith(Thread.source_thread_id) for n in names), form
         else:
             assert Thread.id in names, form
@@ -619,6 +673,8 @@ def test_unavailable_memory_is_not_reported_as_an_empty_diary(
 DIARY_TEXT_READS = {
     "search": ("mempalace_search", {"query": "plan"}),
     "search_cli": ("mempalace_search", {"query": "plan", "cli_compatible": True}),
+    "search_media": ("mempalace_search", {"query": "plan", "include_media": True}),
+    "search_code": ("mempalace_search", {"query": "plan", "query_task": "code"}),
     "check_duplicate": ("mempalace_check_duplicate", {"content": DIARY_TEXT, "threshold": 0.9}),
     "get_drawer": ("mempalace_get_drawer", {"drawer_id": "probe-diary"}),
     "get_drawers": ("mempalace_get_drawers", {"drawer_ids": ["probe-diary"]}),
@@ -658,3 +714,70 @@ def test_member_rest_search_never_returns_hidden_topic_diary_words(hub, collecti
     seed(collection, config, thread.id)
     status, raw = rest(hub, headers, "/api/memory/search?q=plan")
     assert status == 200 and DIARY_TEXT not in raw, raw
+
+
+def diary_entry(collection, identifier, topic, stamp):
+    collection.add(
+        ids=[identifier],
+        documents=[f"Diary entry {identifier}"],
+        metadatas=[
+            {
+                "wing": "shared",
+                "room": "diary",
+                "hall": "hall_diary",
+                "topic": topic,
+                "type": "diary_entry",
+                "agent": "probe",
+                "filed_at": stamp,
+                "date": "2026-11-10",
+            }
+        ],
+    )
+
+
+def test_too_many_diary_topics_is_named_and_fails_closed(
+    hub, collection, config, blind, monkeypatch
+):
+    from mempalace import mcp_server
+
+    seed(collection, config, "general")
+    diary_entry(collection, "probe-diary-a", "topic-a", "2026-11-10T02:00:00Z")
+    diary_entry(collection, "probe-diary-b", "topic-b", "2026-11-10T03:00:00Z")
+    monkeypatch.setattr(mcp_server, "_DIARY_TOPIC_LIMIT", 2)
+    body = payload(mcp(hub, blind[1], "mempalace_diary_read", agent_name="probe", wing="shared"))
+    assert body == {
+        "error": "This agent has too many diary topics to check (more than 2);"
+        " diary entries are not shown"
+    }, body
+
+
+def test_collection_pinned_read_is_refused_when_sqlite_would_serve(hub, collection, monkeypatch):
+    """A store change refuses the read in both directions."""
+    from mempalace import mcp_server
+
+    visible_diary_entry(collection)
+    read = mcp_server.tool_diary_read
+    assert read("probe", wing="shared", thread_scope={"probe": True}).get("source") == "sqlite"
+    scope = {"exclude_topics": [], "source": "collection"}
+    refused = read("probe", wing="shared", thread_scope=scope)
+    assert refused.get("probe_fault") is True and "entries" not in refused, refused
+
+
+def test_plain_read_does_not_decode_diary_metadata(hub, collection, monkeypatch):
+    """An empty hidden-topic list leaves the SQLite page path unchanged."""
+    from mempalace import mcp_server
+    from mempalace.backends import chroma_sqlite
+
+    visible_diary_entry(collection)
+    decoded = []
+    original = chroma_sqlite._decoded_rows
+
+    def counting(conn, row_ids, *args, **kwargs):
+        decoded.append(kwargs.get("metadata_only", False))
+        return original(conn, row_ids, *args, **kwargs)
+
+    monkeypatch.setattr(chroma_sqlite, "_decoded_rows", counting)
+    read = mcp_server.tool_diary_read
+    page = read("probe", wing="shared", thread_scope={"exclude_topics": [], "source": "sqlite"})
+    assert [entry["topic"] for entry in page["entries"]] == ["general"], page
+    assert decoded == [False], decoded  # Only the page itself is hydrated.

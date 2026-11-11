@@ -1094,6 +1094,19 @@ class Mediator:
             return self._diary_probe_fault(type(exc).__name__)
         if isinstance(probe, dict) and set(probe) == {"error"}:
             return {"respond": probe}  # The same answer an unscoped read gives.
+        if (
+            isinstance(probe, dict)
+            and set(probe) == {"error", "probe_fault", "topic_limit"}
+            and type(probe["topic_limit"]) is int
+        ):
+            # Fails closed until the agent's diary has fewer distinct topics.
+            limit = probe["topic_limit"]
+            return {
+                "respond": {
+                    "error": f"This agent has too many diary topics to check (more than {limit});"
+                    " diary entries are not shown"
+                }
+            }
         topics = probe.get("topics") if isinstance(probe, dict) else None
         if (
             not isinstance(probe, dict)

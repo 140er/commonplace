@@ -21,6 +21,7 @@ import os
 import secrets
 import sqlite3
 import threading
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -149,6 +150,15 @@ def _stored_thread(row: Optional[sqlite3.Row]) -> Optional[StoredThread]:
         created_at=row["created_at"],
         created_by=row["created_by"],
     )
+
+
+def source_match_key(source: str) -> str:
+    """How a source ID is compared for room authorization: its hash-variant
+    base, NFKC-normalised, with an ``mcp`` namespace in any case as ``mcp:``."""
+    base = source.split("#sha256:", 1)[0]
+    text = unicodedata.normalize("NFKC", base)
+    namespace, sep, rest = text.partition(":")
+    return "mcp:" + rest if sep and namespace.lower() == "mcp" else text
 
 
 class ThreadStore:
@@ -740,26 +750,34 @@ class ThreadStore:
     def by_source_prefix(self, workspace_id: str, value: str) -> list[StoredThread]:
         """Threads whose source ID, or its hash-variant base, is a prefix of ``value``.
 
-        Literal binary comparison within the value's ``<namespace>:`` range, so
-        ``mcp:<source>_notes`` finds the threads filed under ``mcp:<source>``.
+        Both sides compare as ``source_match_key``: NFKC, with the ``mcp``
+        namespace in any case, so ``MCP:x``, ``Mcp:x`` and fullwidth spellings
+        match ``mcp:x``. ``mcp:<source>_notes`` finds the threads filed under
+        ``mcp:<source>``, and a bare stored ``mcp:`` matches every ``mcp:`` value.
         """
-        namespace = value[: value.find(":") + 1] if ":" in value else ""
-        if not namespace:
+        target = source_match_key(value)
+        if not target.startswith("mcp:"):
             return []
-        base = (
-            "CASE WHEN instr(source_thread_id, '#sha256:') > 0 "
-            "THEN substr(source_thread_id, 1, instr(source_thread_id, '#sha256:') - 1) "
-            "ELSE source_thread_id END"
-        )
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM threads WHERE workspace_id=? AND source_thread_id>=? "
-                "AND source_thread_id<? AND length(" + base + ") > length(?) "
-                "AND substr(?, 1, length(" + base + ")) = " + base + " COLLATE BINARY "
-                "ORDER BY id",
-                (workspace_id, namespace, namespace[:-1] + ";", namespace, value),
+            # Narrow by spelling; NFKC can only fold a non-ASCII first character.
+            candidates = self._conn.execute(
+                "SELECT id, source_thread_id FROM threads WHERE workspace_id=? AND "
+                "(lower(substr(source_thread_id, 1, 3)) = 'mcp' "
+                "OR unicode(source_thread_id) > 127) ORDER BY id",
+                (workspace_id,),
             ).fetchall()
-            return [_stored_thread(row) for row in rows]
+            ids = [
+                row[0]
+                for row in candidates
+                if source_match_key(row[1]).startswith("mcp:")
+                and target.startswith(source_match_key(row[1]))
+            ]
+            return [
+                _stored_thread(
+                    self._conn.execute("SELECT * FROM threads WHERE id=?", (thread,)).fetchone()
+                )
+                for thread in ids
+            ]
 
     def list_source_range(self, workspace_id, prefix, *, after=None, limit):
         """Page a literal source namespace in binary identity order."""

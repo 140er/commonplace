@@ -1730,7 +1730,10 @@ stored lower-case thread, so its readers keep the room. A T3 source ID may conta
 any character (`mcp:github.com/o/r`, spaces, quotes), so each `mcp:` occurrence
 (any case) names the whole remaining value, which is resolved through the
 workspace thread store: every stored source ID, or hash-variant base, that is a
-prefix of that remainder counts, including `mcp:<source>_notes`. One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
+prefix of that remainder counts, including `mcp:<source>_notes`. Both sides are
+compared after NFKC with the `mcp` namespace in any case, so stored or named
+`MCP:x`, `Mcp:x` and fullwidth spellings all match `mcp:x`, and a bare stored
+`mcp:` source is a prefix of every `mcp:` value (it fails closed). One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
 check (`provenance_refs.room_references`, used through
 `mirror_access.private_thread_reference`) cover every route that returns or
 writes a room or topic. Reads: drawer reads, search (structured and
@@ -1750,17 +1753,20 @@ unreadable thread before it counts or windows them, so `total` and `showing`
 cover visible entries; the final gate recounts any entry it still drops. The
 probe reports which store served it (the SQLite fast path or the collection),
 and the read is pinned to that store; a store change between the two refuses the
-read. The probe reports at most 1000 distinct topics. A diary read never falls
+read in either direction. The probe reports at most 1000 distinct topics; beyond
+that every read of that diary fails closed with an error saying the agent has too
+many diary topics to check. An empty hidden-topic list leaves the read's SQLite
+page path unchanged. A diary read never falls
 back to an unscoped count: a probe validation error is returned as the read's
 answer; paused or unavailable memory is reported exactly as on other routes (an
 error, with `retry_after_s` during an online-backup pause); any other probe fault
 is logged by class only and answered with an explicit error, for owners and
 everyone else. The diary `thread_scope` is server-only: the gateway drops any
 client value before every route and always sets its own, and the worker accepts
-it without listing it. A diary entry hidden by its topic is hidden everywhere its
-words could appear: search rows and `check_duplicate` matches carry the entry's
-`topic`, so the gate drops them from structured search, CLI search text and
-duplicate matches as well as from diary reads and drawer reads.
+it without listing it. A diary entry hidden by its topic is hidden from diary
+reads, drawer reads and listings, structured search (including unified media and
+code search), CLI search text and `check_duplicate` matches: search rows and
+duplicate matches carry the entry's `topic`, so the gate drops them.
 `check_duplicate` recomputes `is_duplicate` from the matches that pass the gate. Search acquisition counters
 and truncation flags (`total_before_filter`, `filtered_by_max_distance`,
 `date_filter_pool_truncated`, `candidates_truncated`,
@@ -1782,7 +1788,15 @@ over the citation length limit) are also hidden from every reader. Wing names
 are outside this check: a wing named like a thread ID is filtered by wing policy
 alone.
 
-CLI rendering decision (lead, 11 Nov 2026; replaces the earlier rule that
+Known residuals. The diary probe and the read are two worker calls: a hidden
+entry filed between them with a `filed_at` older than the newest `last_n`
+entries is neither excluded nor in the window, so `total` can count it once.
+Its words and topic are never returned. `mcp:` source IDs in knowledge-graph
+fact sources, tunnel labels and drawer provenance (`source_thread`,
+`source_kept.thread`) are checked only for thread IDs and capture references,
+not resolved as T3 sources; those paths predate this room check.
+
+CLI rendering rule (replaces the earlier rule that
 every-wing policies keep worker-rendered CLI output and search diagnostics):
 CLI-compatible search, for every principal, acquires structured hits and renders
 only after the same drawer gate as structured search: room, topic and provenance

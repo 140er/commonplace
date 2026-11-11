@@ -448,9 +448,9 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Search rows and `check_duplicate` matches carry a drawer's `topic` when it has one, so the gateway can hide diary entries whose topic names an unreadable thread wherever their words appear.
+  - Search rows (including unified media/code search) and `check_duplicate` matches carry a drawer's `topic` when it has one, so the gateway can hide diary entries whose topic names an unreadable thread from search, CLI search and duplicate checks.
 
-  - Diary reads accept a server-only `thread_scope` (declared with `x-mempalace-server-only`, so `tools/list` omits it): `probe` lists at most 1000 entry topics from metadata only and names the serving store, and `exclude_topics` with that `source` skips those entries before counting and windowing on the same store (the SQLite fast path or the collection); a changed store or any other scope is refused.
+  - Diary reads accept a server-only `thread_scope` (declared with `x-mempalace-server-only`, so `tools/list` omits it): `probe` lists at most 1000 entry topics from metadata only and names the serving store, and `exclude_topics` with that `source` skips those entries before counting and windowing on the same store (the SQLite fast path or the collection); a store change in either direction or any other scope is refused, an empty exclusion list leaves the SQLite page path unchanged, and an over-limit probe names the limit.
 
   - Local CLI and gated gateway CLI use the same pure drawer formatter, preserving headers, match scores, folded-copy labels, body whitespace conventions, empty results and BM25 fallback output. The gateway explicitly selects flat rows even when they carry import-authorization metadata and renders CLI text from gated rows for every principal; the local CLI keeps its metadata mode.
 
@@ -565,7 +565,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
-  - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls; count rows prove diary totals, search counters and duplicate flags describe only visible rows, and a partial source-family reader is refused; source IDs containing each character the old token scan stopped at, upper-case IDs, a client `thread_scope`, store pinning, probe faults, unavailable memory and hidden-topic diary words on search, CLI search, duplicate checks and REST search have their own rows.
+  - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls; count rows prove diary totals, search counters and duplicate flags describe only visible rows, and a partial source-family reader is refused; source IDs containing each character the old token scan stopped at, upper-case IDs, a client `thread_scope`, store pinning, probe faults, unavailable memory, hidden-topic diary words on search, CLI search, media/code search, duplicate checks and REST search, `mcp` namespace spellings, the topic cap and the empty-exclusion fast path have their own rows.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
@@ -912,7 +912,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The write-side room check shares the handoff thread-reference check, including diary and checkpoint diary topics, so a room or topic naming an unreadable thread in any form is refused as not found.
 
-  - Diary reads probe entry topics through the worker and exclude topics naming unreadable threads before the worker counts or windows entries, pinned to the probe's store. A client `thread_scope` never reaches the worker. A probe validation error is returned as the answer, paused or unavailable memory propagates as on other routes, and other probe faults are logged by class and answered with an explicit error; no read falls back to an unscoped count.
+  - Diary reads probe entry topics through the worker and exclude topics naming unreadable threads before the worker counts or windows entries, pinned to the probe's store. A client `thread_scope` never reaches the worker. A probe validation error is returned as the answer, an over-limit probe answers that the agent has too many diary topics to check, paused or unavailable memory propagates as on other routes, and other probe faults are logged by class and answered with an explicit error; no read falls back to an unscoped count.
 
   - CLI-compatible search, for every principal, acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
@@ -1356,7 +1356,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - `provenance_refs.THREAD_ID` is the one thread-ID definition (stores, recall and scans). `room_references` names the lower-cased thread IDs and the whole remaining value after each `mcp:` in a room, topic or link across the raw value and repeated decode/NFKC rounds until stable, and returns None for undecodable or still-changing values; `private_thread_reference` resolves source IDs through `by_source_prefix` (every stored source or hash-variant base that begins the value) and hides any value naming a thread the reader cannot read, in rooms, diary topics and read_wing room filtering. The gate recounts diary `total`/`showing` and recomputes `is_duplicate` after dropping rows. Ordinary words such as `thr_deadline` name no thread.
+  - `provenance_refs.THREAD_ID` is the one thread-ID definition (stores, recall and scans). `room_references` names the lower-cased thread IDs and the whole remaining value after each `mcp:` in a room, topic or link across the raw value and repeated decode/NFKC rounds until stable, and returns None for undecodable or still-changing values; `private_thread_reference` resolves source IDs through `by_source_prefix` (compared as `source_match_key`: NFKC, `mcp` namespace in any case, a bare `mcp:` matching every value) (every stored source or hash-variant base that begins the value) and hides any value naming a thread the reader cannot read, in rooms, diary topics and read_wing room filtering. The gate recounts diary `total`/`showing` and recomputes `is_duplicate` after dropping rows. Ordinary words such as `thr_deadline` name no thread.
 
   - The final search gate proves source_path like source_file, including nested folded copies and media path/title aliases, and omits acquisition counts and truncation flags for every reader, since acquisition precedes thread authorization. Body text and arbitrary provenance labels are not scanned for private words.
 
