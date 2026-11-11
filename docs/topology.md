@@ -235,7 +235,7 @@ A removed value reads `(removed)`. The ask's context holds the proposal id, the 
 The owner answers the card as they answer any ask. Then:
 
 - **Approve** applies the change with the proposing observer and its evidence as provenance, as an authoritative write (`replace=True`). The old values stay in history.
-- **Reject**, or a written reply without a choice, changes nothing. The old fact stays.
+- **Reject**, or a written reply without a choice, changes nothing. The old fact stays. The same change proposed again within seven days, by any observer, gets that rejected proposal back instead of a new card; a different change, or the owner's own write, is not held back. Proposals never reach the store before approval, so a rejected proposal leaves no conflict record and a repeat opens none.
 - The proposal is **void**, and nothing is applied, when the card was edited, withdrawn or asked again before the owner answered it, when the answer does not come from a workspace owner, or when the map no longer matches the "before" that was shown. A void proposal can simply be proposed again.
 
 Only the owner can answer: the board's decide path refuses everyone else, and the proposal checks the answer again against the card's own history. An owner's connection that holds `cards:decide` answers on the owner's behalf, as for any ask.

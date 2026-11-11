@@ -130,8 +130,28 @@ def test_a_rerun_asks_only_once(world):
     assert len(proposals.listing(ctx(world), "pending")) == 1
     other = os_change(world, "Linux 7.0")
     assert other["id"] != first["id"]
+
+
+def test_a_rejected_change_is_not_asked_again_for_a_while(world, monkeypatch):
+    seed(world)
+    first = os_change(world)
     answer(world, first, "Reject")
-    assert os_change(world)["id"] != first["id"]
+    cards = len(board(world).task_list(board="work"))
+    # The same change again, also from another agent, gets the owner's answer back.
+    again = os_change(world)
+    assert again["id"] == first["id"] and again["state"] == "rejected"
+    _, other = world.agent("other")
+    args = {"items": [{"node": "web1", "fields": {"os": "Linux 6.9"}}], "evidence": EVIDENCE}
+    assert proposals.propose(ctx(world, other), **args)["proposal"]["id"] == first["id"]
+    response = call(world, "topology_propose", **args)
+    assert text(response).startswith("the owner rejected this change on ")
+    assert len(board(world).task_list(board="work")) == cards
+    assert store.list_conflicts(topo(world), open_only=False) == []
+    # A different change is a new question, and so is the same one after the quiet time.
+    assert os_change(world, "Linux 7.0")["state"] == "pending"
+    monkeypatch.setattr(proposals, "REJECTED_QUIET_SECONDS", 0)
+    later = os_change(world)
+    assert later["id"] != first["id"] and later["state"] == "pending"
 
 
 def test_no_decision_means_nothing_is_written(env):

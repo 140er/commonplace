@@ -55,7 +55,10 @@ def _tool(ctx, args):
     if result["proposal"]:
         row = result["proposal"]
         lines.append(
-            f"proposal {row['id']} with {_count(row)} waits for the owner: "
+            f"the owner rejected this change on {row['decided_at']} ({row['id']}); "
+            "it is not asked again for now"
+            if row["state"] == "rejected"
+            else f"proposal {row['id']} with {_count(row)} waits for the owner: "
             f"#{row['card']} {card_url(ctx, row['card'])}"
         )
     if result["unchanged"]:

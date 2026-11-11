@@ -37,6 +37,8 @@ MAX_ITEMS = 32
 LIST_LIMIT = 100
 # A proposal row whose decision card never opened (a crash in between) is void after this.
 OPENING_SECONDS = 600
+# A change the owner rejected is not asked again, by anyone, for this long.
+REJECTED_QUIET_SECONDS = 7 * 24 * 3600
 
 _SCHEMA = (
     """
@@ -433,14 +435,20 @@ def _public(row) -> dict:
 
 
 def _waiting(topo, observer, changes):
-    """This observer's open proposal of exactly these changes, so a rerun asks only once."""
+    """The proposal that already answers this request, so the owner is asked only once.
+
+    That is this observer's open proposal of exactly these changes, or the same changes
+    the owner rejected a short while ago: a rerun must not bring a refused change back.
+    """
+    quiet = model.stamp(model.clock(None) - timedelta(seconds=REJECTED_QUIET_SECONDS))
     with _reading(topo) as conn:
         if conn is None:
             return None
         return conn.execute(
-            "SELECT * FROM topology_proposals WHERE state='pending' AND card IS NOT NULL "
-            "AND observer_kind=? AND observer_id=? AND changes=? ORDER BY created_at LIMIT 1",
-            (observer.kind, observer.id, model.encode(changes)),
+            "SELECT * FROM topology_proposals WHERE changes=? AND ("
+            "(state='pending' AND card IS NOT NULL AND observer_kind=? AND observer_id=?) "
+            "OR (state='rejected' AND decided_at>?)) ORDER BY state, created_at DESC LIMIT 1",
+            (model.encode(changes), observer.kind, observer.id, quiet),
         ).fetchone()
 
 

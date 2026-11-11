@@ -2054,7 +2054,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Keys, tokens, passwords and private key material are refused on write, in fields, evidence and observer ids. The refusal names the field and the kind of secret, never the value, and stores nothing.
 
-  - An agent's change reaches the map only after the workspace owner answered Approve on the ask exactly as it was opened: an edited, withdrawn or re-asked card, an answer by anyone else, or a map that no longer matches the shown "before" voids the proposal and applies nothing. Reject keeps the old fact. A runner writes without a question only new facts about itself.
+  - An agent's change reaches the map only after the workspace owner answered Approve on the ask exactly as it was opened: an edited, withdrawn or re-asked card, an answer by anyone else, or a map that no longer matches the shown "before" voids the proposal and applies nothing. Reject keeps the old fact, and the same change is not asked again for seven days. A runner writes without a question only new facts about itself.
 
   - Every applied change keeps each fact's value before and after; undo is the signed-in owner's and deletes nothing. A proposal passes the secret filter before a row or a card exists.
 
