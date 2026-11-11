@@ -1670,3 +1670,22 @@ def test_a_disconnect_keeps_keys_while_an_ended_owner_left_its_record(merging, m
     tick(worker, monkeypatch)
     assert revoked_tokens(s).count(candidate) == 1 and not rows(s, "github_confirmations")
     assert not rows(s, "github_keys")
+
+
+@pytest.mark.parametrize("path", ["decline", "replaced token"])
+def test_a_revoke_github_refuses_is_flagged_and_not_retried(merging, monkeypatch, path):
+    s = merging
+    if path == "decline":
+        target = pending_merge_consent(s)
+    else:
+        connect(s)
+        target = s.remote.issued[0]
+        s.remote.scope = "public_repo"
+        finish(s, begin_consent(s))
+    s.remote.status = 500
+    assert post_confirm(s, path != "decline")[0] == 200
+    s.remote.status = 204
+    # Flag and drop: the person sees revocation unconfirmed and reviews GitHub app access.
+    assert not rows(s, "github_confirmations") and status(s)["acknowledge_required"]
+    tick(s.gateway.github, monkeypatch)
+    assert revoked_tokens(s).count(target) == 1
