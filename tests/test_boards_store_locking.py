@@ -37,7 +37,7 @@ def short_busy_timeout(monkeypatch):
 
 
 def hold_write_lock(path):
-    conn = sqlite3.connect(path, isolation_level=None)
+    conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.execute("BEGIN IMMEDIATE")
     return conn
 
@@ -119,8 +119,8 @@ def test_warm_open_still_applies_a_pending_legacy_origin(tmp_path):
     store = BoardStore(tmp_path)
     with store.transaction() as conn:
         conn.execute(
-            "INSERT INTO boards(slug,name,wing,created_at,updated_at,updated_by) "
-            "VALUES ('b','b','w','t','t','u')"
+            "INSERT INTO boards(slug,name,wing,stamp_user,stamp_trust,created_at) "
+            "VALUES ('b','b','w','u','trusted','t')"
         )
         conn.execute(
             "INSERT INTO tasks(board_id,title,body,status,position,stamp_user,"
