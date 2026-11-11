@@ -516,6 +516,13 @@ def test_r1_board_coordinator_is_never_granted(world):
     status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
     assert status == 409, refused
     assert refused["error"] == AGENT_TEXT
+    # Refused before any write: no grant is recorded and then withdrawn.
+    grants = [
+        r
+        for r in hub.db.audit_entries(hub.workspace, limit=500)
+        if r["connection_id"] == cid and r["action"] == "connection.decide.grant"
+    ]
+    assert grants == []
     status, listing = api(hub, w.cookie, "GET", "/api/connections")
     row = next(c for c in listing["connections"] if c["id"] == cid)
     assert row["decide"] is False and row["decide_grantable"] is False
@@ -1021,3 +1028,32 @@ def test_r15_another_members_row_gets_its_own_message(world):
     status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
     assert status == 409, refused
     assert refused["error"] == NOT_YOURS_TEXT
+
+
+def test_r16_the_in_transaction_clear_survives_a_kill_after_the_commit(world, monkeypatch):
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    status, _ = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
+    assert status == 200
+    real = hub.db.clear_decide
+
+    def committed():
+        with w.owner.store.connection() as conn:
+            row = conn.execute("SELECT coordinator FROM boards WHERE slug='work'").fetchone()
+        return row["coordinator"] == "conn:coordinator-app"
+
+    def killed_after_commit(connection_id, **kwargs):
+        # The process dies after the board COMMIT, before the second clear runs.
+        if committed():
+            raise RuntimeError("killed after the board COMMIT")
+        return real(connection_id, **kwargs)
+
+    monkeypatch.setattr(hub.db, "clear_decide", killed_after_commit)
+    with pytest.raises(RuntimeError, match="killed after"):
+        w.owner.board_set("work", "conn:coordinator-app")
+    monkeypatch.undo()
+    assert committed()
+    assert (
+        "cards:decide" not in json.loads(hub.db.connection(cid, hub.workspace)["policy"])["scopes"]
+    )
