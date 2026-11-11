@@ -11,6 +11,7 @@ from commonplace.runner import agent, jobs
 from tests._projects_helpers import projects_hub_fixture  # noqa: F401
 from tests.runner_harness import (
     card,
+    http,
     owners as owners,
     runner_config,
     signup_hub as signup_hub,
@@ -18,6 +19,7 @@ from tests.runner_harness import (
 from tests.test_orch_acceptance import (
     BOARD,
     _configure,
+    _jobs,
     _lease,
     _machine,
     _person_start,
@@ -156,6 +158,44 @@ def test_zero_floor_disables_the_guard(start_setup, monkeypatch):
     config["min_free_memory_mb"] = 0
     monkeypatch.setattr(agent, "_available_memory_mb", lambda: 0, raising=False)
     assert agent._job_code(config, job) is None
+
+
+MEMINFO = "MemTotal:       16384000 kB\nMemFree:          100000 kB\nMemAvailable:    2048000 kB\nBuffers: 1 kB\n"
+
+
+def test_meminfo_parser_converts_kb_to_mb(tmp_path):
+    path = tmp_path / "meminfo"
+    path.write_text(MEMINFO)
+    assert agent._available_memory_mb(str(path)) == 2000  # 2048000 kB // 1024
+
+
+def test_meminfo_parser_is_unknown_without_a_usable_line(tmp_path):
+    path = tmp_path / "meminfo"
+    path.write_text("MemTotal: 1 kB\nMemAvailable: lots kB\n")
+    assert agent._available_memory_mb(str(path)) is None
+    path.write_text("MemTotal: 1 kB\n")
+    assert agent._available_memory_mb(str(path)) is None
+    assert agent._available_memory_mb(str(tmp_path / "missing")) is None
+
+
+def test_low_memory_reaches_card_start_status(signup_hub, owners):
+    hub, owner = signup_hub, owners["A"]
+    machine = _machine(hub, owner)
+    task = card(hub, owner, board=BOARD)
+    assert _person_start(hub, owner, machine, task)[0] == 201
+    code, lease = _lease(hub, machine)
+    assert code == 200
+    # Exactly what the runner client posts when its guard refuses a leased start.
+    code, body = http(
+        hub.port,
+        "POST",
+        "/api/runner/result",
+        token=machine["machine_token"],
+        body={"lease_token": lease["lease_token"], "outcome": "failed", "code": "low_memory"},
+    )
+    assert code == 200, (code, body)
+    (job,) = _jobs(hub, owner, task)
+    assert (job["state"], job["outcome_code"]) == ("failed", "low_memory")
 
 
 def _loaded(tmp_path, **overrides):

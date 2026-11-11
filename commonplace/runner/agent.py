@@ -222,10 +222,10 @@ def _launch_text(job):
     return message, {"instanceId": model["instanceId"], "model": model["model"]}
 
 
-def _available_memory_mb():
+def _available_memory_mb(meminfo_path="/proc/meminfo"):
     """Memory this machine can give a new process without swapping, or None when unknown."""
     try:
-        with open("/proc/meminfo", encoding="ascii") as meminfo:
+        with open(meminfo_path, encoding="ascii") as meminfo:
             for line in meminfo:
                 if line.startswith("MemAvailable:"):
                     return int(line.split()[1]) // 1024
