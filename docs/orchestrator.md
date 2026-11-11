@@ -204,7 +204,11 @@ commit is still found.
   the cursor moves past it. A start that cannot be planned is a miss too
   (`not_configured`, `unknown_role`, or `config_invalid`), so one card never
   blocks the board's later cards. Only infrastructure errors leave the cursor
-  for the next sweep. A refused card is not retried automatically, even when the
+  for the next sweep.
+- **Failing sweeps.** Two failed sweeps of a board in a row emit one
+  `orch.trigger.failing` event (app and webhooks), and the owner's `needs_me`
+  lists the board under `orchestrator_failing` until a sweep succeeds. Only
+  the exception type is stored. A refused card is not retried automatically, even when the
   refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
   checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
 

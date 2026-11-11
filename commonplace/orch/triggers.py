@@ -44,7 +44,9 @@ start, renewal, result and status read), never inside its transaction.
 
 Locks: the sweep opens the orchestrator store with ``Store.existing`` (no schema script,
 no ``orch_state`` insert, no marker conversion), so up to ``fenced_start`` its only
-``runner.sqlite3`` write is the arming ``UPDATE`` of a NULL cursor. The store is created
+``runner.sqlite3`` write is the arming ``UPDATE`` of a NULL cursor. After a board's sweep,
+``orch_sweep_health`` records a failure streak (cleared by the next clean sweep, no write
+while healthy); the second failure in a row alerts once (``failing``, Needs me, event). The store is created
 by the accept that configures a board; a pending restore marker is converted by the next
 explicit store open (surface, CLI, lease call or start), and until then the sweep skips
 the workspace as it does under the restore flag.
@@ -333,4 +335,115 @@ def run(js, *, now=None) -> dict:
         except Exception as exc:
             log_failure(logger, "orchestrator trigger sweep of a board failed", exc)
             report[board] = None
+            _record_failure(js, st, board, exc, now or jobs._now())
+        else:
+            _record_success(st, board)
     return report
+
+
+# --------------------------------------------------------------- sweep health
+
+HEALTH_DDL = (
+    "CREATE TABLE IF NOT EXISTS orch_sweep_health (board TEXT PRIMARY KEY, "
+    "failures INTEGER NOT NULL, first_at TEXT NOT NULL, last_at TEXT NOT NULL, "
+    "error TEXT NOT NULL, alerted INTEGER NOT NULL DEFAULT 0)"
+)
+ALERT_AFTER = 2  # consecutive failed sweeps of one board before the owner is alerted
+
+
+def _health_table(conn) -> bool:
+    return bool(
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='orch_sweep_health'"
+        ).fetchone()
+    )
+
+
+def _record_success(st, board: str) -> None:
+    """A clean sweep ends the board's failure streak (no write while healthy)."""
+    try:
+        with st.connection() as conn:
+            if (
+                not _health_table(conn)
+                or not conn.execute(
+                    "SELECT 1 FROM orch_sweep_health WHERE board=?", (board,)
+                ).fetchone()
+            ):
+                return
+        with st.transaction() as conn:
+            conn.execute("DELETE FROM orch_sweep_health WHERE board=?", (board,))
+    except Exception as exc:
+        log_failure(logger, "orchestrator sweep health could not be cleared", exc)
+
+
+def _record_failure(js, st, board: str, exc: Exception, now: str) -> None:
+    """Count consecutive failed sweeps of a board. The second one in a row emits one
+    ``orch.trigger.failing`` event (app and webhooks) and the owner's Needs me lists the
+    board until a sweep succeeds: a sweep that fails on every poll is never just a log line.
+    Only the exception's type is stored, never its text."""
+    error = type(exc).__name__
+    try:
+        with st.transaction() as conn:
+            conn.execute(HEALTH_DDL)
+            conn.execute(
+                "INSERT INTO orch_sweep_health(board,failures,first_at,last_at,error) "
+                "VALUES (?,1,?,?,?) ON CONFLICT(board) DO UPDATE SET "
+                "failures=failures+1,last_at=excluded.last_at,error=excluded.error",
+                (board, now, now, error),
+            )
+            row = conn.execute("SELECT * FROM orch_sweep_health WHERE board=?", (board,)).fetchone()
+            alert = row["failures"] >= ALERT_AFTER and not row["alerted"]
+            if alert:
+                conn.execute("UPDATE orch_sweep_health SET alerted=1 WHERE board=?", (board,))
+            failures, since = row["failures"], row["first_at"]
+    except Exception as health_exc:
+        log_failure(logger, "orchestrator sweep health could not be recorded", health_exc)
+        return
+    if alert:
+        from commonplace import events
+
+        try:
+            events.emit(
+                js.gateway.db,
+                js.workspace_id,
+                "orch.trigger.failing",
+                subject=f"board:{board}",
+                actor="system",
+                data={"board": board, "failures": failures, "since": since, "error": error},
+            )
+        except Exception as emit_exc:
+            log_failure(logger, "orchestrator sweep alert could not be emitted", emit_exc)
+
+
+def failing(gateway, workspace_id: str) -> list[dict]:
+    """Boards whose trigger sweep keeps failing: ``[{board, failures, since, error,
+    message}]`` for the owner's Needs me. Empty when the store or table does not exist."""
+    directory = gateway.workspace_dir(workspace_id)
+    from pathlib import Path
+
+    if not (Path(directory) / "runner.sqlite3").exists():
+        return []
+    try:
+        st = orch_store.open_existing(gateway, workspace_id)
+        with st.connection() as conn:
+            if not _health_table(conn):
+                return []
+            rows = conn.execute(
+                "SELECT * FROM orch_sweep_health WHERE failures>=? ORDER BY board",
+                (ALERT_AFTER,),
+            ).fetchall()
+    except Exception as exc:
+        log_failure(logger, "orchestrator sweep health unavailable", exc)
+        return []
+    return [
+        {
+            "board": row["board"],
+            "failures": row["failures"],
+            "since": row["first_at"],
+            "error": row["error"],
+            "message": f"The orchestrator cannot start work on {row['board']}: its trigger "
+            f"sweep failed {row['failures']} times in a row since {row['first_at']} "
+            f"({row['error']}). New and released cards will not start until it is fixed.",
+        }
+        for row in rows
+    ]
