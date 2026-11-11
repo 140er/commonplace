@@ -1267,6 +1267,8 @@ Format (read by `commonplace orch docs-check`):
 
   - A lost launch result becomes `uncertain` and waits for a person; a revoked machine cancels queued jobs on the next sweep; a busy queue refuses with `busy`.
 
+  - The card panel's "Start agent" asks `GET /api/card-starts/options?task=<n>` (signed-in owner only, read-only, `commonplace/runner/start_options.py`): on a configured board the config's machine, project and topic, otherwise the attested machines the owner may use with the projects and topics each allows; a start the card or setup cannot take comes back as a `refusal` code, never as a choice. On a configured board the owner's `card_start` may send the card alone; a refused start answers its stable `code` next to `error`.
+
   - Resolving a start that is no longer `uncertain` answers 409, not 403, so a settled start reads differently from a refused caller; `tests/test_card_runs_contract.py` pins it with the member and other-workspace refusals.
 
 - **Tests:**
@@ -1278,6 +1280,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
+  - `tests/test_card_start_defaults.py` covers the owner's card-only start, equal and differing explicit values, the options route, and the refusal of a member, an untrusted agent and a coordinator token with no job created; `tests/cardruns.mjs` the panel's Start control.
   - `tests/test_runner_wings.py` covers multi-wing starts, the ungranted-wing refusal, worker write bounds after enrollment and PATCH, and owner-only listing.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 

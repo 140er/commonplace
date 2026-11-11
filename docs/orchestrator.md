@@ -133,7 +133,7 @@ Agent tokens with an owner role are not the owner. The project's Connect seat
 | Path | Who | Lease | Cap |
 |---|---|---|---|
 | `orch_card_start(board, role, card, step_key, epoch, token, config_ref?)` | the lease holder | yes | yes |
-| `card_start(…, config_ref?)` over MCP or `POST /api/card-starts` | the person owner only; anyone else gets `no: use orch_card_start` | no | yes |
+| `card_start(…, config_ref?)` over MCP or `POST /api/card-starts` (the owner may send the card alone; the config fills machine, project and topic) | the person owner only; anyone else gets `no: use orch_card_start` | no | yes |
 | trigger | the event's actor | no | yes |
 | `card_start_cancel` of a job that belongs to a step | the person owner only | – | – |
 
