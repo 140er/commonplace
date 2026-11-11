@@ -43,6 +43,21 @@ entry was written.
   the existing gateway 401 challenge. No authority extends to other workspaces’ personal data.
   The installed route inventory mirrors both authenticated Admin GET prefixes.
 
+- **Pre-push quick check:** `git push` runs `commonplace.guards.prepush` on the
+  files the push changes (git's pre-push input, diffed against the remote tip or
+  the development branch): ruff check and format on changed Python, other
+  detected stacks, `docs-check` against the base, and the fast tests whose
+  names match the changed modules. Default budget 60 s (`--budget` or
+  `COMMONPLACE_PREPUSH_BUDGET`) covers all steps together: a step that is
+  still running when it ends is stopped, later steps are not started, and the
+  run lists them as skipped or cut off. A failed check blocks the push (exit 1);
+  an incomplete run does not, and never prints a pass. Every run states that it
+  is a quick check, not the full suite or CI. The hooks are one pair of shell
+  scripts in the clone's shared hooks directory, written by
+  `python -m commonplace.guards.hooks install`; each run picks the environment
+  of the worktree it runs in (`COMMONPLACE_PYTHON`, `.venv`, `VIRTUAL_ENV`,
+  `python3`) and, when none has the tools, exits with the setup command.
+
 - **Admin read and lifecycle bounds:** New projections use an existing SQLite
   `mode=ro` connection, connection-local `query_only`, at most 250 ms busy/connect
   wait and a 2 second monotonic request budget with progress interruption. They
@@ -141,6 +156,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
 
+### Rules for reviewers and at session start
+
+- `commonplace review-rules` hands a reviewer the effective rules of the token it is run with, and `--verify` checks that a verdict repeats the current rule version. That line shows which rule set the reviewer was given; it does not show that the reviewer applied each rule. Review tools outside this repository have to call both steps themselves.
+
+- The session-start hook adds a notice when its context does not open with a complete rule set. It recognises the server's own first and last rule lines; a context that only quotes those lines as data still gets the notice.
+
 ### Operator-blind token slots: primitives with production locked
 
 - B3 is opt-in via the proposed `encryption.key_mode=token-v2` marker. This slice rejects that marker (and unknown key modes) with an encryption error before operator-held B2 keys or content are opened, including backup snapshots. Existing workspaces without the marker retain their existing behavior; no workspace is automatically migrated or modified.
@@ -228,6 +249,8 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Repeated sweep failures are visible: the second consecutive failure of a board alerts the owner once (`orch.trigger.failing`, `needs_me.orchestrator_failing`) until a sweep succeeds.
 
+- A todo start refused for a transient reason (`at_cap`, `project_limit`, `busy`, `settings_unavailable`, `config_changed`, `worker_unavailable`, `started_recently`) is retried by the sweep with bounded backoff (1, 5, 15, 30, 60 minutes, then `retry_exhausted`); every refusal stays a miss and the attempts are kept in `orch_start_retries`. A permanent refusal is never retried.
+
 ### Runner wings and the owner runner block
 
 - A runner machine's worker PAT reads and writes every wing in the machine grant and no other; its first wing is the default write wing. `startable()` accepts a card whose board wing is granted and otherwise refuses with `outside_worker_wing`, naming the board wing and the granted wings. Machines enrolled before this keep a first-wing-only worker policy until their wings are saved once (same wings do not reset the binding).
@@ -276,6 +299,21 @@ The shipped agent skill teaches the same routing and withdrawal boundaries. The
 pinned MCP contract adds only optional `person_reason` to `ask` and `task_update`,
 with matching descriptions for `ask`, `task_update` and `decide`; tool names and
 visibility for slim, standard and full profiles remain unchanged.
+
+### Completion reviewer
+
+A card may name one reviewer of its completion, a current workspace member
+(`user:<id>`). Only a signed-in workspace owner chooses, changes or clears it
+(`reviewer` on `task_add` and `task_update`, and on the card REST routes); agents
+and members are refused. Without a reviewer nothing changes: the owner is asked
+and only an owner answers. With a reviewer, a move to Done by anyone but that
+member (an agent, the assignee or the owner) opens a completion review addressed
+to them even on a board that does not gate completions, and `decide` answers it
+only for that member. An assignee therefore reviews their own work only when the
+owner explicitly chose them. A reviewer who has left the workspace counts as no
+reviewer. Changing the reviewer re-addresses an open completion review, and the
+chosen reviewer sees it in `needs_me`. The pinned MCP contract adds only the
+optional `reviewer` argument to `task_add` and `task_update`.
 
 
 ### Project seat wake recommendations
@@ -533,6 +571,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - Cancelling a job that belongs to a step is person-owner only.
 
+- The person owner may send `card_start` the card alone on a configured board: machine, project and topic come from the config, and values that are sent must still equal it. `GET /api/card-starts/options` (person owner only, read-only) tells the card panel what it may offer and why nothing can be started; it creates no job.
+
 - The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
 
 - The limit is `min(config.max_agents, project_limits.max_agents)` when both are set.
@@ -774,6 +814,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
 
+### Routines create cards on a schedule
+
+A routine (name, card template, schedule, owner) creates one card per due time. The worker claims a `routine_runs` row, unique per routine and due time, before it creates the card, and the card carries a marker label, so a restart between the claim and the card finds the existing card instead of making a second. Cards are made by `BoardService.task_add` as the routine's owner (a workspace owner), so priority, origin and authorization rules apply at run time; if the owner has lost ownership or the board is gone, the run is recorded as failed and five failed runs in a row pause the routine. A board is never created by a routine. After downtime at most three due times are made up; earlier ones become a single `skipped` history row. Time spent paused is not made up. Limits: 25 routines per workspace, 60-minute minimum interval, 200 history rows per routine. Only signed-in workspace owners read or change routines (`/api/routines`). Due times come from the shared pure `commonplace/schedule_time.py` (every N minutes or a cron, in an IANA time zone).
+
 ### Webhook dispatcher recovery
 
 - Each delivery pass contains unexpected errors from reconciliation, due-delivery lookup and delivery.
@@ -908,7 +952,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 | Store | Scope | Holds | Backed up |
 |---|---|---|---|
-| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit | yes |
+| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit, sign-up waitlist (`signup_waitlist`, additive) | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
 | `runner.sqlite3` | workspace | runner jobs; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
