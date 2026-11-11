@@ -660,8 +660,9 @@ def get_link(
 
 def get_route(topo: TopologyStore, site: str, *, now: datetime | None = None) -> dict | None:
     """A site's route with every hop resolved against the link facts, or ``None``."""
-    route = read_graph(topo, now=now)["routes"]
-    return next((item for item in route if item["site"] == model.node_key(site, "site")), None)
+    site = model.node_key(site, "site")
+    routes = read_graph(topo, now=now)["routes"]
+    return next((route for route in routes if route["site"] == site), None)
 
 
 def read_graph(topo: TopologyStore, *, now: datetime | None = None) -> dict:

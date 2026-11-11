@@ -460,6 +460,8 @@ def test_an_old_workspace_without_the_wing_keeps_working(tmp_path, other):
     assert store.get_node(other, "web1", now=T0) is None
     assert store.get_link(other, "a", "b", "direct", now=T0) is None
     assert store.get_route(other, "site.test", now=T0) is None
+    with pytest.raises(TopologyError, match="site"):
+        store.get_route(other, "Not A Site", now=T0)
     assert store.list_conflicts(other, open_only=False) == []
     assert store.history(other, "node:web1") == []
     # Reading never creates the file or touches what the workspace already holds.
