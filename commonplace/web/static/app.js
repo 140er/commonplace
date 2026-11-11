@@ -15,6 +15,7 @@ import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecr
 import { createAdmin, boundedRequest } from "./admin.js";
 import { createRunnerBlock } from "./adminrunners.js";
 import { createConsole } from "./console.js";
+import { createBots, waitingTotal } from "./bots.js";
 import { createChat } from "./chat.js";
 import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
@@ -24,7 +25,7 @@ import { createDetails } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
-import { resolveRoute } from "./routes.js";
+import { boardRoute, resolveRoute } from "./routes.js";
 import { createNeeds } from "./needs.js";
 import { createMemory } from "./memory.js";
 import { createPalette } from "./palette.js";
@@ -67,12 +68,12 @@ const state = {
   screen: 0, renderPending: null, error: "", pollError: false, loading: false,
   chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
   chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
-  toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, chatTimes: new Map(),
+  toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, botsWaiting: 0, chatTimes: new Map(),
   phonePushPending: false, underChat: null, fromChat: null, detailsSheet: false, rebase: null,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
 let adminUI = null;
-let consoleUI = null, chatUI = null, detailsUI = null, boardDispose = null;
+let consoleUI = null, botsUI = null, chatUI = null, detailsUI = null, boardDispose = null;
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
@@ -382,13 +383,13 @@ function navigation() {
   if (!boardNav) return;
   const board = currentBoard();
   // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
-  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
-  const needsByBoard = {};
-  for (const card of needsCards()) needsByBoard[card.board] = (needsByBoard[card.board] || 0) + 1;
-  boardNav.outerHTML = renderRail({ can_admin: state.me.can_admin === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, boards: state.boards, board, view, needs: state.needs.count || 0, needsByBoard, rulesWaiting: state.rulesWaiting }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-  root.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board });
-  root.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ board, view, needs: state.needs.count || 0 });
+  // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
+  const needs = state.needs.count || 0;
+  boardNav.outerHTML = renderRail({ can_admin: state.me.can_admin === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting }).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+  root.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true });
+  root.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
   root.querySelector(".shell")?.setAttribute("data-view", view);
@@ -979,17 +980,7 @@ function mountWorkbenchChat() {
     service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
       phone() {
         const mount = root.querySelector("#phone-tabs");
-        if (!mount) return;
-        const view = state.base === "#/needs" ? "needs" : state.base.startsWith("#/memory") ? "memory" : dock.isOpen() ? "chat" : "board";
-        mount.innerHTML = renderPhoneTabs({ board: service.board, view, needs: state.needs.count || 0, unread: dock.isOpen() ? 0 : service.unread });
-        const tab = mount.querySelector("#m-chat-tab");
-        if (tab) {
-          tab.setAttribute("aria-controls", "chat"); tab.setAttribute("aria-expanded", String(dock.isOpen()));
-          tab.onclick = (event) => {
-            event.preventDefault(); event.stopPropagation();
-            void dock.open({ from: tab, strip: view === "needs" ? { text: `${service.board.name || service.board.slug} chat`, backLabel: "Back to Needs me" } : null });
-          };
-        }
+        if (mount) mount.innerHTML = renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
       },
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
@@ -1012,6 +1003,7 @@ function mountWorkbenchChat() {
 // even when no board service exists (Settings, Memory, …). Other users' ids stay.
 function clearWorkbenchChat() {
   adminUI?.stop();
+  botsUI?.stop();
   const user = state.me?.user || state.me?.actor?.replace(/^user:/, "");
   if (user) clearSeen(user);
   chatUI?.clearUnsent();
@@ -1019,6 +1011,17 @@ function clearWorkbenchChat() {
   state.workbenchChat?.dispose();
   chatUI?.stop(); chatUI = null;
   if (typeof Event === "function") document.dispatchEvent?.(new Event("signout"));
+}
+function setBotsWaiting(total) {
+  if (total === state.botsWaiting) return;
+  state.botsWaiting = total;
+  if (state.me) navigation();
+}
+function botsScreen() {
+  // The roster the screen already loads also feeds the rail badge, so the screen adds no second poll.
+  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => setBotsWaiting(waitingTotal(bots)) });
+  botsUI.show(state.base.split("/")[2] || null);
+  title("Bots");
 }
 function adminScreen() {
   adminUI ??= createAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, runners: createRunnerBlock({ api, e }) });
@@ -1046,9 +1049,11 @@ async function refresh({ background = false, events = [] } = {}) {
     throw error;
   });
   try {
-    const [boards, needs, rules] = await Promise.all([read("/api/boards"), read("/api/needs-me"), read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; })]);
+    // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
+    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), read("/api/needs-me"), read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs;
+    if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
@@ -1097,6 +1102,8 @@ async function refresh({ background = false, events = [] } = {}) {
       await memoryView(epoch, background);
     } else if (/^#\/chat(?:\/|$)/.test(state.base)) {
       boardView();
+    } else if (/^#\/bots(?:\/|$)/.test(state.base)) {
+      if (!background) botsScreen();
     } else if (/^#\/console(?:\?|$)/.test(state.base)) {
       if (!background) consoleScreen();
     } else if (state.base === "#/settings") {
@@ -1332,7 +1339,7 @@ async function route() {
   let last;
   try { last = localStorage.getItem(boardPreference()); } catch { /* The first readable board is the fallback. */ }
   // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
-  const resolved = hash === "#/chat" ? resolveRoute("#/", { boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last });
+  const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
@@ -1341,17 +1348,18 @@ async function route() {
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
   state.screen++; state.route = hash; state.underChat = null; state.fromChat = null;
-  if (direct) { state.base = resolveRoute("#/", { boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
+  if (direct) { state.base = boardRoute({ boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin)$/.test(hash) ? hash : "#/");
     state.card = null;
   } else if (state.base === "#/admin") {
-    state.base = resolveRoute("#/", { boards: state.boards, last });
+    state.base = boardRoute({ boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/admin") adminUI?.stop();
   if (previousBase.startsWith("#/console") && !state.base.startsWith("#/console")) consoleUI?.stop();
+  if (previousBase.startsWith("#/bots") && !state.base.startsWith("#/bots")) botsUI?.stop();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
   }
