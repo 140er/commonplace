@@ -1023,7 +1023,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Canonical Space REST aliases mapped to existing board tool authority.
 
-  - `extensions.MODULES` mounts `commonplace.topology.proposal_api`, and `_rest_tool` maps `POST /api/topology/proposals` to `topology_propose`, so the route shares the tool's visibility gate.
+  - `extensions.MODULES` mounts `commonplace.topology` (its `install` is the proposal surface's), and `_rest_tool` maps `POST /api/topology/proposals` to `topology_propose`, so the route shares the tool's visibility gate.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
@@ -2040,7 +2040,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `model.py` is the allow-list: every field and its shape, the observer, lifetimes, subjects and the secret filter. `store.py` holds `TopologyStore` (one workspace's file, opened like `bots.sqlite3`; `open_topology` caches one per workspace on the gateway) and writes and reads: `upsert` (and the node, link and route forms), `retract`, `resolve_conflict`, `get_node`, `get_link`, `get_route`, `read_graph`, `list_conflicts`, `history`.
 
-  - The write side for agents. `proposals.py` holds the rules: `propose` compares a request with the map fact by fact, applies a runner's additions about itself (and the signed-in owner's own write) at once, and turns every other addition, change or removal into one proposal with one owner decision opened through the board's ask path (structured options Approve and Reject, the map after and before as their previews). `settle` applies or closes a proposal from its card's history, `undo` puts back what an applied change replaced, `listing` and `get` read the rows. The rows are the table `topology_proposals` in `topology.sqlite3`. `proposal_api.py` is the surface, mounted by one line in `extensions.MODULES`: the MCP tool `topology_propose`, `/api/topology/proposals` (propose, list, read, undo) and the `card.decided` listener that calls `settle`.
+  - The write side for agents. `proposals.py` holds the rules: `propose` compares a request with the map fact by fact, applies a runner's additions about itself (and the signed-in owner's own write) at once, and turns every other addition, change or removal into one proposal with one owner decision opened through the board's ask path (structured options Approve and Reject, the map after and before as their previews). `settle` applies or closes a proposal from its card's history, `undo` puts back what an applied change replaced, `listing` and `get` read the rows. The rows are the table `topology_proposals` in `topology.sqlite3`. `proposal_api.py` is the surface, mounted by one import in `topology/__init__.py` (`commonplace.topology` is one entry of `extensions.MODULES`): the MCP tool `topology_propose`, `/api/topology/proposals` (propose, list, read, undo) and the `card.decided` listener that calls `settle`.
 - **Promises:**
 
   - Every fact keeps who observed it, when, from what verbatim evidence, and when it expires. A stale value leaves `values` and is still readable with `stale: true`; nothing is deleted.

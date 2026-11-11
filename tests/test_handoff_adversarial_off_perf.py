@@ -468,6 +468,8 @@ TOOLS_ADDED_SINCE_BASELINE = {
     "rules_get",
     "rules_changed",
     "session_start",
+    # The Compute map's write tool (not part of handoff).
+    "topology_propose",
     # Orchestrator config, lease, journal and gate tools (not part of handoff).
     *"""
     orch_card_start orch_checkpoint orch_config_accept orch_config_diff orch_config_get

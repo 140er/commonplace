@@ -6,5 +6,14 @@ control database with provenance, expiry and conflict records. See ``docs/topolo
 
 from . import model, store
 from .model import TOPOLOGY_WING, Observer, SecretRefused, TopologyError
+from .proposal_api import install  # also registers topology_propose
 
-__all__ = ["TOPOLOGY_WING", "Observer", "SecretRefused", "TopologyError", "model", "store"]
+__all__ = [
+    "TOPOLOGY_WING",
+    "Observer",
+    "SecretRefused",
+    "TopologyError",
+    "install",
+    "model",
+    "store",
+]
