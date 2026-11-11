@@ -71,7 +71,8 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
 - Only while the person can still see the item: their access is checked again for every
   event, with the same rules as project chat. No access, no message.
 - Exactly once: a task posts when its status changes into one of the three above, so the
-  same event twice, or two events for one change, add one message. A forwarded post is
+  same event twice, two events for one change, or events handled out of order add one
+  message each, in order. A forwarded post is
   answered by the first reply from the project's orchestrator after it (the rule project
   chat uses); later replies are not attached to it.
 - A title is other people's text: it is redacted and shortened for the message and never

@@ -1,6 +1,7 @@
 """Updates between turns: events on a bot's work reach its thread once, only for its owner."""
 
 import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -364,4 +365,120 @@ def test_an_existing_bots_file_gains_the_new_columns(scene, tmp_path):
     def names(table):
         return {r["name"] for r in reopened._connection().execute(f"PRAGMA table_info({table})")}
 
-    assert "last_word" in names("bot_work") and "answered_by" in names("bot_forwards")
+    assert {"last_word", "last_seq"} <= names("bot_work")
+    assert "answered_by" in names("bot_forwards")
+
+
+def test_a_stale_handler_after_a_newer_one_is_a_no_op_and_the_marker_stays(scene):
+    number = scene.card()
+    args = (scene.bot, scene.admin, "work", number)
+    assert scene.store.work_changed(*args, 6, "done", "done text") is not None
+    assert scene.store.work_changed(*args, 5, "ready", "ready text") is None
+    assert [e["text"] for e in scene.events()] == ["done text"]
+    row = scene.store._connection().execute("SELECT * FROM bot_work WHERE bot_id=?", (scene.bot,))
+    assert row.fetchone()["last_word"] == "done"
+    assert scene.store.work_changed(*args, 6, "ready", "again") is None  # redelivery of seq 6
+
+
+def test_a_fast_review_then_done_posts_both_in_order_whoever_writes_first(scene):
+    number = scene.card()
+    args = (scene.bot, scene.admin, "work", number)
+    assert scene.store.work_changed(*args, 5, "ready", "ready text")
+    assert scene.store.work_changed(*args, 6, "done", "done text")
+    assert [e["text"] for e in scene.events()] == ["ready text", "done text"]
+
+
+def test_two_threads_racing_on_one_event_post_one_message(scene):
+    number = scene.card()
+    start, results = threading.Barrier(8), []
+
+    def handle():
+        start.wait()
+        results.append(
+            scene.store.work_changed(scene.bot, scene.admin, "work", number, 9, "ready", "once")
+        )
+
+    threads = [threading.Thread(target=handle) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len([r for r in results if r]) == 1
+    assert [e["text"] for e in scene.events()] == ["once"]
+
+
+def test_a_forwarded_post_is_answered_once_and_never_taken_over(scene):
+    post = scene.forward()
+    args = (scene.bot, scene.admin, "work")
+    first = scene.store.forward_answered(*args, post + 1, [post], "first")
+    assert first and first["text"] == "first"
+    assert scene.store.forward_answered(*args, post + 1, [post], "first") is None
+    assert scene.store.forward_answered(*args, post + 2, [post], "later") is None
+    assert [e["text"] for e in scene.events()] == ["first"]
+
+
+def test_replies_handled_out_of_order_still_go_to_the_right_post(scene):
+    hub = scene.hub.hub
+    events.remove_listener(hub.gateway.bots_listener)  # deliver by hand, in the wrong order
+    try:
+        first = scene.forward("one")
+        reply_one = scene.coordinator.space_post("work", "answer one")["id"]
+        second = scene.forward("two")
+        reply_two = scene.coordinator.space_post("work", "answer two")["id"]
+        assert first < reply_one < second < reply_two
+        found = {
+            e["data"]["message_id"]: e
+            for e in events.after(hub.db, hub.workspace, 0, 500)
+            if e["kind"] == "space_replied"
+        }
+        hub.gateway.bots_listener(found[reply_two])
+        assert [e["text"] for e in scene.events()] == ["answer two"]  # the post "one" is not taken
+        hub.gateway.bots_listener(found[reply_one])
+        hub.gateway.bots_listener(found[reply_one])
+        assert [e["text"] for e in scene.events()] == ["answer two", "answer one"]
+    finally:
+        events.add_listener(hub.gateway.bots_listener)
+
+
+def test_a_reply_that_arrives_before_the_earlier_one_for_the_same_post_is_skipped(scene):
+    hub = scene.hub.hub
+    events.remove_listener(hub.gateway.bots_listener)
+    try:
+        scene.forward()
+        reply_one = scene.coordinator.space_post("work", "first")["id"]
+        reply_two = scene.coordinator.space_post("work", "second")["id"]
+        found = {
+            e["data"]["message_id"]: e
+            for e in events.after(hub.db, hub.workspace, 0, 500)
+            if e["kind"] == "space_replied"
+        }
+        hub.gateway.bots_listener(found[reply_two])
+        assert scene.events() == []
+        hub.gateway.bots_listener(found[reply_one])
+        hub.gateway.bots_listener(found[reply_two])
+        assert [e["text"] for e in scene.events()] == ["first"]
+    finally:
+        events.add_listener(hub.gateway.bots_listener)
+
+
+def test_a_person_with_no_unfinished_filed_work_costs_no_board_read(scene, monkeypatch):
+    hub = scene.hub
+    from commonplace.boards.service import BoardService
+
+    reads = []
+    original = BoardService.task_list
+    monkeypatch.setattr(
+        BoardService, "task_list", lambda self, *a, **k: reads.append(k) or original(self, *a, **k)
+    )
+    hub.bots(hub.owner)
+    assert reads == []
+    number = scene.card()
+    scene.ready(number)
+    scene.owner.decide(number, choice="Accept the completed work", then="done")
+    reads.clear()
+    states = {b["id"]: b["state"] for b in hub.bots(hub.owner)["bots"]}
+    assert reads == [] and states[scene.bot] == "idle"
+    unfinished = scene.card()
+    reads.clear()
+    hub.bots(hub.owner)
+    assert len(reads) == 1 and unfinished

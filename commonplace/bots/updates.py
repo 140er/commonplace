@@ -51,13 +51,6 @@ def _person(gateway, user_id, event):
     return principal
 
 
-def _stored(db, event) -> bool:
-    """The event is the one the log holds under its sequence number."""
-    with db._lock:
-        row = db._conn.execute("SELECT * FROM events WHERE seq=?", (event.get("seq"),)).fetchone()
-    return row is not None and events._row(row) == event
-
-
 def _title(card) -> str:
     title = " ".join(redact.redact(str(card["title"]))[0].split())
     return title if len(title) <= TITLE_CHARS else title[: TITLE_CHARS - 1] + "…"
@@ -84,35 +77,58 @@ def _card_event(gateway, event, bots, links):
             link["user_id"],
             board,
             number,
+            event["seq"],
             word,
             text,
             [{"type": kind, "card": number}] if kind else (),
         )
 
 
+def _first_reply(service, board, post, coordinator, upto):
+    """Id of the coordinator's first message after ``post`` (looked for up to ``upto``), or None."""
+    after = post
+    while after < upto:
+        page = service.space_read(board, after=after)
+        for message in page["messages"]:
+            if message["actor"] == coordinator:
+                return message["id"]
+        if not page["messages"]:
+            return None
+        after = page["cursor"]
+    return None
+
+
 def _reply_event(gateway, event, bots, forwards):
     data = event["data"]
     board, reply_id = data["board"], data["message_id"]
+    answered = {}  # bot -> (user, the reply, the posts it answers)
     for forward in forwards:
         principal = _person(gateway, forward["user_id"], event)
         if principal is None:
             continue
+        service = BoardService(ToolContext(principal=principal, gateway=gateway))
         try:
-            page = BoardService(ToolContext(principal=principal, gateway=gateway)).space_read(
-                board, after=reply_id - 1
-            )
+            page = service.space_read(board, after=reply_id - 1)
+            message = next((m for m in page["messages"] if m["id"] == reply_id), None)
+            # Only the orchestrator answers a post, and only its first reply after it: a reply
+            # that arrives out of order must not take a post an earlier reply answers.
+            if (
+                message is None
+                or not page["coordinator"]
+                or _first_reply(
+                    service, board, forward["space_message_id"], page["coordinator"], reply_id
+                )
+                != reply_id
+            ):
+                continue
         except ToolError:
             continue
-        message = next((m for m in page["messages"] if m["id"] == reply_id), None)
-        if message is None or not page["coordinator"] or message["actor"] != page["coordinator"]:
-            continue  # only the project's orchestrator answers a forwarded post
+        answered.setdefault(forward["bot_id"], (forward["user_id"], message["text"], []))[2].append(
+            forward["space_message_id"]
+        )
+    for bot_id, (user_id, text, posts) in answered.items():
         bots.forward_answered(
-            forward["bot_id"],
-            forward["user_id"],
-            board,
-            reply_id,
-            message["text"],
-            [{"type": "orchestrator"}],
+            bot_id, user_id, board, reply_id, posts, text, [{"type": "orchestrator"}]
         )
 
 
@@ -137,7 +153,7 @@ def on_event(gateway, event: dict) -> None:
             if lookup == "reply"
             else bots.bots_for_card(board, item)
         )
-        if found and _stored(gateway.db, event):
+        if found and events.is_stored(gateway.db, event):
             handle(gateway, event, bots, found)
     except Exception as exc:
         log_failure(logger, "bot update failed", exc)
