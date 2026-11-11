@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Commonplace</title>
+<!-- Three full-app design directions behind one switch: ?ui=a | b | c (default a).
+     Screens: #/chat  #/bots  #/project  #/compute  #/settings  (direction b also has #/today).
+     Sample data only (data.js); nothing here talks to a server. -->
+<script>
+  const ui = (new URLSearchParams(location.search).get("ui") || "a").replace(/[^abc]/g, "") || "a";
+  document.documentElement.dataset.ui = ui;
+  document.write(`<link rel="stylesheet" href="${ui}.css">`);
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+const ui = document.documentElement.dataset.ui;
+const [{ render }, D] = await Promise.all([import(`./${ui}.js`), import("./data.js")]);
+const phone = matchMedia("(max-width: 700px)");
+const state = { accepted: false, node: D.selected.id };
+function draw() {
+  const route = (location.hash || "#/chat").slice(2) || "chat";
+  document.querySelector("#app").innerHTML = render(route, D, { phone: phone.matches, vw: innerWidth, vh: innerHeight, ...state });
+  document.body.dataset.route = route;
+  for (const node of document.querySelectorAll(".thread")) node.scrollTop = node.scrollHeight;
+}
+addEventListener("hashchange", draw);
+addEventListener("resize", draw);
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-accept]")) { state.accepted = true; draw(); }
+  const node = event.target.closest("[data-node]");
+  if (node) { state.node = node.dataset.node; draw(); }
+});
+await document.fonts.ready;
+draw();
+</script>
+</body>
+</html>
