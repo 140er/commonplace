@@ -79,6 +79,8 @@
 
 - **Promises:**
 
+  - Tests that read the module map read every file in `docs/modules/`, not `MODULES.md`; `tests/test_docs_fragments.py` holds the merge-without-conflict proof for the documentation layout.
+
   - `tests/spaces_surfaces.json` pins the `decide` description naming owner connections holding `cards:decide`.
 
   - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Authority lookup failures pin one redacted diagnostic and no enqueue. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
