@@ -461,6 +461,15 @@ def test_r1_seats_are_never_granted_and_never_answer(projects_hub):
     status, listing = api(hub, h.owner, "GET", "/api/connections")
     seat_row = next(c for c in listing["connections"] if c["id"] == seat_id)
     assert seat_row["decide"] is False and seat_row["decide_grantable"] is False
+    # Nor can a new connection that claims the seat client be created with it.
+    status, _ = api(
+        hub,
+        h.owner,
+        "POST",
+        "/api/connections",
+        {"name": "fake-seat", "client": "commonplace-orchestrator", "decide": True},
+    )
+    assert status == 400
     # A grant stored by other means (an older build) still never answers.
     with hub.db._lock:
         row = hub.db._conn.execute(
