@@ -36,7 +36,7 @@ RULES_MISSING = (
     "before you plan or write, call rules_get(effective=true, format=md), "
     "and tell the owner if it keeps failing."
 )
-_RULES_HEAD = re.compile(r"effective rules: [0-9]+\n")
+_RULES_HEAD = re.compile(r"effective rules: ([0-9]+)\n")
 _RULES_MARKER = re.compile(r"^rules_seq (?:off|[0-9]+)$", re.MULTILINE)
 LOCAL_WARNING = (
     "A managed instruction or memory file has local-only changes. "
@@ -57,6 +57,14 @@ def _input(stream):
     return value
 
 
+def _rules_complete(context):
+    head, marker = _RULES_HEAD.match(context), _RULES_MARKER.search(context)
+    if head is None or marker is None:
+        return False
+    # A count above zero without any rule line is an empty set, not a complete one.
+    return int(head[1]) == 0 or "\n- " in context[: marker.start()]
+
+
 def _session(args, payload):
     query = payload.get("prompt")
     if not isinstance(query, str) or not query.strip() or len(query) > 1000:
@@ -69,7 +77,7 @@ def _session(args, payload):
         or len(context.encode("utf-8")) > MAX_CONTEXT_BYTES
     ):
         raise ValueError
-    if _RULES_HEAD.match(context) is None or _RULES_MARKER.search(context) is None:
+    if not _rules_complete(context):
         return GUIDANCE + "\n" + RULES_MISSING + "\n\n" + context
     return GUIDANCE + "\n\n" + context
 

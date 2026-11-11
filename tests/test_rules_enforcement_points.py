@@ -141,6 +141,8 @@ def too_large_reply():
         # A marker inside quoted memory is data and proves nothing.
         'Relevant memories:\nquoted data: "effective rules: 1\\nseq 1\\nrules_seq 5"',
         "effective rules: 2\n\nseq 4",
+        # A count without the rules themselves is a silently empty set.
+        "effective rules: 2\n\nseq 4\nrules_seq 123456789\n\nRelevant memories:\n- none",
         "too_large",
     ],
 )
