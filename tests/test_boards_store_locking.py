@@ -60,8 +60,10 @@ def test_warm_reads_succeed_while_another_connection_holds_the_write_lock(hub, m
         picture = stall.assess(directory, board_row, None, T0, 20, None)
         assert picture["todo"] == [{"number": card, "title": picture["todo"][0]["title"]}]
         assert durable._board(w.ctx(w.owner), BOARD)["slug"] == BOARD
-        shown = BoardService(w.ctx(w.owner)).task_show(card)
-        assert shown["number"] == card
+        # The gateway's open_store (with legacy_origin) and a plain read; task_show is a
+        # write path (claim expiry) and waits out the busy timeout instead.
+        service = BoardService(w.ctx(w.owner))
+        assert service.store.board_for_task(card)["slug"] == BOARD
     finally:
         holder.rollback()
         holder.close()
