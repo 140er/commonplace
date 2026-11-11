@@ -452,15 +452,12 @@ def test_g8_no_hub_splitting():
 
 def test_g9_off_json_and_arguments(world):
     w = world
-    assert set(board(w)) == {
-        "slug",
-        "name",
-        "wing",
-        "coordinator",
-        "can_configure",
-        "counts",
-        "agents_working",
-    }
+    row = board(w)
+    assert {"slug", "name", "wing", "coordinator", "can_configure", "counts", "agents_working"} <= (
+        row.keys()
+    )
+    # Off adds no orchestration fields; unrelated board fields may come and go.
+    assert not {"max_agents", "used"} & row.keys()
     with pytest.raises((ToolError, TypeError)):
         w.boards.task_add("Blocked", board="acme", blocked_by=[1])
 
