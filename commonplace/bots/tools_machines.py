@@ -13,6 +13,7 @@ from commonplace.extensions import ToolError
 
 NOT_VERIFIED = "Attested by the workspace owner, not verified by Commonplace."
 IN_FLIGHT = frozenset(("queued", "leased", "starting"))
+LISTED = 8  # machines handed to the model; the block shows them all
 REF = {"type": "integer", "minimum": 1, "description": "The task's number"}
 MACHINE = {
     "type": "string",
@@ -49,10 +50,28 @@ def _machine_name(turn, ref) -> str:
 # list_machines
 
 
+def _brief(machine) -> dict:
+    """One machine for the model: flat and short (a tool result is cut at 4,000 characters)."""
+    return {
+        "id": machine["id"],
+        "label": machine["label"],
+        "trust": machine["trust"],
+        "can_start_agent": machine["capabilities"]["start_agent"],
+        "can_run_command": machine["capabilities"]["run_command"],
+        "projects": machine["grants"]["projects"][:8],
+        "topics": machine["grants"]["topics"][:8],
+        "wings": machine["grants"]["wings"][:8],
+        "max_runtime_mode": machine["grants"]["max_runtime_mode"],
+        "last_seen": machine["last_seen"],
+    }
+
+
 def _list(turn, args):
     principal = turn.principal()
     listed = machines.list_machines(turn.gateway, principal)
-    data = {"machines": listed, "note": NOT_VERIFIED}
+    data = {"machines": [_brief(m) for m in listed[:LISTED]], "note": NOT_VERIFIED}
+    if len(listed) > LISTED:
+        data["not_shown"] = len(listed) - LISTED
     if not listed:
         data["reason"] = machines.why_none(turn.gateway, principal)
     return Result(True, data, blocks=({"type": "machines"},))
@@ -65,6 +84,13 @@ def hydrate_machines(reader, stored) -> dict:
 # start_work
 
 
+def _start_check(turn, args) -> None:
+    """Refused before any chip exists: the task is not this project's, the machine is unknown."""
+    _task(turn, args)
+    if args.get("machine"):
+        _machine_name(turn, args["machine"])
+
+
 def _start_label(turn, args) -> str:
     label = f"Start an agent on “{_clean(_task(turn, args)['title'])}”"
     if args.get("machine"):
@@ -73,7 +99,6 @@ def _start_label(turn, args) -> str:
 
 
 def _start(turn, args):
-    _task(turn, args)
     try:
         started = machines.start_agent(
             turn.gateway,
@@ -94,19 +119,31 @@ def _stop_label(turn, args) -> str:
     return f"Cancel the agent start on “{_clean(_task(turn, args)['title'])}”"
 
 
-def _stop(turn, args):
-    _task(turn, args)
-    principal = turn.principal()
-    rows = machines.start_status(turn.gateway, principal, args["ref"])
+def _live(turn, args):
+    """The starts that can still be cancelled, or the plain sentence for why there are none."""
+    rows = machines.start_status(turn.gateway, turn.principal(), args["ref"])
     live = [row for row in rows if row["state"] in IN_FLIGHT]
+    if live:
+        return live, ""
+    if any(row["state"] == "started" for row in rows):
+        return [], machines.SENTENCES["already_finished"]
+    if any(row["state"] == "uncertain" for row in rows):
+        return [], machines.SENTENCES["uncertain"]
+    return [], "No agent start is waiting on that task, so there is nothing to cancel."
+
+
+def _stop_check(turn, args) -> None:
+    _task(turn, args)
+    live, refusal = _live(turn, args)
     if not live:
-        if any(row["state"] == "started" for row in rows):
-            return Result(False, say=machines.SENTENCES["already_finished"])
-        if any(row["state"] == "uncertain" for row in rows):
-            return Result(False, say=machines.SENTENCES["uncertain"])
-        return Result(
-            False, say="No agent start is waiting on that task, so there is nothing to cancel."
-        )
+        raise ToolError(refusal)
+
+
+def _stop(turn, args):
+    live, refusal = _live(turn, args)
+    if not live:
+        return Result(False, say=refusal)
+    principal = turn.principal()
     cancelled, requested = [], []
     try:
         for row in live:
@@ -126,6 +163,13 @@ def _stop(turn, args):
 
 def _can_run(turn) -> bool:
     return machines.can_run_command(turn.gateway, turn.principal())
+
+
+def _run_check(turn, args) -> None:
+    turn.words(args["command"])
+    if not _can_run(turn):
+        raise ToolError(machines.SENTENCES["unsupported"])
+    _machine_name(turn, args["machine"])
 
 
 def _run_label(turn, args) -> str:
@@ -177,6 +221,7 @@ def _register() -> None:
             schema=_schema({"ref": REF, "machine": MACHINE}, ["ref"]),
             kind="confirm",
             run=_start,
+            check=_start_check,
             label=_start_label,
             scope="project",
         )
@@ -191,6 +236,7 @@ def _register() -> None:
             schema=_schema({"ref": REF}, ["ref"]),
             kind="confirm",
             run=_stop,
+            check=_stop_check,
             label=_stop_label,
             scope="project",
         )
@@ -211,6 +257,7 @@ def _register() -> None:
             ),
             kind="confirm",
             run=_run,
+            check=_run_check,
             label=_run_label,
             available=_can_run,
         )

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-import commonplace.bots.tools_machines  # noqa: F401  (registers the tools)
+import commonplace.bots.tools_machines
 from commonplace import sessions
 from commonplace.bots import blocks, machines, tools
 from commonplace.runner import jobs, registry
@@ -479,7 +479,7 @@ def test_stop_work_cancels_a_start_that_has_not_launched(env, model):
     assert message["blocks"][0]["ok"] is True and env.jobs()[0]["state"] == "cancelled"
 
 
-def test_stop_work_says_plainly_that_a_launched_agent_cannot_be_stopped(env, model):
+def test_stop_work_refuses_up_front_when_there_is_nothing_to_cancel(env, model):
     env.enroll()
     configure(env.bots)
     card = env.card()
@@ -487,13 +487,28 @@ def test_stop_work_says_plainly_that_a_launched_agent_cannot_be_stopped(env, mod
     tap(env, bot, events)
     env.set_state(env.jobs()[0]["id"], "started")
     _, events = ask(env, model, "stop_work", "Stop it", "request-0002", ref=card)
+    assert [d for e, d in events if e == "block" and d["type"] == "confirm"] == []
+    [refused] = [d for e, d in events if e == "action" and d["state"] == "refused"]
+    assert refused["tool"] == "stop_work"
+    assert "can't be stopped from here" in json.dumps(model.calls[-1]["messages"])
+    nothing = env.card("Nothing started")
+    _, events = ask(env, model, "stop_work", "Stop it", "request-0003", ref=nothing)
+    assert [d for e, d in events if e == "block" and d["type"] == "confirm"] == []
+    assert "nothing to cancel" in json.dumps(model.calls[-1]["messages"])
+
+
+def test_a_stop_is_checked_again_when_the_person_taps(env, model):
+    env.enroll()
+    configure(env.bots)
+    card = env.card()
+    bot, events = ask(env, model, "start_work", "Start it", "request-0001", ref=card)
+    tap(env, bot, events)
+    _, events = ask(env, model, "stop_work", "Stop it", "request-0002", ref=card)
+    env.set_state(env.jobs()[0]["id"], "started")  # launches before the tap
     _, message = tap(env, bot, events)
     assert message["blocks"][0]["ok"] is False
     assert "can't be stopped from here" in message["text"]
-    nothing = env.card("Nothing started")
-    _, events = ask(env, model, "stop_work", "Stop it", "request-0003", ref=nothing)
-    _, message = tap(env, bot, events)
-    assert "nothing to cancel" in message["text"]
+    assert env.jobs()[0]["state"] == "started"
 
 
 def test_list_machines_stores_a_block_that_hydrates_per_reader(env, model):
@@ -551,3 +566,29 @@ def test_run_command_is_offered_only_while_a_machine_can_run_commands(env, model
     assert provider.ran == [("fake-machine", "ls")]
     machines.unregister_provider("fake")
     assert "run_command" not in offered(env)
+
+
+def test_the_list_handed_to_the_model_stays_short(env):
+    class Many(FakeProvider):
+        def machines(self, gateway, principal):
+            return [
+                {
+                    **FakeProvider.machines(self, gateway, principal)[0],
+                    "id": f"m-{n}",
+                    "label": f"machine-{n}",
+                }
+                for n in range(30)
+            ]
+
+    machines.register_provider(Many())
+    turn = tools.Turn(
+        env.gateway,
+        env.owner.workspace_id,
+        env.owner.user_id,
+        {"id": "x", "board": "work"},
+        {"id": 1, "text": "list"},
+        "request-0001",
+    )
+    result = commonplace.bots.tools_machines._list(turn, {})
+    assert len(json.dumps(result.data)) < 3500
+    assert result.data["not_shown"] == 22 and result.blocks == ({"type": "machines"},)
