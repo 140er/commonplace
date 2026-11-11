@@ -245,6 +245,8 @@ Format (read by `commonplace orch docs-check`):
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
+  - `design/compute-map/png/` holds screenshots of the Compute map canvas over an invented topology (the map, a highlighted route, the phone layout, the empty state, 300 nodes, two stages of the scripted walk), made by `tests/topology_shots.sh`.
+
   - `docs/design/RULES.md` places the Rules entry in the account menu rather than the sidebar and phone tabs.
 
   - The OAuth contract records the displayed callback origin, numeric-host tightening and required pre-deploy registration inventory.
