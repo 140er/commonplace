@@ -14,6 +14,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -24,6 +25,10 @@ from commonplace.compute.script_sandbox import ScriptTargetConfig
 from commonplace.compute.target_helper import TARGET_CONFIG_PATH, TARGET_HELPER_COMMAND
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="Linux target provisioning")
+
+REAL_RUNNING_PACKAGES = install.running_packages
+SITE_DIR = "usr/local/lib/python3.12/dist-packages"
+LIB = "opt/commonplace-compute/lib"
 
 WIRE = struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32) + bytes(range(32))
 KEY = "ssh-ed25519 " + base64.b64encode(WIRE).decode("ascii")
@@ -56,6 +61,32 @@ def fake_runtime(base):
         stdlib=base / "stdlib",
         dynload=base / "dynload",
         version=(3, 12),
+    )
+
+
+PACKAGE_TREE = {
+    "commonplace",
+    "commonplace/__init__.py",
+    "commonplace/compute",
+    "commonplace/compute/__init__.py",
+    "commonplace/compute/target_helper.py",
+    "mempalace",
+    "mempalace/__init__.py",
+}
+
+
+@pytest.fixture(autouse=True)
+def fake_packages(tmp_path, monkeypatch):
+    base = tmp_path / "pkgs"
+    for name in PACKAGE_TREE:
+        if name.endswith(".py"):
+            (base / name).parent.mkdir(parents=True, exist_ok=True)
+            (base / name).write_text("# fake\n")
+    (base / "commonplace/__pycache__").mkdir()
+    (base / "commonplace/__pycache__/x.cpython-312.pyc").write_bytes(b"x")
+    (base / "commonplace/data.txt").write_text("not python")
+    monkeypatch.setattr(
+        install, "running_packages", lambda: (base / "commonplace", base / "mempalace")
     )
 
 
@@ -106,6 +137,12 @@ def expected_paths():
         "usr/local/libexec",
         "usr/local/libexec/commonplace-compute",
         "usr/local/libexec/commonplace-compute/helper-entry",
+        "usr/local/lib",
+        "usr/local/lib/python3.12",
+        SITE_DIR,
+        SITE_DIR + "/commonplace-compute.pth",
+        LIB,
+        *(LIB + "/" + name for name in PACKAGE_TREE),
         "var",
         "var/lib",
         "var/lib/commonplace-compute",
@@ -246,7 +283,6 @@ def test_sshd_dropin_authorized_key_and_entry_content(root, runtime):
         "PermitTTY no",
         "AllowTcpForwarding no",
         "AllowAgentForwarding no",
-        "PermitUserEnvironment no",
     ):
         assert line in block, line
     assert not any(line.startswith("AcceptEnv") for line in block)
@@ -668,3 +704,222 @@ def test_host_runtime_discovery_builds_a_self_contained_tree(tmp_path):
     assert not any(path.is_symlink() for path in tree.rglob("*"))
     assert len(install.staged_inventory(tree)) == 64
     shutil.rmtree(tree)
+
+
+# --- fix round 1: sshd Match validity, placed package, account stop, bare uninstall ---
+
+
+def block_keywords(text):
+    inside, keywords = False, []
+    for line in text.splitlines():
+        words = line.split()
+        if not words or line.startswith("#"):
+            continue
+        if words[0] == "Match":
+            inside = words[1:] != ["all"]
+            continue
+        if inside:
+            keywords.append(words[0])
+    return keywords
+
+
+def test_match_block_leaves_out_global_only_directives(root, runtime):
+    installed(root, runtime)
+    text = (root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf").read_text()
+    # sshd rejects this one inside Match ("not allowed within a Match block").
+    assert "PermitUserEnvironment" not in text
+
+
+def test_match_block_uses_only_directives_allowed_in_match(root, runtime):
+    installed(root, runtime)
+    text = (root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf").read_text()
+    keywords = block_keywords(text)
+    assert keywords
+    assert set(keywords) <= install.SSHD_MATCH_KEYWORDS
+    assert "PermitUserEnvironment" not in install.SSHD_MATCH_KEYWORDS
+
+
+def test_match_validator_rejects_a_global_only_directive():
+    good = install.sshd_dropin("commonplace-compute")
+    install.validate_match_block(good)
+    bad = good.replace("    PermitTTY no\n", "    PermitTTY no\n    PermitUserEnvironment no\n")
+    with pytest.raises(install.InstallError, match="PermitUserEnvironment"):
+        install.validate_match_block(bad)
+
+
+@pytest.mark.skipif(
+    not (Path("/usr/sbin/sshd").exists() and shutil.which("ssh-keygen")), reason="needs sshd"
+)
+def test_real_sshd_accepts_the_generated_match_block(tmp_path):
+    key = tmp_path / "host_key"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+    config = tmp_path / "sshd_config"
+    config.write_text(install.sshd_dropin("commonplace-compute"))
+    done = subprocess.run(
+        ["/usr/sbin/sshd", "-t", "-f", str(config), "-h", str(key)], capture_output=True, text=True
+    )
+    if "privilege separation" in done.stderr or "Missing" in done.stderr:
+        pytest.skip("sshd -t cannot run unprivileged here")
+    assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.parametrize(
+    "effective", ["permituserenvironment yes\n", "permituserenvironment all\n", "port 22\n"]
+)
+def test_global_permit_user_environment_must_be_no(root, runtime, capsys, effective):
+    class Effective(install.StagedHost):
+        def sshd_effective_config(self):
+            return effective
+
+    host = Effective()
+    before = snapshot(root)
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 1
+    assert "PermitUserEnvironment" in capsys.readouterr().err
+    assert snapshot(root) == before and host.commands == []
+
+
+def test_global_permit_user_environment_no_is_accepted(root, runtime):
+    class Effective(install.StagedHost):
+        def sshd_effective_config(self):
+            return "port 22\npermituserenvironment no\n"
+
+    installed(root, runtime, host=Effective())
+
+
+def test_install_places_the_python_packages_and_a_pth(root, runtime):
+    installed(root, runtime)
+    lib = root / LIB
+    placed = {str(p.relative_to(lib)) for p in lib.rglob("*")}
+    assert placed == PACKAGE_TREE  # python sources only: no bytecode, no data files
+    for path in [lib, *lib.rglob("*")]:
+        assert not stat.S_IMODE(path.lstat().st_mode) & 0o022
+    pth = root / SITE_DIR / "commonplace-compute.pth"
+    assert pth.read_text() == "/" + LIB + "\n"
+    assert stat.S_IMODE(pth.stat().st_mode) == 0o644
+    manifest = json.loads((root / "etc/commonplace/compute-install-manifest.json").read_text())
+    kinds = {(item["kind"], item["path"]) for item in manifest["items"]}
+    assert ("tree", "/" + LIB) in kinds
+    assert ("file", "/" + SITE_DIR + "/commonplace-compute.pth") in kinds
+
+
+def test_install_verifies_the_import_after_placing_it(root, runtime):
+    host = LiveStub()
+    installed(root, runtime, host=host)
+    check = ("/usr/bin/python3", "-I", "-c", "import commonplace.compute.target_helper")
+    assert host.commands.count(check) == 1
+    assert host.commands.index(check) < host.commands.index(("sshd", "-t"))
+    again = len(host.commands)
+    run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host)
+    assert len(host.commands) == again
+
+
+def test_preflight_does_not_require_the_package_to_be_installed_already(monkeypatch):
+    seen = []
+    monkeypatch.setattr(install, "_host_run", lambda argv, timeout=30: seen.append(argv) or "")
+    install.LiveHost().preflight(install.InstallOptions())
+    assert not any("target_helper" in " ".join(argv) for argv in seen)
+
+
+def test_a_failed_import_check_stops_before_sshd_changes(root, runtime):
+    class Broken(LiveStub):
+        def run(self, argv):
+            super().run(argv)
+            if "target_helper" in " ".join(argv):
+                raise install.InstallError("import failed")
+
+    host = Broken()
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 1
+    assert not (root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf").exists()
+    assert not (root / "etc/commonplace/compute-script-target-v1.json").exists()
+
+
+def test_the_real_packages_import_with_only_the_stdlib_and_the_placed_copy(tmp_path):
+    lib = tmp_path / "lib"
+    install.copy_python_packages(lib, REAL_RUNNING_PACKAGES())
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "commonplace-compute.pth").write_text(str(lib) + "\n")
+    code = (
+        "import site,sys;site.addsitedir(sys.argv[1]);"
+        "import commonplace.compute.target_helper as h;"
+        "bad=[m for m,v in sys.modules.items() if getattr(v,'__file__',None)"
+        " and v.__file__.startswith(sys.argv[2]) is False and 'site-packages' in v.__file__];"
+        "print(h.TARGET_HELPER_COMMAND, bad)"
+    )
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", code, str(site), str(lib)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().endswith("[]")
+    for path in lib.rglob("*"):
+        assert path.is_dir() or path.suffix == ".py"
+        assert not stat.S_IMODE(path.lstat().st_mode) & 0o022
+
+
+def test_site_directory_choice_prefers_the_local_dist_packages():
+    lines = ["/usr/lib/python3/dist-packages", "/usr/local/lib/python3.12/dist-packages"]
+    assert install.choose_site_dir(lines) == "/usr/local/lib/python3.12/dist-packages"
+    with pytest.raises(install.InstallError, match="site"):
+        install.choose_site_dir([])
+
+
+def test_uninstall_stops_the_account_before_userdel(root, runtime):
+    host = LiveStub()
+    installed(root, runtime, host=host)
+    host.linger = True
+    host.commands.clear()
+    assert run(root, "uninstall", runtime, host=host) == 0
+    commands = host.commands
+    stop = commands.index(("loginctl", "terminate-user", "commonplace-compute"))
+    assert ("loginctl", "disable-linger", "commonplace-compute") in commands
+    assert stop < commands.index(("userdel", "commonplace-compute"))
+    assert commands.index(("loginctl", "disable-linger", "commonplace-compute")) < commands.index(
+        ("userdel", "commonplace-compute")
+    )
+
+
+def test_uninstall_skips_disable_linger_when_it_is_not_set(root, runtime):
+    host = LiveStub()
+    installed(root, runtime, host=host)
+    host.commands.clear()
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert ("loginctl", "terminate-user", "commonplace-compute") in host.commands
+    assert not any(c[:2] == ("loginctl", "disable-linger") for c in host.commands)
+
+
+def test_uninstall_leaves_processes_alone_while_evidence_blocks_it(root, runtime):
+    host = LiveStub()
+    installed(root, runtime, host=host)
+    (root / "var/lib/commonplace-compute/attempts/claim0").mkdir()
+    (root / "var/lib/commonplace-compute/attempts/claim0/claim.json").write_text("{}")
+    host.commands.clear()
+    assert run(root, "uninstall", runtime, host=host) == 1
+    assert host.commands == []
+
+
+def test_uninstall_needs_no_install_arguments(root, runtime):
+    installed(root, runtime)
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "commonplace.compute.target_installer",
+            "uninstall",
+            "--root",
+            str(root),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    assert done.returncode == 0, done.stderr
+    assert "uninstalled" in done.stdout
+    assert {str(p.relative_to(root)) for p in root.rglob("*")} == {
+        "etc",
+        "etc/ssh",
+        "etc/ssh/sshd_config",
+        "etc/ssh/sshd_config.d",
+    }
