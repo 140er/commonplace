@@ -710,13 +710,6 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Shell project attention counts and refresh selection include origin/configuration approvals. Release items rank after person decisions and before plan review; a selected origin stays open until it leaves the queue.
 
 
-### Coordinator release authority
-
-- A seat counts as the board coordinator for restricted-origin release when it is the board's configured coordinator, or when it holds a live coordinator lease of exactly that board. The coordinator lease is the lease of the accepted live config's orchestrator role; the configured coordinator is preferred when it qualifies. A replaced epoch (a newer claim by another holder), an expired or released lease, a lease of another board, a missing or unparsable config and a pending restore name nobody, and the lease holder must still be independent of the card's creator and keep every release grant.
-- A coordinator may release a restricted-origin card reserved for it and keep working it after later handoffs. A seat that is neither the configured coordinator nor the live lease holder is refused on approve, update and take, and the creator never releases its own card.
-- A release recorded by an agent authorizes handed-over work only while that agent keeps its release grants, including task_approve, needs_me, space_read, space_post and write access to the board's wing. A former coordinator that loses any of them no longer authorizes work it released, whoever holds the card.
-- Needs-me discovery of origin releases still follows the configured coordinator; a seat that only holds the lease releases through the card.
-
 ### Thread-derived mutations and citations
 
 - Within one workspace, a fact with any readable thread source is mutable.
@@ -753,6 +746,13 @@ playbooks and the original wider orchestration acceptance remain separate work.
   other probe failures propagate. Parser/access caches expire with a response.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
+
+### Coordinator release authority
+
+- A seat counts as the board coordinator when it is the board's configured coordinator, or when it holds a live coordinator lease of exactly that board. The coordinator lease is the lease of the accepted live config's orchestrator role; the configured coordinator is preferred when it qualifies. A replaced epoch (a newer claim by another holder), an expired or released lease, a lease of another board, a missing or unparsable config, a pending restore and an unreadable runner store name nobody. A lease holder must still be independent of the card's creator and keep every release grant.
+- The lease holder has the whole coordinator role on that board: it releases restricted-origin cards, is a candidate approver and supervisor for the board's pending proposals and plans, may edit the title and body of an unassigned restricted-origin todo card, is the target of the `orchestrator`/`coordinator` handoff alias when no live configured coordinator exists, and receives release discovery (needs-me, release boards) for the board. The owner's recovery item is shown only while no coordinator, configured or leased, can release the card. Routed asks (`ask`, coordinated ask boards) and runner or planner routing still follow the configured coordinator only.
+- A coordinator may release a restricted-origin card reserved for it and keep working it after later handoffs. A seat that is neither the configured coordinator nor the live lease holder is refused on approve, update and take, and the creator never releases its own card.
+- A release recorded by an agent authorizes handed-over work only while that agent keeps every release grant (task_approve, needs_me, space_read, space_post, memory read and write, and write access to the board's wing). This holds for every agent route that can store a release: coordinator, parent, top-level agent and other trusted agents. A former approver that loses any grant no longer authorizes work it released, whoever holds the card.
 
 ## Numbers
 

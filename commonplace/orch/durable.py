@@ -329,6 +329,29 @@ def coordinator_holder_in(conn, board: str, now: str | None = None) -> str | Non
     return row["holder_actor"] if row is not None and _lease_live(row, now) else None
 
 
+def coordinator_holders_in(conn, now: str | None = None) -> dict[str, str]:
+    """``{board: actor}`` for every board with a live coordinator lease (see ``coordinator_holder_in``)."""
+    if conn is None:
+        return {}
+    now = _clock(now)
+    try:
+        boards = [
+            r["board"]
+            for r in conn.execute(
+                "SELECT board FROM orch_configs WHERE channel=? AND status='accepted'",
+                (orch_store.LIVE,),
+            )
+        ]
+    except sqlite3.Error:
+        return {}
+    holders = {}
+    for board in boards:
+        actor = coordinator_holder_in(conn, board, now)
+        if actor:
+            holders[board] = actor
+    return holders
+
+
 def check_lease(
     conn,
     *,

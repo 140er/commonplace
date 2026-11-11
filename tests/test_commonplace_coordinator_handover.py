@@ -128,3 +128,29 @@ def test_another_boards_coordinator_is_refused(hub, fresh):
     fresh.owner.board_set("elsewhere", seat.principal.actor)
     refuse(fresh.owner, number, lambda: seat.work.task_approve(number, approve=True, reason=REASON))
     refuse(fresh.owner, number, lambda: seat.work.task_update(number, status="doing"))
+
+
+@pytest.mark.parametrize("loss", ["none", "tools", "wing-write"])
+@pytest.mark.parametrize("topology", ["direct", "via-middle"])
+def test_an_ancestors_release_lapses_with_its_authority(hub, fresh, topology, loss):
+    root = fresh.connect("root", trust="trusted")
+    parent = root
+    if topology == "via-middle":
+        parent = fresh.connect("middle", parent=root.id, trust="trusted")
+    creator = fresh.connect("creator", parent=parent.id, trust="untrusted", write_wing="inbox")
+    seat = fresh.connect("seat", trust="trusted")
+    fresh.owner.board_set("work", root.principal.actor)
+    number = creator.work.task_add(board="work", title="Restricted work")["number"]
+    root.work.task_approve(number, approve=True, reason=REASON)
+    assert creator.work.task_take_next(task=number)["status"] == "doing"
+    creator.work.task_handoff(number, seat.principal.actor, NOTE)
+    fresh.owner.board_set("work", fresh.connect("replacement").principal.actor)
+    if loss == "tools":
+        policy(hub, root, tools=[t for t in TOOLS if t not in ("task_approve", "needs_me")])
+    elif loss == "wing-write":
+        policy(hub, root, write_wing="elsewhere")
+    if loss == "none":
+        assert seat.work.task_take_next(task=number)["status"] == "doing"
+    else:
+        refuse(fresh.owner, number, lambda: seat.work.task_take_next(task=number))
+        assert fresh.owner.task_show(number).get("awaiting_release") is True
