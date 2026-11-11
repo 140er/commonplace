@@ -210,3 +210,35 @@ def test_tool_schemas_expose_the_new_arguments():
     assert get["keys"]["type"] == "array" and get["keys"]["maxItems"] == render.MAX_KEYS
     start = extensions.get("session_start").input_schema["properties"]["rules"]
     assert start == {"type": "string", "enum": ["full", "index"], "default": "full"}
+
+
+def test_keyed_reply_is_bounded_with_many_large_rules_and_unknown_keys(hub, env):
+    rows = [
+        {
+            "id": i,
+            "key": f"k{i}",
+            "kind": "style",
+            "scope": "global",
+            "status": "accepted",
+            "source": "owner",
+            "version": 1,
+            "summary": None,
+            "text": "T" * 4_000,
+        }
+        for i in range(100)
+    ]
+    keys = [f"k{i}" for i in range(100)] + [f"\u0001{n:03d}" + "x" * 190 for n in range(100)]
+    reply = render.keyed(rows, keys, 9, budget=24_000)
+    assert len(reply.encode()) <= 24_000
+    assert "Incomplete:" in reply and "ask for fewer keys" in reply
+    assert " and " in reply.split("unknown keys: ")[1].split("\n")[0]
+    assert reply.endswith("gives no rules_seq.")
+    assert reply.count(" [style global accepted owner v1] ") + reply.count("Incomplete") >= 2
+    full = render.keyed(rows[:2], ["k0", "k1", "k0"], 9)
+    assert "rules: 2 of 2 keys" in full and "Incomplete" not in full
+
+
+def test_keyed_duplicate_keys_count_once_on_the_plain_path(hub, env):
+    publish(env, key="one", text="Mine")
+    ok, reply = mcp(hub, env.token, "rules_get", keys=["one", "one", "gone", "gone"])
+    assert ok and "rules: 1 of 2 keys" in reply and reply.count('"gone"') == 1

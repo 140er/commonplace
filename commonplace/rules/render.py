@@ -239,6 +239,7 @@ def effective(rows, seq, rules_seq, *, format="text", mode="off", budget=REPLY_B
 TITLE_CHARS = 80
 MAX_KEYS = 200
 KEY_CHARS = 200
+UNKNOWN_BYTES = 2_000
 
 
 def unknown_keys(rows, keys):
@@ -288,21 +289,38 @@ def index(rows, seq, *, mode="off", budget=REPLY_BYTES):
 
 
 def keyed(rows, keys, seq, *, budget=REPLY_BYTES):
-    """Full text of the selected rules, one key-labelled line each; unknown keys are named."""
+    """Full text of the selected rules, one key-labelled line each; unknown keys are named.
+
+    The whole reply, including the unknown-keys line, stays within the budget.
+    """
+    keys = list(dict.fromkeys(keys))
     wanted = set(keys)
     selected = [r for r in rows if r["key"] in wanted]
-    unknown = unknown_keys(rows, keys)
     lines = text(selected).split("\n") if selected else []
+    tail = []
+    unknown = unknown_keys(rows, keys)
+    if unknown:
+        named, size = [], length("unknown keys: ") + 32
+        for key in unknown:
+            quoted = quote(key)
+            if size + length(quoted) + 2 > UNKNOWN_BYTES:
+                break
+            named.append(quoted)
+            size += length(quoted) + 2
+        more = f" and {len(unknown) - len(named)} more" if len(named) < len(unknown) else ""
+        tail.append("unknown keys: " + ", ".join(named) + more)
+    tail += [f"seq {seq}", "Partial read: this is not the full rule set and gives no rules_seq."]
+    head = f"rules: {len(selected)} of {len(keys)} keys"
+    room = budget - length(head) - sum(length(t) + 1 for t in tail) - 1
+    room -= 100  # the Incomplete note
     shown, size = [], 0
     for line in lines:
-        if size + length(line) + 1 > budget - 400:
+        if size + length(line) + 1 > room:
             break
         shown.append(line)
         size += length(line) + 1
-    out = [f"rules: {len(selected)} of {len(keys)} keys", *shown]
     if len(shown) < len(lines):
-        out.append(f"Incomplete: {len(lines) - len(shown)} rules not shown; ask for fewer keys.")
-    if unknown:
-        out.append("unknown keys: " + ", ".join(quote(k) for k in unknown))
-    out += [f"seq {seq}", "Partial read: this is not the full rule set and gives no rules_seq."]
-    return "\n".join(out)
+        head_tail = [f"Incomplete: {len(lines) - len(shown)} rules not shown; ask for fewer keys."]
+    else:
+        head_tail = []
+    return "\n".join([head, *shown, *head_tail, *tail])
