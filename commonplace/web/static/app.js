@@ -1,4 +1,5 @@
 import { mountWorkspaceOrchestration } from "./projects.js";
+import { mountProjectPanel } from "./projectpanel.js";
 import { mountAgentSchedules } from "./agent-schedules.js";
 import { api, escape as e, actor, elapsed, safeLink, pullRequestUrl, setPeople } from "./api.js";
 import { digestSpeech } from "./digest.js";
@@ -22,6 +23,7 @@ import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, ro
 import { createDetails } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
+import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
 import { resolveRoute } from "./routes.js";
 import { createNeeds } from "./needs.js";
 import { createMemory } from "./memory.js";
@@ -343,7 +345,7 @@ function shell() {
   let opener = null, wasOpen = false;
   const sync = () => {
     // Needs me lends the shared panel to project settings; it draws there again once the panel closes.
-    if (panel.hidden && state.needsUI?.paused?.()) state.needsUI.pause(false);
+    resumeNeedsAfterPanel(panel);
     if (layout.classList.contains("chat-open") || layout.classList.contains("ctx-pushed")) return;
     // Project settings are a page from 700 px up (10), never a dimmed sheet; on a phone they are the m13 sheet.
     const page = panel.querySelector("[data-project-settings]") && !matchMedia("(max-width:699px)").matches;
@@ -520,6 +522,7 @@ function boardView() {
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
   void fillChatTimes(board);
+  void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
 }
 function markOpenCard() {
   root.querySelectorAll(".workbench-board .card[data-card]").forEach((card) => {
@@ -675,7 +678,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (rebase) { state.base = `#/board/${enc(card.board)}`; void refresh(); }
     const saved = remember();
     // A refresh of the open card reuses the component, so focus stays where the user left it.
-    if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api }); }
+    if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
     const shown = detailsUI.show(card, { board, me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
@@ -722,20 +725,40 @@ function showFromChat(number, row) {
   const node = root.querySelector(`.workbench-board .card[data-card="${number}"]`);
   if (node) { roveTo(node); node.focus(); node.scrollIntoView({ block: "nearest" }); }
 }
+// Needs me lends the shared panel to project settings; once the panel closes it draws again and
+// re-reads its lists, so an item the owner just fixed (a saved model) is gone.
+function resumeNeedsAfterPanel(panel) {
+  if (panel.hidden && state.needsUI?.paused?.()) { state.needsUI.pause(false); void refresh({ background: true }); }
+}
+// Opens project settings in the shared panel from a shell button (the coordinator or a Needs me "Set the model").
+async function openProjectSettings(action, b, { mountProject, settingsOptions }) {
+  voice.stop();
+  const slug = b.dataset.board || currentBoard()?.slug, epoch = state.screen;
+  if (!slug) return;
+  const panel = root.querySelector("#card-panel");
+  // On Needs me the panel holds the item's detail: it waits while settings use the panel.
+  const needs = onNeeds() ? state.needsUI : null;
+  needs?.pause(true);
+  panel.hidden = false;
+  panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
+  await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen,
+    ...settingsOptions({ action, dataset: b.dataset, needs, panel, refresh: () => refresh({ background: true }) }) });
+}
 // The no-answer error's restart link opens project settings in the chat's Details slot; Back returns to the link.
-async function openRestart(link) {
+async function openRestart(link, projects) {
   const service = state.workbenchChat, board = service?.board, epoch = state.screen;
   if (!board) return;
   voice.stop();
   service.dock.close({ toDetails: true, row: link });
-  const { mountProject } = await import("./projects.js");
+  const { mountProject, settingsOptions } = projects || await import("./projects.js");
   if (epoch !== state.screen) return;
   const panel = root.querySelector("#card-panel");
   detailsUI?.stop(); detailsUI = null;
   panel.hidden = false;
   panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="settings-back-to-chat" aria-label="Back to the chat">×</button><div data-project-settings></div></section>';
   await mountProject(panel.querySelector("[data-project-settings]"), { slug: board.slug, api, e, settings: true, restart: true, origin: `#/board/${enc(board.slug)}/chat`,
-    current: () => epoch === state.screen, onBack() { void state.workbenchChat?.dock.backToChat(); } });
+    current: () => epoch === state.screen, onBack() { void state.workbenchChat?.dock.backToChat(); },
+    ...settingsOptions({ action: "restart", refresh: () => refresh({ background: true }) }) });
   if (epoch === state.screen && !panel.hidden) panel.querySelector("[data-project-back]")?.focus();
 }
 function cancelCard() {
@@ -1536,20 +1559,10 @@ root.addEventListener("click", async (event) => {
     else if (action === "space-tab") {
       voice.stop();
       const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
-    } else if (action === "coordinator") {
-      voice.stop();
-      const slug = b.dataset.board || currentBoard()?.slug, epoch = state.screen;
-      if (!slug) return;
-      const { mountProject } = await import("./projects.js");
+    } else if (action === "coordinator" || action === "project-models") {
+      const epoch = state.screen, projects = await import("./projects.js");
       if (epoch !== state.screen) return;
-      const panel = root.querySelector("#card-panel");
-      // On Needs me the panel holds the item's detail: it waits while settings use the panel.
-      const needs = onNeeds() ? state.needsUI : null;
-      needs?.pause(true);
-      panel.hidden = false;
-      panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
-      await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen,
-        ...(needs ? { onBack() { panel.hidden = true; } } : {}) });
+      return openProjectSettings(action, b, projects);
     }
     else if (action === "close-panel") {
       closeCardPanel();
@@ -1561,6 +1574,11 @@ root.addEventListener("click", async (event) => {
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
     else if (action === "unblock") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: removeBlocker(state.card, Number(b.dataset.blocker)), version: state.card.version } }));
+    else if (["archive", "restore", "carry-on", "unpin"].includes(action)) await mutate(`card-${state.card.number}`, async () => {
+      const request = lifecycleRequest(state.card, action, { pin: b.dataset.pin });
+      const result = await api(request.path, { method: "POST", body: request.body });
+      if (action === "carry-on") location.hash = `#/card/${result.card.number}`;
+    });
     else if (action === "new-board") openOnboarding();
     else if (action === "logout") {
       state.needsUI?.stop(); state.needsUI = null;
@@ -1623,6 +1641,11 @@ root.addEventListener("submit", async (event) => {
     });
     else if (kind === "blockers") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: addBlockers(state.card, blockerNumbers), version: state.card.version } });
+      form.reset();
+    });
+    else if (kind === "pocket") await mutate(`card-${state.card.number}`, async () => {
+      const request = lifecycleRequest(state.card, "pin", { text: payload.text });
+      await api(request.path, { method: "POST", body: request.body });
       form.reset();
     });
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));

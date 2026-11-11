@@ -114,6 +114,32 @@
           "name": "board_set"
         },
         {
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
+        },
+        {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
@@ -223,6 +249,44 @@
             "type": "object"
           },
           "name": "fact_save"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -1149,7 +1213,7 @@
           "name": "rules_feedback"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1162,12 +1226,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -1255,7 +1330,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1278,6 +1353,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -1815,6 +1898,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_goal",
       "card_split_done",
       "card_start",
       "card_start_cancel",
@@ -1822,6 +1906,8 @@
       "card_start_status",
       "decide",
       "fact_save",
+      "goal_list",
+      "goal_set",
       "handoff_start",
       "memory_get",
       "memory_link",
@@ -1995,6 +2081,32 @@
           "name": "board_own_wing"
         },
         {
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
+        },
+        {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2031,6 +2143,44 @@
             "type": "object"
           },
           "name": "decide"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -2231,7 +2381,7 @@
           "name": "rules_feedback"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2244,12 +2394,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -2337,7 +2498,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2360,6 +2521,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -2767,8 +2936,11 @@
       "board_add",
       "board_list",
       "board_own_wing",
+      "card_goal",
       "card_split_done",
       "decide",
+      "goal_list",
+      "goal_set",
       "memory_get",
       "memory_link",
       "memory_save",
@@ -2912,6 +3084,32 @@
           "name": "board_set"
         },
         {
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
+        },
+        {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
@@ -3021,6 +3219,44 @@
             "type": "object"
           },
           "name": "fact_save"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -3947,7 +4183,7 @@
           "name": "rules_feedback"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -3960,12 +4196,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -4053,7 +4300,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4076,6 +4323,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -4613,6 +4868,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_goal",
       "card_split_done",
       "card_start",
       "card_start_cancel",
@@ -4620,6 +4876,8 @@
       "card_start_status",
       "decide",
       "fact_save",
+      "goal_list",
+      "goal_set",
       "handoff_start",
       "memory_get",
       "memory_link",
