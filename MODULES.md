@@ -29,6 +29,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `SYSTEM.md`, `MODULES.md`
 - **Owns:**
 
+  - OAuth consent documents the displayed single validated origin, canonical numeric hosts and actionable legacy validation errors.
+
   - The exact instance authority, packaged identity and opt-in receipt/mount residual contracts.
 
   - Admin card navigation restores a regular base, inventory counts match joined rows, and Retry retains the failed page mode and cursor.
@@ -240,6 +242,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The OAuth contract records the displayed callback origin, numeric-host tightening and required pre-deploy registration inventory.
+
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
@@ -260,9 +264,13 @@ Format (read by `commonplace orch docs-check`):
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
+  - `CONTRIBUTING.md` documents the hook install, the pre-push quick check and its budget, and the per-worktree environment.
+
   - `docs/projects.md` and `docs/orchestrator.md` state who may hold a lease on a board without `[runner]`: its own trusted project seat.
 
 - **Promises:**
+
+  - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
@@ -304,7 +312,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Contributor test instructions state that the default run excludes the `timing` lane and that timing results are informational, never a merge gate.
 
-  - Board API and design prose describe deliberate origin release, fail-closed provenance and signed-in owner recovery separately from proposal/plan review.
+  - Board API and design prose describe deliberate origin release, fail-closed provenance and signed-in owner recovery separately from proposal/plan review. They also describe creator-only reservation cancellation without activation authority.
 
 - **How it fails:**
 
@@ -341,6 +349,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Python and Rust packaging, pinned dependencies, the coverage gate, lint and format settings, pre-commit hooks, repository metadata and the development container.
+
+  - `.pre-commit-config.yaml` configures the commit stage only; the push stage is the quick check in `commonplace/guards/`, installed with `python -m commonplace.guards.hooks install`.
 
 - **Promises:**
 
@@ -578,18 +588,32 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - `tests/test_commonplace_capacity.py` covers the unlimited default, under/at the cap, concurrent sign-ups on one and on separate connections, waitlist admit, invited and disabled accounts, and the email, provider, REST and CLI paths.
+
+  - The encrypted-store budget regression proves a budgeted thread write and its refusal through SQLCipher, whose `page_size` is text.
+
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
+  - OAuth CSP header controls and real Chromium form submissions cover normal consent, login retry and re-rendered error consent.
+
+  - OAuth CSP and destination-display controls cover normal consent, retry, canonical numeric hosts, explicit default ports and actionable validation errors.
+
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
+  - `tests/cardruns.mjs` (run by `tests/test_card_runs_ui.py`) covers the card panel's Runs section including the Start agent control: the words of every refusal, the configured and free forms, what a refresh keeps and when no control shows.
+
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
   - `tests/test_commonplace_rules_evidence.py` and the `rules_feedback` entries of `tests/spaces_surfaces.json` pin evidence writes, refusals, workspace isolation, bounded growth and old-database migration.
+
+  - `tests/test_guards_prepush.py` and `tests/test_guards_hooks.py` build throwaway git repos and linked worktrees with stand-in tools; they run no host tool and need no network.
+
+  - `tests/test_statechart_card_rules.py` walks the shortest breaking path of each card-lifecycle statechart rule (R1, R3, R4, R5, R6, R6b, R7) and asserts the rule holds.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
@@ -604,7 +628,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Synthetic Admin HTTP inventories and served-asset Node contracts, with assertion-only pinned-base RED evidence and identical selected head GREEN nodes.
 
-  - Runner block checks run the served `adminrunners.js` against a fake DOM: enroll, attest and wings edit call the owner routes with exact bodies, and enrollment tokens never reach storage, logs, list redraws or a dismissed panel.
+  - Runner block checks run the served `adminrunners.js` against a fake DOM: enroll, attest, wings edit and the two-step revoke call the owner routes with exact bodies, and enrollment tokens never reach storage, logs, list redraws or a dismissed panel.
 
 
   - Synthetic legacy safety-stop cases and explicitly classified transcript-only fixture updates.
@@ -623,6 +647,8 @@ Format (read by `commonplace orch docs-check`):
   - Coordinator status regressions: `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) and `tests/test_orch_lease_status.py` pin the status states, the End lease confirm and refusals, and that ending a live lease leaves unfinished steps listed.
 
 - **Promises:**
+
+  - `tests/spaces_surfaces.json` pins the `decide` description naming owner connections holding `cards:decide`.
 
   - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Authority lookup failures pin one redacted diagnostic and no enqueue. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
 
@@ -727,7 +753,10 @@ Format (read by `commonplace orch docs-check`):
 
   - Waiting-reason app tests drive the real `board.js`, `details.js` and `waiting.js` modules through Node against the server sentences.
 
+  - Card reviewer tests (`test_commonplace_card_reviewer.py`) run the owner-only choice, member validation, completion routing, decide enforcement over service, MCP and REST, self-review, re-addressing and needs-me through the hub; `card_reviewer.mjs` drives `card-reviewer.js`, `details.js` and `board.js` in Node.
+
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
+  - Stranded-reservation tests exercise coordinator release of its own reservation, creator cancellation after a real handoff with current or lapsed release, and atomic refusals for unrelated/descendant release, stored descendant markers, other reservations, bundled updates and pending reviews.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Owner rejection of person-targeted restricted proposals with a healthy coordinator preserves origin state; owner fallback still refuses rejection. Existing release, connection, default-client and delayed-approval contracts supply explicit recovery reasons and separate required proposal review.
   - Person proposal/plan queues assert reject-only actions before an independent coordinator releases origin and full actions afterwards; coordinator and fallback-owner approval controls remain positive. Routed-decision claims preserve choice and reply across a later origin release, including reply-only decisions. Owners can directly reject pending proposals during creator, descendant, unsafe-lineage and invalid-stamp configuration states without releasing origin. Coordinator-settings coverage counts the owner recovery card once, excluding its notice. Button-click regressions exercise reject-only proposals and plans through both the direct rejection request and the shell callback, with no approval control. Reserved-choice regressions refuse the exact origin sentinel in free-text decisions and new/existing ask options without changing task/event state, then verify delivery of a replacement decision; case and whitespace variants remain ordinary choices.
@@ -935,12 +964,14 @@ Format (read by `commonplace orch docs-check`):
 
 ## hub-core
 
-- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
+- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
 
   - Canonical Space REST aliases mapped to existing board tool authority.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
+
+  - The extension seam lists `commonplace.agent_schedules`, installed after holds.
 
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
 
@@ -949,6 +980,8 @@ Format (read by `commonplace orch docs-check`):
 - **Promises:**
 
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
+
+  - Owner-granted `cards:decide`: only the signed-in owner's principal can grant it, to their own top-level, non-agent, non-seat connection; loaded policies drop it with ownership; the stored grant is removed on demotion (a trigger on `UPDATE` of `memberships.role` from owner), on coordinator assignment and on every coordinator removal or replacement (`board_set`, auto-unbind; a separate control-DB commit ordered before the board COMMIT, not atomic with it) and when an expired PAT is rotated; OAuth issue and refresh return only live scopes. Holders answer only asks addressed to their own person, each answer audited as `card.decide.delegated` with the connection id; `LocalTool.untrusted_scope` admits untrusted holders to `decide` only.
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
@@ -1055,11 +1088,15 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_gateway.py`, `tests/test_commonplace_control_db.py`, `tests/test_commonplace_policy.py`, `tests/test_hub_` files.
 
+  - `tests/test_cards_decide_scope.py` covers granting, refusal, other people's asks, revocation and audit; `tests/test_cards_decide_scope_browser.py` covers the consent and Agents UI (needs Playwright).
+
 
 ## sessions-and-sign-in
 
-- **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/oauth/`, `commonplace/social/`
+- **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/capacity.py`, `commonplace/oauth/`, `commonplace/social/`
 - **Owns:**
+
+  - Authenticated consent displays the validated code destination origin and permits only that origin in form-action; login and generic pages remain self-only. IPv6 redirects fail closed because Chromium ignores IPv6 CSP host-sources.
 
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
 
@@ -1071,6 +1108,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Imported-history consent: OAuth reader consent is separate and unticked; defaults and person policies exclude the reader, while refresh descendants cannot regain a dropped scope.
 
+  - OAuth `cards:decide` consent is separate, unticked and owner-only, and requires `memory:read` plus `memory:write`; members see an owner-only notice and a forged tick grants nothing.
+
   - OAuth client revoke: a workspace owner can revoke an OAuth-connected client from Settings > Agents. One transaction marks the connection, every access and refresh token and any unredeemed code revoked and audits it; later calls and refreshes are refused, and what the client wrote stays. Members, other workspaces and the client itself cannot revoke it.
 
   - Enabled coordinator startup context includes unsplit inbox counts, without migrating boards.
@@ -1081,15 +1120,17 @@ Format (read by `commonplace orch docs-check`):
 
   - **Browser GitHub connection:** GitHub login reserves subject ownership, and connect-marked callbacks dispatch before login flow lookup without provisioning or replacing sessions.
 
+  - **Account cap and waitlist:** `COMMONPLACE_MAX_ACCOUNTS` unset means unlimited and changes nothing. When set, only the creation of a new account through sign-up is gated: the count (non-disabled users) and the insert share one `BEGIN IMMEDIATE` transaction, so concurrent sign-ups cannot overshoot it, also across processes. A full server records the verified email in `signup_waitlist` and tells the person plainly (`signin=waitlist` for providers, a 200 text page for email). Existing accounts, invited members and people an instance admin admitted are never refused; admitting may exceed the cap. Admins list and admit through `GET`/`POST /api/admin/instance/waitlist` or `commonplace waitlist list|admit`.
+
   - **Connection lifecycle proof:** Connect-marked POST callbacks are refused before login dispatch; a normal login remains independent of an outstanding connect flow.
 
 - **How it fails:**
 
-  - Mail outages block new sign-ins but not existing sessions; a misconfigured provider fails closed.
+  - Mail outages block new sign-ins but not existing sessions; a misconfigured provider fails closed. An invalid `COMMONPLACE_MAX_ACCOUNTS` logs one warning and leaves accounts unlimited.
 
 - **Tests:**
 
-  - `tests/test_commonplace_email_auth.py`, `tests/test_commonplace_oauth.py`, `tests/test_commonplace_agents_oauth_revoke.py`, `tests/test_commonplace_social.py`, `tests/test_commonplace_session.py`.
+  - `tests/test_commonplace_email_auth.py`, `tests/test_commonplace_oauth.py`, `tests/test_commonplace_agents_oauth_revoke.py`, `tests/test_commonplace_social.py`, `tests/test_commonplace_session.py`, `tests/test_commonplace_capacity.py`.
 
 
 ## cli-and-client
@@ -1097,9 +1138,13 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/client_hooks.py`, `commonplace/client_install.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
 - **Owns:**
 
+  - `commonplace waitlist list|admit` (instance admin, `--by` as for `plan set`) and the `COMMONPLACE_MAX_ACCOUNTS` setup note in `SETUP.md`.
+
   - The `commonplace` command line, the credential-scoped client, native hooks and installers, the stdio bridge and the agent skill.
 
 - **Promises:**
+
+  - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
 
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
   - Opt-in backup reporting records only the final selected mode; check/cleanup/restore never report. Receipt failure preserves backup return/exception; test_backup_status.py covers both outcomes and fallback.
@@ -1144,7 +1189,11 @@ Format (read by `commonplace orch docs-check`):
 
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
+  - The card's completion reviewer (`boards/reviewer.py`): only a signed-in workspace owner chooses, changes or clears it, it must be a current member, and a reviewer who left counts as none. With none the owner reviews as before. With one, every move to Done by anyone else opens a completion review addressed to that member, and only that member may answer it; the reviewer sees it in needs-me, and changing the reviewer re-addresses an open review.
+
 - **Promises:**
+
+  - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, is refused for seats and board coordinators, needs `memory:write`, read access to the board's wing and the owner's person-level write access to it (not the app's own write wings), cannot escalate, and writes one `card.decide.delegated` audit row inside the board transaction (a failed write fails the answer; a later rollback appends `card.decide.rolled_back`; an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails). Without the scope, refusals are unchanged.
 
   - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill. Subscription lookup exceptions log their type and stack locations while retaining fail-closed authority.
 
@@ -1191,6 +1240,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Subagent and restricted-agent submissions remain inactive until deliberate origin release. An appointed independent coordinator needs current memory read/write, board-wing read/write and visible space_read, space_post, task_approve and needs_me; decide is not required. Ancestors remain eligible, while creators and their descendants cannot obtain new release authority. Missing, foreign or cyclic ancestry and unverifiable connection-creator stamps fail closed on every agent release path, including stored markers.
   - The appointed independent coordinator may release origin while holding the card, preserving status, holder, every lease timestamp, provenance and pending review. Its marker is revalidated against current appointment, liveness, lineage and grants. This grants no self-review, rejection or escalation rights; origin release requires an affirmative decision and a nonempty reason of at most 500 characters.
+  - A status-only update lets a creator cancel its own todo reservation to backlog after handoff, even if origin release has lapsed. It clears the assignee, preserves provenance and the approval marker, and grants no activation or review authority. Other reservations and pending/rejected proposals or person decisions still refuse cancellation.
   - Signed-in workspace owners recover origin only when the configured record is absent/non-live, or verified independent but missing a required release grant. A live creator, descendant or unsafe lineage requires coordinator configuration and blocks owner release, even with missing grants. An unverifiable creator stamp plus any live configured record also blocks release: clear the coordinator first. Clearing affects the entire board and routes its other unreleased cards to owner recovery as well. Owner-role connection tokens gain no person fallback.
   - Owner recovery preserves pending proposals and plan reviews: release origin first, then review separately. Origin/configuration items appear once in approvals with release/you needs and approve/configure_coordinator actions; healthy coordinator work creates no owner origin item. Explicit person-targeted backlog proposals and plans retain their independent review route, including owner rejection outside fallback without origin release. Origin audit events keep kind=decide with choice="release origin"; that exact validated choice is reserved and refused in user decisions and ask options.
   - Person review items advertise reject only while origin awaits release that the viewer cannot perform, with a matching explanation; proposal Decline and plan Reject controls render independently of approval permission; other review actions remain intact. Owners retain pending-proposal rejection in configuration states via the card/API approve route with approve=false; the configuration item itself offers only board settings. Claim delivery excludes origin-release decide events by choice so an earlier return-routed decision, including a reply-only decision, is delivered unchanged.
@@ -1269,6 +1319,8 @@ Format (read by `commonplace orch docs-check`):
 
   - A lost launch result becomes `uncertain` and waits for a person; a revoked machine cancels queued jobs on the next sweep; a busy queue refuses with `busy`.
 
+  - The card panel's "Start agent" asks `GET /api/card-starts/options?task=<n>` (signed-in owner only, read-only, `commonplace/runner/start_options.py`): on a configured board the config's machine, project and topic, otherwise the attested machines the owner may use with the projects and topics each allows; a start the card or setup cannot take comes back as a `refusal` code, never as a choice. On a configured board the owner's `card_start` may send the card alone; a refused start answers its stable `code` next to `error`.
+
   - Resolving a start that is no longer `uncertain` answers 409, not 403, so a settled start reads differently from a refused caller; `tests/test_card_runs_contract.py` pins it with the member and other-workspace refusals.
 
 - **Tests:**
@@ -1280,13 +1332,15 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
+  - `tests/test_card_start_defaults.py` covers the owner's card-only start, equal and differing explicit values, the options route, and the refusal of a member, an untrusted agent and a coordinator token with no job created; `tests/cardruns.mjs` the panel's Start control.
   - `tests/test_runner_wings.py` covers multi-wing starts, the ungranted-wing refusal, worker write bounds after enrollment and PATCH, and owner-only listing.
+  - `tests/test_runner_revoke_scope.py` covers a second workspace's owner failing to list or revoke a machine (404, tokens still valid) and revoke/list never returning a token.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
 
 ## orch
 
-- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
+- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
 - **Owns:**
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
@@ -1331,6 +1385,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Two failed sweeps of a board in a row emit one `orch.trigger.failing` event and list the board in the owner's `needs_me` (`orchestrator_failing`) until a sweep succeeds; `orch_sweep_health` stores only the exception type.
 
+  - On boards without workspace orchestration a trigger start refused as `at_cap`, `project_limit`, `busy`, `settings_unavailable`, `config_changed`, `worker_unavailable` or `started_recently` is retried by the sweep (`start_retry`, `orch_start_retries`) after 1, 5, 15, 30 and 60 minutes under the event's own request key, each refusal adds a miss, and the fifth ends as `retry_exhausted`; any other refusal, including one on a retry, is final.
+
   - Void cannot stop launched threads or prove completion; existing active/recent-start and per-switch capacity guards still apply, and a pending todo trigger may run on a later sweep.
 
 
@@ -1348,6 +1404,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_orch_stall_wake.py` covers exactly one wake for an idle board with open work, backoff, a done card restarting the timer, no wake for blocked or person-held cards, owner escalation after three nudges and the off switch.
 
   - `tests/test_orch_trigger_stall.py` covers a split start without a `main` role (including the live v3 config shape), unplannable starts as misses, a released todo card starting, and the failing-sweep owner alert.
+
+  - `tests/test_orch_start_retry.py` covers a retried `at_cap` start with its exact backoff, repeated refusals recorded as misses, the bounded `retry_exhausted` end, a permanent refusal never retried, a retry that is refused permanently, and a settled retry not counted twice.
 
 
 ## projects
@@ -1416,12 +1474,19 @@ Format (read by `commonplace orch docs-check`):
 
   - Rule evidence (`commonplace/rules/evidence.py`): bounded `rule_events` plus `rule_stats` counters per workspace, written by `rules_feedback` (MCP) and `/api/rules/<id>/feedback` (REST).
 
+  - The pre-push quick check (`guards/prepush.py`): changed-file selection, the shared time budget and the report of what it skipped; and the hook installer (`guards/hooks.py`) whose scripts resolve each worktree's own environment.
+
+  - `commonplace.guards.pretool`, a PreToolUse command that refuses git-hook bypasses (`docs/hook-bypass-guard.md`).
+
 - **Promises:**
 
   - Split completion markers are checked writes on MCP and REST.
   - Canonical create uses header freshness while legacy routes retain body compatibility.
 
   - Rules take effect only after owner review; writes from a client with stale rules get 428; flags are deterministic.
+  - The bypass guard denies hook-skipping shell commands and edits of existing hook files with a reason, passes look-alike text, and never auto-approves.
+
+  - The quick check names itself a quick check, reports every skipped or cut-off step, and fails the push only when a check it ran failed. The installed hooks work in a fresh linked worktree or say how to set it up.
 
   - Evidence never changes a rule or its sequence. Agents write with `memory:write` and read back only their own events plus the rule's counters; people read all events, only owners write. `rules_feedback` is an exempt write: a report, not an instruction.
 
@@ -1433,11 +1498,15 @@ Format (read by `commonplace orch docs-check`):
 
   - Evidence tables are created additively in `migrate()`; events are capped (50 per writer, 200 per rule) while counters keep the full history, so a pruned event is no longer readable but still counted.
 
+  - A test whose name matches no changed module is not selected, so the quick check can pass while a distant test would fail; a cut-off step is reported, not retried; a worktree with no environment blocks the hook with the setup command.
+
 - **Tests:**
 
   - Route-aware checked REST harness and Space freshness contract tests.
 
   - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_rules_evidence.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
+
+  - `tests/test_guards_prepush.py` covers test selection, the budget (cut-off lint, cut-off tests, skipped steps), docs-check and the per-worktree tool path; `tests/test_guards_hooks.py` installs the hooks into a clone and pushes and commits from fresh linked worktrees.
 
 
 ## handoff-and-continuity
@@ -1448,6 +1517,8 @@ Format (read by `commonplace orch docs-check`):
   - Agent context handoff to a fresh agent and append-only native session continuity.
 
 - **Promises:**
+
+  - Thread-store storage budgets read `page_size` and `page_count` as integers, so a budgeted write in an encrypted (SQLCipher) workspace is checked instead of failing with a type error.
 
   - The final search gate proves source_path like source_file, including nested folded copies and media path/title aliases, and omits acquisition counts and truncation flags for restricted readers. Body text and arbitrary provenance labels are not scanned for private words.
 
@@ -1553,6 +1624,8 @@ Format (read by `commonplace orch docs-check`):
   - A failed launch of the successor leaves the source agent running; an interrupted archive adoption resumes from its last committed step.
 
 - **Tests:**
+
+  - `tests/test_workspace_encryption.py::test_storage_budget_accepts_sqlcipher_text_page_size` covers a budgeted write and a refusal in an encrypted compact store.
 
   - Graph protocol fault, live-reader and legacy locus-order witnesses exercise mediation.
 
@@ -1744,26 +1817,68 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Workspace skills exposed through scoped MCP tools and owner-managed routes.
+  - Skill bundles: `SKILL.md` plus up to 20 small UTF-8 helper files, stored verbatim by content hash and never run.
+  - Shares: the owner serves a skill to the whole workspace or to one project, and revokes it.
 
 - **Promises:**
 
   - Skills are versioned; only the owner publishes them; reads follow the caller's scopes.
+  - Agents and members are served a skill only while it is shared with the workspace or with a project whose wing they read; the share is checked on every read, so a revoke takes effect at once.
+  - Skills stored before sharing existed start as workspace shares; new ones are workspace-shared unless the owner says otherwise.
 
 - **How it fails:**
 
   - A missing skill version is refused, not silently replaced.
+  - Oversized, binary, duplicate or escaping helper files are refused and nothing is stored; an unshared or other-workspace skill answers "not found".
 
 - **Tests:**
 
-  - `tests/test_commonplace_skills.py`, `tests/test_commonplace_skill.py`.
+  - `tests/test_commonplace_skills.py`, `tests/test_commonplace_skill.py`, `tests/test_commonplace_skills_library.py`.
 
+
+## agent-schedules
+
+- **Paths:** `commonplace/agent_schedules/`, `commonplace/schedule_time.py`, `commonplace/web/static/agent-schedules.js`, `tests/test_agent_schedules.py`, `tests/test_schedule_time.py`, `tests/agent_schedules_view.mjs`
+- **Owns:**
+
+  - Scheduled prompts per agent: an owner gives an agent (a connection) a schedule, a timezone and a prompt, in the control database (`agent_schedules`, `agent_schedule_runs`), through `/api/agent-schedules` and the Scheduled prompts section of Settings.
+
+  - `schedule_time.py` is the one due-time calculation: validation of the two schedule forms (`{every_minutes}` or a five-field `{cron}`, with an IANA timezone), `next_due` and the stored timestamp form. It has no I/O and no clock, so other features (routines) import it instead of re-deriving due times.
+
+  - Delivery uses the existing wake path and no second channel: an owner-authored board message (`space_post`) on the board the agent coordinates, which emits the ordinary `space_message` event that wakes the coordinator and is read with `space_read`. A schedule creates no card.
+
+- **Promises:**
+
+  - Owner-only: listing, creating, pausing, resuming and cancelling answer 403 to members and agent tokens and 401 to anonymous callers; ids from another workspace answer 404.
+
+  - Bounded: at most 20 live (active or paused) schedules per workspace, intervals and cron gaps of at least 15 minutes, prompts of at most 4000 characters, names of at most 80, 30 runs kept per schedule.
+
+  - At most once per due time, also across restarts and racing workers: a due time is claimed by one transaction that advances `next_due` and inserts the run keyed by (schedule, due time). A run left claimed by a crash becomes failed (`interrupted`), never delivered again. A due time more than ten minutes late is recorded as skipped (`missed`). Resuming counts from the resume time; cancelling is final.
+
+  - Delivery re-checks authority at each due time: creator still a workspace owner, connection live, agent still the board's coordinator. Otherwise nothing is posted and the run fails with `owner_gone`, `agent_gone`, `not_coordinator` or `board_gone`; five failures in a row pause the schedule with that reason.
+
+- **How it fails:**
+
+  - A schedule for an agent that is not the board's coordinator is refused at creation (409 `not_coordinator`); other refusals carry `invalid`, `limit`, `agent_not_found`, `board_not_found` or `not_found` codes.
+
+  - A worker pass error is logged without text or values and the next pass retries; a stopped hub delivers nothing and the missed due times are skipped on the next start.
+
+- **Tests:**
+
+  - `tests/test_agent_schedules.py` covers firing once with a fake clock, cron in a timezone, restart, crash between claim and delivery, missed due times, racing workers, pause/resume/cancel, owner-only refusals, workspace isolation, limits, validation refusals and re-checked delivery.
+
+  - `tests/test_schedule_time.py` covers interval and cron due times, daylight-saving gaps and repeats, and every validation refusal.
+
+  - `tests/agent_schedules_view.mjs` (run by `tests/test_agent_schedules.py`) covers row rendering and escaping in the app section.
 
 ## web-and-console
 
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
-  - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
+  - The instance-admin sign-up waitlist routes (`GET`/`POST /api/admin/instance/waitlist`, mounted from `commonplace/capacity.py`) and the plain `waitlist` sign-in message in `signin.js`.
+
+  - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest, wings edit and two-step revoke over `/api/runners`, with one-time token display (and a token-free setup note) kept outside the Admin sections' redraws; revoking a machine clears its token panel.
 
   - Runtime switch/orchestrator/machine read projectors, effective limits, stuck facts and separate legacy needs-me rendering in the existing Admin lifecycle.
 
@@ -1771,9 +1886,15 @@ Format (read by `commonplace orch docs-check`):
   - The GET-only Admin dispatcher, scoped users/connections projections, account/palette navigation and independently settling page controller.
 
 
+  - The card panel's Runs section (`cardruns.js`) lists the card's start jobs with Cancel and the owner's Resolve choice, and offers the owner a Start agent control fed by the options route, with plain words for each refusal.
+
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
+  - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
+
 - **Promises:**
+
+  - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** only on rows the server marks `decide_grantable` (the viewing owner's own eligible, unexpired PATs; never agents, runners, seats, board coordinators or other members' connections; the grant route refuses coordinators too); the consent copy comes from `decide_consent` in `GET /api/connections`; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
 
   - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 
@@ -1811,6 +1932,8 @@ Format (read by `commonplace orch docs-check`):
   - `blockers.js` renders the card-details Blocked by section (blocker title, Waiting or Done, Clear, Add blocker by card number) only when card views carry `blocked_by`, and edits the list through the card `PATCH`.
 
   - `waiting.js` shows the server's waiting sentence as a board tag and in the card details, and a strip of `waiting_notes` above the board; it adds no sentences of its own.
+
+  - `card-reviewer.js` renders the card panel's Reviewer row: a member picker for the owner (server-enforced, default says the workspace owner reviews) and a read-only name for everyone else; the board card carries a Reviewer tag.
 
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 
