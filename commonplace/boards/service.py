@@ -16,7 +16,14 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
-from . import priority as priorities, reviewer as reviewers, task_types
+from . import (
+    decision_blocks,
+    goals,
+    lifecycle,
+    priority as priorities,
+    reviewer as reviewers,
+    task_types,
+)
 from .digest import digest
 from .display import (
     _waiting_on_person as _display_waiting,
@@ -522,7 +529,7 @@ def needs_me(
     return result
 
 
-class BoardService:
+class BoardService(lifecycle.LifecycleMixin):
     def __init__(self, ctx, *, store=True):
         self.ctx = ctx
         self.principal = ctx.principal
@@ -937,6 +944,7 @@ class BoardService:
 
             if snoozed := snooze.active(conn, row["id"]):
                 result["snoozed"] = snoozed
+            result.update(lifecycle.card_fields(conn, row, q))
             if self._restricted_origin(row):
                 result["restricted"] = True
             if self._awaits_origin_release(row):
@@ -1729,6 +1737,9 @@ class BoardService:
         updates.update(
             version=row["version"] + 1, updated_at=now(), updated_by=self.principal.actor
         )
+        if "ask_options" in updates:
+            # Blocks describe one ask's options; a new or cleared ask never inherits them.
+            updates.setdefault("ask_blocks", None)
         if "status" in updates:
             updates["claim_from"] = (
                 row["status"]
@@ -1804,6 +1815,7 @@ class BoardService:
                         r["status"]: r["n"]
                         for r in conn.execute(
                             "SELECT status,count(*) n FROM tasks WHERE board_id=? "
+                            "AND id NOT IN (SELECT task_id FROM card_archive WHERE archived=1) "
                             + ("AND parent_number IS NULL " if top_level else "")
                             + "GROUP BY status",
                             (board["id"],),
@@ -1818,6 +1830,7 @@ class BoardService:
                         "coordinator": board["coordinator"],
                         "can_configure": self.principal.role == "owner",
                         "counts": counts,
+                        "archived": lifecycle.archived_count(conn, board["id"]),
                         "agents_working": len(limits.working(conn, board["id"])),
                     }
                 )
@@ -2311,7 +2324,9 @@ class BoardService:
         all_statuses=False,
         top_level=False,
         include_snoozed=False,
+        archived=False,
     ):
+        """Archived cards are hidden unless ``archived`` asks for exactly those."""
         from commonplace.snooze import store as snooze
 
         cutoff = stale_before()
@@ -2321,6 +2336,7 @@ class BoardService:
             if status is not None and status not in STATUSES:
                 raise ToolError("no: invalid status")
             result = []
+            hidden = lifecycle.archived_ids(conn)
             runner = _UNSET
             if self._orchestration_on is True:
                 from commonplace.projects import split
@@ -2342,11 +2358,13 @@ class BoardService:
                     task = task_row(conn, row["id"])
                     if not shown and snooze.active(conn, task["id"]):
                         continue
+                    if (task["id"] in hidden) != archived:
+                        continue
                     if task["status"] not in (
                         (status,)
                         if status
                         else STATUSES
-                        if all_statuses
+                        if all_statuses or archived
                         else ("todo", "doing", "review")
                     ) and not (mine and status is None and task["proposal_status"] == "pending"):
                         continue
@@ -2447,6 +2465,40 @@ class BoardService:
             ]
             result["linked"] = linked
             result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
+            self._with_goals(conn, row, result)
+            return result
+
+    def _with_goals(self, conn, row, result):
+        """Agent card context: the goal chain, only for a card that points at a goal."""
+        block = goals.chain_block(conn, row["id"])
+        if block is not None:
+            result["goals"] = block
+
+    def goal_list(self):
+        with self.transaction() as conn:
+            return goals.tree(conn)
+
+    def goal_set(self, goal=None, title=None, detail=None, parent=None, archived=None):
+        goals.require_owner(self.principal)
+        with self.transaction() as conn:
+            return goals.put(
+                conn,
+                self.principal.actor,
+                now(),
+                goal=goal,
+                title=title,
+                detail=detail,
+                parent=parent,
+                archived=archived,
+            )
+
+    def card_goal(self, task, goal=None):
+        goals.require_owner(self.principal)
+        with self.transaction() as conn:
+            row, _board = self._get(conn, task)
+            goals.point(conn, self.principal.actor, now(), row["id"], goal)
+            result = {"number": row["id"], "board": row["board"]}
+            self._with_goals(conn, row, result)
             return result
 
     def _parent_card(self, conn, board, parent, *, delegating=False):
@@ -2616,6 +2668,7 @@ class BoardService:
         labels=None,
         ask=None,
         options=None,
+        blocks=None,
         target=None,
         message_id=None,
         parent=None,
@@ -2761,7 +2814,7 @@ class BoardService:
         number = cur.lastrowid
         conn.execute(
             "UPDATE tasks SET claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
-            "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=? WHERE id=?",
+            "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=?,ask_blocks=? WHERE id=?",
             (
                 until,
                 at if until else None,
@@ -2772,6 +2825,7 @@ class BoardService:
                 label,
                 rank,
                 reviewer,
+                blocks if ask is not None else None,
                 number,
             ),
         )
@@ -3191,6 +3245,7 @@ class BoardService:
                 # Clear the delivery marker in this same versioned mutation.
                 conn.execute("UPDATE tasks SET return_to=NULL WHERE id=?", (row["id"],))
                 result["return_to"] = None
+            self._with_goals(conn, row, result)
             return result
 
     def task_snooze(self, task, until=None, timezone=None, after_card=None):
@@ -3695,6 +3750,7 @@ class BoardService:
         }
         with self.transaction() as conn:
             row, board = self._get(conn, task)
+            lifecycle.refuse_if_archived(conn, row)
             # Coordination may refine available work without releasing its origin.
             # Keep this exception limited to title/body edits, never work transitions.
             content_edit = (
@@ -3923,6 +3979,7 @@ class BoardService:
         *,
         ask_to=None,
         type_holder=None,
+        blocks=None,
     ):
         if row["proposal_status"] in ("pending", "rejected"):
             raise ToolError(
@@ -3965,6 +4022,7 @@ class BoardService:
             "assignee": None if person else target,
             "ask": note if person else None,
             "ask_options": json.dumps(options),
+            "ask_blocks": blocks if person else None,
             "ask_to": target if person else None,
             "return_to": self.principal.actor if person else None,
             "flags": json.dumps(
@@ -4026,6 +4084,7 @@ class BoardService:
         return self._start_assignment(result)
 
     def ask(self, question, options=None, board=None, task=None, context="", person_reason=None):
+        options, blocks = decision_blocks.parse(options)
         with self.transaction() as conn:
             if task is not None:
                 row, b = self._get(conn, task)
@@ -4042,6 +4101,7 @@ class BoardService:
                     options,
                     context or None,
                     ask_to=recipient,
+                    blocks=blocks,
                 )
             b = self._board(conn, board, create=True)
             self._write(b, submission=True)
@@ -4056,6 +4116,7 @@ class BoardService:
                 status="review",
                 ask=question,
                 options=choices(options),
+                blocks=blocks,
                 target=recipient,
             )
 

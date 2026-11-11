@@ -242,6 +242,30 @@ Ends the caller's hold and gives the card to someone else. `note` is required, s
 
 `options` (people only) requires two to six distinct choices. A substantive question and context are required; free-text replies remain available in addition to the options.
 
+### Structured decision blocks
+
+`ask` also accepts structured options: each entry of `options` is a label, or an object
+`{"label", "detail"?, "preview"?}`. `detail` is a short explanation (up to 280 characters);
+`preview` is plain text (up to 1200 characters and 24 lines: a mockup, a snippet, sample copy)
+that the app shows side by side in a fixed-width font. A structured list needs two to six
+distinct labels; unknown keys, empty or non-text values and control characters are refused.
+
+```json
+{"question": "Which header should the app use?",
+ "context": "Both variants pass the layout checks.",
+ "options": [
+   {"label": "Compact header", "detail": "One row; search moves into the menu.",
+    "preview": "[logo]  Boards  Memory   (o)"},
+   {"label": "Tall header", "preview": "[logo]\nBoards  Memory  [ search ]"},
+   "Keep the current header"]}
+```
+
+The labels are stored in `ask_options` as for a plain ask, so routing, events and `decide` do
+not change: the person answers with one label, and a choice that was not offered is refused.
+The card adds `ask_blocks`, one `{label, detail?, preview?}` per offered label (an empty list
+for a plain ask); it is cleared with the ask. `task_show` prints each option's detail and
+preview under the ask line. `task_handoff` and `task_update` take plain labels only.
+
 ```
 ok #145 → user:avery  review
 ```
@@ -742,3 +766,23 @@ new-user migration and desktop synchronization are deferred.
 
 Workspace owners can inspect members and connections through the separate
 [Admin GET API](../admin.md); board actions retain their existing authority.
+
+## After Done: Archive, carry on and the Pocket
+
+A done card is final. Four actions follow it, all `POST` with the card `version` and open to signed-in
+people only (workspace owner or member). Connections get 403 `no: only a signed-in person can ...`. There
+are no MCP tools for them yet.
+
+| Route | Body | Result |
+| --- | --- | --- |
+| `/api/cards/<n>/archive` | `version` | The card, `archived: true`. Only a done card; archiving twice changes nothing. |
+| `/api/cards/<n>/restore` | `version` | The card, `archived: false`, back in Done. |
+| `/api/cards/<n>/follow-up` | `version`, optional `title`, `body` | 201 `{origin, card}`: a new backlog card on the same board, linked by `follow_up_of` / `follow_ups`. Only from a done card. |
+| `/api/cards/<n>/pocket` | `version`, `text` | The card with the fact pinned (verbatim, up to 2000 characters, at most 25 per card, no duplicates). |
+| `/api/cards/<n>/unpocket` | `version`, `pin` | The card without that fact. The row stays in storage, marked unpinned. |
+
+Archive hides, it never deletes. Archived cards leave `GET /api/boards/<slug>/cards` and the board
+`counts` (the board reports `archived` separately), stay readable through `GET /api/cards/<n>` and
+`GET /api/boards/<slug>/cards?archived=1`, and refuse updates and Pocket changes until restored.
+Every card carries `final`, `archived`, `archived_at`, `archived_by`, `follow_up_of`, `follow_ups`,
+`pocket` and the caller's `can_archive`, `can_restore`, `can_follow_up` and `can_pocket`.
