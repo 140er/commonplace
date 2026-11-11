@@ -11,9 +11,10 @@ function slice(start, end) {
 }
 const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const apiUrl = url(await read('api.js'));
+const linksUrl = url(await read('cardlinks.js'));
 async function module(name) {
   assert.match(app, new RegExp(`from ["']\\./${name}\\.js["']`), `${name} import missing`);
-  return import(url((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl))));
+  return import(url((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl)).replace(/(['"])\.\/cardlinks\.js\1/g, JSON.stringify(linksUrl))));
 }
 const e = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const board = { slug: 'alpha', name: 'Alpha', counts: { review: 9 }, agents_working: 2 };

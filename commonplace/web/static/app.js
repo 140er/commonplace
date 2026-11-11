@@ -376,7 +376,7 @@ function navigation() {
   if (!boardNav) return;
   const board = currentBoard();
   // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
-  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/space/") ? "space"
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   const needsByBoard = {};
   for (const card of needsCards()) needsByBoard[card.board] = (needsByBoard[card.board] || 0) + 1;
@@ -981,8 +981,12 @@ function adminScreen() {
   navigation();
 }
 function consoleScreen() {
-  consoleUI ??= createConsole({ mount: () => root.querySelector("#content"), api, e });
-  consoleUI.show();
+  consoleUI ??= createConsole({
+    mount: () => root.querySelector("#content"), api, e,
+    // Picking another agent keeps the choice in the address, so a reload or a shared link lands on it.
+    onSelect: (id) => { const hash = `#/console?agent=${encodeURIComponent(id)}`; history.replaceState(history.state, "", hash); state.route = state.base = hash; },
+  });
+  consoleUI.show(new URLSearchParams(state.base.split("?")[1] || "").get("agent"));
   title("Console");
 }
 async function refresh({ background = false, events = [] } = {}) {
@@ -1047,7 +1051,7 @@ async function refresh({ background = false, events = [] } = {}) {
       await memoryView(epoch, background);
     } else if (/^#\/chat(?:\/|$)/.test(state.base)) {
       boardView();
-    } else if (state.base === "#/console") {
+    } else if (/^#\/console(?:\?|$)/.test(state.base)) {
       if (!background) consoleScreen();
     } else if (state.base === "#/settings") {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
@@ -1294,14 +1298,14 @@ async function route() {
   if (direct) { state.base = resolveRoute("#/", { boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console|settings|admin)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin)$/.test(hash) ? hash : "#/");
     state.card = null;
   } else if (state.base === "#/admin") {
     state.base = resolveRoute("#/", { boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/admin") adminUI?.stop();
-  if (previousBase === "#/console" && state.base !== "#/console") consoleUI?.stop();
+  if (previousBase.startsWith("#/console") && !state.base.startsWith("#/console")) consoleUI?.stop();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
   }
