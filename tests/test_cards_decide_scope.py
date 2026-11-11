@@ -505,7 +505,8 @@ def test_r1_board_coordinator_is_never_granted(world):
     token, cid = _coordinator_app(hub)
     w.owner.board_set("work", "conn:coordinator-app")
     status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
-    assert (status, refused["error"]) == (409, AGENT_TEXT), refused
+    assert status == 409, refused
+    assert refused["error"] == AGENT_TEXT
     status, listing = api(hub, w.cookie, "GET", "/api/connections")
     row = next(c for c in listing["connections"] if c["id"] == cid)
     assert row["decide"] is False and row["decide_grantable"] is False
@@ -581,7 +582,9 @@ def test_r3_no_audit_row_for_an_answer_that_rolls_back(world, monkeypatch):
         app.decide(number, choice=OPTIONS[0], version=version)
     assert w.owner.task_show(number)["status"] == "review"
     # Written in the transaction; the rollback appends a row that cancels it.
-    (written,) = delegated_audit(w.hub)
+    rows = delegated_audit(w.hub)
+    assert len(rows) == 1, "the audit row is written inside the board transaction"
+    written = rows[0]
     cancels = [
         r
         for r in w.hub.db.audit_entries(w.hub.workspace, limit=500)
