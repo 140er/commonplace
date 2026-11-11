@@ -9,7 +9,7 @@ import pytest
 
 from commonplace import events
 from commonplace.boards import service as board_service, store as board_store
-from commonplace.orch import stall, triggers
+from commonplace.orch import triggers
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._phase_b_helpers import doing
 from tests._split_helpers import blockers, world
@@ -87,8 +87,10 @@ def test_three_unanswered_wakes_reach_the_owner_and_off_switch(hub, clock):
     w.card()
     for minute in (21, 42, 63):
         clock.sweep(w, minute)
-    stalled = w.boards.needs_me()["orchestrator_stalled"]
-    assert [(s["board"], s["nudges"]) for s in stalled] == [(BOARD, 3)]
+    stalled = w.boards.needs_me().get("orchestrator_stalled")
+    assert stalled and [(s["board"], s["nudges"]) for s in stalled] == [(BOARD, 3)]
+    from commonplace.orch import stall
+
     stall.set_minutes(w.st, BOARD, 0)
     clock.sweep(w, 200)
     assert len(wakes(w)) == 3
