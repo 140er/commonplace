@@ -149,7 +149,7 @@ if (which === 'details-button') {
   let paused = null;
   root.addEventListener = (type, fn) => { handlers[type] = fn; };
   state.base = '#/needs'; state.needsUI = { pause: (on) => { paused = on; } };
-  Object.assign(context, { consoleUI: null, api() {}, currentBoard: () => board, settingsOptions: projects.settingsOptions,
+  Object.assign(context, { consoleUI: null, api() {}, onNeeds: () => state.base === '#/needs' || state.base === '#/', currentBoard: () => board, settingsOptions: projects.settingsOptions,
     refresh: async (options) => { refreshes.push(JSON.parse(JSON.stringify(options))); },
     injected: async (host, options) => mounted.push(options) });
   run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));

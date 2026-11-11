@@ -246,6 +246,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
 
+  - The Admin machine requester list, its addable agents and the owner-only edit, in the Admin and runner guides.
+
 
   - `docs/admin.md` is the authoritative current Admin API and partial-rollout contract, linked from the existing board API and agent connection guide.
 
@@ -428,6 +430,10 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_claude_plugin_hook_config.py`, `tests/test_claude_plugin_hook_wrappers.py`, `tests/test_antigravity_plugin_manifest.py`, `tests/test_claude_marketplace_skills.py`, `tests/test_hooks_cli.py`.
 
+  - `.dsh-plugin/test/autosave.test.mjs` holds a hook run open until the test releases it (`until` in `.dsh-plugin/test/host.mjs`) to check that unloading joins a running hook and that queued runs collapse, and checks what must not have happened after one event-loop turn (`loopTurn`) or after `unload()`, not after a timer. Positive checks wait for the hook spawn, warning or transcript content. The `unload()` negatives only see runs that go through `schedule()`, because `unload()` drains exactly those.
+
+  - `.dsh-plugin/test/recall.test.mjs` checks cancellation and unload by whether the wait ends at all (`settles` with a 30 s hang guard), with the palace read held open and every plugin timer longer than the guard. Only the two first-assembly budget tests measure time; `tests/test_dsh_plugin.py` skips them in the functional run and runs them as `test_dsh_plugin_node_suite_budgets` in the `timing` lane (`pytest -o addopts= -m timing tests/test_dsh_plugin.py`).
+
 
 ## sites
 
@@ -481,6 +487,8 @@ Format (read by `commonplace orch docs-check`):
   - Tunnel keysets use stable ids; final lookup ignores traversal statistics and unrelated metadata while rechecking current endpoint associations.
 
   - Explicit tunnel probes page metadata without content, bind both endpoints and optional current drawer descriptors, and revalidate before follow hydration or recording.
+
+  - The MCP tunnel tools create, list, follow and delete tunnels in the server's configured palace, and `mempalace_graph_stats` counts that palace's explicit tunnels on its client path: the room check and the tunnel file never fall back to the ambient default palace.
   - Logical drawer pages authorize physical identities before grouping, dates, totals and slicing; only visible page text is hydrated.
 
   - Display-label token scans deduplicate identities without rewriting labels or changing citation parsing.
@@ -580,6 +588,8 @@ Format (read by `commonplace orch docs-check`):
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
+
+  - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
 
@@ -879,6 +889,8 @@ Format (read by `commonplace orch docs-check`):
 
   - test_admin_runtime_api.py and test_admin_runtime_ui.py are the twelve-row proof; test_admin_runtime_controls.py covers independent list cursors, absent tables, workspace filtering and completed-source survival.
 
+  - test_runner_requesters_admin.py, the requesters case of admin_runtime_ui.mjs and the models_submit_before_loads case of workbench_g4_projects.mjs are the proof for the Admin requester edit and the early models-form binding; tests/workbench_e2e/test_project_models.py is the browser check of Save models with slow reads.
+
   - `test_admin_api.py` and `test_admin_ui.py` provide fourteen foundation rows; `admin_ui.mjs` exercises served navigation, production route/refresh wiring, request generations, expiry and body-decoding deadlines. `test_admin_controls.py` covers cursor binding, pagination, source budgets and gateway controls; `workbench_e2e/test_admin.py` covers real-browser owner/member navigation at three widths.
 
 
@@ -910,7 +922,11 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/_mirror_drain.py` (`drain_service`) waits on the real drain condition (no sweep active, no job pending, 120 s stuck-job limit) instead of one fixed `wait_for_mirrors` budget, which returns silently when it runs out; `tests/test_search_index_sweep.py`, `tests/test_card253_s12.py`, `tests/test_handoff_adversarial_idempotency.py`, `tests/test_handoff_adversarial_security.py`, `tests/test_handoff_fact_integration.py`, `tests/test_commonplace_import.py`, `tests/test_commonplace_import_reader.py` and `tests/test_imported_history_search.py` use it, so host load cannot leave a job half-finished before the assertions. `tests/test_search_index_sweep_slow_host.py` with `tests/_slow_sweep_plugin.py` re-runs a selection of them with late-starting jobs and a wait that returns at once. The 20-thread and unit bounds are unchanged. `tests/test_card253_s12_teardown.py` with `tests/_card253_teardown_probe.py` checks that a failed teardown drain still shuts down every world's server thread, so the process exits and the drain error is reported.
 
-  - `tests/test_commonplace_rules_inject.py` runs its functional tests on a frozen deadline clock, so a loaded host cannot spend the 80 ms injection budget and turn the injected text empty; `tests/test_commonplace_rules_inject_slow_host.py` with `tests/_slow_host_plugin.py` re-runs a functional selection with a clock that burns the whole budget on every read. The locked-store setup retries until background listener threads release the store.
+  - `tests/test_commonplace_rules_inject.py` runs its functional tests on a frozen deadline clock, so a loaded host cannot spend the 80 ms injection budget and turn the injected text empty; `tests/test_commonplace_rules_inject_slow_host.py` loads `tests/_slow_host_plugin.py` (a clock that burns the whole budget on every read) and checks that the functional selection still passes because it keeps its own frozen clock; it does not exercise injection against a slow clock. The locked-store setup retries until background listener threads release the store.
+
+  - `tests/test_commonplace_agent_defaults.py` runs every test that asserts startup content (fresh connections, warm startup, composed grants, import flow, native startup hook) on a frozen deadline clock (`frozen_deadline_clock`, opt-in per test; the late-initialize test drives its own clock) with the functional worker transport, and runs the installed startup hook command with only `HUB_TIMEOUT_S` lifted to a hang guard (the lift rewrites every installed form; the encoded PowerShell form is unit-tested only, never executed here); `tests/test_commonplace_agent_defaults_slow_host.py` re-runs the acceptance tests through `tests/_slow_host.py` with `tests/_slow_hub_plugin.py`, so every gateway POST takes longer than the production hook allowance; the hook runs with that allowance lifted, so this covers hub latency, not the 0.4 s budget. It does not starve the deadline clock, which those tests freeze. The test HTTP clients in `tests/test_commonplace_email_auth.py` and the acceptance fixture use a named hang guard instead of a 3 s timeout. `observe_sql()` in that file also stops the answer-hold worker before it opens a SQL boundary window. `test_sql_boundary_window_gets_no_background_hold_tick` checks that the helper leaves no live worker, and with a helper that does not stop it, it forces a live tick inside the window and fails on the late `SELECT`.
+
+  - `tests/test_mcp_tunnel_server_palace.py` checks the tunnel tools and the `mempalace_graph_stats` client path against the server's palace while a different, populated palace is the ambient default.
 
   - `tests/test_commonplace_rules_inject.py::test_locked_store_uses_remaining_deadline` checks locked-store fallback and remaining connection/statement waits with a fake clock; the separate timing test retains the informational wall-clock budget.
 
@@ -1104,6 +1120,8 @@ Format (read by `commonplace orch docs-check`):
 
   - CLI commands act through the same services as the network routes; installers never change trust policy; hooks fail open.
 
+  - The native startup hook gives the hub `client_hooks.HUB_TIMEOUT_S` (0.4 s) and then fails open to the follow-up notice.
+
 - **How it fails:**
 
   - Local data-directory access remains operator authority; authenticated progress never inherits it.
@@ -1227,6 +1245,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
+  - Admin lists each machine's requesters and the active trusted agents an owner may add, and edits them only through owner-only per-requester add and remove routes that act on the stored row under the registry lock and require the grant version the caller read (409 when stale); a grant edit vets added requesters and keeps ones the machine already holds.
+
 
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
   - A machine may start a todo card reserved for its own worker or a doing card already held by that worker.
@@ -1258,6 +1278,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - tests/test_admin_runtime_api.py covers machine timestamps, unverified binding, expired lease omission and absent/corrupt runner sources; existing runner owner tests retain authority contracts.
+
+  - tests/test_runner_requesters_admin.py and tests/test_admin_runtime_ui.py (requesters case) cover the Admin requester list, candidates, the owner-only add and remove, lapsed-peer removal and the refusal of non-owner callers.
 
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
@@ -1384,6 +1406,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_projects_` files, `tests/test_commonplace_plans.py`.
 
+  - `tests/workbench_g4_projects.mjs` (case `models_submit_before_loads`) holds that the project settings models form saves, and reloads with the stored values, while the page's other reads are still pending.
+
   - `tests/test_projects_seat_lease.py` drives the settings routes and the seat's own MCP calls: take, hold, renew and release with no config, plus refusals without trust, after demotion or switch-off, for another project's seat, for another role and outside the wing.
 
 
@@ -1396,12 +1420,15 @@ Format (read by `commonplace orch docs-check`):
 
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
+  - `commonplace.guards.pretool`, a PreToolUse command that refuses git-hook bypasses (`docs/hook-bypass-guard.md`).
+
 - **Promises:**
 
   - Split completion markers are checked writes on MCP and REST.
   - Canonical create uses header freshness while legacy routes retain body compatibility.
 
   - Rules take effect only after owner review; writes from a client with stale rules get 428; flags are deterministic.
+  - The bypass guard denies hook-skipping shell commands and edits of existing hook files with a reason, passes look-alike text, and never auto-approves.
 
 - **How it fails:**
 
@@ -1765,6 +1792,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 
+  - The Admin runtime panel lists each machine's requesters and the active trusted agents an owner may add; its one write is the owner-only add or remove of a single requester on the stored list, and the project settings models form binds its save handler before the page's slow reads.
+
   - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
   - The navigation-only instance flag falls back to false on read faults without breaking /api/me; receipt parent refreshes invalidate older mode generations.
 
@@ -1791,6 +1820,8 @@ Format (read by `commonplace orch docs-check`):
   - `waiting.js` shows the server's waiting sentence as a board tag and in the card details, and a strip of `waiting_notes` above the board; it adds no sentences of its own.
 
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
+
+  - A background refresh never replaces an edit, hand-off or ask form open in the card panel, including one opened while the refresh's card read was in flight. On Needs me (including a hash the router does not recognise, which draws it too) the item's detail waits (paused) while a hand-off form is open; Cancel, a saved hand-off, choosing another item or a filter that drops the item gives the panel back and focuses the item heading, and a read that failed meanwhile is repeated. J and K do not move the selection while a form is open, wherever focus is. Closing the panel does not read a card, so the close itself does not reopen it; a later change to the Needs me payload re-selects the item and opens the panel again, as before. When a filter leaves no items, focus goes to the filter button. On a card route the panel redraws from a fresh card read.
 
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.
 
@@ -1825,11 +1856,15 @@ Format (read by `commonplace orch docs-check`):
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 
+  - tests/test_runner_requesters_admin.py and the requesters case of tests/admin_runtime_ui.mjs hold the Admin requester list, candidates, the per-requester owner-only edit with its version precondition and the other-workspace refusal.
+
 
   - `tests/test_admin_api.py` covers person/role/workspace refusals, fixed lifecycle time, pagination, redaction and no writes/locks; `tests/test_admin_ui.py` and `tests/admin_ui.mjs` cover cold routing, independent deadlines, retries and disposal.
 
 
   - The `tests/test_workbench_` files, the `tests/test_console_` files and the `tests/test_commonplace_console_` files.
+
+  - `tests/workbench_e2e/test_refresh_forms.py` drives a real browser: an open hand-off form (also one opened mid-refresh) and a comment in progress survive a background refresh, the panel updates once the form is cancelled, and on Needs me a queue change leaves an open hand-off form alone and Cancel closes it.
 
   - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals and escaping; `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
 

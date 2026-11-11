@@ -55,7 +55,9 @@ model to the list" in the same section (an owner action, also available as
 chosen for it and the workspace defaults, never another board's choices.
 
 Saving a choice does not call a provider or start work, and does not change the
-separate workspace chat model settings.
+separate workspace chat model settings. The Save models form works as soon as project
+settings open, even while the page's other reads (chat answers, agents) are still
+loading or have timed out.
 
 Model resolution uses the project's choice, then the workspace default for
 that role, then the runner's own default. Clearing a project choice restores

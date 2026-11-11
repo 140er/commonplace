@@ -98,7 +98,7 @@ if (which === 'shell') {
   root.addEventListener = (type, handler) => { handlers[type] = handler; };
   state.base = '#/needs';
   const projects = await module('projects');
-  Object.assign(context, {consoleUI: null, api() {}, refresh: async () => {}, settingsOptions: projects.settingsOptions, currentBoard: () => ({slug: 'wrong-project'}), injectedMountProject: async (_mount, options) => mounted.push(options.slug)});
+  Object.assign(context, {consoleUI: null, api() {}, onNeeds: () => state.base === '#/needs' || state.base === '#/', refresh: async () => {}, settingsOptions: projects.settingsOptions, currentBoard: () => ({slug: 'wrong-project'}), injectedMountProject: async (_mount, options) => mounted.push(options.slug)});
   run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injectedMountProject, settingsOptions})'));
   await handlers.click({target: {closest: (s) => s.includes('chat-recovery') ? null : ({dataset: {action: 'coordinator', board: 'origin-project'}})}});
   assert.deepEqual(mounted, ['origin-project']);

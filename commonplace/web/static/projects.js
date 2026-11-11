@@ -514,6 +514,15 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       } catch { if (active()) status.textContent = "Could not check the agent. Try again."; }
       finally { check.disabled = false; }
     };
+    // Draw and bind the models form before the optional reads below: until it has a handler the
+    // browser submits it as a GET and drops the values. It is not redrawn when the reads settle.
+    drawModels();
+    // Needs me sends the owner here for one role: open the section and put focus on that role's picker.
+    if (focus === "models") {
+      const section = host.querySelector("[data-project-models-section]");
+      if (section) section.setAttribute("open", "");
+      host.querySelector(`[data-model-role="${role || "main"}"]`)?.focus();
+    }
     await Promise.all([
       mountChatAnswers(host.querySelector("[data-project-chat]"), {project, api, e, current: active, onSaved: markSaved}),
       mountProjectAgents(host.querySelector("[data-project-agents]"), {project, api, e, current: active, onUpdate: latest => { project = latest; renderMain(); }}),
@@ -577,13 +586,6 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
         if (active()) add.querySelector("[data-project-model-add-status]").textContent = PROJECT_COPY.addModelError;
       }
     };
-  }
-  drawModels();
-  // Needs me sends the owner here for one role: open the section and put focus on that role's picker.
-  if (focus === "models") {
-    const section = host.querySelector("[data-project-models-section]");
-    if (section) section.setAttribute("open", "");
-    host.querySelector(`[data-model-role="${role || "main"}"]`)?.focus();
   }
 }
 
