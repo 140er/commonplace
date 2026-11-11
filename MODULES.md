@@ -261,6 +261,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `docs/projects.md` and `docs/orchestrator.md` state who may hold a lease on a board without `[runner]`: its own trusted project seat.
 
+  - `docs/project-panels.md` documents the project panel file format, limits and routes.
+
 - **Promises:**
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
@@ -588,6 +590,8 @@ Format (read by `commonplace orch docs-check`):
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
+
+  - `tests/projectpanel.mjs` (run by `tests/test_project_panel_ui.py`) covers the panel draw: escaped text, dropped unsafe links, nothing for a project without a panel, cached redraws and failed reads.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
@@ -1415,6 +1419,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Canonical Space create in the checked REST write inventory.
+
+  - The project panel write `PUT /api/projects/<slug>/panel` (`project_panel_set`) in the checked REST write inventory.
 
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
