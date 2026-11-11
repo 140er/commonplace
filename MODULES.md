@@ -1181,6 +1181,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Admin keeps machine and worker contact separate and always reports owner attestation as unverified; expired job inspection never sweeps or renews leases.
 
+  - Admin lists each machine's requesters and the active trusted agents an owner may add, and edits them only through the owner-only runner PATCH; a grant edit vets added requesters and keeps ones the machine already holds.
+
 
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
   - A machine may start a todo card reserved for its own worker or a doing card already held by that worker.
@@ -1210,6 +1212,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - tests/test_admin_runtime_api.py covers machine timestamps, unverified binding, expired lease omission and absent/corrupt runner sources; existing runner owner tests retain authority contracts.
+
+  - tests/test_runner_requesters_admin.py and tests/test_admin_runtime_ui.py (requesters case) cover the Admin requester list, candidates, the owner-only add and remove, lapsed-peer removal and the refusal of non-owner callers.
 
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
@@ -1322,6 +1326,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The `tests/test_projects_` files, `tests/test_commonplace_plans.py`.
+
+  - `tests/workbench_g4_projects.mjs` (case `models_submit_before_loads`) holds that the project settings models form saves, and reloads with the stored values, while the page's other reads are still pending.
 
 
 ## rules-and-guards

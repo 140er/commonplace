@@ -389,6 +389,42 @@ const cases = {
     assert.equal(text, `Not answering since ${hhmm(asked)} · connected · last active ${hhmm(seen)}`);
     assert.match(ui.mainHTML(project, e, { notAnswering: text }), /Not answering since/);
   },
+  // Card 422: the models form saves even while the page's slow optional reads are still pending.
+  async models_submit_before_loads() {
+    const calls = [], stalled = new Promise(() => {}), field = (el, name) => el.querySelector(`[name="${name}"]`);
+    let stored = { main: null, worker: null };
+    const api = async (path, options = {}) => {
+      calls.push({ path, method: options.method || "GET", body: options.body });
+      if (path.startsWith("/api/chat-settings") || path === "/api/connections" || path.endsWith("/cards")) return stalled;
+      if (path.startsWith("/api/chat/")) return path.endsWith("/status") ? { orchestrator: null } : { messages: [], replies: [] };
+      if (options.method === "PUT") stored = { ...stored, ...options.body };
+      return { ...project, can_configure: true, limits: { max_agents: 3 }, models: stored };
+    };
+    const host = doc.createElement("div"); doc.body.append(host);
+    void ui.mountProject(host, { slug: "ledger", api, e, settings: true, origin: "#/board/ledger" });
+    for (let turn = 0; turn < 20 && !host.querySelector("[data-project-models]"); turn++) await new Promise((r) => setTimeout(r, 0));
+    const form = host.querySelector("[data-project-models]");
+    assert.ok(form, "settings draw the models form");
+    assert.ok(calls.some((c) => c.path === "/api/connections"), "the slow read is still pending");
+    field(form, "main_provider").value = "anthropic";
+    field(form, "main_model").value = "model-a";
+    assert.equal(typeof form.onsubmit, "function", "without a handler the browser submits the form as a GET and drops the values");
+    const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() {} };
+    await form.onsubmit(event);
+    assert.equal(event.defaultPrevented, true);
+    const puts = calls.filter((c) => c.method === "PUT");
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].path, "/api/projects/ledger/models");
+    assert.deepEqual(puts[0].body, { main: { provider: "anthropic", model: "model-a" }, worker: null });
+    assert.match(host.querySelector("[data-project-model-status]").textContent, /saved/);
+    // A reload draws the stored choice back into the fields.
+    const again = doc.createElement("div"); doc.body.append(again);
+    void ui.mountProject(again, { slug: "ledger", api, e, settings: true, origin: "#/board/ledger" });
+    for (let turn = 0; turn < 20 && !again.querySelector("[data-project-models]"); turn++) await new Promise((r) => setTimeout(r, 0));
+    assert.equal(field(again, "main_provider").getAttribute("value"), "anthropic");
+    assert.equal(field(again, "main_model").getAttribute("value"), "model-a");
+    host.remove(); again.remove();
+  },
   // I1: settings hand Back and Esc to the caller's onBack.
   async on_back() {
     assert.equal(typeof ui.openConnectDialog, "function", "openConnectDialog missing");

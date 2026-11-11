@@ -105,7 +105,7 @@ def _strings(value, key, limit, pattern=None):
     return list(dict.fromkeys(value))
 
 
-def _grant(db, owner, grant, *, initial=False):
+def _grant(db, owner, grant, *, initial=False, held=()):
     if not isinstance(grant, dict) or set(grant) - (
         GRANT_KEYS | (set() if initial else {"enabled"})
     ):
@@ -150,7 +150,8 @@ def _grant(db, owner, grant, *, initial=False):
         refs = data["requesters"]
         if not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs):
             raise ValueError("invalid requesters")
-        for ref in refs:
+        # Entries the machine already holds stay even if they have lapsed; only additions are vetted.
+        for ref in (ref for ref in refs if ref not in held):
             p = db.authenticate_connection(ref)
             linked = db._conn.execute(
                 "SELECT 1 FROM runner_connections WHERE connection_id=?", (ref,)
@@ -295,7 +296,7 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
         else get_machine(db, owner.workspace_id, machine_id)
     )
     if remove_requester is None:
-        data = _grant(db, owner, grant)
+        data = _grant(db, owner, grant, held=json.loads(row["requesters"]))
     else:
         data = {
             "requesters": [ref for ref in json.loads(row["requesters"]) if ref != remove_requester]

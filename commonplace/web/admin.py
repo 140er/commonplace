@@ -418,14 +418,71 @@ def orchestrators(conn, board_conn, workspace_id, context):
     return result
 
 
-def machines(conn, workspace_id, context, *, active_only=False):
-    if not has_table(conn, context, "runner_machines"):
+REQUESTER_LIMIT = 32
+
+
+def requester_views(conn, workspace_id, context, raw):
+    """Name and state of a machine's stored requester ids; ids of other workspaces stay unnamed."""
+    try:
+        refs = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    result = []
+    for ref in [ref for ref in refs if isinstance(ref, str)][:REQUESTER_LIMIT]:
+        context.remaining()
+        row = select(
+            conn,
+            context,
+            "SELECT name FROM connections WHERE id=? AND workspace_id=?",
+            (ref, workspace_id),
+        ).fetchone()
+        live = current_connection(conn, workspace_id, context, cid=ref) is not None
+        result.append(
+            {
+                "id": display(ref),
+                "name": display(row["name"]) if row else None,
+                "state": "active" if live else "inactive",
+            }
+        )
+    return result
+
+
+def requester_candidates(conn, workspace_id, context):
+    """Active trusted workspace agents an owner may name as requesters (what the write accepts)."""
+    if not has_table(conn, context, "runner_connections"):
         return []
     rows = select(
         conn,
         context,
+        "SELECT c.id,c.name,c.policy,c.expires_at FROM connections c "
+        "JOIN memberships m ON m.workspace_id=c.workspace_id AND m.user_id=c.user_id "
+        "JOIN users u ON u.id=c.user_id "
+        "LEFT JOIN runner_connections r ON r.connection_id=c.id "
+        "WHERE c.workspace_id=? AND c.auth='pat' AND c.revoked_at IS NULL "
+        "AND u.disabled_at IS NULL AND r.connection_id IS NULL ORDER BY c.name,c.id",
+        (workspace_id,),
+    ).fetchall()
+    result = []
+    for row in rows:
+        context.remaining()
+        expires = control_db._parse(row["expires_at"])
+        if (expires is None or expires > context.now) and (
+            Policy.from_json(row["policy"]).trust == "trusted"
+        ):
+            result.append({"id": identifier(row["id"]), "name": display(row["name"])})
+    return result[:100]
+
+
+def machines(conn, workspace_id, context, *, active_only=False):
+    if not has_table(conn, context, "runner_machines"):
+        return []
+    has_requesters = "requesters" in columns(conn, context, "runner_machines")
+    rows = select(
+        conn,
+        context,
         "SELECT m.id,m.label,m.enabled,m.revoked_at,m.binding_state,m.max_in_flight,"
-        "m.max_starts_per_hour,m.created_at,mc.last_used_at AS machine_last_used_at,"
+        + ("m.requesters," if has_requesters else "'[]' AS requesters,")
+        + "m.max_starts_per_hour,m.created_at,mc.last_used_at AS machine_last_used_at,"
         "wc.last_used_at AS worker_last_used_at FROM runner_machines m "
         "LEFT JOIN connections mc ON mc.id=m.machine_connection_id AND mc.workspace_id=m.workspace_id "
         "LEFT JOIN connections wc ON wc.id=m.worker_connection_id AND wc.workspace_id=m.workspace_id "
@@ -454,6 +511,9 @@ def machines(conn, workspace_id, context, *, active_only=False):
                 "max_in_flight": row["max_in_flight"],
                 "max_starts_per_hour": row["max_starts_per_hour"],
                 "created_at": timestamp(row["created_at"]),
+                "requesters": []
+                if active_only
+                else requester_views(conn, workspace_id, context, row["requesters"]),
             }
         )
     return result
@@ -523,6 +583,9 @@ def runtime(gateway, workspace_id, context, after):
                         source,
                         after,
                         lambda r: (r["created_at"], r["id"]),
+                    )
+                    value["requester_candidates"] = requester_candidates(
+                        conn, workspace_id, context
                     )
             context.remaining()
             result[source] = {"state": "ready", **value}

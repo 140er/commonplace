@@ -4,7 +4,7 @@ Sign in as the current workspace's owner and choose **Account → Admin**, or ch
 **Admin** in the command palette on a phone. The direct route is `/app/#/admin`.
 The page shows the active workspace's members, connections, runtime configuration, effective limits and cards needing attention. It adds no
 workspace switching, global account directory, invitation, token reveal or editing
-form. **Manage agents and workspace settings** opens the existing Settings page.
+form; the one write is the owner's machine requester list (see below). **Manage agents and workspace settings** opens the existing Settings page.
 
 ## Authority
 
@@ -107,7 +107,20 @@ filtering and current policy/wing access. It sends no webhook or liveness probe.
 
 Machines include `id`, `label`, `enabled`, `revoked_at`, `binding_state`,
 `verified:false`, `machine_last_used_at`, `worker_last_used_at`, `activity`,
-`worker_activity`, `max_in_flight`, `max_starts_per_hour`, `created_at`.
+`worker_activity`, `max_in_flight`, `max_starts_per_hour`, `created_at` and
+`requesters` (at most 32 entries of `id`, `name`, `state`: `active` or
+`inactive`; a name is `null` for an id outside the workspace). The machines
+subresult also carries `requester_candidates`: the active trusted workspace
+agents (`id`, `name`; at most 100) an owner may add, with runner credentials,
+OAuth, untrusted and revoked connections left out.
+
+The runtime panel lists each unrevoked machine's requesters with **Remove** and
+**Add** buttons. They call the owner-only `PATCH /api/runners/<machine-id>` with
+the full `requesters` list, so a non-owner caller is refused (403) and nothing
+changes. The server vets only additions: an entry a machine already holds is kept
+even after it lapses, so an owner can still remove its neighbours. A save sends
+the list as the page last read it; a concurrent edit from another session is
+overwritten, and the page reads the list again after each save.
 Machine activity uses machine contact, with worker contact shown separately.
 Working means recent contact; idle/quiet means no recent contact; unused means
 never contacted. Attestation never proves a live or verified runner.
