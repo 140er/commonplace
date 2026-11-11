@@ -381,11 +381,14 @@ HANDLERS = {
 
 
 def _audit(gateway, h, app, tool):
-    """One row per write request made through an app connection: ids and the outcome only."""
-    status = getattr(h, "_bots_status", 200)
+    """One row per write request made through an app connection: ids and the outcome only.
+
+    The outcome is the status actually sent; a request that dies before answering counts as 500.
+    """
+    status = h._bots_status
     gateway.db.audit(
         action=bots_grant.AUDIT_WRITE,
-        decision="ok" if status < 400 else "refused",
+        decision="ok" if status < 400 else "refused" if status < 500 else "error",
         workspace_id=app.workspace_id,
         user_id=app.user_id,
         connection_id=app.connection_id,
@@ -399,10 +402,9 @@ def _guarded(gateway, h, run, tool="", scope=None):
     if principal is None:
         return
     app = auth.app(h)
-    if app is not None and scope and not app.policy.has_scope(scope):
-        _error(h, 403, "scope_required", "This app needs another permission for that.")
-        return
-    if app is not None and h.command != "GET":
+    write = app is not None and h.command != "GET"
+    if write:
+        h._bots_status = 500  # until a response is actually sent
         send_response = h.send_response
 
         def remember(code, *args):
@@ -411,6 +413,9 @@ def _guarded(gateway, h, run, tool="", scope=None):
 
         h.send_response = remember
     try:
+        if app is not None and scope and not app.policy.has_scope(scope):
+            _error(h, 403, "scope_required", "This app needs another permission for that.")
+            return
         run(principal)
     except store.Missing:
         _error(h, 404, "not_found", "Not found")
@@ -423,7 +428,7 @@ def _guarded(gateway, h, run, tool="", scope=None):
     except TimeoutError:
         _error(h, 429, "busy", "Busy, try again")
     finally:
-        if app is not None and h.command != "GET":
+        if write:
             _audit(gateway, h, app, tool)
 
 

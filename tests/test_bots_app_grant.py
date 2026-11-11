@@ -504,6 +504,41 @@ def test_granting_revoking_and_every_write_are_audited_without_text(bots_hub, fa
     assert sorted(r["tool"] for r in revoked) == [CHAT, CONFIRM]
 
 
+def test_a_refused_confirm_is_audited_too(bots_hub):
+    hub = bots_hub
+    token, cid = app(hub)  # chat only
+    bot_id = owner_bot(hub)
+    status, body, _ = hub.post(
+        token, f"/api/bots/{bot_id}/confirm", {"pending": WORDS, "accept": True}
+    )
+    assert (status, body["code"]) == (403, "scope_required")
+    [row] = rows(hub, action=bots_grant.AUDIT_WRITE)
+    assert (row["tool"], row["decision"], row["connection_id"], row["user_id"]) == (
+        "POST confirm",
+        "refused",
+        cid,
+        hub.hub.admin,
+    )
+    assert WORDS not in json.dumps([dict(r) for r in hub.db.audit_entries(hub.workspace)])
+
+
+def test_a_write_that_dies_before_answering_is_not_audited_as_ok(bots_hub, monkeypatch):
+    from commonplace.bots import routes
+
+    hub = bots_hub
+    token, cid = app(hub)
+    bot_id = owner_bot(hub)
+
+    def broken(*args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setitem(routes.HANDLERS, ("POST", "read"), broken)
+    status, _, _ = hub.post(token, f"/api/bots/{bot_id}/read", {"upto": 0})
+    assert status == 500
+    [row] = rows(hub, action=bots_grant.AUDIT_WRITE)
+    assert (row["tool"], row["decision"], row["connection_id"]) == ("POST read", "error", cid)
+
+
 # Settings > Agents
 
 

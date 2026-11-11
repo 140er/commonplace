@@ -325,9 +325,15 @@ grants. The command line cannot grant these scopes.
 well), or revoke the connection. It takes effect on the next request: a withdrawn scope answers
 404 and a revoked or expired connection 401.
 
+**Limits of this release.** There is no member-scoped list of connections, so a member grants
+through the OAuth authorization form or by `PATCH` on their own connection (the web Settings →
+Agents list is for owners). There is no create-time option on `POST /api/connections`: create the
+connection, then grant.
+
 **Audit.** Granting and withdrawing each scope is recorded with the connection. Every write the
 app makes (creating or renaming a bot, memory, sending, stopping, read marks, confirming) adds
-one record with the connection id, the route and whether it was accepted; reads add none, and
+one record with the connection id, the route and the outcome (`ok`, `refused` or `error`; a refused
+confirm is recorded too); reads add none, and
 no message text is ever recorded.
 
 ## Using bots in the web app
