@@ -724,7 +724,11 @@ class BoardService:
             candidates.append(self._live_connection(row["created_by"][5:]))
         live = {}
         for q in candidates:
-            if q is not None and self._approval_visible(q, row):
+            if (
+                q is not None
+                and q.policy.tool_visible("needs_me")
+                and self._approval_visible(q, row)
+            ):
                 role = self._approval_role(q, row)
                 if role:
                     live[q.actor] = role

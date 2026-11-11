@@ -1,5 +1,6 @@
 """Only a live coordinator lease of exactly this board makes a seat the board coordinator."""
 
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -7,11 +8,11 @@ import pytest
 
 from commonplace.boards.service import BoardService
 from commonplace.extensions import ToolContext, ToolError
-from commonplace.orch import durable
+from commonplace.orch import durable, schema
 from commonplace.projects import split
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_commonplace_origin_holder_release import TOOLS, edit, policy, raw, snapshot
-from tests.test_orch_durable import BOARD, ROLE, T0, Env, at
+from tests.test_orch_durable import BOARD, MACHINE, ROLE, T0, Env, at, config_text
 
 REASON = "Independent origin checked"
 PAST = "2020-01-01T00:00:00Z"
@@ -221,3 +222,94 @@ def test_a_pending_restore_names_nobody(hub, env):
         assert durable.coordinator_holder_in(conn, BOARD) == env.a.actor
         conn.execute("UPDATE orch_state SET restore_flag=1 WHERE id=1")
         assert durable.coordinator_holder_in(conn, BOARD) is None
+
+
+def found(obj, number):
+    if isinstance(obj, dict):
+        if obj.get("number") == number:
+            return obj
+        obj = list(obj.values())
+    if isinstance(obj, list):
+        for value in obj:
+            hit = found(value, number)
+            if hit is not None:
+                return hit
+    return None
+
+
+def pending_plain_card(env):
+    number = env.owner_board.task_add(board=BOARD, title="Plain work", status="backlog")["number"]
+    edit(env.owner_board, number, proposal_status="pending", proposed_to=None)
+    return number
+
+
+@pytest.mark.parametrize("sees", [True, False])
+@pytest.mark.parametrize("route", ["lease", "configured"])
+def test_the_owner_item_for_a_pending_proposal_follows_whether_a_candidate_sees_it(
+    hub, env, route, sees
+):
+    number = pending_plain_card(env)
+    if route == "lease":
+        env.resume(env.a)
+    else:
+        env.owner_board.board_set(BOARD, env.a.actor)
+    if not sees:
+        hidden = [t for t in TOOLS if t != "needs_me"]
+        policy(hub, SimpleNamespace(id=env.a.connection_id, principal=env.a), tools=hidden)
+    seat = work_for(env, hub.db.authenticate_connection(env.a.connection_id))
+    assert (number in numbers(seat.approvals_for_me())) is sees
+    assert (found(env.owner_board.needs_me(), number) is None) is sees
+
+
+@pytest.mark.parametrize("trust_after", ["trusted", "standard"])
+def test_a_member_role_lease_holder_sees_its_card(hub, env, trust_after):
+    number = restricted_card(env)
+    user = hub.db.create_user(f"member-{trust_after}@example.test")
+    hub.db.add_member(env.ws, user, "member", actor=hub.admin)
+    token = hub.token(
+        f"member-{trust_after}",
+        user=user,
+        profile="full",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["shared"],
+        write_wings=["shared"],
+        trust="trusted",
+    )
+    member = hub.gateway.authenticate(f"Bearer {token}")
+    assert member.role == "member"
+    requesters = [env.a, env.b, env.seat, member]
+    with hub.db._lock, hub.db._tx() as conn:
+        conn.execute(
+            "UPDATE runner_machines SET requesters=? WHERE id=?",
+            (json.dumps([p.connection_id for p in requesters]), MACHINE),
+        )
+    env.resume(member)
+    if trust_after != "trusted":
+        policy(hub, SimpleNamespace(id=member.connection_id, principal=member), trust=trust_after)
+    seat = work_for(env, hub.db.authenticate_connection(member.connection_id))
+    assert seat.principal.policy.trust == trust_after
+    assert seat.release_boards()
+    assert number in numbers(seat.approvals_for_me())
+    assert number not in numbers(env.owner_board.approvals_for_me())
+
+
+@pytest.mark.parametrize("roles", ["none", "two"])
+def test_the_lease_read_needs_exactly_one_orchestrator_role(hub, env, roles):
+    env.resume(env.a)
+    body = config_text()
+    if roles == "none":
+        body = body.replace('[roles.main]\nkind = "orchestrator"', '[roles.main]\nkind = "builder"')
+    else:
+        body = body.replace(
+            '[roles.builder]\nkind = "builder"\nparent = "main"',
+            '[roles.builder]\nkind = "orchestrator"',
+        )
+    kinds = [role.kind for role in schema.parse(body).roles.values()]
+    assert kinds.count("orchestrator") == (0 if roles == "none" else 2)
+    with env.runner_db() as conn:
+        assert durable.coordinator_holder_in(conn, BOARD) == env.a.actor
+        conn.execute(
+            "UPDATE orch_configs SET body=? WHERE board=? AND status='accepted'", (body, BOARD)
+        )
+        assert durable.coordinator_holder_in(conn, BOARD) is None
+        assert durable.coordinator_holders_in(conn) == {}
