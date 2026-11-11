@@ -259,6 +259,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
+  - `CONTRIBUTING.md` documents the hook install, the pre-push quick check and its budget, and the per-worktree environment.
+
   - `docs/projects.md` and `docs/orchestrator.md` state who may hold a lease on a board without `[runner]`: its own trusted project seat.
 
 - **Promises:**
@@ -340,6 +342,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Python and Rust packaging, pinned dependencies, the coverage gate, lint and format settings, pre-commit hooks, repository metadata and the development container.
+
+  - `.pre-commit-config.yaml` configures the commit stage only; the push stage is the quick check in `commonplace/guards/`, installed with `python -m commonplace.guards.hooks install`.
 
 - **Promises:**
 
@@ -588,6 +592,8 @@ Format (read by `commonplace orch docs-check`):
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
+
+  - `tests/test_guards_prepush.py` and `tests/test_guards_hooks.py` build throwaway git repos and linked worktrees with stand-in tools; they run no host tool and need no network.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
@@ -1412,6 +1418,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
+  - The pre-push quick check (`guards/prepush.py`): changed-file selection, the shared time budget and the report of what it skipped; and the hook installer (`guards/hooks.py`) whose scripts resolve each worktree's own environment.
+
 - **Promises:**
 
   - Split completion markers are checked writes on MCP and REST.
@@ -1419,17 +1427,23 @@ Format (read by `commonplace orch docs-check`):
 
   - Rules take effect only after owner review; writes from a client with stale rules get 428; flags are deterministic.
 
+  - The quick check names itself a quick check, reports every skipped or cut-off step, and fails the push only when a check it ran failed. The installed hooks work in a fresh linked worktree or say how to set it up.
+
 - **How it fails:**
 
   - Missing and stale served sequences retain the 428 refresh payload.
 
   - Redaction can miss a sensitive detail; flags are hints, not blocks.
 
+  - A test whose name matches no changed module is not selected, so the quick check can pass while a distant test would fail; a cut-off step is reported, not retried; a worktree with no environment blocks the hook with the setup command.
+
 - **Tests:**
 
   - Route-aware checked REST harness and Space freshness contract tests.
 
   - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
+
+  - `tests/test_guards_prepush.py` covers test selection, the budget (cut-off lint, cut-off tests, skipped steps), docs-check and the per-worktree tool path; `tests/test_guards_hooks.py` installs the hooks into a clone and pushes and commits from fresh linked worktrees.
 
 
 ## handoff-and-continuity
