@@ -1562,6 +1562,21 @@ records; coverage claims require loss counts and complete begin/end pairs for
 the exported interval, not only sequential scratch results.
 
 
+### Worker malloc arenas
+
+Each memory worker the gateway launches starts with `MALLOC_ARENA_MAX=2` unless
+the gateway's own environment sets `MALLOC_ARENA_MAX`, which then passes through
+unchanged (a larger value relaxes the cap). A worker serves every request on a
+new thread; glibc otherwise gives concurrent threads their own malloc arenas, up
+to eight per core, and keeps the pages freed into each, so worker RSS climbs with
+concurrency and never returns. On a synthetic 2,500-drawer palace with sixteen
+concurrent clients, anonymous RSS grew from 59 to 908 MiB over 4,800 calls and
+was still rising; with two arenas the same mix stayed near 390 MiB at the same
+wall time. Sequential calls and the Python heap showed no comparable growth.
+Non-glibc platforms ignore the variable. This bounds allocator retention only:
+the native vector index a palace loads on first use still scales with its size,
+and the gateway process keeps its own allocator settings.
+
 ### D1-visible KG pages and aggregates
 
 - Every authenticated KG query mode and timeline authorizes wing, sensitivity and original source sets before counts, entity labels, candidates and pagination. Stats derive participating entities, predicates and wings from visible facts; orphan entities do not contribute.

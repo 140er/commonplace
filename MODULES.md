@@ -565,6 +565,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
+  - `tests/test_worker_malloc_arenas.py` reads a real launched worker's `/proc` environment for the default glibc arena cap and the operator pass-through.
+
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
   - Assertion-only review witnesses pin public facet compatibility, real-wrapper projected retry, refusal envelopes and negative-cache invalidation.
@@ -908,7 +910,9 @@ Format (read by `commonplace orch docs-check`):
 
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
-  - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
+  - Only the explicit worker-memory observation opt-out and `MALLOC_ARENA_MAX` are added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
+
+  - Every launched worker gets `MALLOC_ARENA_MAX=2` unless the operator sets it, so glibc arena retention under concurrent calls stays bounded.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 

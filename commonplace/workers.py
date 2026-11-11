@@ -51,8 +51,15 @@ _PASSED_ENV = frozenset(
         "MEMPALACE_EMBEDDING_DEVICE",
         "MEMPALACE_EMBEDDING_THREADS",
         "MEMPALACE_EMBEDDINGGEMMA_BATCH_SIZE",
+        "MALLOC_ARENA_MAX",
     }
 )
+# glibc gives each request thread of a worker its own malloc arena (up to eight
+# per core) and keeps the pages freed into it, so a worker under concurrent
+# calls grows with every new arena instead of reusing freed memory. Two arenas
+# keep it flat at the same throughput (#275). An operator ``MALLOC_ARENA_MAX``
+# passes through unchanged.
+DEFAULT_MALLOC_ARENA_MAX = "2"
 DEFAULT_IDLE_STOP_S = 15 * 60
 # A memory call that meets a backup pause waits this long, then is refused
 # with a retry hint (COMMONPLACE_BACKUP_MEMORY_WAIT_S overrides the wait).
@@ -212,6 +219,7 @@ class SubprocessLauncher:
                 "MEMPALACE_MCP_TRUSTED_IDENTITY": "1",
             }
         )
+        env.setdefault("MALLOC_ARENA_MAX", DEFAULT_MALLOC_ARENA_MAX)
         log = open(workspace_dir / "worker.log", "ab")
         try:
             proc = subprocess.Popen(
