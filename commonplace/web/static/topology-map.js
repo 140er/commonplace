@@ -10,6 +10,7 @@
    another origin. */
 import { escape as esc } from "./api.js";
 import { KINDS, kindOf } from "./topology-icons.js";
+import { createNodePanel } from "./topology-detail.js";
 import { autoLayout, fitView, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
 
 export const MAP_PATH = "/api/topology/map";
@@ -410,6 +411,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     on(stage, "wheel", wheel, { passive: false });
     on(stage, "keydown", keys);
     on(section, "click", click);
+    createNodePanel({ section, api, model: () => core.model, interval });
     on(part("route"), "change", (event) => { core.setRoute(event.target.value); draw(); });
     if (typeof ResizeObserver === "function") {
       sizes = new ResizeObserver(() => { if (fitted && core.view && !gesture) fit({ remember: false }); });

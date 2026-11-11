@@ -4,7 +4,9 @@
 #   bash tests/topology_shots.sh <output-dir>
 # Writes <scene>-desktop.png (1280x800) and <scene>-phone.png (390x844 at 2x), walk-<n>-desktop.png for
 # each stage of the scripted walk (drag, zoom and pan, status change, reload), and walk.html, the
-# walk's final DOM. Fails unless that DOM says every check of the walk passed.
+# walk's final DOM. Fails unless that DOM says every check of the walk passed. The node detail panel adds
+# detail-<tab>-desktop.png for each tab, a stale device, a phone sheet and detailwalk.html, the DOM of a
+# walk through every tab with real clicks and keys, checked the same way.
 set -euo pipefail
 out="${1:?usage: topology_shots.sh <output-dir>}"
 mkdir -p "$out"
@@ -27,6 +29,14 @@ for scene in map route empty; do
 done
 shot large "scene=large" desktop 1280 800 1
 for steps in 0 1 2 3 4; do shot "walk-$steps" "scene=walk&steps=$steps" desktop 1280 800 1; done
+for tab in physical config agents sites; do
+  shot "detail-$tab" "scene=detail&node=maple&tab=$tab" desktop 1280 800 1
+done
+shot detail-physical "scene=detail&node=old-nas&tab=physical" stale-desktop 1280 800 1
+shot detail-config "scene=detail&node=maple&tab=config" phone 390 844 2
+run --window-size=1280,800 --dump-dom "$page?scene=detailwalk" > "$out/detailwalk.html"
+grep -q '<html lang="en" data-walk="pass">' "$out/detailwalk.html" || { echo "detail walk failed:"; grep -o '<li class="[a-z]*">[^<]*' "$out/detailwalk.html"; exit 1; }
+echo "detail walk: pass"
 run --window-size=1280,800 --dump-dom "$page?scene=walk" > "$out/walk.html"
 ls -l "$out"
 grep -q '<html lang="en" data-walk="pass">' "$out/walk.html" || { echo "walk failed:"; grep -o '<li class="[a-z]*">[^<]*' "$out/walk.html"; exit 1; }

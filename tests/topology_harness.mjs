@@ -2,6 +2,7 @@
 import { createTopologyMap } from "/commonplace/web/static/topology-map.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "/commonplace/web/static/rail.js";
 import { fixture, largeFixture } from "/tests/topology_fixture.mjs";
+import { scriptedApi } from "/tests/topology_detail_fixture.mjs";
 
 const params = new URLSearchParams(location.search);
 const scene = params.get("scene") || "map";
@@ -18,7 +19,8 @@ const workspace = `harness-${scene}`;
 const memoryKey = `commonplace.topology.${workspace}`;
 localStorage.removeItem(memoryKey);
 const content = document.querySelector("#content");
-const open = () => { const map = createTopologyMap({ mount: () => content, api: async () => structuredClone(payload), workspace: () => workspace, interval: 400 }); map.show(); return map; };
+const detailApi = scriptedApi(fixture());
+const open = () => { const map = createTopologyMap({ mount: () => content, api: async (path) => (path.startsWith("/api/topology/map") ? structuredClone(payload) : detailApi(path)), workspace: () => workspace, interval: 400 }); map.show(); return map; };
 let map = open();
 const ready = async (selector) => { for (let i = 0; i < 100 && !content.querySelector(selector); i++) await sleep(20); return content.querySelector(selector); };
 
@@ -26,6 +28,48 @@ if (scene === "route") {
   const select = await ready('[data-topo="route"] option[value="orchard.example"]').then((option) => option.parentElement);
   select.value = "orchard.example";
   select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+// detail: the real canvas and the real panel. ?node=<key>&tab=<physical|config|agents|sites> opens one tab
+// for a screenshot; detailwalk drives every tab with real clicks and keys and sets data-walk.
+if (scene === "detail" || scene === "detailwalk") {
+  await ready('[data-key="maple"]');
+  const choose = (key) => content.querySelector(`[data-key="${key}"]`).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const panelReady = async (text) => { for (let i = 0; i < 100 && !content.querySelector(".topo-detail")?.textContent.includes(text); i++) await sleep(20); return content.querySelector(".topo-detail"); };
+  const tab = (id) => content.querySelector(`[data-td-tab="${id}"]`).click();
+  if (scene === "detail") {
+    choose(params.get("node") || "maple");
+    await panelReady("Read-only");
+    tab(params.get("tab") || "physical");
+  } else {
+    const list = document.querySelector("#walk");
+    list.hidden = false;
+    let failed = false;
+    const check = (label, pass, detail = "") => { failed ||= !pass; const item = document.createElement("li"); item.className = pass ? "ok" : "fail"; item.textContent = `${pass ? "ok" : "FAIL"}: ${label}${detail ? ` (${detail})` : ""}`; list.append(item); };
+    const body = () => content.querySelector(".td-body")?.textContent || "";
+    check("no panel before a device is selected", !content.querySelector(".topo-detail"));
+    choose("maple");
+    await panelReady("Linux 6.8");
+    check("selecting Maple opens the panel on Physical with its OS and a source", body().includes("Linux 6.8") && body().includes("conn_scout") && body().includes("observed"));
+    check("the panel sits beside the map, inside the viewport", content.querySelector(".topo-detail").getBoundingClientRect().right <= innerWidth + 1);
+    tab("config"); await panelReady("How to connect");
+    check("Config shows the Tailscale name and topology_route's answer", body().includes("maple.example.ts.net") && body().includes("recorded way(s) in to 'maple'"));
+    tab("agents"); await panelReady("Coordinators");
+    check("Agents shows a run linking to its card and the coordinator's lease", !!content.querySelector('a[href="#/card/442"]') && body().includes("lease held by conn_lead"));
+    tab("sites"); await panelReady("Hosted on this device");
+    check("Sites lists orchard.example as hosted here", body().includes("orchard.example") && body().includes("Hosted on this device"));
+    content.querySelector('[data-td="route"]').click();
+    for (let i = 0; i < 50 && content.querySelector('[data-topo="path"]').hidden; i++) await sleep(20);
+    check("Show route on map highlights that route on the canvas", !content.querySelector('[data-topo="path"]').hidden && content.querySelector('[data-topo="path"]').textContent.startsWith("Route of orchard.example"));
+    content.querySelector('[data-td="close"]').click();
+    await sleep(60);
+    check("Close hides the panel and clears the selection", content.querySelector(".topo-detail").hidden && !content.querySelector('[data-key="maple"].sel'));
+    choose("studio-mac"); await panelReady("Studio Mac"); tab("agents"); await panelReady("not a runner machine");
+    check("a device that is no runner says so", body().includes("not a runner machine"));
+    choose("studio-mac"); choose("pocket"); await panelReady("Pocket"); tab("sites"); await panelReady("No website is routed");
+    check("a device on no route has a plain empty state", body().includes("No website is routed through or hosted on this device."));
+    document.documentElement.dataset.walk = failed ? "fail" : "pass";
+  }
 }
 
 if (scene === "walk") {

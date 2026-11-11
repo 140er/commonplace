@@ -231,7 +231,56 @@ The owner opens the map from **Compute map** under **Workspace** in the account 
 - **Live:** the map reads again every five seconds while the tab is visible and redraws only when something changed. If a read fails, the last map stays and a line says it is not updating.
 - **Empty workspace:** the empty state has one button, "Start agent work on map". The canvas only offers it; the discovery work behind it is separate, and until that is connected the button is off and says so.
 
-Selecting a device sends a `topology:select` event (`detail.key`) from the map's root element, which is where a detail panel attaches.
+Selecting a device sends a `topology:select` event (`detail.key`) from the map's root element, which is where the detail panel attaches (see below).
+
+## Node detail read
+
+`GET /api/topology/node?key=<node key>` is what the node detail panel reads. It lives in `commonplace/topology/node_panel.py` and `node_agents.py`. Access is the `topology` wing grant (`policy.can_read_wing`), the same rule as the agent tools, so it is not owner-only; what the agents part adds is decided separately, below. It reads one workspace's store and creates no file.
+
+```json
+{
+  "as_of": "2026-01-01T10:20:00Z",
+  "node": {"key": "web1", "found": true, "stale": false, "conflicted": false,
+           "fields": {"os": {"value": "Linux 6.8", "stale": false,
+                             "observed_at": "2026-01-01T10:00:00Z", "expires_at": "2026-01-31T10:00:00Z",
+                             "sources": [{"kind": "agent", "id": "conn_…", "observed_at": "…", "seen_count": 1, "evidence": "uname -sr"}],
+                             "contenders": 0}}},
+  "sites": [{"site": "example.test", "role": "hosted", "stale": false, "observed_at": "…", "expires_at": "…",
+             "sources": [], "hops": 3, "at": [{"index": 2, "link": "web1>app:hosts", "from": "web1", "to": "app",
+                                               "method": "hosts", "known": true, "stale": false, "status": "up",
+                                               "observed_at": "…", "status_observed_at": "…"}]}],
+  "agents": {"applicable": true, "machine": {"id": "mach_…", "label": "web1-runner", "enabled": true, "revoked": false},
+             "connections": [{"kind": "machine", "name": "…", "last_used_at": "…", "revoked": false}],
+             "runs": [{"job": "…", "state": "started", "board": "atlas", "card": 442, "project": "…", "topic": "…",
+                       "thread_id": "…", "updated_at": "…", "started_at": "…", "log_ref": "…"}],
+             "coordinators": [{"board": "atlas", "lease": {"epoch": 4, "holder": "…", "expires_at": "…", "live": true},
+                               "open_steps": 2, "threads": [{"thread_id": "…", "card": 444, "state": "started", "updated_at": "…"}]}]}
+}
+```
+
+- `node.fields` holds only the node fields of the allow-list (see Facts), with a stale value kept and marked `stale: true`; a key nothing is recorded for is `{"key": …, "found": false}`. `sources` are the observers of the value, newest first, with the first line of their evidence (up to 200 characters; evidence has already passed the secret filter).
+- `sites` lists every route that starts at, ends at or passes through the node. `role` is `site` (the node is the website), `hosted` (the node ends the route, or is the machine that `hosts` what ends it) or `through`. `at` has the node's hops with their freshness; a hop without link facts says `known: false` and carries no times.
+- `agents` is for a node whose `runner_id` is a machine enrolled in this workspace; any other node answers `{"applicable": false, "reason": "not_a_runner" | "machine_not_found"}`. Runs are start jobs of that machine that are queued, leased, starting or uncertain, or started with no end reported in the last six hours. Coordinators are boards whose live orchestrator config runs on the machine, with the checkpoint's lease and thread builders.
+- Grants: `connections` is `null` unless the caller is a signed-in workspace owner. A run or coordinator is listed only when the caller may read the board's wing. A caller without the `topology` wing gets `403`, a request without a session `401`, a key that is not a node key `400`.
+
+## The node detail panel
+
+`commonplace/web/static/topology-detail.js` (with `topology-detail.css`) is a read-only panel for the device selected on the canvas. It creates its element on the first `topology:select`, reads the node read and `GET /api/topology/route?target=<key>` (the `topology_route` answer), and reads them again every five seconds while the device stays selected and the tab is visible. The canvas mounts it with one call; it changes the canvas only by setting the canvas's own route picker.
+
+| Tab | Shows | From |
+| --- | --- | --- |
+| Physical | hardware, OS, CPU, GPU, cores, memory, storage; the newest observation time | `node.fields` |
+| Config | hostname, Tailscale name, ssh alias, runner id, wings and the links that end at the device, as rows and as copyable text; below, the `topology_route` answer exactly as an agent gets it (answer sentence, each way in or each hop with method, alias, jump host, port and status), copyable | `node.fields`, the map's links, `GET /api/topology/route` |
+| Agents | the machine, its connections, its runs with a link to the card and the log, and each coordinator's lease with the thread builders its checkpoint lists, each linking to its card or board | `agents` |
+| Sites | each site the device hosts or passes, the hops where it appears with status, and a button that highlights that route on the map | `sites` |
+
+- Every value shows where it came from (observer kind and id, or "runner registry", "start job", "checkpoint", "connection") and how old it is; a stale value is marked `stale` in words, dashed and shows when it was last observed.
+- A device with nothing to show has a plain empty state (no hardware recorded, not a runner machine, no agents working, no site routed), and a device the map draws but the store has no facts for says "not recorded".
+- Nothing is editable: there is no input, textarea or write call. Changes go through agent proposals.
+- Only fields of the store's allow-list are shown, so a field outside it never appears even if a read carried one. Every value is escaped; a log reference that is not an `http` or `https` link is shown as text.
+- A read the caller may not make says so in words ("You may not read the details of this device"); a missing route answer leaves the rest of the tab working.
+
+The Config tab depends on the agent tools' REST read (`GET /api/topology/route`, card 438). Without it the facts still show and the route part says the answer is not available.
 
 ## Existing workspaces
 
