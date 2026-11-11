@@ -240,8 +240,18 @@ def test_worker_cannot_rewrite_its_own_question_on_a_read_only_board(signup_hub,
     response = _tool(hub, worker, "task_update", task=asked, title="Worker rewrote its question")
     assert "error" in response or response["result"].get("isError"), response
     assert _task_row(hub, owner, asked)["title"] == before["title"]
-    # A card assigned to the worker stays editable outside the write set.
+    # The memory-link path has the same own-card bypass; the worker has no link tool, so
+    # check the store with its principal directly.
     from commonplace.boards.store import BoardStore
+    from commonplace.extensions import ToolError
+
+    principal = hub.db.authenticate_connection(
+        _machine_row(hub, owner, machine)["worker_connection_id"]
+    )
+    store = BoardStore(hub.gateway.workspace_dir(owner["workspace"]))
+    with pytest.raises(ToolError, match="cannot change this board"):
+        store.link_drawer(asked, "drawer_synthetic", actor, principal=principal)
+    # A card assigned to the worker stays editable outside the write set.
 
     with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
         conn.execute(
