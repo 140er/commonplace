@@ -12,6 +12,7 @@ from commonplace.admission import GATE
 from commonplace.extensions import ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
+from . import contracts
 from .display import need_for, plan_waiting
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
@@ -196,6 +197,13 @@ def owns_card(row, actor):
     )
 
 
+def _paths(raw) -> list:
+    """The card's path contract; an unreadable stored value shows as ``**``, the way the
+    start check reads it, so the owner can see it and clear it."""
+    paths = contracts.parse(raw)
+    return list(contracts.ANY) if paths is None else paths
+
+
 def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
     result = {
@@ -219,7 +227,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
             if key not in ("labels", "paths", "parent_number", "pr_repo", "task_type")
         },
         "labels": json.loads(row["labels"] or "[]"),
-        "paths": json.loads(row["paths"] or "[]") if "paths" in row.keys() else [],
+        "paths": _paths(row["paths"] if "paths" in row.keys() else None),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
         "created_by": row["created_by"],

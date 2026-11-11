@@ -18,7 +18,7 @@ in this order: (trigger only) the ``(cursor, gen)`` re-check as the first statem
 current, ``plan`` label -> ``plan_pending``; 2. existing step (orch) or existing keyed
 job (person with a ``request_key``, trigger): a voided runner-start key refuses
 ``step_voided`` before matching; an unvoided exact match returns the stored job,
-a mismatch is a 409; then card/grant refusals; 3. path contracts (``path_overlap``); 4. the cap; 5. ``jobs.create_in`` and (orch)
+a mismatch is a 409; then card/grant refusals; 3. path contracts (``path_overlap``, ``path_contract_too_large``); 4. the cap; 5. ``jobs.create_in`` and (orch)
 the step row, the lease re-check and renewal; (trigger) the cursor advance with the job
 or the miss row. A refusal after a write rolls back to a savepoint, so nothing partial
 is ever committed.
@@ -342,7 +342,7 @@ def request_key_for(path: str, *, role=None, step_key=None, event=None, request_
 # -------------------------------------------------------------- fenced start
 
 
-def _live_cards(conn, board: str, now: str, *, hold: bool = True) -> set:
+def _live_cards(conn, board: str, now: str, *, hold: bool) -> set:
     """Cards with a live runner job on ``board``: queued, leased, starting or uncertain,
     or started, whatever the card's own status says. ``hold`` (the cap) counts a started
     job for ``STARTED_HOLD_SECONDS`` only; without it (path contracts) a started job counts
@@ -361,8 +361,30 @@ def _live_cards(conn, board: str, now: str, *, hold: bool = True) -> set:
     return {row[0] for row in rows.fetchall()}
 
 
+def has_live_job(gateway, workspace_id: str, board: str, card: int) -> bool:
+    """True when ``card`` has a runner job that holds its contract (queued, leased,
+    starting, uncertain or started, of any age). Read-only: it never creates the runner
+    database or a table."""
+    from pathlib import Path
+
+    from mempalace.sqlite_crypto import connect
+
+    path = Path(gateway.workspace_dir(workspace_id)) / orch_store.DB_NAME
+    if not path.is_file():
+        return False
+    conn = connect(str(path), timeout=10, isolation_level=None)
+    try:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_jobs'"
+        ).fetchone():
+            return False
+        return card in _live_cards(conn, board, jobs._now(), hold=False)
+    finally:
+        conn.close()
+
+
 def _cap_count(conn, plan: Plan, now: str) -> int:
-    return len(_live_cards(conn, plan.board, now) | set(plan.doing))
+    return len(_live_cards(conn, plan.board, now, hold=True) | set(plan.doing))
 
 
 def contract_refusal(
@@ -413,17 +435,22 @@ def contract_refusal(
         except contracts.TooLarge:
             return StartRefused(
                 "path_contract_too_large",
-                f"card #{card}'s path contract is too large to compare with the running "
-                f"cards' contracts; narrow the paths of #{card} or of #{other}",
+                f"comparing card #{card}'s path contract with the running cards' contracts "
+                f"needs more than {contracts.MAX_STEPS} glob-segment steps (stopped at "
+                f"running card #{other}); narrow the paths of #{card} or of #{other}",
                 card=other,
                 paths=mine,
+                other_paths=globs,
+                budget=contracts.MAX_STEPS,
             )
         if pair is not None:
             return StartRefused(
                 "path_overlap",
                 f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of "
-                f"running card #{other}; start it after #{other} finishes, narrow the paths, "
-                f"or clear #{other}'s paths (task_update paths=[]) once its work is finished",
+                f"running card #{other}. #{other} holds its contract while its job exists "
+                f"(a started job never ends): narrow #{card}'s paths, or ask the workspace "
+                f"owner to clear #{other}'s paths (task_update paths=[]) once its work is "
+                f"over; an agent cannot clear them while the job exists",
                 card=other,
                 paths=mine,
                 other_paths=globs,
@@ -798,7 +825,7 @@ def orch_card_start(
     ``invalid_step_key``, ``invalid_request_key``, ``board_not_found``,
     ``card_not_found``, ``unknown_role``, ``not_allowed``, ``not_configured``,
     ``fenced``, ``restore_pending``, ``config_changed``, ``plan_pending``,
-    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``path_overlap``, ``at_cap``
+    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``path_overlap``, ``path_contract_too_large``, ``at_cap``
     (switch off), ``project_limit`` (switch on), ``active_start``,
     ``started_recently``, ``busy``) or pass ``OrchError``s of ``resolve_in`` through."""
     principal = ctx.principal

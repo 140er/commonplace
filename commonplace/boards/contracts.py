@@ -19,8 +19,10 @@ this check exists to prevent. So:
   ``..`` that cannot collapse all count as ``**``, so they overlap everything;
 - names compare case-insensitively, because a checkout on a case-insensitive file system
   maps ``Docs/a.md`` and ``docs/a.md`` to one file;
-- one comparison is bounded (``MAX_COMPARISONS`` glob pairs). Beyond that it fails
-  closed (``TooLarge``) instead of holding the runner lock.
+- one start's comparison is bounded (``MAX_STEPS`` glob-segment steps, about a second).
+  Each glob pair is charged its depth, because the cost of a pair grows with the number
+  of segments; beyond the budget it fails closed (``TooLarge``) instead of holding the
+  runner lock.
 """
 
 from __future__ import annotations
@@ -35,23 +37,23 @@ MAX_GLOBS = 32  # globs in one update
 MAX_EXPANSIONS = 64  # alternatives one glob may expand to
 MAX_STORED = 64  # globs stored per card, after expansion
 MAX_GLOB_LENGTH = 200
-MAX_COMPARISONS = 200_000  # glob pairs compared by one start
+MAX_STEPS = 1_500_000  # glob-segment steps compared by one start (about a second)
 _WILDCARDS = frozenset("*?[{}")
 ANY = ("**",)
 
 
 class TooLarge(Exception):
-    """A start would compare more glob pairs than ``MAX_COMPARISONS``."""
+    """A start would compare more glob-segment steps than ``MAX_STEPS``."""
 
 
 class Budget:
-    """Glob pairs one start may still compare."""
+    """Glob-segment steps one start may still compare."""
 
-    def __init__(self, pairs: int = MAX_COMPARISONS):
-        self.left = pairs
+    def __init__(self, steps: int = MAX_STEPS):
+        self.left = steps
 
-    def take(self, pairs: int) -> None:
-        self.left -= pairs
+    def take(self, steps: int) -> None:
+        self.left -= steps
         if self.left < 0:
             raise TooLarge
 
@@ -136,6 +138,8 @@ def normalize(value) -> list[str]:
         if glob.startswith("/") or "\\" in glob:
             raise ToolError("no: a path glob is relative to the repo root (no / or \\)")
         for alternative in _expand(glob, strict=True):
+            if alternative.startswith("/"):
+                raise ToolError("no: a path glob is relative to the repo root (no / or \\)")
             canonical = "/".join(_canonical(alternative, strict=True)) or "**"  # "." is the root
             if canonical not in globs:
                 globs.append(canonical)
@@ -190,11 +194,14 @@ def globs_overlap(a: str, b: str) -> bool:
 def first_overlap(mine, theirs, budget: Budget | None = None) -> tuple[str, str] | None:
     """The first ``(my glob, their glob)`` pair that can match the same path, or None.
     Either side empty means no contract, so no overlap. Each glob is expanded once; with a
-    ``budget`` the pairs are counted first and ``TooLarge`` is raised when they exceed it."""
+    ``budget`` the steps (pairs times the shallower side's deepest glob, which bounds the
+    segments one pair compares) are charged first and ``TooLarge`` is raised when they
+    exceed it."""
     left = [(g, s) for glob in mine or () for g, s in _alternatives(glob)]
     right = [(g, s) for glob in theirs or () for g, s in _alternatives(glob)]
-    if budget is not None:
-        budget.take(len(left) * len(right))
+    if budget is not None and left and right:
+        depth = min(max(len(x) for _, x in left), max(len(y) for _, y in right))
+        budget.take(len(left) * len(right) * max(depth, 1))
     for a, x in left:
         for b, y in right:
             if _overlap(x, y):
@@ -203,10 +210,10 @@ def first_overlap(mine, theirs, budget: Budget | None = None) -> tuple[str, str]
 
 
 def parse(raw) -> list[str] | None:
-    """Stored column value (JSON text or NULL) to a glob list. NULL, empty and ``[]`` are
-    no contract (``[]``); a value that is not a JSON list of strings is unreadable
-    (``None``), and callers treat that as ``**`` rather than as no contract."""
-    if not raw:
+    """Stored column value (JSON text or NULL) to a glob list. Only NULL and ``[]`` are no
+    contract; anything that is not a JSON list of strings, an empty string included, is
+    unreadable (``None``), and callers treat that as ``**`` rather than as no contract."""
+    if raw is None:
         return []
     try:
         value = json.loads(raw) if isinstance(raw, str) else raw

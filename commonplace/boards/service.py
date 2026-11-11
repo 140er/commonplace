@@ -3307,6 +3307,29 @@ class BoardService:
             actor = self._update_acquisition_actor(prospective, args)
         return actor, self._type_holder(actor)
 
+    def _paths_update(self, row, args):
+        """Stored ``paths`` for a contract update. A card that has a runner job holds its
+        contract: only the workspace owner may clear or narrow it; anyone else who may edit
+        the card can only keep every glob and add more."""
+        update = contracts.column_update(args)
+        if not update or (self.principal.person and self.principal.role == "owner"):
+            return update
+        old = contracts.parse(row["paths"] if "paths" in row.keys() else None)
+        if old is None:
+            old = list(contracts.ANY)
+        if set(old) <= set(json.loads(update["paths"])):
+            return update
+        from commonplace.orch import runner_bridge
+
+        if runner_bridge.has_live_job(
+            self.ctx.gateway, self.principal.workspace_id, row["board"], row["id"]
+        ):
+            raise ToolError(
+                f"no: #{row['id']} has a running job, so only the workspace owner can clear "
+                "or narrow its paths; ask the owner (adding globs is allowed)"
+            )
+        return update
+
     def task_update(self, task, *, version=None, **args):
         type_updates = {
             key: task_types.owner_value(self.principal, value)
@@ -3373,7 +3396,9 @@ class BoardService:
             self._holder(
                 row,
                 completing=args.get("status") == "done",
-                editing=bool(set(args) & {"title", "body", "labels", "blocked_by", "task_type"})
+                editing=bool(
+                    set(args) & {"title", "body", "labels", "blocked_by", "task_type", "paths"}
+                )
                 and not content_edit,
                 reopening=set(args) == {"status"} and args["status"] == "todo",
                 annotating=bool(set(args) - {"status"})
@@ -3414,7 +3439,7 @@ class BoardService:
                 self._plan_label_check(conn, row, labels)
                 self._check_split_labels(conn, board, row, labels)
                 updates["labels"] = json.dumps(labels)
-            updates.update(contracts.column_update(args))
+            updates.update(self._paths_update(row, args))
             for key in ("title", "body", "branch", "status_line"):
                 if key in args:
                     updates[key] = validate_text(

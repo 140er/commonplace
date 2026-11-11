@@ -154,19 +154,24 @@ Inside it, in this order:
    (409) wins over matching or changed requests. Other kinds retain
    `step_conflict`. For an unvoided exact match the stored job is returned;
    any mismatch is a 409 with the stored step or job.
-3b. **Path contracts.** A card with `paths` (canonical repo-relative globs, set
-   with `task_update`) is refused with `path_overlap` (409; details `card`,
-   `paths`, `other_paths`) while another card of the board that holds a start
-   declares a glob that can match the same path. Holding a start means a
-   runner job that is queued, leased, starting, uncertain or started (a started
-   job counts whatever its age, unlike the cap's one-hour hold; no state ends
-   it) whatever the card's status, or `doing` with a connection assignee. The
-   jobs, the doing cards and the contracts are read inside the write lock, and a
-   running card's paths are read live, so clearing them (`task_update(paths=[])`)
-   releases the card; no owner action ends a started job. Unreadable stored
-   contracts count as `**`; more than 200 000 glob pairs refuse with
-   `path_contract_too_large`. `card_start` on a board without an orchestrator
-   config runs the same check before the job is inserted. Cards without a
+3b. **Path contracts.** A card with `paths` (canonical, brace-free,
+   repo-relative globs, set with `task_update`) is refused with `path_overlap`
+   (409; details `card`, `paths`, `other_paths`) while another card of the board
+   that holds a start declares a glob that can match the same path. Holding a
+   start means a runner job that is queued, leased, starting, uncertain or
+   started (a started job counts whatever its age, unlike the cap's one-hour
+   hold; no state ends it) whatever the card's status, or `doing` with a
+   connection assignee. The jobs, the doing cards and the contracts are read
+   inside the write lock, and a running card's paths are read live. `paths` is
+   an editing field (holder, review editor, creator of an unassigned card, or a
+   person), and while the card has a job only the workspace owner may clear or
+   narrow it (`task_update(paths=[])`); others can only add globs, so an agent
+   asks the owner to release a card. Unreadable stored contracts count as
+   `**`. One start compares at most 1 500 000 glob-segment steps; beyond that
+   it refuses with `path_contract_too_large` (details `card`, `paths`,
+   `other_paths`, `budget`). `card_start` on a board without an orchestrator
+   config runs the same check before the job is inserted. Only runner starts
+   are checked: a card a connection takes by hand is not. Cards without a
    contract never conflict.
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a

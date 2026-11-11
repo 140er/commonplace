@@ -1122,7 +1122,7 @@ Format (read by `commonplace orch docs-check`):
   - Card lists share a runner read and per-board usage; a capacity refusal retains its original error when no display reason is available.
 
   - Board REST maps only database lock timeouts to busy; waiting summaries reuse one runner read and two board usage counts; split-key edits preserve child identity.
-  - Cards may declare a path contract (`paths`, relative globs; `commonplace/boards/contracts.py`): `task_update(paths=)` validates it and stores it canonical and brace-free, the card shows it, and the orchestrator start refuses `path_overlap` against a running card with an overlapping contract.
+  - Cards may declare a path contract (`paths`, relative globs; `commonplace/boards/contracts.py`): `task_update(paths=)` validates it and stores it canonical and brace-free (an editing field; while the card has a runner job only the workspace owner may clear or narrow it), the card shows it, and the orchestrator start refuses `path_overlap` against a running card with an overlapping contract.
   - Card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
   - Owner todo assignments validate the target’s typed grant before claiming; repeat takes preserve an existing holder’s claim after grant removal.
 
@@ -1252,7 +1252,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
-  - A start is refused with `path_overlap` while a running card of the board (a queued, leased, starting, uncertain or started job of any age whatever the card's status, or doing with a connection assignee) declares an overlapping path contract; the check reads jobs, doing cards and contracts in the write lock for configured and unconfigured boards alike, treats an unreadable contract as `**`, refuses with `path_contract_too_large` past its comparison budget, and never refuses cards without a contract. A started job has no end state, so its card is released by clearing its paths.
+  - A runner start is refused with `path_overlap` while a running card of the board (a queued, leased, starting, uncertain or started job of any age whatever the card's status, or doing with a connection assignee) declares an overlapping path contract; the check reads jobs, doing cards and contracts in the write lock for configured and unconfigured boards alike, treats an unreadable contract as `**`, refuses with `path_contract_too_large` past its glob-segment step budget, and never refuses cards without a contract. A started job has no end state, so only the workspace owner releases its card, by clearing its paths; manual claims are not checked.
 
   - Configured starts share project admission with claims and plain jobs when workspace orchestration is enabled; boards without a `[runner]` config retain earlier behavior with the workspace switch off.
 
