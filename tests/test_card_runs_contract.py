@@ -60,10 +60,19 @@ def test_owner_resolves_with_the_body_the_panel_sends(signup_hub, owners):
     assert http(hub.port, "POST", path, cookie=owner["cookie"], body=body)[0] == 200
     [row] = _status(hub, task, owner=owner)
     assert (row["state"], row["thread_id"]) == ("started", "thread-42")
-    # A second answer is a 409 the panel shows in words.
+
+
+def test_resolving_a_settled_start_is_a_conflict_not_a_permission_error(signup_hub, owners):
+    # The panel shows a 409 as "this already changed" and a 403 as "you may not"; a start that
+    # an owner already resolved is the first kind.
+    hub, owner = signup_hub, owners["A"]
+    task, job, _machine = _uncertain(hub, owner)
+    path = f"/api/card-starts/{job['job_id']}/resolve"
+    first = {"outcome": "started", "thread_id": "thread-42"}
+    assert http(hub.port, "POST", path, cookie=owner["cookie"], body=first)[0] == 200
     code, payload = http(hub.port, "POST", path, cookie=owner["cookie"], body={"outcome": "failed"})
-    assert code == 409, (code, payload)
-    assert payload["error"]
+    assert (code, payload) == (409, {"error": "no: start is not uncertain"})
+    assert _status(hub, task, owner=owner)[0]["state"] == "started"
 
 
 def test_member_sees_no_runs_and_cannot_cancel_or_resolve(signup_hub, owners):
