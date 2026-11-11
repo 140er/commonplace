@@ -647,12 +647,15 @@ def test_sql_boundary_window_gets_no_background_hold_tick(fresh, monkeypatch):
     boundary = observe_sql(client)
     boundary.forbidden = True
     window["open"] = True
+    # observe_sql() stops the worker, so on this helper nothing is left to
+    # tick. With a helper that left it running (as an earlier version did),
+    # the wake below forces the tick a loaded host produces at random, inside
+    # the window, and its SELECT shows up as late SQL.
     if worker.thread is not None and worker.thread.is_alive():
-        # Force the tick a loaded host produces at random: a live worker
-        # runs once more as soon as it is woken.
         worker._wake.set()
         assert ticked_inside.wait(HANG_GUARD_S)
     assert not boundary.late
+    assert worker.thread is None or not worker.thread.is_alive()
 
 
 def test_known_and_unknown_return_before_held_delivery(fresh, monkeypatch):
