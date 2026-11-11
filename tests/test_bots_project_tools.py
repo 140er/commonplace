@@ -946,7 +946,7 @@ def test_audit_rows_and_logs_hold_no_conversation_text(project_hub, fake, caplog
         project_call(SECRET_WORDS, "c5"),
     )
     marker = "quartz lantern"
-    rows = [r for r in hub.db.audit_entries(hub.workspace) if r["tool"].startswith("bot:")]
+    rows = [r for r in hub.db.audit_entries(hub.workspace) if (r["tool"] or "").startswith("bot:")]
     assert {r["tool"] for r in rows} == {
         "bot:create_work",
         "bot:comment_work",
