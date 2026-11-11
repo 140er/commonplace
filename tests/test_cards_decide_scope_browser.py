@@ -49,14 +49,14 @@ async def consent_and_agents(hub):
         try:
             context = await browser.new_context(viewport={"width": 1100, "height": 900})
             await context.add_cookies([{"name": sessions.COOKIE, "value": session, "url": base}])
-            # The consent POST's redirect to the client is recorded, never followed.
+            # Redirects to the client (consent answers or refusals) are recorded, never followed.
             locations = []
 
             async def consent_post(route):
-                if route.request.method != "POST":
-                    await route.continue_()
-                    return
                 response = await route.fetch(max_redirects=0)
+                if route.request.method != "POST" and response.status < 300:
+                    await route.fulfill(response=response)
+                    return
                 locations.append(response.headers.get("location", ""))
                 await route.fulfill(status=200, body="redirected to client")
 

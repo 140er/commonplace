@@ -328,7 +328,15 @@ def test_a4_cli_refuses_the_scope(monkeypatch):
 
     monkeypatch.setattr(cli, "_db", lambda args: None)
     with pytest.raises(ValueError, match="browser consent"):
-        cli.cmd_token_add(SimpleNamespace(scopes="memory:read,cards:decide"))
+        cli.cmd_token_add(
+            SimpleNamespace(
+                scopes="memory:read,cards:decide",
+                client="generic",
+                **dict.fromkeys(
+                    ("profile", "tools", "read_wings", "write_wings", "write_wing", "trust")
+                ),
+            )
+        )
 
 
 # ── 5. revoking the scope stops it at once ──
