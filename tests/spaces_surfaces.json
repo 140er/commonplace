@@ -374,7 +374,7 @@
           "name": "needs_me"
         },
         {
-          "description": "As the lease holder, start the config's runner role on a card. The same step key returns the stored job unless voided (step_voided, 409); a fresh start needs a new key and normal admission. config_ref is live or exp:<name>.",
+          "description": "As the lease holder, start the config's runner role on a card. The same step key returns the stored job unless voided (step_voided, 409); a fresh start needs a new key and normal admission. config_ref is live or exp:<name>. While an agent that holds the card's context has capacity the start is refused (agent_has_capacity) unless fresh_reason says why a fresh agent is needed; the step records that reason.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -395,6 +395,11 @@
               "epoch": {
                 "minimum": 1,
                 "type": "integer"
+              },
+              "fresh_reason": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
               },
               "role": {
                 "maxLength": 32,
@@ -686,6 +691,98 @@
           "name": "orch_exp_retire"
         },
         {
+          "description": "Report a review finding about a card. The hub routes it to the role whose lease started the card's work while that lease is live, else parks it with a reason.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "card": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "detail": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "step_key",
+              "card",
+              "detail"
+            ],
+            "type": "object"
+          },
+          "name": "orch_finding"
+        },
+        {
+          "description": "As the owning role, acknowledge a finding routed or parked to you.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "finding": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "finding"
+            ],
+            "type": "object"
+          },
+          "name": "orch_finding_ack"
+        },
+        {
           "description": "End the current lease of a board role (signed-in workspace owner only).",
           "inputSchema": {
             "additionalProperties": false,
@@ -710,7 +807,7 @@
           "name": "orch_force_release"
         },
         {
-          "description": "Reserve the one gate attempt for a pull request head.",
+          "description": "Reserve the one gate attempt for a pull request head. Refused (repair_exhausted) once the pull request's repair used its failure bound.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -772,7 +869,7 @@
           "name": "orch_gate_open"
         },
         {
-          "description": "Record the gate verdict; every verdict is final for that head.",
+          "description": "Record the gate verdict; every verdict is final for that head. A fail opens or joins the pull request's one repair and routes a finding to the card's owning session.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1800,6 +1897,8 @@
       "orch_config_render",
       "orch_config_write",
       "orch_exp_retire",
+      "orch_finding",
+      "orch_finding_ack",
       "orch_force_release",
       "orch_gate_open",
       "orch_gate_record",
@@ -3038,7 +3137,7 @@
           "name": "needs_me"
         },
         {
-          "description": "As the lease holder, start the config's runner role on a card. The same step key returns the stored job unless voided (step_voided, 409); a fresh start needs a new key and normal admission. config_ref is live or exp:<name>.",
+          "description": "As the lease holder, start the config's runner role on a card. The same step key returns the stored job unless voided (step_voided, 409); a fresh start needs a new key and normal admission. config_ref is live or exp:<name>. While an agent that holds the card's context has capacity the start is refused (agent_has_capacity) unless fresh_reason says why a fresh agent is needed; the step records that reason.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -3059,6 +3158,11 @@
               "epoch": {
                 "minimum": 1,
                 "type": "integer"
+              },
+              "fresh_reason": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
               },
               "role": {
                 "maxLength": 32,
@@ -3350,6 +3454,98 @@
           "name": "orch_exp_retire"
         },
         {
+          "description": "Report a review finding about a card. The hub routes it to the role whose lease started the card's work while that lease is live, else parks it with a reason.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "card": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "detail": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "step_key",
+              "card",
+              "detail"
+            ],
+            "type": "object"
+          },
+          "name": "orch_finding"
+        },
+        {
+          "description": "As the owning role, acknowledge a finding routed or parked to you.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "finding": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "finding"
+            ],
+            "type": "object"
+          },
+          "name": "orch_finding_ack"
+        },
+        {
           "description": "End the current lease of a board role (signed-in workspace owner only).",
           "inputSchema": {
             "additionalProperties": false,
@@ -3374,7 +3570,7 @@
           "name": "orch_force_release"
         },
         {
-          "description": "Reserve the one gate attempt for a pull request head.",
+          "description": "Reserve the one gate attempt for a pull request head. Refused (repair_exhausted) once the pull request's repair used its failure bound.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -3436,7 +3632,7 @@
           "name": "orch_gate_open"
         },
         {
-          "description": "Record the gate verdict; every verdict is final for that head.",
+          "description": "Record the gate verdict; every verdict is final for that head. A fail opens or joins the pull request's one repair and routes a finding to the card's owning session.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4457,6 +4653,8 @@
       "orch_config_render",
       "orch_config_write",
       "orch_exp_retire",
+      "orch_finding",
+      "orch_finding_ack",
       "orch_force_release",
       "orch_gate_open",
       "orch_gate_record",

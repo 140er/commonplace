@@ -71,6 +71,8 @@ MAX_SKILLS = 32
 MAX_MCPS = 16
 MAX_CONNECTIONS = 16
 MAX_TRIGGERS = 4
+FLEET_REPAIR_ATTEMPTS = (1, 10)
+FLEET_AGENT_CARDS = (1, 20)
 
 NAME = re.compile(r"[a-z0-9-]{1,32}")  # role, workflow and mcp names
 PROJECT = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")  # as commonplace.runner.registry.PROJECT
@@ -183,6 +185,21 @@ class Trigger:
 
 
 @dataclass(frozen=True)
+class Fleet:
+    """Per-board overrides of the fleet defaults; every field has the product default.
+
+    ``repair_attempts``: failed gates of one pull request that one repair absorbs before
+    it is parked. ``route_findings``: findings go to the session that owns the card.
+    ``reuse_agents``: a start is refused while a context-holding agent has capacity.
+    ``agent_cards``: unfinished cards one agent may carry."""
+
+    repair_attempts: int = 3
+    route_findings: bool = True
+    reuse_agents: bool = True
+    agent_cards: int = 2
+
+
+@dataclass(frozen=True)
 class Config:
     """One validated config. ``sha256`` is set by ``parse`` (raw text), else ``None``."""
 
@@ -194,7 +211,13 @@ class Config:
     mcps: Mapping[str, Mcp] = field(default_factory=dict)
     runner: Runner | None = None
     triggers: tuple[Trigger, ...] = ()
+    fleet: Fleet | None = None
     sha256: str | None = None
+
+    @property
+    def fleet_rules(self) -> Fleet:
+        """The effective fleet rules: the ``[fleet]`` table, else the defaults."""
+        return self.fleet or Fleet()
 
     @property
     def has_runner(self) -> bool:
@@ -228,6 +251,8 @@ class Config:
             out["runner"] = dataclasses.asdict(self.runner)
         if self.triggers:
             out["triggers"] = [{"on": t.on} for t in self.triggers]
+        if self.fleet is not None:
+            out["fleet"] = dataclasses.asdict(self.fleet)
         return out
 
 
@@ -243,7 +268,17 @@ class Change:
 
 TEMPLATE_DIR = Path(__file__).with_name("templates")
 
-_TOP_KEYS = ("schema", "project", "limits", "roles", "workflows", "mcps", "runner", "triggers")
+_TOP_KEYS = (
+    "schema",
+    "project",
+    "limits",
+    "roles",
+    "workflows",
+    "mcps",
+    "runner",
+    "triggers",
+    "fleet",
+)
 _ROLE_KEYS = (
     "kind",
     "area",
@@ -258,6 +293,7 @@ _ROLE_KEYS = (
     "connections",
 )
 _RUNNER_KEYS = ("role", "machine", "project", "runtime_mode")
+_FLEET_KEYS = ("repair_attempts", "route_findings", "reuse_agents", "agent_cards")
 _SAFE_KEY = re.compile(r"[A-Za-z0-9_-]{1,40}")
 _SECRET_KEY_NAME = re.compile(
     r"(?i)password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
@@ -312,6 +348,12 @@ def _int(value: object, path: str, low: int, high: int) -> int:
         raise ConfigError("wrong_type", path, "must be an integer")
     if not low <= value <= high:
         raise ConfigError("invalid_value", path, f"must be between {low} and {high}")
+    return value
+
+
+def _bool(value: object, path: str) -> bool:
+    if type(value) is not bool:
+        raise ConfigError("wrong_type", path, "must be true or false")
     return value
 
 
@@ -641,6 +683,27 @@ def _triggers(value: object, runner: Runner | None) -> tuple[Trigger, ...]:
     return tuple(dict.fromkeys(out))
 
 
+def _fleet(value: object) -> Fleet | None:
+    if value is None:
+        return None
+    body = _table(value, "fleet", _FLEET_KEYS)
+    default = Fleet()
+    return Fleet(
+        repair_attempts=_int(
+            body.get("repair_attempts", default.repair_attempts),
+            "fleet.repair_attempts",
+            *FLEET_REPAIR_ATTEMPTS,
+        ),
+        route_findings=_bool(
+            body.get("route_findings", default.route_findings), "fleet.route_findings"
+        ),
+        reuse_agents=_bool(body.get("reuse_agents", default.reuse_agents), "fleet.reuse_agents"),
+        agent_cards=_int(
+            body.get("agent_cards", default.agent_cards), "fleet.agent_cards", *FLEET_AGENT_CARDS
+        ),
+    )
+
+
 # ---------------------------------------------------------------- public API
 
 
@@ -711,6 +774,7 @@ def validate(data: Mapping[str, Any]) -> Config:
         mcps=mcps,
         runner=runner,
         triggers=_triggers(doc.get("triggers", []), runner),
+        fleet=_fleet(doc.get("fleet")),
     )
     if runner is not None:
         limit = MAX_LAUNCH_CHARS - SPAWN_RESERVE_CHARS
@@ -815,6 +879,13 @@ def render(config: Config) -> str:
         )
     if config.triggers:
         lines.append("- triggers: " + ", ".join(f"`{t.on}`" for t in config.triggers))
+    if config.fleet is not None:
+        f = config.fleet
+        lines.append(
+            f"- fleet: repair_attempts {f.repair_attempts}, route_findings "
+            f"{str(f.route_findings).lower()}, reuse_agents {str(f.reuse_agents).lower()}, "
+            f"agent_cards {f.agent_cards}"
+        )
     for role in config.roles.values():
         lines += ["", f"## Role `{role.name}` ({role.kind})", "", *_role_lines(role)]
         text = role_instructions(config, role.name)

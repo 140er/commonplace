@@ -317,11 +317,12 @@ def force_release(ctx, board, role):
     return result
 
 
-def card_start(ctx, board, role, card, step_key, epoch, token, config_ref=None):
+def card_start(ctx, board, role, card, step_key, epoch, token, config_ref=None, fresh_reason=None):
     from . import runner_bridge
 
+    extra = {} if fresh_reason is None else {"fresh_reason": fresh_reason}
     return runner_bridge.orch_card_start(
-        ctx, board, role, card, step_key, epoch, token, config_ref=config_ref
+        ctx, board, role, card, step_key, epoch, token, config_ref=config_ref, **extra
     )
 
 
@@ -353,6 +354,20 @@ def gate_record(ctx, board, role, epoch, token, step_key, verdict):
     from . import durable
 
     return durable.gate_record(ctx, board, role, epoch, token, step_key, verdict)
+
+
+def finding(ctx, board, role, epoch, token, step_key, card, detail):
+    from . import durable
+
+    return durable.finding_report(
+        ctx, board, role, epoch, token, step_key, card=card, detail=detail
+    )
+
+
+def finding_ack(ctx, board, role, epoch, token, finding):
+    from . import durable
+
+    return durable.finding_ack(ctx, board, role, epoch, token, finding)
 
 
 def void_step(ctx, board, role, step_key):
@@ -525,6 +540,7 @@ OPERATIONS = {
             "card": CARD,
             "step_key": STEP_KEY,
             "config_ref": CHANNEL,
+            "fresh_reason": {"type": "string", "minLength": 1, "maxLength": 200},
         },
         (*LEASE, "card", "step_key"),
         "write",
@@ -532,7 +548,9 @@ OPERATIONS = {
         False,
         "As the lease holder, start the config's runner role on a card. The same step key "
         "returns the stored job unless voided (step_voided, 409); a fresh start needs a new "
-        "key and normal admission. config_ref is live or exp:<name>.",
+        "key and normal admission. config_ref is live or exp:<name>. While an agent that holds "
+        "the card's context has capacity the start is refused (agent_has_capacity) unless "
+        "fresh_reason says why a fresh agent is needed; the step records that reason.",
     ),
     "orch_journal_intent": (
         journal_intent,
@@ -585,7 +603,8 @@ OPERATIONS = {
         "write",
         True,
         False,
-        "Reserve the one gate attempt for a pull request head.",
+        "Reserve the one gate attempt for a pull request head. Refused (repair_exhausted) "
+        "once the pull request's repair used its failure bound.",
     ),
     "orch_gate_record": (
         gate_record,
@@ -598,7 +617,32 @@ OPERATIONS = {
         "write",
         True,
         False,
-        "Record the gate verdict; every verdict is final for that head.",
+        "Record the gate verdict; every verdict is final for that head. A fail opens or joins "
+        "the pull request's one repair and routes a finding to the card's owning session.",
+    ),
+    "orch_finding": (
+        finding,
+        {
+            **LEASE,
+            "step_key": STEP_KEY,
+            "card": CARD,
+            "detail": {"type": "string", "minLength": 1, "maxLength": 2000},
+        },
+        (*LEASE, "step_key", "card", "detail"),
+        "write",
+        True,
+        False,
+        "Report a review finding about a card. The hub routes it to the role whose lease "
+        "started the card's work while that lease is live, else parks it with a reason.",
+    ),
+    "orch_finding_ack": (
+        finding_ack,
+        {**LEASE, "finding": {"type": "integer", "minimum": 1}},
+        (*LEASE, "finding"),
+        "write",
+        True,
+        False,
+        "As the owning role, acknowledge a finding routed or parked to you.",
     ),
     "orch_void_step": (
         void_step,

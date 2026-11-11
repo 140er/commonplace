@@ -22,6 +22,11 @@ a mismatch is a 409; then card/grant refusals; 4. the cap; 5. ``jobs.create_in``
 the step row, the lease re-check and renewal; (trigger) the cursor advance with the job
 or the miss row. A refusal after a write rolls back to a savepoint, so nothing partial
 is ever committed.
+
+Fleet rule (``orch`` path only, after the insert, inside the same savepoint): a start is
+refused while an agent that holds the context of the card (or its parent or children) has
+capacity, unless the caller gives ``fresh_reason``. The step records why a fresh agent was
+started (``fresh_reason``). ``[fleet]`` in the accepted config overrides the default.
 """
 
 from __future__ import annotations
@@ -45,6 +50,8 @@ from . import durable, schema, store as orch_store
 logger = logging.getLogger(__name__)
 
 MAX_REQUEST_KEY = 128
+MAX_FRESH_REASON = 200
+AGENT_CONTEXT_SECONDS = 6 * 3600  # a started agent holds its context this long
 PATHS = ("orch", "person", "trigger")
 MISSES_SCHEMA = (
     """CREATE TABLE IF NOT EXISTS orch_misses (
@@ -104,6 +111,8 @@ class Plan:
     orchestration_on: bool = False
     workers: frozenset = frozenset()
     workspace_dir: str | None = None
+    related: frozenset = frozenset()  # the card, its parent and its children
+    unfinished: frozenset = frozenset()  # cards of the board not in done
 
     @property
     def role(self) -> schema.Role:
@@ -274,6 +283,25 @@ def prepare(
                 (board_row["id"],),
             ).fetchall()
         )
+        unfinished = frozenset(
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM tasks WHERE board_id=? AND status!='done'", (board_row["id"],)
+            ).fetchall()
+        )
+        parent = conn.execute(
+            "SELECT parent_number FROM tasks WHERE id=?", (card_row["id"],)
+        ).fetchone()
+        related = frozenset(
+            {card_row["id"]}
+            | ({parent[0]} if parent is not None and parent[0] is not None else set())
+            | {
+                row["id"]
+                for row in conn.execute(
+                    "SELECT id FROM tasks WHERE parent_number=?", (card_row["id"],)
+                ).fetchall()
+            }
+        )
     cap = config.max_agents if limit is None else min(config.max_agents, limit)
     return Plan(
         board=board_row["slug"],
@@ -294,6 +322,8 @@ def prepare(
         orchestration_on=on,
         workers=workers,
         workspace_dir=gateway.workspace_dir(workspace_id),
+        related=related,
+        unfinished=unfinished,
     )
 
 
@@ -360,7 +390,9 @@ def _wrap(exc) -> StartRefused:
     )
 
 
-def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now, clock):
+def _fenced(
+    conn, plan, *, path, role, step_key, epoch, token, request_key, now, clock, fresh_reason=None
+):
     # 0. resolve: the model is pinned from the snapshot; the hash covers it.
     if plan.model is None:
         raise StartRefused("model_unresolved", f"no model is set for {plan.role.model_role}")
@@ -468,6 +500,7 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
         row = _job(conn, row["id"])
     step = None
     if path == "orch":
+        fresh = _fresh_reason(conn, plan, fresh_reason, now)
         step = durable.insert_step_in(
             conn,
             board=plan.board,
@@ -479,6 +512,7 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
             actor=plan.requested_by,
             now=now,
             job_id=row["id"],
+            fresh_reason=fresh,
         )
         try:  # re-check expiry right before COMMIT, then renew
             later = clock()
@@ -489,6 +523,48 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
         except durable.DurableError as exc:
             raise _wrap(exc) from None
     return Outcome(status, row, step)
+
+
+def _fresh_reason(conn, plan, requested, now):
+    """Why a new agent starts for this card, or a refusal naming the agent to reuse.
+
+    A context holder is the latest started agent of a card related to this one (itself, its
+    parent or its children), unfinished and started within ``AGENT_CONTEXT_SECONDS``. It has
+    capacity while the unfinished cards it carries, plus this one, stay within
+    ``fleet.agent_cards``. A holder with capacity refuses the start unless the caller gives
+    a reason; otherwise the recorded reason is a code: ``reuse_off``, ``no_context_agent``
+    or ``agent_full``."""
+    fleet = plan.config.fleet_rules
+    if not fleet.reuse_agents:
+        return requested or "reuse_off"
+    latest = {}
+    for row in conn.execute(
+        "SELECT id, task_number, thread_id, started_at FROM runner_jobs WHERE board_slug=? "
+        "AND state='started' AND thread_id IS NOT NULL AND started_at>=? "
+        "ORDER BY started_at DESC, rowid DESC",
+        (plan.board, jobs._after(now, -AGENT_CONTEXT_SECONDS)),
+    ):
+        latest.setdefault(row["task_number"], row)
+    carried: dict = {}
+    for card, row in latest.items():
+        if card in plan.unfinished:
+            carried.setdefault(row["thread_id"], set()).add(card)
+    holders = [row for card, row in latest.items() if card in plan.related & plan.unfinished]
+    if not holders:
+        return requested or "no_context_agent"
+    for row in holders:
+        if len(carried[row["thread_id"]] | {plan.card}) <= fleet.agent_cards:
+            if requested:
+                return requested
+            raise StartRefused(
+                "agent_has_capacity",
+                "an agent that holds this card's context has capacity; send the work to it, "
+                "or start fresh with fresh_reason",
+                thread_id=row["thread_id"],
+                job=row["id"],
+                card=row["task_number"],
+            )
+    return requested or "agent_full"
 
 
 def _advance(conn, plan, trigger) -> None:
@@ -511,6 +587,7 @@ def fenced_start(
     request_key: str | None = None,
     trigger: TriggerRef | None = None,
     actor_refusal: str | None = None,
+    fresh_reason: str | None = None,
     now: str | None = None,
 ) -> Outcome:
     """One ``BEGIN IMMEDIATE`` on ``store`` (``jobs.JobStore``); see the module doc.
@@ -584,6 +661,7 @@ def fenced_start(
                 request_key=key,
                 now=now,
                 clock=clock,
+                fresh_reason=fresh_reason,
             )
         except StartRefused as exc:
             conn.execute("ROLLBACK TO fenced_start")
@@ -656,7 +734,7 @@ def launch_reply(plan: Plan, outcome: Outcome) -> dict:
 
 
 def orch_card_start(
-    ctx, board, role, card, step_key, epoch, token, config_ref=None, *, now=None
+    ctx, board, role, card, step_key, epoch, token, config_ref=None, fresh_reason=None, *, now=None
 ) -> dict:
     """``orch_card_start``: a lease holder starts the configured runner role on ``card``.
 
@@ -669,13 +747,26 @@ def orch_card_start(
     ``fenced``, ``restore_pending``, ``config_changed``, ``plan_pending``,
     ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``at_cap``
     (switch off), ``project_limit`` (switch on), ``active_start``,
-    ``started_recently``, ``busy``) or pass ``OrchError``s of ``resolve_in`` through."""
+    ``started_recently``, ``busy``, ``agent_has_capacity``, ``invalid_fresh_reason``) or
+    pass ``OrchError``s of ``resolve_in`` through.
+
+    Fleet rule: while an agent that holds the card's context has capacity
+    (``_fresh_reason``), the start is refused with ``agent_has_capacity`` unless the caller
+    gives ``fresh_reason``. A new step records why a fresh agent started."""
     principal = ctx.principal
     if getattr(principal, "runner", None) is not None:
         raise StartRefused("not_allowed", "requester not allowed")
     if not isinstance(role, str) or not durable.ROLE.fullmatch(role):
         raise StartRefused("unknown_role", "role not found")
     request_key_for("orch", role=role, step_key=step_key)
+    if fresh_reason is not None and (
+        not isinstance(fresh_reason, str)
+        or not fresh_reason.strip()
+        or len(fresh_reason) > MAX_FRESH_REASON
+    ):
+        raise StartRefused(
+            "invalid_fresh_reason", f"fresh_reason must be 1-{MAX_FRESH_REASON} characters", 400
+        )
     board_row = _board_row(ctx, board)
     card_row = _card_row(ctx, board_row, card)
     ws = principal.workspace_id
@@ -697,7 +788,15 @@ def orch_card_start(
     if plan.machine is None or not requester_ok(ctx.gateway, principal, plan.machine):
         raise StartRefused("not_allowed", "requester not allowed")
     outcome = fenced_start(
-        store, plan, path="orch", role=role, step_key=step_key, epoch=epoch, token=token, now=now
+        store,
+        plan,
+        path="orch",
+        role=role,
+        step_key=step_key,
+        epoch=epoch,
+        token=token,
+        fresh_reason=fresh_reason,
+        now=now,
     )
     return launch_reply(plan, outcome)
 

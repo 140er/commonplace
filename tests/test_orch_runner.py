@@ -73,6 +73,7 @@ def config_text(
     topic="worker",
     model_role="worker",
     harness="t3",
+    fleet="",
 ):
     lines = [
         'schema = "commonplace.orchestrator/1"',
@@ -109,6 +110,8 @@ def config_text(
             "[[triggers]]",
             'on = "card.todo"',
         ]
+    if fleet:
+        lines.append(fleet)
     return "\n".join(lines) + "\n"
 
 
@@ -254,6 +257,12 @@ class World:
         return service.task_add(fields.pop("title", "Example card"), board=board, **fields)[
             "number"
         ]
+
+    def child_card(self, parent, **fields):
+        child = self.card(**fields)
+        with BoardStore(self.gw.workspace_dir(self.ws)).connection() as conn:
+            conn.execute("UPDATE tasks SET parent_number=? WHERE id=?", (parent, child))
+        return child
 
     def update(self, card, **fields):
         return self.boards.task_update(card, version=self._version(card), **fields)
@@ -1320,6 +1329,96 @@ def test_r2_stalled_launch_is_uncertain_in_doubt_and_never_redone(
         hub.port, "GET", f"/api/card-starts?task={card['number']}", cookie=owner["cookie"]
     )
     assert status == 200 and len(rows) == 1, (status, rows)
+
+
+# ----------------------------------------------------------- fleet rule (d)
+
+
+def _agent(world, lease, card, key, thread="agent-1"):
+    """A started agent that holds ``card``'s context."""
+    world.orch_start(world.a, lease, card, key)
+    world.launch(world.lease(), thread)
+    return world.jobs_for(card)[0]
+
+
+def test_fleet_start_is_refused_while_a_context_agent_has_capacity(world):
+    """Rule (d): no fresh agent for a child card while its parent's agent has capacity."""
+    parent = world.card()
+    child = world.child_card(parent)
+    world.configure()
+    lease = world.claim(world.a)
+    _agent(world, lease, parent, "s1", thread="agent-parent")
+    refusal = refused("agent_has_capacity", world.orch_start, world.a, lease, child, "s2")
+    assert refusal.details["thread_id"] == "agent-parent"
+    assert refusal.details["card"] == parent
+    assert len(world.all_jobs()) == 1 and len(world.steps()) == 1
+
+
+def test_fleet_fresh_start_records_why_no_context_agent(world):
+    held, unrelated = world.card(), world.card()
+    world.configure()
+    lease = world.claim(world.a)
+    _agent(world, lease, held, "s1")
+    started = world.orch_start(world.a, lease, unrelated, "s2")
+    assert started["status"] == 201
+    assert started["step"].get("fresh_reason") == "no_context_agent"
+    assert world.steps()[-1]["fresh_reason"] == "no_context_agent"
+    checkpoint = durable.checkpoint(world.ctx(world.owner), BOARD, ROLE)
+    reasons = {step["step_key"]: step.get("fresh_reason") for step in checkpoint["open"]}
+    assert reasons["s2"] == "no_context_agent"
+
+
+def test_fleet_agent_without_capacity_starts_fresh_with_its_code(world):
+    parent = world.card()
+    child = world.child_card(parent)
+    world.configure(fleet="[fleet]\nagent_cards = 1")
+    lease = world.claim(world.a)
+    _agent(world, lease, parent, "s1")
+    started = world.orch_start(world.a, lease, child, "s2")
+    assert (started["status"], started["step"]["fresh_reason"]) == (201, "agent_full")
+
+
+def test_fleet_stated_reason_lets_a_fresh_agent_start_and_is_recorded(world):
+    parent = world.card()
+    child = world.child_card(parent)
+    world.configure()
+    lease = world.claim(world.a)
+    _agent(world, lease, parent, "s1")
+    why = "the parent agent's thread is unreachable"
+    started = world.orch_start(world.a, lease, child, "s2", fresh_reason=why)
+    assert (started["status"], started["step"]["fresh_reason"]) == (201, why)
+    again = world.orch_start(world.a, lease, child, "s2")
+    assert (again["status"], again["step"]["fresh_reason"]) == (200, why)
+    for bad in ("", " ", "x" * 201, 5):
+        refused(
+            "invalid_fresh_reason", world.orch_start, world.a, lease, child, "s3", fresh_reason=bad
+        )
+
+
+@pytest.mark.parametrize("how", ["stale", "finished"])
+def test_fleet_stale_or_finished_agent_holds_no_context(world, how):
+    parent = world.card()
+    child = world.child_card(parent)
+    world.configure()
+    lease = world.claim(world.a)
+    _agent(world, lease, parent, "s1")
+    if how == "stale":
+        _set_job(world, parent, started_at=_ago(7 * 3600))
+    else:
+        with BoardStore(world.gw.workspace_dir(world.ws)).connection() as conn:
+            conn.execute("UPDATE tasks SET status='done' WHERE id=?", (parent,))
+    started = world.orch_start(world.a, lease, child, "s2")
+    assert (started["status"], started["step"]["fresh_reason"]) == (201, "no_context_agent")
+
+
+def test_fleet_agent_reuse_is_a_board_override(world):
+    parent = world.card()
+    child = world.child_card(parent)
+    world.configure(fleet="[fleet]\nreuse_agents = false")
+    lease = world.claim(world.a)
+    _agent(world, lease, parent, "s1")
+    started = world.orch_start(world.a, lease, child, "s2")
+    assert (started["status"], started["step"]["fresh_reason"]) == (201, "reuse_off")
 
 
 # ------------------------------------------------------- runner-start void contract

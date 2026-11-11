@@ -563,6 +563,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
+  - The base-captured MCP surface fixture lists the orchestrator finding tools and the `fresh_reason` start parameter, exactly as registered.
+
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
@@ -1230,6 +1232,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Journal inserts persist a card destination or an explicit park reason before any result; checkpoints include parked finished results, including next notes. Older steps gain only additive destination metadata.
 
+  - Fleet rules: one repair per failing pull request gate with a bound (`repair_attempts`), findings routed by the hub to the live owning role's checkpoint with acknowledgement (`orch_finding`, `orch_finding_ack`), and a recorded reason for every fresh runner start with `agent_has_capacity` refusing a start while a context-holding agent has capacity. A board overrides them in the accepted config's `[fleet]` table. Additive tables `orch_repairs` and `orch_findings` and the column `orch_steps.fresh_reason`.
+
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
   - Configured starts share project admission with claims and plain jobs when workspace orchestration is enabled; boards without a `[runner]` config retain earlier behavior with the workspace switch off.
@@ -1257,6 +1261,8 @@ Format (read by `commonplace orch docs-check`):
   - The `tests/test_orch_` files listed in Paths and `tests/test_docs_obligations.py`; R22 in `tests/test_orch_checks.py` covers misplaced labels, missing files, accepted label forms and repository-root resolution.
 
   - Destination regressions in `tests/test_orch_durable.py` cover journal, gate and job-derived results, owner checkpoint visibility and idempotent migration preserving existing history.
+
+  - Fleet-rule regressions (`test_fleet_*` in `tests/test_orch_durable.py` for repairs and findings, in `tests/test_orch_runner.py` for fresh agents) cover joined failures and the bound, owner routing, parking reasons, acknowledgement, the context-holder capacity refusal, recorded fresh-start reasons and each `[fleet]` override.
 
   - R1, R1b, R1d, R1e, R8b, R10a and R11e map to `tests/test_orch_acceptance.py`.
 
@@ -1315,7 +1321,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/rules/`, `commonplace/guards/`, `commonplace/privacy.py`, `commonplace/redact.py`
 - **Owns:**
 
-  - Canonical Space create in the checked REST write inventory.
+  - Canonical Space create in the checked REST write inventory; the orchestrator finding tools (`orch_finding`, `orch_finding_ack`) are checked writes.
 
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 

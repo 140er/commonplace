@@ -305,7 +305,7 @@ def test_r9_cli_principal_and_person_owner_pass_runner_child_does_not(env):
 
 def test_untrusted_tokens_see_only_read_and_propose(env):
     orch = {name for name in extensions.names() if name.startswith("orch_")}
-    assert len(orch) == 21
+    assert len(orch) == 23
     assert {n for n in env.hub.tool_names(env.untrusted_token) if n.startswith("orch_")} == (
         READ_TOOLS | {"orch_config_propose"}
     )

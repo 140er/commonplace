@@ -34,7 +34,7 @@ def at(seconds, base=T0):
     return durable._after(base, seconds)
 
 
-def config_text(board=BOARD, machine=MACHINE):
+def config_text(board=BOARD, machine=MACHINE, extra=""):
     return "\n".join(
         [
             'schema = "commonplace.orchestrator/1"',
@@ -67,6 +67,7 @@ def config_text(board=BOARD, machine=MACHINE):
             'runtime_mode = "approval-required"',
             "[[triggers]]",
             'on = "card.todo"',
+            *([extra] if extra else []),
             "",
         ]
     )
@@ -99,6 +100,17 @@ class Env:
 
     def ctx(self, principal):
         return ToolContext(principal=principal, gateway=self.hub.gateway)
+
+    def reconfigure(self, extra):
+        """Accept a live config carrying ``extra`` (a ``[fleet]`` table) before any lease."""
+        text = config_text(extra=extra)
+        orch_store.open_store(self.hub.gateway, self.ws).write(
+            self.owner,
+            BOARD,
+            text,
+            connections=[],
+            sha256=hashlib.sha256(text.encode()).hexdigest(),
+        )
 
     def pat(self, name, trust="trusted"):
         token = self.hub.token(
@@ -273,6 +285,184 @@ def test_fleet_destination_migrates_old_steps_without_changing_history():
         assert [row["destination_kind"] for row in after] == ["parked", "card"]
         assert [row["destination_reason"] for row in after] == ["no_owning_card", None]
         assert conn.execute("SELECT COUNT(*) FROM orch_journal").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------- fleet rules (b), (c)
+
+
+def _gate(env, principal, key, head, verdict, *, role=ROLE, claim, pr=7, card=None, at_=1):
+    """Open and record one gate; ``claim`` is the ``(epoch, token)`` of ``role``'s lease."""
+    ctx, (epoch, token) = env.ctx(principal), claim
+    durable.gate_open(
+        ctx, BOARD, role, epoch, token, key, repo=REPO, pr=pr, head=head, card=card, now=at(at_)
+    )
+    return durable.gate_record(ctx, BOARD, role, epoch, token, key, verdict, now=at(at_ + 1))
+
+
+def _heads(count):
+    return [format(index + 10, "x") * 40 for index in range(count)]
+
+
+def test_fleet_repair_failures_join_one_repair_and_the_bound_is_honoured(env):
+    """Rule (b): failed gates of one pull request share one repair with one owner; at the
+    stated bound it is parked and no further gate attempt starts."""
+    owner, other = lease(env, role=ROLE), lease(env, env.b, role=OTHER_ROLE)
+    h1, h2, h3, h4 = _heads(4)
+    first = _gate(env, env.a, "g1", h1, "fail", claim=owner)
+    repair = first.get("repair")
+    assert repair is not None, "a failed gate opened no repair"
+    assert (repair["owner_role"], repair["failures"], repair["state"]) == (ROLE, 1, "open")
+    assert repair["bound"] == 3
+    joined = _gate(env, env.b, "g2", h2, "fail", role=OTHER_ROLE, claim=other, at_=3)
+    assert (joined["repair"] or {}).get("id") == repair["id"], "a second repair was started"
+    assert (joined["repair"]["owner_role"], joined["repair"]["failures"]) == (ROLE, 2)
+    last = _gate(env, env.a, "g3", h3, "fail", claim=owner, at_=5)["repair"]
+    assert (last["failures"], last["state"]) == (3, "exhausted")
+    assert last["destination"] == {"kind": "parked", "reason": "repair_exhausted"}
+    with pytest.raises(ToolError) as exc:
+        durable.gate_open(
+            env.ctx(env.a), BOARD, ROLE, *owner, "g4", repo=REPO, pr=7, head=h4, now=at(7)
+        )
+    assert code_of(exc) == "repair_exhausted"
+    with env.runner_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM orch_repairs").fetchone()[0] == 1
+        assert (
+            conn.execute("SELECT COUNT(*) FROM orch_steps WHERE step_key='g4'").fetchone()[0] == 0
+        )
+    view = durable.checkpoint(env.ctx(env.owner), BOARD, ROLE, now=at(8))
+    assert [(r["id"], r["state"]) for r in view["repairs"]] == [(repair["id"], "exhausted")]
+
+
+def test_fleet_repair_is_per_pull_request_and_a_pass_resolves_it(env):
+    claim = lease(env)
+    h1, h2, h3 = _heads(3)
+    _gate(env, env.a, "g1", h1, "fail", claim=claim, pr=7)
+    elsewhere = _gate(env, env.a, "g2", h2, "fail", claim=claim, pr=8, at_=3)
+    assert elsewhere["repair"]["failures"] == 1, "another pull request shares the repair"
+    passed = _gate(env, env.a, "g3", h3, "pass", claim=claim, pr=7, at_=5)["repair"]
+    assert passed["state"] == "resolved"
+    again = _gate(env, env.a, "g4", "e" * 40, "fail", claim=claim, pr=7, at_=7)["repair"]
+    assert (again["failures"], again["state"]) == (1, "open")
+    assert again["id"] != passed["id"]
+
+
+@pytest.mark.parametrize("bound", [1, 2, 4])
+def test_fleet_repair_bound_is_a_board_override(env, bound):
+    env.reconfigure(f"[fleet]\nrepair_attempts = {bound}")
+    claim = lease(env)
+    for index, head in enumerate(_heads(bound)):
+        repair = _gate(env, env.a, f"g{index}", head, "fail", claim=claim, at_=1 + 2 * index)[
+            "repair"
+        ]
+        assert repair["bound"] == bound
+    assert repair["state"] == "exhausted"
+    with pytest.raises(ToolError) as exc:
+        durable.gate_open(
+            env.ctx(env.a), BOARD, ROLE, *claim, "next", repo=REPO, pr=7, head="f" * 40, now=at(50)
+        )
+    assert code_of(exc) == "repair_exhausted"
+
+
+def _owned_card(env, *, key="run", job="job_aaaaaaaaaaaaaaaa"):
+    """A card whose latest unvoided runner start belongs to the ``main`` role's lease."""
+    claim = lease(env)
+    card = env.card()
+    _orch_job(env, job=job, card=card, role=ROLE, step_key=key)
+    _start_step(env, epoch=claim[0], token=claim[1], step_key=key, card=card, job=job)
+    return claim, card
+
+
+def test_fleet_failed_gate_finding_reaches_the_owning_session(env):
+    """Rule (c): the finding goes to the role that owns the card, not to the reporter."""
+    owner, card = _owned_card(env)
+    reporter = lease(env, env.b, role=OTHER_ROLE, now=at(2))
+    result = _gate(
+        env, env.b, "g1", HEAD, "fail", role=OTHER_ROLE, claim=reporter, card=card, at_=3
+    )
+    finding = result.get("finding")
+    assert finding is not None, "a failed gate produced no finding"
+    assert (finding["owner_role"], finding["state"]) == (ROLE, "routed")
+    assert finding["destination"] == {"kind": "session", "board": BOARD, "role": ROLE}
+    ctx = env.ctx(env.owner)
+    assert [f["id"] for f in durable.checkpoint(ctx, BOARD, ROLE, now=at(4))["inbox_findings"]] == [
+        finding["id"]
+    ]
+    assert durable.checkpoint(ctx, BOARD, OTHER_ROLE, now=at(4))["inbox_findings"] == []
+    with pytest.raises(ToolError) as exc:
+        durable.finding_ack(env.ctx(env.b), BOARD, OTHER_ROLE, *reporter, finding["id"], now=at(5))
+    assert code_of(exc) == "not_owner"
+    acked = durable.finding_ack(env.ctx(env.a), BOARD, ROLE, *owner, finding["id"], now=at(6))
+    assert acked["finding"]["state"] == "acked"
+    assert durable.checkpoint(ctx, BOARD, ROLE, now=at(7))["inbox_findings"] == []
+
+
+def test_fleet_review_finding_is_routed_and_retries_are_idempotent(env):
+    owner, card = _owned_card(env)
+    reporter = lease(env, env.b, role=OTHER_ROLE, now=at(2))
+    args = (env.ctx(env.b), BOARD, OTHER_ROLE, *reporter, "r1")
+    first = durable.finding_report(*args, card=card, detail="Missing test.", now=at(3))["finding"]
+    assert (first["owner_role"], first["state"], first["source"]) == (ROLE, "routed", "review")
+    assert durable.finding_report(*args, card=card, detail="Missing test.", now=at(4)) == {
+        "finding": first
+    }
+    with pytest.raises(ToolError) as exc:
+        durable.finding_report(*args, card=card, detail="Different.", now=at(5))
+    assert code_of(exc) == "step_exists"
+
+
+@pytest.mark.parametrize("why", ["no_owning_card", "no_owning_session", "owner_session_gone"])
+def test_fleet_finding_is_parked_with_a_reason_when_no_session_can_take_it(env, why):
+    claim = lease(env, env.b, role=OTHER_ROLE)
+    if why == "no_owning_card":
+        finding = _gate(env, env.b, "g1", HEAD, "fail", role=OTHER_ROLE, claim=claim)["finding"]
+    else:
+        card = env.card()
+        if why == "owner_session_gone":
+            owner, card = _owned_card(env)
+            durable.release(env.ctx(env.a), BOARD, ROLE, *owner, now=at(2))
+        finding = durable.finding_report(
+            env.ctx(env.b), BOARD, OTHER_ROLE, *claim, "r1", card=card, detail="x", now=at(3)
+        )["finding"]
+    assert (finding["state"], finding["reason"]) == ("parked", why)
+    assert finding["destination"] == {"kind": "parked", "reason": why}
+    view = durable.checkpoint(env.ctx(env.owner), BOARD, OTHER_ROLE, now=at(9))
+    assert [f["id"] for f in view["findings"]] == [finding["id"]]
+
+
+def test_fleet_finding_routing_is_a_board_override(env):
+    env.reconfigure("[fleet]\nroute_findings = false")
+    owner, card = _owned_card(env)
+    reporter = lease(env, env.b, role=OTHER_ROLE, now=at(2))
+    result = durable.finding_report(
+        env.ctx(env.b), BOARD, OTHER_ROLE, *reporter, "r1", card=card, detail="x", now=at(3)
+    )
+    assert (result["finding"]["state"], result["finding"]["reason"]) == ("parked", "routing_off")
+
+
+def test_fleet_fresh_reason_column_is_added_without_changing_steps():
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        # A database that only has the destination columns: the schema without fresh_reason.
+        conn.executescript(durable.SCHEMA.replace(" fresh_reason TEXT,\n", ""))
+        conn.execute(
+            "INSERT INTO orch_steps(board,role,step_key,kind,card,state,detail,created_epoch,"
+            "epoch,created_at,updated_at) VALUES (?,?,?,'thread',7,'done','verbatim',1,1,?,?)",
+            (BOARD, ROLE, "old", T0, T0),
+        )
+        assert "fresh_reason" not in {
+            row[1] for row in conn.execute("PRAGMA table_info(orch_steps)")
+        }
+        before = dict(conn.execute("SELECT * FROM orch_steps").fetchone())
+        durable.ensure_schema(conn)
+        durable.ensure_schema(conn)
+        after = dict(conn.execute("SELECT * FROM orch_steps").fetchone())
+        assert after.pop("fresh_reason") is None
+        for row in (before, after):  # the destination backfill is rule (a)'s migration
+            row.pop("destination_kind"), row.pop("destination_reason")
+        assert after == before
     finally:
         conn.close()
 

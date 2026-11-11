@@ -30,6 +30,8 @@ Routes (``<b>`` board slug, ``<r>`` role, ``<v>`` version number, ``<k>`` step k
     POST /api/orch/boards/<b>/roles/<r>/journal/<k>     orch_journal_record
     POST /api/orch/boards/<b>/roles/<r>/gates           orch_gate_open
     POST /api/orch/boards/<b>/roles/<r>/gates/<k>       orch_gate_record
+    POST /api/orch/boards/<b>/roles/<r>/findings        orch_finding
+    POST /api/orch/boards/<b>/roles/<r>/findings/<n>    orch_finding_ack
     POST /api/orch/boards/<b>/roles/<r>/steps/<k>/void  orch_void_step
 
 Refusals answer ``{"error": "no: ...", "code": ..., "details": {...}}`` with the
@@ -96,6 +98,7 @@ def resolve(method: str, parts: list) -> tuple[str, dict]:
             "card-starts": "orch_card_start",
             "journal": "orch_journal_intent",
             "gates": "orch_gate_open",
+            "findings": "orch_finding",
         }
         if len(tail) == 1 and tail[0] in simple:
             return simple[tail[0]], role
@@ -103,6 +106,8 @@ def resolve(method: str, parts: list) -> tuple[str, dict]:
             return "orch_journal_record", {**role, "step_key": tail[1]}
         if len(tail) == 2 and tail[0] == "gates":
             return "orch_gate_record", {**role, "step_key": tail[1]}
+        if len(tail) == 2 and tail[0] == "findings":
+            return "orch_finding_ack", {**role, "finding": _number(tail[1], "finding")}
         if len(tail) == 3 and tail[0] == "steps" and tail[2] == "void":
             return "orch_void_step", {**role, "step_key": tail[1]}
     raise HTTPError(404, "not found")
