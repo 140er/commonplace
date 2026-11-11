@@ -26,7 +26,7 @@ const content = {
 const reads = [], settingsReads = [];
 const free = { enabled: true, plan: "free", storage: { used: 12, limit: 1024 }, transcription: { used_today: 0, limit: 600 }, sync: { interval_seconds: 900 } };
 const values = {
-  "/api/connections": {}, "/api/webhooks": { webhooks: [] }, "/api/plan": free,
+  "/api/connections": {}, "/api/runners": { machines: [] }, "/api/webhooks": { webhooks: [] }, "/api/plan": free,
   "/api/phone-push": {}, "/api/chat-settings": { front: { enabled: false }, usage: { used_today: 0, user_used_today: 0 } },
   "/api/settings/orchestration": { enabled: false },
 };
@@ -43,7 +43,7 @@ const context = {
   remember: () => ({}), capture: () => () => {}, restore() {},
   navigation() { navigationCalls++; },
   title() {}, message: (text) => text, e: (value) => String(value ?? ""), planView,
-  agentsView: () => "", phonePushView: () => "", voice: { settings: () => "" },
+  agentsView: () => "", runnersView: () => "", phonePushView: () => "", voice: { settings: () => "" },
   mountWorkspaceOrchestration() {},
   consoleScreen() { renders++; content.innerHTML = "Console controls"; },
   showError: (error) => assert.equal(error, ""),
@@ -86,12 +86,12 @@ if (which === "foreground_only" || which === "settled_background") {
   finishForeground();
   // Let the shared reads reach the real settingsView's deferred reads.
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(settingsReads.length, 6);
+  assert.equal(settingsReads.length, 7);
   if (which === "navigate_during_settings") navigateAway();
   else {
     const background = context.refresh({ background: true, events: [{ kind: "board.created" }] });
     batch()(); await background;
-    assert.equal(settingsReads.length, 6, "Background refresh must not start a duplicate Settings render");
+    assert.equal(settingsReads.length, 7, "Background refresh must not start a duplicate Settings render");
   }
   settingsReads.splice(0).forEach((resolve) => resolve());
   await foreground;
