@@ -171,6 +171,8 @@ install; a missing module is skipped.
 
 ## Project tools
 
+Filled by a later slice.
+
 ## Machines
 
 A bot can list the machines its person may use and start or cancel an agent on one. It does

@@ -7,6 +7,7 @@ import pytest
 import commonplace.bots.tools_machines
 from commonplace import sessions
 from commonplace.bots import blocks, machines, tools
+from commonplace.extensions import ToolError
 from commonplace.runner import jobs, registry
 from tests._bots_helpers import bots_hub_fixture  # noqa: F401
 from tests.test_bots_turn import (
@@ -592,3 +593,72 @@ def test_the_list_handed_to_the_model_stays_short(env):
     result = commonplace.bots.tools_machines._list(turn, {})
     assert len(json.dumps(result.data)) < 3500
     assert result.data["not_shown"] == 22 and result.blocks == ({"type": "machines"},)
+
+
+def test_a_machine_without_projects_is_refused_plainly_not_raised(env):
+    made = env.enroll()
+    with (
+        env.db._lock,
+        env.db._tx() as conn,
+    ):  # enrollment never allows this; a damaged row must not crash
+        conn.execute("UPDATE runner_machines SET projects='[]' WHERE id=?", (made["machine_id"],))
+    with pytest.raises(machines.Refused) as caught:
+        machines.start_agent(env.gateway, env.owner, env.card(), machine=made["machine_id"])
+    assert caught.value.code == "machine_not_configured"
+    assert caught.value.text.endswith(".") and env.jobs() == []
+
+
+def test_a_genuine_status_failure_is_logged_but_an_unauthorised_reader_is_not(
+    env, caplog, monkeypatch
+):
+    env.enroll()
+    card = env.card()
+    with caplog.at_level("WARNING"):
+        assert machines.start_status(env.gateway, env.member, card) == []
+        assert machines.start_status(env.gateway, env.owner, 99999) == []
+    assert caplog.records == []  # not allowed and not found are the normal answers
+
+    def broken(ctx, task):
+        raise ToolError("no: something unexpected")
+
+    monkeypatch.setattr(machines.tools, "card_start_status", broken)
+    with caplog.at_level("WARNING"):
+        assert machines.start_status(env.gateway, env.owner, card) == []
+    assert [r.getMessage() for r in caplog.records] == ["start status failed: refused"]
+
+
+def test_start_status_sorts_rows_without_a_timestamp(env):
+    class Odd(FakeProvider):
+        def start_status(self, gateway, principal, card):
+            return [{"job": "a", "machine_label": "x", "state": "queued", "updated_at": None}]
+
+    env.enroll()
+    machines.register_provider(Odd())
+    assert [r["job"] for r in machines.start_status(env.gateway, env.owner, env.card())] == ["a"]
+
+
+def test_stop_reports_what_was_cancelled_when_a_later_cancel_is_refused(env, monkeypatch):
+    env.enroll()
+    rows = [
+        {"job": "job_1", "machine_label": "m", "state": "queued", "updated_at": "1"},
+        {"job": "job_2", "machine_label": "m", "state": "queued", "updated_at": "2"},
+    ]
+
+    def cancel(gateway, principal, job):
+        if job == "job_2":
+            raise machines.Refused("busy")
+        return {"state": "cancelled"}
+
+    monkeypatch.setattr(machines, "start_status", lambda *a: rows)
+    monkeypatch.setattr(machines, "cancel_start", cancel)
+    turn = tools.Turn(
+        env.gateway,
+        env.owner.workspace_id,
+        env.owner.user_id,
+        {"id": "x", "board": "work"},
+        {"id": 1, "text": "stop"},
+        "request-0001",
+    )
+    result = commonplace.bots.tools_machines._stop(turn, {"ref": env.card()})
+    assert result.ok is False and result.data["cancelled"] == ["job_1"]
+    assert result.say.startswith("I cancelled 1 of 2 starts, but not the rest:")
