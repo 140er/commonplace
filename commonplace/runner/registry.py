@@ -29,12 +29,13 @@ GRANT_KEYS = {
     "projects",
     "topics",
     "wings",
+    "write_wings",
     "max_runtime_mode",
     "requesters",
     "max_in_flight",
     "max_starts_per_hour",
 }
-JSON_KEYS = ("projects", "topics", "wings", "requesters", "binding_topics")
+JSON_KEYS = ("projects", "topics", "wings", "write_wings", "requesters", "binding_topics")
 RESET = (
     "binding_state='unbound', binding_topics=NULL, binding_provider_instance_id=NULL, "
     "binding_worker_connection_id=NULL, binding_attested_by=NULL, "
@@ -60,6 +61,7 @@ def ensure(db):
                 machine_connection_id TEXT NOT NULL UNIQUE,
                 worker_connection_id TEXT NOT NULL UNIQUE,
                 projects TEXT NOT NULL, topics TEXT NOT NULL, wings TEXT NOT NULL,
+                write_wings TEXT,
                 max_runtime_mode TEXT NOT NULL DEFAULT 'approval-required'
                     CHECK(max_runtime_mode IN ('approval-required','auto-accept-edits','auto','full-access')),
                 requesters TEXT NOT NULL DEFAULT '[]',
@@ -86,6 +88,9 @@ def ensure(db):
                 db._conn.execute(
                     "ALTER TABLE runner_machines ADD COLUMN binding_epoch INTEGER NOT NULL DEFAULT 1"
                 )
+            if "write_wings" not in columns:
+                # NULL keeps the original write set: the first granted wing only.
+                db._conn.execute("ALTER TABLE runner_machines ADD COLUMN write_wings TEXT")
             db._conn.execute("COMMIT")
         except BaseException:
             db._conn.execute("ROLLBACK")
@@ -128,17 +133,26 @@ def _grant(db, owner, grant, *, initial=False):
     ):
         if key in data:
             data[key] = _strings(data[key], key, limit, pattern)
-    if "wings" in data:
+    if "write_wings" in data:
+        # Extra write wings may be empty: that restores the first-wing-only write set.
+        extra = data["write_wings"]
+        if not isinstance(extra, list) or len(extra) > 8:
+            raise ValueError("write_wings must contain at most 8 entries")
+        if any(not isinstance(w, str) for w in extra):
+            raise ValueError("invalid write_wings")
+    for key in ("wings", "write_wings"):
+        if key not in data:
+            continue
         if any(
             not w.strip()
             or len(w) > 200
             or any(c in w for c in "*?[]")
             or is_private_wing(w)
             or not owner.policy.can_read_wing(w)
-            for w in data["wings"]
+            for w in data[key]
         ):
-            raise ValueError("invalid wings")
-        data["wings"] = list(dict.fromkeys(canonical_wing(w) for w in data["wings"]))
+            raise ValueError(f"invalid {key}")
+        data[key] = list(dict.fromkeys(canonical_wing(w) for w in data[key]))
     if "max_runtime_mode" in data and data["max_runtime_mode"] not in MODES:
         raise ValueError("invalid max_runtime_mode")
     for key, limit in (("max_in_flight", 4), ("max_starts_per_hour", 30)):
@@ -167,12 +181,35 @@ def _grant(db, owner, grant, *, initial=False):
     return data
 
 
-def _worker_policy(wings):
+def write_set(wings, write_wings=None):
+    """The worker's write wings: the first granted wing, then granted extras in order."""
+    extra = [w for w in write_wings or () if w in wings and w != wings[0]]
+    return [wings[0], *extra]
+
+
+def machine_write_set(machine):
+    """``write_set`` for a stored registry row (``write_wings`` NULL on older grants)."""
+    raw = machine["write_wings"]
+    return write_set(json.loads(machine["wings"]), json.loads(raw) if raw else None)
+
+
+def _write_wings(wings, extra):
+    """Extra write wings must already be granted for reading; the first wing is implicit."""
+    if extra is None:
+        return None
+    if any(w not in wings for w in extra):
+        raise ValueError("write_wings must be granted wings")
+    return write_set(wings, extra)[1:]
+
+
+def _worker_policy(wings, write_wings=None):
+    write = write_set(wings, write_wings)
     return Policy.build(
         tools=WORKER_TOOLS,
         scopes=("memory:read", "memory:write"),
         read_wings=wings,
-        write_wing=wings[0],
+        write_wing=write[0],
+        write_wings=write[1:],
         trust="standard",
     )
 
@@ -205,6 +242,8 @@ def enroll(db, owner, grant):
     _owner(owner)
     with db._lock, db._tx() as conn:
         data = _grant(db, owner, grant, initial=True)
+        if "write_wings" in data:
+            data["write_wings"] = _write_wings(data["wings"], data["write_wings"])
         mid = control_db._new_id("mach")
         now = control_db._iso(control_db._now())
         credentials = {}
@@ -213,7 +252,7 @@ def enroll(db, owner, grant):
                 "machine",
                 Policy.build(profile="slim", tools=[], scopes=[], read_wings=[], trust="standard"),
             ),
-            ("worker", _worker_policy(data["wings"])),
+            ("worker", _worker_policy(data["wings"], data.get("write_wings"))),
         ):
             cid, token = db.create_token(
                 workspace_ref=owner.workspace_id,
@@ -300,11 +339,26 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
         data = {
             "requesters": [ref for ref in json.loads(row["requesters"]) if ref != remove_requester]
         }
-    reset = any(key in data and data[key] != json.loads(row[key]) for key in ("topics", "wings"))
-    if "wings" in data:
+    if "wings" in data or "write_wings" in data:
+        wings = data.get("wings", json.loads(row["wings"]))
+        stored = json.loads(row["write_wings"]) if row["write_wings"] else None
+        if "write_wings" in data:
+            data["write_wings"] = _write_wings(wings, data["write_wings"])
+        elif stored is not None:
+            # Narrowing the read grant also drops any extra write wing it no longer covers.
+            data["write_wings"] = write_set(wings, stored)[1:]
+    # A NULL write_wings column and an empty list grant the same write set.
+    reset = any(
+        key in data and (data[key] or []) != json.loads(row[key] or "[]")
+        for key in ("topics", "wings", "write_wings")
+    )
+    if "wings" in data or "write_wings" in data:
         db._conn.execute(
             "UPDATE connections SET policy=? WHERE id=?",
-            (_worker_policy(data["wings"]).to_json(), row["worker_connection_id"]),
+            (
+                _worker_policy(wings, data.get("write_wings", stored)).to_json(),
+                row["worker_connection_id"],
+            ),
         )
     data.update(
         grant_version=row["grant_version"] + 1,

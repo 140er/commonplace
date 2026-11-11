@@ -24,21 +24,34 @@ def _view(row):
     for key in registry.JSON_KEYS:
         if result[key] is not None:
             result[key] = json.loads(result[key])
-    result.update(machine_id=result["id"], enabled=bool(result["enabled"]), verified=False)
+    result.update(
+        machine_id=result["id"],
+        enabled=bool(result["enabled"]),
+        verified=False,
+        write_set=registry.machine_write_set(row),
+    )
     return result
 
 
 def _wings(gateway, owner, data):
-    if "wings" not in data:
-        return data
-    wings = data["wings"]
-    if not isinstance(wings, list) or not 1 <= len(wings) <= 8:
-        raise ValueError("wings must contain 1 to 8 entries")
+    if "wings" in data:
+        wings = data["wings"]
+        if not isinstance(wings, list) or not 1 <= len(wings) <= 8:
+            raise ValueError("wings must contain 1 to 8 entries")
+        data = {**data, "wings": _existing(gateway, owner, wings)}
+    if "write_wings" in data:
+        extra = data["write_wings"]
+        if not isinstance(extra, list) or len(extra) > 8:
+            raise ValueError("write_wings must contain at most 8 entries")
+        data = {**data, "write_wings": _existing(gateway, owner, extra) if extra else []}
+    return data
+
+
+def _existing(gateway, owner, wings):
     try:
-        wings = _read_wings(gateway, owner, {"read_wings": wings})
+        return _read_wings(gateway, owner, {"read_wings": wings})
     except ValueError:
         raise ValueError("choose existing nonprivate workspace wings without patterns") from None
-    return {**data, "wings": wings}
 
 
 def register(gateway):

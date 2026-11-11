@@ -75,5 +75,6 @@ def startable(gateway, machine, row, board) -> None:
         service._write(board, row=row, claiming=True)
     except ToolError:
         raise Refused("outside_worker_wing") from None
-    if board["wing"] != worker.policy.write_wing:
+    # Exact names only: the first granted wing plus any owner-granted extra write wings.
+    if board["wing"] not in (worker.policy.write_wing, *worker.policy.write_wings):
         raise Refused("outside_worker_wing")

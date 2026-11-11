@@ -183,6 +183,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - **Manual assignments.** An owner assignment to an active agent connection claims the card immediately, including project admission and the busy-agent guard. With orchestration enabled, an assignment to the configured machine's worker requests a fresh start through the owner orchestrator path. A disabled switch, missing runner config, a different worker or a refused start leaves an explicit reason in the card's status line. Assignment never bypasses origin release. The worker can confirm its existing claim with an explicit take without a second claim event or lease renewal.
 
+### Runner worker write wings
+
+- **Write set.** A runner worker writes to the first wing of its machine grant, plus any extra wings the owner lists in the grant's `write_wings`. Extra write wings must be existing, non-private, pattern-free wings that are also in the grant's `wings`; the app's Settings > Runner machines control adds a chosen wing to `wings` and `write_wings` in one `PATCH /api/runners/{id}`. Only a signed-in person owner of the machine's workspace can change it.
+- **One write set everywhere.** The worker PAT's policy carries the set (`write_wing` = first wing, `write_wings` = extras). Card starts (`startable`, used by owner/coordinator starts, configured starts and machine leases) accept a board only when its wing is exactly one of those names; board writes, memory saves and the gateway's write-wing pin use the same policy through `can_write_wing`.
+- **Existing grants.** `runner_machines.write_wings` is an additive nullable column; NULL (every grant made before it) and an empty list both mean the first wing only, so those workers keep exactly their previous write wing. Narrowing `wings` drops extras it no longer covers. A changed write set resets the binding like a wing change and is audited as one `runner.patch` row. Rollback is a code revert; the column can stay.
+
 ### Privacy scanner timing checks
 
 - Large-input and delimiter-heavy near-miss correctness checks run in the behaviour suite without measuring time.
@@ -749,6 +755,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 |---|---|---|
 | M | `max_agents` range 1–20, counting distinct connection assignees | `commonplace/projects/limits.py:26,34-57` |
 | M | One worker PAT per machine | `commonplace/runner/registry.py:61` |
+| M | A runner grant has 1–8 wings and 0–8 extra write wings, each also a granted wing | `commonplace/runner/registry.py:_grant,_write_wings` |
 | M | Runner store writes use `BEGIN IMMEDIATE`; busy timeout 10 s | `commonplace/runner/jobs.py:68-95` |
 | M | One active start per card | `commonplace/runner/jobs.py:47-50` |
 | M | A non-person start within 24 h of the last start is refused | `commonplace/runner/jobs.py:236-243` |

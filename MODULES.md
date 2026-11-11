@@ -1168,6 +1168,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
   - Machine enrollment, binding epoch migrations and immutable job epoch snapshots, grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
+  - The worker write set: the first granted wing plus owner-granted `write_wings` (additive nullable column), applied to the worker PAT policy.
 
 - **Promises:**
 
@@ -1176,6 +1177,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
   - A machine may start a todo card reserved for its own worker or a doing card already held by that worker.
+  - A start needs the board wing to be exactly one of the worker's write wings; grants without `write_wings` keep the first wing as the only one. Only a signed-in person owner changes the set, and only to existing, non-private, granted wings.
 
   - Other assignees, waiting-person gates and unreleased origins remain refused.
   - Enabled starts reject unresolved same-board blockers through read-only board probes, without constructing a board store inside a runner transaction.
@@ -1206,6 +1208,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
+  - `tests/test_runner_write_wings.py` (write-set starts, refusals, owner authority, private wings, defaults, migration) and the browser check `tests/workbench_e2e/test_runner_write_wings.py`.
 
 
 ## orch
@@ -1658,6 +1661,7 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
+  - The owner Settings > Runner machines section (`runners.js`): each machine's read and write wings, and the write-access control that patches `write_wings`.
 
 - **Promises:**
 
