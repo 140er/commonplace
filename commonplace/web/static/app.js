@@ -1,4 +1,5 @@
 import { mountWorkspaceOrchestration } from "./projects.js";
+import { mountProjectPanel } from "./projectpanel.js";
 import { mountAgentSchedules } from "./agent-schedules.js";
 import { api, escape as e, actor, elapsed, safeLink, pullRequestUrl, setPeople } from "./api.js";
 import { digestSpeech } from "./digest.js";
@@ -22,6 +23,7 @@ import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, ro
 import { createDetails } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
+import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
 import { resolveRoute } from "./routes.js";
 import { createNeeds } from "./needs.js";
 import { createMemory } from "./memory.js";
@@ -520,6 +522,7 @@ function boardView() {
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
   void fillChatTimes(board);
+  void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
 }
 function markOpenCard() {
   root.querySelectorAll(".workbench-board .card[data-card]").forEach((card) => {
@@ -675,7 +678,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (rebase) { state.base = `#/board/${enc(card.board)}`; void refresh(); }
     const saved = remember();
     // A refresh of the open card reuses the component, so focus stays where the user left it.
-    if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api }); }
+    if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
     const shown = detailsUI.show(card, { board, me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
@@ -1571,6 +1574,11 @@ root.addEventListener("click", async (event) => {
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
     else if (action === "unblock") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: removeBlocker(state.card, Number(b.dataset.blocker)), version: state.card.version } }));
+    else if (["archive", "restore", "carry-on", "unpin"].includes(action)) await mutate(`card-${state.card.number}`, async () => {
+      const request = lifecycleRequest(state.card, action, { pin: b.dataset.pin });
+      const result = await api(request.path, { method: "POST", body: request.body });
+      if (action === "carry-on") location.hash = `#/card/${result.card.number}`;
+    });
     else if (action === "new-board") openOnboarding();
     else if (action === "logout") {
       state.needsUI?.stop(); state.needsUI = null;
@@ -1633,6 +1641,11 @@ root.addEventListener("submit", async (event) => {
     });
     else if (kind === "blockers") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: addBlockers(state.card, blockerNumbers), version: state.card.version } });
+      form.reset();
+    });
+    else if (kind === "pocket") await mutate(`card-${state.card.number}`, async () => {
+      const request = lifecycleRequest(state.card, "pin", { text: payload.text });
+      await api(request.path, { method: "POST", body: request.body });
       form.reset();
     });
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
