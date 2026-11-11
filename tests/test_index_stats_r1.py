@@ -57,11 +57,10 @@ def test_additive_admin_overview_and_no_stats_index_operations(hub, disk, monkey
     assert result["index_stats"]["drawers"]["value"] == 101
     token = hub.token("admin-full", scopes=["memory:read"], read_wings=["*"], profile="full")
     response = status_response(hub, {"Authorization": "Bearer " + token})
-    assert response == {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "error": {"code": -32601, "message": "Unknown tool: mempalace_status"},
-    }
+    # Wildcard readers without private access get the ordinary projected status;
+    # only an instance-admin person session receives figures.
+    assert "error" not in response
+    assert json.loads(response["result"]["content"][0]["text"]) == expected
     assert "index_stats" not in json.dumps(response)
 
 
