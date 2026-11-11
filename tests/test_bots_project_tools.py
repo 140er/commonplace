@@ -83,6 +83,11 @@ def ask(hub, fake, text, *calls, auth=None, board="work", request_id=REQ, final=
     return talk(hub, text, request_id, auth=auth, board=board)
 
 
+def project_call(name, call_id="c1"):
+    """``call`` cannot carry a ``name`` argument: its own first parameter has that name."""
+    return ("tool_call", {"id": call_id, "name": "create_project", "arguments": {"name": name}})
+
+
 def results(fake):
     """The tool results the model was given in its last request."""
     return [
@@ -439,7 +444,7 @@ def test_text_that_is_not_the_persons_words_is_refused_and_nothing_is_written(pr
         call("create_work", "c2", body="Model written body"),
         call("comment_work", "c3", ref=number, text="Model written comment"),
         call("tell_orchestrator", "c4", text="Model written message"),
-        call("create_project", "c5", name="Model Written Project"),
+        project_call("Model Written Project", "c5"),
     )
     assert [(s, c) for _, s, c in outcomes(evs)] == [("refused", "not_your_words")] * 5
     assert [r["code"] for r in results(fake)] == ["not_your_words"] * 5
@@ -773,7 +778,7 @@ def test_confirm_tools_run_only_through_confirm_once_with_the_frozen_version(pro
         text,
         call("answer_decision", "c1", ref=decision, choice=OPTIONS[0]),
         call("approve_work", "c2", ref=plan, approve=True),
-        call("create_project", "c3", name="Garden Shed"),
+        project_call("Garden Shed", "c3"),
         board="work",
     )
     answer, approve, create = blocks_of(evs)
@@ -850,7 +855,7 @@ def test_create_project_waits_for_a_tap_and_its_bot_appears(project_hub, fake):
         hub,
         fake,
         "Please create a project called Garden Shed",
-        call("create_project", name="Garden Shed"),
+        project_call("Garden Shed"),
         board="general",
     )
     [pending] = blocks_of(evs)
@@ -865,7 +870,7 @@ def test_create_project_waits_for_a_tap_and_its_bot_appears(project_hub, fake):
         hub,
         fake,
         "Create a project called Garden Shed",
-        call("create_project", name="Garden Shed"),
+        project_call("Garden Shed"),
         board="general",
         request_id="request-0002",
     )
@@ -877,7 +882,7 @@ def test_create_project_waits_for_a_tap_and_its_bot_appears(project_hub, fake):
         hub,
         fake,
         "Create a project !!!",
-        call("create_project", name="!!!"),
+        project_call("!!!"),
         board="general",
         request_id="request-0003",
     )
@@ -938,7 +943,7 @@ def test_audit_rows_and_logs_hold_no_conversation_text(project_hub, fake, caplog
         call("comment_work", "c2", ref=number),
         call("tell_orchestrator", "c3", text=SECRET_WORDS),
         call("create_work", "c4", title=SECRET_WORDS + " and model words"),
-        call("create_project", "c5", name=SECRET_WORDS),
+        project_call(SECRET_WORDS, "c5"),
     )
     marker = "quartz lantern"
     rows = [r for r in hub.db.audit_entries(hub.workspace) if r["tool"].startswith("bot:")]

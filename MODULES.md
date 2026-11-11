@@ -254,6 +254,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The operational Admin API and opt-in backup receipts, with operator provisioning and unknown-history limits.
 
+  - `docs/chat.md` and `docs/bots.md` state that bots are the main way to talk to a project, what the project tools do for the person, the your-words rule, which actions wait for a tap, and that a post a bot forwards gets no front receipt or fallback card.
+
   - The card API reference documents the after-Done routes (archive, restore, carry on, Pocket), their person-only authorization and what archiving hides.
 
   - The Admin runtime/limits/stuck API, independent owner queue and project/runner guide links.
