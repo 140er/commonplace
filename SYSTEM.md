@@ -347,6 +347,7 @@ optional `reviewer` argument to `task_add` and `task_update`.
 - Message coordinator filtering and reply-loop suppression still apply.
 
 - With orchestration enabled, the list appends `card.created` and `project.report`.
+- `tests/test_projects_new_project_flow.py` proves the chain for a new project end to end through these routes: seat connect, split of a new card by the seat, and the project agent limit refusing and then admitting a second agent.
 
 ### Card-lifecycle rule replay
 
