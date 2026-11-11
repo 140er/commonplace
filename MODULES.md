@@ -262,6 +262,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
+  - `docs/chat.md` lists the live delivery states of a chat message, their reasons and timing, and who sees the agent's read time.
+
   - `docs/design/RULES.md` describes the reviewer rules block and its verdict line, the session hook's missing-rules notice, and a table that maps each rule enforcement point to the tests that fail when it is skipped.
 
 
@@ -618,6 +620,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Restricted-search refill regressions cover hidden ranked prefixes, counter suppression, exhaustion, work bounds, unchanged every-wing calls, restricted CLI-compatible search, filters and deadline failures; the same fixture reports information-only latency.
   - `tests/test_runner_start_context.py` is the measurement and the contract of a start prompt's card context; `tests/test_runner_start.py` allows `card_context` beside the identifier keys of a lease.
+
+  - `tests/test_chat_live.py` and `tests/test_chat_live_view.py` (with `tests/chat_live_view.mjs`) pin the live chat delivery states on the server and in the pane.
 
   - OAuth CSP header controls and real Chromium form submissions cover normal consent, login retry and re-rendered error consent.
 
