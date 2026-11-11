@@ -42,6 +42,11 @@ We do not accept summarization of user content, cloud storage/sync features, tel
 - No full-suite check per PR. The full suite runs per batch on `develop`, about every 5 merges or 60 minutes. If a batch is red, bisect it, open a revert or fix PR, and hold merges while `develop` is red.
 - The coordinator never merges. `develop` to `main` needs the owner's go.
 
+## Host and test limits
+
+- At most 12 concurrent Claude agents/turns on t3code-home across all orchestrators and their delegated children. Queue the rest; start no new child above the cap.
+- No raw pytest on t3code-home: run tests only through heavy or pr-check so the slot cap holds; full batches prefer edge1.
+
 ## Setup
 
 ```bash
