@@ -140,7 +140,7 @@ const cases = {
     await click(host, '[data-limit-step="1"]'); assert.equal(calls[0].body.max_agents, 4);
     assert.equal(calls[0].path, "/api/projects/atlas/limits"); assert.equal(calls[0].method, "PUT");
     assert.match(node(host, "[data-limit-status]").textContent, /saved \d\d:\d\d/);
-    await mount(host, {project: {...project, limits: {max_agents: 20}}, e, api: async () => assert.fail("over cap")});
+    await mount(host, {project: {...project, limits: {max_agents: 100}}, e, api: async () => assert.fail("over cap")});
     assert.equal(node(host, '[data-limit-step="1"]').disabled, true);
     await mount(host, {project: {...project, limits: {max_agents: 1}}, e, api: async () => assert.fail("under cap")});
     assert.equal(node(host, '[data-limit-step="-1"]').disabled, true);

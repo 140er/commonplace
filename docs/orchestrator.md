@@ -23,7 +23,7 @@ with the standard library from Python 3.11 and with `tomli` on 3.10.
 schema = "commonplace.orchestrator/1"
 project = "example-shop"
 [limits]
-max_agents = 3                 # config-driven starts; min with the project limit
+max_agents = 3                 # 1-100; config-driven starts; min with the project limit
 [roles.main]
 kind = "orchestrator"
 harness = "t3"
@@ -158,6 +158,9 @@ Inside it, in this order:
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with
    `at_cap` when workspace orchestration is off, or `project_limit` when on.
+   `max_agents` accepts 1 to 100. The effective number of concurrent starts is
+   also bounded by the machines: `max_in_flight`, one agent per project, and
+   the runner's memory guard (see [runner.md](runner.md)).
    Voided steps do not exempt their jobs from capacity accounting.
 5. **Insert** the step row and the runner job, with the existing guards: one
    active start per card, and a non-person start within 24 h is refused

@@ -475,7 +475,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
 
-- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set.
+- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set. Both accept 1–100. Per machine, `max_in_flight` and `max_starts_per_hour` still apply at lease time, and the runner refuses a leased start with the pre-spawn code `low_memory` when its available memory is under `min_free_memory_mb` (the job ends `failed`, shown by `card_start_status`; the guard never blocks when the probe is unreadable).
 
 - A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
 
@@ -747,7 +747,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 | Label | Number | Source |
 |---|---|---|
-| M | `max_agents` range 1–20, counting distinct connection assignees | `commonplace/projects/limits.py:26,34-57` |
+| M | `max_agents` range 1–100 (`MAX_AGENTS`; older tables are widened on the next write), counting distinct connection assignees | `commonplace/projects/limits.py` |
+| M | Runner `min_free_memory_mb` default 256 (0 disables): below it the runner fails the lease `low_memory` before any launch | `commonplace/runner/agent.py` |
 | M | One worker PAT per machine | `commonplace/runner/registry.py:61` |
 | M | Runner store writes use `BEGIN IMMEDIATE`; busy timeout 10 s | `commonplace/runner/jobs.py:68-95` |
 | M | One active start per card | `commonplace/runner/jobs.py:47-50` |

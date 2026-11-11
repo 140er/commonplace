@@ -564,6 +564,7 @@ Format (read by `commonplace orch docs-check`):
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
+  - `tests/test_agent_limit_388.py` pins the 1–100 agent limit (config, project limit, widening of older tables) and the runner memory guard with a fake probe.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
@@ -1168,6 +1169,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
   - Machine enrollment, binding epoch migrations and immutable job epoch snapshots, grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
+  - The local launch client's memory guard: below the optional `min_free_memory_mb` (default 256, 0 disables) it fails a leased start `low_memory` before any launch; an unreadable probe never blocks.
 
 - **Promises:**
 
@@ -1214,6 +1216,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
+
+  - `limits.max_agents` accepts 1 to 100, the same bound as the project limit; the effective start count is still bounded by each machine (`max_in_flight`, the runner memory guard).
 
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
 
@@ -1285,7 +1289,7 @@ Format (read by `commonplace orch docs-check`):
   - Split marker task references are range-checked before SQLite binding and settings-read failures remain retryable.
   - Default-off project reports capture the current coordinator and activation/binding generations, baseline existing staleness, scan at most 100 cards and publish at most 100 rows per workspace pass, and retain receipt-backed event identity across crashes.
 
-  - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
+  - Only a signed-in owner changes models or limits; `max_agents` (1–100) counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
   - **Browser GitHub connection:** Signup plan assignment accepts the provisioning transaction to preserve atomic GitHub ownership reservation.
 
@@ -1658,6 +1662,7 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
+  - The project agent-limit stepper spans 1 to 100.
 
 - **Promises:**
 

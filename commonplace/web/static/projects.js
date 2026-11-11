@@ -642,7 +642,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
   const active = () => current() && host.isConnected;
   function render() {
     if (!active()) return;
-    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max agents working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 20 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div><p role="status" data-limit-status>${e(status)}</p>`;
+    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max agents working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 100 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div><p role="status" data-limit-status>${e(status)}</p>`;
     host.querySelectorAll("[data-limit-step]").forEach(button => {
       button.onclick = () => save(value === null ? 1 : value + Number(button.getAttribute("data-limit-step")));
     });
@@ -650,7 +650,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
     if (clear) { clear.disabled = busy; clear.onclick = () => save(null); }
   }
   async function save(next) {
-    if (!active() || !project.can_configure || busy || (next !== null && (next < 1 || next > 20))) return;
+    if (!active() || !project.can_configure || busy || (next !== null && (next < 1 || next > 100))) return;
     busy = true; status = ""; render();
     try {
       const result = await api(`/api/projects/${encodeURIComponent(project.board)}/limits`, {method: "PUT", body: {max_agents: next}});

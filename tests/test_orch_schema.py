@@ -298,7 +298,7 @@ def mutate(path, value):
         (("extra",), 1, "unknown_key"),
         (("project",), "Acme Shop", "invalid_value"),
         (("limits", "max_agents"), 0, "invalid_value"),
-        (("limits", "max_agents"), 21, "invalid_value"),
+        (("limits", "max_agents"), 101, "invalid_value"),
         (("limits", "max_agents"), True, "wrong_type"),
         (("limits",), KeyError, "limits_required"),
         (("roles",), {}, "invalid_value"),
