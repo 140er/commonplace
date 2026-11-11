@@ -88,7 +88,9 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
         ? api(base, { method: 'POST', body: { requester: ref }, headers, timeoutMs: 10000 })
         : api(`${base}/${encodeURIComponent(ref)}`, { method: 'DELETE', headers, timeoutMs: 10000 }));
       // The answer carries the machine's new version, so a second edit before the reload is not stale.
-      if (Number.isInteger(result?.grant_version)) row.grant_version = result.grant_version;
+      // A read that landed meanwhile replaced the rows, so look the machine up again and keep the larger version.
+      const stored = sections.get('runtime')?.data?.machines?.items?.find(r => r.id === machine);
+      if (stored && Number.isInteger(result?.grant_version)) stored.grant_version = Math.max(stored.grant_version, result.grant_version);
       notes.set(machine, result?.changed === false ? (action === 'requester-add' ? 'Already a requester.' : 'Already removed.') : 'Requesters saved.');
     } catch (error) {
       notes.set(machine, error.status === 403 ? 'a signed-in workspace owner is required'
@@ -97,6 +99,8 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     } finally { writing.delete(machine); }
     if (epoch !== pageEpoch || !live) return;
     render();
+    // A read already in flight predates this edit; drop it so the reload below shows the new list.
+    requests.get('runtime')?.abort(); requests.delete('runtime');
     void refreshSection('runtime');
   }
 

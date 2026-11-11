@@ -41,8 +41,10 @@ def test_save_models_while_reads_are_slow_and_after_reload(ui, app):
         page.wait_for_timeout(100)
     # Without the handler the browser submits a GET and puts the values in the URL.
     assert "main_provider=" not in page.url, "the form must not navigate with its values in the URL"
-    assert saves == [200], f"exactly one successful save expected, got {saves}"
     page.locator("[data-project-model-status]").get_by_text("Project models saved.").wait_for()
+    # A second save would arrive shortly after the first; give it the time to show.
+    settle(page, 300)
+    assert saves == [200], f"exactly one successful save expected, got {saves}"
     for pattern in SLOW:
         page.unroute(pattern)
     settle(page, 300)

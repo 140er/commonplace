@@ -84,15 +84,32 @@ try {
     // Fail closed: once the session is no longer an owner, nothing is written.
     me={...me,can_admin:false};const before=writes().length;write('requester-remove','mach_1','conn_a');assert.equal(writes().length,before);
   } else if(process.argv[2]==='requesters-chain') {
-    find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0},machines:{state:'ready',count:1,has_more:false,requester_candidates:[{id:'conn_a',name:'a'},{id:'conn_b',name:'b'}],items:[{id:'mach_1',label:'M',enabled:true,binding_state:'unbound',max_in_flight:1,max_starts_per_hour:2,grant_version:7,requesters:[]}]}});await flush();
+    // Three edits in a row without a reload; the reload that is in flight lands before or after the second edit.
+    const runtime=(version,requesters)=>({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0},machines:{state:'ready',count:1,has_more:false,requester_candidates:[{id:'conn_a',name:'a'},{id:'conn_b',name:'b'},{id:'conn_c',name:'c'}],items:[{id:'mach_1',label:'M',enabled:true,binding_state:'unbound',max_in_flight:1,max_starts_per_hour:2,grant_version:version,requesters}]}});
     const write=(action,requester)=>listeners.get('click')({target:{closest:()=>({dataset:{adminSection:'runtime',adminAction:action,adminMachine:'mach_1',adminRequester:requester}})}});
     const writes=()=>requests.filter(r=>r.options?.method&&r.options.method!=='GET');
-    write('requester-add','conn_a');assert.equal(writes()[0].options.headers['If-Match'],'7');
-    writes()[0].resolve({changed:true,grant_version:8});await flush();
-    // The reload is still pending; a second edit already carries the version the first one produced.
-    assert.ok(requests.filter(r=>r.path.includes('/runtime')).length===2&&!requests.findLast(r=>r.path.includes('/runtime')).settled);
-    write('requester-add','conn_b');assert.equal(writes().length,2);
-    assert.equal(writes()[1].options.headers['If-Match'],'8','a second edit before the reload must not send the old version');
+    const reads=()=>requests.filter(r=>r.path.includes('/runtime'));
+    const sent=()=>writes().map(w=>w.options.headers['If-Match']);
+    const seen=[{id:'conn_a',name:'a',state:'active'}];
+    find('runtime').resolve(runtime(7,[]));await flush();
+    // Late: the reload started after edit 1 lands after edit 2 completed (it still reads version 8).
+    write('requester-add','conn_a');writes()[0].resolve({changed:true,grant_version:8});await flush();
+    assert.equal(reads().length,2);
+    write('requester-add','conn_b');writes()[1].resolve({changed:true,grant_version:9});await flush();
+    reads()[1].resolve(runtime(8,seen));await flush();
+    write('requester-add','conn_c');
+    assert.deepEqual(sent(),['7','8','9'],'late reload: the third edit sends the version the second returned');
+    writes()[2].reject(Object.assign(new Error('x'),{status:500}));await flush();
+    for(const r of reads().slice(2))r.resolve(runtime(9,seen));await flush();
+    // Early: the reload lands before edit 2 completes, and a newer reload is pending for edit 3.
+    requests.length=0;
+    ui.refreshSection('runtime');reads().at(-1).resolve(runtime(7,[]));await flush();
+    write('requester-add','conn_a');writes()[0].resolve({changed:true,grant_version:8});await flush();
+    write('requester-add','conn_b');
+    reads().at(-1).resolve(runtime(8,seen));await flush();
+    writes()[1].resolve({changed:true,grant_version:9});await flush();
+    write('requester-add','conn_c');
+    assert.deepEqual(sent(),['7','8','9'],'early reload: the third edit sends the version the second returned');
   } else if(process.argv[2]==='page-error') {
     const payload={workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[{id:1,name:'Existing project'}],count:101,has_more:true,next_cursor:'page-two'},machines:{state:'ready',items:[],count:0}};
     find('runtime').resolve(payload);await flush();
