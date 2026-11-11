@@ -1,14 +1,14 @@
 """Owner read for the Compute map canvas: the graph without provenance, plus a status per end.
 
-Interim and deliberately small. The agent tools add the general graph read and the live
-status read adds heartbeat-derived status; the canvas then reads those two and this module
-is removed. Until then a node's status is ``unknown`` and both ends of a link carry the
-link's own observed ``status`` fact. See "Map read" in ``docs/topology.md``.
+Interim and deliberately small: one answer holding ``store.read_graph`` without evidence and
+``status.read_status`` reduced to one word per node and per link end. The agent tools add
+the general graph read; the canvas then reads that and this module is removed. See "Map
+read" in ``docs/topology.md``.
 """
 
 from commonplace.http_util import require_principal, send_json
 
-from . import model, store
+from . import model, status, store
 
 PATH = "/api/topology/map"
 UNKNOWN = "unknown"
@@ -32,14 +32,14 @@ def _plain(record: dict) -> dict:
     return plain
 
 
-def map_view(graph: dict) -> dict:
-    """``{"graph", "status"}`` for one ``read_graph`` result."""
-    status = {"nodes": {}, "links": {}}
-    for node in graph["nodes"]:
-        status["nodes"][node["key"]] = UNKNOWN
-    for link in graph["links"]:
-        seen = link["values"].get("status", UNKNOWN)
-        status["links"][link["id"]] = {"from": seen, "to": seen}
+def _state(record) -> str:
+    seen = record.get("status") if isinstance(record, dict) else None
+    return seen if seen in model.LINK_STATUSES else UNKNOWN
+
+
+def map_view(graph: dict, live: dict) -> dict:
+    """``{"graph", "status"}`` for one ``read_graph`` result and its ``read_status``."""
+    links = live.get("links", {})
     return {
         "graph": {
             "wing": graph["wing"],
@@ -47,7 +47,19 @@ def map_view(graph: dict) -> dict:
             "links": [_plain(link) for link in graph["links"]],
             "routes": [_plain(route) for route in graph["routes"]],
         },
-        "status": status,
+        "status": {
+            "nodes": {
+                node["key"]: _state(live.get("nodes", {}).get(node["key"]))
+                for node in graph["nodes"]
+            },
+            "links": {
+                link["id"]: {
+                    end: _state((links.get(link["id"]) or {}).get("ends", {}).get(end))
+                    for end in ("from", "to")
+                }
+                for link in graph["links"]
+            },
+        },
     }
 
 
@@ -63,7 +75,9 @@ def install(gateway):
         ):
             send_json(h, 403, {"error": "Only the workspace owner can open the Compute map."})
             return
-        topo = store.open_topology(gateway, principal.workspace_id)
-        send_json(h, 200, map_view(store.read_graph(topo)))
+        graph = store.read_graph(store.open_topology(gateway, principal.workspace_id))
+        # The same graph goes to the status read, so the map and its status describe one moment.
+        live = status.read_status(gateway, principal.workspace_id, graph=graph)
+        send_json(h, 200, map_view(graph, live))
 
     gateway.add_route("GET", PATH, handle)

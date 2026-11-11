@@ -63,6 +63,40 @@ def test_owner_reads_graph_and_status_without_provenance(bots_hub):
     assert b"seen in a fixture" not in raw and b"mach_" not in raw and b'"fields"' not in raw
 
 
+def test_live_status_reaches_the_canvas_as_one_word_per_node_and_link_end():
+    graph = {
+        "wing": "topology",
+        "nodes": [
+            {"key": key, "subject": f"node:{key}", "wing": "topology", "values": {}, "fields": {}}
+            for key in ("laptop", "web1", "nas")
+        ],
+        "links": [
+            {"id": link, "subject": f"link:{link}", "wing": "topology", "values": {}, "fields": {}}
+            for link in ("laptop>web1:tailscale", "web1>nas:direct")
+        ],
+        "routes": [],
+    }
+    live = {
+        "nodes": {"laptop": {"status": "up", "color": "green"}, "web1": {"status": "degraded"}},
+        "links": {
+            "laptop>web1:tailscale": {
+                "status": "down",
+                "ends": {"from": {"status": "up"}, "to": {"status": "down"}},
+            },
+            "web1>nas:direct": {"status": "green", "ends": {"from": {"status": "green"}}},
+        },
+        "machines": {"mach_0123456789abcdef": {"status": "up"}},
+    }
+    assert map_route.map_view(graph, live)["status"] == {
+        # A node the status read does not know, and anything that is not a status, is unknown.
+        "nodes": {"laptop": "up", "web1": "degraded", "nas": "unknown"},
+        "links": {
+            "laptop>web1:tailscale": {"from": "up", "to": "down"},
+            "web1>nas:direct": {"from": "unknown", "to": "unknown"},
+        },
+    }
+
+
 def test_expired_status_is_unknown_and_a_stale_node_keeps_its_last_label(bots_hub):
     long_ago = datetime.now(timezone.utc) - timedelta(days=40)
     _seed(bots_hub, now=long_ago)
