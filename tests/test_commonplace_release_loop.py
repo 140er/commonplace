@@ -262,6 +262,9 @@ def reserved_for_agent(hub, fresh, kind):
     author = fresh.connect("author")
     number = author.work.task_add(board="work", title="Ordinary work")["number"]
     assert author.work.task_take_next(task=number)["status"] == "doing"
+    if kind == "held":
+        edit(fresh.owner, number, assignee=fresh.connect("holder").principal.actor)
+        return number
     author.work.task_handoff(number, fresh.connect("holder").principal.actor, NOTE)
     assert raw(fresh.owner, number)["status"] == "todo"
     return number
@@ -271,10 +274,12 @@ MEMBER_MOVES = {
     "take-over": ("PATCH", "", {"status": "doing"}),
     "drop": ("PATCH", "", {"status": "backlog"}),
     "handoff-anyone": ("POST", "/handoff", {"to": "anyone", "note": NOTE}),
+    "complete": ("PATCH", "", {"status": "done"}),
+    "review": ("PATCH", "", {"status": "review"}),
 }
 
 
-@pytest.mark.parametrize("kind", ["released", "ordinary"])
+@pytest.mark.parametrize("kind", ["released", "ordinary", "held"])
 @pytest.mark.parametrize("move", sorted(MEMBER_MOVES))
 def test_member_web_session_cannot_move_another_reservation(hub, fresh, kind, move):
     number = reserved_for_agent(hub, fresh, kind)
@@ -288,11 +293,18 @@ def test_member_web_session_cannot_move_another_reservation(hub, fresh, kind, mo
         f"/api/cards/{number}{suffix}",
         {**body, "version": before[0]["version"]},
     )
+    if kind == "held" and move == "take-over":
+        # Doing to doing is no status change, so the guard does not apply; the holder keeps it.
+        assert status == 200, reply
+        assert reply["assignee"] == before[0]["assignee"]
+        assert snapshot(fresh.owner, number)[0]["assignee"] == before[0]["assignee"]
+        return
     assert status == 403, reply
+    assert "reserved for another connection" in str(reply)
     assert snapshot(fresh.owner, number) == before
 
 
-@pytest.mark.parametrize("move", ["take-over", "drop", "handoff-anyone"])
+@pytest.mark.parametrize("move", sorted(MEMBER_MOVES))
 def test_member_service_cannot_move_another_reservation(hub, fresh, move):
     number = reserved_for_agent(hub, fresh, "released")
     member = member_session(hub, fresh)
@@ -301,8 +313,10 @@ def test_member_service_cannot_move_another_reservation(hub, fresh, move):
         "take-over": lambda: member.task_update(number, status="doing", version=version),
         "drop": lambda: member.task_update(number, status="backlog", version=version),
         "handoff-anyone": lambda: member.task_handoff(number, "anyone", NOTE, version=version),
+        "complete": lambda: member.task_update(number, status="done", version=version),
+        "review": lambda: member.task_update(number, status="review", version=version),
     }
-    refuse(fresh.owner, number, calls[move])
+    refuse(fresh.owner, number, calls[move], match="reserved for another connection")
 
 
 @pytest.mark.parametrize("move", ["take-over", "drop", "handoff-anyone"])
@@ -344,28 +358,55 @@ def test_recorded_release_by_a_creator_descendant_is_not_authority(hub, fresh):
     refuse(fresh.owner, number, lambda: seat.work.task_take_next(task=number))
 
 
-def test_same_named_agent_in_another_workspace_is_refused(hub, fresh):
-    number = reserved_for_agent(hub, fresh, "released")
-    other_user = hub.db.create_user("other-owner@example.test")
-    other_ws = hub.db.create_workspace("other-workspace", other_user)
+def other_workspace_agent(hub, name, user, workspace, trust="trusted"):
     _, token = hub.db.create_token(
-        name="coordinator",
+        name=name,
         client="generic",
-        user_ref=other_user,
-        workspace_ref=other_ws,
+        user_ref=user,
+        workspace_ref=workspace,
         policy=Policy.build(
             profile="standard",
             scopes=["memory:read", "memory:write"],
             read_wings=["shared"],
             write_wing="shared",
-            trust="trusted",
+            trust=trust,
         ),
-        actor=other_user,
+        actor=user,
     )
-    twin = service(hub, hub.db.authenticate_token(token))
-    version = raw(fresh.owner, number)["version"]
-    refuse(fresh.owner, number, lambda: twin.task_take_next(task=number))
-    refuse(fresh.owner, number, lambda: twin.task_update(number, status="backlog", version=version))
+    return service(hub, hub.db.authenticate_token(token))
+
+
+def test_same_named_agent_in_another_workspace_is_refused(hub, fresh):
+    number = reserved_for_agent(hub, fresh, "released")
+    other_user = hub.db.create_user("other-owner@example.test")
+    other_ws = hub.db.create_workspace("other-workspace", other_user)
+    service(hub, sessions.person_principal(hub.db, other_user, other_ws)).board_add(
+        slug="work", wing="shared"
+    )
+    # Same actor name ("coordinator") as the released card's coordinator, and a card with the
+    # same number in the other workspace, reserved for another connection there. A refusal from
+    # the reservation check proves authority was decided; "card not found" would prove nothing.
+    twin = other_workspace_agent(hub, "coordinator", other_user, other_ws, trust="standard")
+    holder = other_workspace_agent(hub, "holder", other_user, other_ws)
+    cards = [
+        twin.task_add(board="work", title="Other workspace work")["number"] for _ in range(number)
+    ]
+    own = cards[-1]
+    assert own == number
+    assert twin.task_take_next(task=own)["status"] == "doing"
+    twin.task_handoff(own, holder.principal.actor, NOTE)
+    refuse(
+        fresh.owner,
+        number,
+        lambda: twin.task_take_next(task=number),
+        match="not available to take",
+    )
+    refuse(
+        fresh.owner,
+        number,
+        lambda: twin.task_update(number, status="backlog", version=raw(twin, own)["version"]),
+        match="reserved for another connection",
+    )
 
 
 def test_member_web_session_cannot_drop_work_another_agent_holds(hub, fresh):

@@ -1149,8 +1149,7 @@ class BoardService:
             and row["assignee"] not in (None, p.actor)
         ):
             raise ToolError(
-                "no: card is reserved for another connection; the workspace owner or the "
-                "board coordinator can move it"
+                "no: card is reserved for another connection; the workspace owner can move it"
             )
 
     def _can_cancel_reservation(self, row):
