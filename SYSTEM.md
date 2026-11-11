@@ -177,6 +177,12 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - Thread-store storage budgets convert SQLCipher's text `page_size` (and `page_count`) to integers, so budgeted writes in encrypted workspaces are checked rather than failing with a type error.
 
 
+### Compact rules index
+
+- `session_start rules=index` and `rules_get effective=true format=index` list each effective rule as key, section, scope, size of the full text and a short quoted title (the owner summary, else the first sentence), so a large rule set costs a few kilobytes instead of the whole text.
+- `rules_get keys=[...]` returns the selected rules in full, one key-labelled line each, and names unknown keys. Both are partial reads: they never record the set as served and give no `rules_seq`, so a checked connection must still read the full set before a write. In warn or enforce mode the index says so.
+- The default of both tools is unchanged, and replies stay within the existing reply size bound.
+
 ### Chroma session rebuilds
 
 - If a session's cached palace database disappears, invalidate that palace's shared Chroma System before constructing another client.
@@ -382,6 +388,10 @@ optional `reviewer` argument to `task_add` and `task_update`.
 - Full account-deletion integration, composite multi-worker HTTP acceptance and a live browser workspace-switch flow remain deferred. The GitHub deletion helper fences its own cleanup only, not other stores or the user record.
 
 - Absent token expiry requires dated `COMMONPLACE_GITHUB_NONEXPIRING_EVIDENCE` in `YYYY-MM-DD|OAuth App|client-id|expiration disabled` form. Before enabling, record fresh-account/prior-login scope, header and expiry outcomes plus ingress/callback/backend no-secret logging canaries. Live GitHub OAuth behavior remains unproven. Merge, repository consent, refresh and reconciliation remain deferred.
+
+### Generic agent skills
+
+- `skills/untangle-codebase` is a repository-independent skill: it names no host, path, person or product of this system, and its helper only reads files. A test keeps its front matter, required sections and absence of local paths checked, and the Claude marketplace copy must match the canonical files byte for byte. It changes no stored data and is never installed or enabled by the system itself.
 
 ### Optional agent orchestration
 
@@ -1164,8 +1174,23 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
   bounds acquisition; this contract makes no timing or constant-time claim.
 - Imported holder-room counts can include rows outside a consented range,
   as before this projection; content reads retain their separate range gate.
-  Search `total_before_filter` can include hidden candidates inside a visible
-  wing before the response gate filters them.
+- Restricted structured drawer searches gate each ranked prefix before
+  applying the requested result limit, for explicit wings and fan-out alike.
+  A short readable page retries with doubled worker limits until filled,
+  the worker returns a short prefix, or the 100-candidate bound is reached.
+  At most eight worker searches share one existing request deadline; ranking
+  still uses the same joint wing pool. Readable hits beyond that bound may
+  remain unavailable. Every-wing principals keep their existing search path.
+- Refill requires an attached gateway handoff context; standalone worker
+  helpers retain their exact response shape and existing authorization gates.
+  Pinned-wing searches retain the original forwarded worker response, including
+  protocol errors and opaque replies, and refill only structured search hits.
+  The first search and every refill share the same deadline and call bound.
+- Restricted structured responses omit `total`, `total_before_filter` and
+  `filtered_by_max_distance`; any `count` describes only returned readable
+  hits. No hidden-candidate count or refill diagnostic is returned. Restricted
+  CLI-compatible search acquires structured hits, so it uses the same refill
+  before the final gate and rendering.
 - Other overview, legacy
   provenance and owner search-index progress remain separate residuals.
 
