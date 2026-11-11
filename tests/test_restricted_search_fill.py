@@ -97,6 +97,27 @@ def test_hidden_population_does_not_appear_in_response():
     assert request(search_world(hidden=3)) == request(search_world(hidden=19))
 
 
+def test_refill_helper_omits_worker_candidate_counters():
+    world = search_world()
+    result = world.mediator._readable_search(
+        world.principal, "mempalace_search", {"query": "exact", "limit": 2}
+    )
+    assert [hit["drawer_id"] for hit in result["results"]] == ["visible-0", "visible-1"]
+    assert result["count"] == 2
+    assert not {"total", "total_before_filter", "filtered_by_max_distance"}.intersection(result)
+
+
+@pytest.mark.parametrize("filters", [{"wing": "shared"}, {}])
+def test_restricted_cli_search_fills_before_rendering(filters):
+    world = search_world()
+    result = request(world, cli_compatible=True, **filters)
+    assert "exact 0" in result["cli_output"] and "exact 1" in result["cli_output"]
+    assert "hidden" not in json.dumps(result)
+    assert result["results"] == []
+    assert all(call.get("cli_compatible") is False for call in world.calls)
+    assert len(world.calls) > 1
+
+
 def test_fanout_gates_candidates_before_returning_filled_limit():
     world = search_world()
     result = world.mediator._fan_out_search(
