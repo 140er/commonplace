@@ -1695,6 +1695,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.
 
+  - The Admin runtime panel lists each machine's requesters and the active trusted agents an owner may add; its one write is the owner-only runner PATCH, and the project settings models form binds its save handler before the page's slow reads.
+
   - Settings and its prerequisite reads use ten-second per-request deadlines through JSON decoding; each failed section is named with Retry while successful sections retain saved values.
   - The navigation-only instance flag falls back to false on read faults without breaking /api/me; receipt parent refreshes invalidate older mode generations.
 
@@ -1745,6 +1747,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
+
+  - tests/test_runner_requesters_admin.py and the requesters case of tests/admin_runtime_ui.mjs hold the Admin requester list, candidates and owner-only edit.
 
 
   - `tests/test_admin_api.py` covers person/role/workspace refusals, fixed lifecycle time, pagination, redaction and no writes/locks; `tests/test_admin_ui.py` and `tests/admin_ui.mjs` cover cold routing, independent deadlines, retries and disposal.
