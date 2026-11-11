@@ -612,6 +612,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
+  - `tests/spaces_surfaces.json` and the route inventory and REST tool list in `tests/test_commonplace_public_surface.py` carry the `topology_get` and `topology_route` tools and their routes; `tests/test_topology_tools.py` covers them.
+
   - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
 
   - `tests/test_commonplace_capacity.py` covers the unlimited default, under/at the cap, concurrent sign-ups on one and on separate connections, waitlist admit, invited and disabled accounts, and the email, provider, REST and CLI paths.
@@ -1022,6 +1024,8 @@ Format (read by `commonplace orch docs-check`):
   - The extension seam lists `commonplace.agent_schedules`, installed after holds.
 
   - The extension list ends with `commonplace.bots`, which installs the person-only `/api/bots` routes.
+
+  - The extension list also loads `commonplace.topology.extension`, which registers the read tools `topology_get` and `topology_route` and their `GET /api/topology` and `GET /api/topology/route` routes; `_rest_tool` maps both routes to their tools.
 
   - The extension list also loads `commonplace.routines`, which starts its worker with the other background workers and stops it before the control database closes.
 
