@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Today harness</title>
+<!-- Real Deck shell, Today module and app styles; scripted Northwind API. -->
+<link rel="stylesheet" href="/commonplace/web/static/app.css">
+<link rel="stylesheet" href="/commonplace/web/static/screens.css">
+<link rel="stylesheet" href="/commonplace/web/static/map.css">
+<link rel="stylesheet" href="/commonplace/web/static/mix.css">
+<link rel="stylesheet" href="/commonplace/web/static/ui.css">
+<link rel="stylesheet" href="/commonplace/web/static/decide.css">
+<link rel="stylesheet" href="/commonplace/web/static/rules.css">
+<link rel="stylesheet" href="/commonplace/web/static/console.css">
+<link rel="stylesheet" href="/commonplace/web/static/chat.css">
+<link rel="stylesheet" href="/commonplace/web/static/workbench.css">
+<link rel="stylesheet" href="/commonplace/web/static/chatdock.css">
+<link rel="stylesheet" href="/commonplace/web/static/bots.css">
+<link rel="stylesheet" href="/commonplace/web/static/deck.css">
+</head>
+<body>
+<div id="root"><div class="shell two" data-view="page"><nav class="rail" id="board-nav"></nav><main class="center"><div id="phone-bar"></div><header class="head bar"><h1 id="title">Today</h1></header><div id="content" tabindex="-1"></div><div id="phone-tabs"></div></main></div></div>
+<script type="module">
+import { applyDeck, createDeck } from "/commonplace/web/static/deck.js";
+import { renderRail, renderPhoneTabs, renderPhoneBar } from "/commonplace/web/static/rail.js";
+import { createBots } from "/commonplace/web/static/bots.js";
+import { escape as e } from "/commonplace/web/static/api.js";
+
+applyDeck();
+const params = new URLSearchParams(location.search), scene = params.get('scene') || 'today';
+const at = (m) => new Date(Date.now() - m * 60000).toISOString();
+const bot = (id, name, job, extra = {}) => ({ id, name, job, kind: 'project', board: id, last: null, unread: 0, waiting: 0, state: 'idle', ...extra });
+const bots = scene === 'empty' ? [] : [
+  bot('atlas', 'Atlas', 'Website and sign-in', { waiting: 1, state: 'needs_you', last: { role: 'bot', text: 'The login fix is ready. Going live needs your OK.', at: at(2) } }),
+  bot('harbor', 'Harbor', 'Mobile app', { state: 'working', last: { role: 'bot', text: 'Two agents are on the push-notification bug.', at: at(14) } }),
+  bot('billing', 'Billing', 'Invoices and exports', { waiting: 1, state: 'needs_you', last: { role: 'bot', text: 'Which currency should the export use?', at: at(60) } }),
+  bot('general', 'General', 'Anything that is not a project', { kind: 'general', waiting: 2 }),
+  bot('notes', 'Notes', 'Keeps my reading list', { kind: 'custom', state: 'working', last: { role: 'bot', text: 'Checking the reading list for new editions.', at: at(31) } }),
+];
+const boards = scene === 'empty' ? [] : [{ slug: 'atlas', name: 'Atlas', agents_working: 1 }, { slug: 'harbor', name: 'Harbor', agents_working: 2 }];
+const questions = [
+  { type: 'decision', card: 60, question: 'Put the login fix live on northwind.example', context: 'This changes the public site.', options: ['Accept', 'Not now'], version: 3, open: true, answer: null },
+  { type: 'decision', card: 61, question: 'Which currency should the export use?', context: 'The March export has invoices in euros and dollars.', options: ['Euros', 'Dollars', 'Keep both'], version: 2, open: true, answer: null },
+];
+const calls = [];
+const api = async (path, options = {}) => {
+  calls.push({ path, ...options });
+  if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  if (path === '/api/bots') return { bots };
+  const page = /^\/api\/bots\/([^/?]+)\/messages/.exec(path);
+  if (page) return { bot: bots.find((b) => b.id === page[1]), messages: [], waiting: questions.filter((q) => q.open && (page[1] === 'general' || q.card === (page[1] === 'atlas' ? 60 : 61))) };
+  const decide = /^\/api\/cards\/(\d+)\/decide$/.exec(path);
+  if (decide) {
+    if (scene === 'failure') throw new Error('Could not send your answer. Try again.');
+    const q = questions.find((q) => q.card === Number(decide[1]));
+    if (scene === 'conflict' && q.version === 3) { q.version++; q.question = 'Wait for one more check before going live?'; throw Object.assign(new Error('Conflict'), { status: 409 }); }
+    q.open = false; q.answer = options.body.choice;
+    return { ok: true };
+  }
+  throw new Error('Unexpected fake API path');
+};
+location.hash ||= '#/today';
+const root = document.querySelector('#root');
+const ctx = () => ({ me: { name: 'Maya' }, boards, needs: {}, go: (hash) => { location.hash = hash; } });
+const deck = createDeck({ root, api, context: ctx, title: (t) => { document.querySelector('#title').textContent = t; } });
+const nav = { workspace: 'Northwind', user: 'Maya', needs: 2, hash: location.hash };
+document.querySelector('#board-nav').outerHTML = (deck.bar(nav) || renderRail(nav)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
+document.querySelector('#phone-bar').innerHTML = deck.top() || renderPhoneBar(nav);
+document.querySelector('#phone-tabs').innerHTML = deck.tabs(nav) || renderPhoneTabs(nav);
+if (deck.owns(location.hash)) await deck.show(location.hash);
+else {
+  const classic = createBots({ mount: () => document.querySelector('#content'), api, e, go: ctx().go });
+  document.querySelector('.shell').dataset.view = 'bots';
+  await classic.show();
+}
+// Exercise the real controls and refresh contract in a browser, including a failed answer.
+if (params.has('exercise') && deck.on()) {
+  await deck.show(location.hash); // refresh awaits via the screen's own API below
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const box = root.querySelector('input[name="text"]');
+  box.value = 'Please fix the footer'; box.focus(); box.setSelectionRange(4, 8);
+  await deck.show(location.hash, { background: true });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (document.activeElement !== box || box.value !== 'Please fix the footer' || box.selectionStart !== 4) throw new Error('Composer changed during refresh');
+  root.querySelector('[data-today-decide="60"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (calls.filter((c) => c.method === 'POST').length !== 1) throw new Error('Duplicate decide');
+  const question = root.querySelector('[data-question="60"]');
+  if (scene === 'failure' ? question.dataset.state !== 'open' || !question.querySelector('[role="alert"]') : scene === 'conflict' ? !question.textContent.includes('one more check') : question.dataset.state !== 'settled') throw new Error('Wrong answer state');
+  document.body.dataset.proof = 'pass';
+}
+document.title = 'ready';
+</script>
+</body>
+</html>
