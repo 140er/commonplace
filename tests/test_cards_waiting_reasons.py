@@ -118,6 +118,16 @@ def test_card_plan_review_and_release_are_told_apart(hub):
     assert summary["plan_review"] == 1 and summary["not_released"] == 1
 
 
+def test_plan_review_still_refuses_a_claim_with_its_own_code(hub):
+    w = world(hub)
+    plan = w.card(title="Plan")
+    with w.boards.store.transaction() as conn:
+        conn.execute("UPDATE tasks SET labels='[\"plan\"]' WHERE id=?", (plan,))
+    status, error = claim(w, plan)
+    assert status >= 400 and error["code"] == "plan_review"
+    assert error["error"].endswith("Waiting for plan review")
+
+
 def test_card_no_agent_connected(hub):
     w = world(hub)
     a = w.card()
