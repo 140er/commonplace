@@ -17,6 +17,7 @@ SETTINGS = [
     "/api/phone-push",
     "/api/chat-settings",
     "/api/settings/orchestration",
+    "/api/runners",
 ]
 SHARED = ["/api/boards", "/api/needs-me", "/api/rules/count"]
 
@@ -66,7 +67,7 @@ const content = {
 };
 const values = {
   '/api/boards': { boards: [] }, '/api/needs-me': {}, '/api/rules/count': {},
-  '/api/connections': {}, '/api/webhooks': { webhooks: [] },
+  '/api/connections': {}, '/api/webhooks': { webhooks: [] }, '/api/runners': { machines: [] },
   '/api/plan': { plan: 'free' }, '/api/phone-push': {},
   '/api/chat-settings': { front: { enabled: false }, usage: { used_today: 0, user_used_today: 0 } },
 };
@@ -98,7 +99,7 @@ const context = {
   root: { querySelector: selector => selector === '#content' ? content : null },
   remember: () => ({}), restore() {}, capture: () => () => {}, navigation() {}, title() {},
   showError(value) { screenError = value; },
-  voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<h2>Agents</h2>',
+  voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<h2>Agents</h2>', runnersView: () => '<h2>Runner machines</h2>',
 };
 vm.createContext(context);
 vm.runInContext(read('api.js').replace(/export /g, '') + '\nconst e = escape;', context);
@@ -167,7 +168,7 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
   const label = {
     '/api/connections': 'Agents', '/api/webhooks': 'Webhooks', '/api/plan': 'Plan',
     '/api/phone-push': 'Phone notifications', '/api/chat-settings': 'Chat',
-    '/api/settings/orchestration': 'Agent orchestration',
+    '/api/settings/orchestration': 'Agent orchestration', '/api/runners': 'Runner machines',
   }[path] || path;
   assert.match(visible, /Could not load|timed out|unavailable|Invalid JSON/, 'A failed read must surface an error');
   assert.ok(visible.includes(label), `Error must identify ${label}: ${visible}`);
@@ -235,7 +236,7 @@ def test_settings_saved_state_after_reload(saved):
 
 def test_settings_deadline_after_navigation():
     result = subprocess.run(
-        ["node", "-e", HARNESS, SETTINGS[-1], "navigate"],
+        ["node", "-e", HARNESS, "/api/settings/orchestration", "navigate"],
         cwd=ROOT,
         capture_output=True,
         text=True,

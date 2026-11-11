@@ -369,7 +369,8 @@ def test_pre_p0_upgrade(world):
     w = world
     # Recreate the table using frozen pre-epoch DDL, preserving the bound row.
     original = dict(w.machine())
-    legacy = {k: v for k, v in original.items() if k != "binding_epoch"}
+    added = ("binding_epoch", "write_wings")  # both columns postdate the frozen DDL
+    legacy = {k: v for k, v in original.items() if k not in added}
     with w.db._lock:
         w.db._conn.execute("DROP TABLE runner_machines")
         w.db._conn.executescript(LEGACY_MACHINE_DDL)
@@ -406,7 +407,8 @@ def test_pre_p0_upgrade(world):
         w.js = jobs.open_store(w.gw, w.ws)
         assert epoch(w) == 1
         assert w.machine()["binding_state"] == "owner_attested"
-        assert {k: v for k, v in dict(w.machine()).items() if k != "binding_epoch"} == legacy
+        assert {k: v for k, v in dict(w.machine()).items() if k not in added} == legacy
+        assert w.machine()["write_wings"] is None
         with w.db._lock:
             column = next(
                 r
