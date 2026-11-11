@@ -44,8 +44,8 @@ We do not accept summarization of user content, cloud storage/sync features, tel
 
 ## Host and test limits
 
-- At most 12 concurrent Claude agents/turns on t3code-home across all orchestrators and their delegated children. Queue the rest; start no new child above the cap.
-- No raw pytest on t3code-home: run tests only through heavy or pr-check so the slot cap holds; full batches prefer edge1.
+- At most 12 concurrent Claude agents/turns on the shared host across all orchestrators and their delegated children. Queue the rest; start no new child above the cap.
+- No raw pytest on the shared host: run tests only through the project's test runners so the slot cap holds; full batches prefer a dedicated runner.
 
 ## Setup
 
