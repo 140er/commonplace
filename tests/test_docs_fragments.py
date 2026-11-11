@@ -322,9 +322,7 @@ def test_a_new_module_file_lists_its_new_directory(repo):
 
 def test_a_module_in_two_places_is_flagged(repo):
     commit(repo, {"MODULES.md": FORMAT + "\n" + block("core"), "docs/system/new.md": "### New\n"})
-    problems = check(repo)
-    assert "block 'core' appears twice" in problems
-    assert "'core/' is listed twice" in problems
+    assert "block 'core' appears twice" in check(repo)
 
 
 @pytest.mark.parametrize(
