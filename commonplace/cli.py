@@ -91,6 +91,38 @@ def cmd_plan_set(args) -> int:
         db.close()
 
 
+def cmd_waitlist_list(args) -> int:
+    from . import capacity
+
+    db = _db(args)
+    try:
+        capacity.ensure_schema(db)
+        state = capacity.status(db)
+        limit = state["max_accounts"]
+        print(f"accounts  {state['accounts']} of {limit if limit is not None else 'unlimited'}")
+        for entry in capacity.waitlist(db):
+            print(f"{entry['status']:<9} {entry['email']}  {entry['created_at']}")
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_waitlist_admit(args) -> int:
+    from . import capacity
+
+    db = _db(args)
+    try:
+        capacity.ensure_schema(db)
+        actor = db.user(_actor(db, args))
+        if not actor["is_admin"]:
+            raise ControlError("admin access required")
+        for email in capacity.admit(db, actor=actor["id"], email=args.email, next_n=args.next or 0):
+            print(f"admitted  {email}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_plan_show(args) -> int:
     from .workers import WorkerSupervisor
 
@@ -153,6 +185,8 @@ def cmd_token_add(args) -> int:
 
     if "memory:import:read" in (_csv(args.scopes) or []):
         raise ValueError("Imported history requires explicit browser reader consent")
+    if "cards:decide" in (_csv(args.scopes) or []):
+        raise ValueError("Answering Needs-me questions requires the owner's browser consent")
     defaults = CLIENT_PRESETS.get(args.client, DEFAULT_CLIENT_PRESET)
 
     def value(name, fallback):
@@ -786,9 +820,10 @@ def _client_parsers(sub):
         parser.set_defaults(func=handler)
     check = sub.add_parser("check", help="warn about instructions or memory saved only locally")
     check.set_defaults(func=cmd_check)
-    from . import sync_cli
+    from . import review_rules, sync_cli
 
     sync_cli.register(sub)
+    review_rules.register(sub)
     for parser in (sub.choices["onboard"], check):
         parser.add_argument("--home", type=Path)
         project = parser.add_mutually_exclusive_group()
@@ -947,6 +982,11 @@ def cmd_runner(args) -> int:
 
         return chat_agent.run(args.config, args.once)
 
+    if args.action == "report":
+        from .runner import report
+
+        return report.run(args)
+
     from .runner.agent import check, run
 
     if args.action == "check":
@@ -968,6 +1008,15 @@ def build_parser() -> argparse.ArgumentParser:
         if action in ("run", "chat"):
             s.add_argument("--once", action="store_true")
         s.set_defaults(func=cmd_runner)
+    s = runner.add_parser("report", help="report a started run's status, log and usage")
+    s.add_argument("--config", required=True)
+    s.add_argument("--job", required=True, help="job id of the started run")
+    s.add_argument("--status", choices=("completed", "errored", "stopped"))
+    s.add_argument("--log-ref")
+    for flag in ("--input-tokens", "--output-tokens", "--cost-micros"):
+        s.add_argument(flag, type=int)
+    s.add_argument("--currency")
+    s.set_defaults(func=cmd_runner)
 
     s = sub.add_parser("init", help="create the control database and the first admin")
     s.add_argument("--admin-email", required=True)
@@ -991,6 +1040,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = plan.add_parser("show")
     s.add_argument("user")
     s.set_defaults(func=cmd_plan_show)
+
+    waitlist = sub.add_parser("waitlist").add_subparsers(dest="action", required=True)
+    waitlist.add_parser("list").set_defaults(func=cmd_waitlist_list)
+    s = waitlist.add_parser("admit")
+    s.add_argument("email", nargs="?")
+    s.add_argument("--next", type=int, help="admit the oldest N waiting people")
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_waitlist_admit)
 
     ws = sub.add_parser("workspace").add_subparsers(dest="action", required=True)
     s = ws.add_parser("add")
@@ -1142,7 +1199,7 @@ def main(argv=None) -> int:
     if args.command == "runner" or orch_cli.repo_only(args):
         # Repository checks and the runner client never open the data directory.
         return args.func(args)
-    if args.command in {"onboard", "remember", "rule", "check", "sync"}:
+    if args.command in {"onboard", "remember", "rule", "check", "sync", "review-rules"}:
         from .client import ClientError
 
         # Client operations neither open server databases nor take their lock.
