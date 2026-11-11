@@ -187,7 +187,13 @@ def require_visible(row, principal) -> None:
         raise ToolError("no: card not found")
 
 
-def owns_card(row, actor):
+def owns_card(row, actor, *, held_only=False):
+    """The actor's card: assigned, self-created and unassigned, or its own question in review.
+
+    ``held_only`` (runner workers) narrows this to cards assigned to the actor, so a
+    question the worker asked on a board it cannot write does not become writable."""
+    if held_only:
+        return row is not None and row["assignee"] == actor
     return row is not None and (
         row["assignee"] == actor
         or (row["assignee"] is None and row["created_by"] == actor)
@@ -491,7 +497,11 @@ class BoardStore:
                 principal.policy.has_scope("memory:write")
                 and (
                     principal.policy.can_write_wing(row["board_wing"])
-                    or owns_card(row, principal.actor)
+                    or owns_card(
+                        row,
+                        principal.actor,
+                        held_only=getattr(principal, "runner", None) is not None,
+                    )
                 )
             ):
                 raise ToolError("no: this connection cannot change this board")

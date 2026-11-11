@@ -1094,7 +1094,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - A `task_update` lesson goes to the card's wing when that wing is literally one of the connection's write wings, otherwise to its first write wing. Comments and asks remain submissions gated by read scope.
+  - A `task_update` lesson goes to the card's wing when that wing is literally one of the connection's write wings and the connection is not restricted, otherwise to its first write wing. Comments and board-scoped asks remain submissions gated by read scope. For runner principals the own-card wing bypass covers only assigned cards.
 
   - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill. Subscription lookup exceptions log their type and stack locations while retaining fail-closed authority.
 
@@ -1181,7 +1181,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Reset-before-start is refused in both orchestration modes, including retry; runner admission precedes control authority held through commit. Owner resolution audits under runner-first ordering.
   - A machine may start a todo card reserved for its own worker or a doing card already held by that worker.
-  - A start needs the board wing to be exactly one of the worker's write wings; grants without `write_wings` keep the first wing as the only one. Only a signed-in person owner changes the set, and only to existing, non-private, granted wings. Comments and asks follow read scope, and held cards stay editable after narrowing. The `runner.patch` audit reason records `write_set +added -removed`; a registry `PermissionError` maps to 403.
+  - A start needs the board wing to be exactly one of the worker's write wings; grants without `write_wings` keep the first wing as the only one. Only a signed-in person owner changes the set, and only to existing, non-private, granted wings. Comments and board-scoped asks follow read scope; outside the write set the worker edits only cards assigned to it, which stay editable after narrowing. The `runner.patch` audit reason records `write_set +added -removed` and `primary old->new`; a registry `PermissionError` maps to 403.
 
   - Other assignees, waiting-person gates and unreleased origins remain refused.
   - Enabled starts reject unresolved same-board blockers through read-only board probes, without constructing a board store inside a runner transaction.

@@ -151,8 +151,15 @@ def test_write_set_change_is_audited_and_resets_the_binding(signup_hub, owners):
             )
         ]
     assert reasons == ["binding_reset;write_set +compute", "binding_reset;write_set -compute"]
-    # Unchanged set: no reset and no diff; narrowing wings records the extras it drops.
-    for patch in ({"write_wings": []}, {"write_wings": ["compute", "notes"]}, {"wings": WINGS[:2]}):
+    # Unchanged set: no reset and no diff; narrowing wings records the extras it drops;
+    # swapping the first write wing records the new primary even with the same members.
+    swap = {"wings": ["compute", "platform"], "write_wings": ["platform"]}
+    for patch in (
+        {"write_wings": []},
+        {"write_wings": ["compute", "notes"]},
+        {"wings": WINGS[:2]},
+        swap,
+    ):
         status, body = _patch(hub, machine, patch, cookie=owner["cookie"])
         assert status == 200, (status, body)
     with hub.db._lock:
@@ -168,6 +175,7 @@ def test_write_set_change_is_audited_and_resets_the_binding(signup_hub, owners):
         "",
         "binding_reset;write_set +compute +notes",
         "binding_reset;write_set -notes",
+        "binding_reset;primary platform->compute",
     ]
 
 
@@ -185,10 +193,62 @@ def test_submissions_follow_read_scope_not_the_write_set(signup_hub, owners):
     }
     _ok(_tool(hub, worker, "task_comment", task=readable["number"], text="Synthetic note."))
     _ok(_tool(hub, worker, "ask", board="notes", **question))
+    # Asking about an existing card hands it off, which needs write access to its wing.
+    response = _tool(hub, worker, "ask", task=readable["number"], **question)
+    assert "error" in response or response["result"].get("isError"), response
     response = _tool(hub, worker, "task_comment", task=unreadable["number"], text="Synthetic.")
     assert "error" in response or response["result"].get("isError"), response
     response = _tool(hub, worker, "ask", board="shared", **question)
     assert "error" in response or response["result"].get("isError"), response
+
+
+def _task_row(hub, owner, number):
+    from commonplace.boards.store import BoardStore
+
+    with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+        return dict(
+            conn.execute(
+                "SELECT id, title, status, assignee, return_to FROM tasks WHERE id=?", (number,)
+            ).fetchone()
+        )
+
+
+def test_worker_cannot_rewrite_its_own_question_on_a_read_only_board(signup_hub, owners):
+    """Asking on a readable board is allowed, but the question card does not become the
+    worker's to edit: only cards assigned to it skip the write-set check."""
+    hub, owner = signup_hub, owners["A"]
+    machine = _enroll(hub, owner, wings=WINGS)  # writes platform only; reads notes
+    worker = machine["worker_token"]
+    held = card(hub, owner, board="notes")  # also creates the notes board
+    _ok(
+        _tool(
+            hub,
+            worker,
+            "ask",
+            board="notes",
+            question="Which synthetic option should this example card use next?",
+            options=["First option", "Second option"],
+            context="Synthetic context for a regression test.",
+        )
+    )
+    asked = held["number"] + 1
+    actor = hub.db.authenticate_connection(
+        _machine_row(hub, owner, machine)["worker_connection_id"]
+    ).actor
+    before = _task_row(hub, owner, asked)
+    assert before["status"] == "review" and before["return_to"] == actor, before
+    response = _tool(hub, worker, "task_update", task=asked, title="Worker rewrote its question")
+    assert "error" in response or response["result"].get("isError"), response
+    assert _task_row(hub, owner, asked)["title"] == before["title"]
+    # A card assigned to the worker stays editable outside the write set.
+    from commonplace.boards.store import BoardStore
+
+    with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET status='doing', assignee=? WHERE id=?", (actor, held["number"])
+        )
+    _ok(_tool(hub, worker, "task_update", task=held["number"], title="Held card edit"))
+    assert _task_row(hub, owner, held["number"])["title"] == "Held card edit"
 
 
 def _lesson_wing(hub, owner, worker, task):
@@ -235,6 +295,31 @@ def test_lessons_stay_with_the_card_wing_inside_the_write_set(signup_hub, owners
         else:
             _ok(_tool(hub, agent, "task_take_next", task=task["number"]))
         assert _lesson_wing(hub, owner, agent, task) == expected, board
+
+
+def test_restricted_connections_keep_lessons_in_their_write_wing(signup_hub, owners):
+    """A standard token whose write wing is the inbox keeps lessons there, even for a card
+    in one of its extra write wings."""
+    hub, owner = signup_hub, owners["A"]
+    _enroll(hub, owner, wings=WINGS)
+    agent_id, agent = cli_token(
+        owner,
+        "inbox-agent",
+        profile="standard",
+        trust="standard",
+        read_wings=",".join([*WINGS, "inbox"]),
+        write_wing="inbox",
+        write_wings="compute",
+    )
+    actor = hub.db.authenticate_connection(agent_id).actor
+    task = card(hub, owner, board="compute")
+    from commonplace.boards.store import BoardStore
+
+    with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+        conn.execute(
+            "UPDATE tasks SET status='doing', assignee=? WHERE id=?", (actor, task["number"])
+        )
+    assert _lesson_wing(hub, owner, agent, task) == "inbox"
 
 
 def test_registry_permission_error_is_a_403_not_a_500(signup_hub, owners, monkeypatch):

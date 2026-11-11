@@ -228,11 +228,15 @@ def _audit(db, owner, action, machine_id, *, reset=False, detail=""):
 
 
 def _write_set_diff(before, after):
-    """``write_set +added -removed`` (wing names only), or "" when the set is unchanged."""
+    """``write_set +added -removed`` and ``primary old->new`` (wing names only), or ""."""
     changes = [f"+{w}" for w in after if w not in before] + [
         f"-{w}" for w in before if w not in after
     ]
-    return "write_set " + " ".join(changes) if changes else ""
+    parts = ["write_set " + " ".join(changes)] if changes else []
+    if before[0] != after[0]:
+        # The first write wing is the default for unnamed writes, so a swap is a change too.
+        parts.append(f"primary {before[0]}->{after[0]}")
+    return ";".join(parts)
 
 
 def _write(db, machine_id, data):

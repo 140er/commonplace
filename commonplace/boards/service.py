@@ -1126,6 +1126,14 @@ class BoardService:
     def _own_card(self, row):
         return owns_card(row, self.principal.actor)
 
+    def _writes_own_card(self, row):
+        """Own cards skip the wing check; a runner worker's only when assigned to it."""
+        return owns_card(
+            row,
+            self.principal.actor,
+            held_only=getattr(self.principal, "runner", None) is not None,
+        )
+
     def _plan_gate(self, conn, board_id):
         """The orchestrator plan gate of a board with an accepted live config, else None."""
         from commonplace.orch import plan_check
@@ -1430,7 +1438,7 @@ class BoardService:
                     "no: restricted-origin work needs parent or workspace owner release"
                 )
         # Board ownership is independent of memory write destinations and trust.
-        if submission or self._own_card(row):
+        if submission or self._writes_own_card(row):
             return
         if claiming and self._top_level_taker() and row["status"] == "todo":
             # Work-claim authority is coordination, not memory-write trust
@@ -3494,9 +3502,11 @@ class BoardService:
                 policy = self.principal.policy
                 # A lesson stays with its card when the card's wing is literally one of this
                 # connection's write wings; otherwise it goes to the first write wing.
+                # Restricted connections (untrusted, or writing to the inbox) keep theirs.
                 wing = (
                     board["wing"]
                     if policy.write_wing
+                    and not _restricted(self.principal)
                     and board["wing"] in (policy.write_wing, *policy.write_wings)
                     else policy.write_wing or board["wing"]
                 )
