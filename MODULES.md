@@ -552,6 +552,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
+  - `tests/test_commonplace_release_loop.py` proves a same-named agent in another workspace is refused by the reservation authority check on its own same-numbered card, not by a missing card, and that a member's status move on another actor's todo or doing card is refused for take over, drop, hand off, done and review on ordinary, held and released reservations.
+
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
   - Assertion-only review witnesses pin public facet compatibility, real-wrapper projected retry, refusal envelopes and negative-cache invalidation.
