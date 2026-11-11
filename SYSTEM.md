@@ -1515,7 +1515,7 @@ A bot turn runs on its own thread and never holds a lock, the admission gate or 
 
 ### Bots use machines only through the runner's own checks
 
-A bot never holds machine rights. `commonplace/bots/machines.py` lists, starts and cancels as the person who typed, through the runner's registry, `card_start`, `card_start_status` and `card_start_cancel`, so a person can use a machine only when the runner would let them start on it. Attestation is shown as what it is, set by the owner and not verified, and the listing carries no credential, token or host name. Running commands is not offered until a provider reports that it can.
+A bot never holds machine rights. `commonplace/bots/machines.py` lists, starts and cancels as the person who typed, through the runner's registry, `card_start`, `card_start_status` and `card_start_cancel`, so a person can use a machine only when the runner would let them start on it. Attestation is shown as what it is, set by the owner and not verified, and the listing carries no credential, token or host name. Starting an agent and cancelling a start that has not launched are confirm actions (one tap, label built by the server, request key derived from the turn so a repeat creates one start); running commands is not offered until a provider reports that it can.
 
 ### After Done: archive hides, never deletes
 

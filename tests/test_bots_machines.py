@@ -4,10 +4,19 @@ import json
 
 import pytest
 
+import commonplace.bots.tools_machines  # noqa: F401  (registers the tools)
 from commonplace import sessions
-from commonplace.bots import machines
+from commonplace.bots import blocks, machines, tools
 from commonplace.runner import jobs, registry
 from tests._bots_helpers import bots_hub_fixture  # noqa: F401
+from tests.test_bots_turn import (
+    call,
+    configure,
+    confirm,
+    fake as scripted_model,  # noqa: F401
+    talk,
+    thread,
+)
 from tests.test_commonplace_boards import service
 
 GRANT = {
@@ -365,3 +374,180 @@ def test_no_credential_appears_in_any_returned_value(env):
     for secret in env.secrets:
         assert secret not in text
     assert "lease_token" not in text and made["machine_id"] in text
+
+
+@pytest.fixture(name="model")
+def model_fixture(request):
+    return request.getfixturevalue("scripted_model")
+
+
+# The bot tools
+
+
+def tap(env, bot, events):
+    [block] = [data for event, data in events if event == "block" and data["type"] == "confirm"]
+    status, body, _ = confirm(env.bots, bot["id"], block["pending"])
+    assert status == 200, body
+    return block, body["message"]
+
+
+def ask(env, model, name, text, request_id, **arguments):
+    model.script = [[call(name, **arguments)], [("text", "Waiting for your tap.")]]
+    return talk(env.bots, text, request_id)
+
+
+def test_start_work_waits_for_a_tap_and_starts_exactly_once(env, model):
+    env.enroll()
+    configure(env.bots)
+    card = env.card()
+    bot, events = ask(env, model, "start_work", "Start it", "request-0001", ref=card)
+    [block] = [d for e, d in events if e == "block"]
+    assert block["label"] == "Start an agent on “Demo task”" and block["state"] == "open"
+    assert env.jobs() == []  # a tool call alone starts nothing
+    _, message = tap(env, bot, events)
+    assert message["blocks"][0]["ok"] is True
+    [job] = env.jobs()
+    assert job["request_key"].startswith("request-0001:") and job["task_number"] == card
+    work = [b for b in message["blocks"] if b["type"] == "work"]
+    assert work and work[0]["card"] == card
+    again = confirm(env.bots, bot["id"], block["pending"])
+    assert again[0] == 409 and len(env.jobs()) == 1
+    shown = thread(env.bots, bot["id"])["messages"][-1]["blocks"]
+    assert [b["status"] for b in shown if b["type"] == "work"] == ["working"]
+
+
+def test_the_confirm_label_names_the_machine_and_unknown_ones_are_refused(env, model):
+    env.enroll()
+    configure(env.bots)
+    card = env.card()
+    _, events = ask(
+        env, model, "start_work", "Start it", "request-0001", ref=card, machine="example-machine"
+    )
+    [block] = [d for e, d in events if e == "block"]
+    assert block["label"] == "Start an agent on “Demo task” on example-machine"
+    _, events = ask(
+        env, model, "start_work", "Start it", "request-0002", ref=card, machine="somewhere"
+    )
+    assert [d for e, d in events if e == "block" and d["type"] == "confirm"] == []
+    [refused] = [d for e, d in events if e == "action" and d["state"] == "refused"]
+    assert refused["tool"] == "start_work" and env.jobs() == []
+
+
+def test_a_refused_start_is_a_plain_sentence_and_nothing_is_created(env, model):
+    env.enroll(wings=["notes"])
+    configure(env.bots)
+    bot, events = ask(env, model, "start_work", "Start it", "request-0001", ref=env.card())
+    _, message = tap(env, bot, events)
+    assert message["blocks"][0]["ok"] is False and "code" not in message["blocks"][0]
+    assert "isn't allowed to work in this project's area" in message["text"]
+    assert env.jobs() == []
+
+
+def test_a_task_of_another_project_is_not_started_from_this_bot(env, model):
+    env.enroll()
+    configure(env.bots)
+    env.bots.add_board("other", "Other")
+    card = env.card(board="other")
+    _, events = ask(env, model, "start_work", "Start it", "request-0001", ref=card)
+    assert [d for e, d in events if e == "block" and d["type"] == "confirm"] == []
+    assert env.jobs() == []
+
+
+def test_a_member_is_told_plainly_that_only_owners_start_agents(env, model):
+    env.enroll()
+    configure(env.bots)
+    card = env.card()
+    model.script = [[call("start_work", ref=card)], [("text", "Waiting.")]]
+    bot, events = talk(env.bots, "Start it", "request-0001", auth=env.bots.member)
+    pending = next(d["pending"] for e, d in events if e == "block")
+    status, body, _ = confirm(env.bots, bot["id"], pending, auth=env.bots.member)
+    assert status == 200, body
+    assert "owner" in body["message"]["text"] and env.jobs() == []
+
+
+def test_stop_work_cancels_a_start_that_has_not_launched(env, model):
+    env.enroll()
+    configure(env.bots)
+    card = env.card()
+    bot, events = ask(env, model, "start_work", "Start it", "request-0001", ref=card)
+    tap(env, bot, events)
+    _, events = ask(env, model, "stop_work", "Stop it", "request-0002", ref=card)
+    [block] = [d for e, d in events if e == "block"]
+    assert block["label"] == "Cancel the agent start on “Demo task”"
+    assert env.jobs()[0]["state"] == "queued"
+    _, message = tap(env, bot, events)
+    assert message["blocks"][0]["ok"] is True and env.jobs()[0]["state"] == "cancelled"
+
+
+def test_stop_work_says_plainly_that_a_launched_agent_cannot_be_stopped(env, model):
+    env.enroll()
+    configure(env.bots)
+    card = env.card()
+    bot, events = ask(env, model, "start_work", "Start it", "request-0001", ref=card)
+    tap(env, bot, events)
+    env.set_state(env.jobs()[0]["id"], "started")
+    _, events = ask(env, model, "stop_work", "Stop it", "request-0002", ref=card)
+    _, message = tap(env, bot, events)
+    assert message["blocks"][0]["ok"] is False
+    assert "can't be stopped from here" in message["text"]
+    nothing = env.card("Nothing started")
+    _, events = ask(env, model, "stop_work", "Stop it", "request-0003", ref=nothing)
+    _, message = tap(env, bot, events)
+    assert "nothing to cancel" in message["text"]
+
+
+def test_list_machines_stores_a_block_that_hydrates_per_reader(env, model):
+    made = env.enroll()
+    configure(env.bots)
+    bot, events = ask(env, model, "list_machines", "What machines?", "request-0001")
+    [shown] = [d for e, d in events if e == "block"]
+    assert [m["label"] for m in shown["machines"]] == ["example-machine"]
+    stored = env.bots.store().messages(bot["id"], env.owner.user_id)
+    assert [b for m in stored for b in m["blocks"] if b["type"] == "machines"] == [
+        {"type": "machines"}
+    ]
+    member = blocks.Reader(env.gateway, env.member)
+    assert blocks.hydrate(member, [{"type": "machines"}])[0]["machines"] == []
+    registry.revoke(env.db, env.owner, made["machine_id"])
+    reread = thread(env.bots, bot["id"])["messages"][-1]["blocks"]
+    assert [b["machines"] for b in reread if b["type"] == "machines"] == [[]]
+
+
+def test_list_machines_for_an_empty_list_carries_the_reason(env, model):
+    configure(env.bots)
+    _, events = ask(env, model, "list_machines", "What machines?", "request-0001")
+    [shown] = [d for e, d in events if e == "block"]
+    assert shown["machines"] == []
+    assert "No machine is set up" in json.dumps(model.calls[-1]["messages"])
+
+
+def offered(env):
+    turn = tools.Turn(
+        env.gateway,
+        env.owner.workspace_id,
+        env.owner.user_id,
+        {"id": "x", "board": "work"},
+        {"id": 1, "text": "run ls"},
+        "request-0001",
+    )
+    return {tool.name for tool in tools.offered(turn)}
+
+
+def test_run_command_is_offered_only_while_a_machine_can_run_commands(env, model):
+    env.enroll()
+    assert {"list_machines", "start_work", "stop_work"} <= offered(env)
+    assert "run_command" not in offered(env)
+    provider = FakeProvider(run_command=True)
+    machines.register_provider(provider)
+    assert "run_command" in offered(env)
+    configure(env.bots)
+    bot, events = ask(
+        env, model, "run_command", "run ls", "request-0001", machine="fake-machine", command="ls"
+    )
+    [block] = [d for e, d in events if e == "block"]
+    assert block["label"] == "Run a command on fake-machine: ls"
+    assert provider.ran == []
+    tap(env, bot, events)
+    assert provider.ran == [("fake-machine", "ls")]
+    machines.unregister_provider("fake")
+    assert "run_command" not in offered(env)
