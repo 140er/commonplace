@@ -37,7 +37,8 @@ function fixture({ machines, wings = ['shared', 'team'], fail = {}, wingsGate = 
   };
   const state = { machines: machines ?? [machine()], copied: [] };
   const api = async (path, options = {}) => {
-    calls.push({ path, method: options.method || 'GET', body: options.body });
+    calls.push({ path, method: options.method || 'GET', body: options.body});
+    (calls.timeouts ??= {})[`${options.method || 'GET'} ${path}`] = options.timeoutMs;
     const key = `${options.method || 'GET'} ${path}`;
     if (fail[key]) throw Object.assign(new Error(fail[key]), { status: 409 });
     if (path === '/api/runners' && !options.method) return { machines: state.machines };
@@ -196,6 +197,7 @@ const field = (name, value, type = 'text', checked = false) => ({ name, value, t
   const f = fixture({ wingsGate });
   f.block.show(f.host); await flush();
   assert.doesNotMatch(f.regions.list.innerHTML, /Loading runner machines/);
+  assert.ok(f.calls.timeouts['GET /api/runners'] > 0 && f.calls.timeouts['GET /api/connections'] > 0, 'both reads are bounded by a timeout');
   assert.match(f.regions.list.innerHTML, /bench-1/);
   assert.match(f.regions.list.innerHTML, /Loading wings/); assert.doesNotMatch(f.regions.list.innerHTML, /type="checkbox"/);
   release(); await flush();
