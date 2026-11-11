@@ -110,6 +110,13 @@ Stop old processes before update and explicitly reinstall
 transcript-only or uninstall: unchanged service restart policies retry old rejected
 configs. No deployment, replacement importer or memory-coverage completion is claimed.
 
+The generic `agent-log` capture source extends feed token selection to its own
+capture token, still never an import credential. Its records name `agent` and
+`session_id`; the capture identity `<agent>:<session_id>` lives in the filing
+actor's private namespace, so privacy, opt-in, cadence and idempotency are those
+of the native sources. Native agent names are reserved and a stream cannot carry
+records of another agent or session. No Cursor database reader is claimed.
+
 ### Agent adapter contract
 
 - Any connection takes part in a board through the same five tools (`session_start`, `task_take_next`, `task_heartbeat`, `task_update`, `task_handoff`); `docs/agent-adapter.md` is the contract and `commonplace/adapter.py` its reference implementation. The hub has no per-agent-type branch on that path.
@@ -975,6 +982,8 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
 
+- **Bots web screens (S5):** `#/bots` and `#/bots/<id>` (`web/static/bots.js`, `botstream.js`, `bots.css`) talk only to the `/api/bots*` contract and the existing `POST /api/cards/<n>/decide`; they hold no conversation text beyond the open page, store nothing in the browser except an unsent draft in memory, and never send a model or mode choice. Every server string is escaped before it is drawn. A turn is streamed with `fetch` and a stream reader; a connection lost after the `ack` event is not a failure, the page polls `GET /api/bots/<id>/messages?after=` until `running` is false. The roster is polled every 15 s and an open thread every 5 s (1.5 s while a turn runs), both paused while the tab is hidden. A failed send keeps the text and retries under the same `request_id`. Work stays "work", "task" and "question" in the screen's wording.
+
 ## Numbers
 
 | Label | Number | Source |
@@ -1482,6 +1491,14 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 - Owner-approved waiver ids, one per line as `W<n>: <scope>`.
 
 - None are approved yet.
+
+### Bots keep conversations in the workspace store
+
+Bot threads live only in the workspace file `bots.sqlite3`; the control database, logs, audit reasons and error strings never hold message, model or tool-argument text. A bot is not a principal: every read goes through the board services as the person it belongs to, and `/api/bots*` serves signed-in people only (agent tokens and machine credentials get 404, anonymous callers 401). Display text is redacted while the stored message stays verbatim and append-only. Roster previews are cut to 200 characters for display only. Input bounds count raw characters, never the stripped text, so verbatim storage and the limit agree. When a person already has 50 live bots, default bots for further projects are simply not created.
+
+### Bots hear about their work without being asked
+
+A hub event listener appends one short `event` message to a bot's thread when a card the bot filed needs its owner, is ready for review or is done, and when the project's orchestrator answers a post the bot forwarded (the first coordinator reply after it; the reply is stored verbatim and marked as the orchestrator's). It runs on the emitting thread after the commit, never raises, filters with one indexed lookup before any other work and does nothing for a card or post no bot is linked to. It speaks only in the bot that filed or forwarded the item and only while the owner can still see it (fresh person principal, same visibility check as webhooks). A work item posts when its status word changes and only for an event newer than the last one applied, decided and written in one transaction, so a redelivered, repeated, stale or racing event adds nothing; a forwarded post is answered once, by the coordinator's first reply after it, even when replies are handled out of order. Card titles are redacted and cut for display; logs carry a code and a stack location, never text. A start that never launched has no hub event, so no update is made for it.
 
 ### After Done: archive hides, never deletes
 
