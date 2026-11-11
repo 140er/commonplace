@@ -374,6 +374,7 @@ def expire_claims(conn, board_id):
 _MIGRATED: dict[str, tuple] = {}
 
 BUSY_TIMEOUT = 10
+PENDING_PR_REPO = "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
 
 
 def _identity(conn, path):
@@ -465,15 +466,12 @@ class BoardStore:
                     conn.execute(
                         "ALTER TABLE task_links ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0"
                     )
-                pending_pr_repo = (
-                    "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
-                )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS tasks_pending_pr_repo ON tasks(id) WHERE "
-                    + pending_pr_repo
+                    + PENDING_PR_REPO
                 )
                 for row in conn.execute(
-                    "SELECT id,pr_url FROM tasks WHERE " + pending_pr_repo
+                    "SELECT id,pr_url FROM tasks WHERE " + PENDING_PR_REPO
                 ).fetchall():
                     repo = pr_repository(row["pr_url"])
                     if repo:
@@ -488,17 +486,23 @@ class BoardStore:
             _MIGRATED[self.path] = _identity(conn, self.path)
 
     def _migrated(self, conn, legacy_origin) -> bool:
-        """Read-only: this process already migrated this very file, and no legacy
-        backlog row is still waiting for a ``legacy_origin`` verdict."""
+        """Read-only: this process already migrated this very file, no legacy backlog
+        row waits for a ``legacy_origin`` verdict and no PR URL written around
+        ``BoardService`` (which sets ``pr_repo`` itself) waits for its ``pr_repo``."""
         known = _MIGRATED.get(self.path)
         if known is None or known != _identity(conn, self.path):
             return False
-        return (
-            legacy_origin is None
-            or conn.execute(
+        if (
+            legacy_origin is not None
+            and conn.execute(
                 "SELECT 1 FROM tasks WHERE status='backlog' AND restricted_origin IS NULL LIMIT 1"
             ).fetchone()
-            is None
+        ):
+            return False
+        # Unindexable URLs stay pending for good; only a resolvable one needs the write.
+        return not any(
+            pr_repository(row[0])
+            for row in conn.execute("SELECT pr_url FROM tasks WHERE " + PENDING_PR_REPO)
         )
 
     @contextmanager

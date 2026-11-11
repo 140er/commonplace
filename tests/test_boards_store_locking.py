@@ -18,7 +18,7 @@ from commonplace.boards import store as board_store
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import BoardStore
 from commonplace.http_util import log_failure
-from commonplace.orch import durable, orch_store, stall, triggers
+from commonplace.orch import durable, stall, store as orch_store, triggers
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._split_helpers import world
 from tests.test_orch_runner import BOARD
@@ -45,6 +45,8 @@ def hold_write_lock(path):
 def test_warm_reads_succeed_while_another_connection_holds_the_write_lock(hub, monkeypatch):
     w = world(hub, on=False, runner=True)
     card = w.card()
+    # A PR write sets pr_repo itself, so the next open has no backfill to write.
+    BoardService(w.ctx(w.owner)).task_update(card, pr="https://example.test/org/repo/pull/7")
     triggers.arm_cursor(w.gw, w.ws, BOARD)
     directory = w.gw.workspace_dir(w.ws)
     BoardStore(directory)  # warm: this process already migrated the file
