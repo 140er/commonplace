@@ -64,6 +64,49 @@ enabling fixed-operation execution alone does not enable collection. Scope ceili
 charged permanently at intake, including unused or cancelled reservations.
 Unknown attempts retain their slots and never automatically recollect.
 
+## Provision a script target
+
+One installer invocation replaces the manual operator prerequisites for the target
+helper and script sandbox. It must run once as root; that single elevation is the
+only accept, and nothing after it asks anything. It installs no packages, fetches
+nothing, scans no network and reads no secret: the controller's public ed25519 key
+is passed in. Prerequisites it refuses without: a root-owned non-setuid
+`/usr/bin/bwrap`, cgroup v2 with cpu/memory/pids, systemd, an sshd that Includes
+`/etc/ssh/sshd_config.d/*.conf` and does not `AcceptEnv` `SSH_USER_AUTH`, and the
+`commonplace` package importable by `/usr/bin/python3`.
+
+```sh
+python -m commonplace.compute.target_installer plan \
+  --workspace WORKSPACE --gateway GATEWAY --node NODE --controller-key-file controller.pub
+sudo python -m commonplace.compute.target_installer install \
+  --workspace WORKSPACE --gateway GATEWAY --node NODE --controller-key-file controller.pub
+sudo python -m commonplace.compute.target_installer uninstall
+```
+
+`plan` prints the exact actions and touches nothing. `install` creates the dedicated
+`commonplace-compute` account; the private workspace (`attempts/`, `inputs/`) and a
+32 MB / 4096-inode tmpfs scratch through an owned systemd mount unit; the root-owned
+runtime tree (python3, its shared libraries, zipped stdlib, lib-dynload) bind-mounted
+read-only, whose `runtime_inventory` becomes `runtime_digest`; a fixed sshd
+`Match User` drop-in with `ExposeAuthInfo yes`, a root-owned `authorized_keys`
+entry and a ForceCommand entry that runs the helper in a `Delegate=yes` systemd
+scope with the runner/fixture cgroup layout; then the protected
+`ScriptTargetConfig`, last, which is what activates the helper. Optional
+`--approval-keyset PATH` pins the owner's approval keys through the
+`pin_approval_keys` seam, which still raises `NotImplementedError("awaiting #431
+format")` until that format exists; it runs before activation.
+
+Each created item is recorded in the root-owned manifest
+`/etc/commonplace/compute-install-manifest.json`. A second `install` with the same
+settings changes nothing; different settings, or any pre-existing path that is not in
+the manifest, are refused. `uninstall` removes exactly what the manifest lists, leaves
+files that changed after install, and refuses while `attempts/`, `inputs/` or
+`scratch/` hold data (preserve claim evidence first; `--discard-workspace-data`
+overrides). `--root PREFIX` stages everything under a directory without root and runs
+no system command. To run the optional confinement fixture against a provisioned
+host, set `COMMONPLACE_COMPUTE_SANDBOX_FIXTURE` to the config path the installer
+prints and use `--workspace fixture-script-workspace`.
+
 ## Reconcile an uncertain execution
 
 After independently confirming termination or a non-run on the target, the

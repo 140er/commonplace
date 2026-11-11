@@ -413,6 +413,24 @@ positive integers (4096 hosts/results, 64 concurrent, 100 per second, 300 second
 maximum); the future dispatch service must account for aggregate consumption.
 No remote transport or execution capability is claimed by this domain module.
 
+### Compute target installer
+
+`commonplace.compute.target_installer` (`plan`, `install`, `uninstall`) provisions the
+script target that `target_helper.py` and `script_sandbox.py` document as operator
+prerequisites. A real install runs once as root and needs no later prompt; it reads
+no secret, contacts no server and installs no package (bubblewrap, systemd, sshd and
+the importable package are preflight requirements). Steps record into a root-owned
+manifest before they act: dedicated account, private workspace with attempts/inputs,
+bounded tmpfs scratch via a systemd mount unit, root-owned runtime tree bind-mounted
+read-only (its `runtime_inventory` is the config digest), a fixed ForceCommand entry
+that runs the helper in a `Delegate=yes` scope with the runner/fixture cgroup layout,
+an sshd drop-in (`ExposeAuthInfo yes`, no AcceptEnv of the auth-info variable,
+root-owned authorized key), an optional approval-key pin through the
+`pin_approval_keys` seam (#431 format pending) and, last, the protected config.
+Install is a no-op when already complete; uninstall removes only manifest entries,
+keeps changed files and attempt evidence. `--root` stages without root or system
+commands. Real-host behavior is unverified until a disposable VM run.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck
