@@ -610,6 +610,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
 
+  - `tests/test_topology_proposals.py` covers the topology write path through the real gateway (see the topology block); `tests/spaces_surfaces.json` pins `topology_propose` for the standard and full profiles, and the checked REST shapes in `tests/test_commonplace_rules_enforce.py` include its route.
+
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
 
   - `tests/bots_harness.html` and `tests/bots_shots.sh` are the screenshot harness for the bots screens: the real `bots.js` and stylesheets with a scripted fake API and stream, captured through headless Chromium.
@@ -1021,6 +1023,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Canonical Space REST aliases mapped to existing board tool authority.
 
+  - `extensions.MODULES` mounts `commonplace.topology.proposal_api`, and `_rest_tool` maps `POST /api/topology/proposals` to `topology_propose`, so the route shares the tool's visibility gate.
+
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
   - The extension seam lists `commonplace.agent_schedules`, installed after holds.
@@ -1383,6 +1387,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
 
+  - `WORKER_TOOLS` includes `topology_propose`, so a worker can report its machine's own topology facts. The tool still needs the `topology` wing in the machine grant, and the worker policy is rebuilt with the tool whenever the grant's wings are patched.
+
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
 
 
@@ -1600,6 +1606,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Canonical Space create in the checked REST write inventory.
+
+  - `topology_propose` is a checked write, over MCP and as `POST /api/topology/proposals` in the REST write inventory. Undoing a topology change is a signed-in owner's write and sits outside the inventory, like the card lifecycle routes.
 
   - The project panel write `PUT /api/projects/<slug>/panel` (`project_panel_set`) in the checked REST write inventory.
 
