@@ -448,6 +448,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - Search rows and `check_duplicate` matches carry a drawer's `topic` when it has one, so the gateway can hide diary entries whose topic names an unreadable thread wherever their words appear.
+
   - Diary reads accept a server-only `thread_scope` (declared with `x-mempalace-server-only`, so `tools/list` omits it): `probe` lists at most 1000 entry topics from metadata only and names the serving store, and `exclude_topics` with that `source` skips those entries before counting and windowing on the same store (the SQLite fast path or the collection); a changed store or any other scope is refused.
 
   - Local CLI and gated gateway CLI use the same pure drawer formatter, preserving headers, match scores, folded-copy labels, body whitespace conventions, empty results and BM25 fallback output. The gateway explicitly selects flat rows even when they carry import-authorization metadata and renders CLI text from gated rows for every principal; the local CLI keeps its metadata mode.
@@ -563,7 +565,7 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
-  - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls; count rows prove diary totals, search counters and duplicate flags describe only visible rows, and a partial source-family reader is refused; source IDs containing each character the old token scan stopped at, upper-case IDs, a client `thread_scope`, store pinning and probe faults have their own rows.
+  - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls; count rows prove diary totals, search counters and duplicate flags describe only visible rows, and a partial source-family reader is refused; source IDs containing each character the old token scan stopped at, upper-case IDs, a client `thread_scope`, store pinning, probe faults, unavailable memory and hidden-topic diary words on search, CLI search, duplicate checks and REST search have their own rows.
 
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
@@ -910,7 +912,7 @@ Format (read by `commonplace orch docs-check`):
 
   - The write-side room check shares the handoff thread-reference check, including diary and checkpoint diary topics, so a room or topic naming an unreadable thread in any form is refused as not found.
 
-  - Diary reads probe entry topics through the worker and exclude topics naming unreadable threads before the worker counts or windows entries, pinned to the probe's store. A client `thread_scope` never reaches the worker. Probe faults are logged by class; owners keep the gated read and other principals receive an empty diary.
+  - Diary reads probe entry topics through the worker and exclude topics naming unreadable threads before the worker counts or windows entries, pinned to the probe's store. A client `thread_scope` never reaches the worker. A probe validation error is returned as the answer, paused or unavailable memory propagates as on other routes, and other probe faults are logged by class and answered with an explicit error; no read falls back to an unscoped count.
 
   - CLI-compatible search, for every principal, acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 

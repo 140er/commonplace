@@ -73,6 +73,7 @@ WRITABLE = [
 ]
 DRAWER = "thread-room-probe"
 TEXT = "Shared exact words about the plan"
+DIARY_TEXT = "Diary words about the plan"
 
 
 def secret(thread, form):
@@ -180,7 +181,7 @@ def seed(collection, config, room):
             "Other plan words",
             "General words",
             "Other general words",
-            "Diary words about the plan",
+            DIARY_TEXT,
         ],
         metadatas=[
             {"wing": "shared", "room": room},
@@ -540,42 +541,120 @@ def test_diary_read_stays_on_the_store_its_probe_used(hub, collection, monkeypat
     assert refused.get("probe_fault") is True and "entries" not in refused, refused
 
 
-def failing_probe(hub, monkeypatch):
+def failing_probe(hub, monkeypatch, outcome):
+    """Replace only the gateway's topic probe with ``outcome`` (raised or returned)."""
     workers = hub.gateway.mediator.workers
     original = workers.call_tool
 
     def call_tool(principal, name, args):
         if args.get("thread_scope") == {"probe": True}:
-            raise RuntimeError("probe unavailable")
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
         return original(principal, name, args)
 
     monkeypatch.setattr(workers, "call_tool", call_tool)
 
 
-def test_probe_fault_is_logged_and_owner_keeps_diary(
-    hub, collection, config, blind, monkeypatch, caplog
-):
-    seed(collection, config, "general")
-    visible_diary_entry(collection)
-    failing_probe(hub, monkeypatch)
-    with caplog.at_level(logging.WARNING, logger="commonplace.gateway"):
-        body = payload(
-            mcp(hub, blind[1], "mempalace_diary_read", agent_name="probe", wing="shared")
-        )
-    assert len(body["entries"]) == 2, body
-    assert "Diary topic probe failed (RuntimeError)" in caplog.text
-    assert "probe unavailable" not in caplog.text
-
-
-def test_probe_fault_fails_closed_for_non_owners(hub, collection, config, monkeypatch):
-    seed(collection, config, "general")
-    visible_diary_entry(collection)
+def diary_member(hub):
     uid = hub.db.create_user("diary-member@example.test")
     hub.db.add_member(hub.workspace, uid, "member", actor=hub.admin)
     token = hub.token(
         "diary-member", user=uid, profile="full", scopes=["memory:read"], read_wings=["shared"]
     )
     assert hub.db.authenticate_token(token).role != "owner"
-    failing_probe(hub, monkeypatch)
-    body = payload(mcp(hub, token, "mempalace_diary_read", agent_name="probe", wing="shared"))
-    assert body == {"agent": "probe", "entries": [], "message": "No diary entries yet."}, body
+    return token
+
+
+@pytest.mark.parametrize("who", ["owner", "member"])
+@pytest.mark.parametrize("fault", ["raised", "malformed"])
+def test_probe_fault_answers_an_error_and_logs_its_class(
+    hub, collection, config, blind, monkeypatch, caplog, who, fault
+):
+    """Never an unscoped read, never a silent empty diary: an explicit error."""
+    seed(collection, config, "general")
+    visible_diary_entry(collection)
+    token = blind[1] if who == "owner" else diary_member(hub)
+    outcome = RuntimeError("probe unavailable") if fault == "raised" else {"topics": "x"}
+    failing_probe(hub, monkeypatch, outcome)
+    with caplog.at_level(logging.WARNING, logger="commonplace.gateway"):
+        body = payload(mcp(hub, token, "mempalace_diary_read", agent_name="probe", wing="shared"))
+    assert set(body) == {"error"}, body
+    kind = "RuntimeError" if fault == "raised" else "malformed probe reply"
+    assert f"Diary topic probe failed ({kind})" in caplog.text
+    assert "probe unavailable" not in caplog.text
+
+
+def test_probe_error_is_returned_not_read_unscoped(hub, collection, config, blind, monkeypatch):
+    """A probe error never falls through to a read whose total counts hidden entries."""
+    thread = hidden_thread(hub, blind, "bare")
+    seed(collection, config, thread.id)  # The hidden entry is older than the window.
+    visible_diary_entry(collection)
+    error = {"error": "Failed to read diary entries"}
+    failing_probe(hub, monkeypatch, error)
+    raw = mcp(hub, blind[1], "mempalace_diary_read", agent_name="probe", wing="shared", last_n=1)
+    assert payload(raw) == error, raw
+
+
+@pytest.mark.parametrize("paused", [True, False], ids=["paused", "unavailable"])
+def test_unavailable_memory_is_not_reported_as_an_empty_diary(
+    hub, collection, config, blind, monkeypatch, paused
+):
+    from commonplace.gateway import WorkerPaused, WorkerUnavailable
+
+    visible_diary_entry(collection)
+    failing_probe(hub, monkeypatch, WorkerPaused(30) if paused else WorkerUnavailable())
+    response = hub.rpc(
+        blind[1],
+        "tools/call",
+        {"name": "mempalace_diary_read", "arguments": {"agent_name": "probe", "wing": "shared"}},
+    )
+    assert "result" not in response, response
+    assert "unavailable" in response["error"]["message"], response
+    if paused:
+        assert response["error"]["data"] == {"retry_after_s": 30}, response
+
+
+# Routes that can return a diary entry's words. check_duplicate looks for the entry itself.
+DIARY_TEXT_READS = {
+    "search": ("mempalace_search", {"query": "plan"}),
+    "search_cli": ("mempalace_search", {"query": "plan", "cli_compatible": True}),
+    "check_duplicate": ("mempalace_check_duplicate", {"content": DIARY_TEXT, "threshold": 0.9}),
+    "get_drawer": ("mempalace_get_drawer", {"drawer_id": "probe-diary"}),
+    "get_drawers": ("mempalace_get_drawers", {"drawer_ids": ["probe-diary"]}),
+    "list_drawers": ("mempalace_list_drawers", {"wing": "shared"}),
+    "diary_read": ("mempalace_diary_read", {"agent_name": "probe", "wing": "shared"}),
+}
+DIARY_TEXT_FORMS = ["bare", "app_path", "upper_case", "mcp_source", "mcp_source_slash"]
+
+
+@pytest.mark.parametrize("route", sorted(DIARY_TEXT_READS))
+@pytest.mark.parametrize("form", DIARY_TEXT_FORMS)
+def test_hidden_topic_diary_words_are_never_returned(hub, collection, config, blind, form, route):
+    """Hiding an entry hides its words, not only the thread its topic names."""
+    thread = hidden_thread(hub, blind, form)
+    seed(collection, config, FORMS[form](thread))
+    name, args = DIARY_TEXT_READS[route]
+    raw = mcp(hub, blind[1], name, **args)
+    assert DIARY_TEXT not in raw, raw
+    if route == "check_duplicate":
+        body = payload(raw)
+        assert body["matches"] == [] and body["is_duplicate"] is False, body
+
+
+@pytest.mark.parametrize("route", sorted(DIARY_TEXT_READS))
+@pytest.mark.parametrize("form", ["bare", "mcp_source_slash"])
+def test_thread_reader_keeps_diary_words(hub, collection, config, reader, form, route):
+    thread = readable_thread(hub, reader, form)
+    seed(collection, config, FORMS[form](thread))
+    name, args = DIARY_TEXT_READS[route]
+    raw = mcp(hub, reader[1], name, **args)
+    assert DIARY_TEXT in raw, raw
+
+
+def test_member_rest_search_never_returns_hidden_topic_diary_words(hub, collection, config, blind):
+    headers = member(hub)
+    thread = hidden_thread(hub, blind, "bare")
+    seed(collection, config, thread.id)
+    status, raw = rest(hub, headers, "/api/memory/search?q=plan")
+    assert status == 200 and DIARY_TEXT not in raw, raw

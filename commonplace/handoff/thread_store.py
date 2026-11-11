@@ -738,7 +738,7 @@ class ThreadStore:
             return [_stored_thread(row) for row in rows]
 
     def by_source_prefix(self, workspace_id: str, value: str) -> list[StoredThread]:
-        """Threads whose source ID, or its hash-variant base, begins ``value``.
+        """Threads whose source ID, or its hash-variant base, is a prefix of ``value``.
 
         Literal binary comparison within the value's ``<namespace>:`` range, so
         ``mcp:<source>_notes`` finds the threads filed under ``mcp:<source>``.

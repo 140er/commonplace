@@ -1750,12 +1750,18 @@ unreadable thread before it counts or windows them, so `total` and `showing`
 cover visible entries; the final gate recounts any entry it still drops. The
 probe reports which store served it (the SQLite fast path or the collection),
 and the read is pinned to that store; a store change between the two refuses the
-read. The probe reports at most 1000 distinct topics. Probe faults are logged by
-class only: owners then receive the unscoped read, still scrubbed and recounted
-by the final gate; every other principal receives an empty diary. The diary
-`thread_scope` is server-only: the gateway drops any client value before every
-route and always sets its own, and the worker accepts it without listing it. `check_duplicate` recomputes
-`is_duplicate` from the matches that pass the gate. Search acquisition counters
+read. The probe reports at most 1000 distinct topics. A diary read never falls
+back to an unscoped count: a probe validation error is returned as the read's
+answer; paused or unavailable memory is reported exactly as on other routes (an
+error, with `retry_after_s` during an online-backup pause); any other probe fault
+is logged by class only and answered with an explicit error, for owners and
+everyone else. The diary `thread_scope` is server-only: the gateway drops any
+client value before every route and always sets its own, and the worker accepts
+it without listing it. A diary entry hidden by its topic is hidden everywhere its
+words could appear: search rows and `check_duplicate` matches carry the entry's
+`topic`, so the gate drops them from structured search, CLI search text and
+duplicate matches as well as from diary reads and drawer reads.
+`check_duplicate` recomputes `is_duplicate` from the matches that pass the gate. Search acquisition counters
 and truncation flags (`total_before_filter`, `filtered_by_max_distance`,
 `date_filter_pool_truncated`, `candidates_truncated`,
 `distinct_results_truncated`) precede authorization and are omitted for every
@@ -1774,9 +1780,10 @@ project's `mempalace.yml` without that validation. Values that cannot be decoded
 percent levels in one round, still changing after four decode/NFKC rounds, or
 over the citation length limit) are also hidden from every reader. Wing names
 are outside this check: a wing named like a thread ID is filtered by wing policy
-alone. A diary entry hidden by its topic can still appear as a `check_duplicate`
-match in a readable room; the match carries no topic.
+alone.
 
+CLI rendering decision (lead, 11 Nov 2026; replaces the earlier rule that
+every-wing policies keep worker-rendered CLI output and search diagnostics):
 CLI-compatible search, for every principal, acquires structured hits and renders
 only after the same drawer gate as structured search: room, topic and provenance
 checks; body text is not scanned. A see-all reader may still lack a thread that a
@@ -1785,6 +1792,17 @@ a literal wing and with no wing. Both CLI paths use the same pure formatter. The
 gateway explicitly renders flat rows, so import-authorization metadata cannot
 replace a readable row's wing, room or source. CLI responses contain only query,
 CLI text, an empty results array, optional searched wings and non-empty facts.
+
+Owner-visible changes from this rule set. Search acquisition counters and
+truncation flags are no longer returned to owners. Owner CLI search uses the
+gateway's flat rendering, so an empty result reads `No results found for:
+"<query>"`, and owner CLI searches with `source_file`, `min_similarity`,
+`max_distance`, `context`, `include_media` or a non-search `query_task` are
+refused with the same errors as for other principals. Structured search rows and
+`check_duplicate` matches for diary entries carry their `topic`. Diary reads cost
+one extra metadata-only worker call (the topic probe). Rooms and topics naming a
+thread the owner cannot read (another person's capture thread, a hex-looking
+name, an undecodable value) are hidden from owners too.
 
 Content placed in an ordinary shared room is visible on every route. Body text
 and arbitrary provenance labels are not scanned for private words or fingerprinted;
