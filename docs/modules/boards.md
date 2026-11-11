@@ -13,12 +13,16 @@
 
   - Boards, cards, the append-only `task_events` log, approvals and decisions, the hub event log, signed webhooks and delayed person approvals.
 
+  - A small workspace goals tree (`boards/goals.py`, owner REST in `web/goals.py`, MCP `goal_list`, `goal_set`, `card_goal`) and the goal a card points at. `task_show` and `task_take_next` add the card's goal chain as `goals` only when a goal is set; `goals.chain_block` is the one place that builds it.
+
   - Task-type refusals (`boards/task_types.py`): a pickup the holder’s grants do not allow names the refused type and points the owner to Settings > Agents.
   - The card's completion reviewer (`boards/reviewer.py`): only a signed-in workspace owner chooses, changes or clears it, it must be a current member, and a reviewer who left counts as none. With none the owner reviews as before. With one, every move to Done by anyone else opens a completion review addressed to that member, and only that member may answer it; the reviewer sees it in needs-me, and changing the reviewer re-addresses an open review.
 
   - Routines (`routines.py`, `/api/routines`): an owner-defined name, card template, schedule and owner that create one card per due time through `BoardService.task_add`, with a history of runs linking to the cards. Due times come from the shared `schedule_time.py`.
 
 - **Promises:**
+
+  - Goals are owner-written plain single-line text (title 100, detail 400 characters, at most 200 goals, 6 levels). A card's goal context never exceeds `goals.BUDGET` (1200) characters: higher goals are dropped from the top level down and counted in `omitted`; the card's own goal always stays. Goal tables are created idempotently, so older boards databases keep working and a missing table reads as no goal.
 
   - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, is refused for seats and board coordinators, needs `memory:write`, read access to the board's wing and the owner's person-level write access to it (not the app's own write wings), cannot escalate, and writes one `card.decide.delegated` audit row inside the board transaction (a failed write fails the answer; a later rollback appends `card.decide.rolled_back`; an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails). Without the scope, refusals are unchanged.
 
@@ -97,6 +101,8 @@
   - `tests/test_cards_blocked_by_app.py` with `tests/blockers_ui.mjs` covers the app's blocker section, the REST add/clear round trip, todo and take-next skipping blocked cards, and plain refusals.
 
   - `tests/test_cards_waiting_reasons.py` with `tests/board_why.mjs` covers each waiting reason (pure, card view, board summary) and its app rendering.
+
+  - `tests/test_commonplace_goals.py` covers owner-only goal writes, validation, cycles and depth, the additive schema on an old database, the chain in card context, the fixed character budget and cards without a goal staying unchanged.
 
   - `tests/test_routines.py` uses a fake clock: one card per due time, restart recovery without duplicates, bounded catch-up and history, pause/resume/delete, owner-only refusals and limits.
 

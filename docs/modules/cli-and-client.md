@@ -3,11 +3,15 @@
 - **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/client_hooks.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
 - **Owns:**
 
+  - The `runner report` argument parser; the command itself lives in `commonplace/runner/report.py`.
+
   - `commonplace waitlist list|admit` (instance admin, `--by` as for `plan set`) and the `COMMONPLACE_MAX_ACCOUNTS` setup note in `SETUP.md`.
 
   - The `commonplace` command line, the credential-scoped client, native hooks and installers, the stdio bridge and the agent skill.
 
 - **Promises:**
+
+  - `runner report` sends only the values it was given for one started run; it never opens the data directory.
 
   - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
 
@@ -36,11 +40,15 @@
 
 - **How it fails:**
 
+  - `runner report` exits 4 on an invalid config or report, 3 on a revoked credential and 5 when the hub refuses or is unavailable.
+
   - Local data-directory access remains operator authority; authenticated progress never inherits it.
 
   - The CLI runs with data-dir access, so anyone with the service's OS user can use it (residual in `SYSTEM.md`).
 
 - **Tests:**
+
+  - `tests/test_run_ledger.py` runs `runner report` against a hub.
 
   - `tests/test_search_index_progress.py` covers local status, run and explicit capture enrolment.
 

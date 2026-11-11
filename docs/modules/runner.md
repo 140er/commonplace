@@ -3,15 +3,19 @@
 - **Paths:** `commonplace/runner/`, `docs/runner.md`
 - **Owns:**
 
+  - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
+
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
 
 
   - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
   - Machine enrollment, binding epoch migrations and immutable job epoch snapshots, grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
 
-  - `commonplace/runner/start_context.py`: the card context of a start. `assemble` is the one function that turns a card into launch text; its `SECTIONS` list is the priority order and the place to add a section.
+  - `commonplace/runner/start_context.py`: the card context of a start. `assemble` is the one function that turns a card into launch text; its `SECTIONS` list is the priority order and the place to add a section. A card that points at a goal gets its own goal as an always-present line beside the title and the goals above it (nearest first) as the section after decisions.
 
 - **Promises:**
+
+  - Every start has one ledger row, written in the job's own transaction and following its state; tokens, cost, log pointer and the run's end are only what the run's own enabled machine reported, and an unreported value stays NULL. The end status is set once; jobs from before the ledger are given a row when the store opens.
 
   - A machine's worker policy reads and writes exactly its granted wings (first is the default write wing); starts on any other board wing are refused with a message naming the board wing and the granted wings, and the worker cannot write to an ungranted wing through any tool.
 
@@ -40,6 +44,8 @@
 
 - **How it fails:**
 
+  - A usage report for a run that has not started, or a second, different end status, answers 409; a job of another machine or any caller but an enabled machine answers 404; an invalid report answers 400 and changes nothing.
+
   - Absent optional runner stores remain absent for Admin; existing unreadable sources produce safe errors rather than fabricated usage.
 
 
@@ -54,6 +60,8 @@
   - Resolving a start that is no longer `uncertain` answers 409, not 403, so a settled start reads differently from a refused caller; `tests/test_card_runs_contract.py` pins it with the member and other-workspace refusals.
 
 - **Tests:**
+
+  - `tests/test_run_ledger.py` covers the ledger row per start and its states, partial and final reports, refusals by caller and by body, the backfill of older jobs and the `runner report` command.
 
   - tests/test_admin_runtime_api.py covers machine timestamps, unverified binding, expired lease omission and absent/corrupt runner sources; existing runner owner tests retain authority contracts.
 

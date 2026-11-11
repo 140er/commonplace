@@ -3,6 +3,8 @@
 - **Paths:** `tests/`
 - **Owns:**
 
+  - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
+
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
   - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
@@ -19,6 +21,7 @@
 
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
+  - Chromium project-connect regressions verify visible shared-memory and other conflict statuses, dialog dismissal and unchanged explicit retry bodies.
   - Restricted-search refill regressions cover hidden ranked prefixes, counter suppression, exhaustion, work bounds, unchanged every-wing calls, restricted CLI-compatible search, filters and deadline failures; the same fixture reports information-only latency.
   - `tests/test_runner_start_context.py` is the measurement and the contract of a start prompt's card context; `tests/test_runner_start.py` allows `card_context` beside the identifier keys of a lease.
 
@@ -37,6 +40,8 @@
   - `tests/test_routines.py` pins routine creation per due time on a fake clock, restart recovery and owner-only access.
 
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
+
+  - `tests/test_commonplace_goals.py` covers the goals tree, its owner-only writes, the additive schema and the card-context chain budget.
 
   - `tests/projectpanel.mjs` (run by `tests/test_project_panel_ui.py`) covers the panel draw: escaped text, dropped unsafe links, nothing for a project without a panel, cached redraws and failed reads.
 
@@ -79,7 +84,11 @@
 
 - **Promises:**
 
+<<<<<<< docs/modules/tests.md
   - Tests that read the module map read every file in `docs/modules/`, not `MODULES.md`; `tests/test_docs_fragments.py` holds the merge-without-conflict proof for the documentation layout.
+=======
+  - Browser tests that need Playwright skip at module level when it is missing, so collecting `tests/` never errors; `CP_BROWSER_E2E=1` turns a missing Playwright into a failure (`tests/test_cards_decide_scope_browser.py`, as in `tests/workbench_e2e`).
+>>>>>>> /tmp/tmp49ei0oac/t
 
   - `tests/spaces_surfaces.json` pins the `decide` description naming owner connections holding `cards:decide`.
 

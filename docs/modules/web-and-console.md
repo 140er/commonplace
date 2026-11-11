@@ -3,6 +3,10 @@
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
+  - The ledger lines of the card panel's Runs list in `cardruns.js`: end status, tokens, cost and log pointer of a started run.
+
+  - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
+
   - The Needs me Set up row for a missing model role, and the project settings model picker with its stored id, add-a-model form and role focus.
 
   - The instance-admin sign-up waitlist routes (`GET`/`POST /api/admin/instance/waitlist`, mounted from `commonplace/capacity.py`) and the plain `waitlist` sign-in message in `signin.js`.
@@ -19,9 +23,13 @@
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 
+  - Owner REST for the workspace goals tree (`web/goals.py`: GET/POST `/api/goals`, POST `/api/goals/card`), a thin layer over `BoardService`.
+
   - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
 
 - **Promises:**
+
+  - The Runs list shows a run's reported tokens, cost, end and log pointer; an unreported value reads "not reported", never zero, and a log pointer is a link only when it is an http(s) address.
 
   - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** only on rows the server marks `decide_grantable` (the viewing owner's own eligible, unexpired PATs; never agents, runners, seats, board coordinators or other members' connections; the grant route refuses coordinators too); the consent copy comes from `decide_consent` in `GET /api/connections`; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
 
@@ -30,6 +38,8 @@
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
+
+  - Project Connect keeps every 409 reason in its status, including shared-memory and replacement guidance after cancelling a dialog. Accepted choices clear that conflict before retrying; the memory-access rules remain unchanged.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
@@ -94,6 +104,8 @@
 
 - **How it fails:**
 
+  - A hub that sends no ledger with a start shows the Runs list as before, without ledger lines.
+
   - Runtime suberrors preserve completed sibling facts; needs-me and stuck settle independently. Deployment/health and backup receipts have independent subpanels. Missing optional data stays absent and corrupt sources return safe errors.
 
 
@@ -103,6 +115,8 @@
   - Rendering errors surface in the browser; the server state is unaffected.
 
 - **Tests:**
+
+  - `tests/test_card_runs_ui.py` (ledger case) covers reported and unreported usage, end words, cost formatting and log pointer escaping.
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 
