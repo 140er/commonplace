@@ -174,45 +174,72 @@ Inside it, in this order:
    against the other running cards inside that lock, whoever edits it
    (`path_overlap` or `path_contract_too_large`); a card that does not run is
    checked when it starts. Without a runner database there is nothing to lock
-   and the change does not create it. Unreadable stored contracts count as `**`. One start spends a budget
-   of 2 200 000 work units, calibrated on the development host at about 0.3
-   microseconds per unit: each running card costs 16 units to handle plus its
-   stored size (1, plus 8 per glob, 1 per `/` and 1 per 32 characters), billed
-   before its contract is parsed; each wildcard segment compiled is billed by
-   what compiling costs (70, plus 2 per character, 21 per `*` and 20 per `[`),
-   a recompile after a cache clear included; and a comparison costs pairs times
-   the shallower side's deepest glob times the heaviest segment of either side.
-   The SQL read of the running cards' contracts is not billed (0.17 s at 220 000
-   rows with contracts, 0.04 s without). Measured on the development host, in
-   seconds to run into the budget (or through all running cards where the shape
+   and the change does not create it. Unreadable stored contracts count as
+   `**`. A wildcard segment is matched by a matcher that means what `fnmatch`
+   means (classes included) but never backtracks the way a regex does: it makes
+   at most one pass over the pattern per character of the name, plus one (one
+   pass in all when the pattern has no `*`), so its cost has a bound that is
+   known before it runs. One start spends a budget of 2 200 000 work units,
+   calibrated on the development host at about 0.3 microseconds per unit: each
+   running card costs 16 units to handle plus its stored size (1, plus 10 per
+   glob, 1 per `/` and 1 per 32 characters), billed before its contract is
+   parsed; building the matcher of each wildcard segment is billed by what it
+   costs (10, plus 1 per character and 8 per `[`), a rebuild after a cache clear
+   included; and a comparison costs pairs times the shallower side's deepest
+   glob times the dearest segment comparison: equal literals 1 unit plus 1 per
+   32 characters, a pattern with a `*` against a name of n characters
+   1 + (n + 2) x w / 6 units and a pattern without one 1 + (w + 1) / 6, where
+   w is 1 plus the pattern's length plus 8 per `[`. The SQL read of the running
+   cards' contracts is not billed (0.17 s at 220 000 rows with contracts, 0.04 s
+   without). Measured on the development host, in seconds to run into the
+   budget (or through all running cards where the shape
    never reached it), minimum to maximum over the runs made:
 
    | shape | running cards compared | seconds |
    |---|---|---|
-   | A 89 segments, `?` against literal | 5 | 0.33 to 0.35 |
-   | B one ~180-character segment, `?` against literal | 85 | 0.22 |
-   | C one star-dense segment against literal | 98 | 0.44 |
-   | D 89 segments, literal against literal | 5 | 0.11 |
-   | E one ~180-character segment, literal against literal | 86 | 0.11 |
-   | G 4 segments of ~53 characters, `?` against literal | 64 | 0.29 |
-   | H one segment of character classes | 84 | 0.21 |
-   | I one `*?` segment | 80 | 0.46 to 0.48 |
-   | J one segment, many stars, end mismatch | 81 | 0.45 |
-   | L 366 or 1000 running cards of 64 globs of 89 segments | 330 | 0.69 to 0.72 |
-   | M new card of 64 globs of 89 segments, 1000 one-glob cards (never reaches the budget) | 1000 | 0.03 |
-   | Q2 64 globs of 8 segments, distinct 20-character wildcard patterns | 41 | 0.55 to 0.57 |
-   | T1 64 tiny literal globs per card | 3 563 | 0.60 to 0.86 |
-   | T2 64 distinct 185-character wildcard globs per card | 74 | 0.65 to 0.68 |
-   | T2s 64 distinct 19-character wildcard globs per card | 291 | 0.69 to 0.78 |
-   | T3 64 distinct 185-character literal globs, 1200 cards (never reaches the budget) | 1200 | 0.34 |
-   | M2 an edit adding 64 long wildcard globs, 64-glob literal cards | 86 | 0.16 |
-   | S1 new card against one literal glob per card | 78 571 | 0.50 to 0.52 |
-   | G64x1 new card of 64 one-segment literal globs, one glob per card | 24 713 | 0.58 |
-   | G64x1W the same with 64 wildcard globs | 24 640 | 0.82 to 0.88 |
-   | G64x64 new card of 64 one-segment literal globs, 64 per card | 473 | 0.54 |
-   | G64x64W the same with 64 wildcard globs | 472 | 0.82 to 0.88 |
+   | A 89 segments, `?` against literal | 5 | 0.37 to 0.42 |
+   | B one ~180-character segment, `?` against literal | 17 | 0.58 to 0.64 |
+   | C one star-dense segment against literal | refused at the first | 0.00 |
+   | D 89 segments, literal against literal | 5 | 0.10 to 0.11 |
+   | E one ~180-character segment, literal against literal | 85 | 0.10 to 0.11 |
+   | G 4 segments of ~53 characters, `?` against literal | 13 | 0.43 to 0.45 |
+   | H one segment of character classes | 6 | 0.18 to 0.21 |
+   | I one `*?` segment | refused at the first | 0.00 |
+   | J one segment, many stars, end mismatch | refused at the first | 0.00 |
+   | L 366 running cards of 64 globs of 89 segments | 323 | 0.55 to 0.64 |
+   | M new card of 64 globs of 89 segments, 1000 one-glob cards (never reaches the budget) | 1000 | 0.04 |
+   | Q2 64 globs of 8 segments, distinct 20-character wildcard patterns | 42 | 0.09 to 0.12 |
+   | T1 64 tiny literal globs per card | 2 952 | 0.53 to 0.60 |
+   | T2 64 distinct 185-character wildcard globs per card | 141 | 0.15 |
+   | T2s 64 distinct 19-character wildcard globs per card, 600 cards (never reaches the budget) | 600 | 0.23 to 0.27 |
+   | T3 64 distinct 185-character literal globs, 1200 cards (never reaches the budget) | 1200 | 0.32 to 0.37 |
+   | M2 an edit adding 64 long wildcard globs, 64-glob literal cards | 16 | 0.04 to 0.05 |
+   | S1 new card against one literal glob per card | 73 332 | 0.44 to 0.50 |
+   | G64x1 new card of 64 one-segment literal globs, one glob per card | 24 168 | 0.55 to 0.58 |
+   | G64x1W the same with 64 wildcard globs | 4 210 | 0.24 |
+   | G64x64 new card of 64 one-segment literal globs, 64 per card | 460 | 0.50 to 0.55 |
+   | G64x64W the same with 64 wildcard globs | 59 | 0.20 to 0.25 |
+   | P31 32 trailing-star globs of 31 characters, one 31-character name per card | 386 | 0.07 |
+   | L127 the same at 127 characters | 24 | 0.02 |
+   | L199 the same at 199 characters | 10 | 0.01 |
+   | P199x20 64 trailing-star globs of ~196 characters, 20 cards of 64 such names | refused at the first | 0.00 |
+   | L199x64 64 trailing-star globs of 199 characters, 64 such names per card | refused at the first | 0.00 |
+   | CL199 32 globs of ~193 characters, a class run before the tail | 4 | 0.01 |
+   | MEM 600 cards of 64 distinct 5-character wildcard globs (never reaches the budget) | 600 | 0.21 to 0.23 |
+   | W1 32 globs of `*`, 1 to 33 `?` and two letters, one 199-character name per card | 55 to 406 | 0.30 to 0.53 |
+   | W1x64 64 such globs, 64 199-character names per card | 1 | 0.24 to 0.27 |
+   | WC 32 globs of `*`, three classes and two letters, one 199-character name per card | 44 to 51 | 0.04 to 0.27 |
+   | WR 32 globs of `*` and one class of 60 ranges | 10 | 0.01 to 0.02 |
+   | WS one 199-character new name, 64 distinct `*?????z` patterns per card | 60 | 0.25 to 0.30 |
+   | WD 64 globs of 49 `*?z` segments, one 49-segment name per card | 116 | 0.01 |
+   | WX 400 cards of 64 distinct wide-range class globs (never reaches the budget) | 400 | 0.21 to 0.23 |
 
-   The measured set is not exhaustive. Beyond the budget it
+   Three runs per shape with the host's 1-minute load at about 10 (14 cores).
+   Before this matcher, a depth-1 wildcard comparison was billed one unit
+   whatever its cost and a class was compiled into a regex: P31 took 1.5 s,
+   P199x20 1.7 s (28% of the budget), L199x64 6.0 s, and 20 WX cards 2.5 s
+   with 4% of the budget used. The measured set is not exhaustive. Beyond the
+   budget it
    refuses with `path_contract_too_large` (details `card`, `paths`,
    `other_paths`, `budget`). `card_start` on a board without an orchestrator
    config runs the same check before the job is inserted. Only runner starts

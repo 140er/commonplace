@@ -142,9 +142,13 @@ def test_normalize_refuses_unusable_braces_and_oversized_contracts(bad):
 def test_comparison_budget_counts_segment_steps():
     mine = [f"a{i}/*.py" for i in range(10)]  # 2 segments deep
     theirs = [f"b{i}/*.py" for i in range(10)]
-    assert contracts.first_overlap(mine, theirs, contracts.Budget(200)) is None
+    # One matcher to build (`*.py`), then 100 pairs x 2 segments x the dearest segment
+    # comparison: `*.py` (weight 1 + 4) against a 2-character name, 1 + 4 * 5 // 6 = 4 units.
+    cost = contracts._compile_units("*.py") + 100 * 2 * 4
+    assert contracts.first_overlap(mine, theirs, contracts.Budget(cost)) is None
+    contracts._MATCHERS.clear()
     with pytest.raises(contracts.TooLarge):
-        contracts.first_overlap(mine, theirs, contracts.Budget(199))
+        contracts.first_overlap(mine, theirs, contracts.Budget(cost - 1))
     deep = "/".join(["?"] * 20)
     with pytest.raises(contracts.TooLarge):  # the same 100 pairs, 21 segments deep
         contracts.first_overlap(
@@ -156,8 +160,9 @@ def test_comparison_budget_counts_segment_steps():
 
 def test_permitted_deep_wildcard_contracts_exhaust_the_budget_in_a_few_cards():
     """What ``normalize`` accepts at most, 64 globs of 89 segments, costs 4 096 x 89 work
-    units per running card, so the budget is gone after a fixed number of them. (The time
-    that allows was measured separately; see the budget comment in contracts.py.)"""
+    units per running card (a one-character `?` is one pass, one unit), so the budget is
+    gone after a fixed number of them. (The time that allows was measured separately; see
+    the docs.)"""
     deep = "/".join(["?"] * 88)
     mine = contracts.normalize([f"{deep}/{{m{i},n{i}}}" for i in range(32)])
     theirs = contracts.normalize([f"{deep}/{{t{i},u{i}}}" for i in range(32)])
@@ -171,14 +176,14 @@ def test_permitted_deep_wildcard_contracts_exhaust_the_budget_in_a_few_cards():
 
 
 def test_long_single_segment_contracts_are_charged_by_length():
-    """A segment's cost grows with its length: 64 globs of one 173-character segment cost
-    6 units per pair (1 + 173 // 32), not 1, so far fewer running cards fit the budget than
+    """A segment's cost grows with its length: 64 globs of one 172-character `?` pattern
+    are matched against names of up to 173 characters in one pass (no `*`), which costs
+    1 + 174 // 6 = 30 units per pair, not 1, so far fewer running cards fit the budget than
     the segment count alone would allow."""
     mine = contracts.normalize(["?" * 170 + f"{{m{i},n{i}}}" for i in range(32)])
     theirs = contracts.normalize(["x" * 170 + f"{{t{i},u{i}}}" for i in range(32)])
     assert len(mine) == len(theirs) == 64
-    weight = 1 + len(mine[0]) // contracts.SEGMENT_CHARS
-    assert weight == 6
+    weight = 30
     budget, cards = contracts.Budget(), 0
     with pytest.raises(contracts.TooLarge):
         while True:
@@ -191,6 +196,17 @@ def test_long_single_segment_contracts_are_charged_by_length():
 
 def _stored(globs):
     return json.dumps(contracts.normalize(globs))
+
+
+def test_long_literal_segments_are_charged_by_length():
+    """Reviewer shape E: equal literals compare by length, 1 unit plus 1 per 32
+    characters: 64 x 64 pairs of one 173-character literal segment cost 6 units each."""
+    mine = contracts.normalize(["x" * 170 + f"{{m{i},n{i}}}" for i in range(32)])
+    theirs = contracts.normalize(["x" * 170 + f"{{t{i},u{i}}}" for i in range(32)])
+    cost = 64 * 64 * (1 + 173 // 32)
+    assert contracts.first_overlap(mine, theirs, contracts.Budget(cost)) is None
+    with pytest.raises(contracts.TooLarge):
+        contracts.first_overlap(mine, theirs, contracts.Budget(cost - 1))
 
 
 def test_many_large_running_cards_are_charged_before_they_are_parsed():
@@ -221,18 +237,19 @@ def test_unreadable_and_empty_running_contracts_are_billed_and_read_as_expected(
 
 def test_tiny_globs_are_billed_per_glob():
     """Reviewer shape T1: 64 short literal globs per running card. Each glob costs real work
-    to read, expand and canonicalise, so about 3 700 such cards use up the budget; billing
+    to read, expand and canonicalise, so about 3 000 such cards use up the budget; billing
     one unit per glob let the loop go on for about 16 000."""
     running = [(k, json.dumps([f"c{k}_{j}x" for j in range(64)])) for k in range(6000)]
     with pytest.raises(contracts.TooLarge) as info:
         contracts.first_overlap_running(["src/a.py"], running, contracts.Budget())
-    assert 3000 < info.value.key < 4500
+    assert 2500 < info.value.key < 3500
 
 
 def test_long_distinct_wildcard_globs_are_billed_by_length():
     """Reviewer shape T2: 64 distinct 185-character wildcard globs per running card (the
-    validator accepts them). Compiling one costs about 140 us, so the budget runs out after
-    under a hundred such cards; a flat per-pattern charge let it go on for about 240."""
+    validator accepts them). Building each one's matcher is billed by its length, so the
+    budget runs out after under two hundred such cards; a flat per-pattern charge let it go
+    on for about 240."""
     running = [
         (
             k,
@@ -245,14 +262,13 @@ def test_long_distinct_wildcard_globs_are_billed_by_length():
     contracts._MATCHERS.clear()
     with pytest.raises(contracts.TooLarge) as info:
         contracts.first_overlap_running(["src/a.py"], running, contracts.Budget())
-    assert info.value.key < 120
+    assert info.value.key < 200
 
 
-def test_compile_charge_follows_length_stars_and_classes():
+def test_compile_charge_follows_length_and_classes():
     plain = contracts._compile_units("?" * 20)
     assert contracts._compile_units("?" * 185) > 3 * plain
-    assert contracts._compile_units("*a" * 90) > 10 * contracts._compile_units("?" * 180) // 4
-    assert contracts._compile_units("[a-z]" * 35) > contracts._compile_units("?" * 175)
+    assert contracts._compile_units("[a-z]" * 35) > 2 * contracts._compile_units("?" * 175)
 
 
 def test_many_one_glob_running_cards_are_billed_per_card():
@@ -272,11 +288,9 @@ def test_every_compile_is_billed_even_after_the_shared_cache_is_cleared(monkeypa
     monkeypatch.setattr(contracts, "MAX_MATCHERS", 16)
     contracts._MATCHERS.clear()
     compiled, billed = [], []
-    real_compile, real_units = contracts.re.compile, contracts._compile_units
+    real_tokens, real_units = contracts._tokens, contracts._compile_units
     monkeypatch.setattr(
-        contracts.re,
-        "compile",
-        lambda pattern, *a: (compiled.append(pattern), real_compile(pattern, *a))[1],
+        contracts, "_tokens", lambda pattern: (compiled.append(pattern), real_tokens(pattern))[1]
     )
     monkeypatch.setattr(
         contracts, "_compile_units", lambda text: (billed.append(text), real_units(text))[1]
@@ -331,8 +345,191 @@ def test_distinct_wildcard_patterns_are_charged_for_compiling():
     contracts.first_overlap(["*.py"], ["a.py"], first)
     again = contracts.Budget()
     contracts.first_overlap(["*.py"], ["a.py"], again)
-    assert contracts._compile_units("*.py") == 70 + 2 * 4 + 21
+    assert contracts._compile_units("*.py") == contracts.COMPILE_UNITS + 4
     assert again.left - first.left == contracts._compile_units("*.py")
+
+
+def _random_pattern(rng, *, class_chars="abcmxz-!^][\\&~|0\u00e9\u0100AZ"):
+    out = []
+    for _ in range(rng.randint(0, 6)):
+        if rng.random() < 0.3:
+            body = "".join(rng.choice(class_chars) for _ in range(rng.randint(0, 7)))
+            out.append("[" + body + rng.choice("]]]x"))  # sometimes left open
+        else:
+            out.append(rng.choice("ab-!^]*?[\\&~|zZ.\n\u00e9\u0100{}"))
+    return "".join(out)
+
+
+def test_the_matcher_agrees_with_fnmatch():
+    """``_match`` replaces the regex ``fnmatch`` builds; on random patterns (classes with
+    ranges, negation, stray brackets and hyphens included) and names it decides the same."""
+    import fnmatch
+    import random
+    import re
+    import warnings
+
+    rng = random.Random(389)
+    names = "abcmxz-!^]\\&~|zZ.\n\u00e9\u0100[*?{}0AZ\u2000"
+    edges = ["[a-]", "[!a-]", "[a-c]", "[!a-c]", "[a-cb-e]", "[a-eb-c]", "[]-a]", "[z-a]", "[!z-a]"]
+    edges += ["[a-c-e]", "[--/]", "[!]a]", "[^a]", "[\\-a]", "[a-\u0100]", "[&&~|]", "[[]", "[a"]
+    edges += ["[b-a!]", "[a--!]"]  # a backwards range dropped can leave `!`: any character
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)  # the regex parser warns on `[[`
+        for pattern in edges:
+            regex = re.compile(fnmatch.translate(pattern))
+            tokens = contracts._tokens(pattern)
+            for char in names + "dey/\u00ff\uffff":
+                assert contracts._match(tokens, char) == (regex.match(char) is not None), (
+                    pattern,
+                    char,
+                )
+        for _ in range(20_000):
+            pattern = _random_pattern(rng)
+            regex = re.compile(fnmatch.translate(pattern))
+            tokens = contracts._tokens(pattern)
+            for _ in range(3):
+                name = "".join(rng.choice(names) for _ in range(rng.randint(0, 8)))
+                assert contracts._match(tokens, name) == (regex.match(name) is not None), (
+                    pattern,
+                    name,
+                )
+
+
+def test_the_matcher_stays_within_its_billed_bound():
+    """The matcher's loop runs at most (len(name) + 1) x (tokens + 1) times, the bound
+    ``_match_steps`` bills, on the shapes that make a regex backtrack (a leading star, a
+    long fixed tail, a mismatch at the end) and on random ones. Counted, not timed."""
+    import inspect
+    import random
+    import sys
+
+    source, first = inspect.getsourcelines(contracts._match)
+    loop = first + next(i for i, line in enumerate(source) if "while s < n:" in line)
+    code = contracts._match.__code__
+
+    def iterations(pattern, name):
+        count = 0
+
+        def trace(frame, event, arg):
+            nonlocal count
+            if frame.f_code is not code:
+                return None
+            if event == "line" and frame.f_lineno == loop:
+                count += 1
+            return trace
+
+        sys.settrace(trace)
+        try:
+            contracts._match(contracts._tokens(pattern), name)
+        finally:
+            sys.settrace(None)
+        return count
+
+    rng = random.Random(9)
+    shapes = [("*" + "?" * k + "ab", "0" * 199) for k in (1, 5, 28, 98, 196)]
+    shapes += [("*a" * 20 + "b", "a" * 199), ("*" + "[0-9]" * 30 + "z", "0" * 199)]
+    shapes += [
+        (_random_pattern(rng), "".join(rng.choice("ab-]z") for _ in range(40))) for _ in range(300)
+    ]
+    for pattern, name in shapes:
+        tokens = contracts._tokens(pattern)
+        assert iterations(pattern, name) <= (len(name) + 1) * (len(tokens) + 1)
+        assert len(tokens) < contracts._pattern_weight(pattern)
+
+
+def test_a_trailing_star_comparison_is_billed_by_pattern_and_name_length():
+    """A depth-1 comparison was billed one unit whatever its length; it is billed by the
+    matcher's bound, which grows with the pattern times the name."""
+    short = contracts.Budget()
+    contracts.first_overlap(["*" + "?" * 28 + "ab"], ["0" * 31], short)
+    long = contracts.Budget()
+    contracts.first_overlap(["*" + "?" * 196 + "ab"], ["0" * 199], long)
+    spent_short = contracts.MAX_STEPS - short.left
+    spent_long = contracts.MAX_STEPS - long.left
+    # (31 + 2) x 32 and (199 + 2) x 200 matcher steps, 6 to a unit.
+    assert spent_short >= 33 * 32 // 6
+    assert spent_long >= 201 * 200 // 6 > 30 * spent_short
+
+
+def _trailing_star(length, index):
+    """One depth-1 pattern: a leading star, `?` for the rest, two distinct letters at the
+    end (never matches the all-digit names of the running cards)."""
+    return "*" + "?" * (length - 3) + chr(97 + index // 26) + chr(97 + index % 26)
+
+
+def _digits(length, key):
+    return "0" * (length - 6) + f"{key:06d}"
+
+
+def test_short_trailing_star_globs_against_one_name_per_card_refuse_early():
+    """Reviewer shape P31: 32 trailing-star globs of 31 characters against one 31-character
+    name per running card. Billed one unit per comparison, a start went on to card 37 841
+    (1.5 s on the measuring host); billed by the matcher's bound it stops before card 1000."""
+    mine = contracts.normalize([_trailing_star(31, i) for i in range(32)])
+    running = [(k, _stored([_digits(31, k)])) for k in range(40_000)]
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(mine, running, contracts.Budget())
+    assert info.value.key < 1000
+
+
+def test_long_trailing_star_globs_against_twenty_cards_refuse():
+    """Reviewer shape P199x20: 64 trailing-star globs of 196 characters against 20 running
+    cards of 64 literal 196-character globs. The start used 28% of the budget and 1.7 s;
+    priced by the matcher's bound it is refused on the first card."""
+    mine = contracts.normalize(["*" + "?" * 190 + f"{i:02d}" + "{a,b}" for i in range(32)])
+    running = [
+        (k, _stored(["0" * 190 + f"{k:03d}{j:02d}" + "{x,y}" for j in range(32)]))
+        for k in range(20)
+    ]
+    assert len(mine) == 64 and len(json.loads(running[0][1])) == 64
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(mine, running, contracts.Budget())
+    assert info.value.key < 2
+
+
+def test_longest_trailing_star_globs_against_64_names_per_card_refuse_at_once():
+    """Reviewer shape L199x64: 64 trailing-star globs of 199 characters against running
+    cards of 64 literal 199-character names. Refused at card 73 after 6 s before; one card
+    of it is already beyond the budget."""
+    mine = [_trailing_star(199, i) for i in range(64)]
+    running = [(k, json.dumps([_digits(199, k * 64 + j) for j in range(64)])) for k in range(200)]
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running(mine, running, contracts.Budget())
+    assert info.value.key < 2
+
+
+def test_trailing_star_globs_on_running_cards_are_billed_too():
+    """The same shape the other way round: the running cards hold the trailing-star
+    patterns and the new card holds a long name, so their patterns are matched against it."""
+    running = [
+        (k, _stored(["*" + "?" * 189 + f"{k:03d}{j:02d}" + "{a,b}" for j in range(32)]))
+        for k in range(20)
+    ]
+    with pytest.raises(contracts.TooLarge) as info:
+        contracts.first_overlap_running([_digits(199, 7)], running, contracts.Budget())
+    assert info.value.key < 8
+    # A class test is a call, billed above a plain character.
+    assert contracts._pattern_weight("[a]") > contracts._pattern_weight("???") + 4
+
+
+def test_wide_character_classes_build_no_regex(monkeypatch):
+    """A regex for `[<low>-U+FFFF]` walks every character of the range when it is
+    compiled (milliseconds per class, billed as microseconds). The matcher reads a class
+    itself, so no regex is built, and the class still means what it means to fnmatch."""
+    import re
+
+    def no_regex(*args, **kwargs):
+        raise AssertionError("a contract comparison compiled a regex")
+
+    contracts._MATCHERS.clear()
+    monkeypatch.setattr(re, "compile", no_regex)
+    running = [
+        (k, json.dumps([f"[{chr(0x100 + j)}-\uffff]{k:05d}" for j in range(64)])) for k in range(5)
+    ]
+    assert contracts.first_overlap_running(["src/a.py"], running, contracts.Budget()) is None
+    assert contracts.globs_overlap("[\u0100-\uffff]00003", "\u2000" + "00003")
+    assert not contracts.globs_overlap("[\u0100-\uffff]00003", "z00003")
+    assert contracts.globs_overlap("[!a-c]x", "dx") and not contracts.globs_overlap("[!a-c]x", "bx")
 
 
 def test_live_cards_needs_an_explicit_hold():
