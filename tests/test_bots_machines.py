@@ -608,6 +608,11 @@ def test_a_machine_without_projects_is_refused_plainly_not_raised(env):
     assert caught.value.text.endswith(".") and env.jobs() == []
 
 
+def ours(caplog):
+    """This module's own log lines (the hub's background listeners log elsewhere)."""
+    return [r.getMessage() for r in caplog.records if r.name == machines.__name__]
+
+
 def test_a_genuine_status_failure_is_logged_but_an_unauthorised_reader_is_not(
     env, caplog, monkeypatch
 ):
@@ -616,7 +621,7 @@ def test_a_genuine_status_failure_is_logged_but_an_unauthorised_reader_is_not(
     with caplog.at_level("WARNING"):
         assert machines.start_status(env.gateway, env.member, card) == []
         assert machines.start_status(env.gateway, env.owner, 99999) == []
-    assert caplog.records == []  # not allowed and not found are the normal answers
+    assert ours(caplog) == []  # not allowed and not found are the normal answers
 
     def broken(ctx, task):
         raise ToolError("no: something unexpected")
@@ -624,7 +629,7 @@ def test_a_genuine_status_failure_is_logged_but_an_unauthorised_reader_is_not(
     monkeypatch.setattr(machines.tools, "card_start_status", broken)
     with caplog.at_level("WARNING"):
         assert machines.start_status(env.gateway, env.owner, card) == []
-    assert [r.getMessage() for r in caplog.records] == ["start status failed: refused"]
+    assert ours(caplog) == ["start status failed: refused"]
 
 
 def test_start_status_sorts_rows_without_a_timestamp(env):
