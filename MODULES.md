@@ -854,6 +854,8 @@ Format (read by `commonplace orch docs-check`):
 
   - test_admin_runtime_api.py and test_admin_runtime_ui.py are the twelve-row proof; test_admin_runtime_controls.py covers independent list cursors, absent tables, workspace filtering and completed-source survival.
 
+  - test_runner_requesters_admin.py, the requesters case of admin_runtime_ui.mjs and the models_submit_before_loads case of workbench_g4_projects.mjs are the proof for the Admin requester edit and the early models-form binding.
+
   - `test_admin_api.py` and `test_admin_ui.py` provide fourteen foundation rows; `admin_ui.mjs` exercises served navigation, production route/refresh wiring, request generations, expiry and body-decoding deadlines. `test_admin_controls.py` covers cursor binding, pagination, source budgets and gateway controls; `workbench_e2e/test_admin.py` covers real-browser owner/member navigation at three widths.
 
 
