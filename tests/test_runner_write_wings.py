@@ -61,6 +61,18 @@ def test_wing_without_write_grant_is_still_outside_the_worker_wing(signup_hub, o
     code, body = _start(hub, machine, card(hub, owner, board="notes"), owner=owner)
     assert code == 403 and body["error"].endswith("outside_worker_wing"), (code, body)
     assert not _policy(hub, owner, machine).can_write_wing("notes")
+    # A card already reserved for the worker passes the board-write rule (own card), so
+    # only the start check's write set keeps a read-only wing out.
+    from commonplace.boards.store import BoardStore
+
+    worker = hub.db.authenticate_connection(
+        _machine_row(hub, owner, machine)["worker_connection_id"]
+    )
+    task = card(hub, owner, board="notes")
+    with BoardStore(hub.gateway.workspace_dir(owner["workspace"])).transaction() as conn:
+        conn.execute("UPDATE tasks SET assignee=? WHERE id=?", (worker.actor, task["number"]))
+    code, body = _start(hub, machine, task, owner=owner)
+    assert code == 403 and body["error"].endswith("outside_worker_wing"), (code, body)
 
 
 @pytest.mark.parametrize("caller", ["member", "trusted", "worker", "foreign-owner"])
