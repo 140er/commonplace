@@ -146,7 +146,7 @@ export function createDetails({ mount, api = request, onMemory = () => {} }) {
   const click = (event) => {
     const tab = event.target.closest("[data-details-tab]");
     if (tab) selectTab(tab.dataset.detailsTab, true);
-    if (event.target.closest("[data-card-type-save]")) {
+    else if (event.target.closest("[data-card-type-save]")) {
       void saveCardType(mount, current, api).then((updated) => {
         if (!updated) return;
         current = updated;
