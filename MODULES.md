@@ -622,7 +622,9 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
-  - `tests/test_commonplace_deck_today.py` (`commonplace_deck_today.mjs`) exercises Today decisions, project-owner de-duplication, refresh-safe draft hand-off, errors, cancellation and Deck-only routing; `commonplace_deck_today_harness.html` draws the real screen with a scripted Northwind API.
+  - `tests/test_commonplace_deck_bots.py` (`commonplace_deck_bots.mjs`) covers draft hand-off in both looks, Deck tile and strip markup, project work status mapping, week-bounded completion groups, escaped text and the read-only project sheet lifecycle.
+
+  - `tests/test_commonplace_deck_today.py` (`commonplace_deck_today.mjs`) exercises Today decisions, project-owner de-duplication, refresh-safe draft hand-off, errors, cancellation and Deck-only routing.
 
   - The navigation tests follow the bots-first rail: `tests/workbench_shell_wiring.mjs`, `tests/workbench_chat_wiring.mjs`, `tests/commonplace_home_render.mjs`, `tests/commonplace_board_defaults_render.mjs`, `tests/card_log_links.mjs`, `tests/admin_ui.mjs` and the phone scenarios of `tests/workbench_e2e/test_keys.py` no longer expect project rows, a Needs me or Console rail entry or a Chat tab (the phone Chat button is the dock toggle in the header).
 
