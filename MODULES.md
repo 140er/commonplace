@@ -987,7 +987,7 @@ Format (read by `commonplace orch docs-check`):
   - The suite itself under the coverage gate; `tests/test_commonplace_webhooks.py::test_dispatcher_thread_survives_an_unexpected_pass_error` checks that an unexpected delivery-pass error is logged without its private message and the dispatcher retries while staying alive.
 
   - `tests/test_projects_phase_b.py` and `tests/test_projects_admission.py` keep paired pin/head assertions and independent runner-lock coverage.
-  - `tests/test_projects_new_project_flow.py` walks a board created after the orchestration switch through the app's routes with nothing seeded: connect the automatic seat, split a new card with the seat's token, set the agent limit and see admission follow it. The off-mode guard in `tests/test_projects_phase_b.py` checks that no orchestration field leaks into the board list, not an exact key set.
+  - `tests/test_projects_new_project_flow.py` walks a board created after the orchestration switch through the app's routes with nothing seeded: connect the automatic seat, split a new card with the seat's token, set the agent limit and see admission follow it.
 
   - `tests/test_backup_online_enumeration.py` forces SQLite sidecar cleanup and the writer/workspace-lookup freeze interleaving, and checks that missing user files, unsafe paths and new directory creation remain guarded.
 
