@@ -269,6 +269,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - Live-sync instructions describe transcript-only reinstall, explicit destination and retained disabled memory history.
+
+  - Live-sync and capture instructions document the generic `agent-log` source for agents without a native transcript.
   - Public Space endpoint and error documentation alongside legacy board routes.
 
   - `docs/boards/API.md` describes structured decision blocks: the `{label, detail, preview}` option shape, its bounds, and the `ask_blocks` card field; `docs/boards/schema.sql` lists the column.
@@ -605,6 +607,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Paths:** `tests/`
 - **Owns:**
+
+  - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
 
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
 
@@ -1641,6 +1645,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Agent context handoff to a fresh agent and append-only native session continuity.
 
+  - Protected-reference recognition also covers private `agent-log` capture identities (`capture:<actor>:agent-log:<agent>:<session>`), without widening the import domain.
+
 - **Promises:**
 
   - Thread-store storage budgets read `page_size` and `page_count` as integers, so a budgeted write in an encrypted (SQLCipher) workspace is checked instead of failing with a type error.
@@ -1827,10 +1833,12 @@ Format (read by `commonplace orch docs-check`):
 
 ## memory-and-search
 
-- **Paths:** `commonplace/memory_tools.py`, `commonplace/search_index_api.py`, `commonplace/store_embed.py`, `commonplace/store_switch.py`, `commonplace/workspace_store.py`, `commonplace/capture.py`, `commonplace/capture_client.py`
+- **Paths:** `commonplace/memory_tools.py`, `commonplace/search_index_api.py`, `commonplace/store_embed.py`, `commonplace/store_switch.py`, `commonplace/workspace_store.py`, `commonplace/capture.py`, `commonplace/capture_client.py`, `commonplace/agent_log.py`
 - **Owns:**
 
   - Memory tools and routes under the caller's policy, search index progress, workspace store generations and cutovers, and opt-in chat capture.
+
+  - The generic `agent-log` capture source: any agent appends JSONL records carrying `agent` and `session_id`, and the capture identity is `<agent>:<session_id>`.
 
 - **Promises:**
 
@@ -1843,6 +1851,8 @@ Format (read by `commonplace orch docs-check`):
   - Owner HTTP progress always forwards the authenticated principal, returns only readable progress and disables response caching.
 
   - Reads and writes respect the caller's wings and scopes; store cutovers are backup-gated and restartable; capture is explicit and append-only.
+
+  - An agent-log record is stored verbatim in the filing actor's private capture namespace; every record must name the agent and session of its stream, so a stream cannot carry foreign provenance, and native agent names are reserved.
 
 - **How it fails:**
 
@@ -1860,7 +1870,7 @@ Format (read by `commonplace orch docs-check`):
 
   - When only the steady untrusted write limit refuses a capture or import write, a bounded first-backfill allowance is spent instead: per connection once (closing after its window, never renewed) and per workspace (renewing only after its period), never keyed by stream, so restarts and new streams cannot re-arm it. The per-minute budgets still apply and are refunded on refusal; other routes and trusted connections keep their limits. `tests/test_commonplace_public_surface.py::test_first_backfill_of_realistic_size_is_not_throttled_by_the_steady_limit` is red on `origin/develop`.
 
-  - `tests/test_commonplace_memory.py`, `tests/test_commonplace_capture.py`, `tests/test_workspace_store_switch.py`.
+  - `tests/test_commonplace_memory.py`, `tests/test_commonplace_capture.py`, `tests/test_commonplace_agent_log.py`, `tests/test_workspace_store_switch.py`.
 
 
 ## imports
@@ -1894,6 +1904,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Opt-in client synchronization of transcripts and memory, its local state and the content-free live feed.
 
+  - `--source agent-log:ROOT` selects a directory of agent-log JSONL files for any agent; it needs an explicit root and its own `COMMONPLACE_CAPTURE_TOKEN_AGENT_LOG` connection.
+
 - **Promises:**
 
   - Explicit exact-endpoint consent precedes token/state access. Disabled legacy rows and schema survive unchanged; memory roots are never inspected. Caught-up transcripts finish backfill without legacy allowance use.
@@ -1910,7 +1922,7 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_card199_safety.py` covers entry order, each discriminator, direct scanner/attempt/rearm guards, retained rows, backfill, status and private preview output.
 
-  - The `tests/test_commonplace_sync_` files.
+  - The `tests/test_commonplace_sync_` files and `tests/test_commonplace_agent_log_sync.py`.
 
 
 ## backup-and-encryption
@@ -2024,9 +2036,13 @@ Format (read by `commonplace orch docs-check`):
 
   - Defaults (one project bot per readable, non-archived project plus General) are created lazily and an archived default is never recreated. At most 50 live bots per person.
 
+  - Text bounds count the raw characters (what is stored), so padding cannot exceed them; text that cannot be stored as UTF-8 is `invalid`. A pending confirmation past its expiry can only become `expired`, whatever the requested state.
+
 - **How it fails:**
 
   - Out-of-bound input is 400 `invalid`, the bot limit and conflicts are 409, a busy store is 429; error bodies carry fixed text, never conversation text.
+
+  - A memory id outside the integer range is an unknown id (404); a `board` that is not a project slug string is 400.
 
   - The message, stop and confirm routes are not served yet; they answer 404.
 
@@ -2035,6 +2051,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_bots_store.py` covers bounds, append-only triggers, idempotent sends and conflicts, one reply, paging, unread, the action journal, pending compare-and-set, forwards and work lookups, memory tombstones, per-user isolation and reopening the store.
 
   - `tests/test_bots_api.py` covers defaults per readable project, create/rename/archive and the 50-bot bound, thread paging, block hydration and status words, waiting decisions, read marks, memory, redacted display, and 404 for another person, another workspace and agent tokens.
+
+  - Regression tests in both bots test files cover padded text bounds, unstorable text, huge memory ids, non-string boards, non-object bodies, expiry on cancel and refused cross-origin writes.
 
 ## web-and-console
 
