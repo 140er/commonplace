@@ -565,6 +565,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
+  - Runner write-wing tests start and write cards through public HTTP in every granted write wing, keep ungranted wings refused, and check owner-only, non-private changes and first-wing-only defaults for existing grants.
+
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
   - Assertion-only review witnesses pin public facet compatibility, real-wrapper projected retry, refusal envelopes and negative-cache invalidation.
