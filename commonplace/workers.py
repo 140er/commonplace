@@ -436,6 +436,13 @@ class WorkerSupervisor:
             worker.stop()
         return idle
 
+    def stop(self, workspace_id: str) -> None:
+        """Stop one workspace's worker, if it runs. A later call starts a new one."""
+        with self._lock:
+            worker = self._workers.pop(workspace_id, None)
+        if worker is not None:
+            worker.stop()
+
     def stop_all(self) -> None:
         with self._lock:
             workers = list(self._workers.values())

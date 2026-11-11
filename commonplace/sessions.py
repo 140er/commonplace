@@ -214,6 +214,20 @@ def session_principal(db: ControlDB, session: str) -> Optional[Principal]:
     return person_principal(db, row["user_id"], row["workspace_id"])
 
 
+def session_created_at(db: ControlDB, session: Optional[str]) -> Optional[datetime]:
+    """When a live session was started: how recently its person proved who they are."""
+    ensure_schema(db)
+    if not session or len(session) > 200:
+        return None
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT * FROM sessions WHERE id_hash = ?", (_hash(session),)
+        ).fetchone()
+    if row is None or row["revoked_at"] or row["expires_at"] <= _now().strftime(_FMT):
+        return None
+    return datetime.strptime(row["created_at"], _FMT).replace(tzinfo=timezone.utc)
+
+
 def end_session(db: ControlDB, session: str) -> None:
     ensure_schema(db)
     with db._lock:

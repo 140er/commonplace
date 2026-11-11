@@ -12,6 +12,18 @@ entry was written.
 
 ## Decisions
 
+- **Account export and deletion:** A person exports their account as one streamed
+  archive: control rows about them and the full content of workspaces they own; a
+  workspace they are only a member of is listed, not exported. Deletion is an instance
+  setting, off by default (`COMMONPLACE_ACCOUNT_DELETION`). It is a request with a recent
+  sign-in and a typed confirmation, a grace period in which the account keeps working,
+  then a purge. The purge deletes workspaces with no other live member and every row
+  about the account, and leaves tombstones (user id, membership, revoked connections)
+  where other people's work refers to it. It refuses rather than choose for the owner:
+  a sole owner of a shared workspace, the last instance administrator and an account with
+  a GitHub grant cannot be purged. One table (`commonplace/account/tables.py`) classifies
+  every control table for both paths, and a test fails when a new table is missing.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck
@@ -811,7 +823,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 | Store | Scope | Holds | Backed up |
 |---|---|---|---|
-| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit | yes |
+| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, account deletion requests, audit | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
 | `runner.sqlite3` | workspace | runner jobs; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |

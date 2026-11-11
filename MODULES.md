@@ -577,6 +577,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Account export and deletion regressions (`tests/test_commonplace_account_` files, fixtures in `tests/_commonplace_account_helpers.py`) run a real gateway over temporary data: archive content and redaction, constant export memory, the deletion switch, grace period, blockers, an interrupted purge, and a before/after proof that other accounts' rows and files are unchanged.
+
   - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
 
   - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
@@ -946,6 +948,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
+  - `WorkerSupervisor.stop(workspace_id)` stops one workspace's worker without touching the others; a later call starts a new one. The account extension is the last entry of `extensions.MODULES`.
+
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
@@ -1062,6 +1066,8 @@ Format (read by `commonplace orch docs-check`):
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
 
 - **Promises:**
+
+  - `session_created_at` reports when a live session was started and nothing for a revoked, expired or unknown one; account deletion uses it as its recent sign-in proof.
 
   - OAuth authentication strips loaded private/admin scope when current workspace membership is not exactly owner, independently of token scope narrowing.
 
@@ -1854,6 +1860,36 @@ Format (read by `commonplace orch docs-check`):
   - `tests/orchstatus.mjs` (run by `tests/test_orchstatus.py`) covers the status block states, the End lease confirm, refusals and escaping; `tests/test_orch_lease_status.py` covers the checkpoint fields it reads and the owner-only force-release contract.
 
   - `api.js` joins a refusal's `error` and `next_step` and words a 403 without a JSON body; `tests/test_commonplace_owner_403_message.py` and `tests/owner_403_message.mjs` cover it.
+
+## account-data
+
+- **Paths:** `commonplace/account/`
+- **Owns:**
+
+  - `GET /api/account`, `GET /api/account/export`, `POST` and `DELETE /api/account/deletion`; the `account_deletions` control table; the classification of every control table (`tables.py`) that export and deletion share; the purge sweeper.
+
+- **Promises:**
+
+  - Only a signed-in person reaches these routes. An agent token, also the account's own, gets 403.
+
+  - Export is one streamed ZIP of NDJSON: the account's control rows, and for each workspace the person owns its control rows, every table of every workspace database and every other file, as stored. Credentials and their digests are replaced in control rows. A workspace the person is only a member of is listed without content. Memory use does not grow with the account, and `manifest.json` plus the ZIP directory come last, so a broken download is not a valid archive.
+
+  - Deletion is off unless `COMMONPLACE_ACCOUNT_DELETION=on`. A request needs a session started in the last 10 minutes and the typed account address, and only records a date `COMMONPLACE_ACCOUNT_DELETION_GRACE_DAYS` (default 14, 0 to 90) ahead; until then the account works and the person can withdraw it.
+
+  - A purge deletes workspaces without another live member (directory, store generations, control rows) and every other row about the account. In shared workspaces the membership and connections stay as tombstones (member role, revoked, no credential) and nothing else changes. The `users` row stays without name or address, disabled; the audit log is kept.
+
+  - A purge never runs while the account is the only owner of a workspace with other members, is the last instance administrator, holds a GitHub grant, or while a control table is unclassified.
+
+- **How it fails:**
+
+  - Export refuses with 409 before sending anything when a workspace database is unreadable (an encrypted store) or a store pointer needs repair; a second export of the same account gets 429. An error after the first byte closes the connection without the archive's directory. A control table newer than `tables.py` is exported on a best reading and the manifest says `complete: false`.
+
+  - A blocked purge records its blockers on the request, audits the change once and is retried by the next sweep; the account stays usable. A purge interrupted after it started leaves the account disabled in state `purging` and is resumed by the next sweep. Backups made before a purge still hold the data until they rotate out.
+
+- **Tests:**
+
+  - The `tests/test_commonplace_account_` files.
+
 
 ## browser-github-grants
 

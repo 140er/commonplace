@@ -50,6 +50,7 @@ MODULES = (
     "commonplace.chat",
     "commonplace.holds",
     "commonplace.projects",
+    "commonplace.account",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})
