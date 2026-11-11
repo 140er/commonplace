@@ -279,6 +279,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Documents enabled blockers, waiting payloads, stable split keys and bounded runner retry delivery.
 
+  - The board API guide describes the app's Blocked by section and the plain refusal sentences for blocker edits.
+
   - Documentation describes shipped behaviour; design notes are marked as proposals.
 
   - Project documentation explains opt-in start authority, shared admission, seat consent and the card-webhook delivery residual.
@@ -700,6 +702,9 @@ Format (read by `commonplace orch docs-check`):
   - Public presence witnesses reach real worker acquisition branches and real search fan-out before comparing hidden and absent worlds. Private protocol tests cover descriptor revalidation, bounded batches and metadata-only reads.
 
   - Space profile/tool snapshots retain split and inbox visibility and card-schema additions, with current origin-release descriptions. Legacy NULL-origin and untrusted-policy controls isolate each predicate independently.
+
+  - Blocker app tests drive the real `blockers.js` and `details.js` modules through Node and the REST add/clear path through the hub, so UI and API stay in step.
+
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Owner rejection of person-targeted restricted proposals with a healthy coordinator preserves origin state; owner fallback still refuses rejection. Existing release, connection, default-client and delayed-approval contracts supply explicit recovery reasons and separate required proposal review.
@@ -1134,6 +1139,8 @@ Format (read by `commonplace orch docs-check`):
   - Metadata uses an exact active slug on a plain store connection; list retains expiry and create retains rules enforcement.
   - Non-done to done transitions capture metadata in the source transaction. Unavailable report settings reject before status or lesson writes; new boards without a coordinator remain history only. Raw events retain their existing matching and authorization.
 
+  - Blocker refusals (`self`, `cycle`, `other_board`, `invalid_blockers`, `blocker_graph_too_large`) carry a plain sentence; a blocker on a card the caller cannot read gets the same `other_board` answer as a missing number.
+
   - Every card change is one transaction with its `task_events` row; event emission happens after commit and a failed emission never undoes the change; on a configured board only `task_approve` removes `plan` and plan-check gates plan approval.
 
   - Trusted agents retain their title/body edit alternative on unassigned restricted-origin todo cards. Coordinator-derived edits require verified independence: creators, descendants and unsafe lineage cannot use that exception. Content edits never release origin or grant claims.
@@ -1165,6 +1172,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_spaces_contract.py` covers DTOs, isolation, authority, collisions and side effects.
   - `tests/test_project_reports.py::test_enqueue_deferral_raw_progress_and_backoff`, `test_send_retry_accounting_and_identity` and `test_auth_retry_inspection_beyond_latest_100` pin durable retries and inspection.
+
+  - `tests/test_cards_blocked_by_app.py` with `tests/blockers_ui.mjs` covers the app's blocker section, the REST add/clear round trip, todo and take-next skipping blocked cards, and plain refusals.
 
   - `tests/test_commonplace_boards.py`, the `tests/test_commonplace_board_` files, `tests/test_commonplace_decide.py`, `tests/test_orch_plan_gate.py`, `tests/test_commonplace_webhooks.py`.
 
@@ -1714,6 +1723,9 @@ Format (read by `commonplace orch docs-check`):
   - The Connect checklist renders the supplied webhook event recommendation, including card moves and optional card creation, with escaped values.
 
   - Enabled waiting tags show dependency titles or occupied-slot counts and suppress the available tag.
+
+  - `blockers.js` renders the card-details Blocked by section (blocker title, Waiting or Done, Clear, Add blocker by card number) only when card views carry `blocked_by`, and edits the list through the card `PATCH`.
+
   - A current refresh failure clears that responsibility, so later background reads still preserve busy Rules forms.
 
   - The latest refresh carries a pending foreground render for its screen, so background events cannot leave Settings or Console on Loading; completed Settings views keep their usual background-update policy.

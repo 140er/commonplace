@@ -653,6 +653,14 @@ count by code. A blocked-card wait alone does not appear in `needs_me`.
 Explicit claims use the same waiting text for blocker and project-cap refusals;
 existing-agent admission exemptions still apply. Board tags show the blocker
 title or occupied-slot count instead of advertising a waiting card as available.
+In the app, a card's details show a **Blocked by** section: each blocker with its
+title and whether it is still waiting or Done, a Clear button per blocker, and an
+Add blocker box that takes a card number (`12` or `#12`). Both send the ordinary
+card `PATCH` with the full `blocked_by` list and the card `version`. A refused link
+(itself, a loop, a card that is not on this board or that the caller cannot read)
+comes back as a `400` whose `error` is a plain sentence and whose `code` is
+`self`, `cycle`, `other_board`, `invalid_blockers` or `blocker_graph_too_large`;
+a card the caller cannot read gets the same `other_board` answer as a missing number.
 With orchestration off these fields and the `blocked_by` schema properties are absent,
 and `blocked_by` is refused. `not_released` applies only to Todo/Backlog cards.
 

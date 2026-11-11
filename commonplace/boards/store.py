@@ -85,23 +85,37 @@ def set_blockers(conn, row, values, actor):
         or len(values) > 16
         or any(type(n) is not int or not 1 <= n < 2**63 for n in values)
     ):
-        raise CardRefused("invalid_blockers", status=400)
+        raise CardRefused(
+            "invalid_blockers",
+            "blocked_by takes a list of at most 16 card numbers",
+            status=400,
+        )
     for number in set(values):
         if number == row["id"]:
-            raise CardRefused("self", status=400)
+            raise CardRefused("self", "a card cannot be blocked by itself", status=400)
         found = conn.execute("SELECT board_id FROM tasks WHERE id=?", (number,)).fetchone()
         if found is None or found[0] != row["board_id"]:
-            raise CardRefused("other_board", status=400)
+            raise CardRefused(
+                "other_board",
+                f"#{number} is not a card on this board that you can read",
+                status=400,
+            )
         pending, seen = [number], set()
         while pending:
             current = pending.pop()
             if current == row["id"]:
-                raise CardRefused("cycle", status=400)
+                raise CardRefused(
+                    "cycle",
+                    f"#{number} already waits on this card, so the cards would wait on each other",
+                    status=400,
+                )
             if current in seen:
                 continue
             seen.add(current)
             if len(seen) > 200:
-                raise CardRefused("blocker_graph_too_large", status=400)
+                raise CardRefused(
+                    "blocker_graph_too_large", "too many chained blockers to check", status=400
+                )
             pending.extend(
                 r[0]
                 for r in conn.execute(

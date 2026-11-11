@@ -615,6 +615,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   checks them before starting. Views use the pure `boards.why` predicate in
   blocker/person/release/cap order; explicit claims share its waiting text.
   Dependency waiting alone does not enter `needs_me`.
+
+- Blocker links are edited in the app through the ordinary card `PATCH` with the full `blocked_by` list and the card version, so ownership, visibility and optimistic-version rules are unchanged. Refusals (`self`, `cycle`, `other_board`, `invalid_blockers`, `blocker_graph_too_large`) carry a plain sentence; a card the caller cannot read is answered exactly like a missing number.
 - `boards.sqlite3` adds `task_blockers` and `card_splits`. Keyed children use
   `split:<parent>:<key>` labels; key checks and inserts share the board write
   transaction. Inbox reads include open unsplit roots, excluding children and

@@ -18,6 +18,7 @@ import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, roveTo } from "./board.js";
 import { createDetails } from "./details.js";
+import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { resolveRoute } from "./routes.js";
 import { createNeeds } from "./needs.js";
 import { createMemory } from "./memory.js";
@@ -1539,6 +1540,7 @@ root.addEventListener("click", async (event) => {
     } else if (action === "new-card") newCardForm();
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
+    else if (action === "unblock") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: removeBlocker(state.card, Number(b.dataset.blocker)), version: state.card.version } }));
     else if (action === "new-board") openOnboarding();
     else if (action === "logout") {
       state.needsUI?.stop(); state.needsUI = null;
@@ -1566,6 +1568,8 @@ root.addEventListener("submit", async (event) => {
   }
   const payload = data(form), kind = form.dataset.form;
   if (kind === "reply" && !payload.reply?.trim()) { showError("Enter a reply."); return; }
+  const blockerNumbers = kind === "blockers" ? parseBlockerNumbers(payload.blockers) : null;
+  if (kind === "blockers" && !blockerNumbers) { showError("Enter the card number that blocks this card."); return; }
   if (kind === "handoff" && (!payload.note?.trim() || !payload.to?.trim())) { showError("Enter a recipient and a note."); return; }
   if (kind === "handoff" && form.dataset.connectionsOnly === "true" && !/^conn:\S+$/.test(payload.to)) {
     showError("Choose an agent using conn: followed by its name.");
@@ -1596,6 +1600,10 @@ root.addEventListener("submit", async (event) => {
     else if (kind === "new-card") await mutate("new-card", async () => {
       const card = await api(`/api/boards/${enc(form.dataset.board)}/cards`, { method: "POST", body: payload });
       location.hash = `#/card/${card.number}`;
+    });
+    else if (kind === "blockers") await mutate(`card-${state.card.number}`, async () => {
+      await api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: addBlockers(state.card, blockerNumbers), version: state.card.version } });
+      form.reset();
     });
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "review") await move(state.card.number, "review", { ...payload, options: payload.options.split("\n").map((v) => v.trim()).filter(Boolean) });
