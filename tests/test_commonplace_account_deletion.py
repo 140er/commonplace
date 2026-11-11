@@ -85,8 +85,8 @@ def give_alice_a_footprint(site):
         )
         run(
             "INSERT INTO webhooks(id, workspace_id, connection_id, owner_actor, url, "
-            "secret_hash, event_id_key, kinds, active, start_seq, created_at) VALUES "
-            "('hook_team', ?, ?, 'conn:alice-agent', 'https://example.test/hook', 'h', 'k', "
+            "secret_hash, secret, event_id_key, kinds, active, start_seq, created_at) VALUES "
+            "('hook_team', ?, ?, 'conn:alice-agent', 'https://example.test/hook', 'h', 's', 'k', "
             "'[]', 1, 0, '2026-01-01T00:00:00Z')",
             (site.team, connection),
         )

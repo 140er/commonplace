@@ -49,6 +49,7 @@ RULES = {
     # scope_id is a workspace id or a connection id, by scope.
     "backfill_allowance": Rule(workspace=("scope_id",), connection=("scope_id",)),
     # actor_id is the user id for a person and the connection id for an agent.
+    "bot_model_calls": Rule(user=_U, workspace=_W),
     "capture_ops": Rule(user=("actor_id",), workspace=_W, connection=("actor_id",)),
     "capture_settings": Rule(workspace=_W),
     "chat_front_jobs": Rule(user=_U, workspace=_W),
@@ -85,11 +86,15 @@ RULES = {
     ),
     "phone_push_state": Rule(parent=("subscription_id", "phone_push_subscriptions", "id")),
     "phone_push_subscriptions": Rule(user=_U, workspace=_W),
+    "project_model_catalog": Rule(workspace=_W),
     "project_orchestrators": Rule(workspace=_W, connection=_C),
     "project_report_activation": Rule(workspace=_W),
     "project_report_bindings": Rule(workspace=_W, connection=_C),
     "project_report_dispatch_retry": Rule(workspace=_W),
     "project_report_receipts": Rule(workspace=_W),
+    "routine_runs": Rule(parent=("routine_id", "routines", "id")),
+    # A routine runs for its owner, so it leaves with them.
+    "routines": Rule(user=("owner_user_id",), workspace=_W),
     "rule_checks": Rule(workspace=_W),
     "rule_stores": Rule(workspace=_W),
     "runner_connections": Rule(connection=_C),
