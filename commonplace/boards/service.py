@@ -17,7 +17,14 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
-from . import lifecycle, priority as priorities, reviewer as reviewers, task_types
+from . import (
+    decision_blocks,
+    goals,
+    lifecycle,
+    priority as priorities,
+    reviewer as reviewers,
+    task_types,
+)
 from .digest import digest
 from .display import (
     _waiting_on_person as _display_waiting,
@@ -1866,6 +1873,9 @@ class BoardService(lifecycle.LifecycleMixin):
         updates.update(
             version=row["version"] + 1, updated_at=now(), updated_by=self.principal.actor
         )
+        if "ask_options" in updates:
+            # Blocks describe one ask's options; a new or cleared ask never inherits them.
+            updates.setdefault("ask_blocks", None)
         if "status" in updates:
             updates["claim_from"] = (
                 row["status"]
@@ -2598,6 +2608,40 @@ class BoardService(lifecycle.LifecycleMixin):
             ]
             result["linked"] = linked
             result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
+            self._with_goals(conn, row, result)
+            return result
+
+    def _with_goals(self, conn, row, result):
+        """Agent card context: the goal chain, only for a card that points at a goal."""
+        block = goals.chain_block(conn, row["id"])
+        if block is not None:
+            result["goals"] = block
+
+    def goal_list(self):
+        with self.transaction() as conn:
+            return goals.tree(conn)
+
+    def goal_set(self, goal=None, title=None, detail=None, parent=None, archived=None):
+        goals.require_owner(self.principal)
+        with self.transaction() as conn:
+            return goals.put(
+                conn,
+                self.principal.actor,
+                now(),
+                goal=goal,
+                title=title,
+                detail=detail,
+                parent=parent,
+                archived=archived,
+            )
+
+    def card_goal(self, task, goal=None):
+        goals.require_owner(self.principal)
+        with self.transaction() as conn:
+            row, _board = self._get(conn, task)
+            goals.point(conn, self.principal.actor, now(), row["id"], goal)
+            result = {"number": row["id"], "board": row["board"]}
+            self._with_goals(conn, row, result)
             return result
 
     def _parent_card(self, conn, board, parent, *, delegating=False):
@@ -2767,6 +2811,7 @@ class BoardService(lifecycle.LifecycleMixin):
         labels=None,
         ask=None,
         options=None,
+        blocks=None,
         target=None,
         message_id=None,
         parent=None,
@@ -2912,7 +2957,7 @@ class BoardService(lifecycle.LifecycleMixin):
         number = cur.lastrowid
         conn.execute(
             "UPDATE tasks SET claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
-            "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=? WHERE id=?",
+            "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=?,ask_blocks=? WHERE id=?",
             (
                 until,
                 at if until else None,
@@ -2923,6 +2968,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 label,
                 rank,
                 reviewer,
+                blocks if ask is not None else None,
                 number,
             ),
         )
@@ -3345,6 +3391,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 # Clear the delivery marker in this same versioned mutation.
                 conn.execute("UPDATE tasks SET return_to=NULL WHERE id=?", (row["id"],))
                 result["return_to"] = None
+            self._with_goals(conn, row, result)
             return result
 
     def _position(self, conn, row, updates, before=None, after=None):
@@ -4050,6 +4097,7 @@ class BoardService(lifecycle.LifecycleMixin):
         *,
         ask_to=None,
         type_holder=None,
+        blocks=None,
     ):
         if row["proposal_status"] in ("pending", "rejected"):
             raise ToolError(
@@ -4092,6 +4140,7 @@ class BoardService(lifecycle.LifecycleMixin):
             "assignee": None if person else target,
             "ask": note if person else None,
             "ask_options": json.dumps(options),
+            "ask_blocks": blocks if person else None,
             "ask_to": target if person else None,
             "return_to": self.principal.actor if person else None,
             "flags": json.dumps(
@@ -4153,6 +4202,7 @@ class BoardService(lifecycle.LifecycleMixin):
         return self._start_assignment(result)
 
     def ask(self, question, options=None, board=None, task=None, context="", person_reason=None):
+        options, blocks = decision_blocks.parse(options)
         with self.transaction() as conn:
             if task is not None:
                 row, b = self._get(conn, task)
@@ -4169,6 +4219,7 @@ class BoardService(lifecycle.LifecycleMixin):
                     options,
                     context or None,
                     ask_to=recipient,
+                    blocks=blocks,
                 )
             b = self._board(conn, board, create=True)
             self._write(b, submission=True)
@@ -4183,6 +4234,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 status="review",
                 ask=question,
                 options=choices(options),
+                blocks=blocks,
                 target=recipient,
             )
 
