@@ -68,6 +68,16 @@ def test_failed_injection_never_leaves_blank_instructions(env, monkeypatch, brok
     assert "Commonplace is the single source" in degraded
     assert "Automatically call session_start" in degraded
     assert "Original worker instructions." in degraded
+    # Even with the optional startup context failing too, the pointer remains.
+    from commonplace import session
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError(SECRET)
+
+    monkeypatch.setattr(session, "initialize_context", fail)
+    bare = env.gateway.mediator.handle(env.principal, request)["result"]["instructions"]
+    assert "Automatically call session_start for full context." in bare
+    assert "Original worker instructions." in bare and SECRET not in bare
 
 
 # ── 2. session-start hook ──
