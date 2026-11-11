@@ -2011,6 +2011,13 @@ class BoardService:
                         "no: coordinator must be an active agent with access to this board"
                     )
             conn.execute("UPDATE boards SET coordinator=? WHERE id=?", (actor, b["id"]))
+            if actor is not None and actor.startswith("conn:"):
+                # A coordinator is agent machinery: assigning one ends any stored
+                # cards:decide grant, so unassigning it later needs fresh consent.
+                coordinator_row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+                self.ctx.db.clear_decide(
+                    coordinator_row["id"], reason="coordinator", user_id=self.principal.user_id
+                )
             self.pending.append(
                 (
                     "space_configured",
@@ -3700,6 +3707,31 @@ class BoardService:
             )
 
     def decide(self, task, choice=None, reply=None, then="return", version=None):
+        audited = []
+        try:
+            return self._decide(task, choice, reply, then, version, audited)
+        except BaseException:
+            # The audit row was written inside the board transaction. The log is
+            # append-only, so a rollback after it appends a row that cancels it.
+            p = self.principal
+            for seq, card in audited:
+                try:
+                    self.ctx.db.audit(
+                        action=decide_grant.ROLLBACK_ACTION,
+                        decision="rolled_back",
+                        workspace_id=p.workspace_id,
+                        user_id=p.user_id,
+                        connection_id=p.connection_id,
+                        auth=p.auth,
+                        tool="decide",
+                        reason=f"audit_seq={seq}",
+                        target_ids=[card],
+                    )
+                except Exception as exc:
+                    log_failure(logger, "delegated decide rollback audit failed", exc)
+            raise
+
+    def _decide(self, task, choice, reply, then, version, audited):
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             p = self.principal
@@ -3810,13 +3842,10 @@ class BoardService:
                     "ask_to": row["ask_to"],
                 },
             )
-            result = self._card(conn, task_row(conn, row["id"]), self.principal)
-        if delegated:
-            # After the board commit, so no audit row describes an answer that rolled
-            # back. The committed card event already names this connection; a failed
-            # control-log write is logged, not raised, because the answer stands.
-            try:
-                self.ctx.db.audit(
+            if delegated:
+                # Inside the board transaction: a failed audit write fails the answer.
+                # A later rollback appends a cancelling row in decide().
+                seq = self.ctx.db.audit(
                     action=decide_grant.AUDIT_ACTION,
                     decision="ok",
                     workspace_id=p.workspace_id,
@@ -3827,9 +3856,8 @@ class BoardService:
                     reason=f"board={board['slug']}",
                     target_ids=[str(row["id"])],
                 )
-            except Exception as exc:
-                log_failure(logger, "delegated decide audit failed", exc)
-        return result
+                audited.append((seq, str(row["id"])))
+            return self._card(conn, task_row(conn, row["id"]), self.principal)
 
     def _owner_writes(self, wing):
         """Whether the app's person, signed in, could write this wing right now."""
@@ -3842,6 +3870,16 @@ class BoardService:
             and person.policy.can_read_wing(wing)
             and person.policy.can_write_wing(wing)
         )
+
+    def coordinator_actors(self):
+        """Every board coordinator actor in this workspace (archived boards included)."""
+        with self.store.connection() as conn:
+            return frozenset(
+                r[0]
+                for r in conn.execute(
+                    "SELECT coordinator FROM boards WHERE coordinator IS NOT NULL"
+                )
+            )
 
     def _agent_connection(self, conn, p):
         """A project seat or any board's coordinator: agent machinery, not an owner's app."""

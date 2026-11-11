@@ -26,9 +26,9 @@ FULL = "memory:read memory:write cards:decide"
 # Literal copies: this file must run (and fail behaviourally) on a base without the scope.
 SCOPE_TEXT = (
     "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
-    "It can answer only questions addressed to you, never another person's, and only on "
-    "boards you can write to. Every answer is recorded with this connection. You can stop "
-    "this at any time under Agents."
+    "Every answer is recorded with this connection, and you can stop this at any time "
+    "under Agents. It can answer only questions addressed to you, never another "
+    "person's, and only on boards you can write to."
 )
 OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
 TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
@@ -487,26 +487,56 @@ def test_r1_seats_are_never_granted_and_never_answer(projects_hub):
     assert status == 403 and REFUSAL in refused["error"], refused
 
 
-def test_r1_board_coordinator_never_answers_as_the_owner(world):
-    w = world
-    hub = w.hub
+def _coordinator_app(hub, name="coordinator-app"):
     token = hub.token(
-        "coordinator-app",
+        name,
         profile="full",
         scopes=["memory:read", "memory:write"],
         read_wings=["*"],
         write_wings=["inbox"],
         trust="trusted",
     )
-    cid = hub.gateway.authenticate(f"Bearer {token}").connection_id
-    status, body = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
-    assert status == 200 and body["connection"]["decide"] is True
+    return token, hub.gateway.authenticate(f"Bearer {token}").connection_id
+
+
+def test_r1_board_coordinator_is_never_granted(world):
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
     w.owner.board_set("work", "conn:coordinator-app")
+    status, refused = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
+    assert (status, refused["error"]) == (409, AGENT_TEXT), refused
+    status, listing = api(hub, w.cookie, "GET", "/api/connections")
+    row = next(c for c in listing["connections"] if c["id"] == cid)
+    assert row["decide"] is False and row["decide_grantable"] is False
     number, version = _owner_ask(hub, asker=w.asker)
     status, refused = rest_decide(w, token, number, version)
     assert status == 403 and REFUSAL in refused["error"], refused
     assert w.owner.task_show(number)["status"] == "review"
     assert delegated_audit(hub) == []
+
+
+def test_r1_assigning_a_coordinator_clears_its_grant(world):
+    w = world
+    hub = w.hub
+    token, cid = _coordinator_app(hub)
+    status, body = api(hub, w.cookie, "PATCH", f"/api/connections/{cid}", {"decide": True})
+    assert status == 200 and body["connection"]["decide"] is True
+    w.owner.board_set("work", "conn:coordinator-app")
+    stored = json.loads(hub.db.connection(cid, hub.workspace)["policy"])
+    assert "cards:decide" not in stored["scopes"]
+    cleared = [
+        r
+        for r in hub.db.audit_entries(hub.workspace, limit=500)
+        if r["action"] == "connection.decide.revoke" and r["connection_id"] == cid
+    ]
+    assert [r["reason"] for r in cleared] == ["coordinator"]
+    # Unassigning does not bring it back: answering needs fresh consent.
+    w.owner.board_set("work", None)
+    number, version = _owner_ask(hub, asker=w.asker)
+    status, refused = rest_decide(w, token, number, version)
+    assert status == 403 and REFUSAL in refused["error"], refused
+    assert w.owner.task_show(number)["status"] == "review"
 
 
 def test_r2_answers_where_the_owner_can_write_as_a_person(world, monkeypatch):
@@ -550,7 +580,108 @@ def test_r3_no_audit_row_for_an_answer_that_rolls_back(world, monkeypatch):
     with pytest.raises(RuntimeError):
         app.decide(number, choice=OPTIONS[0], version=version)
     assert w.owner.task_show(number)["status"] == "review"
+    # Written in the transaction; the rollback appends a row that cancels it.
+    (written,) = delegated_audit(w.hub)
+    cancels = [
+        r
+        for r in w.hub.db.audit_entries(w.hub.workspace, limit=500)
+        if r["action"] == "card.decide.rolled_back"
+    ]
+    assert [(r["reason"], json.loads(r["target_ids"])) for r in cancels] == [
+        (f"audit_seq={written['seq']}", [str(number)])
+    ]
+
+
+def test_r8_a_failed_audit_write_fails_the_answer(world, monkeypatch):
+    w = world
+    token, _cid = owner_app(w)
+    number, version = ask(w)
+    real = w.hub.db.audit
+
+    def broken(**entry):
+        if entry.get("action") == AUDIT_ACTION:
+            raise RuntimeError("audit log unavailable")
+        return real(**entry)
+
+    monkeypatch.setattr(w.hub.db, "audit", broken)
+    app = service(w.hub, w.hub.gateway.authenticate(f"Bearer {token}"))
+    with pytest.raises(RuntimeError):
+        app.decide(number, choice=OPTIONS[0], version=version)
+    monkeypatch.undo()
+    assert w.owner.task_show(number)["status"] == "review"
     assert delegated_audit(w.hub) == []
+
+
+def test_r9_a_person_policy_lookup_error_fails_closed(world, monkeypatch):
+    w = world
+    token, _cid = owner_app(w)
+    number, version = ask(w)
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("person lookup failed")
+
+    monkeypatch.setattr(sessions, "person_principal", unavailable)
+    app = service(w.hub, w.hub.gateway.authenticate(f"Bearer {token}"))
+    with pytest.raises(RuntimeError):
+        app.decide(number, choice=OPTIONS[0], version=version)
+    monkeypatch.undo()
+    assert w.owner.task_show(number)["status"] == "review"
+    assert delegated_audit(w.hub) == []
+
+
+def test_r10_rotating_an_expired_app_drops_its_grant(world):
+    w = world
+    hub = w.hub
+    token, cid = owner_app(w)
+    # Rotating a live app keeps the grant.
+    status, body = api(hub, w.cookie, "POST", f"/api/connections/{cid}/rotate", {})
+    assert status == 200 and body["connection"]["decide"] is True
+    token = body["token"]
+    number, version = ask(w, "Live rotation?")
+    assert rest_decide(w, token, number, version)[0] == 200
+    # Expiry ends eligibility: rotation brings the token back, not the grant.
+    with hub.db._lock:
+        hub.db._conn.execute(
+            "UPDATE connections SET expires_at=? WHERE id=?", ("2000-01-01T00:00:00Z", cid)
+        )
+    number, version = ask(w, "Expired app question?")
+    assert rest_decide(w, token, number, version)[0] == 401
+    status, body = api(hub, w.cookie, "POST", f"/api/connections/{cid}/rotate", {})
+    assert status == 200 and body["connection"]["decide"] is False
+    status, refused = rest_decide(w, body["token"], number, version)
+    assert status == 403 and HIDDEN in refused["error"], refused
+    assert w.owner.task_show(number)["status"] == "review"
+    expired = [
+        r["reason"]
+        for r in hub.db.audit_entries(hub.workspace, limit=500)
+        if r["action"] == "connection.decide.revoke" and r["connection_id"] == cid
+    ]
+    assert expired == ["expired"]
+
+
+def test_r11_other_members_rows_are_never_offered(world):
+    w = world
+    hub = w.hub
+    member = hub.db.create_user("member@example.com")
+    hub.db.add_member(hub.workspace, member, "member", actor=hub.admin)
+    token = hub.token(
+        "member-app",
+        user=member,
+        profile="slim",
+        scopes=["memory:read", "memory:write"],
+        read_wings=["*"],
+        write_wing="inbox",
+        trust="untrusted",
+    )
+    cid = hub.gateway.authenticate(f"Bearer {token}").connection_id
+    _own, own_id = owner_app(w)
+    status, listing = api(hub, w.cookie, "GET", "/api/connections")
+    rows = {c["id"]: c for c in listing["connections"]}
+    assert rows[cid]["decide_grantable"] is False
+    assert api(hub, w.cookie, "PATCH", f"/api/connections/{own_id}", {"decide": False})[0] == 200
+    status, listing = api(hub, w.cookie, "GET", "/api/connections")
+    rows = {c["id"]: c for c in listing["connections"]}
+    assert rows[own_id]["decide_grantable"] is True
 
 
 def test_r4_control_layer_needs_the_signed_in_owner(world):
@@ -646,6 +777,7 @@ def test_r7_consent_copy_has_one_source_and_names_the_scope(world):
     grant = oauth_grant(w.hub)
     label = re.search(r'name="grant_decide" value="1"> ([^<]+)</label>', grant.page)[1]
     assert unescape(label) == SCOPE_TEXT and "cards:decide" in SCOPE_TEXT
+    assert SCOPE_TEXT.endswith("only on boards you can write to.")
     status, listing = api(w.hub, w.cookie, "GET", "/api/connections")
     assert status == 200 and listing["decide_consent"] == SCOPE_TEXT
     static = Path(__file__).parents[1] / "commonplace" / "web" / "static" / "agents.js"
@@ -674,6 +806,9 @@ def test_refresh_does_not_restore_a_withdrawn_grant(world):
     status, _, raw = client.refresh(cid, issued["refresh_token"])
     assert status == 200, raw
     fresh = json.loads(raw)
+    assert "cards:decide" in issued["scope"].split()
+    # The response lists only what is live after the withdrawal.
+    assert fresh["scope"].split() == ["memory:read", "memory:write"]
     assert not hub.gateway.authenticate("Bearer " + fresh["access_token"]).policy.has_scope(
         "cards:decide"
     )

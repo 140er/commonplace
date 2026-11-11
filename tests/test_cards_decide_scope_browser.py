@@ -24,9 +24,9 @@ DECIDE = "cards:decide"
 # A literal copy, so the file runs (and fails behaviourally) on a base without the scope.
 SCOPE_TEXT = (
     "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
-    "It can answer only questions addressed to you, never another person's, and only on "
-    "boards you can write to. Every answer is recorded with this connection. You can stop "
-    "this at any time under Agents."
+    "Every answer is recorded with this connection, and you can stop this at any time "
+    "under Agents. It can answer only questions addressed to you, never another "
+    "person's, and only on boards you can write to."
 )
 
 

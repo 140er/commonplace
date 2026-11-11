@@ -12,9 +12,9 @@ DECIDE_SCOPE = "cards:decide"
 # The one source for the consent copy: the OAuth form and Settings → Agents show it.
 SCOPE_TEXT = (
     "Allow this app to answer your Needs-me questions as you (scope cards:decide). "
-    "It can answer only questions addressed to you, never another person's, and only on "
-    "boards you can write to. Every answer is recorded with this connection. You can stop "
-    "this at any time under Agents."
+    "Every answer is recorded with this connection, and you can stop this at any time "
+    "under Agents. It can answer only questions addressed to you, never another "
+    "person's, and only on boards you can write to."
 )
 OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
 TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
@@ -22,6 +22,7 @@ AGENT_TEXT = "Agent, runner and orchestrator connections cannot answer Needs-me 
 INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
 OAUTH_GRANT_TEXT = "An OAuth app gets this only through a fresh sign-in consent."
 AUDIT_ACTION = "card.decide.delegated"
+ROLLBACK_ACTION = "card.decide.rolled_back"  # cancels an AUDIT_ACTION row by audit_seq
 SEAT_CLIENT = "commonplace-orchestrator"  # projects.types.SEAT_CLIENT; asserted in tests
 
 

@@ -159,7 +159,17 @@ def _revoke(conn, connection_id):
     )
 
 
+def _live_scope(conn, grant) -> str:
+    """The granted scopes the connection still holds now (owner role applied)."""
+    row = _live_connection(conn, grant["connection_id"])
+    live = set(Policy.from_json(row["policy"]).for_role(row["role"]).scopes) if row else set()
+    return " ".join(s for s in grant["scope"].split() if s in live)
+
+
 def _issue(conn, grant) -> dict:
+    # Issue and advertise only what is live, so a withdrawn or lost scope never
+    # reappears in a response or in the stored token rows a later refresh copies.
+    grant = dict(grant, scope=_live_scope(conn, grant))
     access = "cmmn_at_" + secrets.token_urlsafe(32)
     refresh = "cmmn_rt_" + secrets.token_urlsafe(48)
     for secret, kind, lifetime in (

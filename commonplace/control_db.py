@@ -678,6 +678,10 @@ class ControlDB:
                 raise RunnerLinkedError()
             if row["auth"] != "pat" or row["revoked_at"]:
                 raise ControlError("only active personal access tokens can be rotated")
+            expires = _parse(row["expires_at"])
+            if expires is not None and expires <= _now():
+                # Expiry ended the app's eligibility: reviving it needs fresh consent.
+                self.clear_decide(row["id"], reason="expired", user_id=actor_id)
             token = tokens.new_token()
             self._conn.execute(
                 "UPDATE connections SET token_hash=?, token_hint=?, expires_at=?, "
@@ -923,11 +927,11 @@ class ControlDB:
         reason: str = "",
         wing: Optional[str] = None,
         target_ids: Iterable[str] = (),
-    ) -> None:
-        """Append one entry. Ids and decisions only, never memory text."""
+    ) -> int:
+        """Append one entry and return its sequence number. Ids and decisions only."""
         ids = [str(t)[:200] for t in target_ids if t][:500]
         with self._lock:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "INSERT INTO audit_log(at, workspace_id, user_id, connection_id, auth, action, "
                 "tool, decision, reason, wing, target_ids) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
@@ -944,6 +948,39 @@ class ControlDB:
                     json.dumps(ids),
                 ),
             )
+            return cursor.lastrowid
+
+    def clear_decide(self, connection_id: str, *, reason: str, user_id=None) -> bool:
+        """Remove a stored cards:decide grant; True when one was removed (audited)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, workspace_id, user_id, auth, policy FROM connections WHERE id=?",
+                (connection_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                policy = json.loads(row["policy"])
+                scopes = list(policy.get("scopes", ()))
+            except (TypeError, ValueError, AttributeError):
+                return False
+            if DECIDE_SCOPE not in scopes:
+                return False
+            policy["scopes"] = sorted(set(scopes) - {DECIDE_SCOPE})
+            self._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?",
+                (json.dumps(policy, sort_keys=True), row["id"]),
+            )
+            self.audit(
+                action="connection.decide.revoke",
+                decision="ok",
+                workspace_id=row["workspace_id"],
+                user_id=user_id or row["user_id"],
+                connection_id=row["id"],
+                auth=row["auth"],
+                reason=reason,
+            )
+            return True
 
     def audit_entries(self, workspace_ref: Optional[str] = None, limit: int = 100) -> list:
         sql = "SELECT * FROM audit_log"

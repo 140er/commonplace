@@ -87,7 +87,7 @@ By default only you, signed in to the web app, can answer a Needs-me question.
 To let one of your own apps (for example a phone or car app) answer them, grant
 it the separate `cards:decide` scope. The consent text says:
 
-> Allow this app to answer your Needs-me questions as you (scope cards:decide). It can answer only questions addressed to you, never another person's, and only on boards you can write to. Every answer is recorded with this connection. You can stop this at any time under Agents.
+> Allow this app to answer your Needs-me questions as you (scope cards:decide). Every answer is recorded with this connection, and you can stop this at any time under Agents. It can answer only questions addressed to you, never another person's, and only on boards you can write to.
 
 - **PAT:** tick that box when you create the connection, or use **Allow
   answering Needs-me** on an existing top-level connection. Through the API,
@@ -101,9 +101,10 @@ it the separate `cards:decide` scope. The consent text says:
 
 Only a workspace owner can grant it, only to their own top-level app
 connection. Agent machinery never holds it: child agents, runner connections and
-project orchestrator seats are refused when granting (the button is not offered
-on their rows), and seats or board coordinators are refused again when
-answering. Members see no consent box and the CLI refuses it. Agent tokens
+project orchestrator seats and board coordinators are refused when granting
+(the button is not offered on their rows), and refused again when answering.
+Assigning a connection as a board coordinator removes its grant; unassigning it
+does not bring the grant back. The button appears only on your own connections. Members see no consent box and the CLI refuses it. Agent tokens
 cannot grant it to themselves or anyone else: granting needs your signed-in
 browser session.
 
@@ -113,16 +114,19 @@ any board it can see whose wing you, signed in, can write. Its own write wings
 still needs `memory:write`, cannot answer in another workspace, and is refused
 on boards whose wing you cannot write.
 
-If you stop being a workspace owner, every stored `cards:decide` grant on your
-connections is removed; becoming owner again does not bring it back.
+If your role changes from owner to member, every stored `cards:decide` grant on
+your connections is removed; becoming owner again does not bring it back. An
+expired app connection keeps its grant only until you rotate it: rotation
+renews the token but removes the grant, so allow answering again afterwards.
+OAuth refresh responses list only the scopes the app still holds.
 
 With the scope, the app may call `decide` (MCP) or
 `POST /api/cards/<n>/decide` (REST) for asks addressed to you only. Asks
 addressed to another person or to an agent coordinator stay refused, as do
-escalation and boards the connection cannot read or write. The card history,
-committed with the answer, names the connection as the actor; after that commit
-each answer also writes an audit entry `card.decide.delegated` with the
-connection id and auth kind.
+escalation and boards the connection cannot read or write. The card history
+names the connection as the actor, and each answer writes an audit entry
+`card.decide.delegated` with the connection id and auth kind in the same step;
+if that audit write fails, the answer fails.
 
 To stop it, use **Stop answering** under **Settings → Agents** (PAT or OAuth), or
 `PATCH /api/connections/<id>` with `{"decide": false}`. The next request is

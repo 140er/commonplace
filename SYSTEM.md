@@ -500,8 +500,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
   and refuses runner (its runner message), inactive, child, agent-started and
   seat connections with specific 409 messages; OAuth code minting rechecks a
   person owner. The CLI refuses it; person policies, profile defaults and seat or
-  runner policies never include it. Settings → Agents offers the grant only on
-  eligible rows, with the consent text served from one source.
+  runner policies never include it. The grant route also refuses any current
+  board coordinator (checked in the board store). Settings → Agents offers the
+  grant only on the viewing owner's own eligible, non-coordinator PATs, with the
+  consent text served from one source.
 - Answering: the connection must be a live PAT or OAuth connection of a current
   owner, top-level, not a runner, hold the scope, and the ask's recipient must be
   exactly that owner. Project seats and board coordinators are refused. The app
@@ -511,17 +513,29 @@ playbooks and the original wider orchestration acceptance remain separate work.
   the browser, regardless of the app's own `inbox` write wing, and is refused
   where the owner cannot write. It cannot escalate or answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
   tool lists stay unchanged.
-- Audit: the board event committed with the answer names the connection. After
-  that commit every delegated answer writes `audit_log` action
-  `card.decide.delegated` with user, connection id, auth kind, board and card
-  number, so a rolled-back answer leaves no audit row; a failed control-log write
-  is logged. Grants and withdrawals write `connection.decide.grant` and
-  `connection.decide.revoke`.
+- Audit: inside the answer's board transaction, before it commits, every
+  delegated answer writes `audit_log` action `card.decide.delegated` with user,
+  connection id, auth kind, board and card number. A failed audit write fails the
+  answer. The audit log is append-only and a separate database, so if the board
+  transaction rolls back after the row was written, a `card.decide.rolled_back`
+  row with `reason=audit_seq=<seq>` cancels it. Grants and withdrawals write
+  `connection.decide.grant` and `connection.decide.revoke`.
 - Revocation: `PATCH {"decide": false}` (PAT or OAuth) or revoking the connection
   takes effect on the next request; policies load on every request and lose the
-  scope when the holder stops being owner. Membership triggers also remove the
-  stored grant (with a `connection.decide.revoke` audit row, reason "ownership
-  lost") when an owner is demoted or removed, so re-promotion never revives it.
+  scope when the holder stops being owner. Losing eligibility removes the stored
+  grant, each with a `connection.decide.revoke` audit row, so regaining it needs
+  fresh consent:
+  - demotion: a membership trigger fires on an `UPDATE` of `memberships.role`
+    from `owner` to anything else (reason "ownership lost"); deleting a
+    membership is refused by the foreign key while the user has connections;
+  - coordinator assignment: `board_set` clears the grant of the connection it
+    assigns (reason "coordinator"); unassigning does not restore it;
+  - expiry: rotating an expired PAT clears the grant (reason "expired"); rotating
+    a live PAT keeps it. Expired tokens can still be rotated, as the connection
+    docs describe.
+- OAuth token and refresh responses (and the stored token rows) carry only the
+  granted scopes the connection still holds after policy and role intersection,
+  so a withdrawn `cards:decide` never reappears in a refresh.
 
 ### Explicit imported-history reader consent
 

@@ -1,12 +1,21 @@
 """Human-managed agent tokens, sharing the existing connection authority."""
 
+import logging
+
 from commonplace import decide_grant, import_grant, urls
 from commonplace.control_db import ControlError
-from commonplace.extensions import ToolError
-from commonplace.http_util import path_parts, read_json, require_principal, send_json
+from commonplace.extensions import ToolContext, ToolError
+from commonplace.http_util import (
+    log_failure,
+    path_parts,
+    read_json,
+    require_principal,
+    send_json,
+)
 from commonplace.policy import Policy, canonical_wing, is_private_wing
 
 TOKEN_DAYS = 90
+logger = logging.getLogger(__name__)
 
 
 def _read_wings(gateway, principal, data):
@@ -32,7 +41,23 @@ def _read_wings(gateway, principal, data):
     return list(dict.fromkeys(canonical_wing(wing) for wing in wings))
 
 
-def connection_view(row, db=None):
+def coordinators(gateway, principal):
+    """Board coordinator actors, or ``None`` when the boards cannot be read (fail closed)."""
+    from commonplace.boards.service import BoardService
+
+    try:
+        return BoardService(ToolContext(principal=principal, gateway=gateway)).coordinator_actors()
+    except Exception as exc:
+        log_failure(logger, "board coordinators unavailable", exc)
+        return None
+
+
+def decide_view(gateway, principal):
+    """What connection_view needs to offer the cards:decide grant to this viewer."""
+    return {"db": gateway.db, "viewer": principal, "coordinators": coordinators(gateway, principal)}
+
+
+def connection_view(row, db=None, *, viewer=None, coordinators=None):
     view = {
         key: row[key]
         for key in (
@@ -53,11 +78,16 @@ def connection_view(row, db=None):
     view["read_wings"] = list(policy.read_wings)
     view["import_read"] = policy.has_scope(import_grant.READER_SCOPE)
     view["decide"] = policy.has_scope(decide_grant.DECIDE_SCOPE)
-    # Offered only on the owner's own active top-level PATs; never agents or seats.
+    # Offered only on the viewing owner's own active top-level PATs; never on
+    # agents, runners, seats, board coordinators or other members' connections.
     view["decide_grantable"] = bool(
         db is not None
+        and viewer is not None
+        and coordinators is not None
+        and row["user_id"] == viewer.user_id
         and row["auth"] == "pat"
         and not row["revoked_at"]
+        and f"conn:{row['name']}" not in coordinators
         and decide_grant.refusal(db, row) is None
     )
     return view
@@ -67,6 +97,15 @@ def _update_decide(gateway, h, principal, row, data):
     if set(data) != {"decide"} or type(data["decide"]) is not bool:
         send_json(h, 400, {"error": "Use decide true or false"})
         return
+    if data["decide"]:
+        # Coordinators live in the board store; control_db cannot see them.
+        current = coordinators(gateway, principal)
+        if current is None:
+            send_json(h, 503, {"error": "Boards are unavailable; try again"})
+            return
+        if f"conn:{row['name']}" in current:
+            send_json(h, 409, {"error": decide_grant.AGENT_TEXT})
+            return
     try:
         gateway.db.set_connection_decide(
             row["id"], data["decide"], actor=principal, workspace_ref=principal.workspace_id
@@ -75,8 +114,8 @@ def _update_decide(gateway, h, principal, row, data):
         # Specific, owner-safe reasons: inactive, runner-linked, agent or not top-level.
         send_json(h, 409, {"error": str(exc)})
         return
-    view = connection_view(gateway.db.connection(row["id"], principal.workspace_id), gateway.db)
-    send_json(h, 200, {"connection": view})
+    fresh = gateway.db.connection(row["id"], principal.workspace_id)
+    send_json(h, 200, {"connection": connection_view(fresh, **decide_view(gateway, principal))})
 
 
 def _update_read_wings(gateway, h, principal, row, data):
@@ -102,7 +141,8 @@ def _update_read_wings(gateway, h, principal, row, data):
         200,
         {
             "connection": connection_view(
-                gateway.db.connection(row["id"], principal.workspace_id), gateway.db
+                gateway.db.connection(row["id"], principal.workspace_id),
+                **decide_view(gateway, principal),
             )
         },
     )
@@ -207,7 +247,7 @@ def install(gateway):
                 send_json(h, 400, {"error": "Invalid or duplicate agent name, client or parent"})
                 return
             row = gateway.db.connection(cid, principal.workspace_id)
-            reveal(h, 201, row, token)
+            reveal(h, 201, row, token, principal)
             return
         if not (
             (h.command == "POST" and len(parts) == 2 and parts[1] == "rotate")
@@ -258,14 +298,14 @@ def install(gateway):
         except ControlError:
             send_json(h, 409, {"error": "Revoked agents cannot be rotated"})
             return
-        reveal(h, 200, gateway.db.connection(row["id"], principal.workspace_id), token)
+        reveal(h, 200, gateway.db.connection(row["id"], principal.workspace_id), token, principal)
 
-    def reveal(h, status, row, token):
+    def reveal(h, status, row, token, principal):
         send_json(
             h,
             status,
             {
-                "connection": connection_view(row, gateway.db),
+                "connection": connection_view(row, **decide_view(gateway, principal)),
                 "token": token,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },

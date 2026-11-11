@@ -908,7 +908,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Restricted CLI-compatible search acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
 
-  - Owner-granted `cards:decide`: only the signed-in owner's principal can grant it, to their own top-level, non-agent, non-seat connection; loaded policies drop it with ownership and membership triggers delete the stored grant on demotion or removal. Holders answer only asks addressed to their own person, each answer audited as `card.decide.delegated` with the connection id; `LocalTool.untrusted_scope` admits untrusted holders to `decide` only.
+  - Owner-granted `cards:decide`: only the signed-in owner's principal can grant it, to their own top-level, non-agent, non-seat connection; loaded policies drop it with ownership; the stored grant is removed on demotion (a trigger on `UPDATE` of `memberships.role` from owner), on coordinator assignment (`board_set`) and when an expired PAT is rotated; OAuth issue and refresh return only live scopes. Holders answer only asks addressed to their own person, each answer audited as `card.decide.delegated` with the connection id; `LocalTool.untrusted_scope` admits untrusted holders to `decide` only.
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
@@ -1104,7 +1104,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, is refused for seats and board coordinators, needs `memory:write`, read access to the board's wing and the owner's person-level write access to it (not the app's own write wings), cannot escalate, and writes one `card.decide.delegated` audit row after the board commit. Without the scope, refusals are unchanged.
+  - Owner-granted `cards:decide`: a live owner's top-level PAT or OAuth connection holding the scope answers only asks addressed to that owner, is refused for seats and board coordinators, needs `memory:write`, read access to the board's wing and the owner's person-level write access to it (not the app's own write wings), cannot escalate, and writes one `card.decide.delegated` audit row inside the board transaction (a failed write fails the answer; a later rollback appends `card.decide.rolled_back`). Without the scope, refusals are unchanged.
 
   - Member event pages use one readable-board snapshot, an opaque access epoch and bounded SQL projection. Restricted webhook subscriptions omit public sequence fields and use opaque ids from independent server-only subscription keys, initialized on first use and durable across restarts. Neither keys nor sequence fields are exposed; raw event keys remain internal for replay deduplication without a counter or backfill. Subscription lookup exceptions log their type and stack locations while retaining fail-closed authority.
 
@@ -1675,7 +1675,7 @@ Format (read by `commonplace orch docs-check`):
 
 - **Promises:**
 
-  - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** only on rows the server marks `decide_grantable` (never agents, runners or seats); the consent copy comes from `decide_consent` in `GET /api/connections`; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
+  - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** only on rows the server marks `decide_grantable` (the viewing owner's own eligible PATs; never agents, runners, seats, board coordinators or other members' connections; the grant route refuses coordinators too); the consent copy comes from `decide_consent` in `GET /api/connections`; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
 
   - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 
