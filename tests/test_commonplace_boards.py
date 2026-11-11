@@ -1693,9 +1693,10 @@ def test_expired_version_conflict_returns_committed_card(hub, env):
     )
     assert status == 409 and conflict["current"]["status"] == "doing"
     actual = owner.task_show(created["number"])
-    # can_prioritize depends on who reads the card, not on the card.
-    assert {key: actual[key] for key in CARD_KEYS - {"can_prioritize"}} == {
-        k: v for k, v in conflict["current"].items() if k not in ("url", "can_prioritize")
+    # can_prioritize and can_set_reviewer depend on who reads the card, not on the card.
+    reader = {"can_prioritize", "can_set_reviewer"}
+    assert {key: actual[key] for key in CARD_KEYS - reader} == {
+        k: v for k, v in conflict["current"].items() if k not in {"url", *reader}
     }
     assert actual["title"] == "Expired version"
 
