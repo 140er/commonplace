@@ -24,6 +24,8 @@ _CHAT_PRESET = {
     "trust": "standard",
 }
 DEFAULT_CLIENT_PRESET = _CHAT_PRESET
+# A preset by what the agent does, for any client name (`token add --preset`).
+PRESETS = {"coding": _CODING_PRESET, "chat": _CHAT_PRESET}
 CLIENT_PRESETS = {
     "claude-code": _CODING_PRESET,
     "codex": _CODING_PRESET,

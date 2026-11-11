@@ -605,6 +605,8 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `tests/`
 - **Owns:**
 
+  - `tests/test_agent_adapter_conformance.py`: adapter conformance for a second agent type (take, heartbeat, work, done, release), claim expiry on a missed heartbeat and the return of that work, and the `--preset` and `ToolRefused` units.
+
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
 
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
@@ -1187,8 +1189,10 @@ Format (read by `commonplace orch docs-check`):
 
 ## cli-and-client
 
-- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/client_hooks.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
+- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/adapter.py`, `docs/agent-adapter.md`, `commonplace/client_hooks.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
 - **Owns:**
+
+  - The agent adapter contract (`docs/agent-adapter.md`) and its reference implementation `commonplace/adapter.py`: register, take, heartbeat, report and release for any agent type over the canonical tools; `token add --preset coding|chat` gives any client name a named policy preset.
 
   - The `runner report` argument parser; the command itself lives in `commonplace/runner/report.py`.
 
@@ -1197,6 +1201,10 @@ Format (read by `commonplace orch docs-check`):
   - The `commonplace` command line, the credential-scoped client, native hooks and installers, the stdio bridge and the agent skill.
 
 - **Promises:**
+
+  - The adapter is agent-type neutral: it calls only `session_start`, `task_take_next`, `task_heartbeat`, `task_update` and `task_handoff`, heartbeats after two thirds of the claim, and never guesses at a reply outside the documented shapes. Without `--preset`, `token add` picks the preset by client name exactly as before.
+
+  - The client raises `ToolRefused` only for the hub's explicit `no:` refusal; a timeout or any other tool error stays a plain `ClientError` with the same safe message.
 
   - `runner report` sends only the values it was given for one started run; it never opens the data directory.
 
@@ -1227,6 +1235,8 @@ Format (read by `commonplace orch docs-check`):
 
 - **How it fails:**
 
+  - A refused heartbeat raises `ClaimLost` (stop working on the card); a transport failure stays a `ClientError` and says nothing about the claim; an unexpected reply raises `AdapterError`.
+
   - `runner report` exits 4 on an invalid config or report, 3 on a revoked credential and 5 when the hub refuses or is unavailable.
 
   - Local data-directory access remains operator authority; authenticated progress never inherits it.
@@ -1234,6 +1244,8 @@ Format (read by `commonplace orch docs-check`):
   - The CLI runs with data-dir access, so anyone with the service's OS user can use it (residual in `SYSTEM.md`).
 
 - **Tests:**
+
+  - `tests/test_agent_adapter_conformance.py` drives a fake agent type and a built-in one through the adapter against the real gateway, including claim expiry and return.
 
   - `tests/test_run_ledger.py` runs `runner report` against a hub.
 
