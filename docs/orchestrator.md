@@ -210,7 +210,10 @@ failed after commit is still found.
   held, after release or expiry, or when the owner forces it. The token is
   returned once. TTL 1800 s, renewed by fenced writes and `orch_heartbeat`;
   waits are sliced to at most 10 minutes with heartbeats. Expiry only fences.
-  A lost token means waiting for expiry or an owner force.
+  A lost token means waiting for expiry or an owner force. A board without
+  `[runner]` has one possible holder: its own project seat, once an owner
+  trusted it in Project settings, for its seat role (`main`). A project seat
+  never claims another board's lease.
 - **Journal.** `intent → started → waiting → done | failed | in_doubt`;
   `in_doubt` moves on to `done`, `failed` or `needs_person`. A job maps to its
   step as: queued, leased or starting → `waiting`; started → `done`;

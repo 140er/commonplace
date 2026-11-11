@@ -253,6 +253,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
+  - `docs/projects.md` and `docs/orchestrator.md` state who may hold a lease on a board without `[runner]`: its own trusted project seat.
+
 - **Promises:**
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
@@ -564,6 +566,8 @@ Format (read by `commonplace orch docs-check`):
   - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
+
+  - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
 
@@ -1252,6 +1256,8 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_orch_areas.py` covers area roundtrips, ordered topology errors, frozen experiments, owner boundaries and complete refusal snapshots through store, MCP, REST and local CLI.
 
+  - Lease authority without `[runner]` belongs only to the board's own trusted project seat for its seat role (`not_configured` for everyone else, `not_allowed` with the Project settings hint for that seat before trust); a seat is refused `not_allowed` on other boards. Covered by `tests/test_projects_seat_lease.py`.
+
   - The `tests/test_orch_` files listed in Paths and `tests/test_docs_obligations.py`; R22 in `tests/test_orch_checks.py` covers misplaced labels, missing files, accepted label forms and repository-root resolution.
 
   - R1, R1b, R1d, R1e, R8b, R10a and R11e map to `tests/test_orch_acceptance.py`.
@@ -1285,6 +1291,8 @@ Format (read by `commonplace orch docs-check`):
   - Split marker task references are range-checked before SQLite binding and settings-read failures remain retryable.
   - Default-off project reports capture the current coordinator and activation/binding generations, baseline existing staleness, scan at most 100 cards and publish at most 100 rows per workspace pass, and retain receipt-backed event identity across crashes.
 
+  - `seats.held_by` names the board and role of the seat a connection holds; the durable orchestrator uses it so a seat trusted in Project settings holds its own board's lease without a config.
+
   - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
   - **Browser GitHub connection:** Signup plan assignment accepts the provisioning transaction to preserve atomic GitHub ownership reservation.
@@ -1304,6 +1312,8 @@ Format (read by `commonplace orch docs-check`):
 
 
   - The `tests/test_projects_` files, `tests/test_commonplace_plans.py`.
+
+  - `tests/test_projects_seat_lease.py` drives the settings routes and the seat's own MCP calls: take, hold, renew and release with no config, plus refusals without trust, after demotion or switch-off, for another project's seat, for another role and outside the wing.
 
 
 ## rules-and-guards
