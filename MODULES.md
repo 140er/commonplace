@@ -587,6 +587,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
+  - `tests/test_routines.py` and `tests/test_schedule_due.py` pin routine creation per due time on a fake clock, restart recovery and owner-only access.
+
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
 
   - Overview witnesses separate old-head behavioral regressions from the original-base fail-closed contract, with exact facet-call sequences and both lazy SQLite error classes.
@@ -939,6 +941,8 @@ Format (read by `commonplace orch docs-check`):
   - Canonical Space REST aliases mapped to existing board tool authority.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
+
+  - The extension list also loads `commonplace.routines`, which starts its worker with the other background workers and stops it before the control database closes.
 
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
 
