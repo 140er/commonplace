@@ -433,7 +433,9 @@ variable, root-owned authorized key; global `PermitUserEnvironment no` is verifi
 `pin_approval_keys` seam (#431 format pending) and, last, the protected config.
 Install is a no-op when already complete; uninstall removes only manifest entries,
 keeps changed files and attempt evidence, and stops the account's sessions and user
-manager before `userdel`. `--root` stages without root or system
+manager before `userdel`. Each directory, file and the account is recorded before it is
+created (an interrupted run resumes or uninstalls cleanly) and bytecode that later imports
+add to the placed source tree is ignored by the comparison and removed by uninstall. `--root` stages without root or system
 commands. A real root install, idempotent reinstall, confined run and clean uninstall were
 verified on a disposable Ubuntu 24.04 VM.
 

@@ -94,7 +94,7 @@ a configured fixture must pass prerequisite checks and execute successfully.
 Synthetic wire tests do not replace this verification. The application must stay
 disabled without independent runtime verification.
 
-`python -m commonplace.compute.target_installer` provisions this fixture in one root
+`python -I -m commonplace.compute.target_installer` provisions this fixture in one root
 invocation and writes the protected config; see RUNNING.md. The installer is
 idempotent and reversible, and was verified on a disposable Ubuntu 24.04 VM;
 confined execution additionally needs the bubblewrap `--disable-userns` fix.

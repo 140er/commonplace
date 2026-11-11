@@ -78,16 +78,29 @@ allow that directive inside a Match block). The installer itself places the pyth
 sources the helper imports: it copies the `commonplace` and `mempalace` packages it
 is running from (sources only, stdlib is enough) to `/opt/commonplace-compute/lib` and
 adds a root-owned `commonplace-compute.pth` to the system python's local
-dist-packages, then checks `/usr/bin/python3 -I -c "import
-commonplace.compute.target_helper"` before touching sshd.
+dist-packages, then checks `/usr/bin/python3 -I -B -c "import
+commonplace.compute.target_helper"` before touching sshd (`-B`: as root it must not
+write bytecode into the placed tree; later imports that do are tolerated).
+
+Run the installer as root with an explicit, trusted interpreter and `-I`, from a
+`commonplace` package installed in a location only root can write, for example:
 
 ```sh
-python -m commonplace.compute.target_installer plan \
+PY=/opt/commonplace/venv/bin/python   # root-owned interpreter with commonplace installed
+$PY -I -m commonplace.compute.target_installer plan \
   --workspace WORKSPACE --gateway GATEWAY --node NODE --controller-key-file controller.pub
-sudo python -m commonplace.compute.target_installer install \
+sudo $PY -I -m commonplace.compute.target_installer install \
   --workspace WORKSPACE --gateway GATEWAY --node NODE --controller-key-file controller.pub
-sudo python -m commonplace.compute.target_installer uninstall
+sudo $PY -I -m commonplace.compute.target_installer uninstall
 ```
+
+Why: `python -m` puts the current directory first on `sys.path`, so running it as root
+from a user-writable checkout or directory would import whatever code is placed there
+as root. `-I` (isolated mode) drops the current directory, the `PYTHON*` environment
+variables and the user site directory, and an absolute interpreter path avoids a
+`PATH` lookup. The installer copies the package it runs from into the root-owned
+location the helper imports, so that package must be the trusted one, not an editable
+checkout a user can change.
 
 `plan` prints the exact actions and touches nothing. `install` creates the dedicated
 `commonplace-compute` account; the private workspace (`attempts/`, `inputs/`) and a
