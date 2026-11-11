@@ -155,7 +155,11 @@ def test_card_blocked_person_limit_still_report_through_the_shared_text(hub):
     dep, b, person, limited = (w.card(title=t) for t in ("Dep", "B", "Person", "Limited"))
     blockers(w, b, dep)
     with w.boards.store.transaction() as conn:
-        conn.execute("UPDATE tasks SET ask='Decide?', ask_to=? WHERE id=?", (w.owner.actor, person))
+        conn.execute(
+            "UPDATE tasks SET status='review',restricted_origin=1,proposal_status='pending',"
+            "ask='Decision?',ask_options='[\"Yes\",\"No\"]',ask_to=? WHERE id=?",
+            (w.owner.actor, person),
+        )
     cap(w, 1)
     doing(w, w.card(title="Busy"), w.b.actor)
     seen = {n: _show(w, n) for n in (b, person, limited)}
