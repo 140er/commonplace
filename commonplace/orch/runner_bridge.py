@@ -18,7 +18,7 @@ in this order: (trigger only) the ``(cursor, gen)`` re-check as the first statem
 current, ``plan`` label -> ``plan_pending``; 2. existing step (orch) or existing keyed
 job (person with a ``request_key``, trigger): a voided runner-start key refuses
 ``step_voided`` before matching; an unvoided exact match returns the stored job,
-a mismatch is a 409; then card/grant refusals; 4. the cap; 5. ``jobs.create_in`` and (orch)
+a mismatch is a 409; then card/grant refusals; 3. path contracts (``path_overlap``); 4. the cap; 5. ``jobs.create_in`` and (orch)
 the step row, the lease re-check and renewal; (trigger) the cursor advance with the job
 or the miss row. A refusal after a write rolls back to a savepoint, so nothing partial
 is ever committed.
@@ -32,6 +32,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, replace
 
+from commonplace.boards import contracts
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import BoardStore, task_row
 from commonplace.extensions import ToolContext, ToolError
@@ -104,6 +105,8 @@ class Plan:
     orchestration_on: bool = False
     workers: frozenset = frozenset()
     workspace_dir: str | None = None
+    contract: tuple = ()  # the card's path contract (globs)
+    contracts: tuple = ()  # (card, globs) of the board's other cards that declare one
 
     @property
     def role(self) -> schema.Role:
@@ -280,6 +283,15 @@ def prepare(
                 (board_row["id"],),
             ).fetchall()
         )
+        declared = tuple(
+            (row["id"], tuple(globs))
+            for row in conn.execute(
+                "SELECT id, paths FROM tasks WHERE board_id=? AND id!=? AND status!='done' "
+                "AND paths IS NOT NULL",
+                (board_row["id"], card_row["id"]),
+            ).fetchall()
+            if (globs := contracts.parse(row["paths"]))
+        )
     cap = config.max_agents if limit is None else min(config.max_agents, limit)
     return Plan(
         board=board_row["slug"],
@@ -300,6 +312,8 @@ def prepare(
         orchestration_on=on,
         workers=workers,
         workspace_dir=gateway.workspace_dir(workspace_id),
+        contract=tuple(contracts.parse(card_row["paths"] if "paths" in card_row.keys() else None)),
+        contracts=declared,
     )
 
 
@@ -341,14 +355,42 @@ def request_key_for(path: str, *, role=None, step_key=None, event=None, request_
 # -------------------------------------------------------------- fenced start
 
 
-def _cap_count(conn, plan: Plan, now: str) -> int:
+def _running(conn, plan: Plan, now: str) -> set:
+    """Cards that hold a start on the board: live runner jobs and doing cards that have
+    a ``conn:`` assignee."""
     rows = conn.execute(
         "SELECT DISTINCT task_number FROM runner_jobs WHERE board_slug=? AND "
         "(state IN ('queued','leased','starting','uncertain') "
         "OR (state='started' AND started_at>?))",
         (plan.board, jobs._after(now, -jobs.STARTED_HOLD_SECONDS)),
     ).fetchall()
-    return len({row[0] for row in rows} | set(plan.doing))
+    return {row[0] for row in rows} | set(plan.doing)
+
+
+def _cap_count(conn, plan: Plan, now: str) -> int:
+    return len(_running(conn, plan, now))
+
+
+def _contract_refusal(conn, plan: Plan, now: str) -> StartRefused | None:
+    """Refuse a card whose path contract overlaps a running card's. Cards with no
+    contract, and running cards with none, never conflict."""
+    if not plan.contract or not plan.contracts:
+        return None
+    running = _running(conn, plan, now) - {plan.card}
+    for card, globs in plan.contracts:
+        if card not in running:
+            continue
+        pair = contracts.first_overlap(plan.contract, globs)
+        if pair is not None:
+            return StartRefused(
+                "path_overlap",
+                f"card #{plan.card} declares {pair[0]!r}, which overlaps {pair[1]!r} of "
+                f"running card #{card}; start it after #{card} finishes or narrow the paths",
+                card=card,
+                paths=list(plan.contract),
+                other_paths=list(globs),
+            )
+    return None
 
 
 def _job(conn, job_id):
@@ -426,6 +468,10 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
             )
     if plan.refusal is not None:
         raise StartRefused(plan.refusal, f"card is not startable: {plan.refusal}")
+    # 3. path contracts: no two running cards own the same files.
+    overlap = _contract_refusal(conn, plan, now)
+    if overlap is not None:
+        raise overlap
     # 4. cap.
     if plan.orchestration_on:
         from commonplace.projects import orchestration as orch
@@ -707,7 +753,7 @@ def orch_card_start(
     ``invalid_step_key``, ``invalid_request_key``, ``board_not_found``,
     ``card_not_found``, ``unknown_role``, ``not_allowed``, ``not_configured``,
     ``fenced``, ``restore_pending``, ``config_changed``, ``plan_pending``,
-    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``at_cap``
+    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``path_overlap``, ``at_cap``
     (switch off), ``project_limit`` (switch on), ``active_start``,
     ``started_recently``, ``busy``) or pass ``OrchError``s of ``resolve_in`` through."""
     principal = ctx.principal

@@ -83,6 +83,8 @@ def show(c):
         rows.append(f"space message: {c['message_id']}")
     if c["ask"]:
         rows.append(f"asks {c['ask_to']}: {quoted(c['ask'])}  options: {quoted(c['ask_options'])}")
+    if c.get("paths"):
+        rows.append("paths: " + quoted(c["paths"]))
     for key, label in (
         ("repo", "repo"),
         ("branch", "branch"),
@@ -385,6 +387,12 @@ def register_tools():
                 "description": "Owner person only; empty string clears. Omit to preserve the type.",
             },
             "labels": ARRAY,
+            "paths": {
+                "type": "array",
+                "items": STRING,
+                "maxItems": 32,
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+            },
             "blocked_by": {
                 "type": "array",
                 "items": {"type": "integer", "minimum": 1},

@@ -93,6 +93,8 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Voided steps keep counting their jobs; refusal is `at_cap` with workspace orchestration off and `project_limit` with it on.
 
+- A card may declare a path contract: `paths`, up to 32 repo-relative globs set with `task_update(paths=[...])` (`[]` clears) and shown on the card. A config-driven start (`orch_card_start`, owner `card_start`, trigger sweep) refuses with `path_overlap` (409) while another card of the board that holds a start (live job or `doing` with a connection assignee) declares a glob that can match the same path; the refusal names the running card and both globs. Matching is conservative (when two patterns might match one path they overlap; `**` matches any depth; a glob that ends where the other goes deeper owns that directory). A card with no contract, or running next to cards with none, is never refused, so existing boards behave as before. Triggers record the refusal as a final miss like any other code. Not yet: role-level contracts, queueing or `blocked_by`, gate flagging of out-of-contract edits, in-app editing.
+
 - Owner/local void permanently retires a runner-start key while preserving its request, link, state, evidence and history.
 
 - Only queued/leased jobs are cancelled, in the void transaction; starting/uncertain/started and finished jobs are untouched.

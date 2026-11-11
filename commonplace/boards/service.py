@@ -16,7 +16,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
-from . import task_types
+from . import contracts, task_types
 from .digest import digest
 from .display import (
     _waiting_on_person as _display_waiting,
@@ -3319,6 +3319,7 @@ class BoardService:
             "title",
             "body",
             "labels",
+            "paths",
             "blocked_by",
             "status",
             "before",
@@ -3413,6 +3414,7 @@ class BoardService:
                 self._plan_label_check(conn, row, labels)
                 self._check_split_labels(conn, board, row, labels)
                 updates["labels"] = json.dumps(labels)
+            updates.update(contracts.column_update(args))
             for key in ("title", "body", "branch", "status_line"):
                 if key in args:
                     updates[key] = validate_text(

@@ -31,6 +31,7 @@ TASK_COLUMNS = {
     "status_line": "TEXT",
     "heartbeat_at": "TEXT",
     "labels": "TEXT",
+    "paths": "TEXT",
     "claim_expired_at": "TEXT",
     "agent_parent": "TEXT",
     "proposal_status": "TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected'))",
@@ -215,9 +216,10 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         **{
             key: row[key] if key in row.keys() else None
             for key in TASK_COLUMNS
-            if key not in ("labels", "parent_number", "pr_repo", "task_type")
+            if key not in ("labels", "paths", "parent_number", "pr_repo", "task_type")
         },
         "labels": json.loads(row["labels"] or "[]"),
+        "paths": json.loads(row["paths"] or "[]") if "paths" in row.keys() else [],
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
         "created_by": row["created_by"],

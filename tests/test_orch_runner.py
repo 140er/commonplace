@@ -1601,3 +1601,112 @@ def test_void_cancel_and_marker_roll_back_together(void_world, monkeypatch, stat
     with pytest.raises(RuntimeError, match="synthetic post-cancel failure"):
         void_start(w)
     assert (w.steps(), w.all_jobs(), w.rows("SELECT * FROM orch_journal")) == before
+
+
+# ------------------------------------------------------------- path contracts (#389)
+
+
+def _declare(world, card, *globs):
+    """Declare a card's path contract straight in the board store, so these tests pin
+    the start guard whatever the surface that sets the contract."""
+    with BoardStore(world.gw.workspace_dir(world.ws)).transaction() as conn:
+        if "paths" not in {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}:
+            conn.execute("ALTER TABLE tasks ADD COLUMN paths TEXT")
+        conn.execute("UPDATE tasks SET paths=? WHERE id=?", (json.dumps(list(globs)), card))
+
+
+def test_c389_overlapping_contract_is_refused_while_the_first_card_runs(world):
+    """Two cards that can edit the same file never run together: the second start is
+    refused with a coded reason that names the running card and both globs."""
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/api/**")
+    _declare(world, second, "src/api/users.py", "docs/*.md")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    exc = refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+    assert exc.status == 409
+    assert exc.details["card"] == first
+    assert exc.details["paths"] == ["src/api/users.py", "docs/*.md"]
+    assert exc.details["other_paths"] == ["src/api/**"]
+    assert f"running card #{first}" in str(exc) and "src/api/users.py" in str(exc)
+    assert world.jobs_for(second) == []
+    assert len(world.all_jobs()) == 1
+
+
+def test_c389_disjoint_contracts_start_together(world):
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/api/**")
+    _declare(world, second, "docs/**", "src/web/*.js")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, first, "s1")
+    world.orch_start(world.a, lease, second, "s2")
+    assert len(world.all_jobs()) == 2
+
+
+def test_c389_without_a_contract_nothing_changes(world):
+    """No contract on either card, or on only one of them: both start as before."""
+    plain, other, declared = world.card(), world.card(), world.card()
+    _declare(world, declared, "src/**")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, plain, "s1")
+    world.orch_start(world.a, lease, other, "s2")
+    world.orch_start(world.a, lease, declared, "s3")
+    assert len(world.all_jobs()) == 3
+
+
+def test_c389_only_running_cards_block(world):
+    """A todo card that declares a contract but has no job holds nothing."""
+    waiting, starting = world.card(), world.card()
+    _declare(world, waiting, "src/**")
+    _declare(world, starting, "src/api/**")
+    world.configure(max_agents=5)
+    lease = world.claim(world.a)
+    world.orch_start(world.a, lease, starting, "s1")
+    assert len(world.all_jobs()) == 1
+
+
+def test_c389_a_doing_card_held_by_an_agent_counts_as_running(world):
+    first, second = world.card(), world.card()
+    _declare(world, first, "src/**")
+    _declare(world, second, "src/a.py")
+    world.configure(max_agents=5)
+    BoardService(world.ctx(world.b)).task_take_next(board=BOARD, task=first)
+    lease = world.claim(world.a)
+    refused("path_overlap", world.orch_start, world.a, lease, second, "s2")
+
+
+def test_c389_trigger_start_records_the_overlap_as_a_miss(world):
+    world.configure(max_agents=5)
+    first, second = world.card(), world.card()
+    _declare(world, first, "pkg/**")
+    _declare(world, second, "pkg/mod.py")
+    world.sweep()
+    world.sweep()
+    assert len(world.jobs_for(first)) == 1 and world.jobs_for(second) == []
+    assert [m["code"] for m in world.misses() if m["card"] == second] == ["path_overlap"]
+
+
+def test_c389_person_start_is_refused_too(world):
+    first, second = world.card(), world.card()
+    _declare(world, first, "pkg/**")
+    _declare(world, second, "pkg/mod.py")
+    world.configure(max_agents=5)
+    world.person_start(first)
+    with pytest.raises(runner_bridge.StartRefused) as info:
+        world.person_start(second)
+    assert info.value.code == "path_overlap"
+
+
+def test_c389_contract_round_trips_and_is_validated(world):
+    card = world.card()
+    assert world.boards.task_show(card)["paths"] == []
+    result = world.update(card, paths=["./src/api/", "docs/*.md", "src/api"])
+    assert result["paths"] == ["src/api", "docs/*.md"]
+    assert world.boards.task_show(card)["paths"] == ["src/api", "docs/*.md"]
+    for bad in ("src/**", ["/etc/passwd"], ["../x"], ["a\\b"], [""], [3], ["x"] * 33):
+        with pytest.raises(ToolError, match="path"):
+            world.update(card, paths=bad)
+    assert world.update(card, paths=[])["paths"] == []

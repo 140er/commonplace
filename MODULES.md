@@ -1120,6 +1120,7 @@ Format (read by `commonplace orch docs-check`):
   - Card lists share a runner read and per-board usage; a capacity refusal retains its original error when no display reason is available.
 
   - Board REST maps only database lock timeouts to busy; waiting summaries reuse one runner read and two board usage counts; split-key edits preserve child identity.
+  - Cards may declare a path contract (`paths`, relative globs; `commonplace/boards/contracts.py`): `task_update(paths=)` validates it, the card shows it, and the orchestrator start refuses `path_overlap` against a running card with an overlapping contract.
   - Card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
   - Owner todo assignments validate the target’s typed grant before claiming; repeat takes preserve an existing holder’s claim after grant removal.
 

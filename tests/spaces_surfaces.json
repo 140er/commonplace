@@ -1336,6 +1336,14 @@
                   "integer"
                 ]
               },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
               "status": {
                 "enum": [
                   "todo",
@@ -2301,6 +2309,14 @@
                   "string",
                   "integer"
                 ]
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
               },
               "status": {
                 "enum": [
@@ -3999,6 +4015,14 @@
                   "string",
                   "integer"
                 ]
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
               },
               "status": {
                 "enum": [
