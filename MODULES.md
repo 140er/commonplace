@@ -1073,6 +1073,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Enabled coordinator startup context includes unsplit inbox counts, without migrating boards.
 
+  - `session_start` takes `rules=index`: a compact list (key, section, scope, size hint, title) of the effective rules instead of full texts. The default `rules=full` is unchanged.
+
   - Accounts exist only after verification; sessions are cookie-bound and revocable; mail is configured only through the environment.
 
   - Successful email verification expires an older host-only session before setting a configured shared-domain session, so the older cookie cannot shadow the new one.
@@ -1419,6 +1421,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Rules take effect only after owner review; writes from a client with stale rules get 428; flags are deterministic.
 
+  - `rules_get` takes `keys=[...]` for selected rules in full (unknown keys named) and, with `effective=true`, `format=index` for the compact index. Both are partial reads: they never record the full set as served and give no `rules_seq`. Defaults are unchanged.
+
 - **How it fails:**
 
   - Missing and stale served sequences retain the 428 refresh payload.
@@ -1428,6 +1432,8 @@ Format (read by `commonplace orch docs-check`):
 - **Tests:**
 
   - Route-aware checked REST harness and Space freshness contract tests.
+
+  - `tests/test_rules_index.py` pins index completeness and size, keyed get with unknown keys, partial reads not serving, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
   - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
 
