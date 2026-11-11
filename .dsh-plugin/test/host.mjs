@@ -147,10 +147,10 @@ export const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms)
 /** Ends a wait that never comes. It is not a budget: nothing asserts it is fast. */
 export const HANG_GUARD_MS = 30_000
 
-/** Poll until `condition` holds; the guard only ends a test whose condition never comes true. */
+/** Poll until `condition` (sync or async) holds; the guard only ends a test whose condition never comes true. */
 export async function waitFor(condition) {
   const end = Date.now() + HANG_GUARD_MS
-  while (!condition()) {
+  while (!(await condition())) {
     if (Date.now() > end) throw new Error('condition never became true')
     await tick(2)
   }
@@ -174,8 +174,8 @@ export async function settles(promise) {
 }
 
 /**
- * One full turn of the event loop: every pending promise reaction and every
- * I/O callback already due has run. A step the plugin takes without waiting
- * on a timer has happened by then, on any host.
+ * One full turn of the event loop. A step that waits only on promises has
+ * happened by then, on any host; a step that waits on I/O or a timer may not
+ * have. Use it only where the step a broken build would take is promise-only.
  */
 export const loopTurn = () => new Promise((resolve) => setImmediate(resolve))

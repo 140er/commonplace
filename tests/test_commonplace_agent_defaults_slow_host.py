@@ -1,9 +1,12 @@
-"""Onboarding acceptance gives the same answers when the hub is slower than the hook allows.
+"""Onboarding acceptance gives the same answers when every gateway POST is slow.
 
-Every gateway answer takes longer than the startup hook's 0.4 s allowance
-(``tests/_slow_hub_plugin.py``). The deadline clock is not starved here: the
-acceptance tests run on a frozen deadline clock (``frozen_deadline_clock``), so
-a starved clock could not reach them.
+Every POST to the gateway takes 0.6 s (``tests/_slow_hub_plugin.py``); these
+tests reach the hub only through POST. That is longer than the startup hook's
+production 0.4 s allowance, but the acceptance test runs the hook with that
+allowance lifted to a hang guard (``_without_hub_budget``), so this covers hub
+latency, not the 0.4 s budget, which ``tests/test_commonplace_client_hooks.py``
+pins. The deadline clock is not starved here: these tests freeze it
+(``frozen_deadline_clock``), so a starved clock could not reach them.
 """
 
 from tests._slow_host import run_under
@@ -16,5 +19,5 @@ ACCEPTANCE = [
 ]
 
 
-def test_onboarding_acceptance_passes_when_every_gateway_answer_is_slower_than_the_hook_budget():
+def test_onboarding_acceptance_passes_when_every_gateway_post_is_slow():
     run_under(["tests._slow_hub_plugin"], ACCEPTANCE)

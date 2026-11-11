@@ -130,9 +130,10 @@ test('a slow palace costs the first call at most the budget, then memory lands',
 })
 
 // The palace read below is held open until the test releases it, and the
-// first-assembly budget is longer than the hang guard, so only the abort can
-// end the wait: a build that ignored it would never settle.
-const NEVER_BY_BUDGET = { firstAssemblyBudgetMs: 10 * 60_000 }
+// first-assembly budget and the CLI timeout are both longer than the hang
+// guard, so only the abort can end the wait: a build that ignored it would
+// never settle.
+const NEVER_BY_BUDGET = { firstAssemblyBudgetMs: 10 * 60_000, timeoutMs: 10 * 60_000 }
 
 function heldWakeUp() {
   let release
@@ -142,7 +143,7 @@ function heldWakeUp() {
   return { reply: wakeUp(WAKEUP, { until: read }), release }
 }
 
-test('an aborted turn stops waiting for memory at once', async () => {
+test('an aborted turn stops waiting for memory without the read finishing', async () => {
   const palace = heldWakeUp()
   const host = createHost({ reply: palace.reply })
   recall.apply(host.ctx, NEVER_BY_BUDGET)
@@ -152,7 +153,7 @@ test('an aborted turn stops waiting for memory at once', async () => {
   const controller = new AbortController()
   const pending = assemble({ signal: controller.signal })
   controller.abort()
-  assert.ok(await settles(pending), 'the aborted assembly stopped waiting for the read')
+  assert.ok(await settles(pending), 'the aborted assembly settled while the read was still held')
   palace.release()
 })
 
@@ -268,7 +269,7 @@ test('a palace slower than the budget delays only the first assembly, not every 
   assert.match(render(await assemble()), /I am Atlas/)
 })
 
-test('a turn cancelled before assembly does not wait, and leaves the wait for the next assembly', async () => {
+test('a turn cancelled before assembly settles without the read, and leaves the wait for the next assembly', async () => {
   const palace = heldWakeUp()
   const host = createHost({ reply: palace.reply })
   recall.apply(host.ctx, NEVER_BY_BUDGET)
@@ -277,7 +278,7 @@ test('a turn cancelled before assembly does not wait, and leaves the wait for th
 
   const controller = new AbortController()
   controller.abort()
-  assert.ok(await settles(assemble({ signal: controller.signal })), 'an already-cancelled turn returned at once')
+  assert.ok(await settles(assemble({ signal: controller.signal })), 'an already-cancelled turn settled while the read was still held')
 
   const next = assemble()
   palace.release()

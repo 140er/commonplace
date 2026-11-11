@@ -1,9 +1,9 @@
-"""Pytest plugin: make every gateway answer slower than the startup hook allows.
+"""Pytest plugin: make every gateway POST slower than the startup hook allows.
 
 Each POST to the gateway takes longer than the 0.4 s a native startup hook
 gives the hub (``commonplace.client_hooks.HUB_TIMEOUT_S``), so a functional
 test that leans on the hub being quick fails here every time, as it does on a
-loaded host.
+loaded host. Other verbs are not slowed.
 """
 
 import time

@@ -2,8 +2,9 @@
 
 The plugins (``tests/_slow_host_plugin.py``, ``tests/_slow_hub_plugin.py``)
 make the host slower than a production budget on every run, so a functional
-test that leans on the budget fails here every time instead of only under
-real load.
+test that leans on that budget fails here every time instead of only under
+real load. Each caller's docstring says which budget its selection actually
+meets.
 """
 
 import os

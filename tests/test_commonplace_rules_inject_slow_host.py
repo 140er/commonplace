@@ -1,4 +1,12 @@
-"""Rules injection tests give the same answers on a host too slow for the budget."""
+"""Functional rules-injection tests keep their frozen deadline clock on a starved host.
+
+``tests/_slow_host_plugin.py`` makes every read of the deadline clock burn the
+whole injection budget. The functional tests freeze that clock themselves
+(``frozen_deadline_clock`` in ``tests/test_commonplace_rules_inject.py``), so
+the starved clock never reaches them: this test fails if one of them stops
+freezing it. It does not exercise injection against a slow clock; the budget
+has its own deterministic and `timing` tests.
+"""
 
 from tests._slow_host import run_under
 
@@ -10,5 +18,5 @@ FUNCTIONAL = [
 ]
 
 
-def test_functional_injection_tests_pass_when_every_clock_read_is_slow():
+def test_functional_injection_tests_keep_their_frozen_clock_when_the_host_clock_is_starved():
     run_under(["tests._slow_host_plugin"], FUNCTIONAL)
