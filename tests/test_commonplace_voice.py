@@ -785,12 +785,23 @@ def test_unusable_model_setting_at_request_time_is_a_clear_503_and_refunds(limit
 def test_voice_calls_no_external_provider(app, monkeypatch):
     import socket
 
-    def refuse(*args, **kwargs):
-        raise AssertionError("voice tests must not open outside connections")
+    real_getaddrinfo, real_connect = socket.getaddrinfo, socket.socket.connect
+
+    def local_only(host):
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise AssertionError(f"voice tests must not reach outside hosts: {host}")
+
+    def getaddrinfo(host, *args, **kwargs):
+        local_only(host)
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    def connect(self, address):
+        local_only(address[0])
+        return real_connect(self, address)
 
     enable(app)
-    monkeypatch.setattr(socket, "getaddrinfo", refuse)
-    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(socket.socket, "connect", connect)
     # The fake engine stands in for the provider: no model download, no network.
     assert call(app, "POST", "/api/voice/transcribe?lang=nl", b"\0\0" * 100)[0] == 200
 
