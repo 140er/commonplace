@@ -243,6 +243,7 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - The board API guide documents `task_snooze`, `task_unsnooze`, `include_snoozed`, the `snoozed` waiting reason and `/api/card-snooze`; the contract lists `card.snoozed` and `card.woke`.
+  - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; the full suite runs per develop batch, never per PR.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
@@ -330,6 +331,7 @@ Format (read by `commonplace orch docs-check`):
   - Contributor test instructions state that the default run excludes the `timing` lane and that timing results are informational, never a merge gate.
 
   - Board API and design prose describe deliberate origin release, fail-closed provenance and signed-in owner recovery separately from proposal/plan review. They also describe creator-only reservation cancellation without activation authority.
+  - Board API and design prose describe releases that outlive appointment changes, the owner's explicit Release, reservation takeover and the orchestrator and pool handoff aliases.
 
 - **How it fails:**
 
@@ -612,7 +614,11 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
 
+  - `tests/test_chat_model_stream.py` runs the streaming model transport against loopback fake Anthropic and OpenAI-compatible servers; `tests/test_bots_turn.py` drives bot turns over real HTTP with a scripted model and one loopback fake provider.
+
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
+
+  - `tests/test_commonplace_deck.py` (`commonplace_deck.mjs`): the Deck switch, bar, phone tabs, screen registry, Look section and shell wiring.
 
   - `tests/bots_harness.html` and `tests/bots_shots.sh` are the screenshot harness for the bots screens: the real `bots.js` and stylesheets with a scripted fake API and stream, captured through headless Chromium.
 
@@ -809,6 +815,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Stranded-reservation tests exercise coordinator release of its own reservation, creator cancellation after a real handoff with current or lapsed release, and atomic refusals for unrelated/descendant release, stored descendant markers, other reservations, bundled updates and pending reviews.
+  - Release-loop tests replay the real release, creator claim and handoff through the service, then cover coordinator replacement, idle seats, owner Release, handoff aliases, reservation takeover and drop, and refusals for lost grants, creator markers, unrelated and descendant connections. Member tests cover take-over, drop and handoff through REST and the service for released and ordinary reservations; lapse tests cover revocation, creator descendants and a same-named agent in another workspace. Browser tests cover the card Release control, handoff recipients and visible refusals after the page settles, without retries.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Owner rejection of person-targeted restricted proposals with a healthy coordinator preserves origin state; owner fallback still refuses rejection. Existing release, connection, default-client and delayed-approval contracts supply explicit recovery reasons and separate required proposal review.
   - Person proposal/plan queues assert reject-only actions before an independent coordinator releases origin and full actions afterwards; coordinator and fallback-owner approval controls remain positive. Routed-decision claims preserve choice and reply across a later origin release, including reply-only decisions. Owners can directly reject pending proposals during creator, descendant, unsafe-lineage and invalid-stamp configuration states without releasing origin. Coordinator-settings coverage counts the owner recovery card once, excluding its notice. Button-click regressions exercise reject-only proposals and plans through both the direct rejection request and the shell callback, with no approval control. Reserved-choice regressions refuse the exact origin sentinel in free-text decisions and new/existing ask options without changing task/event state, then verify delivery of a replacement decision; case and whitespace variants remain ordinary choices.
@@ -1336,6 +1343,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Subagent and restricted-agent submissions remain inactive until deliberate origin release. An appointed independent coordinator needs current memory read/write, board-wing read/write and visible space_read, space_post, task_approve and needs_me; decide is not required. Ancestors remain eligible, while creators and their descendants cannot obtain new release authority. Missing, foreign or cyclic ancestry and unverifiable connection-creator stamps fail closed on every agent release path, including stored markers.
   - The appointed independent coordinator may release origin while holding the card, preserving status, holder, every lease timestamp, provenance and pending review. Its marker is revalidated against current appointment, liveness, lineage and grants. This grants no self-review, rejection or escalation rights; origin release requires an affirmative decision and a nonempty reason of at most 500 characters.
+  - A recorded `release origin` decision keeps a marker valid across handoffs and coordinator replacement while the approver keeps its grants and independence from the creator. The owner may explicitly release any card awaiting release, implicit release stays limited to boards with no live coordinator, and the owner or live coordinator may take over or drop a released todo reservation. Handoff accepts orchestrator and pool aliases, owners may close released restricted-origin todo cards, and members other than the owner cannot take over, drop or hand off another actor's todo or doing reservation.
   - A status-only update lets a creator cancel its own todo reservation to backlog after handoff, even if origin release has lapsed. It clears the assignee, preserves provenance and the approval marker, and grants no activation or review authority. Other reservations and pending/rejected proposals or person decisions still refuse cancellation.
   - Signed-in workspace owners recover origin only when the configured record is absent/non-live, or verified independent but missing a required release grant. A live creator, descendant or unsafe lineage requires coordinator configuration and blocks owner release, even with missing grants. An unverifiable creator stamp plus any live configured record also blocks release: clear the coordinator first. Clearing affects the entire board and routes its other unreleased cards to owner recovery as well. Owner-role connection tokens gain no person fallback.
   - Owner recovery preserves pending proposals and plan reviews: release origin first, then review separately. Origin/configuration items appear once in approvals with release/you needs and approve/configure_coordinator actions; healthy coordinator work creates no owner origin item. Explicit person-targeted backlog proposals and plans retain their independent review route, including owner rejection outside fallback without origin release. Origin audit events keep kind=decide with choice="release origin"; that exact validated choice is reserved and refused in user decisions and ask options.
@@ -1821,6 +1829,8 @@ Format (read by `commonplace orch docs-check`):
 
   - The workspace chat front agent, server-local dictation and opt-in phone notifications.
 
+  - The control-database `bot_model_calls` table (bot model requests per person and day, numbers only); `store.counts_today` adds it to project chat's count so both share one budget, and `store.take_bot_call` checks and counts one bot request in a single transaction.
+
   - `commonplace/chat/model.py` holds the shared connection code (`resolve_endpoint`, `Call`) behind both `complete` and the streaming client `commonplace/chat/model_stream.py`, which yields reply text, complete tool calls and one stop reason as the provider sends them.
 
 - **Promises:**
@@ -2063,9 +2073,34 @@ Format (read by `commonplace orch docs-check`):
 
   - `tests/test_card_snooze.py` covers, with a fake clock: hidden while snoozed and back at the time, the idle nudge, starts, the waiting reason, wake once (worker, restart, racing, lazy), the card condition, unsnooze by owner and assignee, every refusal, the REST routes and `schedule_time.at`.
 
+## topology
+
+- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`
+- **Owns:**
+
+  - The topology store behind the Compute map: nodes, links and site routes as structured `(subject, predicate, object)` facts in the workspace's `topology` wing, in the workspace file `topology.sqlite3` (`topology_facts`, `topology_observations`, `topology_conflicts`). `docs/topology.md` is the contract: node kinds, link methods, routes, provenance, expiry, conflicts, the secret filter and the Python read and write signatures.
+
+  - `model.py` is the allow-list: every field and its shape, the observer, lifetimes, subjects and the secret filter. `store.py` holds `TopologyStore` (one workspace's file, opened like `bots.sqlite3`; `open_topology` caches one per workspace on the gateway) and writes and reads: `upsert` (and the node, link and route forms), `retract`, `resolve_conflict`, `get_node`, `get_link`, `get_route`, `read_graph`, `list_conflicts`, `history`.
+- **Promises:**
+
+  - Every fact keeps who observed it, when, from what verbatim evidence, and when it expires. A stale value leaves `values` and is still readable with `stale: true`; nothing is deleted.
+
+  - Two observers disagreeing leaves the current value and files the other as a conflict record; only the same observer, an expired value, an owner decision or an authoritative `replace` write changes the current value, and the old one stays in history.
+
+  - Keys, tokens, passwords and private key material are refused on write, in fields, evidence and observer ids. The refusal names the field and the kind of secret, never the value, and stores nothing.
+
+  - The schema is additive and each write is one transaction. The store does not authorize: callers check the `topology` wing with the existing wing grants. A store is one workspace's file, so reads never cross workspaces; the control database holds no topology text.
+- **How it fails:**
+
+  - A value outside the allow-list, a broken route chain or secret-looking text raises `TopologyError` (`SecretRefused` for secrets) before anything is stored. A workspace without `topology.sqlite3` reads as an empty map, and reading does not create the file.
+- **Tests:**
+
+  - `tests/test_topology_store.py` covers upsert and read back with provenance and expiry, refreshes, allow-list refusals, stale facts and route hops, conflicts and their resolutions, the authoritative write, retraction, secret refusals, workspace isolation, an old workspace without the file, reopening, a moved workspace directory, a crash inside a write and the wing grant.
+
+
 ## bots
 
-- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`
+- **Paths:** `commonplace/bots/`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tools/bots_overhead.py`
 - **Owns:**
 
   - The web-app part of `docs/bots.md` also says where Projects, Needs me and Console moved (the Workspace group of the account menu) and that the Bots count is the number of questions waiting on the person.
@@ -2078,7 +2113,9 @@ Format (read by `commonplace orch docs-check`):
 
   - `auth.person` is the single gate for `/api/bots*`: a signed-in person session, 404 for any agent token or machine credential, 401 for no credentials.
 
-  - `blocks.HYDRATORS` fills stored block references (`work`, `decision`, `action`, `setup`) with the reader's own view through `BoardService`; an invisible or missing item becomes `gone`, an unknown type is returned as stored. `modelcfg.resolve` turns the chat front settings into a model or one of `needs_configuration`, `needs_turn_on`, `key_missing`.
+  - The turn engine: `turn.py` runs one turn per bot on its own thread (process-local `limits.REGISTRY`: one per bot, 4 per person, 32 per process), streams through `chat.model_stream.stream` with the `BOT_*` limits in `limits.py`, journals every tool call in `bot_actions`, and stores the reply in one write; `routes.py` relays it as server-sent events and serves stop and confirm. `context.py` builds the fixed system prompt and the quoted, redacted context. `tools.py` holds the `Tool`/`Result`/`Turn` contract, argument validation, the built-in `remember` and `forget`, and `bots.TOOL_MODULES` lists the tool modules imported at install. `tools/bots_overhead.py` is an informational hub-overhead measurement, not a test.
+
+  - `blocks.HYDRATORS` fills stored block references (`work`, `decision`, `action`, `setup`, `confirm`) with the reader's own view through `BoardService`; an invisible or missing item becomes `gone`, an unknown type is returned as stored. `modelcfg.resolve` turns the chat front settings into a model or one of `needs_configuration`, `needs_turn_on`, `key_missing`.
 
 - **Promises:**
 
@@ -2090,19 +2127,23 @@ Format (read by `commonplace orch docs-check`):
 
   - Text bounds count the raw characters (what is stored), so padding cannot exceed them; text that cannot be stored as UTF-8 is `invalid`. A pending confirmation past its expiry can only become `expired`, whatever the requested state.
 
+  - A turn's `ack` leaves before any model work; text is relayed while the provider still sends; a dropped client never stops a turn. Every tool runs as the person, re-resolved per call, with an audit row `bot:<tool>`; written text must be a verbatim span of the person's message (`not_your_words`). `confirm` tools only create a pending action, run once by compare-and-set on `/confirm`. A request id is never run twice: replay reads the store, a request without reply and without a running turn is stored as `failed:interrupted` with its journal. Bot model requests count in the control table `bot_model_calls` (numbers only) and `chat.store.counts_today` includes them, so bots and project chat share one daily budget and the per-minute `USER_RATE`. A turn takes its unit atomically with the daily check just before sending (`chat.store.take_bot_call`) and gives it back if nothing was sent. Running turns hold a renewed lease in `bot_leases`, so a turn in another hub process is never marked interrupted; a late reply is logged (`code=late_reply`), not stored twice. Streamed text is redacted over the whole reply so far and only its settled part is sent; the step cap is its own code `steps`; a confirm whose `ref` cannot be read creates nothing (`unreadable`). `context.Context.messages` fits every request to `BOT_MAX_INPUT_CHARS` with the transport's own size formula (new message, system prompt, tool schemas and tool rounds first; then memory newest first, whole notes only; the snapshot; history newest first); a message that cannot fit is `too_long` before any request; tool results are cut to 4,000 characters. `Tool.check` (optional) runs before a pending action, chip or write is made, and again on `/confirm` against the original message.
+
 - **How it fails:**
 
   - Out-of-bound input is 400 `invalid`, the bot limit and conflicts are 409, a busy store is 429; error bodies carry fixed text, never conversation text.
 
   - A memory id outside the integer range is an unknown id (404); a `board` that is not a project slug string is 400.
 
-  - The message, stop and confirm routes are not served yet; they answer 404.
+  - Before the stream starts: 400 `invalid`, 404, 409 `busy` (this bot already has a running turn) or `conflict` (request id with other text), 429 `busy` (person or process cap). After the user message is stored, every outcome is a stream event and a stored bot message with a fixed sentence per code; provider text never reaches the person. A model that is not usable gives a stored `setup` block and no request.
 
 - **Tests:**
 
   - `tests/test_bots_store.py` covers bounds, append-only triggers, idempotent sends and conflicts, one reply, paging, unread, the action journal, pending compare-and-set, forwards and work lookups, memory tombstones, per-user isolation and reopening the store.
 
   - `tests/test_bots_updates.py` covers each update (needs you, ready, done, an orchestrator reply, verbatim and marked), exactly-once on redelivery and on a repeated transition, only the filing or forwarding bot, no message for another person or for someone who lost access, no store write for a card no bot filed, a failing store never breaking the card write, roster state and unread, redacted titles, log hygiene and the schema upgrade of an existing file.
+
+  - `tests/test_bots_turn.py` covers a turn over real HTTP with a scripted model and one loopback fake provider: `ack` before model work, a delta while the provider holds back, tool round trips as the person, `not_your_words`, confirm once / decline / expiry / foreign person, replay of finished and running requests, interrupted turns, stop, a dropped client, setup without a model, the shared daily and per-minute budget, the step cap, the turn deadline, caps, a member's refusal, and no conversation text in the control database, audit rows or logs.
 
   - `tests/test_bots_api.py` covers defaults per readable project, create/rename/archive and the 50-bot bound, thread paging, block hydration and status words, waiting decisions, read marks, memory, redacted display, and 404 for another person, another workspace and agent tokens.
 
@@ -2113,9 +2154,13 @@ Format (read by `commonplace orch docs-check`):
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
+  - The card panel offers Release with a required reason on cards awaiting release, the handoff form names the orchestrator and pool recipients, and refused card actions appear inside the open panel.
+
   - The ledger lines of the card panel's Runs list in `cardruns.js`: end status, tokens, cost and log pointer of a started run.
 
   - Bots-first navigation (`routes.js`, `rail.js`, `app.js`): a bare visit resolves to `#/bots` for a person who has a project (the first-run screen stays for one who has none); the rail and the phone tabs list Bots and Memory only, with the Bots count taken from the roster (`waitingTotal` in `bots.js`); Projects, Needs me and Console sit in a "Workspace" group of the account menu (desktop rail and phone top bar), beside Rules, Workspace settings and Admin. `boardRoute` keeps the old landing board for shared card links and the exit from Admin; every earlier deep link resolves as before.
+
+  - The opt-in Deck look (`deck.js`, `deck.css`, `fonts/inter-latin.woff2`): one per-browser switch (`localStorage` key `cmmn.ui`, the Look section in Settings, or `?ui=deck` / `?ui=classic` once). On, the shell draws the Deck top bar and phone tabs instead of the rail, with the workspace tools in the account menu, and `deck.css` re-tokens every screen; every rule in it is scoped to `:root[data-ui="deck"]`, so the file is inert while the switch is off. Deck-only screens register in `SCREENS` and are reached through `state.deck` in the shell.
 
   - The bots screens (`bots.js`, `botstream.js`, `bots.css`, routes `#/bots` and `#/bots/<id>`): a roster of named bots with one state dot each and one streamed thread per bot, drawn from the `/api/bots*` contract. `botstream.js` is the DOM-free SSE frame parser and the message sender; `bots.js` renders blocks (actions on one line, work chip, decision buttons and reply field through the existing decide route, confirm chip, setup block, a "Waiting on you" strip) and owns polling, the unsent-text retry and the memory/rename/archive sheet. See "Using bots in the web app" in `docs/bots.md`.
 
