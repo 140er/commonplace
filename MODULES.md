@@ -493,6 +493,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Display-label token scans deduplicate identities without rewriting labels or changing citation parsing.
 
+  - A restricted caller's fact term counts and seed ranking, and the vector-disabled Chroma fallback's candidate pool and its BM25 order, are computed from readable facts and drawers only; unrestricted callers keep the index's own counts.
+
   - Hallway probes return bounded metadata pages in storage order; final reads revalidate exact descriptors.
 
   - KG search reuses the local tokenizer, selective terms and 50-seed candidate rules on a detached authorized index; deadline checks stop copy, indexing and scoring work. Scoped search requires its detached snapshot.
