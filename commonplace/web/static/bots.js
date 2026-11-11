@@ -232,6 +232,14 @@ const newRequestId = () => {
   const id = globalThis.crypto?.randomUUID?.().replaceAll("-", "");
   return id || `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
 };
+/** Questions waiting on the person across all their bots. The General bot's count already covers every
+ * readable project, so project bots are not added on top of it (each question would count twice). */
+export function waitingTotal(bots) {
+  const n = (bot) => Number.isSafeInteger(bot?.waiting) && bot.waiting > 0 ? bot.waiting : 0;
+  const list = Array.isArray(bots) ? bots : [];
+  const general = list.find((bot) => bot?.kind === "general");
+  return general ? n(general) : list.reduce((sum, bot) => sum + n(bot), 0);
+}
 const lastId = (messages) => messages.reduce((top, m) => Math.max(top, Number(m.id) || 0), 0);
 const merge = (rows, added) => [...new Map([...rows, ...added].map((m) => [m.id, m])).values()].sort((a, b) => a.id - b.id);
 const waitingIds = (list) => list.map((b) => b.card).sort().join(",");
@@ -247,6 +255,7 @@ export function createBots({
   send = sendMessage, fetchImpl,
   viewport = globalThis.visualViewport,
   makeId = newRequestId,
+  onRoster = () => {},
 }) {
   const s = {
     bots: [], model: null, canConfigure: false, loaded: false, error: "",
@@ -368,6 +377,7 @@ export function createBots({
       s.bots = result.bots || []; s.model = result.model || null; s.canConfigure = result.can_configure === true;
       s.loaded = true; s.error = "";
       if (s.botId && !s.bot) s.bot = s.bots.find((b) => b.id === s.botId) || null;
+      onRoster(s.bots);
     } catch (error) {
       if (!alive(token)) return;
       s.loaded = true; s.error = error.message || BOTS_COPY.offline;
