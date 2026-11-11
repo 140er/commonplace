@@ -265,6 +265,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Contributor and agent instructions, the mission and design notes, user and operator documentation, release history, the licence and the security policy.
 
+  - `CONTRIBUTING.md` documents the hook install, the pre-push quick check and its budget, and the per-worktree environment.
+
   - `docs/projects.md` and `docs/orchestrator.md` state who may hold a lease on a board without `[runner]`: its own trusted project seat.
 
 - **Promises:**
@@ -348,6 +350,8 @@ Format (read by `commonplace orch docs-check`):
 - **Owns:**
 
   - Python and Rust packaging, pinned dependencies, the coverage gate, lint and format settings, pre-commit hooks, repository metadata and the development container.
+
+  - `.pre-commit-config.yaml` configures the commit stage only; the push stage is the quick check in `commonplace/guards/`, installed with `python -m commonplace.guards.hooks install`.
 
 - **Promises:**
 
@@ -603,7 +607,11 @@ Format (read by `commonplace orch docs-check`):
 
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.
 
+  - `tests/cardruns.mjs` (run by `tests/test_card_runs_ui.py`) covers the card panel's Runs section including the Start agent control: the words of every refusal, the configured and free forms, what a refresh keeps and when no control shows.
+
   - `tests/test_projects_seat_lease.py` creates a seat through the Project settings routes and has it take, hold, renew and release its lease over MCP.
+
+  - `tests/test_guards_prepush.py` and `tests/test_guards_hooks.py` build throwaway git repos and linked worktrees with stand-in tools; they run no host tool and need no network.
 
   - `tests/test_statechart_card_rules.py` walks the shortest breaking path of each card-lifecycle statechart rule (R1, R3, R4, R5, R6, R6b, R7) and asserts the rule holds.
 
@@ -620,7 +628,7 @@ Format (read by `commonplace orch docs-check`):
 
   - Synthetic Admin HTTP inventories and served-asset Node contracts, with assertion-only pinned-base RED evidence and identical selected head GREEN nodes.
 
-  - Runner block checks run the served `adminrunners.js` against a fake DOM: enroll, attest and wings edit call the owner routes with exact bodies, and enrollment tokens never reach storage, logs, list redraws or a dismissed panel.
+  - Runner block checks run the served `adminrunners.js` against a fake DOM: enroll, attest, wings edit and the two-step revoke call the owner routes with exact bodies, and enrollment tokens never reach storage, logs, list redraws or a dismissed panel.
 
 
   - Synthetic legacy safety-stop cases and explicitly classified transcript-only fixture updates.
@@ -1305,6 +1313,8 @@ Format (read by `commonplace orch docs-check`):
 
   - A lost launch result becomes `uncertain` and waits for a person; a revoked machine cancels queued jobs on the next sweep; a busy queue refuses with `busy`.
 
+  - The card panel's "Start agent" asks `GET /api/card-starts/options?task=<n>` (signed-in owner only, read-only, `commonplace/runner/start_options.py`): on a configured board the config's machine, project and topic, otherwise the attested machines the owner may use with the projects and topics each allows; a start the card or setup cannot take comes back as a `refusal` code, never as a choice. On a configured board the owner's `card_start` may send the card alone; a refused start answers its stable `code` next to `error`.
+
   - Resolving a start that is no longer `uncertain` answers 409, not 403, so a settled start reads differently from a refused caller; `tests/test_card_runs_contract.py` pins it with the member and other-workspace refusals.
 
 - **Tests:**
@@ -1316,13 +1326,15 @@ Format (read by `commonplace orch docs-check`):
 
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
+  - `tests/test_card_start_defaults.py` covers the owner's card-only start, equal and differing explicit values, the options route, and the refusal of a member, an untrusted agent and a coordinator token with no job created; `tests/cardruns.mjs` the panel's Start control.
   - `tests/test_runner_wings.py` covers multi-wing starts, the ungranted-wing refusal, worker write bounds after enrollment and PATCH, and owner-only listing.
+  - `tests/test_runner_revoke_scope.py` covers a second workspace's owner failing to list or revoke a machine (404, tokens still valid) and revoke/list never returning a token.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
 
 ## orch
 
-- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
+- **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`
 - **Owns:**
 
   - A `model_unresolved` start refusal names the role and board and where an owner sets the model (`details.role`, `details.config_role`, `details.board`); `Config.start_roles` and `split_role` give the roles a start can run to `prepare()` and to Needs me.
@@ -1369,6 +1381,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Two failed sweeps of a board in a row emit one `orch.trigger.failing` event and list the board in the owner's `needs_me` (`orchestrator_failing`) until a sweep succeeds; `orch_sweep_health` stores only the exception type.
 
+  - On boards without workspace orchestration a trigger start refused as `at_cap`, `project_limit`, `busy`, `settings_unavailable`, `config_changed`, `worker_unavailable` or `started_recently` is retried by the sweep (`start_retry`, `orch_start_retries`) after 1, 5, 15, 30 and 60 minutes under the event's own request key, each refusal adds a miss, and the fifth ends as `retry_exhausted`; any other refusal, including one on a retry, is final.
+
   - Void cannot stop launched threads or prove completion; existing active/recent-start and per-switch capacity guards still apply, and a pending todo trigger may run on a later sweep.
 
 
@@ -1386,6 +1400,8 @@ Format (read by `commonplace orch docs-check`):
   - `tests/test_orch_stall_wake.py` covers exactly one wake for an idle board with open work, backoff, a done card restarting the timer, no wake for blocked or person-held cards, owner escalation after three nudges and the off switch.
 
   - `tests/test_orch_trigger_stall.py` covers a split start without a `main` role (including the live v3 config shape), unplannable starts as misses, a released todo card starting, and the failing-sweep owner alert.
+
+  - `tests/test_orch_start_retry.py` covers a retried `at_cap` start with its exact backoff, repeated refusals recorded as misses, the bounded `retry_exhausted` end, a permanent refusal never retried, a retry that is refused permanently, and a settled retry not counted twice.
 
 
 ## projects
@@ -1452,6 +1468,8 @@ Format (read by `commonplace orch docs-check`):
 
   - Owner-reviewed rules and their freshness gate, guard building blocks, sensitive-text flags and redaction.
 
+  - The pre-push quick check (`guards/prepush.py`): changed-file selection, the shared time budget and the report of what it skipped; and the hook installer (`guards/hooks.py`) whose scripts resolve each worktree's own environment.
+
   - `commonplace.guards.pretool`, a PreToolUse command that refuses git-hook bypasses (`docs/hook-bypass-guard.md`).
 
 - **Promises:**
@@ -1462,17 +1480,23 @@ Format (read by `commonplace orch docs-check`):
   - Rules take effect only after owner review; writes from a client with stale rules get 428; flags are deterministic.
   - The bypass guard denies hook-skipping shell commands and edits of existing hook files with a reason, passes look-alike text, and never auto-approves.
 
+  - The quick check names itself a quick check, reports every skipped or cut-off step, and fails the push only when a check it ran failed. The installed hooks work in a fresh linked worktree or say how to set it up.
+
 - **How it fails:**
 
   - Missing and stale served sequences retain the 428 refresh payload.
 
   - Redaction can miss a sensitive detail; flags are hints, not blocks.
 
+  - A test whose name matches no changed module is not selected, so the quick check can pass while a distant test would fail; a cut-off step is reported, not retried; a worktree with no environment blocks the hook with the setup command.
+
 - **Tests:**
 
   - Route-aware checked REST harness and Space freshness contract tests.
 
   - `tests/test_commonplace_rules.py`, `tests/test_commonplace_rules_enforce.py`, `tests/test_commonplace_privacy.py`, the `tests/test_guards_` files.
+
+  - `tests/test_guards_prepush.py` covers test selection, the budget (cut-off lint, cut-off tests, skipped steps), docs-check and the per-worktree tool path; `tests/test_guards_hooks.py` installs the hooks into a clone and pushes and commits from fresh linked worktrees.
 
 
 ## handoff-and-continuity
@@ -1841,13 +1865,15 @@ Format (read by `commonplace orch docs-check`):
 
   - The Needs me Set up row for a missing model role, and the project settings model picker with its stored id, add-a-model form and role focus.
 
-  - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
+  - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest, wings edit and two-step revoke over `/api/runners`, with one-time token display (and a token-free setup note) kept outside the Admin sections' redraws; revoking a machine clears its token panel.
 
   - Runtime switch/orchestrator/machine read projectors, effective limits, stuck facts and separate legacy needs-me rendering in the existing Admin lifecycle.
 
 
   - The GET-only Admin dispatcher, scoped users/connections projections, account/palette navigation and independently settling page controller.
 
+
+  - The card panel's Runs section (`cardruns.js`) lists the card's start jobs with Cancel and the owner's Resolve choice, and offers the owner a Start agent control fed by the options route, with plain words for each refusal.
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
 

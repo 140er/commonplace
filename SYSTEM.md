@@ -43,6 +43,21 @@ entry was written.
   the existing gateway 401 challenge. No authority extends to other workspaces’ personal data.
   The installed route inventory mirrors both authenticated Admin GET prefixes.
 
+- **Pre-push quick check:** `git push` runs `commonplace.guards.prepush` on the
+  files the push changes (git's pre-push input, diffed against the remote tip or
+  the development branch): ruff check and format on changed Python, other
+  detected stacks, `docs-check` against the base, and the fast tests whose
+  names match the changed modules. Default budget 60 s (`--budget` or
+  `COMMONPLACE_PREPUSH_BUDGET`) covers all steps together: a step that is
+  still running when it ends is stopped, later steps are not started, and the
+  run lists them as skipped or cut off. A failed check blocks the push (exit 1);
+  an incomplete run does not, and never prints a pass. Every run states that it
+  is a quick check, not the full suite or CI. The hooks are one pair of shell
+  scripts in the clone's shared hooks directory, written by
+  `python -m commonplace.guards.hooks install`; each run picks the environment
+  of the worktree it runs in (`COMMONPLACE_PYTHON`, `.venv`, `VIRTUAL_ENV`,
+  `python3`) and, when none has the tools, exits with the setup command.
+
 - **Admin read and lifecycle bounds:** New projections use an existing SQLite
   `mode=ro` connection, connection-local `query_only`, at most 250 ms busy/connect
   wait and a 2 second monotonic request budget with progress interruption. They
@@ -221,6 +236,8 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 - A trigger start that cannot be planned is a coded miss that advances the board's cursor; only infrastructure errors leave the cursor. A split start falls back to the `[runner]` role when the config has no `main` role, and an origin release fires the trigger.
 
 - Repeated sweep failures are visible: the second consecutive failure of a board alerts the owner once (`orch.trigger.failing`, `needs_me.orchestrator_failing`) until a sweep succeeds.
+
+- A todo start refused for a transient reason (`at_cap`, `project_limit`, `busy`, `settings_unavailable`, `config_changed`, `worker_unavailable`, `started_recently`) is retried by the sweep with bounded backoff (1, 5, 15, 30, 60 minutes, then `retry_exhausted`); every refusal stays a miss and the attempts are kept in `orch_start_retries`. A permanent refusal is never retried.
 
 ### Runner wings and the owner runner block
 
@@ -526,6 +543,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - `card_start` on a configured board is person-owner only; every other caller gets `no: use orch_card_start`.
 
 - Cancelling a job that belongs to a step is person-owner only.
+
+- The person owner may send `card_start` the card alone on a configured board: machine, project and topic come from the config, and values that are sent must still equal it. `GET /api/card-starts/options` (person owner only, read-only) tells the card panel what it may offer and why nothing can be started; it creates no job.
 
 - The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
 
