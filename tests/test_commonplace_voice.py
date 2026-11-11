@@ -709,6 +709,8 @@ def test_engine_passes_configured_model_to_loader():
         ({NL_MODEL: "bad model;rm"}, f"{NL_MODEL} must be"),
         ({NL_MODEL: "../escape"}, f"{NL_MODEL} must be"),
         ({NL_MODEL: "org/../x"}, f"{NL_MODEL} must be"),
+        ({NL_MODEL: "./nl"}, f"{NL_MODEL} must be"),
+        ({NL_MODEL: "models/nl/ct2"}, f"{NL_MODEL} must be"),
         ({NL_MODEL: "https://example.invalid/model"}, f"{NL_MODEL} must be"),
         ({NL_MODEL: "x" * 201}, f"{NL_MODEL} must be"),
         ({NL_MODEL: "/does/not/exist-voice-model"}, "not a directory on this server"),
@@ -796,7 +798,8 @@ def test_voice_calls_no_external_provider(app, monkeypatch):
         return real_getaddrinfo(host, *args, **kwargs)
 
     def connect(self, address):
-        local_only(address[0])
+        if isinstance(address, tuple):
+            local_only(address[0])
         return real_connect(self, address)
 
     enable(app)
@@ -854,3 +857,14 @@ def test_workspace_switch_off_blocks_before_the_cap_is_touched(real_free_cap):
     assert call(app, "PATCH", body={"enabled": False})[0] == 200
     assert call(app, "POST", "/api/voice/transcribe?lang=nl", b"\0\0" * 16000)[0] == 403
     assert plans.transcription_used(hub.db, user) == 0
+
+
+def test_engine_is_rebuilt_when_the_configuration_changes(monkeypatch):
+    monkeypatch.setattr(voice, "_engine", None)
+    first = voice.engine(voice.load_config({}))
+    try:
+        assert voice.engine(voice.load_config({})) is first
+        second = voice.engine(voice.load_config({NL_MODEL: "org/nl-model"}))
+        assert second is not first and second.models["nl"] == "org/nl-model"
+    finally:
+        voice._engine and voice._engine.close()

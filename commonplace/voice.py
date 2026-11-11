@@ -51,7 +51,14 @@ def _model_setting(language, environ):
                 f"{name}={model!r} is not supported; English uses one of {', '.join(MOONSHINE_MODELS)}"
             )
         return model
-    if len(model) > 200 or not _MODEL_ID.match(model) or ".." in model.split("/"):
+    parts = model.lstrip("/").split("/")
+    relative_ok = model.startswith("/") or len(parts) <= 2
+    if (
+        len(model) > 200
+        or not _MODEL_ID.match(model)
+        or not relative_ok
+        or any(part in (".", "..") for part in parts)
+    ):
         raise VoiceConfigError(
             f"{name} must be a faster-whisper model size, a Hugging Face repo id "
             "(owner/name) or an absolute path to a local model directory"
@@ -235,9 +242,14 @@ _engine_lock = threading.Lock()
 
 def engine(config=None):
     global _engine
+    models = (config or load_config()).models
     with _engine_lock:
+        # A new configuration replaces the engine, so settings never go stale.
+        if _engine is not None and _engine.models != models:
+            _engine.close()
+            _engine = None
         if _engine is None:
-            _engine = VoiceEngine(models=(config or load_config()).models)
+            _engine = VoiceEngine(models=models)
         return _engine
 
 
@@ -305,8 +317,8 @@ def install(gateway):
         if set(body) != {"enabled"} or type(body["enabled"]) is not bool:
             send_json(h, 400, {"error": "enabled must be a boolean"})
             return
-        if refusal():
-            send_json(h, 503, {"error": refusal()})
+        if reason := refusal():
+            send_json(h, 503, {"error": reason})
             return
         with gateway.db._lock:
             gateway.db._conn.execute(
@@ -332,8 +344,8 @@ def install(gateway):
         if not enabled(gateway.db, principal.workspace_id):
             send_json(h, 403, {"error": "Voice is off"})
             return
-        if refusal():
-            send_json(h, 503, {"error": refusal()})
+        if reason := refusal():
+            send_json(h, 503, {"error": reason})
             return
         language = query(h).get("lang")
         if language not in LANGUAGES:
