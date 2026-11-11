@@ -244,6 +244,21 @@ test("an event with an orchestrator block carries an Orchestrator label and esca
   assert.doesNotMatch(bot, /Orchestrator/, "only event messages are labelled");
 });
 
+test("server keys that match inherited object members get the default text, never a function or a throw", () => {
+  const ctx = { open: new Set(), busy: new Set() };
+  for (const key of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    assert.match(ui.setupHTML({ code: key, can_configure: true }, e), /Bots need a chat model/, `setup ${key}`);
+    assert.equal(ui.setupText(key, false), ui.setupText("needs_configuration", false));
+    assert.doesNotMatch(ui.workHTML({ card: 1, title: "t", status: key }, ctx, e), /chip|function|native code/, `status ${key}`);
+    const row = ui.rosterHTML({ bots: [{ id: "a", name: "A", job: "", last: null, unread: 0, state: key }] }, e);
+    assert.doesNotMatch(row, /bot-dot|function|native code/, `dot ${key}`);
+    const note = ui.messageHTML({ id: 1, role: "bot", text: "x", state: `failed:${key}`, blocks: [] }, ctx, e);
+    assert.match(note, /The reply failed\./, `fail ${key}`);
+    assert.doesNotMatch(note, /function|native code/);
+    assert.doesNotMatch(ui.confirmHTML({ pending: "p", label: "L", state: key }, ctx, e), /function|native code| · /, `confirm ${key}`);
+  }
+});
+
 // ---------- view: controller ----------
 
 function dom() {
