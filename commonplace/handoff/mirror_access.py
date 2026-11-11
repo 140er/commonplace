@@ -131,7 +131,15 @@ class _ResponseAccess:
             self.private[key] = None
             try:
                 ctx = getattr(self.gateway, "handoff", None)
-                if ctx is None:
+                workspace = self.principal.workspace_id
+                has_threads = getattr(ctx, "has_threads", None)
+                if ctx is None or (
+                    # A workspace that never stored a thread has no sources;
+                    # never create its thread store just to look.
+                    ctx._stores.get(workspace) is None
+                    and has_threads is not None
+                    and not has_threads(workspace)
+                ):
                     self.private[key] = []
                 else:
                     checks.remaining(0)
