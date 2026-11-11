@@ -42,6 +42,7 @@ const context = {
   },
   remember: () => ({}), capture: () => () => {}, restore() {},
   navigation() { navigationCalls++; },
+  mountToolPolicy() {},
   title() {}, message: (text) => text, e: (value) => String(value ?? ""), planView,
   agentsView: () => "", phonePushView: () => "", voice: { settings: () => "" },
   mountWorkspaceOrchestration() {},
