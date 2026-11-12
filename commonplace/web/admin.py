@@ -842,9 +842,9 @@ def instance_authorized(gateway, principal, context):
     """Deny cheaply before the exact server user flag read, without app locks."""
     if principal is None or not principal.person or principal.role != "owner":
         return False
-    from commonplace.instance_admin import flag
+    from commonplace.instance_admin import stored_flag
 
-    return flag(gateway, principal, context)
+    return stored_flag(gateway, principal, context)
 
 
 def deploy(context):

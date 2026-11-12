@@ -102,8 +102,8 @@ def install(gateway):
 
             try:
                 context = admin.ReadContext(gateway.admin_clock)
+                can_instance = admin.instance_authorized(gateway, principal, context)
                 can_manage = flag(gateway, principal, context)
-                can_instance = can_manage and principal.role == "owner"
             except Exception as exc:
                 log_failure(LOG, "Admin capability unavailable", exc)
                 can_instance = False

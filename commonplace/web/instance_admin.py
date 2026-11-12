@@ -48,7 +48,7 @@ def install(gateway):
             target = target or query.get("workspace_id")
             result = service.inventory(gateway, principal, context, kind, target, query)
             context.remaining()
-        except (ValueError, LookupError) as exc:
+        except (ValueError, service.NotFound) as exc:
             status, code = (
                 (400, "invalid_request") if isinstance(exc, ValueError) else (404, "not_found")
             )

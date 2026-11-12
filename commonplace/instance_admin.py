@@ -31,9 +31,13 @@ STATES = ("active", "revoked", "expired", "disabled", "paused", "invalid")
 ID = re.compile(r"(?:ws|usr|conn)_[a-f0-9]{16}")
 
 
-def flag(gateway, principal, context):
-    """One bounded exact flag lookup per request, shared with operational navigation."""
-    if principal is None or not principal.person or principal.auth != "session":
+class NotFound(Exception):
+    """A path or filter names a target that does not exist; anything else is a source fault."""
+
+
+def stored_flag(gateway, principal, context):
+    """One bounded exact flag lookup per request for a person, whatever credential carries it."""
+    if principal is None or not principal.person:
         return False
     if not hasattr(context, "instance_flag"):
         with admin.read_control(gateway.db, context) as conn:
@@ -42,6 +46,15 @@ def flag(gateway, principal, context):
             ).fetchone()
         context.instance_flag = row is not None and row["is_admin"] == 1
     return context.instance_flag
+
+
+def flag(gateway, principal, context):
+    """Console authority: the stored flag, carried by a browser session only."""
+    return (
+        principal is not None
+        and principal.auth == "session"
+        and stored_flag(gateway, principal, context)
+    )
 
 
 def audit(gateway, principal, context, action, *, workspace=None, decision="allow", reason="ok"):
@@ -97,7 +110,7 @@ def parse_query(pairs, kind, workspace):
                 else "usr",
             )
     if workspace and "workspace_id" in query and workspace != query["workspace_id"]:
-        raise LookupError()
+        raise NotFound()
     for key, values in (
         ("role", ("owner", "member")),
         ("disabled", ("true", "false")),
@@ -199,7 +212,7 @@ def limits(conn, context, workspace):
         (workspace,),
     ).fetchone()
     if row is None:
-        raise LookupError()
+        raise NotFound()
     enabled = plans.enabled()
     plan = plans.PLANS.get(row["plan"]) if enabled else None
     return {
@@ -294,7 +307,7 @@ def inventory(gateway, principal, context, kind, workspace, query):
                 conn, context, "SELECT id FROM workspaces WHERE id=?", (target,)
             ).fetchone()
         ):
-            raise LookupError()
+            raise NotFound()
         sections = {
             "audit": audit_inventory,
             "settings": operator_settings,

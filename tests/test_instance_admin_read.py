@@ -618,3 +618,17 @@ def test_workspace_validation_refusal_has_no_targets(hub):
     row = hub.db._conn.execute("SELECT * FROM audit_log ORDER BY seq DESC LIMIT 1").fetchone()
     assert row["decision"] == "refuse"
     assert json.loads(row["target_ids"]) == []
+
+
+def test_unexpected_lookup_failure_is_a_source_error_not_a_missing_target(hub, monkeypatch):
+    from commonplace import instance_admin
+
+    def broken(*args, **kwargs):
+        raise KeyError("internal bug")
+
+    monkeypatch.setattr(instance_admin, "inventory", broken)
+    assert read(hub, "workspaces")[:2] == (503, {"error": "source_unavailable"})
+    row = hub.db._conn.execute(
+        "SELECT decision FROM audit_log WHERE action='instance_admin.read.workspaces' ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    assert row["decision"] == "error"
