@@ -328,6 +328,12 @@ def filter_room_keys(rule, result, can_read):
     return result
 
 
+# Provenance fields that name a thread, and so can carry a T3 source ID.
+_THREAD_FIELDS = frozenset(
+    {"source_thread", "source_url", "source_link", "origin_id", "origin_link", "approval_link"}
+)
+
+
 def scrub_provenance(node, access):
     out = node
     fields = provenance_refs.PROVENANCE_FIELDS | provenance_refs.DERIVED_FIELDS
@@ -346,6 +352,10 @@ def scrub_provenance(node, access):
         allowed = parsed is not provenance_refs.REFUSE and all(
             access.reference(t) for t in parsed.tokens
         )
+        if allowed and key in _THREAD_FIELDS:
+            # Any spelling of an mcp: source ID, not only thr_ tokens, follows
+            # the room rule: shown only to readers of every matching thread.
+            allowed = not private_thread_reference(access, value)
         if allowed and key in {"source_drawer_id", "source_closet"}:
             allowed = access.association(
                 "drawer" if key == "source_drawer_id" else "closet", parsed.text
@@ -437,6 +447,7 @@ def _proved_thread(value, access):
     return (
         parsed is not provenance_refs.REFUSE
         and bool(parsed.text)
+        and not private_thread_reference(access, value)
         and (
             not parsed.tokens
             or parsed.text in parsed.tokens

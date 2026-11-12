@@ -5,6 +5,8 @@
 
   - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls; count rows prove diary totals, search counters and duplicate flags describe only visible rows, and a partial source-family reader is refused; source IDs containing each character the old token scan stopped at, upper-case IDs, a client `thread_scope`, store pinning, probe faults, unavailable memory, hidden-topic diary words on search, CLI search, media/code search, duplicate checks and REST search, `mcp` namespace spellings, non-leading `mcp:` sources (`xmcp:`, leading space or no-break space, percent-encoded namespace), the topic cap and the empty-exclusion fast path have their own rows.
 
+  - `tests/test_mcp_source_provenance.py` hides `mcp:` source IDs from readers who cannot read the thread in fact sources, tunnel labels, drawer provenance and replayed-write `source_kept`, with reader and unfiled-source controls
+
   - Thread-ID canonicalisation regressions refuse every non-canonical reviewer form at filing and successor registration, accept T3-shaped IDs, hide legacy rows on every read, and bound the store queries of a 500-drawer batch.
 
   - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
