@@ -1,3 +1,3 @@
-### Release staging and verification
+### Release verification
 
-- Deployment fails closed unless the requested reviewed source, rendered build identity and running package commit agree. Readiness is bounded, service health is checked internally and externally, and operator configuration remains separate.
+- Deployment waits (bounded) for Compose readiness. When `COMMONPLACE_BUILD_COMMIT` is configured it fails unless the running package commit equals it; when unset it reports "not requested" and does not fail, so deployments that pin source and image by other means are unaffected. Operator configuration remains separate.

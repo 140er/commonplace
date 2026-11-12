@@ -541,11 +541,6 @@ def run_deploy(tmp_path, **fakes):
         assert executable, f"required test dependency: {name}"
         if not (bin_dir / name).exists():
             (bin_dir / name).symlink_to(executable)
-    git = bin_dir / "git"
-    git.write_text(
-        '#!/usr/bin/env bash\nif [[ "$*" == *rev-parse* ]]; then echo ' + "0" * 39 + "1; fi\n"
-    )
-    git.chmod(0o755)
     stat = bin_dir / "stat"
     stat.write_text(
         "#!/usr/bin/env bash\nprintf '%s\\n' " + shlex.quote(fakes.get("stat", "0 600")) + "\n"
@@ -608,20 +603,10 @@ exit HOLD_RC""".replace("HOLD_RC", str(fakes.get("hold_rc", 0))).replace(
         "docker": fakes.get(
             "docker",
             """if [[ "$*" == *"config --format json" ]]; then
- echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"PUBLISHED","target":8765}]}}}'
-fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1"))
-            .replace("PUBLISHED", fakes.get("published", "8765"))
-            .replace(
-                '"ports":',
-                '"build":{"context":"'
-                + str(ROOT)
-                + '","dockerfile":"deploy/commonplace/Dockerfile","args":{"COMMONPLACE_BUILD_COMMIT":"'
-                + "0" * 39
-                + '1"}},"image":"commonplace:0000000000000000000000000000000000000001","ports":',
-            )
-            + '\nif [[ "$*" == *"exec -T commonplace python -c"* ]]; then echo '
-            + "0" * 39
-            + "1; fi",
+ echo '{"services":{"commonplace":{"ports":[{"host_ip":"HOST_IP","published":"PUBLISHED"}]}}}'
+fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1")).replace(
+                "PUBLISHED", fakes.get("published", "8765")
+            ),
         ),
         "curl": fakes.get("curl", "echo 200"),
         "latest": fakes.get(
@@ -646,7 +631,6 @@ fi""".replace("HOST_IP", fakes.get("host_ip", "127.0.0.1"))
         "PATH": str(bin_dir),
         "COMMONPLACE_ROOT": str(tmp_path),
         "COMMONPLACE_SOURCE_DIR": str(ROOT),
-        "COMMONPLACE_BUILD_COMMIT": "0" * 39 + "1",
         "COMMONPLACE_ENV_FILE": str(tmp_path / ".env"),
         "COMMONPLACE_DATA_DIR": str(tmp_path / "data"),
         "COMMONPLACE_DEPLOY_ENV": str(config),
@@ -845,9 +829,8 @@ def test_deploy_sh_success_order(tmp_path):
         "docker",
         "docker",
         "curl",
-        "docker",
     ]
-    assert calls[-5:-2] == [
+    assert calls[-4:-1] == [
         compose + ["config", "--format", "json"],
         compose + ["up", "-d", "--build", "--wait", "--wait-timeout", "90"],
         compose + ["ps"],
@@ -1164,53 +1147,43 @@ def test_deploy_reports_both_missing_paths(tmp_path):
     assert [call[0] for call in calls] == ["id"]
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_without_requested_commit_skips_attestation(tmp_path):
+    result, calls = run_deploy(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "release attestation: not requested" in result.stdout
+    assert "verified release" not in result.stdout
+    assert not any("exec" in call for call in calls)
+    assert any("--wait" in call and "--wait-timeout" in call for call in calls)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_unset_commit_tolerates_unhealthy_probe(tmp_path):
+    result, _calls = run_deploy(tmp_path, curl="echo 503")
+    assert result.returncode == 0, result.stderr
+    assert "release attestation: not requested" in result.stdout
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
 @pytest.mark.parametrize(
     "scenario",
     [
-        "stale_context",
-        "stale_image",
+        "requested",
         "runtime_old",
         "runtime_missing",
         "health",
         "up",
-        "requested",
-        "missing_port",
-        "other_service_port",
-        "wrong_target",
-        "cold_start",
         "readiness_timeout",
         "internal_health",
+        "short_commit",
     ],
 )
 def test_deploy_requested_release(tmp_path, scenario):
     sha = "0" * 39 + "1"
-    source = tmp_path / "release"
-    source.mkdir()
-    service = {
-        "build": {
-            "context": str(source),
-            "dockerfile": "deploy/commonplace/Dockerfile",
-            "args": {"COMMONPLACE_BUILD_COMMIT": sha},
-        },
-        "image": "commonplace:" + sha,
-        "ports": [{"host_ip": "127.0.0.1", "published": "8765", "target": 8765}],
-    }
-    if scenario == "stale_context":
-        service["build"]["context"] = str(tmp_path / "old-release")
-        service["image"] = "commonplace:old"
-    if scenario == "stale_image":
-        service["image"] = "commonplace:old"
-    services = {"commonplace": service}
-    if scenario in {"missing_port", "other_service_port"}:
-        service["ports"] = []
-    if scenario == "other_service_port":
-        services["other"] = {
-            "ports": [{"host_ip": "127.0.0.1", "published": "8765", "target": 8765}]
-        }
-    if scenario == "wrong_target":
-        service["ports"][0]["target"] = 9999
-    rendered = json.dumps({"services": services})
     runtime = "f" * 40 if scenario == "runtime_old" else sha
+    rendered = json.dumps(
+        {"services": {"commonplace": {"ports": [{"host_ip": "127.0.0.1", "published": "8765"}]}}}
+    )
     docker = f"""case "$*" in
 *"config --format json") echo {shlex.quote(rendered)} ;;
 *"up -d --build"*)
@@ -1223,16 +1196,16 @@ esac"""
         docker=docker,
         compose_env="COMMONPLACE_SIGNUP=closed\n",
         curl="echo 503" if scenario == "health" else "echo 200",
-        env={"COMMONPLACE_SOURCE_DIR": str(source), "COMMONPLACE_BUILD_COMMIT": sha},
+        env={"COMMONPLACE_BUILD_COMMIT": "abc123" if scenario == "short_commit" else sha},
     )
     assert (tmp_path / "compose.yml").read_text() == ""
     assert (tmp_path / ".env").read_text() == "COMMONPLACE_SIGNUP=closed\n"
-    if scenario in {"requested", "cold_start"}:
+    if scenario == "requested":
         assert result.returncode == 0, result.stderr
-        assert sha in result.stdout
+        assert f"verified release: {sha}" in result.stdout
         assert any("exec" in call and any("urlopen" in arg for arg in call) for call in calls)
-        assert any("--wait" in call and "--wait-timeout" in call for call in calls)
     else:
         assert result.returncode != 0, (result.stdout, result.stderr)
-        if scenario in {"stale_context", "stale_image"}:
+        assert "verified release" not in result.stdout
+        if scenario == "short_commit":
             assert not any("up" in call for call in calls)

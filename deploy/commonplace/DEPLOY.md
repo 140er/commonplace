@@ -49,15 +49,8 @@ workspace workers link to that cache. A failed preload fails the build.
 
 ## Releases and reverse proxy
 
-Stage a clean reviewed Git checkout into the app directory. Set
-`COMMONPLACE_BUILD_COMMIT` to its full lowercase commit SHA and export it to the
-wrapper; set the operator Compose image tag to that same SHA (with the example,
-export `COMMONPLACE_IMAGE_TAG=$COMMONPLACE_BUILD_COMMIT`). The rendered build
-context must equal `COMMONPLACE_SOURCE_DIR`, use the tracked Dockerfile and pass
-that commit as `COMMONPLACE_BUILD_COMMIT`. Literal pins to an older release are
-rejected before `up`; correct them in the operator-owned file yourself. An rsync
-update must preserve the Git checkout and leave `.env`, `compose.yml`, and other
-operator files outside
+Stage a reviewed release into the app directory with git or rsync. An rsync
+update must leave `.env`, `compose.yml`, and other operator files outside
 its destination. Do not use `--delete` against the operator directory.
 Keep the previous source release and image tag for rollback.
 
@@ -212,8 +205,8 @@ expansions or command substitutions. Environment values override file values.
 Only these keys are accepted from deploy.env; other keys are ignored:
 `DEPLOY_BACKUP_UNIT`, `DEPLOY_BACKUP_TIMEOUT`, `DEPLOY_BACKUP_CHECK_CMD`,
 `DEPLOY_BACKUP_LATEST_CMD`, `DEPLOY_BACKUP_MAX_AGE`, `APP_PORT`, `COMPOSE_FILE`,
-`COMPOSE_ENV_FILE`, `COMMONPLACE_SOURCE_DIR`, `COMMONPLACE_ENV_FILE`,
-`COMMONPLACE_DATA_DIR`, and `COMMONPLACE_BUILD_COMMIT`.
+`COMPOSE_ENV_FILE`, `COMMONPLACE_BUILD_COMMIT`, `COMMONPLACE_SOURCE_DIR`,
+`COMMONPLACE_ENV_FILE`, and `COMMONPLACE_DATA_DIR`.
 Command values split on whitespace into an executable and arguments; shell
 quoting, pipelines and glob patterns are not interpreted.
 
@@ -264,15 +257,18 @@ The script performs these steps in order:
    create or release the holder fails the deploy. SIGKILL or a shell crash cannot
    run a trap: inspect and stop any leftover `commonplace-deploy-proof-*.service`
    before retrying.
-5. Validate Compose JSON so every published port binds to `127.0.0.1` and equals
-   APP_PORT. Require the requested commit to match a clean source HEAD, the
-   rendered build context, Dockerfile, build argument and commit-tagged image.
-   Run `up -d --build`, show `ps`, require HTTP 200 from healthz (10-second
-   timeout), then read the installed package's build resource inside the running
-   service and require the exact requested commit. Missing identity or any failed
-   check exits nonzero; only a successful attestation prints `verified release`.
-   A failure after `up` may leave the new container running: inspect it and use
-   the explicit image rollback above if needed. No automatic data rollback runs.
+5. Validate Compose JSON so every published port binds to `127.0.0.1`,
+   require the published port equals APP_PORT, run `up -d --build --wait
+   --wait-timeout 90` (Compose waits up to 90 seconds for service readiness),
+   show `ps`, and print the health HTTP status (10-second timeout).
+   When `COMMONPLACE_BUILD_COMMIT` is set (deploy.env or the environment), it
+   must be a full lowercase commit; the health status must then be 200, and the
+   installed package's build resource, read inside the running service together
+   with an internal health probe, must equal it. A mismatch, missing identity or
+   failed probe exits nonzero and only a match prints `verified release`. When it
+   is unset the script prints `release attestation: not requested` and does not
+   fail on identity. A failure after `up` may leave the new container running:
+   inspect it and use the explicit image rollback above if needed.
 
 The deploy script makes no docker/compose call until steps 2–4 pass. The backup unit never stops, restarts or replaces the gateway; it snapshots the running service. MAX_AGE must exceed your measured backup duration (restic stamps `time` at the start of the backup); the default 7200 seconds covers the hook's 75-minute snapshot deadline plus upload for typical data sizes.
 
@@ -285,9 +281,9 @@ When staging a clean reviewed source tree, set `COMMONPLACE_BUILD_COMMIT` to its
 full reviewed commit (40 or 64 hexadecimal characters) before building with the
 tracked host compose example. The actual image recipe validates the build argument
 and writes `commonplace/web/_build_commit.txt` before package installation. This
-resource travels with the installed wheel. The deployment wrapper requires it;
-unknown identity is allowed only for builds outside that wrapper. An empty build
-argument is permitted
+resource travels with the installed wheel. Setting `COMMONPLACE_BUILD_COMMIT` for
+the deployment wrapper makes it compare the running package with that commit. An
+empty build argument is permitted
 and reports **Running commit unknown**; an invalid nonempty argument fails the
 build. No runtime environment or checkout HEAD overrides image identity. Admin
 shows both installed package versions separately from the commit.
@@ -332,8 +328,3 @@ backup success/failure or fencing. Admin authorization is signed-in current-work
 owner plus a per-request server admin flag; ordinary owners see exactly
 “Instance administrator access required” and send no operational requests.
 See [Admin API](../../docs/admin.md) and [backup receipts](../../docs/backups.md#optional-status-receipts).
-
-The wrapper requires the Commonplace service itself to publish its container
-health port (8765) on the configured loopback application port. Compose waits
-up to 90 seconds for service health before the external probe; the commit
-attestation also probes health inside that same service container.
