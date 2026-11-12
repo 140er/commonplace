@@ -1,5 +1,6 @@
 """R3 regressions: disabled hooks, legacy compatibility and lossless handoff."""
 
+import ast
 import hashlib
 import http.client
 import inspect
@@ -437,6 +438,8 @@ ADDED_SINCE_BASELINE = {
     "mempalace_kg_invalidate": {"wing", "sensitivities"},
     "mempalace_kg_query": _FILTER | {"search", "limit"},
     "mempalace_search": {"include_facts"},
+    "space_read": {"space"},
+    "space_post": {"space"},
     "mempalace_kg_timeline": _FILTER,
 }
 
@@ -471,6 +474,11 @@ TOOLS_ADDED_SINCE_BASELINE = {
     # Compute map read tools (not part of handoff).
     "topology_get",
     "topology_route",
+    # Space names for board tools (same operations as the board tools).
+    "space_list",
+    "space_add",
+    "space_set",
+    "space_own_wing",
     # Orchestrator config, lease, journal and gate tools (not part of handoff).
     *"""
     orch_card_start orch_checkpoint orch_config_accept orch_config_diff orch_config_get
@@ -580,6 +588,18 @@ def legacy(tmp_path_factory):
     # Overlaid board tools use the current registry contract; handoff remains
     # absent from the baseline's enabled modules below.
     shutil.copy2(ROOT / "commonplace" / "extensions.py", snapshot / "commonplace" / "extensions.py")
+    # Current board tools import the Space tool alias table from policy. Add only
+    # that constant to the pinned policy: the pinned grants never consult it, so
+    # the legacy policy behaviour stays exactly as recorded.
+    current_policy = ast.parse((ROOT / "commonplace" / "policy.py").read_text())
+    aliases = next(
+        node
+        for node in current_policy.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "TOOL_ALIASES" for t in node.targets)
+    )
+    with (snapshot / "commonplace" / "policy.py").open("a") as pinned_policy:
+        pinned_policy.write("\n\n" + ast.unparse(aliases) + "\n")
     # Current board schemas need only the read-only orchestration setting probe.
     # Do not install current project routes into the pinned HTTP baseline.
     projects = snapshot / "commonplace" / "projects"
