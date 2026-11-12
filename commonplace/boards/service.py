@@ -2350,7 +2350,7 @@ class BoardService(lifecycle.LifecycleMixin):
             if backward:
                 messages.reverse()
             oldest = messages[0]["id"] if messages else 0
-            return {
+            page = {
                 "board": b["slug"],
                 "coordinator": b["coordinator"],
                 "messages": messages,
@@ -2363,6 +2363,10 @@ class BoardService(lifecycle.LifecycleMixin):
                     ).fetchone()
                 ),
             }
+        from commonplace.chat import live
+
+        live.mark_read(self.ctx.gateway, self.principal, b, messages)
+        return page
 
     def space_post(self, board, text):
         text = validate_text(text, "text", required=True)
