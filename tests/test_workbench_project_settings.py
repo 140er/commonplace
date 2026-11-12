@@ -24,6 +24,11 @@ REDS = [
     "limits_failure",
     "phases",
     "settings_screen",
+    "settings_pending_connections",
+    "settings_pending_chat",
+    "settings_pending_both",
+    "settings_pending_cards",
+    "settings_pending_unavailable",
 ]
 GUARDS = ["guard_own_memory", "guard_fixed_errors", "guard_shared_consent"]
 

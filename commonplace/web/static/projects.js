@@ -527,6 +527,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     }
   }
   host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>';
+  renderMain();
   if (settings) {
     installProjectStyles();
     bindSettingsNavigation(host, {slug, origin, onBack, current: active});
@@ -697,8 +698,8 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
   const scope = project.board;
   host.innerHTML = '<p role="status">Loading chat settings…</p>';
   let payload;
-  try { payload = await api(`/api/chat-settings?board=${encodeURIComponent(scope)}${owner ? "&probe=1" : ""}`); }
-  catch { if (active()) host.innerHTML = `<p role="alert">${CHAT_SAVE_ERROR}</p>`; return; }
+  try { payload = await api(`/api/chat-settings?board=${encodeURIComponent(scope)}${owner ? "&probe=1" : ""}`, {timeoutMs: 10000}); }
+  catch { if (active()) host.innerHTML = '<p role="alert">Could not load chat settings</p>'; return; }
   if (!active()) return;
   let front = payload.front || {provider: "none"};
   let selected = answerMode(front), busy = false, status = "", error = "";
@@ -780,7 +781,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
   const active = () => current() && host.isConnected;
   function render() {
     if (!active()) return;
-    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max agents working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 20 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div><p role="status" data-limit-status>${e(status)}</p>`;
+    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max agents working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 100 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div><p role="status" data-limit-status>${e(status)}</p>`;
     host.querySelectorAll("[data-limit-step]").forEach(button => {
       button.onclick = () => save(value === null ? 1 : value + Number(button.getAttribute("data-limit-step")));
     });
@@ -788,7 +789,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
     if (clear) { clear.disabled = busy; clear.onclick = () => save(null); }
   }
   async function save(next) {
-    if (!active() || !project.can_configure || busy || (next !== null && (next < 1 || next > 20))) return;
+    if (!active() || !project.can_configure || busy || (next !== null && (next < 1 || next > 100))) return;
     busy = true; status = ""; render();
     try {
       const result = await api(`/api/projects/${encodeURIComponent(project.board)}/limits`, {method: "PUT", body: {max_agents: next}});
@@ -904,10 +905,11 @@ export async function mountProjectAgents(host, {project, api, e, current, onUpda
   const active = () => current() && host.isConnected;
   let connections = [], cards = [], busy = false, error = "";
   const name = value => String(value || "").replace(/^conn:/, "");
+  host.innerHTML = '<p role="status">Loading agents…</p>';
   try {
     const results = await Promise.all([
-      project.can_configure ? api("/api/connections") : Promise.resolve({connections: []}),
-      api(`/api/boards/${encodeURIComponent(project.board)}/cards`),
+      project.can_configure ? api("/api/connections", {timeoutMs: 10000}) : Promise.resolve({connections: []}),
+      api(`/api/boards/${encodeURIComponent(project.board)}/cards`, {timeoutMs: 10000}),
     ]);
     connections = results[0].connections || [];
     cards = [...results[1].cards || [], ...results[1].linked || []];

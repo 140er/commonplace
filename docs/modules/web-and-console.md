@@ -4,6 +4,11 @@
 - **Owns:**
 
   - Owner-only Project settings list orchestrator config versions with their changes and an Accept control, plus Release for cards waiting for release.
+
+  - The owner Compute route, real-inventory enrollment/scope/proposal/approval/passive collection forms, immutable UTF-8 script upload/source inspection/proposal UI, escaped observations and session/route response fencing; transport capabilities remain server-authoritative.
+
+  - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
+
   - The card panel offers Release with a required reason on cards awaiting release, the handoff form names the orchestrator and pool recipients, and refused card actions appear inside the open panel.
 
   - Deck Compute (`deck-compute.js`, `deck-topology.js`) draws owner-visible enrolled machines as a pixel-sized hub map with label-safe geometry, enrollment readiness dots, keyboard selection, four detail tabs and General-bot draft handoffs; no liveness or network routes are inferred.
@@ -24,6 +29,8 @@
 
   - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
 
+  - The web mount installs the invite routes, Admin passes an optional invite block to `createAdmin` beside the runner block, and the palette offers Switch workspace; the logic lives in the `invites` module.
+
   - The Needs me Set up row for a missing model role, and the project settings model picker with its stored id, add-a-model form and role focus.
 
   - The instance-admin sign-up waitlist routes (`GET`/`POST /api/admin/instance/waitlist`, mounted from `commonplace/capacity.py`) and the plain `waitlist` sign-in message in `signin.js`.
@@ -41,6 +48,7 @@
   - The card panel's Runs section (`cardruns.js`) lists the card's start jobs with Cancel and the owner's Resolve choice, and offers the owner a Start agent control fed by the options route, with plain words for each refusal.
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
+  - The project agent-limit stepper spans 1 to 100.
 
   - The chat pane's live delivery block (`chatlive.js`, mounted by `chat.js`): one line per server state with owner or member wording, shown in place of the timed "Working on it…" guess whenever the chat page carries `live`.
 
@@ -52,6 +60,11 @@
 
 - **Promises:**
   - Project settings show a model field pair for each role (orchestrator, builder, reviewer, gate) and an escalation rule form (failed rounds, labels, stronger model); non-owners see both read-only without a save button.
+
+  - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer; task creation and runner admission/recorded launch/refusal/uncertainty are labeled separately from completed work.
+  - Compute execution evidence is escaped and distinguishes observed exit from uncertain cancellation or stored consent; control metadata is escaped and responses are fenced to the exact session/workspace/actor/route; ambiguous mutations require reconciliation and approval never implies dispatch.
+  - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
+  - Coworker message authors follow `actor`: a human row's `bot_id` remains its recipient; only the exact matching bot actor receives a bot name, badge and styling.
 
   - The Admin runner wing editor loads its picker from `GET /api/runners/wings` under a client deadline; on failure it keeps granted wings ticked and accepts typed wing names. `GET /api/connections` gets its wing names from the same index read (`workspace_wing_names` in `web/agents.py`).
 
@@ -65,9 +78,18 @@
 
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
 
+  - Project settings render and bind the orchestrator card before optional chat,
+    connection, card and chat-status reads settle. Chat and agent sections show
+    loading or local errors; their initial reads use ten-second client deadlines.
+    `GET /api/connections` bounds optional wing enumeration to one second and one
+    outstanding daemon per gateway, returning connections with empty wings on
+    timeout, busy lookup or `ToolError`; late results are discarded.
+
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
   - Project Connect keeps every 409 reason in its status, including shared-memory and replacement guidance after cancelling a dialog. Accepted choices clear that conflict before retrying; the memory-access rules remain unchanged.
+
+  - The Admin console shows the paginated index-stats section only to instance administrators, with unknown reasons and no content or paths.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
@@ -121,6 +143,8 @@
 
   - **Browser GitHub connection:** Needs shows local GitHub connection state and validated PR links; selection and session teardown discard connection state.
 
+  - **Merge through the person's own connection:** Merge-ready cards offer "Connect GitHub with repo access to merge", then Merge with a second Confirm merge click, only on a safe github.com PR URL and a consented connection; refusals keep Open PR with a plain reason.
+
   - **Connection lifecycle proof:** Versioned fixture cards preserve the loading assertion; stopped Needs controllers clear the detail DOM as well as cached connection state.
 
   - **Connection teardown boundary:** Stopping clears rendered GitHub details while preserving the established teardown contract for other Needs details.
@@ -147,6 +171,11 @@
 - **Tests:**
 
   - `tests/test_card_runs_ui.py` (ledger case) covers reported and unreported usage, end words, cost formatting and log pointer escaping.
+
+  - `tests/test_commonplace_web.py` covers wing lookup deadlines, single-flight
+    fallback/recovery and the existing `ToolError` fallback.
+    `tests/test_workbench_project_settings.py` and its Node fixture hold connection,
+    chat and card requests pending while exercising Connect and section errors.
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 

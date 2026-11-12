@@ -9,7 +9,15 @@
 
   - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
 
+  - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
+  - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
+  - Coworker regression witnesses refuse workspace hosted providers for owner/member board-less DMs and render human rows carrying `bot_id` with person authors; matching bot actors retain bot labels and styling.
+
+  - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
+
   - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
+
+  - `tests/test_commonplace_invite_canary.py`, `tests/test_commonplace_invites.py` and `tests/test_invites_ui.py` (`tests/invites_ui.mjs`) hold the workspace-invite cases and second-user canaries; the `invites` module block describes them. The route inventory in `tests/test_commonplace_public_surface.py` lists the invite and workspace routes.
 
   - `commonplace_deck_compute.mjs` and its pytest wrapper cover label/segment/dot geometry for 1–12 machines on desktop and phone, owner refusals, state derivation, keyboard tabs, escaping, draft handoffs and refresh/stop races.
 
@@ -39,6 +47,8 @@
 
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 
+  - `tests/spaces_surfaces.json` and the route inventory and REST tool list in `tests/test_commonplace_public_surface.py` carry the `topology_get` and `topology_route` tools and their routes; `tests/test_topology_tools.py` covers them.
+
   - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
 
   - `tests/test_commonplace_capacity.py` covers the unlimited default, under/at the cap, concurrent sign-ups on one and on separate connections, waitlist admit, invited and disabled accounts, and the email, provider, REST and CLI paths.
@@ -65,6 +75,10 @@
   - OAuth CSP header controls and real Chromium form submissions cover normal consent, login retry and re-rendered error consent.
 
   - OAuth CSP and destination-display controls cover normal consent, retry, canonical numeric hosts, explicit default ports and actionable validation errors.
+
+  - Project-settings regressions hold connection, chat and card reads pending while
+    exercising Connect; gateway tests cover slow and blocked wing enumeration,
+    transport budgets, bounded concurrency and fallback recovery.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -140,6 +154,8 @@
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
+
+  - `tests/test_index_stats_readonly.py`, `tests/test_index_stats_r1.py`, `tests/test_index_stats_private_scope.py` and `tests/test_admin_instance_ui.py` cover the instance index figures boundary.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
@@ -296,7 +312,7 @@
 
   - Shared-proposal acceptance freezes the injection clock; a forced-expiry regression exercises the functional test and checks verbatim delivery to both agents after owner acceptance.
 
-  - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
+  - **Browser GitHub connection:** Browser GitHub merge tests cover opt-in consent and scope, own-grant-only merging, head pinning, private-repository merging on the repo scope, refusal without that scope and token secrecy with synthetic transports. Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
 
   - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, Node controller render-cache checks and direct transport bounds.
 
@@ -449,6 +465,7 @@
 
   - `tests/test_chroma_client_lifecycle.py::test_session_evicts_dropped_system_before_opening_missing_database` checks eviction before client construction without depending on SQLite pool scheduling; the external-rebuild probe checks the replacement's exact drawer ids.
   - Thread-search tests pin rank-before-fetch and score/thread/index ordering at the limit boundary, including shuffled rowids and ID batches.
+  - `tests/test_workspace_encryption.py::test_wrong_or_missing_key_is_refused_with_a_clear_message` pins the refusal message of each wrong or missing key at runtime open (base red: the symlinked keyslot record case on `origin/develop`); `tests/test_workspace_keyslots.py` covers the keyslot check and re-wrap.
   - `tests/test_commonplace_owner_403_message.py` and `tests/owner_403_message.mjs` (base red: 6 failures on `origin/develop`) cover the reason and next step of a refused Done move or handoff, and that 404, 409 and other 403 answers keep their status.
 
   - `tests/lifecycle_ui.mjs` (run by `tests/test_card_lifecycle_ui.py`) drives the Done and Pocket card-details module alone; the shell harnesses stub its `placeLifecycle` hook.

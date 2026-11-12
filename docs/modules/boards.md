@@ -3,6 +3,10 @@
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/routines.py`, `commonplace/callstack.py`, `tests/test_boards_store_locking.py`
 - **Owns:**
 
+  - Atomic, person-authorized chat-task origin bindings in the canonical boards transaction, with opaque actor-scoped dispatch keys and conflicting-intent refusal.
+  - Configured BoardStore connections participate in the concrete Compute authority coordinator before authority writes and attach persisted SQL guards.
+  - Internal start_chat_task validates that canonical origin and requests the existing configured person-owner fenced runner admission with a stable hashed origin key; refusal leaves the card intact.
+
   - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest. Every slot (orchestrator, builder, reviewer, gate) gets a button to its picker; only a role that names no `model_role` has none.
 
   - Canonical Space REST response projection and typed creation refusals.

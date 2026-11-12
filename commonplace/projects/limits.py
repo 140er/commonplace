@@ -2,6 +2,14 @@
 
 from commonplace.extensions import ToolError
 
+MAX_AGENTS = 100
+LEGACY_MAX_AGENTS = 20  # the bound older tables enforce in their CHECK
+_TABLE = (
+    "CREATE TABLE {name} ("
+    "board_id INTEGER PRIMARY KEY REFERENCES boards(id), "
+    "max_agents INTEGER CHECK(max_agents BETWEEN 1 AND %d))" % MAX_AGENTS
+)
+
 
 def get(conn, board_id):
     if not conn.execute(
@@ -18,17 +26,30 @@ def put(conn, board_id, body):
     if not isinstance(body, dict) or set(body) != {"max_agents"}:
         raise ValueError("Invalid project limits")
     value = body["max_agents"]
-    if value is not None and (type(value) is not int or not 1 <= value <= 20):
+    if value is not None and (type(value) is not int or not 1 <= value <= MAX_AGENTS):
         raise ValueError("Invalid maximum agents")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS project_limits ("
-        "board_id INTEGER PRIMARY KEY REFERENCES boards(id), "
-        "max_agents INTEGER CHECK(max_agents BETWEEN 1 AND 20))"
-    )
+    _ensure_table(conn)
     conn.execute(
         "INSERT OR REPLACE INTO project_limits(board_id,max_agents) VALUES (?,?)",
         (board_id, value),
     )
+
+
+def _ensure_table(conn):
+    """Create the table, or widen one that still carries the old upper bound."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='project_limits'"
+    ).fetchone()
+    if row is None:
+        conn.execute(_TABLE.format(name="project_limits"))
+    elif f"AND {LEGACY_MAX_AGENTS})" in (row["sql"] or ""):
+        # SQLite cannot alter a CHECK: copy the rows into a table with the new bound.
+        conn.execute("ALTER TABLE project_limits RENAME TO project_limits_old")
+        conn.execute(_TABLE.format(name="project_limits"))
+        conn.execute(
+            "INSERT INTO project_limits SELECT board_id, max_agents FROM project_limits_old"
+        )
+        conn.execute("DROP TABLE project_limits_old")
 
 
 def working(conn, board_id):

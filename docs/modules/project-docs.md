@@ -3,6 +3,12 @@
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - Compute control narrows and migrates permission UPDATE guards, releases closed helper tunnels and confirmed non-run reservations, and settles permit-bound discovery independently of publication. In-flight _fresh checks cover current authority and custody rather than the global claim epoch; stage 4 commits before exec. `compute/operator.py` requires existing guards before attaching and provides fenced controller execution/discovery and helper tunnel/passive recovery with private audit notes; no HTTP route. Regression and safety coverage: `tests/test_compute_control_regressions.py` and `tests/test_compute_control_settlement.py`.
+  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-adviser design decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel component ownership boundaries and isolated local-running instructions in `docs/compute/`.
+  - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
+
+  - The batch merge rule in `CLAUDE.md` (`AGENTS.md` links to it): affected tests per PR, the full suite per batch on `develop`, bisect and revert on red, merges held only while `develop` is red.
+
   - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; the full suite runs per develop batch, never per PR.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
@@ -27,6 +33,8 @@
   - `docs/admin.md` is the authoritative current Admin API and partial-rollout contract, linked from the existing board API and agent connection guide.
 
   - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
+
+  - `docs/admin.md` describes the Admin invite block; `docs/invites.md` (module `invites`) is the contract it links to.
 
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
@@ -53,6 +61,8 @@
 
   - `docs/project-panels.md` documents the project panel file format, limits and routes.
 
+  - `docs/recovery/encrypted-workspace.md` is the recovery runbook for encrypted workspaces (keyslot check, restore on a new host, lost server credential, credential replacement, cases without recovery); `docs/workspace-encryption.md` lists the open keyslot decisions and `docs/backups.md` links the runbook.
+
 - **Promises:**
   - Project documentation and the project routes table describe the four model roles and the owner-only escalation rule.
 
@@ -61,6 +71,10 @@
   - The handoff guide uses generic agent, provider and model placeholders and names the T3 home directory rather than a host-specific variable.
 
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
+
+  - The project guide describes independently loading settings sections, a usable
+    orchestrator card during pending reads and the bounded connection-wing fallback.
+  - `docs/mvp/CONTRACT.md` documents the instance index figures contract and its unknown-reason codes.
 
   - `docs/agent-connections.md` also explains granting and withdrawing `bots:chat` and `bots:confirm` for a member's own app.
 
