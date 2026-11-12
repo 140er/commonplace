@@ -14,6 +14,7 @@ from commonplace.extensions import (
 )
 from commonplace.http_util import log_failure
 
+from . import decision_blocks
 from .display import card_url, people
 from .priority import PRIORITIES
 from .service import APPROVALS_TRUNCATED, BoardService, _trusted_agent, approvals_text
@@ -97,6 +98,9 @@ def show(c):
         rows.append(f"space message: {c['message_id']}")
     if c["ask"]:
         rows.append(f"asks {c['ask_to']}: {quoted(c['ask'])}  options: {quoted(c['ask_options'])}")
+        rows.extend(decision_blocks.lines(c))
+    if c.get("paths"):
+        rows.append("paths: " + quoted(c["paths"]))
     for key, label in (
         ("repo", "repo"),
         ("branch", "branch"),
@@ -108,6 +112,8 @@ def show(c):
     ):
         if c[key] not in (None, ""):
             rows.append(f"{label}: {quoted(c[key])}")
+    if c.get("goals"):
+        rows.append(c["goals"]["text"])
     if c.get("callstack"):
         rows += tree(c["callstack"])
     for event in c["events"][-10:]:
@@ -166,6 +172,21 @@ def _run(ctx, name, args):
         return json.dumps(result, ensure_ascii=False)
     if name == "board_add":
         return f"added board {result['slug']}"
+    if name == "goal_list":
+        return (
+            "\n".join(
+                f"{'  ' * g['depth']}{g['id']}{' (archived)' if g['archived'] else ''} "
+                f"{quoted(g['title'])}" + (f": {quoted(g['detail'])}" if g["detail"] else "")
+                for g in result
+            )
+            or "no goals"
+        )
+    if name == "goal_set":
+        return f"goal {result['id']} {quoted(result['title'])}"
+    if name == "card_goal":
+        return f"#{result['number']} " + (
+            result["goals"]["text"] if result.get("goals") else "has no goal"
+        )
     if name == "task_list":
         return "\n".join(line(c) for c in result) or "no cards"
     if name == "task_show":
@@ -184,6 +205,8 @@ def _run(ctx, name, args):
         )
         reply += parent_line(result)
         reply += f"\nbody: {quoted(result['body'])}"
+        if result.get("goals"):
+            reply += "\n" + result["goals"]["text"]
         if "decision" in result:
             d = result["decision"]
             reply += f"\ndecision by {d['actor']}: {d['choice'] or ''}  {quoted(d['reply'])}"
@@ -281,9 +304,12 @@ def add(
                 "Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. "
                 "callstack takes the JSON from python -m commonplace.callstack.",
                 "task_handoff": "Hand off work with a note, or ask a person and end the turn.",
-                "ask": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
+                "ask": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason. An option is a label, or {label, detail, preview} to show a short explanation and a plain-text preview side by side; the answer is always one of the labels.",
                 "decide": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
                 "needs_me": "Read the visible decision queue and origin releases. Eligible coordinators receive origin work without decide authority; signed-in owners receive release or configuration recovery only when needed. Ask authority remains separate.",
+                "goal_list": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+                "goal_set": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+                "card_goal": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
             }[name],
             input_schema=input_schema,
             input_schema_for=(
@@ -337,6 +363,26 @@ def _orchestration_available(principal, gateway):
 def register_tools():
     add("board_list", {})
     add("board_own_wing", {"board": STRING}, ("board",), owner=True, trusted=True, write=True)
+    add("goal_list", {})
+    add(
+        "goal_set",
+        {
+            "goal": {"type": "integer", "minimum": 1},
+            "title": STRING,
+            "detail": STRING,
+            "parent": {"type": "integer", "minimum": 0},
+            "archived": {"type": "boolean"},
+        },
+        owner=True,
+        write=True,
+    )
+    add(
+        "card_goal",
+        {"task": TASK, "goal": {"type": ["integer", "null"], "minimum": 1}},
+        ("task",),
+        owner=True,
+        write=True,
+    )
     add(
         "space_read",
         {
@@ -403,6 +449,12 @@ def register_tools():
             "priority": PRIORITY,
             "reviewer": REVIEWER,
             "labels": ARRAY,
+            "paths": {
+                "type": "array",
+                "items": STRING,
+                "maxItems": 32,
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+            },
             "blocked_by": {
                 "type": "array",
                 "items": {"type": "integer", "minimum": 1},
@@ -490,7 +542,7 @@ def register_tools():
         "ask",
         {
             "question": STRING,
-            "options": ARRAY,
+            "options": decision_blocks.OPTIONS_SCHEMA,
             "context": STRING,
             "board": STRING,
             "task": TASK,

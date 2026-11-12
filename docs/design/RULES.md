@@ -96,6 +96,7 @@ Rules tools are registered by `commonplace.rules` and are in every profile. The 
 | `session_start` | `memory:read` | read | `query?`, `board?`, `repo?`, `limit?` (default 3, maximum 5) | Effective rules plus relevant quoted memories. Underlying tool allowlists and memory visibility apply. Explicit reads follow normal served rules behavior. |
 | `rules_get` | `memory:read` | read | `board?`, `repo?`, `format?: "text" \| "md"`, `include_retired?: bool`, `effective?: bool` | The rules that apply to me: my own plus `*`, global plus the given board and repo, with `status`, `source`, `version` and the effective text. `format=md` gives a Markdown rules file grouped by kind, with retired rules left out. The last line is `seq N`. |
 | `rules_changed` | `memory:read` | read | `since: int` | `seq N` plus `key status own\|all` lines for changes after `since` (`own` for the caller's rules, `all` for `*` rules). If `since` exceeds the current sequence, returns `reset` then `seq N`. It does no text work; meant to run on every session start. |
+| `rules_feedback` | `memory:write` | write | `rule?: key`, `kind?: followed\|helped\|violated\|conflict\|outdated\|unclear\|note`, `note?: text (500)` | With `kind`, records one evidence event on a rule you can see and returns its counters. With only `rule`, returns your own events (newest 50) and the rule's counters; with neither, counters for every visible rule that has evidence. Evidence never changes a rule or `seq`. Events are capped (50 per writer, 200 per rule); counters keep the full history. People read all events at `GET /api/rules/<id>/feedback` and `GET /api/rules/feedback`; owners write with `POST /api/rules/<id>/feedback`. |
 
 Untrusted tokens may publish: what they publish starts as a proposal for the owner, and nothing else is written. Rule text is stored verbatim, and replies quote it as data the way board tools do.
 
@@ -127,7 +128,7 @@ Without a summary, `display_summary` is the first sentence of `text`, trimmed to
 
 The UI uses look B: the tokens, Geist Mono, tiles on the 6px gap and the v2 block logo from `app.css`/`ui.css`. No new colours.
 
-- **Nav:** "Rules" in the sidebar under Memory and in the phone tabs (`#/rules`). Its count is the number of rules that wait on the owner (`proposed`, or `pending=1`, excluding retired rows except owner-retired rows with pending proposals), shown the same way Home shows its count.
+- **Nav:** "Rules" in the account menu, on desktop and on a phone (`#/rules`). Its count is the number of rules that wait on the owner (`proposed`, or `pending=1`, excluding retired rows except owner-retired rows with pending proposals), shown the same way Home shows its count.
 - **Screen:** the title is "Rules". There is one tile per agent (the connection name, with "All agents" for `*`), ordered by how many rules wait on the owner. The header row holds the agent's name, its waiting count and a "Help me clarify" button for the whole set.
 - **Rule row:** a kind chip, a scope chip (only when it isn't global, e.g. `board commonplace`), a short display summary and a status chip. The summary is a native button with `aria-expanded` and `aria-controls`; clicking it or using Enter/Space reveals the full verbatim text, diffs and suggestions, and toggling again collapses them. Orange marks only what waits on the owner, the same as on the board. Proposed rows show Accept, Edit and Retire. Edited rows show the diff between the agent's wording and the owner's text: removed words struck through in the quiet step, added words in ink. Rows with `pending` show the agent's new wording as a diff (headed with the writing agent's name when the rule now applies to someone else) with "Use agent's" and "Keep mine". Owner-retired rows with pending proposals appear in the active list; other retired rows sit folded at the bottom of each tile.
 - **Applies to:** active rows have an "Applies to…" menu that moves the rule to All agents or another agent's tile. Proposed rows also show "Accept for all agents" next to Accept. History shows the move as its note.
@@ -320,8 +321,11 @@ exempt on every route; the owner's agent tokens remain checked.
 
 Checked MCP tools are `task_add`, `task_update`, `task_comment`, `task_take_next`,
 `task_handoff`, `task_approve`, `ask`, `space_post`, `board_add`, `board_set`,
-`decide`, `memory_save`, `memory_link`, `fact_save`, `handoff_start` and
-`rules_publish`. Their schemas gain a `rules_seq` integer or decimal string in
+`decide`, `goal_set`, `card_goal`, `memory_save`, `memory_link`, `fact_save`,
+`handoff_start` and `rules_publish`. The goals writes are checked because the
+goals tree and a card's goal become instructions in every agent's card context.
+Their REST routes (`/api/goals`, `/api/goals/card`) accept signed-in owners
+only, who are exempt like every person. Their schemas gain a `rules_seq` integer or decimal string in
 warn/enforce; it is required in enforce except for `ask`. Schemas are copied
 per caller. Every MCP call strips the argument before dispatch. Existing
 visibility and owner-only gates run first.
@@ -355,6 +359,7 @@ The Rules screen's incident-count projection is a separate follow-up.
 The following paths deliberately remain open, retaining existing authorization:
 
 - `task_heartbeat`: mechanical claim renewal.
+- `rules_feedback`: evidence about a rule is a report, not an instruction; it never changes work or rules.
 - `orch_heartbeat`, `orch_release`: mechanical orchestrator lease renewal and release.
 - `webhook_add`, `webhook_remove`, `webhook_test`: configuration and outbound automation.
 - `mempalace_add_drawer`, `mempalace_update_drawer`, `mempalace_diary_write`,
