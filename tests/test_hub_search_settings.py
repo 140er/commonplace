@@ -71,6 +71,10 @@ _NOT_SEARCH_SETTINGS = {
     # Embedding batch size changes throughput, not the vectors.
     "MEMPALACE_EMBEDDINGGEMMA_BATCH_SIZE",
     "MEMPALACE_EMBEDDINGGEMMA2_BATCH_SIZE",
+    # Where the same local model runs (shared process or in-process): the
+    # service runs the caller's own embedding function, so vectors are the
+    # same bytes.
+    "MEMPALACE_EMBEDDING_SERVICE",
 }
 
 _SETTING_SOURCES = (
