@@ -22,6 +22,8 @@ EXACT = {
     ("GET", "/api/github"): "authenticated",
     ("POST", "/api/github/connect"): "authenticated",
     ("POST", "/api/github/confirm"): "authenticated",
+    ("POST", "/api/github/merge-consent"): "authenticated",
+    ("POST", "/api/github/merge"): "authenticated",
     ("DELETE", "/api/github"): "authenticated",
     ("GET", "/api/settings/orchestration"): "authenticated",
     ("PUT", "/api/settings/orchestration"): "authenticated",
@@ -131,6 +133,8 @@ PREFIX = {
     ("POST", "/api/orch/"): "authenticated",
     ("POST", "/api/runner/chat/"): "authenticated",
     ("GET", "/api/agent-schedules/"): "authenticated",
+    ("GET", "/api/card-snooze/"): "authenticated",
+    ("POST", "/api/card-snooze/"): "authenticated",
     ("POST", "/api/agent-schedules/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
     **{

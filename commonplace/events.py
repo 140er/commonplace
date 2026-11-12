@@ -12,6 +12,7 @@ Kinds in use (add, never rename):
 
     card.created  card.updated  card.moved  card.commented  card.claimed
     card.expired  card.handoff  card.review_needed  card.decided  card.ask_withdrawn
+    card.snoozed  card.woke
     memory.saved  memory.linked  fact.saved
     rule.changed  rule.suggestion
     space_created
