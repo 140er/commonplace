@@ -65,6 +65,8 @@
 
   - Operator-blind token-slot primitives accept strict versioned token/grant envelopes only; opt-in B3 metadata stays locked before any B2 key provider or database open.
 
+  - A restricted caller's fact term counts and seed ranking, and the vector-disabled Chroma fallback's candidate pool and its BM25 order, are computed from readable facts and drawers only; unrestricted callers keep the index's own counts.
+
   - User content is stored verbatim; ingest is append-only; search returns original words; nothing leaves the machine unless the user configured a provider.
 
 - **How it fails:**

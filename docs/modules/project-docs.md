@@ -14,6 +14,7 @@
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
   - `docs/design/RULES.md` places the Rules entry in the account menu rather than the sidebar and phone tabs.
+  - `docs/design/chat-platform-bots.md` is the design note for chat-platform bots (Slack first, then Teams and Discord, behind one adapter interface): data model, permission and privacy rules, threats, replay behaviour and the slice plan. Nothing in it is built yet.
 
   - The OAuth contract records the displayed callback origin, numeric-host tightening, the required pre-deploy registration inventory and the one exact native redirect `cmmn://auth/callback`.
 
@@ -62,6 +63,8 @@
   - `docs/project-panels.md` documents the project panel file format, limits and routes.
 
   - `docs/recovery/encrypted-workspace.md` is the recovery runbook for encrypted workspaces (keyslot check, restore on a new host, lost server credential, credential replacement, cases without recovery); `docs/workspace-encryption.md` lists the open keyslot decisions and `docs/backups.md` links the runbook.
+
+  - Fact-first ranking and union-where RFCs: a restricted caller's fact counts and seed ranking, and the vector-disabled Chroma fallback's candidate window, come from readable content only; the cost of exact readable statistics is a known limit.
 
 - **Promises:**
   - Project documentation and the project routes table describe the four model roles and the owner-only escalation rule.

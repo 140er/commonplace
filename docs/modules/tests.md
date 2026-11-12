@@ -38,6 +38,8 @@
 
   - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
 
+  - `tests/test_topology_proposals.py` covers the topology write path through the real gateway (see the topology block); `tests/spaces_surfaces.json` pins `topology_propose` for the standard and full profiles, and the checked REST shapes in `tests/test_commonplace_rules_enforce.py` include its route.
+
   - `tests/test_chat_model_stream.py` runs the streaming model transport against loopback fake Anthropic and OpenAI-compatible servers; `tests/test_bots_turn.py` drives bot turns over real HTTP with a scripted model and one loopback fake provider.
 
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.

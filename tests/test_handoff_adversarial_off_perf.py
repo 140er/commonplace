@@ -470,6 +470,9 @@ TOOLS_ADDED_SINCE_BASELINE = {
     "session_start",
     # Run cost sums (not part of handoff).
     "costs_summary",
+    # The Compute map's write tools (not part of handoff).
+    "topology_propose",
+    "topology_discover_site",
     # Compute map read tools (not part of handoff).
     "topology_get",
     "topology_route",
