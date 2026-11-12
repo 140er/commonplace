@@ -256,6 +256,7 @@
   - Reassignment regressions keep doing-card handoffs unclaimed and avoid queued replacement starts until the receiver takes the card.
 
   - Manual-assignment regressions cover the statechart claim replay, configured worker starts, visible blocked-start reasons, project admission, busy agents and restricted-origin release.
+  - Origin auto-release regressions cover the connected orchestrator releasing a new parentless restricted card, unrelated seats and other coordinators staying refused, child proposals staying inactive, and the waiting reason naming who releases.
   - Off-mode capacity regressions preserve legacy refusal text and card state, including a coded admission refusal.
 
   - Card contract tests cover paired RED assertions, off-path guards, atomic key races, bounded retries and route busy responses with unchanged state.
