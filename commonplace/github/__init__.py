@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import logging
@@ -16,13 +17,14 @@ from dataclasses import replace
 from urllib.parse import quote, urlsplit
 
 from .. import sessions, urls
+from ..boards import display
 from ..boards.service import BoardService
 from ..extensions import ToolContext, ToolError
 from ..oauth.http import OAuthError, body, query, redirect, send_json
 from ..oauth.store import digest
 from ..social import accounts
 from ..social.providers import SignInError
-from . import client
+from . import client, merge as pr_merge
 from .store import Store
 
 COOKIE = "cmmn_github_connect"
@@ -59,6 +61,8 @@ class GitHub:
         self._closed = False
         self._heartbeat_thread = None
         self._owns_lease = False
+        # Release transactions that failed, as (user id, settle) pairs; the heartbeat retries them.
+        self._owed = []
         self.db.add_pre_close_callback(self.close)
         self._claim()
         if not self._owns_lease:
@@ -117,12 +121,70 @@ class GitHub:
                 else:
                     with self.db._lock, self.db._tx() as conn:
                         self._fence(conn)
+                    self._retry_releases()
+                    self._sweep()
             except SignInError:
                 logging.getLogger(__name__).warning("GitHub worker lost its lease; writes fenced")
                 return
             except sqlite3.Error:
                 # Retry on the next tick; an expired lease still fails closed.
                 continue
+            except Exception as exc:  # noqa: BLE001 - a dead heartbeat lets the lease lapse
+                # Keep ticking: without renewals every write would answer github_pending until a
+                # restart. Only the type is logged; a message could carry a token.
+                logging.getLogger(__name__).warning(
+                    "GitHub worker tick failed: %s", type(exc).__name__
+                )
+
+    def _release(self, uid, settle):
+        """Run a release transaction; one that fails is owed to the next heartbeat, then raised."""
+        try:
+            with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
+                settle(conn)
+        except Exception:
+            with self.db._lock:
+                self._owed.append((uid, settle))
+            logging.getLogger(__name__).warning(
+                "GitHub in-flight state not released for %s; retried on the next heartbeat", uid
+            )
+            raise
+
+    def _retry_releases(self):
+        """Retry this process's failed releases before the sweep reads the markers they hold."""
+        with self.db._lock:
+            owed, self._owed = self._owed, []
+        for uid, settle in owed:
+            try:
+                self._release(uid, settle)
+            except SignInError:
+                # Lease loss: the worker stops, and the next claim resets every marker.
+                raise
+            except Exception:  # noqa: BLE001 - owed again by _release
+                continue
+
+    def _sweep(self):
+        """Revoke one lapsed, unanswered consent token per tick, outside the database lock.
+
+        One per tick keeps a slow revocation well inside the lease; the rest wait for the next tick.
+        """
+        with self.db._lock:
+            row = self.db._conn.execute(
+                "SELECT user_id FROM github_confirmations WHERE expires_at<=? AND user_id NOT IN "
+                "(SELECT user_id FROM github_lifecycle WHERE active_exchanges>0) LIMIT 1",
+                (time.time(),),
+            ).fetchone()
+        if row is None:
+            return
+        try:
+            self.expire(row["user_id"])
+        except SignInError as exc:
+            # This code is never lease loss by itself: the heartbeat's own fence on the next tick
+            # decides that and stops the worker. A revoke that failed is flagged unconfirmed and its
+            # record dropped; a crash, restart or lease loss leaves the record for another sweep.
+            logging.getLogger(__name__).warning(
+                "GitHub consent sweep failed for %s: %s", row["user_id"], exc.code
+            )
 
     def close(self):
         # Server and database teardown can both close us, including concurrently.
@@ -202,6 +264,10 @@ class GitHub:
             path = urlsplit(h.path).path
             if path == "/api/github/connect":
                 return self.start(h, principal, session, data)
+            if path == "/api/github/merge-consent":
+                return self.start(h, principal, session, data, purpose="merge")
+            if path == "/api/github/merge":
+                return self.merge(h, principal, data)
             if path == "/api/github/confirm":
                 return self.confirm(h, principal, session, data)
             return send_json(h, 200, self.disconnect(principal.user_id, principal.workspace_id))
@@ -232,8 +298,12 @@ class GitHub:
             ).fetchone()
             if grant and not grant["disabled"] and grant["expires_at"] > time.time():
                 # Unlock on reads too: missing keys or tampering never shows a usable connection.
-                self.store.decrypt(conn, uid, "grant", grant["secret"])
-                result.update(state="connected", login=grant["login"])
+                payload = self.store.decrypt(conn, uid, "grant", grant["secret"])
+                result.update(
+                    state="connected",
+                    login=grant["login"],
+                    merge=pr_merge.SCOPE in (payload.get("scopes") or ()),
+                )
             elif grant:
                 result.update(
                     state="expired",
@@ -253,15 +323,38 @@ class GitHub:
             ).fetchone()
             if pending and pending["expires_at"] > time.time():
                 value = self.store.decrypt(conn, uid, "confirmation", pending["secret"])
-                result.update(
-                    state="confirm",
-                    login=value["login"],
-                    subject=value["subject"],
-                    inherited_scopes=value["scopes"],
-                )
+                if value.get("purpose") == "merge":
+                    result.update(
+                        state="merge_confirm", login=value["login"], scopes=value["scopes"]
+                    )
+                else:
+                    result.update(
+                        state="confirm",
+                        login=value["login"],
+                        subject=value["subject"],
+                        inherited_scopes=value["scopes"],
+                    )
         return result
 
-    def start(self, h, principal, session, data):
+    def own_grant(self, conn, principal):
+        """The caller's own live grant here and its secret payload; else fail closed."""
+        uid = principal.user_id
+        life = self.store.lifecycle(conn, uid)
+        grant = conn.execute(
+            "SELECT * FROM github_grants WHERE user_id=? AND workspace_id=?",
+            (uid, principal.workspace_id),
+        ).fetchone()
+        if (
+            grant is None
+            or grant["disabled"]
+            or grant["expires_at"] <= time.time()
+            or life["disconnect_pending"]
+            or life["deleting"]
+        ):
+            raise SignInError("github_not_connected")
+        return grant, self.store.decrypt(conn, uid, "grant", grant["secret"])
+
+    def start(self, h, principal, session, data, purpose="connect"):
         origin = urlsplit(urls.APP_URL)
         if origin.scheme != "https" and not (
             origin.scheme == "http" and origin.hostname in ("localhost", "127.0.0.1", "::1")
@@ -276,9 +369,15 @@ class GitHub:
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
             life = self.store.lifecycle(conn, uid)
+            if purpose == "merge":
+                # Merge consent upgrades the caller's own connection, never a new one.
+                _, payload = self.own_grant(conn, principal)
+                if pr_merge.SCOPE in (payload.get("scopes") or ()):
+                    raise SignInError("github_merge_consented")
             grant = conn.execute("SELECT * FROM github_grants WHERE user_id=?", (uid,)).fetchone()
             if (
-                grant
+                purpose == "connect"
+                and grant
                 and grant["expires_at"] <= time.time()
                 and not life["active_exchanges"]
                 and not life["disconnect_pending"]
@@ -294,7 +393,7 @@ class GitHub:
                 life["disconnect_pending"]
                 or life["active_exchanges"]
                 or life["deleting"]
-                or grant
+                or (grant and purpose == "connect")
                 or conn.execute(
                     "SELECT 1 FROM github_connect_flows WHERE user_id=?", (uid,)
                 ).fetchone()
@@ -303,11 +402,11 @@ class GitHub:
                 ).fetchone()
             ):
                 raise SignInError("github_pending")
-            if life["unconfirmed"] and data.get("acknowledge") is not True:
+            if purpose == "connect" and life["unconfirmed"] and data.get("acknowledge") is not True:
                 raise SignInError("github_acknowledge")
             secret = self.store.encrypt(conn, uid, "verifier", verifier)
             conn.execute(
-                "INSERT INTO github_connect_flows(state_hash,user_id,session_hash,browser_hash,workspace_id,card,generation,expires_at,secret,next) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO github_connect_flows(state_hash,user_id,session_hash,browser_hash,workspace_id,card,generation,expires_at,secret,next,purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     digest(state),
                     uid,
@@ -319,13 +418,16 @@ class GitHub:
                     time.time() + TTL,
                     secret,
                     f"/app/?github_card={data['card']}#/needs",
+                    purpose,
                 ),
             )
-            conn.execute("UPDATE github_lifecycle SET unconfirmed=0 WHERE user_id=?", (uid,))
+            if purpose == "connect":
+                conn.execute("UPDATE github_lifecycle SET unconfirmed=0 WHERE user_id=?", (uid,))
         cookie = f"{COOKIE}={browser}; Path={CALLBACK}; HttpOnly; SameSite=Lax; Max-Age=600"
         if self.gateway.secure_cookies:
             cookie += "; Secure"
-        authorize = replace(self.provider(), scope="").authorize_url(state, verifier, "")
+        scope = pr_merge.SCOPE if purpose == "merge" else ""
+        authorize = replace(self.provider(), scope=scope).authorize_url(state, verifier, "")
         import json
 
         from ..oauth.http import send
@@ -366,7 +468,7 @@ class GitHub:
                 if (
                     not browser
                     or digest(browser) != row["browser_hash"]
-                    or row["purpose"] != "connect"
+                    or row["purpose"] not in ("connect", "merge")
                 ):
                     raise SignInError("github_expired")
                 self.binding(conn, row, session, principal)
@@ -380,24 +482,32 @@ class GitHub:
                     "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
                     (uid,),
                 )
-                active = True
-                self._live += 1
                 landing = row["next"]
+            # Only a committed marker is ours to release: a failed COMMIT must not settle another's.
+            active = True
+            with self.db._lock:
+                self._live += 1
             provider = self.provider()
-            status, _, value = client.request(
-                "POST",
-                provider.token,
-                form={
-                    "grant_type": "authorization_code",
-                    "client_id": provider.credentials["CLIENT_ID"],
-                    "client_secret": provider.client_secret(),
-                    "redirect_uri": provider.redirect_uri(),
-                    "code": code,
-                    "code_verifier": verifier,
-                },
-            )
-            if not isinstance(value, dict):
-                raise SignInError("github_token")
+            try:
+                status, _, value = client.request(
+                    "POST",
+                    provider.token,
+                    form={
+                        "grant_type": "authorization_code",
+                        "client_id": provider.credentials["CLIENT_ID"],
+                        "client_secret": provider.client_secret(),
+                        "redirect_uri": provider.redirect_uri(),
+                        "code": code,
+                        "code_verifier": verifier,
+                    },
+                )
+                if not isinstance(value, dict):
+                    raise SignInError("github_token")
+            except SignInError:
+                # GitHub may have issued a token whose answer was lost or unreadable: there is
+                # nothing to revoke, so revocation is flagged unconfirmed instead.
+                self.flag_unconfirmed(uid)
+                raise
             token = value.get("access_token")
             if not isinstance(token, str) or not token or len(token) > 8192:
                 token = None
@@ -405,7 +515,13 @@ class GitHub:
             if status != 200 or "error" in value:
                 raise SignInError("github_token")
             granted = scopes(value.get("scope"))
-            if not granted <= {"read:user", "user:email"}:
+            merging = row["purpose"] == "merge"
+            # Only a merge flow may carry the repo scope, and it must carry it.
+            if not granted <= {"read:user", "user:email"} | (
+                {pr_merge.SCOPE} if merging else set()
+            ):
+                raise SignInError("github_scope")
+            if merging and pr_merge.SCOPE not in granted:
                 raise SignInError("github_scope")
             expiry = value.get("expires_in")
             if expiry is None:
@@ -452,6 +568,14 @@ class GitHub:
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
                 self.binding(conn, row, session, principal)
+                if merging:
+                    own = conn.execute(
+                        "SELECT subject FROM github_grants WHERE user_id=? AND workspace_id=? AND disabled=0",
+                        (uid, row["workspace_id"]),
+                    ).fetchone()
+                    if own is None or own["subject"] != candidate["subject"]:
+                        raise SignInError("github_subject")
+                    candidate["purpose"] = "merge"
                 known = conn.execute(
                     "SELECT subject FROM user_identities WHERE provider='github' AND user_id=? AND subject=?",
                     (uid, candidate["subject"]),
@@ -472,7 +596,15 @@ class GitHub:
                             secret,
                         ),
                     )
-                token = None
+                # The record never exists while its exchange still counts as in flight: a
+                # disconnect between the two would skip a candidate that has no owner left.
+                self._settle_exchange(conn, uid)
+            # Only after COMMIT does the record or grant own the token; a failed COMMIT leaves it
+            # to the finally, which revokes it or flags it.
+            token = None
+            active = False
+            with self.db._lock:
+                self._live -= 1
         except (OAuthError, SignInError):
             pass
         finally:
@@ -510,10 +642,43 @@ class GitHub:
             ),
         )
 
+    def upgrade(self, conn, uid, row, candidate):
+        """Swap the caller's own token for the merge-scoped one.
+
+        Returns the old token and the record that keeps it until it is revoked: the pending
+        record becomes a lapsed settlement record in the swap's own transaction.
+        """
+        grant = conn.execute(
+            "SELECT * FROM github_grants WHERE user_id=? AND workspace_id=? AND disabled=0 AND subject=?",
+            (uid, row["workspace_id"], candidate["subject"]),
+        ).fetchone()
+        if grant is None or grant["expires_at"] <= time.time():
+            raise SignInError("github_expired")
+        previous = self.store.decrypt(conn, uid, "grant", grant["secret"])["token"]
+        secret = self.store.encrypt(
+            conn, uid, "grant", {"token": candidate["token"], "scopes": candidate["scopes"]}
+        )
+        conn.execute(
+            "UPDATE github_grants SET secret=?, expires_at=? WHERE user_id=?",
+            (secret, candidate["expires_at"], uid),
+        )
+        replaced = self.store.encrypt(
+            conn,
+            uid,
+            "confirmation",
+            {**candidate, "token": previous, "scopes": [], "purpose": "replaced"},
+        )
+        conn.execute(
+            "UPDATE github_confirmations SET secret=?, expires_at=0 WHERE user_id=?",
+            (replaced, uid),
+        )
+        return previous, replaced
+
     def confirm(self, h, principal, session, data):
         uid = principal.user_id
         candidate = None
-        accepted = False
+        accepted = marked = False
+        previous = settlement = None
         try:
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
@@ -528,37 +693,90 @@ class GitHub:
                     or row["workspace_id"] != principal.workspace_id
                 ):
                     raise SignInError("github_expired")
+                if self.store.lifecycle(conn, uid)["active_exchanges"]:
+                    raise SignInError("github_pending")
                 candidate = self.store.decrypt(conn, uid, "confirmation", row["secret"])
-                conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+                # The record outlives every outcome until the candidate is accepted or revoked.
                 conn.execute(
                     "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
                     (uid,),
                 )
+            # Without a committed marker the record is not ours: leave it, revoke and release nothing.
+            marked = True
+            with self.db._lock:
                 self._live += 1
             with self.db._lock, self.db._tx() as conn:
                 self._fence(conn)
                 self.binding(conn, row, session, principal)
-                if data.get("accept") is True:
-                    self.commit(conn, uid, row, candidate)
-                    accepted = True
+                accept = data.get("accept") is True
+                if accept:
+                    if candidate.get("purpose") == "merge":
+                        previous, settlement = self.upgrade(conn, uid, row, candidate)
+                    else:
+                        self.commit(conn, uid, row, candidate)
+                        conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+            # Only a committed swap counts: a failed COMMIT must revoke the candidate, not the stored token.
+            accepted = accept
         finally:
-            if candidate:
+            if marked:
                 try:
-                    if not accepted:
+                    # A disconnect that already took the record owns its revocation.
+                    if not accepted and self.holds_confirmation(uid, row["secret"]):
                         self.cleanup_token(uid, candidate["token"])
+                        self.drop_confirmation(uid, row["secret"])
+                    elif previous:
+                        self.revoke_token(uid, previous)
+                        self.drop_confirmation(uid, settlement)
                 finally:
                     self.finish_exchange(uid)
-        send_json(h, 200, {"state": "connected" if accepted else "absent"})
+        # Declining merge consent keeps the connection that was already there.
+        kept = bool(candidate) and candidate.get("purpose") == "merge"
+        send_json(h, 200, {"state": "connected" if accepted or kept else "absent"})
+
+    def merge(self, h, principal, data):
+        """Merge the card's own reported PR with the caller's grant; never the body's."""
+        card = self.visible(principal, data.get("card"))
+        target = pr_merge.pull_request(card.get("pr_url"))
+        # The same gate the panel uses to offer Merge: a card with an open ask or plan is not ready.
+        if target is None or display.need_for(card, principal) != "merge":
+            raise SignInError("github_not_merge_ready")
+        # The head the person confirmed must still be the head the card reports.
+        if data.get("head") != card["pr_head"]:
+            raise SignInError("github_head_moved")
+        with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
+            _, payload = self.own_grant(conn, principal)
+        if pr_merge.SCOPE not in (payload.get("scopes") or ()):
+            raise SignInError("github_merge_consent")
+        decision, outcome = "error", "unexpected"
+        try:
+            result = pr_merge.merge(payload["token"], *target, card["pr_head"])
+            decision, outcome = "allow", ""
+        except SignInError as exc:
+            decision, outcome = "deny", exc.code
+            raise
+        finally:
+            self.db.audit(
+                action="github.merge",
+                decision=decision,
+                workspace_id=principal.workspace_id,
+                user_id=principal.user_id,
+                auth="session",
+                reason=outcome,
+                target_ids=["%s/%s#%d" % target],
+            )
+        send_json(h, 200, result)
+
+    def flag_unconfirmed(self, uid):
+        with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
+            conn.execute("UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,))
 
     def cleanup_token(self, uid, token):
         try:
             return self.revoke_token(uid, token)
         except Exception:
-            with self.db._lock, self.db._tx() as conn:
-                self._fence(conn)
-                self.db._conn.execute(
-                    "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
-                )
+            self.flag_unconfirmed(uid)
             raise
 
     def revoke_token(self, uid, token):
@@ -582,11 +800,7 @@ class GitHub:
                     return False
         ok = self.revoke(token, grant=False)
         if not ok:
-            with self.db._lock, self.db._tx() as conn:
-                self._fence(conn)
-                self.db._conn.execute(
-                    "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
-                )
+            self.flag_unconfirmed(uid)
         return ok
 
     def revoke(self, token, *, grant):
@@ -607,7 +821,7 @@ class GitHub:
             return False
 
     def expire(self, uid):
-        candidate = None
+        candidate = row = None
         with self.db._lock, self.db._tx() as conn:
             self._fence(conn)
             conn.execute(
@@ -618,28 +832,56 @@ class GitHub:
                 "SELECT * FROM github_confirmations WHERE user_id=? AND expires_at<=?",
                 (uid, time.time()),
             ).fetchone()
+            if row and self.store.lifecycle(conn, uid)["active_exchanges"]:
+                # Another consumer of this record is mid-flight and settles it.
+                row = None
             if row:
-                candidate = self.store.decrypt(conn, uid, "confirmation", row["secret"])
-                conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
-                conn.execute(
-                    "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
-                    (uid,),
-                )
-                self._live += 1
-        if candidate:
-            try:
-                ok = self.cleanup_token(uid, candidate["token"])
-            finally:
-                self.finish_exchange(uid)
-            if not ok:
-                with self.db._lock, self.db._tx() as conn:
-                    self._fence(conn)
+                try:
+                    candidate = self.store.decrypt(conn, uid, "confirmation", row["secret"])
+                except SignInError:
+                    # Unreadable ciphertext cannot be revoked; purge it and require acknowledgement.
                     conn.execute(
                         "UPDATE github_lifecycle SET unconfirmed=1 WHERE user_id=?", (uid,)
                     )
+                    conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+                else:
+                    # The record stays until the revoke has an outcome, so a crash or lease
+                    # loss in between leaves it for the next sweep instead of an unrecorded token.
+                    conn.execute(
+                        "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
+                        (uid,),
+                    )
+        if candidate:
+            with self.db._lock:
+                self._live += 1
+            try:
+                # A failed revocation marks revocation unconfirmed inside revoke_token.
+                self.cleanup_token(uid, candidate["token"])
+                self.drop_confirmation(uid, row["secret"])
+            finally:
+                self.finish_exchange(uid)
+
+    def holds_confirmation(self, uid, secret):
+        with self.db._lock:
+            return (
+                self.db._conn.execute(
+                    "SELECT 1 FROM github_confirmations WHERE user_id=? AND secret=?",
+                    (uid, secret),
+                ).fetchone()
+                is not None
+            )
+
+    def drop_confirmation(self, uid, secret):
+        with self.db._lock, self.db._tx() as conn:
+            self._fence(conn)
+            conn.execute(
+                "DELETE FROM github_confirmations WHERE user_id=? AND secret=?", (uid, secret)
+            )
 
     def disconnect(self, uid, workspace=None, *, deleting=False):
         tokens = []
+        pending = None
+        marked = False
         grant = None
         grant_token = None
         readable = True
@@ -654,17 +896,29 @@ class GitHub:
                 (int(deleting), uid),
             )
             conn.execute("DELETE FROM github_connect_flows WHERE user_id=?", (uid,))
-            pending = conn.execute(
-                "SELECT * FROM github_confirmations WHERE user_id=?", (uid,)
-            ).fetchone()
+            # A record whose exchange is in flight belongs to its owner, who revokes it exactly once.
+            pending = (
+                None
+                if life["active_exchanges"]
+                else conn.execute(
+                    "SELECT * FROM github_confirmations WHERE user_id=?", (uid,)
+                ).fetchone()
+            )
             if pending:
+                # Mark the taken record in flight, as expire and confirm do, so the sweep, expiry
+                # and a decline leave it alone while this disconnect revokes its candidate.
+                conn.execute(
+                    "UPDATE github_lifecycle SET active_exchanges=active_exchanges+1 WHERE user_id=?",
+                    (uid,),
+                )
+                marked = True
                 try:
                     tokens.append(
                         self.store.decrypt(conn, uid, "confirmation", pending["secret"])["token"]
                     )
                 except SignInError:
                     readable = False
-                conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
+                    conn.execute("DELETE FROM github_confirmations WHERE user_id=?", (uid,))
             if grant:
                 conn.execute("UPDATE github_grants SET disabled=1 WHERE user_id=?", (uid,))
                 if grant["expires_at"] > time.time():
@@ -674,21 +928,32 @@ class GitHub:
                         ]
                     except SignInError:
                         readable = False
-        ok = self.revoke(grant_token, grant=True) if grant_token else grant is None
-        ok = ok and readable
-        for token in tokens:
-            if token != grant_token:
-                ok = self.revoke(token, grant=False) and ok
-        with self.db._lock, self.db._tx() as conn:
-            self._fence(conn)
-            conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
-            conn.execute(
-                "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
-                (int(not ok), uid),
-            )
-            life = self.store.lifecycle(conn, uid)
-            if deleting and not life["active_exchanges"] and not life["remote_work"]:
-                self.release_owner(conn, uid)
+        # A pending candidate goes first. Assumed, not verified against live GitHub: revoking the
+        # whole grant first would also remove the app's tokens, so the candidate's own revoke
+        # would answer already gone and read as unconfirmed.
+        ok = readable
+        revoked = False
+        secret = pending["secret"] if pending else None
+        try:
+            for token in tokens:
+                if token != grant_token:
+                    ok = self.revoke(token, grant=False) and ok
+            ok = (self.revoke(grant_token, grant=True) if grant_token else grant is None) and ok
+            revoked = True
+            with self.db._lock, self.db._tx() as conn:
+                self._fence(conn)
+                self._close_disconnect(conn, uid, secret, True, ok, marked, deleting)
+        except Exception:
+            # Any failure before the closing transaction commits runs it again as a release, and
+            # a release that fails too is owed to the next heartbeat. The original error is raised.
+            with contextlib.suppress(Exception):
+                self._release(
+                    uid,
+                    lambda conn: self._close_disconnect(
+                        conn, uid, secret, revoked, ok, marked, deleting
+                    ),
+                )
+            raise
         return {
             "state": "absent",
             "message": "Disconnected"
@@ -696,6 +961,45 @@ class GitHub:
             else "Disconnected locally; GitHub revocation unconfirmed",
             "app_access_url": ACCESS,
         }
+
+    def _close_disconnect(self, conn, uid, secret, revoked, ok, marked, deleting):
+        """End a Disconnect: its closing transaction, and the same release after a failure.
+
+        ``revoked`` says whether every revoke returned. If one raised, the taken record is lapsed
+        instead of deleted, so the sweep revokes its candidate on its next tick, and the grant is
+        purged unrevoked and flagged, as a restart does; nothing is replayed at GitHub.
+        """
+        if secret is not None:
+            # The record outlives its revoke: a death before this point leaves it for the sweep.
+            conn.execute(
+                "DELETE FROM github_confirmations WHERE user_id=? AND secret=?"
+                if revoked
+                else "UPDATE github_confirmations SET expires_at=0 WHERE user_id=? AND secret=?",
+                (uid, secret),
+            )
+        conn.execute("DELETE FROM github_grants WHERE user_id=?", (uid,))
+        conn.execute(
+            "UPDATE github_lifecycle SET unconfirmed=max(unconfirmed,?),remote_work=max(0,remote_work-1),disconnect_pending=CASE WHEN active_exchanges>0 OR remote_work>1 THEN 1 ELSE 0 END WHERE user_id=?",
+            (int(not (revoked and ok)), uid),
+        )
+        life = self.store.lifecycle(conn, uid)
+        if (
+            deleting
+            and not life["active_exchanges"]
+            and not life["remote_work"]
+            and not self._holds_record(conn, uid)
+        ):
+            self.release_owner(conn, uid)
+        if marked:
+            self._settle_exchange(conn, uid)
+
+    def _holds_record(self, conn, uid):
+        # Keys outlive every record: the sweep must still decrypt a lapsed candidate to revoke it.
+        # An owner that ended during a Disconnect can leave its record behind.
+        return (
+            conn.execute("SELECT 1 FROM github_confirmations WHERE user_id=?", (uid,)).fetchone()
+            is not None
+        )
 
     def release_owner(self, conn, uid):
         conn.execute("DELETE FROM user_identities WHERE provider='github' AND user_id=?", (uid,))
@@ -709,25 +1013,26 @@ class GitHub:
     def finish_exchange(self, uid):
         with self.db._lock:
             self._live -= 1
-        with self.db._lock, self.db._tx() as conn:
-            self._fence(conn)
-            conn.execute(
-                "UPDATE github_lifecycle SET active_exchanges=max(0,active_exchanges-1) WHERE user_id=?",
-                (uid,),
-            )
-            life = self.store.lifecycle(conn, uid)
-            if (
-                not life["active_exchanges"]
-                and not life["remote_work"]
-                and not conn.execute(
-                    "SELECT 1 FROM github_grants WHERE user_id=? AND disabled=1", (uid,)
-                ).fetchone()
-            ):
-                conn.execute(
-                    "UPDATE github_lifecycle SET disconnect_pending=0 WHERE user_id=?", (uid,)
-                )
-                if life["deleting"]:
-                    self.release_owner(conn, uid)
+        self._release(uid, lambda conn: self._settle_exchange(conn, uid))
+
+    def _settle_exchange(self, conn, uid):
+        """Release one in-flight exchange; callers may do this in the transaction that ends it."""
+        self._fence(conn)
+        conn.execute(
+            "UPDATE github_lifecycle SET active_exchanges=max(0,active_exchanges-1) WHERE user_id=?",
+            (uid,),
+        )
+        life = self.store.lifecycle(conn, uid)
+        if (
+            not life["active_exchanges"]
+            and not life["remote_work"]
+            and not conn.execute(
+                "SELECT 1 FROM github_grants WHERE user_id=? AND disabled=1", (uid,)
+            ).fetchone()
+        ):
+            conn.execute("UPDATE github_lifecycle SET disconnect_pending=0 WHERE user_id=?", (uid,))
+            if life["deleting"] and not self._holds_record(conn, uid):
+                self.release_owner(conn, uid)
 
     def recover(self):
         if self._live:
@@ -737,11 +1042,20 @@ class GitHub:
             self._recover_rows(conn)
 
     def _recover_rows(self, conn):
+        # Every marker is reset below, so no release of this process is still owed.
+        self._owed = []
         conn.execute(
-            "UPDATE github_lifecycle SET generation=generation+1,unconfirmed=1 WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
+            "UPDATE github_lifecycle SET generation=generation+1,"
+            # A pending candidate alone is revoked by the sweep, which flags a failed revoke itself.
+            "unconfirmed=CASE WHEN user_id IN (SELECT user_id FROM github_confirmations) "
+            "AND user_id NOT IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_grants WHERE disabled=1) "
+            "AND disconnect_pending=0 AND remote_work=0 THEN unconfirmed ELSE 1 END "
+            "WHERE user_id IN (SELECT user_id FROM github_connect_flows UNION SELECT user_id FROM github_confirmations UNION SELECT user_id FROM github_grants WHERE disabled=1) OR disconnect_pending=1 OR active_exchanges>0 OR remote_work>0"
         )
         conn.execute("DELETE FROM github_connect_flows")
-        conn.execute("DELETE FROM github_confirmations")
+        # A pending candidate token is still live at GitHub: keep its encrypted record, lapsed,
+        # so the sweep revokes it instead of this process forgetting it.
+        conn.execute("UPDATE github_confirmations SET expires_at=0")
         conn.execute("DELETE FROM github_grants WHERE disabled=1")
         conn.execute(
             "UPDATE github_lifecycle SET disconnect_pending=0,active_exchanges=0,remote_work=0"
@@ -754,6 +1068,8 @@ def install(gateway):
         ("GET", "/api/github"),
         ("POST", "/api/github/connect"),
         ("POST", "/api/github/confirm"),
+        ("POST", "/api/github/merge-consent"),
+        ("POST", "/api/github/merge"),
         ("DELETE", "/api/github"),
     ):
         gateway.add_route(method, path, gateway.github.handle)

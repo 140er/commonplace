@@ -131,7 +131,7 @@ def test_scoped_seed_work_is_bounded_as_nonmatching_facts_grow(sparse):
             "VALUES('target','target','deploy_port','target','shared')"
         )
         tokens = {"entity", "project"} if sparse else {"kestrel"}
-        growing_wing = "vault" if sparse else "shared"
+        growing_wing = "vault"
 
         def append(start, end):
             conn.executemany(
@@ -151,6 +151,55 @@ def test_scoped_seed_work_is_bounded_as_nonmatching_facts_grow(sparse):
         # Vocabulary accounting can cross FTS page boundaries; scope work
         # must stay within a fixed allowance rather than grow per fact.
         assert expanded_steps <= initial_steps + 1000
+
+
+def test_repeat_scoped_search_while_another_statement_is_open():
+    """The shared connection may have a statement mid-step (another thread, an
+    unfinished cursor); a second scoped search must still run."""
+    with KnowledgeGraph.empty() as kg:
+        conn = kg._conn()
+        conn.execute("INSERT INTO entities(id,name) VALUES('target','Kestrel entity project')")
+        conn.executemany(
+            "INSERT INTO triples(id,subject,predicate,object,wing) VALUES(?,?,?,?,?)",
+            [("target", "target", "deploy_port", "target", "shared")]
+            + [(f"t{i}", "target", "is_a", "target", "vault") for i in range(3)],
+        )
+        scope = {"wings": ["shared"], "sensitivities": ["internal"]}
+        first, _ = _search_steps(kg, {"kestrel"}, **scope)
+        pending = conn.execute("SELECT id FROM triples")
+        assert pending.fetchone() is not None  # rows remain: the statement is active
+        again, _ = _search_steps(kg, {"kestrel"}, **scope)
+        assert first == again == {"target"}
+
+
+@pytest.mark.parametrize("matching, steps_per_fact", [(False, 40), (True, 300)])
+def test_scoped_statistics_work_grows_only_with_the_readable_scope(matching, steps_per_fact):
+    """Counts come from readable facts alone, so only readable growth costs work."""
+    with KnowledgeGraph.empty() as kg:
+        conn = kg._conn()
+        conn.execute(
+            "INSERT INTO entities(id,name) VALUES('target','Kestrel entity project'),"
+            "('other','Unrelated entity project')"
+        )
+        conn.execute(
+            "INSERT INTO triples(id,subject,predicate,object,wing) "
+            "VALUES('target','target','deploy_port','target','shared')"
+        )
+        tokens = {"entity", "project"} if matching else {"kestrel"}
+
+        def append(start, end):
+            conn.executemany(
+                "INSERT INTO triples(id,subject,predicate,object,wing) VALUES(?,?,?,?,?)",
+                ((f"t{i}", "other", "is_a", "other", "shared") for i in range(start, end)),
+            )
+
+        append(0, 2000)
+        _, initial_steps = _search_steps(kg, tokens, wings=["shared"])
+        append(2000, 10000)
+        _, expanded_steps = _search_steps(kg, tokens, wings=["shared"])
+        # Linear in the readable facts. Measured: about 25 VM steps per added fact
+        # that does not match the query, about 235 per matching one.
+        assert expanded_steps <= initial_steps + 8000 * steps_per_fact
 
 
 def test_common_scope_above_1000_keeps_work_bounded_as_newer_hidden_matches_grow():
