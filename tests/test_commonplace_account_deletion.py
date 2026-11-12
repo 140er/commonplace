@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from commonplace import sessions, tokens
+from commonplace import invites, sessions, tokens
 from commonplace.account import deletion
 from tests._commonplace_account_helpers import site_fixture, wait_for  # noqa: F401
 
@@ -705,3 +705,39 @@ def test_without_a_mailer_the_event_is_the_notice(enabled):
     site.advance(15 * DAY)
     assert deletion.purge_due(site.gateway)[0]["state"] == "purged"
     assert len(promoted_events(site, site.team)) == 1
+
+
+def test_purge_revokes_the_invites_the_account_sent_and_deletes_those_addressed_to_it(enabled):
+    site = enabled
+    db = site.db
+    co = db.create_workspace("co", site.alice)
+    db.add_member(co, site.bob, "member", actor=site.alice)
+    pending, _ = invites.create(db, co, site.alice, email="guest@example.test")
+    used, _ = invites.create(db, co, site.alice)
+    to_alice, _ = invites.create(db, site.team, site.bob, email="Alice@Example.Test")
+    to_other, _ = invites.create(db, site.team, site.bob, email="other@example.test")
+    with db._lock:
+        db._conn.execute(
+            "UPDATE workspace_invites SET accepted_at = '2026-01-02T00:00:00Z', accepted_by = ? "
+            "WHERE id = ?",
+            (site.bob, used["id"]),
+        )
+    assert ask(site, site.alice, site.alice_home, "alice@example.test")[0] == 200
+
+    site.advance(deletion.DEFAULT_GRACE_DAYS * DAY + 1)
+    (result,) = deletion.purge_due(site.gateway)
+    assert result["state"] == "purged"
+
+    rows = {r["id"]: r for r in site.rows("SELECT * FROM workspace_invites")}
+    assert pending["id"] in rows and rows[pending["id"]]["revoked_by"] == site.alice
+    assert rows[pending["id"]]["revoked_at"]
+    assert not rows[used["id"]]["revoked_at"] and rows[used["id"]]["accepted_by"] == site.bob
+    assert to_alice["id"] not in rows
+    assert rows[to_other["id"]]["revoked_at"] is None
+    audit = {
+        (r["action"], r["target_ids"])
+        for r in site.rows("SELECT action, target_ids FROM audit_log WHERE action LIKE 'invite.%'")
+        if r["action"] in ("invite.revoke", "invite.delete")
+    }
+    assert any(a == "invite.revoke" and pending["id"] in t for a, t in audit)
+    assert any(a == "invite.delete" and to_alice["id"] in t for a, t in audit)

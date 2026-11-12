@@ -28,9 +28,12 @@ class Rule:
     # Credentials of a connection: deleted for every connection of a leaving
     # account, also where the connection row itself stays as a tombstone.
     credential: bool = False
+    # Rows the user sent to someone else (an invite): exported with the account,
+    # but a purge settles them instead of deleting them.
+    sent: tuple = ()
 
     def columns(self) -> tuple:
-        own = self.user + self.workspace + self.connection + self.email
+        own = self.user + self.workspace + self.connection + self.email + self.sent
         return own + ((self.parent[0],) if self.parent else ())
 
 
@@ -125,6 +128,11 @@ RULES = {
     "webhook_attempts": Rule(parent=("delivery_id", "webhook_deliveries", "id")),
     "webhook_deliveries": Rule(parent=("webhook_id", "webhooks", "id")),
     "webhooks": Rule(workspace=_W, connection=_C),
+    # A purge revokes the pending invites the user sent and deletes the ones addressed
+    # to their email (see ``deletion.settle_invites``); accepted ones stay as history.
+    "workspace_invites": Rule(
+        user=("accepted_by",), workspace=_W, email=("email",), sent=("created_by",)
+    ),
     "workspace_voice": Rule(workspace=_W),
     "workspaces": Rule(user=("personal_of",), workspace=("id",)),
 }
@@ -200,6 +208,8 @@ def account_clause(table: str, tables: dict, *, credentials_only: bool = False, 
         return None
     parts = [f"{quote(c)} = :uid" for c in rule.user]
     parts += [f"{quote(c)} = :email COLLATE NOCASE" for c in rule.email]
+    if not credentials_only:
+        parts += [f"{quote(c)} = :uid" for c in rule.sent]
     if rule.credential or not credentials_only:
         parts += [
             f"{quote(c)} IN (SELECT id FROM connections WHERE user_id = :uid)"

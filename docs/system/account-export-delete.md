@@ -10,7 +10,7 @@ keyed to the account itself, and leaves tombstones (user id, membership, revoked
 where other people's work refers to it. A sole owner of a shared workspace does not
 take it with them: the longest-standing active member becomes an owner when the purge
 starts (audit entry, event, mail if configured), and only a workspace with no other
-member is deleted. It refuses rather than choose for the owner when nobody can take
+member is deleted. Pending invites the account sent are revoked and invites addressed to its email are deleted (both audited). It refuses rather than choose for the owner when nobody can take
 over, for the last instance administrator and for an account with a GitHub grant. One table (`commonplace/account/tables.py`) classifies
 every control table for both paths, and a test fails when a new table is missing.
 

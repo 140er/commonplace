@@ -385,6 +385,38 @@ def _blocked(db, conn, row, blockers) -> dict:
     return {"state": row["state"], "blocked": blockers}
 
 
+def settle_invites(db, conn, user_id: str, email: str, current: str) -> None:
+    """Revoke the pending invites the account sent and delete the ones addressed to its
+    email, each with an audit entry. Accepted invites stay as history."""
+    if "workspace_invites" not in tables.present(conn):
+        return
+    pending = conn.execute(
+        "SELECT id, workspace_id FROM workspace_invites WHERE created_by = ? "
+        "AND accepted_at IS NULL AND revoked_at IS NULL",
+        (user_id,),
+    ).fetchall()
+    conn.execute(
+        "UPDATE workspace_invites SET revoked_at = ?, revoked_by = ? WHERE created_by = ? "
+        "AND accepted_at IS NULL AND revoked_at IS NULL",
+        (current, user_id, user_id),
+    )
+    addressed = conn.execute(
+        "SELECT id, workspace_id FROM workspace_invites WHERE email = ? COLLATE NOCASE",
+        (email,),
+    ).fetchall()
+    conn.execute("DELETE FROM workspace_invites WHERE email = ? COLLATE NOCASE", (email,))
+    for action, rows in (("invite.revoke", pending), ("invite.delete", addressed)):
+        for workspace_id in sorted({row["workspace_id"] for row in rows}):
+            db.audit(
+                action=action,
+                decision="ok",
+                workspace_id=workspace_id,
+                user_id=user_id,
+                reason="account_deleted",
+                target_ids=[row["id"] for row in rows if row["workspace_id"] == workspace_id],
+            )
+
+
 def purge(gateway, user_id: str) -> dict:
     """Delete one account now, whatever its date. Callers check the date."""
     db = gateway.db
@@ -426,6 +458,7 @@ def purge(gateway, user_id: str) -> dict:
         gone = [w["id"] for w in found["delete_workspaces"] if w["id"] in doomed]
         email = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()[0]
         scope = {"uid": user_id, "email": email}
+        settle_invites(db, conn, user_id, email, current)
         for name in tables.children_first(present):
             if name in tables.KEPT:
                 continue
