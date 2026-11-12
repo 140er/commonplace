@@ -33,6 +33,7 @@ Routes (``<b>`` board slug, ``<r>`` role, ``<v>`` version number, ``<k>`` step k
     POST /api/orch/boards/<b>/roles/<r>/findings        orch_finding
     POST /api/orch/boards/<b>/roles/<r>/findings/<n>    orch_finding_ack
     POST /api/orch/boards/<b>/roles/<r>/steps/<k>/void  orch_void_step
+    POST /api/orch/boards/<b>/roles/<r>/reports/<report>/steps/<k>/reassign  orch_reassign_step
 
 Refusals answer ``{"error": "no: ...", "code": ..., "details": {...}}`` with the
 refusal's own HTTP status (400, 403, 404 or 409).
@@ -110,6 +111,8 @@ def resolve(method: str, parts: list) -> tuple[str, dict]:
             return "orch_finding_ack", {**role, "finding": _number(tail[1], "finding")}
         if len(tail) == 3 and tail[0] == "steps" and tail[2] == "void":
             return "orch_void_step", {**role, "step_key": tail[1]}
+        if len(tail) == 5 and (tail[0], tail[2], tail[4]) == ("reports", "steps", "reassign"):
+            return "orch_reassign_step", {**role, "report": tail[1], "step_key": tail[3]}
     raise HTTPError(404, "not found")
 
 

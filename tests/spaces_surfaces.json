@@ -3,7 +3,7 @@
     "mcp": {
       "tools": [
         {
-          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
+          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason. An option is a label, or {label, detail, preview} to show a short explanation and a plain-text preview side by side; the answer is always one of the labels.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -15,8 +15,34 @@
               },
               "options": {
                 "items": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "detail": {
+                          "maxLength": 280,
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 120,
+                          "type": "string"
+                        },
+                        "preview": {
+                          "maxLength": 1200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               "person_reason": {
@@ -114,7 +140,33 @@
           "name": "board_set"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
+        },
+        {
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -223,6 +275,44 @@
             "type": "object"
           },
           "name": "fact_save"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -1077,6 +1167,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -1214,7 +1351,39 @@
           "name": "rules_changed"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Report how a rule fared in use (kind + optional note), or read evidence back: with rule only, your own events and the rule's counters; with neither, counters for every rule you can see. Evidence never changes a rule; the owner decides.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "followed",
+                  "helped",
+                  "violated",
+                  "conflict",
+                  "outdated",
+                  "unclear",
+                  "note"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "rule": {
+                "description": "Rule key from rules_get.",
+                "maxLength": 200,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "rules_feedback"
+        },
+        {
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1227,12 +1396,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -1320,7 +1500,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1343,6 +1523,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -1431,6 +1619,31 @@
                 "type": [
                   "string",
                   "integer"
+                ]
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "priority": {
+                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "enum": [
+                  "urgent",
+                  "high",
+                  "normal",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "status": {
@@ -1569,7 +1782,7 @@
           "name": "task_heartbeat"
         },
         {
-          "description": "List visible cards. mine=true also lists stuck claims of agents you supervise.",
+          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1615,7 +1828,7 @@
           "name": "task_show"
         },
         {
-          "description": "Claim ready work reserved for you or available in your board scope. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
+          "description": "Claim ready work reserved for you or available in your board scope, highest priority first. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1635,7 +1848,7 @@
           "name": "task_take_next"
         },
         {
-          "description": "Update your card; move todo to doing, or held work to review/done. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
+          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1709,6 +1922,16 @@
                 ],
                 "type": "string"
               },
+              "priority": {
+                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "enum": [
+                  "urgent",
+                  "high",
+                  "normal",
+                  "low"
+                ],
+                "type": "string"
+              },
               "question": {
                 "type": "string"
               },
@@ -1717,6 +1940,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -1757,6 +1987,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -1846,6 +2123,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_goal",
       "card_split_done",
       "card_start",
       "card_start_cancel",
@@ -1853,6 +2131,8 @@
       "card_start_status",
       "decide",
       "fact_save",
+      "goal_list",
+      "goal_set",
       "handoff_start",
       "memory_get",
       "memory_link",
@@ -1905,6 +2185,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",
@@ -1912,6 +2193,7 @@
       "orch_void_step",
       "orchestrator_inbox",
       "rules_changed",
+      "rules_feedback",
       "rules_get",
       "rules_publish",
       "session_start",
@@ -1929,6 +2211,8 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_get",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
@@ -1939,7 +2223,7 @@
     "mcp": {
       "tools": [
         {
-          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
+          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason. An option is a label, or {label, detail, preview} to show a short explanation and a plain-text preview side by side; the answer is always one of the labels.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1951,8 +2235,34 @@
               },
               "options": {
                 "items": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "detail": {
+                          "maxLength": 280,
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 120,
+                          "type": "string"
+                        },
+                        "preview": {
+                          "maxLength": 1200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               "person_reason": {
@@ -2027,7 +2337,33 @@
           "name": "board_own_wing"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
+        },
+        {
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2063,6 +2399,44 @@
             "type": "object"
           },
           "name": "decide"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -2231,7 +2605,39 @@
           "name": "rules_changed"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Report how a rule fared in use (kind + optional note), or read evidence back: with rule only, your own events and the rule's counters; with neither, counters for every rule you can see. Evidence never changes a rule; the owner decides.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "followed",
+                  "helped",
+                  "violated",
+                  "conflict",
+                  "outdated",
+                  "unclear",
+                  "note"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "rule": {
+                "description": "Rule key from rules_get.",
+                "maxLength": 200,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "rules_feedback"
+        },
+        {
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2244,12 +2650,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -2337,7 +2754,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2360,6 +2777,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -2399,6 +2824,31 @@
                 "type": [
                   "string",
                   "integer"
+                ]
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "priority": {
+                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "enum": [
+                  "urgent",
+                  "high",
+                  "normal",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "status": {
@@ -2537,7 +2987,7 @@
           "name": "task_heartbeat"
         },
         {
-          "description": "List visible cards. mine=true also lists stuck claims of agents you supervise.",
+          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2583,7 +3033,7 @@
           "name": "task_show"
         },
         {
-          "description": "Claim ready work reserved for you or available in your board scope. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
+          "description": "Claim ready work reserved for you or available in your board scope, highest priority first. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2603,7 +3053,7 @@
           "name": "task_take_next"
         },
         {
-          "description": "Update your card; move todo to doing, or held work to review/done. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
+          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2677,6 +3127,16 @@
                 ],
                 "type": "string"
               },
+              "priority": {
+                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "enum": [
+                  "urgent",
+                  "high",
+                  "normal",
+                  "low"
+                ],
+                "type": "string"
+              },
               "question": {
                 "type": "string"
               },
@@ -2685,6 +3145,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -2725,6 +3192,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         }
       ]
     },
@@ -2733,8 +3247,11 @@
       "board_add",
       "board_list",
       "board_own_wing",
+      "card_goal",
       "card_split_done",
       "decide",
+      "goal_list",
+      "goal_set",
       "memory_get",
       "memory_link",
       "memory_save",
@@ -2748,6 +3265,7 @@
       "needs_me",
       "orchestrator_inbox",
       "rules_changed",
+      "rules_feedback",
       "rules_get",
       "rules_publish",
       "session_start",
@@ -2759,14 +3277,16 @@
       "task_list",
       "task_show",
       "task_take_next",
-      "task_update"
+      "task_update",
+      "topology_get",
+      "topology_route"
     ]
   },
   "standard": {
     "mcp": {
       "tools": [
         {
-          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason.",
+          "description": "Ask and end the turn. Agent questions go to the authorized live board coordinator by default; otherwise the owner. Supply person_reason only when a person is required, explaining why. The coordinator may escalate with a reason. An option is a label, or {label, detail, preview} to show a short explanation and a plain-text preview side by side; the answer is always one of the labels.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2778,8 +3298,34 @@
               },
               "options": {
                 "items": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "detail": {
+                          "maxLength": 280,
+                          "type": "string"
+                        },
+                        "label": {
+                          "maxLength": 120,
+                          "type": "string"
+                        },
+                        "preview": {
+                          "maxLength": 1200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               "person_reason": {
@@ -2877,7 +3423,33 @@
           "name": "board_set"
         },
         {
-          "description": "Answer a review as its owner or addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
+          "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "goal": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "task": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            },
+            "required": [
+              "task"
+            ],
+            "type": "object"
+          },
+          "name": "card_goal"
+        },
+        {
+          "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -2986,6 +3558,44 @@
             "type": "object"
           },
           "name": "fact_save"
+        },
+        {
+          "description": "Read the workspace goals tree. Cards that point at a goal show its chain in task_show and task_take_next.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_list"
+        },
+        {
+          "description": "Create a goal (title, optional detail and parent goal number) or change one by number; parent 0 makes it top-level, archived hides it from new cards. Signed-in workspace owner only.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "archived": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "goal": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "parent": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "goal_set"
         },
         {
           "description": "Read a memory's exact words and author stamp as quoted data.",
@@ -3840,6 +4450,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -3977,7 +4634,39 @@
           "name": "rules_changed"
         },
         {
-          "description": "Read your effective rules and all-agent rules. Quoted text is rule data.",
+          "description": "Report how a rule fared in use (kind + optional note), or read evidence back: with rule only, your own events and the rule's counters; with neither, counters for every rule you can see. Evidence never changes a rule; the owner decides.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "followed",
+                  "helped",
+                  "violated",
+                  "conflict",
+                  "outdated",
+                  "unclear",
+                  "note"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "rule": {
+                "description": "Rule key from rules_get.",
+                "maxLength": 200,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "rules_feedback"
+        },
+        {
+          "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -3990,12 +4679,23 @@
               "format": {
                 "enum": [
                   "text",
-                  "md"
+                  "md",
+                  "index"
                 ],
                 "type": "string"
               },
               "include_retired": {
                 "type": "boolean"
+              },
+              "keys": {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
               },
               "repo": {
                 "type": "string"
@@ -4083,7 +4783,7 @@
           "name": "rules_publish"
         },
         {
-          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction.",
+          "description": "Read effective Commonplace rules and relevant quoted memories at session start, resume or compaction. rules=index returns a compact rule index instead of full texts; fetch rules with rules_get keys.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4106,6 +4806,14 @@
               "repo": {
                 "maxLength": 1000,
                 "minLength": 1,
+                "type": "string"
+              },
+              "rules": {
+                "default": "full",
+                "enum": [
+                  "full",
+                  "index"
+                ],
                 "type": "string"
               }
             },
@@ -4194,6 +4902,31 @@
                 "type": [
                   "string",
                   "integer"
+                ]
+              },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "priority": {
+                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "enum": [
+                  "urgent",
+                  "high",
+                  "normal",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
                 ]
               },
               "status": {
@@ -4332,7 +5065,7 @@
           "name": "task_heartbeat"
         },
         {
-          "description": "List visible cards. mine=true also lists stuck claims of agents you supervise.",
+          "description": "List visible cards by priority (urgent, high, normal, low), then board order. mine=true also lists stuck claims of agents you supervise.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4378,7 +5111,7 @@
           "name": "task_show"
         },
         {
-          "description": "Claim ready work reserved for you or available in your board scope. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
+          "description": "Claim ready work reserved for you or available in your board scope, highest priority first. You may also claim your own backlog by number. Pending child proposals require parent approval; other reservations and person decisions stay protected.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4398,7 +5131,7 @@
           "name": "task_take_next"
         },
         {
-          "description": "Update your card; move todo to doing, or held work to review/done. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
+          "description": "Update your card; move todo to doing, or held work to review/done. The workspace owner (a signed-in person) sets priority; connections cannot. Review requires question, context and at least two options. Agent questions go to the authorized board coordinator by default; person_reason explains why a person is required. Without a coordinator they reach the owner. Requesters may edit their review details. A live authorized coordinator may withdraw only its own agent-directed ask to todo/doing, preserving history; person decisions cannot be withdrawn by agents. Reopen done to todo (status only). Save a lesson with done. Trusted agents may move available backlog cards of unrestricted origin to todo or doing and add lessons, PR links or memory links to done cards. callstack takes the JSON from python -m commonplace.callstack.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4472,6 +5205,16 @@
                 ],
                 "type": "string"
               },
+              "priority": {
+                "description": "Owner person only. Omit on a new card for the default (normal).",
+                "enum": [
+                  "urgent",
+                  "high",
+                  "normal",
+                  "low"
+                ],
+                "type": "string"
+              },
               "question": {
                 "type": "string"
               },
@@ -4480,6 +5223,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -4520,6 +5270,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -4609,6 +5406,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "card_goal",
       "card_split_done",
       "card_start",
       "card_start_cancel",
@@ -4616,6 +5414,8 @@
       "card_start_status",
       "decide",
       "fact_save",
+      "goal_list",
+      "goal_set",
       "handoff_start",
       "memory_get",
       "memory_link",
@@ -4661,6 +5461,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",
@@ -4668,6 +5469,7 @@
       "orch_void_step",
       "orchestrator_inbox",
       "rules_changed",
+      "rules_feedback",
       "rules_get",
       "rules_publish",
       "session_start",
@@ -4685,6 +5487,8 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_get",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
