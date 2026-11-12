@@ -78,22 +78,20 @@ def webhook_server():
         body=b'{"agent_ref":"agent:successor"}',
         headers={},
         received=[],
-        slow=False,
-        release=threading.Event(),
+        dispatch=threading.Event(),
+        workers=[],
     )
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             state.received.append((self.command, self.path, dict(self.headers), body))
-            if state.slow:
-                state.release.wait(timeout=3)
-            self.send_response(state.status, state.reason)
-            for name, value in state.headers.items():
-                self.send_header(name, value)
-            self.send_header("Content-Length", str(len(state.body)))
-            self.end_headers()
             try:
+                self.send_response(state.status, state.reason)
+                for name, value in state.headers.items():
+                    self.send_header(name, value)
+                self.send_header("Content-Length", str(len(state.body)))
+                self.end_headers()
                 self.wfile.write(state.body)
             except (BrokenPipeError, ConnectionResetError):
                 pass
@@ -106,18 +104,29 @@ def webhook_server():
         def log_message(self, *_args):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    class Server(ThreadingHTTPServer):
+        daemon_threads = False
+        block_on_close = True
+
+        def process_request_thread(self, request, client_address):
+            state.workers.append(threading.current_thread())
+            state.dispatch.wait()
+            super().process_request_thread(request, client_address)
+
+    state.dispatch.set()
+    server = Server(("127.0.0.1", 0), Handler)
     state.url = f"http://127.0.0.1:{server.server_port}/launch"
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
     thread.start()
     try:
         yield state
     finally:
-        state.release.set()
+        state.dispatch.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
         assert not thread.is_alive()
+        assert all(not worker.is_alive() for worker in state.workers)
 
 
 def test_client_does_nothing(handoff, tmp_path, monkeypatch):
@@ -482,7 +491,8 @@ def test_webhook_never_follows_redirects(status, handoff, tmp_path, webhook_serv
 
 
 def test_webhook_times_out(handoff, tmp_path, webhook_server):
-    webhook_server.slow = True
+    # A real socket timeout does not require the handler to have read the request.
+    webhook_server.dispatch.clear()
     with pytest.raises(LaunchError, match="request failed"):
         launch(
             LauncherConfig(kind="webhook", url=webhook_server.url, secret="secret"),
@@ -491,7 +501,7 @@ def test_webhook_times_out(handoff, tmp_path, webhook_server):
             prompt_dir=str(tmp_path),
             timeout=0.05,
         )
-    assert len(webhook_server.received) == 1
+    assert webhook_server.received == []
 
 
 @pytest.mark.parametrize(

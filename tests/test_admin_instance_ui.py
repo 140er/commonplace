@@ -37,3 +37,7 @@ def test_complete_admin_and_operational_retries(hub):
 @pytest.mark.parametrize("outcome", ["resolve", "reject"])
 def test_parent_receipts_refresh_supersedes_mode_retry(hub, mode, outcome):
     run(hub, f"race-{mode}-{outcome}")
+
+
+def test_index_stats_table_and_pagination(hub):
+    run(hub, "index-stats")
