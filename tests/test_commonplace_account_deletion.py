@@ -303,25 +303,6 @@ def test_a_workspace_is_deleted_only_when_no_live_member_is_left(enabled):
     }
 
 
-def test_sole_owner_of_a_shared_workspace_cannot_leave(enabled):
-    site = enabled
-    status, body = ask(site, site.bob, site.bob_home, "bob@example.test")
-    assert status == 409 and body["code"] == "blocked"
-    assert body["blockers"] == [
-        {"code": "sole_owner", "workspace": {"id": site.team, "name": "team"}}
-    ]
-    assert state(site, site.bob) is None
-
-    # A second owner lifts the block; Bob then leaves the team without deleting it.
-    site.db.add_member(site.team, site.root, "owner", actor=site.bob)
-    assert ask(site, site.bob, site.bob_home, "bob@example.test")[0] == 200
-    site.advance(15 * DAY)
-    (result,) = deletion.purge_due(site.gateway)
-    assert result["deleted_workspaces"] == [site.bob_home]
-    assert (site.data_dir / "workspaces" / site.team).is_dir()
-    assert site.db.authenticate_token(site.alice_team_token) is not None
-
-
 def test_last_administrator_and_github_grant_block(enabled):
     site = enabled
     home = site.db.create_workspace("root home", site.root, personal=True)
@@ -343,6 +324,7 @@ def test_a_block_that_appears_during_the_grace_period_stops_the_purge(enabled):
     assert ask(site, site.alice, site.alice_home, "alice@example.test")[0] == 200
     carol = site.db.create_user("carol@example.test")
     site.db.add_member(site.alice_home, carol, "member", actor=site.alice)
+    suspend(site, carol)  # nobody active is left to take the workspace over
     before = site.tree(site.alice_home)
 
     site.advance(15 * DAY)
@@ -396,7 +378,9 @@ def test_an_interrupted_purge_is_resumed(enabled, monkeypatch):
     assert not (site.data_dir / "workspaces" / site.alice_home).exists()
 
 
-def test_a_member_who_joins_as_the_purge_starts_keeps_the_workspace(enabled, monkeypatch):
+def test_a_member_who_joins_as_the_purge_starts_inherits_instead_of_losing_the_workspace(
+    enabled, monkeypatch
+):
     site = enabled
     assert ask(site, site.alice, site.alice_home, "alice@example.test")[0] == 200
     site.advance(15 * DAY)
@@ -414,9 +398,9 @@ def test_a_member_who_joins_as_the_purge_starts_keeps_the_workspace(enabled, mon
     before = site.tree(site.alice_home)
     (result,) = deletion.purge_due(site.gateway)
     assert removed == [] and site.tree(site.alice_home) == before
-    assert result["state"] == "purging"
-    assert [b["code"] for b in result["blocked"]] == ["sole_owner"]
-    assert site.rows("SELECT id FROM workspaces WHERE id = ?", site.alice_home)
+    assert result == {"user": site.alice, "state": "purged", "deleted_workspaces": []}
+    assert roles(site, site.alice_home) == {carol: "owner", site.alice: "member"}
+    assert len(promotions(site, site.alice_home)) == 1
 
 
 def test_with_the_switch_off_only_started_purges_are_finished(enabled, monkeypatch):
@@ -477,3 +461,247 @@ def test_gateway_starts_the_sweeper_only_when_enabled(tmp_path, monkeypatch):
     finally:
         made.close()
     assert not made.gateway.account_sweeper._thread.is_alive()
+
+
+# ── a sole owner leaves: the longest-standing active member takes over ──
+
+
+class Mailer:
+    configured = True
+
+    def __init__(self, fail=False):
+        self.fail, self.sent = fail, []
+
+    def send(self, to, subject, text, html=None):
+        if self.fail:
+            raise RuntimeError("smtp down")
+        self.sent.append((to, subject, text))
+
+
+def suspend(site, user):
+    with site.db._lock:
+        site.db._conn.execute(
+            "UPDATE users SET disabled_at = '2026-02-01T00:00:00Z' WHERE id = ?", (user,)
+        )
+
+
+def member(site, workspace, email, joined, *, role="member"):
+    """A member of ``workspace`` who joined at ``joined`` (a date)."""
+    user = site.db.create_user(email)
+    site.db.add_member(workspace, user, role, actor=site.bob)
+    with site.db._lock:
+        site.db._conn.execute(
+            "UPDATE memberships SET created_at = ? WHERE workspace_id = ? AND user_id = ?",
+            (joined + "T00:00:00Z", workspace, user),
+        )
+    return user
+
+
+def roles(site, workspace):
+    return {
+        row["user_id"]: row["role"]
+        for row in site.rows(
+            "SELECT user_id, role FROM memberships WHERE workspace_id = ?", workspace
+        )
+    }
+
+
+def promotions(site, workspace):
+    return site.rows(
+        "SELECT user_id, reason, target_ids FROM audit_log WHERE action = 'workspace.owner_promote' "
+        "AND workspace_id = ?",
+        workspace,
+    )
+
+
+def promoted_events(site, workspace):
+    return site.rows(
+        "SELECT subject, actor, data FROM events WHERE kind = 'workspace.owner_promoted' "
+        "AND workspace_id = ?",
+        workspace,
+    )
+
+
+def leave(site, user, home, mail=None):
+    """Bob asks to delete his account and the grace period passes."""
+    site.gateway.email_auth.mailer = mail or Mailer()
+    assert ask(site, user, home, "bob@example.test")[0] == 200
+    site.advance(15 * DAY)
+
+
+def test_sole_owner_hands_the_workspace_to_the_longest_standing_active_member(enabled):
+    site = enabled
+    # Alice (a plain member) already joined the team through the fixture; fix the dates.
+    with site.db._lock:
+        site.db._conn.execute(
+            "UPDATE memberships SET created_at = '2026-03-01T00:00:00Z' "
+            "WHERE workspace_id = ? AND user_id = ?",
+            (site.team, site.alice),
+        )
+    carol = member(site, site.team, "carol@example.test", "2026-01-01")  # oldest, but suspended
+    dave = member(site, site.team, "dave@example.test", "2026-02-01")
+    erin = member(site, site.team, "erin@example.test", "2026-04-01")
+    suspend(site, carol)
+    mail = Mailer()
+
+    status, shown = site.json("GET", "/api/account", session=site.session(site.bob, site.bob_home))
+    assert shown["deletion"]["blockers"] == []
+    assert shown["deletion"]["promote_owner"] == [{"id": site.team, "name": "team"}]
+    leave(site, site.bob, site.bob_home, mail)
+    tree = site.tree(site.team)
+    (result,) = deletion.purge_due(site.gateway)
+
+    assert result["state"] == "purged" and result["deleted_workspaces"] == [site.bob_home]
+    assert roles(site, site.team) == {
+        site.bob: "member",  # the tombstone
+        site.alice: "member",
+        carol: "member",
+        dave: "owner",
+        erin: "member",
+    }
+    assert site.tree(site.team) == tree  # the workspace itself is untouched
+    assert site.db.authenticate_token(site.bob_team_token) is None
+    assert site.db.authenticate_token(site.alice_team_token) is not None
+    # One audit entry and one event name who took over, and the new owner is told.
+    assert promotions(site, site.team) == [
+        {"user_id": site.bob, "reason": f"{dave}:owner", "target_ids": json.dumps([dave])}
+    ]
+    (event,) = promoted_events(site, site.team)
+    assert event["subject"] == dave and event["actor"] == f"user:{site.bob}"
+    assert json.loads(event["data"]) == {"user": dave, "reason": "previous_owner_left"}
+    ((to, subject, text),) = mail.sent
+    assert to == "dave@example.test" and subject == "You now own team"
+    assert "bob" not in text.lower()
+    # The new owner sees the notice in the workspace's event feed.
+    status, feed = site.json("GET", "/api/events?after=0", session=site.session(dave, site.team))
+    assert status == 200
+    assert [e["kind"] for e in feed["events"] if e["kind"] == "workspace.owner_promoted"] == [
+        "workspace.owner_promoted"
+    ]
+    # Everybody else can still reach the workspace through the new owner.
+    assert site.db.role(site.team, dave) == "owner"
+
+
+def test_ties_in_the_join_date_resolve_by_user_id(enabled):
+    site = enabled
+    first = member(site, site.team, "first@example.test", "2026-01-01")
+    second = member(site, site.team, "second@example.test", "2026-01-01")
+    with site.db._lock:
+        site.db._conn.execute(
+            "UPDATE memberships SET created_at = '2026-01-01T00:00:00Z' WHERE workspace_id = ?",
+            (site.team,),
+        )
+    leave(site, site.bob, site.bob_home)
+    deletion.purge_due(site.gateway)
+    expected = min(first, second, site.alice)
+    owners = [user for user, role in roles(site, site.team).items() if role == "owner"]
+    assert owners == [expected]
+
+
+def test_members_who_are_leaving_themselves_are_not_chosen(enabled):
+    site = enabled
+    oldest = member(site, site.team, "oldest@example.test", "2020-01-01")
+    with site.db._lock:
+        site.db._conn.execute(
+            "INSERT INTO account_deletions(user_id, state, requested_at, purge_after) "
+            "VALUES (?, 'pending', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')",
+            (oldest,),
+        )
+    leave(site, site.bob, site.bob_home)
+    deletion.purge_due(site.gateway)
+    assert roles(site, site.team)[oldest] == "member"
+    assert roles(site, site.team)[site.alice] == "owner"
+
+
+def test_without_an_active_member_the_workspace_is_not_handed_on_and_not_deleted(enabled):
+    site = enabled
+    suspend(site, site.alice)
+    status, body = ask(site, site.bob, site.bob_home, "bob@example.test")
+    assert status == 409 and body["code"] == "blocked"
+    assert body["blockers"] == [
+        {"code": "sole_owner", "workspace": {"id": site.team, "name": "team"}}
+    ]
+    assert state(site, site.bob) is None
+    assert roles(site, site.team) == {site.bob: "owner", site.alice: "member"}
+    assert promotions(site, site.team) == [] and promoted_events(site, site.team) == []
+
+
+def test_a_workspace_without_other_members_goes_with_the_account_and_a_shared_one_is_handed_on(
+    enabled,
+):
+    site = enabled
+    solo = site.db.create_workspace("bob solo", site.bob)
+    site.directory(solo)
+    leave(site, site.bob, site.bob_home)
+    (result,) = deletion.purge_due(site.gateway)
+    assert set(result["deleted_workspaces"]) == {site.bob_home, solo}
+    assert not (site.data_dir / "workspaces" / solo).exists()
+    assert site.rows("SELECT id FROM workspaces WHERE id = ?", solo) == []
+    assert roles(site, site.team)[site.alice] == "owner"
+    assert promotions(site, solo) == [] and promoted_events(site, solo) == []
+
+
+def test_cancelling_promotes_nobody_and_a_rerun_promotes_once(enabled):
+    site = enabled
+    mail = Mailer()
+    site.gateway.email_auth.mailer = mail
+    session = site.session(site.bob, site.bob_home)
+    assert ask(site, site.bob, site.bob_home, "bob@example.test", session)[0] == 200
+    assert site.json("DELETE", "/api/account/deletion", session=session)[0] == 200
+    site.advance(15 * DAY)
+    assert deletion.purge_due(site.gateway) == []
+    assert roles(site, site.team) == {site.bob: "owner", site.alice: "member"}
+    assert promotions(site, site.team) == [] and promoted_events(site, site.team) == []
+    assert mail.sent == []
+
+    recent = site.session_now(site.bob, site.bob_home)
+    assert ask(site, site.bob, site.bob_home, "bob@example.test", recent)[0] == 200
+    site.advance(15 * DAY)
+    deletion.purge_due(site.gateway)
+    for _ in range(2):  # sweeping again, or purging by hand, changes nothing
+        assert deletion.purge_due(site.gateway) == []
+        assert deletion.purge(site.gateway, site.bob) == {"state": "purged"}
+    assert len(promotions(site, site.team)) == 1
+    assert len(promoted_events(site, site.team)) == 1
+    assert len(mail.sent) == 1
+    assert roles(site, site.team) == {site.bob: "member", site.alice: "owner"}
+
+
+def test_an_interrupted_purge_does_not_promote_twice(enabled, monkeypatch):
+    site = enabled
+    mail = Mailer()
+    solo = site.db.create_workspace("bob solo", site.bob)
+    leave(site, site.bob, site.bob_home, mail)
+    real = deletion.remove_workspace
+
+    def crash(gateway, workspace_id):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(deletion, "remove_workspace", crash)
+    assert deletion.purge_due(site.gateway) == [{"user": site.bob, "state": "error"}]
+    assert state(site, site.bob)["state"] == "purging"
+    assert roles(site, site.team)[site.alice] == "owner"  # promoted before any file went
+    monkeypatch.setattr(deletion, "remove_workspace", real)
+    (result,) = deletion.purge_due(site.gateway)
+    assert result["state"] == "purged" and solo in result["deleted_workspaces"]
+    assert len(promotions(site, site.team)) == 1
+    assert len(promoted_events(site, site.team)) == 1
+    assert len(mail.sent) == 1
+
+
+def test_a_failed_mail_does_not_undo_the_promotion(enabled):
+    site = enabled
+    leave(site, site.bob, site.bob_home, Mailer(fail=True))
+    (result,) = deletion.purge_due(site.gateway)
+    assert result["state"] == "purged"
+    assert roles(site, site.team)[site.alice] == "owner"
+    assert len(promoted_events(site, site.team)) == 1
+
+
+def test_without_a_mailer_the_event_is_the_notice(enabled):
+    site = enabled
+    assert not site.gateway.email_auth.mailer.configured
+    assert ask(site, site.bob, site.bob_home, "bob@example.test")[0] == 200
+    site.advance(15 * DAY)
+    assert deletion.purge_due(site.gateway)[0]["state"] == "purged"
+    assert len(promoted_events(site, site.team)) == 1

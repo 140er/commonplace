@@ -15,7 +15,9 @@
 
   - A purge deletes workspaces without another live member (directory, store generations, control rows), rechecking each one right before its files go. A shared workspace keeps its directory and every row keyed to it or to one of its connections; the account's membership and connections stay as tombstones (member role, revoked, no credential). Rows keyed to the account itself are deleted wherever they are, also when they name a shared workspace: sessions, identities, plan, usage, push subscriptions, its sync streams, chat jobs, held answers, agent schedules and routines. The `users` row stays without name or address, disabled; the audit log is kept.
 
-  - A purge never runs while the account is the only owner of a workspace with other members, is the last instance administrator, holds a GitHub grant, or while a control table is unclassified.
+  - A workspace the account owns alone, with other members left, is handed on, not deleted: when the purge starts, the longest-standing active member (plain member, account not disabled, no deletion request of their own; join date, then user id) becomes an owner in the same transaction. That writes a `workspace.owner_promote` audit entry, a `workspace.owner_promoted` event the new owner sees in the workspace feed, and a mail when SMTP is configured. A failed mail does not undo it. Cancelling a request promotes nobody, and repeating or resuming a purge promotes nobody twice. A workspace with no other member goes with the account.
+
+  - A purge never runs while every other member of a workspace the account owns alone is disabled or leaving (nobody can take it over), the account is the last instance administrator or holds a GitHub grant, or while a control table is unclassified.
 
 - **How it fails:**
 

@@ -19,6 +19,7 @@ Kinds in use (add, never rename):
     orch.config.proposed  orch.config.accepted  orch.config.rejected
     orch.experiment.retired  orch.restore.acked  orch.lease.forced  orch.step.voided
     orch.trigger.failing  board.stalled
+    workspace.owner_promoted
 """
 
 from __future__ import annotations

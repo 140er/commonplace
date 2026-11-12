@@ -11,6 +11,12 @@ A purge runs once that date has passed, and only while nothing blocks it:
 
 - A workspace with no other member is deleted: its directory, every store
   generation and every control row.
+- A workspace the account owns alone, with other members left, passes to its
+  longest-standing active member (see :func:`successor`): they become an owner
+  in the transaction that starts the purge, with an audit entry, a
+  ``workspace.owner_promoted`` event in that workspace and a mail when the
+  server can send one. Cancelling a request promotes nobody, and repeating a
+  purge promotes nobody twice.
 - A workspace with other members keeps everything that belongs to the
   workspace: its directory, its settings and every row keyed to it or to one
   of its connections. The account's membership and connections stay as
@@ -24,8 +30,9 @@ A purge runs once that date has passed, and only while nothing blocks it:
   for good. The audit log is append-only and holds ids, not content; it stays.
 
 It is refused, and retried later, while the account is the only owner of a
-workspace that has other members, is the last instance administrator, still
-holds a GitHub grant, or while the control database has a table that
+workspace whose other members are all disabled or have asked to leave (nobody
+can take it over), is the last instance administrator, still holds a GitHub
+grant, or while the control database has a table that
 :mod:`.tables` does not classify. Refusing is the safe side: no other
 person's data is ever deleted or left without an owner.
 
@@ -44,7 +51,7 @@ import shutil
 import threading
 from datetime import datetime, timedelta, timezone
 
-from commonplace import sessions
+from commonplace import events, sessions
 from commonplace.admission import GATE
 from commonplace.http_util import log_failure
 from commonplace.workspace_store import workspace_root
@@ -102,18 +109,40 @@ def _now(gateway) -> datetime:
     return datetime.fromtimestamp(gateway.wall_clock(), timezone.utc).replace(microsecond=0)
 
 
+def successor(conn, workspace_id: str, user_id: str):
+    """The member who takes over a workspace ``user_id`` leaves as its only owner.
+
+    The longest-standing active member: a plain member whose account is not
+    disabled and has no deletion request of its own, by the date they joined,
+    then by id, so ties always resolve the same way. ``None`` when there is none.
+    """
+    return conn.execute(
+        "SELECT m.user_id AS id FROM memberships m JOIN users u ON u.id = m.user_id "
+        "WHERE m.workspace_id = ? AND m.user_id != ? AND m.role = 'member' "
+        "AND u.disabled_at IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM account_deletions d WHERE d.user_id = m.user_id) "
+        "ORDER BY m.created_at, m.user_id LIMIT 1",
+        (workspace_id, user_id),
+    ).fetchone()
+
+
 def effects(conn, present: dict, user_id: str) -> dict:
     """What a purge of ``user_id`` would do right now, and what blocks it.
 
     Accounts that were purged before are not "other members": only their
-    tombstones are left.
+    tombstones are left. A workspace the account owns alone, with other members
+    left, passes to its :func:`successor` (``promote_owner``); it only blocks
+    when none of them can take it.
     """
     others = (
-        "(SELECT count(*) FROM memberships o WHERE o.workspace_id = m.workspace_id "
-        "AND o.user_id != m.user_id AND o.user_id NOT IN "
+        "(SELECT count(*) FROM memberships o JOIN users ou ON ou.id = o.user_id "
+        "WHERE o.workspace_id = m.workspace_id AND o.user_id != m.user_id AND o.user_id NOT IN "
         "(SELECT user_id FROM account_deletions WHERE state = 'purged'){})"
     )
-    members, owners = others.format(""), others.format(" AND o.role = 'owner'")
+    members, owners = (
+        others.format(""),
+        others.format(" AND o.role = 'owner' AND ou.disabled_at IS NULL"),
+    )
     rows = conn.execute(
         f"SELECT m.workspace_id AS id, w.name AS name, m.role AS role, "
         f"{members} AS others, {owners} AS owners "
@@ -121,13 +150,17 @@ def effects(conn, present: dict, user_id: str) -> dict:
         "WHERE m.user_id = ? ORDER BY w.created_at, w.id",
         (user_id,),
     ).fetchall()
-    delete, leave, blockers = [], [], []
+    delete, leave, promote, blockers = [], [], [], []
     for row in rows:
         workspace = {"id": row["id"], "name": row["name"]}
         if row["others"] == 0:
             delete.append(workspace)
         elif row["role"] == "owner" and row["owners"] == 0:
-            blockers.append({"code": "sole_owner", "workspace": workspace})
+            heir = successor(conn, row["id"], user_id)
+            if heir is None:
+                blockers.append({"code": "sole_owner", "workspace": workspace})
+            else:
+                promote.append({**workspace, "to": heir["id"]})
         else:
             leave.append(workspace)
     user = conn.execute("SELECT is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -149,7 +182,12 @@ def effects(conn, present: dict, user_id: str) -> dict:
     unknown = tables.unclassified(present)
     if unknown:
         blockers.append({"code": "unsupported_data", "tables": unknown})
-    return {"delete_workspaces": delete, "leave_workspaces": leave, "blockers": blockers}
+    return {
+        "delete_workspaces": delete,
+        "leave_workspaces": leave,
+        "promote_owner": promote,
+        "blockers": blockers,
+    }
 
 
 def _view(row) -> dict:
@@ -179,7 +217,12 @@ def status(gateway, user_id: str, session=None) -> dict:
         "session_is_recent": started is not None
         and _now(gateway) - started <= timedelta(minutes=REAUTH_MINUTES),
         "request": _view(row) if row is not None else None,
-        **found,
+        **{
+            **found,
+            "promote_owner": [
+                {k: v for k, v in w.items() if k != "to"} for w in found["promote_owner"]
+            ],
+        },
     }
 
 
@@ -269,6 +312,63 @@ def purge_due(gateway, *, resume_only: bool = False) -> list:
     return results
 
 
+OWNER_PROMOTED = "workspace.owner_promoted"
+
+
+def _promote(db, conn, user_id, found) -> list:
+    """Hand workspaces the account owns alone to their successors, in the caller's
+    transaction. Repeating it changes nothing: once the successor is an owner the
+    workspace no longer lists a promotion. Returns what to announce after commit."""
+    announce = []
+    for item in found["promote_owner"]:
+        changed = conn.execute(
+            "UPDATE memberships SET role = 'owner' WHERE workspace_id = ? AND user_id = ? "
+            "AND role = 'member'",
+            (item["id"], item["to"]),
+        ).rowcount
+        if changed != 1:
+            continue
+        db.audit(
+            action="workspace.owner_promote",
+            decision="ok",
+            workspace_id=item["id"],
+            user_id=user_id,
+            reason=f"{item['to']}:owner",
+            target_ids=[item["to"]],
+        )
+        event = events.record(
+            db,
+            item["id"],
+            OWNER_PROMOTED,
+            subject=item["to"],
+            actor=f"user:{user_id}",
+            data={"user": item["to"], "reason": "previous_owner_left"},
+        )
+        email = conn.execute("SELECT email FROM users WHERE id = ?", (item["to"],)).fetchone()[0]
+        announce.append({"event": event, "email": email, "name": item["name"]})
+    return announce
+
+
+def _announce(gateway, announce) -> None:
+    """Tell the promoted members: the stored event goes to the app and webhook
+    listeners, and a mail when the server has one configured. A failed mail
+    never undoes the promotion; the event is the durable notice."""
+    mail = getattr(getattr(gateway, "email_auth", None), "mailer", None)
+    for item in announce:
+        events.notify(item["event"])
+        if mail is None or not mail.configured:
+            continue
+        try:
+            mail.send(
+                item["email"],
+                f"You now own {item['name']}",
+                f"The previous owner of the workspace {item['name']} has closed their account. "
+                "As its longest-standing member you are now an owner of the workspace.",
+            )
+        except Exception as exc:
+            log_failure(LOG, "Owner promotion mail failed", exc)
+
+
 def _blocked(db, conn, row, blockers) -> dict:
     recorded = json.dumps(blockers, sort_keys=True)
     if row["blocked"] != recorded:
@@ -297,6 +397,7 @@ def purge(gateway, user_id: str) -> dict:
         if found["blockers"]:
             return _blocked(db, conn, row, found["blockers"])
         doomed = [workspace["id"] for workspace in found["delete_workspaces"]]
+        announce = _promote(db, conn, user_id, found)
         # From here on the account cannot act: no request of its own can race the purge.
         conn.execute(
             "UPDATE users SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?",
@@ -307,6 +408,7 @@ def purge(gateway, user_id: str) -> dict:
             "WHERE user_id = ?",
             (json.dumps(doomed), user_id),
         )
+    _announce(gateway, announce)
     for workspace_id in doomed:
         # Checked again right before the files go: someone may have joined since.
         with db._lock:
@@ -320,6 +422,7 @@ def purge(gateway, user_id: str) -> dict:
         if found["blockers"]:
             return _blocked(db, conn, row, found["blockers"])
         # A workspace someone joined in the meantime is no longer this account's to delete.
+        announce = _promote(db, conn, user_id, found)
         gone = [w["id"] for w in found["delete_workspaces"] if w["id"] in doomed]
         email = conn.execute("SELECT email FROM users WHERE id = ?", (user_id,)).fetchone()[0]
         scope = {"uid": user_id, "email": email}
@@ -358,6 +461,7 @@ def purge(gateway, user_id: str) -> dict:
             (current, json.dumps(gone), user_id),
         )
         db.audit(action="account.purge", decision="ok", user_id=user_id, target_ids=gone)
+    _announce(gateway, announce)
     # A request that was already running may have recreated an empty directory.
     for workspace_id in gone:
         remove_workspace(gateway, workspace_id)

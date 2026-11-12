@@ -20,9 +20,11 @@ entry was written.
   sign-in and a typed confirmation, a grace period in which the account keeps working,
   then a purge. The purge deletes workspaces with no other live member and every row
   keyed to the account itself, and leaves tombstones (user id, membership, revoked connections)
-  where other people's work refers to it. It refuses rather than choose for the owner:
-  a sole owner of a shared workspace, the last instance administrator and an account with
-  a GitHub grant cannot be purged. One table (`commonplace/account/tables.py`) classifies
+  where other people's work refers to it. A sole owner of a shared workspace does not
+  take it with them: the longest-standing active member becomes an owner when the purge
+  starts (audit entry, event, mail if configured), and only a workspace with no other
+  member is deleted. It refuses rather than choose for the owner when nobody can take
+  over, for the last instance administrator and for an account with a GitHub grant. One table (`commonplace/account/tables.py`) classifies
   every control table for both paths, and a test fails when a new table is missing.
 
 - **Batch merge lane:** `CLAUDE.md` ("Merging pull requests") is the agent rule. A PR into `develop` merges on a gate PASS plus a quick PR check subset PASS on its exact head, squash with `--match-head-commit`, by its builder. The full suite runs per develop batch, not per PR; a red batch holds merges until a revert or fix lands. The coordinator never merges; `develop` to `main` needs the owner.
