@@ -7,6 +7,7 @@ Kinds: ``read`` and ``routine`` run at once; ``confirm`` never runs from a tool 
 stores a pending action and the person confirms it with a tap.
 """
 
+import logging
 import re
 import threading
 from dataclasses import dataclass
@@ -14,9 +15,13 @@ from typing import Any, Callable
 
 from commonplace import sessions
 from commonplace.boards.service import BoardService
-from commonplace.bots import store
+from commonplace.bots import access, machines, store
+from commonplace.bots.access import OutsideBot, ReadOnly
 from commonplace.extensions import ToolContext
+from commonplace.http_util import log_failure
 from commonplace.rules import enforce
+
+logger = logging.getLogger(__name__)
 
 KINDS = ("read", "routine", "confirm")
 SCOPES = ("any", "project")
@@ -49,6 +54,9 @@ class Tool:
     # Raises NotYourWords (or a refusal) before anything is stored or labelled; for a confirm
     # tool it runs before the pending action is created and again before `run` on /confirm.
     check: Callable[["Turn", dict], None] | None = None
+    # What the tool reaches, one of ``access.REACHES``; required (``register`` refuses without
+    # it). A shared bot's access list decides whether the tool is offered and may run.
+    reach: str | None = None
 
 
 @dataclass
@@ -68,6 +76,12 @@ def register(tool: Tool) -> Tool:
         raise ValueError("invalid tool name")
     if tool.kind not in KINDS or tool.scope not in SCOPES:
         raise ValueError(f"{tool.name}: invalid kind or scope")
+    if tool.reach not in access.REACHES:
+        raise ValueError(f"{tool.name}: `reach` is required, one of {', '.join(access.REACHES)}")
+    if tool.reach.startswith("project:") and tool.scope != "project":
+        raise ValueError(f"{tool.name}: a project reach needs scope `project`")
+    if tool.scope == "project" and tool.reach not in ("project:read", "project:write", "machine"):
+        raise ValueError(f"{tool.name}: a project tool reaches a project or a machine")
     schema = tool.schema
     if schema.get("type") != "object" or schema.get("additionalProperties") is not False:
         raise ValueError(f"{tool.name}: schema must be a closed object")
@@ -136,15 +150,56 @@ class Turn:
     def boards(self) -> BoardService:
         return BoardService(ToolContext(principal=self.principal(), gateway=self.gateway))
 
-    def readable(self) -> list[str]:
-        return [b["slug"] for b in self.boards().board_list()]
+    def effective(self) -> access.Access:
+        """What this turn may reach right now: the person's own reach for a bot that is not
+        shared, else the bot's list ∩ the talker ∩ the owner, from fresh principals every call."""
+        talker = access.person(self.gateway, self.user_id, self.workspace_id)
+        if talker is None:
+            raise Gone()
+        if not self.bot.get("shared"):
+            return access.effective(self.gateway, self.bot, None, talker, None)
+        owner_id = self.bot.get("owner_id")
+        owner = (
+            talker
+            if owner_id == self.user_id
+            else access.person(self.gateway, owner_id, self.workspace_id)
+        )
+        try:
+            grants = self.store().access_get(self.bot["id"], self.user_id)["entries"]
+        except store.Missing:
+            grants = None  # no live share or sharing is off: nothing is reachable
+        except Exception as exc:
+            log_failure(logger, "Bot access list unreadable", exc)
+            grants = None
+        return access.effective(self.gateway, self.bot, grants, talker, owner)
 
-    def board(self, args) -> str:
-        """The bot's project; for a bot without one, the validated ``project`` argument."""
+    def readable(self) -> list[str]:
+        return list(self.effective().projects)
+
+    def board(self, args, effective=None) -> str:
+        """The bot's project; for a bot without one, the validated ``project`` argument.
+
+        A project the asker cannot read is "gone" (as for a missing one). One the asker can
+        read but the bot's access does not cover is refused as outside the bot's access.
+        """
         board = self.bot.get("board") or args.get("project")
-        if not isinstance(board, str) or board not in self.readable():
+        effective = effective or self.effective()
+        if not isinstance(board, str) or not effective.can_read(board):
+            if isinstance(board, str) and effective.shared and board in effective.asker:
+                raise OutsideBot("project")
             raise Gone()
         return board
+
+    def machines(self) -> list[dict]:
+        """The machines this turn may use: what the person may use, and for a shared bot also
+        what the list grants and the owner may use."""
+        listed = machines.list_machines(self.gateway, self.principal())
+        if not self.bot.get("shared"):
+            return listed
+        effective = self.effective()
+        owner = access.person(self.gateway, self.bot.get("owner_id"), self.workspace_id)
+        owned = {m["id"] for m in machines.list_machines(self.gateway, owner)} if owner else set()
+        return [m for m in listed if m["id"] in owned and effective.machine_granted(m["id"])]
 
     def words(self, text) -> str:
         """``text`` trimmed, when it is a verbatim span (2+ characters) of the stored message."""
@@ -234,11 +289,39 @@ def schema_for(tool: Tool, turn: Turn) -> dict:
     }
 
 
+def _covered(turn, tool, effective) -> bool:
+    """Whether a shared bot's effective access covers ``tool`` for some project it could act on."""
+    slugs = [turn.bot["board"]] if turn.bot.get("board") else list(effective.projects)
+    for project in slugs if tool.scope == "project" else [None]:
+        try:
+            access.check_tool(effective, tool, project)
+        except (OutsideBot, ReadOnly):
+            continue
+        return True
+    return False
+
+
+def gate(turn, tool, args) -> None:
+    """Refuse a call the turn's effective access does not cover; runs on every call, fresh.
+
+    Raises :class:`Gone` (a project the asker cannot read), :class:`OutsideBot` or
+    :class:`ReadOnly`. A bot that is not shared only gets the project check it always had.
+    """
+    effective = turn.effective()
+    if effective.shared and tool.reach != "none" and not effective.tool_granted(tool.name):
+        raise OutsideBot("other")
+    project = turn.board(args, effective) if tool.scope == "project" else None
+    access.check_tool(effective, tool, project)
+
+
 def offered(turn: Turn) -> list[Tool]:
     """The tools this turn may call, in registration order."""
     out = []
+    effective = turn.effective()
     for tool in list(REGISTRY.values()):
         if tool.scope == "project" and not turn.bot.get("board") and not turn.projects:
+            continue
+        if effective.shared and not _covered(turn, tool, effective):
             continue
         if tool.available is not None:
             try:
@@ -282,6 +365,7 @@ register(
             "additionalProperties": False,
         },
         kind="routine",
+        reach="none",
         run=_remember,
         label=lambda turn, args: "Remembered a note",
     )
@@ -297,7 +381,61 @@ register(
             "additionalProperties": False,
         },
         kind="routine",
+        reach="none",
         run=_forget,
         label=lambda turn, args: "Forgot a note",
+    )
+)
+
+
+def _my_access(turn, args):
+    effective = turn.effective()
+    if not effective.shared:
+        return Result(
+            True, {"shared": False, "note": "This bot acts with the person's own access."}
+        )
+    asked = args.get("project")
+    if asked is not None:
+        if effective.can_read(asked):
+            mode = "write" if effective.can_write(asked) else "read"
+            return Result(True, {"project": asked, "reach": mode})
+        reason = (
+            access.SENTENCES["outside_bot_project"]
+            if asked in effective.asker
+            else "I can't find that."
+        )
+        return Result(True, {"project": asked, "reach": "none", "reason": reason})
+    return Result(
+        True,
+        {
+            "shared": True,
+            "projects": [
+                {"project": slug, "write": effective.can_write(slug)} for slug in effective.projects
+            ],
+            "machines": [m["label"] for m in turn.machines()],
+            "tools": sorted(effective.tools & set(REGISTRY)),
+            "note": "Only what the bot's owner granted, within this person's own access.",
+        },
+    )
+
+
+register(
+    Tool(
+        name="my_access",
+        description=(
+            "Say what this bot may reach for this person (projects, machines, tools), or, with "
+            "`project`, whether it may use that one and why not."
+        ),
+        schema={
+            "type": "object",
+            "properties": {"project": {"type": "string", "minLength": 1, "maxLength": 200}},
+            "required": [],
+            "additionalProperties": False,
+        },
+        kind="read",
+        reach="none",
+        available=lambda turn: bool(turn.bot.get("shared")),
+        run=_my_access,
+        label=lambda turn, args: "Looked at what I may use",
     )
 )

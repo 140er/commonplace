@@ -191,7 +191,7 @@ def _entry(row) -> dict:
     return {key: row[key] for key in ("kind", "ref", "mode", "set_by", "set_at")}
 
 
-def _check_entries(entries) -> dict:
+def check_entries(entries) -> dict:
     """``{(kind, ref): mode}`` of a well-formed list; fixed-text errors."""
     if not isinstance(entries, list) or len(entries) > MAX_ACCESS_ENTRIES:
         raise Invalid("entries must be a list of at most 200")
@@ -476,7 +476,7 @@ class SharesMixin:
         """
         if type(version) is not int:
             raise Invalid("invalid version")
-        wanted = _check_entries(entries)
+        wanted = check_entries(entries)
         with self._tx() as conn:
             bot = self._own(conn, bot_id, owner_id)
             if not bot["shared"]:
@@ -521,6 +521,19 @@ class SharesMixin:
                     )
                 conn.execute("UPDATE bots SET access_version=? WHERE id=?", (new, bot_id))
         return self.access_get(bot_id, owner_id)
+
+    def access_changes(self, bot_id, user_id, version) -> list[dict]:
+        """The log rows written for one access version (kind, ref, modes: no text)."""
+        with self._tx(write=False) as conn:
+            self._viewer(conn, user_id, bot_id)
+            return [
+                {key: r[key] for key in ("action", "kind", "ref", "mode_before", "mode_after")}
+                for r in conn.execute(
+                    "SELECT * FROM bot_access_log WHERE bot_id=? AND version=? AND action IN "
+                    "('grant','change','remove') ORDER BY id",
+                    (bot_id, version),
+                )
+            ]
 
     def access_log(self, bot_id, user_id, after=0, limit=PAGE_DEFAULT) -> list[dict]:
         """Log rows after id ``after``, oldest first (owner and members; ids and codes only)."""

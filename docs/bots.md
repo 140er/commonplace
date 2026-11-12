@@ -28,6 +28,9 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `GET /api/bots/<id>/memory` | `{memories:[{id,text,at}]}` |
 | `POST /api/bots/<id>/memory` | `{text}`, `{memory}` |
 | `DELETE /api/bots/<id>/memory/<mid>` | `{ok}` |
+| `GET /api/bots/<id>/access` | `{version, entries:[{kind,ref,mode,set_at}]}`: what a shared bot may reach (its owner, and members with a live share) |
+| `PUT /api/bots/<id>/access` | `{version, entries}`, `{version, entries}`: the owner replaces the list; web session only; `409 conflict` for a stale `version` |
+| `GET /api/bots/<id>/access/log?after=&limit=` | `{log}`: one row per change, ids and codes only |
 
 The learning memory (`docs/design/bot-learning-memory.md`, first slice: the store, the switches
 and forgetting; nothing learns yet) adds person-session routes. They are off by default and
@@ -313,6 +316,19 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   above. Sharing is off for every workspace until its owner turns it on, a share reaches
   nothing until the bot's owner grants it something, and a member never reaches another
   member's private thread.
+- What a shared bot may reach (slice S2): a turn of a shared bot acts with the bot's access
+  list, the talking member's own rights and the owner's rights, all intersected and read afresh
+  on every call. The list holds `project` entries (`read` or `write`), `machine` entries (a
+  machine id) and `tool` entries (a tool name, always needed for a tool other than `remember`,
+  `forget` and `my_access`); `wing` entries are refused (`unsupported_kind`) until a tool reads
+  wings. A `read` grant never lets the bot write. A project the asker cannot read is "can't
+  find that", one the asker reads but the bot may not use is refused with a fixed sentence that
+  names nothing. Only the bot's owner edits the list (`403 owner_only` for a member, 404 for
+  anyone else and for an app or agent token), only with something the owner reaches
+  themselves (`403 outside_your_scope`), by compare-and-set on `version`; each real change writes
+  one log row per entry and one control-database audit row (kind, ref and mode only). Members
+  read the list and the log. A bot that is not shared ignores the list. Machines and tools are
+  listed only within the list, and the runner's own rule still decides who may start an agent.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 

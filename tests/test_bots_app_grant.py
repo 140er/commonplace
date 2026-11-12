@@ -443,6 +443,7 @@ def test_a_member_app_stays_bound_by_the_members_permissions(bots_hub, fake, ext
 
     extra_tools(
         tools.Tool(
+            reach="none",
             name="owner_op",
             description="An owner-only operation",
             schema={"type": "object", "properties": {}, "additionalProperties": False},
