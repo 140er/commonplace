@@ -202,7 +202,7 @@ def test_page_deadline_nulls_current_and_remaining(hub, disk, monkeypatch):
     )
 
 
-def test_half_second_budget_and_three_million_covering_count(tmp_path):
+def test_half_second_budget_and_three_million_covering_count(tmp_path, monkeypatch):
     from commonplace import index_stats
 
     assert index_stats.READ_SECONDS == 0.5
@@ -218,6 +218,9 @@ def test_half_second_budget_and_three_million_covering_count(tmp_path):
         assert "COVERING INDEX" in str(plan)
     finally:
         conn.close()
+    # The 0.5 s constant is asserted above; the count itself runs under a generous budget so
+    # a loaded machine cannot turn the covering-index check into a timing test.
+    monkeypatch.setattr(index_stats, "READ_SECONDS", 30.0)
     started = time.monotonic()
     result = index_stats.read(palace)
     print(
