@@ -4,6 +4,11 @@
 - **Owns:**
 
   - Owner-only Project settings list orchestrator config versions with their changes and an Accept control, plus Release for cards waiting for release.
+
+  - The owner Compute route, real-inventory enrollment/scope/proposal/approval/passive collection forms, immutable UTF-8 script upload/source inspection/proposal UI, escaped observations and session/route response fencing; transport capabilities remain server-authoritative.
+
+  - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
+
   - The card panel offers Release with a required reason on cards awaiting release, the handoff form names the orchestrator and pool recipients, and refused card actions appear inside the open panel.
 
   - Deck Compute (`deck-compute.js`, `deck-topology.js`) draws owner-visible enrolled machines as a pixel-sized hub map with label-safe geometry, enrollment readiness dots, keyboard selection, four detail tabs and General-bot draft handoffs; no liveness or network routes are inferred.
@@ -54,6 +59,11 @@
 
 - **Promises:**
   - Project settings show a model field pair for each role (orchestrator, builder, reviewer, gate) and an escalation rule form (failed rounds, labels, stronger model); non-owners see both read-only without a save button.
+
+  - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer; task creation and runner admission/recorded launch/refusal/uncertainty are labeled separately from completed work.
+  - Compute execution evidence is escaped and distinguishes observed exit from uncertain cancellation or stored consent; control metadata is escaped and responses are fenced to the exact session/workspace/actor/route; ambiguous mutations require reconciliation and approval never implies dispatch.
+  - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
+  - Coworker message authors follow `actor`: a human row's `bot_id` remains its recipient; only the exact matching bot actor receives a bot name, badge and styling.
 
   - The Admin runner wing editor loads its picker from `GET /api/runners/wings` under a client deadline; on failure it keeps granted wings ticked and accepts typed wing names. `GET /api/connections` gets its wing names from the same index read (`workspace_wing_names` in `web/agents.py`).
 

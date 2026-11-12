@@ -5,6 +5,9 @@
 
   - Canonical Space REST aliases mapped to existing board tool authority.
 
+  - Trusted Compute startup configuration wraps central ControlDB authority access in the bounded cross-process coordinator, with persisted guards and durable epoch invalidation; no configuration leaves existing behavior unchanged.
+  - The gateway installs inert owner Compute management routes alongside chat; this extension setup neither loads credential custody nor starts remote execution.
+
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
   - The extension seam lists `commonplace.agent_schedules`, installed after holds.

@@ -11,6 +11,7 @@
 
   - Plain pytest excludes the `timing` marker from behavior checks; explicit timing selection remains available for serial informational measurements.
 
+  - The optional compute extra adds Paramiko >=5.1,<6 and cryptography without enabling remote access; uv.lock records its resolved dependency set.
   - `uv sync --extra dev` reproduces the locked environment; `ruff check` and `ruff format --check` define style; the coverage threshold in `pyproject.toml` is the gate.
 
 - **How it fails:**
