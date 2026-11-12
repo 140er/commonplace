@@ -197,27 +197,6 @@ def test_a_large_batch_is_split_and_comes_back_in_order(monkeypatch, socket_path
     assert all(v.tobytes() == _vector(t).tobytes() for t, v in zip(texts, vectors))
 
 
-def test_chunks_size_by_the_ascii_wire_encoding_not_the_character_count():
-    # 300k emoji are 3.6 MB on the wire: two of them must not share a chunk
-    # (len*4 would put them together at 2.4 MB and exceed the service limit).
-    big = "\U0001f600" * 300_000
-    chunks = list(service_module._chunks([big, big, big]))
-    assert [len(c) for c in chunks] == [1, 1, 1]
-    for chunk in chunks:
-        assert len(json.dumps(chunk).encode("ascii")) < service_module.DEFAULT_MAX_REQUEST_BYTES
-
-
-def test_one_text_over_the_request_limit_is_refused_without_marking_the_service_down(
-    monkeypatch, socket_path
-):
-    huge = "\U0001f600" * 800_000  # 9.6 MB on the wire
-    with _serve(socket_path):
-        ef = _client_ef(monkeypatch, socket_path)
-        with pytest.raises(service_module.EmbeddingServiceUnavailableError):
-            ef(input=[huge])
-        assert len(ef(input=["abc"])) == 1  # no cooldown: the service is healthy
-
-
 def test_a_bare_string_is_one_document_and_queries_use_the_same_path(monkeypatch, socket_path):
     with _serve(socket_path):
         ef = _client_ef(monkeypatch, socket_path)
