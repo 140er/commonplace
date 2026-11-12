@@ -422,6 +422,54 @@ def test_B7_other_grant_edits_keep_binding_and_increment_version(signup_hub, own
         before = after
 
 
+def test_owner_editor_partial_patch_keeps_wings_topics_and_attestation(signup_hub, owners):
+    """The Admin editor sends only projects and max_runtime_mode with If-Match."""
+    hub, owner = signup_hub, owners["A"]
+    machine = enroll(hub, owner)
+    attest(hub, owner, machine)
+    before = machine_row(hub, owner, machine)
+    assert before["binding_state"] == "owner_attested"
+    status, body = http(
+        hub.port,
+        "PATCH",
+        "/api/runners/" + machine["machine_id"],
+        cookie=owner["cookie"],
+        body={"projects": ["demo", "other"], "max_runtime_mode": "auto"},
+        headers={"If-Match": str(before["grant_version"])},
+    )
+    assert status == 200, (status, body)
+    assert body["binding_state"] == "owner_attested"
+    after = machine_row(hub, owner, machine)
+    assert after["projects"] == ["demo", "other"] and after["max_runtime_mode"] == "auto"
+    assert after["wings"] == before["wings"] and after["topics"] == before["topics"]
+    assert after["binding_state"] == "owner_attested"
+    assert after["binding_epoch"] == before["binding_epoch"]
+    assert after["binding_grant_version"] == before["binding_grant_version"]
+    assert after["grant_version"] == before["grant_version"] + 1
+    # The page's version is now stale: a second save with it is a 409, an invalid mode a 400.
+    stale = {"If-Match": str(before["grant_version"])}
+    path = "/api/runners/" + machine["machine_id"]
+    status, body = http(
+        hub.port,
+        "PATCH",
+        path,
+        cookie=owner["cookie"],
+        body={"projects": ["demo"], "max_runtime_mode": "approval-required"},
+        headers=stale,
+    )
+    assert status == 409, (status, body)
+    status, body = http(
+        hub.port,
+        "PATCH",
+        path,
+        cookie=owner["cookie"],
+        body={"projects": ["demo"], "max_runtime_mode": "bogus"},
+        headers={"If-Match": str(after["grant_version"])},
+    )
+    assert status == 400, (status, body)
+    assert machine_row(hub, owner, machine)["max_runtime_mode"] == "auto"
+
+
 def test_T2_labels_are_unique_until_revocation(signup_hub, owners):
     hub, owner = signup_hub, owners["A"]
     machine = enroll(hub, owner)

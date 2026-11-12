@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 let input = ''; for await (const part of process.stdin) input += part;
 const sources = JSON.parse(input);
 const load = text => import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`);
-const { createRunnerBlock, parseList, chosenWings } = await load(sources.adminrunners);
+const { createRunnerBlock, parseList, chosenWings, grantBody } = await load(sources.adminrunners);
 const { createAdmin } = await load(sources.admin);
 const e = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
@@ -37,7 +37,7 @@ function fixture({ machines, wings = ['shared', 'team'], fail = {}, wingsGate = 
   };
   const state = { machines: machines ?? [machine()], copied: [] };
   const api = async (path, options = {}) => {
-    calls.push({ path, method: options.method || 'GET', body: options.body});
+    calls.push({ path, method: options.method || 'GET', body: options.body, ...(options.headers ? { headers: options.headers } : {}) });
     (calls.timeouts ??= {})[`${options.method || 'GET'} ${path}`] = options.timeoutMs;
     const key = `${options.method || 'GET'} ${path}`;
     if (fail[key]) throw Object.assign(new Error(fail[key]), { status: 409 });
@@ -59,7 +59,7 @@ function fixture({ machines, wings = ['shared', 'team'], fail = {}, wingsGate = 
 function machine(extra = {}) {
   return {
     machine_id: 'mach_aaaaaaaaaaaaaaaa', label: 'bench-1', projects: ['demo'], topics: ['worker'], wings: ['shared'],
-    max_runtime_mode: 'approval-required', max_in_flight: 1, enabled: true, revoked_at: null, binding_state: 'unbound',
+    max_runtime_mode: 'approval-required', max_in_flight: 1, grant_version: 3, enabled: true, revoked_at: null, binding_state: 'unbound',
     binding_provider_instance_id: null, worker_connection_id: 'conn_workerid', ...extra,
   };
 }
@@ -132,11 +132,51 @@ const field = (name, value, type = 'text', checked = false) => ({ name, value, t
   f.block.stop();
 }
 
+// 3b. The grant editor shows current values and a warning, and saves a partial body with If-Match.
+{
+  const f = fixture({ machines: [machine({ projects: ['demo', 'other'], max_runtime_mode: 'auto' })] });
+  f.block.show(f.host); await flush();
+  const list = f.regions.list.innerHTML;
+  assert.match(list, /data-runner-form="grant" data-runner-id="mach_aaaaaaaaaaaaaaaa"/);
+  assert.match(list, /name="projects" required value="demo, other"/, 'current projects are prefilled');
+  assert.match(list, /<option value="auto" selected>/, 'current runtime mode is selected');
+  assert.equal((list.match(/ selected>/g) || []).length, 1);
+  assert.match(list, /without per-command approval/, 'auto and full-access are warned about');
+  assert.match(list, /do not reset the binding/);
+  await f.submit('grant', 'mach_aaaaaaaaaaaaaaaa', [field('projects', ' demo, third, demo '), field('max_runtime_mode', 'full-access')]);
+  const patch = f.calls.find(c => c.method === 'PATCH');
+  assert.deepEqual(patch, { path: '/api/runners/mach_aaaaaaaaaaaaaaaa', method: 'PATCH', body: { projects: ['demo', 'third'], max_runtime_mode: 'full-access' }, headers: { 'If-Match': '3' } });
+  assert.deepEqual(Object.keys(patch.body).sort(), ['max_runtime_mode', 'projects'], 'no wings or topics key is sent');
+  assert.match(f.regions.status.textContent, /attestation is unchanged/); assert.equal(f.regions.status.dataset.state, 'ok');
+  assert.equal(f.calls.filter(c => c.path === '/api/runners' && c.method === 'GET').length, 2, 'the list reloads after saving');
+  assert.deepEqual(grantBody({ projects: 'a, b', max_runtime_mode: 'auto', wings: ['x'], topics: 't' }), { projects: ['a', 'b'], max_runtime_mode: 'auto' });
+  const before = f.calls.length;
+  await f.submit('grant', 'mach_aaaaaaaaaaaaaaaa', [field('projects', ' , '), field('max_runtime_mode', 'auto')]);
+  assert.equal(f.calls.length, before, 'an empty project list sends nothing');
+  assert.match(f.regions.status.textContent, /at least one project/);
+  f.block.stop();
+}
+// 3c. A 409 (stale version) and a 400 show the server's words; a conflict reloads the list and the next save uses the new version.
+{
+  const f = fixture({ fail: { 'PATCH /api/runners/mach_aaaaaaaaaaaaaaaa': 'the machine changed since it was read; reload and try again' } });
+  f.block.show(f.host); await flush();
+  await f.submit('grant', 'mach_aaaaaaaaaaaaaaaa', [field('projects', 'demo'), field('max_runtime_mode', 'auto')]);
+  assert.match(f.regions.status.textContent, /the machine changed since it was read; reload and try again/);
+  assert.match(f.regions.status.textContent, /list was reloaded/); assert.equal(f.regions.status.dataset.state, 'error');
+  assert.equal(f.calls.filter(c => c.path === '/api/runners' && c.method === 'GET').length, 2, 'a conflict reloads the machine list');
+  f.block.stop();
+  const g = fixture({ fail: { 'PATCH /api/runners/mach_aaaaaaaaaaaaaaaa': 'invalid max_runtime_mode' } });
+  g.block.show(g.host); await flush();
+  await g.submit('grant', 'mach_aaaaaaaaaaaaaaaa', [field('projects', 'demo'), field('max_runtime_mode', 'bogus')]);
+  assert.equal(g.regions.status.textContent.startsWith('invalid max_runtime_mode'), true); assert.equal(g.regions.status.dataset.state, 'error');
+  g.block.stop();
+}
+
 // 4. Server errors surface as text; revoked machines offer no forms; no token ever persisted or logged.
 {
   const f = fixture({ machines: [machine({ revoked_at: '2026-11-01T00:00:00Z', enabled: false })], fail: { 'POST /api/runners/mach_aaaaaaaaaaaaaaaa/attest': 'provider_change_requires_reset' } });
   f.block.show(f.host); await flush();
-  assert.doesNotMatch(f.regions.list.innerHTML, /<form/); assert.match(f.regions.list.innerHTML, /revoked/);
+  assert.doesNotMatch(f.regions.list.innerHTML, /<form/); assert.match(f.regions.list.innerHTML, /revoked/); assert.doesNotMatch(f.regions.list.innerHTML, /data-runner-form="grant"/);
   await f.submit('attest', 'mach_aaaaaaaaaaaaaaaa', [field('topics', 'worker'), field('provider_instance_id', 'p'), field('worker_connection_id', 'c')]);
   assert.equal(f.regions.status.textContent, 'provider_change_requires_reset');
   assert.equal(f.regions.status.dataset.state, 'error');
