@@ -239,6 +239,16 @@ management routes and script control path are installed through the normal
 extension list and perform no remote effect until the trusted configuration enables
 them.
 
+### Compute execution component
+
+`compute/executor.py` runs durable execution attempts for approved actions: each
+attempt is recorded before any exec, checks exact signed enrollment, current
+authority and custody at every stage, consumes its approval once and keeps an
+uncertain outcome reserved rather than assuming termination. Published evidence is
+bounded and redacted. The owner UI shows the observed exit, or an uncertain
+cancellation, and never implies dispatch from approval alone. The executor is
+inert until trusted configuration enables it.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and

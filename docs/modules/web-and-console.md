@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
+  - The owner Compute page (`web/static/compute.js`) renders machines, scopes, proposals, approvals and execution evidence from server-authoritative state, escapes every value and fences responses to the current session and route.
+
   - The separate instance console route, additive capability, explicit metadata DTOs and independent section controller.
 
   - Owner-only Project settings list orchestrator config versions with their changes and an Accept control, plus Release for cards waiting for release.
