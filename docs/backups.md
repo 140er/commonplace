@@ -73,7 +73,8 @@ can be restored without keys; hashes verify those bytes, not decrypted
 integrity. Keyslots and wrapping credentials are separate recovery inputs,
 outside this backup tree. See [experimental workspace
 encryption](workspace-encryption.md) for its limits and remaining rollout
-requirements.
+requirements, and the [encrypted workspace recovery
+runbook](recovery/encrypted-workspace.md) for restoring one.
 
 ## Configure the nightly job
 

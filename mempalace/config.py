@@ -1432,6 +1432,24 @@ class MempalaceConfig:
         return default if val is None or val < 0 else val
 
     @property
+    def embedding_service(self):
+        """Socket path of the shared local embedding service, or ``None`` (off, the default).
+
+        Opt-in. When set, ``minilm`` and ``embeddinggemma`` embed through
+        :mod:`mempalace.embedding_service` instead of loading the model in
+        each process. Resolved from env ``MEMPALACE_EMBEDDING_SERVICE``
+        first, then ``embedding_service`` in ``config.json``: an absolute
+        socket path, or ``on``/``true`` for ``embedding.sock`` in the config
+        directory; unset, empty or ``off``/``false`` leaves it off.
+        """
+        from .embedding_service import resolve_address
+
+        value = env_str("MEMPALACE_EMBEDDING_SERVICE")
+        if not value:
+            value = self._file_config.get("embedding_service")
+        return resolve_address(value, self._config_dir)
+
+    @property
     def embedding_api_url(self):
         """Base URL of the OpenAI-compatible ``/v1/embeddings`` endpoint.
 
