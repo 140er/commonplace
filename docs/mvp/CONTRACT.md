@@ -163,6 +163,7 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
 
 - `commonplace onboard [--url URL] [--token-env NAME] [--home DIR] [--project DIR | --no-project] [--dry-run]`: default home and current project pointers, exact reversible imports, and native Claude/Codex connection + hook configuration. Dry-run writes nothing and needs no token. Codex hook trust stays under native review. [Onboarding](../agent-onboarding.md) defines refusal and recovery behavior.
 - `commonplace remember TEXT` saves verbatim through `memory_save`; `commonplace rule TEXT [--agent self|'*'] [--kind instruction|permission|limit|style]` proposes through `rules_publish`. Both accept `--url` and `--token-env`, fetch current effective rules and use the configured caller's permissions.
+- `commonplace review-rules [--url URL] [--token-env NAME] [--verify VERDICT_FILE]` prints the caller's effective rules as a block for a reviewer's prompt, or checks that a verdict ends with the current `Rules checked:` line. Exit 0 complete or attested, 1 verdict not attested, 2 rules incomplete or unavailable; the block is never empty ([Rules](../design/RULES.md)).
 - `commonplace check [--home DIR] [--project DIR | --no-project]` flags managed local-only instruction/memory files without uploading content; exit 1 means findings, exit 2 means an operation failed. These client commands bypass the server data-directory lock and never initialize a local server database.
 - `commonplace login-link <email> [--workspace] [--base-url] [--minutes] [--send]` prints `<base>/app/login?t=…`; with `--send` it emails the link instead (SMTP via `COMMONPLACE_SMTP_*`, see `commonplace/README.md`) and prints only `login link sent to <address>`.
 - `commonplace connect --url <base>/mcp [--token-env COMMONPLACE_TOKEN]`: stdio ↔ HTTP MCP bridge (newline-delimited JSON-RPC on stdin/stdout; POST each to the URL with the Bearer; 202 → no output). For clients that only speak stdio.
@@ -195,6 +196,18 @@ mcp_url() -> str               # AGENT_URL + "/mcp"
 Every link we hand out (webhook payload `url`, `ask`/`needs_me` replies, card JSON `url`, login links) uses `share_link` for app pages and `mcp_url()` for MCP. `GET /s/<code>` → 302 to `APP_URL + path` (no auth on the redirect; the target page needs sign-in). Codes: 7 chars base62, table `short_links(code PK, workspace_id, path, created_at)`. Until W8 lands, call `commonplace.urls` lazily and fall back to `APP_URL + path`.
 
 **OAuth 2.1 (W8)** for claude.ai and ChatGPT, on AGENT_URL: protected-resource metadata (RFC 9728) at `/.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`), AS metadata (RFC 8414) at `/.well-known/oauth-authorization-server`, dynamic client registration (RFC 7591) at `/oauth/register`, `/oauth/authorize` (requires the web session; consent screen = one card: client name, workspace, Allow / Deny; policy preset = slim, standard trust, write_wing `inbox`, read `shared,inbox,project_*`; no extra clicks beyond Allow), `/oauth/token` (authorization_code with PKCE S256 only, refresh_token with rotation), `/oauth/revoke`. Access tokens `cmmn_at_…`-style opaque, 1 h; refresh 90 d. Stored as hashes; each grant is a `connections` row with `auth='oauth'`. 401 on `/mcp` carries `WWW-Authenticate: Bearer resource_metadata="<AGENT_URL>/.well-known/oauth-protected-resource"`. An `OAuthAuthenticator` is added to `gateway.authenticators` in `install(gateway)`.
+
+OAuth consent permits only `'self'` and the exact validated callback origin in
+CSP `form-action` and shows that same escaped origin as the code destination. Login
+and generic HTML/error pages remain self-only. Strict parsed DNS
+host and numeric-port validation, including refusal of all IPv6 literals, rejects unsafe new or legacy redirect URIs
+through the existing invalid-redirect path (Chromium ignores IPv6 CSP host-sources); HTTPS/loopback HTTP schemes and
+exact registered-URI matching remain unchanged. HTTPS numeric/`0x`-hex final labels
+require canonical dotted-quad IPv4. Registered-but-invalid redirects explicitly
+request re-registration; missing registrations keep their separate error. Live
+redirect registrations must be inventoried before deploy; this inventory is not
+performed here.
+
 
 **Privacy, invisible (W9)**: `commonplace/privacy.py` with `scan(text) -> list[str]` flags: `secret:<kind>` (API keys, tokens incl. cmmn_, private keys, passwords in URLs, JWTs), `health`, `injection:<kind>` (§9 list). No clicks, no prompts. Use: `memory_save` routes text flagged `health` to theme `private` when the caller may write `private`, otherwise keeps the theme; secrets are flagged in the event data (`flags`) and shown as ⚠ in the app; text is never changed. Boards store `flags` from `scan()` on titles/bodies/comments.
 
