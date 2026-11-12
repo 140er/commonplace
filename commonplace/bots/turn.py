@@ -19,7 +19,7 @@ import time
 
 from commonplace import redact, sessions
 from commonplace.boards.service import BoardService
-from commonplace.bots import blocks, context, limits, modelcfg, store, tools
+from commonplace.bots import blocks, context, extract, limits, modelcfg, store, tools
 from commonplace.chat import model_stream
 from commonplace.chat.types import ChatDenied, ModelError
 from commonplace.extensions import ToolContext, ToolError
@@ -153,6 +153,8 @@ class TurnRun:
             limits.REGISTRY.release(self)
             self.finished.set()
             self.queue.put(None)
+        if not outcome and self.reply is not None and self.reply["state"] == "ok":
+            extract.after_turn(self)  # a finished new turn only; replays never get here
 
     def _turn(self) -> str:
         bots = store.open_bots(self.gateway, self.workspace_id)
