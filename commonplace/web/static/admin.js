@@ -2,7 +2,7 @@
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Agents and connections',
   runtime: 'Orchestrators and runners/machines', limits: 'Agent limits',
-  stuck: 'Needs-me and stuck cards', deploy: 'Deployment and health', backups: 'Backups',
+  stuck: 'Needs-me and stuck cards', deploy: 'Deployment and health', backups: 'Backups', 'index-stats': 'Memory index',
 };
 
 // api includes response.json(): the deadline covers both transport and body decoding.
@@ -32,7 +32,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
   const sections = new Map(), requests = new Map(), generations = new Map(), writing = new Set(), notes = new Map();
   const owner = () => current()?.can_admin === true;
   const eligible = () => live && owner() && current()?.workspace === workspace;
-  const operational = key => ['deploy','health','backups','backup-online','backup-offline'].includes(key);
+  const operational = key => ['deploy','health','backups','backup-online','backup-offline','index-stats'].includes(key);
   const instanceOwner = () => current()?.can_admin_instance === true && !instanceBlocked;
   const label = key => ({health:'Health','backup-online':'Online backup','backup-offline':'Offline backup',users:'Users',connections:'Connections',needs:'Needs-me',stuck:'Stuck',runtime:'Runtime',limits:'Agent limits'})[key] || SECTIONS[key];
   const value = v => e(v == null || v === '' ? '—' : v);
@@ -128,6 +128,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
   }
 
   function content(key, data) {
+    if (key === 'index-stats') return rows(['Workspace', 'Memories', 'Model', 'Dimension', 'Vectors (SQLite)', 'HNSW capacity', 'Tombstones'], data.workspaces.map(w => [w.workspace_id, ...['drawers','embedding_model','dimension','vector_count','hnsw_capacity','tombstones'].map(k => w[k].value ?? w[k].reason)]));
     if (key === 'deploy') return rows(['Package', 'Version'], [['Commonplace', data.commonplace_version], ['MemPalace', data.mempalace_version]]) + `<p>${data.commit_source === 'build' && /^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(data.commit) ? 'Running commit ' + e(data.commit) : 'Running commit unknown'}</p>`;
     if (key === 'health') return '<p>Gateway reachable</p><p class="quiet">The gateway answered. This does not verify memory, runners, databases or backups.</p>';
     if (key === 'backups') return '<p>Last completed recorded attempt. Snapshot status does not verify remote upload or retention. Interrupted runs may leave the previous receipt.</p>' + '<h3>Online</h3>' + panel('backup-online') + '<h3>Offline</h3>' + panel('backup-offline');
@@ -163,7 +164,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
   function render() {
     if (!host || !live) return;
     (body || host).innerHTML = `<div class="admin settings"><p class="admin-workspace">${e(current().workspace_name || '')}</p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
-      if (!sections.has(key)) return '';
+      if (!sections.has(key) || (key === 'index-stats' && !instanceOwner())) return '';
       if (key === 'deploy') return `<section class="settings-section" data-admin-section="deploy"><h2>${e(title)}</h2>${panel('deploy')}${panel('health')}</section>`;
       return `<section class="settings-section" data-admin-section="${key}" aria-busy="${requests.has(key)}"><h2>${e(title)}</h2>${key === 'stuck' ? '<h3>Needs-me</h3>' + panel('needs') + '<h3>Stuck facts</h3>' : ''}${panel(key)}</section>`;
     }).join('')}</div>`;
@@ -197,7 +198,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
       if (live && !eligible()) stop();
       return eligible() && epoch === pageEpoch && generations.get(key) === generation;
     };
-    const path = key === 'health' ? '/healthz' : operational(key) ? `/api/admin/instance/${key.startsWith('backup-') ? 'backups' : key}` : key === 'needs' ? '/api/needs-me' : `/api/admin/workspaces/${encodeURIComponent(workspace)}/${key}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const path = key === 'health' ? '/healthz' : operational(key) ? `/api/admin/instance/${key.startsWith('backup-') ? 'backups' : key}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}` : key === 'needs' ? '/api/needs-me' : `/api/admin/workspaces/${encodeURIComponent(workspace)}/${key}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`;
     return boundedRequest(api, path, { timers, signal: controller.signal }).then(data => {
       if (!valid()) return;
       if (key !== 'needs' && !operational(key) && data.workspace_id !== workspace) throw new Error('Invalid workspace response');
@@ -214,8 +215,8 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
         } else if (key === 'limits') {
           data = {...item.data, [list]:unique(item.data[list], data[list], 'id'), pagination:{...item.data.pagination, [list]:data.pagination[list]}};
         } else {
-          const field = {users:'members',connections:'connections',stuck:'cards'}[key];
-          data = {...data, [field]:unique(item.data[field], data[field], key === 'stuck' ? 'number' : 'id')};
+          const field = {users:'members',connections:'connections',stuck:'cards','index-stats':'workspaces'}[key];
+          data = {...data, [field]:unique(item.data[field], data[field], key === 'stuck' ? 'number' : key === 'index-stats' ? 'workspace_id' : 'id')};
         }
       }
       if (key === 'health' && data?.ok !== true) throw new Error('Invalid health response');
@@ -286,7 +287,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
       runners.show(host.querySelector('[data-admin-runners]'));
     }
     for (const key of ['users', 'connections', 'runtime', 'limits', 'stuck', 'needs']) sections.set(key, { data: null, error: '', restricted: false });
-    for (const key of ['deploy','health','backups','backup-online','backup-offline']) sections.set(key, { data:null, error:instanceOwner() ? '' : 'Instance administrator access required', restricted:!instanceOwner() });
+    for (const key of ['deploy','health','backups','backup-online','backup-offline','index-stats']) sections.set(key, { data:null, error:instanceOwner() ? '' : 'Instance administrator access required', restricted:!instanceOwner() });
     host.addEventListener('click', click);
     globalThis.document?.addEventListener('session-expired', stop);
     globalThis.document?.addEventListener('signout', stop);

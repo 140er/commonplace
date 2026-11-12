@@ -29,6 +29,43 @@ entry was written.
   inventoried before deploy; that inventory is not performed here. No stored client
   data is migrated.
 
+- **Instance index figures (#284):** Only the existing instance-admin person/owner
+  authority receives additive `mempalace_status.index_stats`; all normal overview
+  fields and diagnostics remain exactly as before. Only the added figures avoid
+  worker/collection operations; the normal overview retains its existing path. Other callers keep the
+  existing overview shape, without feature fields. `/api/admin/instance/index-stats`
+  pages workspace IDs in creation/ID order, 100 per page, and closes the control
+  snapshot before workspace file reads. Each SQLite query has a 500 ms
+  monotonic budget capped by the page deadline, 10 ms busy wait and a progress interrupt; the console request
+  retains its 2 s budget and returns unknown for remaining workspaces. Status reads its one workspace under the same 2 s budget.
+  Figures expose only `{value, reason}` and workspace IDs. Chroma live SQLite
+  embedding rows supply drawers and vector_count (including changes not yet
+  synced into HNSW); collections.dimension supplies dimension. Capacity comes
+  only from the exact 100-byte, little-endian 64-bit version-1 header pinned by
+  Chroma 1.5.9's hnswlib commit 6868102bde454dc761136e1994490133a6a026bb.
+  Oversized, truncated and unsupported headers are refused. Model identity lives
+  outside permitted SQLite sources (`model_not_in_sqlite`); tombstones cannot be
+  proved across unsynchronized SQL/header sources (`unsynchronized_sources`).
+  Never estimate either. The segment catalog is read in primary-key order with
+  a nine-row cap; more than eight segments returns `segment_catalog_limit`.
+  A workspace store override cannot be established from the allowed sources:
+  return `backend_not_established`, including compact stores with old Chroma files.
+  Generation pointers are only stat-ed: `generation_not_established` prevents
+  reading JSON pointers or reporting figures from retired legacy directories.
+  A missing pointer with sibling generation directories returns the same reason.
+  Rollback-journal databases are read directly. WAL header bytes 18–19 must
+  have both existing sidecars, otherwise `wal_unavailable` prevents creation.
+  Paths are lstat-ed and symlinks refused (`symlink`); writer contention returns
+  `busy`, not corruption. Missing/empty HNSW state uses `header_unavailable`.
+  Non-admin index-stats requests receive the exact unknown-section 404.
+  Drawer count, vector count and HNSW capacity sum every wing, private ones
+  included, so they are reported only for a workspace the viewer currently owns
+  (person private reads are owner-only); for any other workspace they are null
+  with reason `private_scope`. Status applies the same rule through the loaded
+  `private:read` scope. Model and dimension describe the index and stay visible.
+  Missing/corrupt/unsupported stores return nulls with stable reasons. No settings,
+  dependencies, admission changes, background jobs or index-content reads added.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck

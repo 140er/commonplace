@@ -1,6 +1,6 @@
 ## hub-core
 
-- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
+- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/index_stats.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
 
   - Canonical Space REST aliases mapped to existing board tool authority.
@@ -36,6 +36,8 @@
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
+
+  - Instance-admin index figures use bounded read-only SQLite and a fixed 100-byte HNSW header; the figure reader never calls a worker or collection. Non-admin status keeps its existing shape. The paginated console shows unknown reasons without content or paths. `tests/test_index_stats_readonly.py` and `tests/test_admin_instance_ui.py` cover this boundary. Admin overview stays additive; 500 ms queries obey page deadlines. Missing pointers with generation siblings, closed WAL, busy stores and symlinks fail with stable reasons; non-admin sections stay 404. `tests/test_index_stats_r1.py` covers review regressions. Size figures (drawers, vectors, HNSW capacity) cover private wings and are shown only to a current owner of that workspace, else `private_scope`; `tests/test_index_stats_private_scope.py` covers this.
 
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
 

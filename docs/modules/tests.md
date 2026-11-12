@@ -141,6 +141,8 @@
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
 
+  - `tests/test_index_stats_readonly.py`, `tests/test_index_stats_r1.py`, `tests/test_index_stats_private_scope.py` and `tests/test_admin_instance_ui.py` cover the instance index figures boundary.
+
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
   - Graph compatibility witnesses distinguish required RED regressions from Chroma and old-base parity guards.
