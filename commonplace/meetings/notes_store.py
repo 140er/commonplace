@@ -344,18 +344,19 @@ class NotesMixin:
         """Edit (the text is then the person's own) or dismiss a note nobody filed yet."""
         with self._tx() as conn:
             self._owned(conn, meeting_id, user_id)
+            open_note = "AND state IN ('draft','proposed') AND filed_request_id IS NULL"
             if dismiss:
-                sets, values = (
-                    "state='dismissed', decided_by=?, decided_at=?",
-                    [user_id, _stamp(now)],
-                )
+                changed = conn.execute(
+                    "UPDATE meeting_notes SET state='dismissed', decided_by=?, decided_at=? "
+                    f"WHERE id=? AND meeting_id=? {open_note}",
+                    (user_id, _stamp(now), note_id, meeting_id),
+                ).rowcount
             else:
-                sets, values = "text=?, edited=1", [text]
-            changed = conn.execute(
-                f"UPDATE meeting_notes SET {sets} WHERE id=? AND meeting_id=? "
-                "AND state IN ('draft','proposed') AND filed_request_id IS NULL",
-                (*values, note_id, meeting_id),
-            ).rowcount
+                changed = conn.execute(
+                    "UPDATE meeting_notes SET text=?, edited=1 "
+                    f"WHERE id=? AND meeting_id=? {open_note}",
+                    (text, note_id, meeting_id),
+                ).rowcount
             row = conn.execute(
                 "SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?", (note_id, meeting_id)
             ).fetchone()
@@ -433,15 +434,12 @@ class NotesMixin:
                     (meeting_id,),
                 )
             ]
-            for table in (
-                "meeting_segments",
-                "meeting_participants",
-                "meeting_notes",
-                "meeting_note_runs",
-                "meeting_chat",
-                "meeting_outbox",
-                "meeting_events",
-            ):
-                conn.execute(f"DELETE FROM {table} WHERE meeting_id=?", (meeting_id,))
+            conn.execute("DELETE FROM meeting_segments WHERE meeting_id=?", (meeting_id,))
+            conn.execute("DELETE FROM meeting_participants WHERE meeting_id=?", (meeting_id,))
+            conn.execute("DELETE FROM meeting_notes WHERE meeting_id=?", (meeting_id,))
+            conn.execute("DELETE FROM meeting_note_runs WHERE meeting_id=?", (meeting_id,))
+            conn.execute("DELETE FROM meeting_chat WHERE meeting_id=?", (meeting_id,))
+            conn.execute("DELETE FROM meeting_outbox WHERE meeting_id=?", (meeting_id,))
+            conn.execute("DELETE FROM meeting_events WHERE meeting_id=?", (meeting_id,))
             conn.execute("DELETE FROM meetings WHERE id=?", (meeting_id,))
             return filed

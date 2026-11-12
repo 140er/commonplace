@@ -988,13 +988,13 @@ class MeetingStore(notes_store.NotesMixin):
             return None
         if step.ends:
             if step.discard:
-                tables = ["meeting_segments", "meeting_participants"]
+                conn.execute("DELETE FROM meeting_segments WHERE meeting_id=?", (meeting_id,))
+                conn.execute("DELETE FROM meeting_participants WHERE meeting_id=?", (meeting_id,))
                 if (
                     step.state != lifecycle.CANCELLED
                 ):  # a removal or a failure keeps no notes either
-                    tables += ["meeting_notes", "meeting_note_runs"]
-                for table in tables:
-                    conn.execute(f"DELETE FROM {table} WHERE meeting_id=?", (meeting_id,))
+                    conn.execute("DELETE FROM meeting_notes WHERE meeting_id=?", (meeting_id,))
+                    conn.execute("DELETE FROM meeting_note_runs WHERE meeting_id=?", (meeting_id,))
             conn.execute(
                 "UPDATE meeting_outbox SET state='cancelled' "
                 "WHERE meeting_id=? AND state IN ('queued','sending')",
