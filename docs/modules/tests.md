@@ -3,7 +3,7 @@
 - **Paths:** `tests/`
 - **Owns:**
 
-  - `tests/test_agent_adapter_conformance.py`: adapter conformance for a second agent type (take, heartbeat, work, done, release), claim expiry on a missed heartbeat and the return of that work, and the `--preset` and `ToolRefused` units.
+  - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
 
   - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
 
