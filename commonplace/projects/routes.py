@@ -8,7 +8,16 @@ from commonplace.boards.store import CardRefused
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, read_json, require_principal, send_json
-from commonplace.projects import connect, limits, models, orchestration, seats, wing
+from commonplace.projects import (
+    connect,
+    escalation,
+    limits,
+    models,
+    orchestration,
+    panel_routes,
+    seats,
+    wing,
+)
 from commonplace.projects.types import ProjectDenied
 from commonplace.rules.enforce import RulesRefresh, rest_write
 from commonplace.runner import registry
@@ -27,6 +36,7 @@ def _view(gateway, principal, board):
     with service.store.connection() as conn:
         project_limits = limits.get(conn, board["id"])
     choices = models.get(gateway.db, principal.workspace_id, board["slug"])
+    rule = escalation.get(gateway.db, principal.workspace_id, board["slug"])
     result = {
         "board": board["slug"],
         "memory": {
@@ -41,8 +51,20 @@ def _view(gateway, principal, board):
             role: choice.public() if choice is not None else None
             for role, choice in choices.items()
         },
+        "model_catalog": [
+            choice.public()
+            for choice in models.catalog(gateway.db, principal.workspace_id, board["slug"])
+        ],
+        "escalation": rule.public() if rule is not None else None,
         "can_configure": principal.person and principal.role == "owner",
     }
+    from commonplace.runner import sessions
+
+    result["session"] = sessions.status(gateway, principal.workspace_id, board["slug"])
+    if not result["can_configure"]:
+        result["session"] = {
+            k: v for k, v in result["session"].items() if k in ("state", "reason", "pending")
+        }
     if orchestration.enabled(gateway.db, principal.workspace_id):
         seat = seats.ensure_main(gateway.db, principal.workspace_id, board["slug"])
         live = seats.active_connection(gateway.db, principal.workspace_id, seat.connection_id)
@@ -145,20 +167,37 @@ def _project_action(method, parts):
     if len(parts) == 1 and method == "GET":
         return "view"
     routes = {
+        ("POST", ("orchestrator", "stop")): "stop",
+        ("POST", ("orchestrator", "resume")): "resume",
         ("POST", ("orchestrator", "connect")): "connect",
         ("POST", ("orchestrator", "trust")): "trust",
         ("GET", ("orchestrator", "inbox")): "inbox",
         ("POST", ("orchestrator", "split")): "split",
         ("PUT", ("models",)): "models",
+        ("POST", ("models", "catalog")): "model_catalog",
+        ("PUT", ("escalation",)): "escalation",
         ("PUT", ("limits",)): "limits",
         ("POST", ("wing",)): "wing",
+        ("GET", ("panel",)): "panel_view",
+        ("PUT", ("panel",)): "panel_set",
     }
     return routes.get((method, tuple(parts[1:])))
 
 
 def _valid_project_body(h, action, body):
-    if action == "wing" and (not isinstance(body, dict) or body):
-        send_json(h, 400, {"error": "Own-wing body must be exactly {}"})
+    if action in ("wing", "stop", "resume") and (not isinstance(body, dict) or body):
+        send_json(
+            h,
+            400,
+            {
+                "error": "Own-wing body must be exactly {}"
+                if action == "wing"
+                else "Session control body must be exactly {}"
+            },
+        )
+        return False
+    if action == "escalation" and (not isinstance(body, dict) or set(body) != {"rule"}):
+        send_json(h, 400, {"error": "Invalid escalation rule"})
         return False
     if action == "connect" and (
         not isinstance(body, dict)
@@ -173,6 +212,10 @@ def _valid_project_body(h, action, body):
 def _project_result(gateway, principal, service, board, action, body):
     slug = board["slug"]
     seats.ensure_main(gateway.db, principal.workspace_id, slug)
+    if action in ("stop", "resume"):
+        from commonplace.runner import sessions
+
+        return 200, sessions.control(gateway, principal, slug, action)
     if action == "connect":
         return connect.connect(
             gateway,
@@ -193,6 +236,10 @@ def _project_result(gateway, principal, service, board, action, body):
             limits.put(conn, board["id"], body)
     if action == "models":
         models.put(gateway.db, principal, slug, body)
+    if action == "model_catalog":
+        models.catalog_add(gateway.db, principal, slug, body)
+    if action == "escalation":
+        escalation.put(gateway.db, principal, slug, body["rule"])
     return 200, _view(gateway, principal, board)
 
 
@@ -235,6 +282,17 @@ def _project_route(gateway, h, principal, parts, action):
     except orchestration.AdmissionRefused as exc:
         send_json(h, exc.status, {"error": str(exc).removeprefix("no: "), "code": exc.code})
         return
+    except models.UnknownModel:
+        send_json(
+            h,
+            400,
+            {
+                "error": "That model is not in this workspace's list. Pick one from the list "
+                "or add it first.",
+                "code": "unknown_model",
+            },
+        )
+        return
     except ValueError:
         send_json(h, 400, {"error": "Invalid project settings"})
         return
@@ -250,6 +308,14 @@ def _project_route(gateway, h, principal, parts, action):
 def _route(gateway, h):
     parts = path_parts(h, "/api/projects/")
     action = _project_action(h.command, parts)
+    if action in ("panel_view", "panel_set"):
+        panel_routes.handle(gateway, h, parts, action)
+        return
+    if parts[1:] == ["learning"] and h.command in ("GET", "PATCH"):
+        from commonplace.bots import learned_routes
+
+        learned_routes.project_route(gateway, h, parts[0])
+        return
     splitting = action in ("inbox", "split")
     principal = require_principal(gateway, h) if splitting else _person(gateway, h)
     if principal is None:
@@ -265,5 +331,5 @@ def install(gateway) -> None:
         gateway.add_route(
             method, "/api/settings/orchestration", lambda h: orchestration_route(gateway, h)
         )
-    for method in ("GET", "POST", "PUT"):
+    for method in ("GET", "POST", "PUT", "PATCH"):
         gateway.add_prefix_route(method, "/api/projects/", lambda h: _route(gateway, h))

@@ -309,12 +309,16 @@ class ExecutionService:
                         <= receipt.verified_at + MAX_VERIFICATION_SECONDS
                     ):
                         raise ValueError
-                    for table, row, metadata in (("gateways", gateway, gm), ("nodes", node, nm)):
-                        metadata["state"] = "verified"
-                        conn.execute(
-                            f"UPDATE {table} SET metadata=? WHERE id=?",
-                            (canonical(metadata).decode(), row["id"]),
-                        )
+                    gm["state"] = "verified"
+                    conn.execute(
+                        "UPDATE gateways SET metadata=? WHERE id=?",
+                        (canonical(gm).decode(), gateway["id"]),
+                    )
+                    nm["state"] = "verified"
+                    conn.execute(
+                        "UPDATE nodes SET metadata=? WHERE id=?",
+                        (canonical(nm).decode(), node["id"]),
+                    )
                     digest = hashlib.sha256(raw + receipt.signature).hexdigest()
                     conn.execute(
                         "INSERT INTO enrollment_verifications(node_id,gateway_id,enrollment,"

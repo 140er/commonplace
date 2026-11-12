@@ -85,12 +85,8 @@ def on_event(gateway, event: dict) -> None:
         if event.get("kind") != "space_created":
             return
         db = gateway.db
-        with db._lock:
-            stored = db._conn.execute(
-                "SELECT * FROM events WHERE seq=?", (event.get("seq"),)
-            ).fetchone()
-            if stored is None or events._row(stored) != event:
-                return
+        if not events.is_stored(db, event):
+            return
         ensure_main(db, event["workspace_id"], event["data"]["board"])
     except Exception as exc:
         log_failure(logger, "project seat event failed", exc)
@@ -102,6 +98,20 @@ def install_listener(gateway) -> None:
     gateway.projects_listener = functools.partial(on_event, gateway)
     events.add_listener(gateway.projects_listener)
     gateway.db.add_pre_close_callback(lambda: events.remove_listener(gateway.projects_listener))
+
+
+def held_by(db, workspace_id, connection_id) -> tuple[str, str] | None:
+    """``(board, role)`` of the seat this connection holds, or ``None``."""
+    with db._lock:
+        if not db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='project_orchestrators'"
+        ).fetchone():
+            return None
+        row = db._conn.execute(
+            "SELECT board, role FROM project_orchestrators WHERE workspace_id=? AND connection_id=?",
+            (workspace_id, connection_id),
+        ).fetchone()
+    return (row["board"], row["role"]) if row is not None else None
 
 
 def active_connection(db, workspace_id, ref):

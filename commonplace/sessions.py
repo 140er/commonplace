@@ -62,7 +62,14 @@ def ensure_schema(db: ControlDB) -> None:
 
 def person_policy(role: Optional[str] = None) -> Policy:
     """Only explicit workspace ownership proves private read authority."""
-    excluded = {"admin", "memory:import", "memory:import:read"}
+    excluded = {
+        "admin",
+        "memory:import",
+        "memory:import:read",
+        "cards:decide",
+        "bots:chat",
+        "bots:confirm",
+    }
     if role != "owner":
         excluded.add("private:read")
     return Policy.build(
@@ -212,6 +219,20 @@ def session_principal(db: ControlDB, session: str) -> Optional[Principal]:
     if row is None or row["revoked_at"] or row["expires_at"] <= _now().strftime(_FMT):
         return None
     return person_principal(db, row["user_id"], row["workspace_id"])
+
+
+def session_created_at(db: ControlDB, session: Optional[str]) -> Optional[datetime]:
+    """When a live session was started: how recently its person proved who they are."""
+    ensure_schema(db)
+    if not session or len(session) > 200:
+        return None
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT * FROM sessions WHERE id_hash = ?", (_hash(session),)
+        ).fetchone()
+    if row is None or row["revoked_at"] or row["expires_at"] <= _now().strftime(_FMT):
+        return None
+    return datetime.strptime(row["created_at"], _FMT).replace(tzinfo=timezone.utc)
 
 
 def end_session(db: ControlDB, session: str) -> None:

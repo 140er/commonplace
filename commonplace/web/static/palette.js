@@ -5,7 +5,7 @@ const keyPreference = 'cmmn.keys.single';
 const encode = encodeURIComponent;
 
 // Command descriptors are dispatched by the shell; this module makes no API calls.
-export function paletteItems({ board = null, boards = [], cards = [], selected = null, query = '', can_admin = false } = {}) {
+export function paletteItems({ board = null, boards = [], cards = [], selected = null, query = '', can_admin = false, can_manage_instance = false } = {}) {
   const commands = [];
   const add = (id, label, group, details = {}) => commands.push({ id, label, group, ...details });
   const currentCards = board ? cards.filter(card => !card.board || card.board === board.slug) : [];
@@ -27,8 +27,6 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   for (const project of boards) add(`board-${project.slug}`, project.name || project.slug, 'Projects', { href: `#/board/${encode(project.slug)}`, board: project.slug });
   add('needs', 'Needs me', 'Go to', { href: '#/needs', key: 'G N' });
   add('memory', 'Memory', 'Go to', { href: '#/memory', key: 'G M' });
-  add('coworkers', 'Coworkers', 'Go to', { href: '#/coworkers', keywords: 'bots conversations direct messages groups' });
-  if (can_admin === true) add('compute', 'Compute', 'Go to', { href: '#/compute', keywords: 'gateways targets passive scopes execution proposals' });
   if (board) {
     add('board', 'Go to board', 'Go to', { href: `#/board/${encode(board.slug)}`, key: 'G B' });
     add('space', 'Space', 'Go to', { href: `#/space/${encode(board.slug)}` });
@@ -37,7 +35,10 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   add('rules', 'Rules', 'Workspace', { href: '#/rules' });
   add('console', 'Console', 'Workspace', { href: '#/console' });
   add('workspace-settings', 'Workspace settings', 'Workspace', { href: '#/settings', keywords: 'voice webhooks phone notifications plan' });
+  if (can_admin === true) add('compute-map', 'Compute map', 'Workspace', { href: '#/compute-map', keywords: 'topology machines network sites routes' });
   if (can_admin === true) add('admin', 'Admin', 'Workspace', { href: '#/admin' });
+  if (can_manage_instance === true) add('instance-admin', 'Instance console', 'Workspace', { href: '#/instance-admin' });
+  add('workspaces', 'Switch workspace', 'Workspace', { action: 'workspaces', keywords: 'change team join' });
   add('decide', 'Decision queue', 'Workspace', { href: '#/decide' });
   add('shortcuts', 'Keyboard shortcuts', 'Workspace', { action: 'shortcuts', key: '?' });
   add('sign-out', 'Sign out', 'Workspace', { action: 'logout' });

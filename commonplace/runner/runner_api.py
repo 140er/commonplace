@@ -1,4 +1,7 @@
-"""Machine-only HTTP endpoints; no launch commands or user content cross this API."""
+"""Machine-only HTTP endpoints; no launch commands cross this API.
+
+User content crosses it in one place: a lease carries ``card_context``, the started
+card as the machine's own worker connection may read it (``start_context``)."""
 
 import json
 import sqlite3
@@ -11,10 +14,13 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.sessions import person_principal
 
-from . import jobs, predicate, registry
+from . import jobs, predicate, registry, start_context
 
 MAX_BODY_BYTES = 4096
 BODY_KEYS = {
+    "sessions/lease": set(),
+    "sessions/starting": {"lease_token"},
+    "sessions/result": {"lease_token", "outcome", "thread_id", "code"},
     "lease": set(),
     "renew": {"lease_token"},
     "starting": {"lease_token"},
@@ -38,8 +44,8 @@ def _body(h, action):
         raise HTTPError(400, "invalid JSON") from None
     if not isinstance(value, dict) or value.keys() - BODY_KEYS[action]:
         raise HTTPError(400, "invalid request body")
-    required = set() if action == "lease" else {"lease_token"}
-    if action == "result":
+    required = set() if action in ("lease", "sessions/lease") else {"lease_token"}
+    if action in ("result", "sessions/result"):
         required.add("outcome")
     if required - value.keys():
         raise HTTPError(400, "missing required argument")
@@ -207,6 +213,35 @@ def register(gateway):
                 body = _body(h, action)
                 if url.query:
                     raise HTTPError(400, "invalid query")
+                if action.startswith("sessions/"):
+                    from . import sessions
+
+                    if action == "sessions/lease":
+                        payload = sessions.lease(gateway, principal.workspace_id, machine["id"])
+                        if payload is None:
+                            h.send_response(204)
+                            h.send_header("Content-Length", "0")
+                            h.send_header("Cache-Control", "no-store")
+                            h.end_headers()
+                            return
+                    elif action == "sessions/starting":
+                        payload = {
+                            "proceed": sessions.starting(
+                                gateway, principal.workspace_id, machine["id"], body["lease_token"]
+                            )
+                        }
+                    else:
+                        payload = sessions.result(
+                            gateway,
+                            principal.workspace_id,
+                            machine["id"],
+                            body["lease_token"],
+                            body["outcome"],
+                            body.get("thread_id"),
+                            body.get("code"),
+                        )
+                    send_json(h, 200, payload)
+                    return
                 if action == "lease":
                     row = jobs.lease(store, machine)
                     if row is None:
@@ -238,12 +273,20 @@ def register(gateway):
                 else:
                     row = jobs.result(store, machine, **body)
                 payload = jobs.job_object(row, tokens=action == "lease")
-                if action == "lease" and row["config_version"] is not None:
-                    from commonplace.orch import runner_bridge
+                if action == "lease":
+                    launch = {}
+                    if row["config_version"] is not None:
+                        from commonplace.orch import runner_bridge
 
-                    # Pinned prompt, workflow and model of a config-driven start.
-                    with store.connection() as conn:
-                        payload.update(runner_bridge.launch_fields(conn, row))
+                        # Pinned prompt, workflow and model of a config-driven start.
+                        with store.connection() as conn:
+                            launch = runner_bridge.launch_fields(conn, row)
+                    # An invalid pinned config launches nothing, so it gets no card.
+                    if row["config_version"] is None or launch:
+                        launch.update(
+                            start_context.lease_fields(gateway, machine, row, launch.get("message"))
+                        )
+                    payload.update(launch)
             send_json(h, 200, payload)
         except HTTPError as exc:
             send_json(h, exc.status, {"error": str(exc)})
