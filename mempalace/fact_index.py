@@ -229,14 +229,17 @@ def candidates(
     if scoped:
         # FTS5's rank weighs terms by whole-index counts, which include facts
         # the caller cannot read. Weigh by readable counts instead: matched
-        # terms' IDF, then shorter facts first among equals.
+        # terms' IDF, then facts with fewer words first, as bm25's length
+        # normalisation does. Seeds then break ties by document order, on both
+        # paths, so equal-relevance seed caps pick the same facts.
         _install_log(conn)
         relevance = (
             "-(SELECT sum(mempalace_log((stats.documents + 1.0)/(ts.doc + 0.5))) "
             "FROM term_matches m JOIN term_stats ts ON ts.term=m.term CROSS JOIN stats "
             "WHERE m.docid=fact_search.rowid AND m.term IN (SELECT term FROM chosen_terms)) "
-            "+ (length(fact_search.subject) + length(fact_search.predicate) "
-            "+ length(fact_search.object)) * 1e-6"
+            "+ (SELECT sum(length(trim(c)) - length(replace(trim(c), ' ', '')) + 1) "
+            "FROM (SELECT fact_search.subject AS c UNION ALL SELECT fact_search.predicate "
+            "UNION ALL SELECT fact_search.object)) * 1e-6"
         )
     else:
         relevance = "fact_search.rank"
@@ -272,7 +275,7 @@ def candidates(
     def seed_query(order, term_gate, seed_limit):
         queries = []
         if scoped:
-            small_order = "relevance, docid" if order == "relevance" else "docid DESC"
+            small_order = order if order == "relevance, docid" else "docid DESC"
             queries.append(
                 "SELECT * FROM (SELECT * FROM small_matches ORDER BY "
                 + small_order
@@ -301,7 +304,7 @@ def candidates(
         return " UNION ALL ".join(queries)
 
     selective = "EXISTS (SELECT 1 FROM selective_terms)"
-    ranked_sql = seed_query("relevance", selective, limit)
+    ranked_sql = seed_query("relevance, docid", selective, limit)
     params.append(limit)
     recent_sql = seed_query(
         "fact_search.rowid DESC",
