@@ -50,9 +50,6 @@ SEARCH_SETTINGS = (
     ),
     ("embedding_device", ("MEMPALACE_EMBEDDING_DEVICE",), ("embedding", "!openai-compat")),
     ("embedding_threads", ("MEMPALACE_EMBEDDING_THREADS",), ("embedding", "!openai-compat")),
-    # Which embedding service answers: a down or different one ranks a search
-    # lexically (or with another model) where a hub's would not.
-    ("embedding_service", ("MEMPALACE_EMBEDDING_SERVICE",), ("embedding", "!openai-compat")),
     ("qdrant_api_key", ("MEMPALACE_QDRANT_API_KEY",), ("backend", "qdrant")),
     ("qdrant_namespace", ("MEMPALACE_QDRANT_NAMESPACE",), ("backend", "qdrant")),
     ("qdrant_timeout", ("MEMPALACE_QDRANT_TIMEOUT",), ("backend", "qdrant")),
