@@ -11,6 +11,8 @@
 
   - The extension seam lists `commonplace.agent_schedules`, installed after holds.
 
+  - The extension seam lists `commonplace.tool_policy`. The gateway asks it once per `tools/call` (`Mediator._admit`, after the connection's own refusal) and once per connection REST request that stands for a tool (`_rest_tool_refusal`).
+
   - The extension list ends with `commonplace.bots`, which installs the person-only `/api/bots` routes.
 
   - The extension list also loads `commonplace.topology.extension`, which registers the read tools `topology_get` and `topology_route` and their `GET /api/topology` and `GET /api/topology/route` routes; `_rest_tool` maps both routes to their tools.
