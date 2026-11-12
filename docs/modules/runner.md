@@ -53,6 +53,8 @@
 
 - **How it fails:**
 
+  - `PATCH /api/runners/{id}` checks that the machine belongs to the caller's workspace before it reads any wing name, so a stranger gets the same 404 `machine not found` for a wing that exists, one that does not and a machine that does not exist; only the machine's own owner sees the wing validation (400).
+
   - A usage report for a run that has not started, or a second, different end status, answers 409; a job of another machine or any caller but an enabled machine answers 404; an invalid report answers 400 and changes nothing.
 
   - Absent optional runner stores remain absent for Admin; existing unreadable sources produce safe errors rather than fabricated usage.
@@ -80,6 +82,8 @@
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
   - `tests/test_card_start_defaults.py` covers the owner's card-only start, equal and differing explicit values, the options route, and the refusal of a member, an untrusted agent and a coordinator token with no job created; `tests/cardruns.mjs` the panel's Start control.
+  - `tests/test_runner_grant_refusal.py` covers the uniform 404 a stranger gets from the wing grant route whatever wing names the body carries, and the owner's own wing validation staying 400.
+
   - `tests/test_runner_wings.py` covers multi-wing starts, the ungranted-wing refusal, worker write bounds after enrollment and PATCH, and owner-only listing.
 
   - `tests/test_runner_start_context.py` covers the fields a start prompt must carry on plain and configured boards, the budget on a very large card, cut markers, whole-item cuts, the unchanged prompt of a small card, worker-only visibility and the runner's handling of the field.

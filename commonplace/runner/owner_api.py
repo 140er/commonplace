@@ -117,6 +117,8 @@ def register(gateway):
                 result = registry.enroll(gateway.db, owner, _wings(gateway, owner, data))
                 status = 201
             elif method == "PATCH":
+                # Ownership first: wing names are only checked for a machine that is theirs.
+                registry.require_active(gateway.db, owner, parts[0])
                 result = _view(
                     registry.patch(
                         gateway.db,
