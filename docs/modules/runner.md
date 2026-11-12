@@ -7,6 +7,8 @@
 
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
 
+  - The runner agent writes the redacted launch output of every start to `<journal_dir>/<job_id>.launch.log` (0600), so a `launch_unknown` has a readable cause; the launch outcome never depends on the log.
+
 
   - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
   - Machine enrollment, binding epoch migrations and immutable job epoch snapshots, grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
