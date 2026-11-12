@@ -20,7 +20,7 @@ const memoryKey = `commonplace.topology.${workspace}`;
 localStorage.removeItem(memoryKey);
 const content = document.querySelector("#content");
 const detailApi = scriptedApi(fixture());
-const open = () => { const map = createTopologyMap({ mount: () => content, api: async (path) => (path.startsWith("/api/topology/map") ? structuredClone(payload) : detailApi(path)), workspace: () => workspace, interval: 400 }); map.show(); return map; };
+const open = () => { const map = createTopologyMap({ mount: () => content, api: async (path) => (path === "/api/topology" ? structuredClone(payload) : detailApi(path)), workspace: () => workspace, interval: 400 }); map.show(); return map; };
 let map = open();
 const ready = async (selector) => { for (let i = 0; i < 100 && !content.querySelector(selector); i++) await sleep(20); return content.querySelector(selector); };
 

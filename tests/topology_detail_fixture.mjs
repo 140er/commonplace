@@ -97,7 +97,7 @@ export function scriptedApi(payload = fixture()) {
     const url = new URL(path, "https://hub.example.test");
     if (url.pathname === "/api/topology/node") return structuredClone(nodeRead(url.searchParams.get("key"), payload));
     if (url.pathname === "/api/topology/route") return structuredClone(routeRead(url.searchParams.get("target"), payload));
-    if (url.pathname === "/api/topology/map") return structuredClone(payload);
+    if (url.pathname === "/api/topology") return structuredClone(payload);
     throw Object.assign(new Error(`unscripted ${path}`), { status: 404 });
   };
   api.calls = calls;
