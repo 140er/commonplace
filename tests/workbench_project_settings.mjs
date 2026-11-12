@@ -12,7 +12,7 @@ class Host {
   set innerHTML(html) {
     this.html = html; this.nodes = [];
     // Inputs have no closing tag; discover every opening tag independently.
-    for (const match of html.matchAll(/<(input|select|button|output|p|a|div|span)\b([^>]*)>/g)) {
+    for (const match of html.matchAll(/<(input|select|button|output|p|a|div|span|form)\b([^>]*)>/g)) {
       const [, tag, attrs] = match;
       const attributes = Object.fromEntries([...attrs.matchAll(/([\w-]+)(?:="([^"]*)")?/g)].map(m => [m[1], m[2] ?? ""]));
       const content = html.slice(match.index + match[0].length).split(`</${tag}>`)[0];
@@ -36,7 +36,7 @@ class ProjectHost extends Host {
   querySelector(selector) {
     if (selector === ".workbench-project") return this;
     if (selector === "[data-project-connect]") return this.querySelector("[data-project-heading]").querySelector(selector);
-    if (["heading", "chat", "agents", "limit", "trust", "memory"].some(name => selector === `[data-project-${name}]`)) {
+    if (["heading", "chat", "agents", "limit", "trust", "memory", "models-host"].some(name => selector === `[data-project-${name}]`)) {
       if (!this.sections.has(selector)) this.sections.set(selector, new Host());
       return this.sections.get(selector);
     }
