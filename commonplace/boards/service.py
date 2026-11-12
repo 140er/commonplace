@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from commonplace import decide_grant, events, privacy, sessions
 from commonplace.callstack import LIMITS
 from commonplace.control_db import ControlError
-from commonplace.extensions import ToolError
+from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
 
 from . import (
@@ -312,6 +312,7 @@ def _plan_waiting(row):
     return plan_waiting(data)
 
 
+ORCHESTRATOR_RELEASE_REASON = "Released automatically by the project orchestrator"
 APPROVALS_TRUNCATED = "(list truncated: more approvals may be waiting; call needs_me)"
 
 
@@ -996,8 +997,12 @@ class BoardService(lifecycle.LifecycleMixin):
             and (row["restricted_origin"] == 0 or self._origin_released(row))
             and not _plan_waiting(row)
         )
+        release_by = None
+        if not released and row["restricted_origin"] != 0 and row["proposal_status"] is None:
+            state = self._origin_authority(row)[0]
+            release_by = state if state in ("coordinator", "owner") else "blocked"
         return why.waiting(
-            {**dict(row), "split_stuck": stuck},
+            {**dict(row), "split_stuck": stuck, "release_by": release_by},
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,
@@ -1092,6 +1097,7 @@ class BoardService(lifecycle.LifecycleMixin):
         from commonplace.projects import orchestration as orch, reports
 
         self.pending = []
+        self._auto_release = []
         conflict = None
         try:
             self._report_snapshot = reports.snapshot(self.ctx.gateway, self.principal.workspace_id)
@@ -1132,8 +1138,36 @@ class BoardService(lifecycle.LifecycleMixin):
                 )
             except Exception as exc:
                 log_failure(logger, "committed board event emission failed", exc)
+        for number in self._auto_release:
+            self._release_for_orchestrator(number)
         if conflict is not None:
             raise conflict
+
+    def _queue_orchestrator_release(self, number, parentless_restricted):
+        if parentless_restricted:
+            self._auto_release.append(number)
+
+    def _release_for_orchestrator(self, number):
+        """Release a new parentless restricted-origin card as its board's connected orchestrator.
+
+        Runs after the card committed. The release goes through ``task_approve`` as the
+        orchestrator itself, so every release rule applies unchanged (live, independent,
+        with the release grants); anything else leaves the card waiting with its reason."""
+        from commonplace.projects import seats
+
+        try:
+            with self.store.connection() as conn:
+                row = task_row(conn, number)
+            state, coordinator = self._origin_authority(row)
+            if state != "coordinator" or not seats.held_by(
+                self.ctx.db, self.principal.workspace_id, coordinator.connection_id
+            ):
+                return
+            BoardService(ToolContext(principal=coordinator, gateway=self.ctx.gateway)).task_approve(
+                number, approve=True, reason=ORCHESTRATOR_RELEASE_REASON
+            )
+        except Exception as exc:
+            log_failure(logger, "orchestrator origin release failed", exc)
 
     def _emit(self, conn, number, kind, *, actor=None, **extra):
         row = task_row(conn, number)
@@ -2902,6 +2936,7 @@ class BoardService(lifecycle.LifecycleMixin):
         )
         self._log(conn, number, "add", to_status=status)
         self._emit(conn, number, "card.created")
+        self._queue_orchestrator_release(number, restricted_origin and not proposal)
         if status == "doing" and self._owner_assignment(assignee):
             self._log(conn, number, "claim", to_status="doing", target=assignee)
             self._emit(conn, number, "card.claimed", to="doing")
