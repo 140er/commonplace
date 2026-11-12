@@ -218,6 +218,15 @@ two-hop SSH channel for the fixed probe and confined helper command, and
 are inert until trusted configuration enables them, deny on host-key mismatch,
 replay or unknown operations, and use no live endpoints in tests.
 
+### Coworker task dispatch component
+
+A coworker chat message that carries explicit task syntax reaches the canonical
+boards only through `BoardService.ensure_chat_task` and `start_chat_task`: the
+origin binding commits atomically with a stable per-actor key, the existing
+person-owner fenced runner admission is requested, and a refusal leaves the
+card in place without inventing a worker launch. Model output never executes
+tools. The coworker store, runtime and task controls stay local to the workspace.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and
