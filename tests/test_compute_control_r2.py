@@ -45,6 +45,7 @@ def _agent(state):
         name="r2-holder",
         client="test",
         policy=Policy.build(
+            profile="standard",
             scopes=["memory:read", "memory:write"],
             read_wings=["*"],
             write_wings=["*"],
