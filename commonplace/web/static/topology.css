@@ -1,0 +1,77 @@
+/* Compute map (topology-map.js): a toolbar, the pan and zoom stage, the highlighted route in
+   words and a status legend. Colours and radii are the workbench tokens; nothing new is
+   introduced. A status is a shape first (circle, triangle, square, ring) and a colour second. */
+.shell[data-view="map"] #content { padding: 0; gap: 0; overflow: hidden; }
+
+.topo { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--pane); font-family: var(--font); }
+.topo button, .topo select { font: inherit; }
+.topo-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.topo-bar label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
+.topo-bar select { min-height: 32px; max-width: 240px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface); color: var(--text); }
+.topo-bar select:disabled { color: var(--text-3); }
+.topo-spacer { flex: 1; }
+.topo-zoom { display: inline-flex; gap: 4px; }
+.topo-zoom .iconbtn { font-size: 18px; line-height: 1; color: var(--text); }
+
+.topo-stage { position: relative; flex: 1; min-height: 240px; overflow: hidden; touch-action: none; cursor: grab; background-color: var(--pane); background-image: radial-gradient(var(--line) 1px, transparent 1.5px); background-size: 24px 24px; }
+.topo-stage.is-panning { cursor: grabbing; }
+.topo-stage:focus-visible { outline-offset: -3px; }
+.topo-svg { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; }
+
+.topo-link line { stroke: var(--line-strong); stroke-width: 1.5; }
+.topo-link.stale line, .topo-link.missing line { stroke-dasharray: 5 4; }
+.topo-link.on line { stroke: var(--accent); stroke-width: 3; }
+.topo-link.dim, .topo-node.dim { opacity: .28; }
+.topo-method { font: 500 10px/1 var(--mono); fill: var(--text-3); stroke: var(--pane); stroke-width: 4px; paint-order: stroke; text-anchor: middle; }
+
+.topo-dot { stroke: var(--surface); stroke-width: 1.5; }
+.topo-dot.s-up { fill: var(--ok); }
+.topo-dot.s-degraded { fill: var(--wait-line); stroke: var(--wait); }
+.topo-dot.s-down { fill: var(--block); }
+.topo-dot.s-unknown { fill: var(--surface); stroke: var(--text-3); stroke-width: 2; }
+
+.topo-node { cursor: pointer; color: var(--text); }
+.topo-node:focus-visible { outline: none; }
+.topo-plate { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1; }
+.topo-node:hover .topo-plate { stroke: var(--text-2); }
+.topo-node.on .topo-plate { stroke: var(--accent); stroke-width: 2; }
+.topo-node.sel .topo-plate { fill: var(--accent-weak); stroke: var(--accent); stroke-width: 2; }
+.topo-node:focus-visible .topo-plate { stroke: var(--focus, var(--accent)); stroke-width: 3.5; }
+.topo-node.stale .topo-plate, .topo-node.missing .topo-plate { stroke-dasharray: 4 3; }
+.topo-icon { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.topo-node.stale .topo-icon, .topo-node.missing .topo-icon { opacity: .5; }
+.topo-name, .topo-role { stroke: var(--pane); stroke-width: 4px; paint-order: stroke; text-anchor: middle; }
+.topo-name { font: 600 12px/1 var(--font); fill: var(--text); }
+.topo-role { font: 500 11px/1 var(--font); fill: var(--text-2); }
+/* Method names would crowd a whole map: they show once zoomed in, and along a highlighted route. */
+.topo-method { display: none; }
+.topo-stage.near .topo-method, .topo-link.on .topo-method { display: inline; }
+.topo-stage.far .topo-role, .topo-stage.far .topo-method { display: none; }
+
+.topo-note { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; pointer-events: none; }
+.topo-note:empty { display: none; }
+.topo-note > * { pointer-events: auto; cursor: auto; }
+.topo-msg { margin: 0; font-size: 14px; color: var(--text-2); }
+.topo-empty { display: grid; justify-items: center; gap: 10px; max-width: 440px; padding: 24px; text-align: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.topo-empty h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 650; color: var(--text); }
+.topo-empty p { margin: 0; font-size: 14px; line-height: 21px; color: var(--text-2); }
+.topo-empty .btn:disabled { opacity: .55; cursor: not-allowed; }
+.topo-empty .topo-off { font-size: 12.5px; line-height: 19px; color: var(--text-3); }
+
+.topo-path { flex: none; margin: 0; padding: 8px 16px; border-top: 1px solid var(--line); font-size: 13px; line-height: 20px; color: var(--text-2); overflow-wrap: anywhere; }
+.topo-foot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 16px; border-top: 1px solid var(--line); font-size: 12.5px; line-height: 19px; color: var(--text-2); }
+.topo-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; }
+.topo-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.topo-legend svg { width: 14px; height: 14px; overflow: visible; }
+.topo-live:empty { display: none; }
+.topo-live { color: var(--wait); }
+.topo-hint { margin-left: auto; color: var(--text-3); }
+
+@media (max-width: 699px) {
+  .topo-bar, .topo-path, .topo-foot { padding-left: 12px; padding-right: 12px; }
+  .topo-bar .btn, .topo-bar .iconbtn, .topo-bar select { min-height: 40px; }
+  .topo-bar .iconbtn { width: 40px; }
+  .topo-hint { display: none; }
+  /* The phone shell scrolls as a page, so the canvas takes its own share of the screen. */
+  .topo-stage { flex: none; height: 62vh; min-height: 320px; }
+}

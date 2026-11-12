@@ -218,6 +218,15 @@ two-hop SSH channel for the fixed probe and confined helper command, and
 are inert until trusted configuration enables them, deny on host-key mismatch,
 replay or unknown operations, and use no live endpoints in tests.
 
+### Coworker task dispatch component
+
+A coworker chat message that carries explicit task syntax reaches the canonical
+boards only through `BoardService.ensure_chat_task` and `start_chat_task`: the
+origin binding commits atomically with a stable per-actor key, the existing
+person-owner fenced runner admission is requested, and a refusal leaves the
+card in place without inventing a worker launch. Model output never executes
+tools. The coworker store, runtime and task controls stay local to the workspace.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and
@@ -949,7 +958,7 @@ optional `reviewer` argument to `task_add` and `task_update`.
 
   - Without a runner or subscribed `card.created` webhook, a new card waits for the orchestrator's next session.
 
-  - An always-running orchestrator is separate work.
+  - An accepted live `[runner]` with `session = true` enables a persistent session through the existing machine runner loop, without requiring a `card.todo` trigger; configs without the key are unchanged and no service is activated automatically.
 
   - Splitting and inbox behavior are not introduced by this switch.
 
@@ -1344,7 +1353,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
   the selected `launch_role` in an additive runner column, so later switch
   changes cannot change a queued job's launch instructions. Messages include
   inbox context; the agent creates missing stable keys and marks completion.
-- Each runner sweep reconciles eligible roots older than 10 minutes with no
+- Each trigger-enabled runner sweep reconciles eligible roots older than 10 minutes with no
   active/started job. Retry keys are `split-retry:<card>:<n>`; gaps are 10, 30,
   90 minutes and n is bounded to 3. Attempts (including refusals) use the existing
   `orch_misses` log with negative event ids. Eligibility and attempt number are
@@ -1359,8 +1368,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   return `409 busy` without mutation. No external service is called.
 - Without a runner, card delivery uses a subscribed `card.created` webhook
   plus the inbox at the next session. Without either, a new card waits for that
-  session. Continuous orchestration, done/stuck routing and runner-job events
-  remain separate work. Stable keys are the agent's responsibility; changing
+  session. Runner-owned persistent board sessions are described below; richer
+  done/stuck routing and runner-job events remain separate work. Stable keys are the agent's responsibility; changing
   keys after a crash can create additional children.
 
 - `runner.sqlite3`: runner jobs with pinned launch role; orchestrator configs, cursors, leases, steps, journal, retry attempts, restore flag
@@ -2124,6 +2133,8 @@ every wake attempt failed. See `docs/chat.md`.
 ### Topology is one store of structured facts
 
 The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Live status of machines and link ends is derived on read from signals runners already send (connection use, chat poll, runner jobs, an optional link `status` report) with configurable thresholds; a silent machine is unknown, never green. Agents read it through two tools, `topology_get` and `topology_route` (REST `GET /api/topology`, `GET /api/topology/route`), under the same scope and wing grant as other memory reads; an answer states how fresh each hop is and says plainly when a hop is unknown or stale. Contract: `docs/topology.md`.
+
+The owner sees the store as a map at `#/compute-map`: an SVG canvas (`web/static/topology-map.js`) that draws only what `GET /api/topology` returns, the graph plus the live status as one word per node and per link end (`status` in the whole-graph answer, the same read the agent tools use). The canvas keeps nothing but dragged positions and the view, in the browser per workspace; it loads nothing from another origin, and a status is never shown by colour alone.
 
 ### Bots keep conversations in the workspace store
 

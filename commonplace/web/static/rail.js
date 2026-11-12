@@ -23,7 +23,7 @@ export function projectSubline(board) {
 // The Workspace group of the account menu: the screens people only visit to set things up.
 // Shared by the desktop rail and the phone top bar so both list the same entries.
 function menuLinks({ needs = 0, rulesWaiting = 0, can_admin = false } = {}) {
-  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/console">Console</a></div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}<button data-action="logout">Sign out</button>`;
+  return `<div class="menu-group" role="group" aria-label="Workspace"><span class="menu-h" aria-hidden="true">Workspace</span><a href="#/boards">Projects</a><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/console">Console</a>${can_admin === true ? '<a href="#/compute-map">Compute map</a>' : ''}</div><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a><a href="#/settings">Workspace settings</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}<button data-action="logout">Sign out</button>`;
 }
 
 // Pure markup: the shell delegates data-action clicks and owns navigation/state.

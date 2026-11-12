@@ -58,6 +58,13 @@ def _view(gateway, principal, board):
         "escalation": rule.public() if rule is not None else None,
         "can_configure": principal.person and principal.role == "owner",
     }
+    from commonplace.runner import sessions
+
+    result["session"] = sessions.status(gateway, principal.workspace_id, board["slug"])
+    if not result["can_configure"]:
+        result["session"] = {
+            k: v for k, v in result["session"].items() if k in ("state", "reason", "pending")
+        }
     if orchestration.enabled(gateway.db, principal.workspace_id):
         seat = seats.ensure_main(gateway.db, principal.workspace_id, board["slug"])
         live = seats.active_connection(gateway.db, principal.workspace_id, seat.connection_id)
@@ -160,6 +167,8 @@ def _project_action(method, parts):
     if len(parts) == 1 and method == "GET":
         return "view"
     routes = {
+        ("POST", ("orchestrator", "stop")): "stop",
+        ("POST", ("orchestrator", "resume")): "resume",
         ("POST", ("orchestrator", "connect")): "connect",
         ("POST", ("orchestrator", "trust")): "trust",
         ("GET", ("orchestrator", "inbox")): "inbox",
@@ -176,8 +185,16 @@ def _project_action(method, parts):
 
 
 def _valid_project_body(h, action, body):
-    if action == "wing" and (not isinstance(body, dict) or body):
-        send_json(h, 400, {"error": "Own-wing body must be exactly {}"})
+    if action in ("wing", "stop", "resume") and (not isinstance(body, dict) or body):
+        send_json(
+            h,
+            400,
+            {
+                "error": "Own-wing body must be exactly {}"
+                if action == "wing"
+                else "Session control body must be exactly {}"
+            },
+        )
         return False
     if action == "escalation" and (not isinstance(body, dict) or set(body) != {"rule"}):
         send_json(h, 400, {"error": "Invalid escalation rule"})
@@ -195,6 +212,10 @@ def _valid_project_body(h, action, body):
 def _project_result(gateway, principal, service, board, action, body):
     slug = board["slug"]
     seats.ensure_main(gateway.db, principal.workspace_id, slug)
+    if action in ("stop", "resume"):
+        from commonplace.runner import sessions
+
+        return 200, sessions.control(gateway, principal, slug, action)
     if action == "connect":
         return connect.connect(
             gateway,
