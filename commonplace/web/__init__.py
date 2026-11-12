@@ -267,6 +267,7 @@ def install(gateway):
         )
 
     from .. import capacity
+    from ..topology import node_panel as topology_node
     from . import admin, agents, goals, invites, task_types
 
     admin.install(gateway)
@@ -275,6 +276,7 @@ def install(gateway):
     agents.install(gateway)
     task_types.install(gateway)
     goals.install(gateway)
+    topology_node.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)
     gateway.add_route("POST", "/app/logout", logout)
