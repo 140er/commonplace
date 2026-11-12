@@ -8,6 +8,7 @@
 - **Promises:**
 
   - The deployment guide links the instance console audit-growth and authority contract.
+  - Trusted source archives stage into an absent directory with archive-defined public permissions, separately from private runtime configuration.
 
   - Build SHA is validated package data; optional same-source RO/RW receipt binds forbid auto-creation. Gateway uses RO; only snapshot exec overrides to RW. Shared-namespace RW visibility remains explicit. Synthetic mount and package-install smoke verify the contract.
 

@@ -1962,6 +1962,8 @@ def _rest_tool(method, path):
         return {"POST": "card_start", "GET": "card_start_status"}.get(method)
     if len(parts) == 4 and parts[:2] == ["api", "card-starts"] and method == "POST":
         return {"cancel": "card_start_cancel", "resolve": "card_start_resolve"}.get(parts[3])
+    if parts == ["api", "topology", "proposals"] and method == "POST":
+        return "topology_propose"
     if parts == ["api", "spaces"]:
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 3 and parts[:2] == ["api", "spaces"] and method == "GET":

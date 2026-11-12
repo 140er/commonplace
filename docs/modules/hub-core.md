@@ -4,8 +4,11 @@
 - **Owns:**
 
   - Dedicated session-admin management metadata services, namespace admission and bounded coordinated read audit appends.
+  - `ControlDB(path, compute_config=...)` accepts trusted Compute startup configuration; its transaction wrapper holds the compute coordinator lock across the whole transaction, and without configuration behavior is unchanged.
 
   - Canonical Space REST aliases mapped to existing board tool authority.
+
+  - `extensions.MODULES` mounts `commonplace.topology` (its `install` is the proposal surface's), and `_rest_tool` maps `POST /api/topology/proposals` to `topology_propose`, so the route shares the tool's visibility gate.
 
   - Trusted Compute startup configuration wraps central ControlDB authority access in the bounded cross-process coordinator, with persisted guards and durable epoch invalidation; no configuration leaves existing behavior unchanged.
   - The gateway installs inert owner Compute management routes alongside chat; this extension setup neither loads credential custody nor starts remote execution.

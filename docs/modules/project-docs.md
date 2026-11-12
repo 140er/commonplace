@@ -67,6 +67,8 @@
 
   - `docs/recovery/encrypted-workspace.md` is the recovery runbook for encrypted workspaces (keyslot check, restore on a new host, lost server credential, credential replacement, cases without recovery); `docs/workspace-encryption.md` lists the open keyslot decisions and `docs/backups.md` links the runbook.
 
+  - Fact-first ranking and union-where RFCs: a restricted caller's fact counts and seed ranking, and the vector-disabled Chroma fallback's candidate window, come from readable content only; the cost of exact readable statistics is a known limit.
+
 - **Promises:**
   - Project documentation and the project routes table describe the four model roles and the owner-only escalation rule.
 

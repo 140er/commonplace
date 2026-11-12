@@ -7,7 +7,6 @@ foreign id is indistinguishable from an unknown one. Errors never carry conversa
 """
 
 import json
-import re
 import sqlite3
 import threading
 import time
@@ -17,14 +16,27 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from commonplace.admission import GATE
+from commonplace.bots import sharing_setting
+from commonplace.bots.errors import (
+    PAGE_DEFAULT,
+    PAGE_MAX,
+    REQUEST_ID,
+    TEXT_MAX,
+    Conflict,
+    Invalid,
+    Limit,
+    Missing,
+    bounded,
+    message,
+    stamp,
+)
+from commonplace.bots.shares import SCHEMA_SHARES, SharesMixin, added_columns, ensure_request_index
 from mempalace.sqlite_crypto import connect, row_factory
 
 MAX_LIVE_BOTS = 50
-NAME_MAX, JOB_MAX, INSTRUCTIONS_MAX, TEXT_MAX, NOTE_MAX = 60, 200, 4000, 8000, 2000
-PAGE_DEFAULT, PAGE_MAX = 50, 100
+NAME_MAX, JOB_MAX, INSTRUCTIONS_MAX, NOTE_MAX = 60, 200, 4000, 2000
 PENDING_TTL_S = 600
 KINDS = ("project", "general", "custom")
-REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS bots (
@@ -56,8 +68,6 @@ CREATE TABLE IF NOT EXISTS bot_messages (
 );
 CREATE INDEX IF NOT EXISTS bot_messages_by_bot ON bot_messages(bot_id, id);
 CREATE INDEX IF NOT EXISTS bot_messages_by_role ON bot_messages(bot_id, role, id);
-CREATE UNIQUE INDEX IF NOT EXISTS bot_messages_request
-    ON bot_messages(bot_id, request_id) WHERE role='user';
 CREATE UNIQUE INDEX IF NOT EXISTS bot_messages_reply
     ON bot_messages(bot_id, reply_to) WHERE role='bot';
 CREATE TRIGGER IF NOT EXISTS bot_messages_no_update BEFORE UPDATE ON bot_messages
@@ -130,7 +140,7 @@ BEGIN SELECT RAISE(ABORT, 'bot memory is append-only'); END;
 
 
 # Columns added after the first release; ``_upgrade`` adds them to an existing file.
-_ADDED = (
+_ADDED = added_columns() + (
     ("bot_work", "last_word", "TEXT"),
     ("bot_work", "last_seq", "INTEGER NOT NULL DEFAULT 0"),
     ("bot_forwards", "answered_by", "INTEGER"),
@@ -138,35 +148,7 @@ _ADDED = (
 UPDATE_MAX = 100_000  # the longest space message, so an orchestrator reply is stored whole
 
 
-class Missing(LookupError):
-    """No such bot for this person (unknown and foreign ids look the same)."""
-
-
-class Invalid(ValueError):
-    """A value outside its bound. The message is fixed text, never user content."""
-
-
-class Limit(Exception):
-    """The person already has the maximum number of live bots."""
-
-
-class Conflict(Exception):
-    """A request id reused with other text, or a second reply to one message."""
-
-
-def stamp(now=None) -> str:
-    return (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _text(value, name, low, high):
-    """``value`` unchanged when its raw length is within ``high`` (and not blank when ``low``)."""
-    if not isinstance(value, str) or len(value) > high or (low and not value.strip()):
-        raise Invalid(f"{name} must be {low}-{high} characters")
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        raise Invalid(f"{name} must be valid text") from None
-    return value
+_text = bounded
 
 
 def _name(value):
@@ -180,27 +162,24 @@ def _bot(row) -> dict:
     return {key: row[key] for key in _BOT_KEYS}
 
 
-def _message(row) -> dict:
-    return {
-        "id": row["id"],
-        "role": row["role"],
-        "text": row["text"],
-        "blocks": json.loads(row["blocks"]),
-        "at": row["created_at"],
-        "state": row["state"],
-        "reply_to": row["reply_to"],
-        "model": row["model"],
-        "request_id": row["request_id"],
-    }
+_message = message
 
 
 def open_bots(gateway, workspace_id: str) -> "BotStore":
     stores = gateway.__dict__.setdefault("_bot_stores", {})
-    return stores.setdefault(workspace_id, BotStore(gateway.supervisor, workspace_id))
+    if workspace_id not in stores:
+        stores[workspace_id] = BotStore(
+            gateway.supervisor,
+            workspace_id,
+            sharing=lambda: sharing_setting.enabled(gateway.db, workspace_id),
+        )
+    return stores[workspace_id]
 
 
-class BotStore:
-    def __init__(self, supervisor, workspace_id):
+class BotStore(SharesMixin):
+    def __init__(self, supervisor, workspace_id, sharing=None):
+        """``sharing``: callable answering the workspace switch for sharing bots (absent: off)."""
+        self._sharing = sharing
         self._supervisor = supervisor
         self._workspace_id = workspace_id
         self._lock = threading.RLock()
@@ -228,6 +207,7 @@ class BotStore:
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.executescript(_SCHEMA)
                 self._upgrade(conn)
+                conn.executescript(SCHEMA_SHARES)
             except Exception:
                 conn.close()
                 raise
@@ -240,6 +220,7 @@ class BotStore:
         for table, column, kind in _ADDED:
             if column not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+        ensure_request_index(conn)
 
     @contextmanager
     def _tx(self, *, write=True):
@@ -373,10 +354,10 @@ class BotStore:
             rows = conn.execute(
                 "SELECT b.*, m.id AS last_id, m.role AS last_role, m.text AS last_text, "
                 "m.created_at AS last_at, "
-                "(SELECT COUNT(*) FROM bot_messages u WHERE u.bot_id=b.id AND u.role<>'user' "
-                "AND u.id>b.read_upto) AS unread "
+                "(SELECT COUNT(*) FROM bot_messages u WHERE u.bot_id=b.id AND u.thread_id IS NULL "
+                "AND u.role<>'user' AND u.id>b.read_upto) AS unread "
                 "FROM bots b LEFT JOIN bot_messages m ON m.id="
-                "(SELECT MAX(id) FROM bot_messages WHERE bot_id=b.id) "
+                "(SELECT MAX(id) FROM bot_messages WHERE bot_id=b.id AND thread_id IS NULL) "
                 "WHERE b.user_id=? AND (b.id=? OR (? IS NULL AND b.archived_at IS NULL)) "
                 "ORDER BY (m.id IS NULL), m.id DESC, b.rowid",
                 (user_id, bot_id, bot_id),
@@ -402,7 +383,8 @@ class BotStore:
         with self._tx() as conn:
             row = self._own(conn, bot_id, user_id)
             newest = conn.execute(
-                "SELECT COALESCE(MAX(id),0) FROM bot_messages WHERE bot_id=?", (bot_id,)
+                "SELECT COALESCE(MAX(id),0) FROM bot_messages WHERE bot_id=? AND thread_id IS NULL",
+                (bot_id,),
             ).fetchone()[0]
             mark = max(row["read_upto"], min(upto, newest))
             conn.execute("UPDATE bots SET read_upto=? WHERE id=?", (mark, bot_id))
@@ -413,7 +395,7 @@ class BotStore:
     def _add(self, conn, bot_id, role, text, **fields) -> dict:
         cursor = conn.execute(
             "INSERT INTO bot_messages (bot_id,role,text,blocks,request_id,reply_to,model,state,"
-            "created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            "created_at,thread_id,author_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 bot_id,
                 role,
@@ -424,6 +406,8 @@ class BotStore:
                 fields.get("model"),
                 fields.get("state", "ok"),
                 stamp(),
+                fields.get("thread_id"),
+                fields.get("author_id"),
             ),
         )
         return _message(
@@ -438,7 +422,8 @@ class BotStore:
         with self._tx() as conn:
             self._own(conn, bot_id, user_id)
             row = conn.execute(
-                "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user'",
+                "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user' "
+                "AND thread_id IS NULL",
                 (bot_id, request_id),
             ).fetchone()
             if row is None:
@@ -457,7 +442,8 @@ class BotStore:
         with self._tx() as conn:
             self._own(conn, bot_id, user_id)
             if not conn.execute(
-                "SELECT 1 FROM bot_messages WHERE id=? AND bot_id=? AND role='user'",
+                "SELECT 1 FROM bot_messages WHERE id=? AND bot_id=? AND role='user' "
+                "AND thread_id IS NULL",
                 (reply_to, bot_id),
             ).fetchone():
                 raise Invalid("reply_to is not a message of this bot")
@@ -485,7 +471,8 @@ class BotStore:
         with self._tx(write=False) as conn:
             self._own(conn, bot_id, user_id)
             row = conn.execute(
-                "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user'",
+                "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user' "
+                "AND thread_id IS NULL",
                 (bot_id, request_id),
             ).fetchone()
             return _message(row) if row else None
@@ -497,7 +484,7 @@ class BotStore:
             return [
                 _message(row)
                 for row in conn.execute(
-                    "SELECT * FROM bot_messages u WHERE u.bot_id=? AND u.role='user' "
+                    "SELECT * FROM bot_messages u WHERE u.bot_id=? AND u.role='user' AND u.thread_id IS NULL "
                     "AND NOT EXISTS (SELECT 1 FROM bot_messages b WHERE b.bot_id=u.bot_id "
                     "AND b.role='bot' AND b.reply_to=u.id) ORDER BY u.id",
                     (bot_id,),
@@ -508,7 +495,8 @@ class BotStore:
         with self._tx(write=False) as conn:
             self._own(conn, bot_id, user_id)
             row = conn.execute(
-                "SELECT * FROM bot_messages WHERE bot_id=? AND role='bot' AND reply_to=?",
+                "SELECT * FROM bot_messages WHERE bot_id=? AND role='bot' AND reply_to=? "
+                "AND thread_id IS NULL",
                 (bot_id, message_id),
             ).fetchone()
             return _message(row) if row else None
@@ -526,12 +514,14 @@ class BotStore:
             self._own(conn, bot_id, user_id)
             if after is not None:
                 rows = conn.execute(
-                    "SELECT * FROM bot_messages WHERE bot_id=? AND id>? ORDER BY id LIMIT ?",
+                    "SELECT * FROM bot_messages WHERE bot_id=? AND thread_id IS NULL AND id>? "
+                    "ORDER BY id LIMIT ?",
                     (bot_id, after, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM bot_messages WHERE bot_id=? AND id<? ORDER BY id DESC LIMIT ?",
+                    "SELECT * FROM bot_messages WHERE bot_id=? AND thread_id IS NULL AND id<? "
+                    "ORDER BY id DESC LIMIT ?",
                     (bot_id, 2**63 - 1 if before is None else before, limit),
                 ).fetchall()[::-1]
         return [_message(row) for row in rows]
@@ -861,7 +851,7 @@ class BotStore:
             return [
                 {"id": r["id"], "text": r["text"], "at": r["created_at"]}
                 for r in conn.execute(
-                    "SELECT * FROM bot_memory WHERE bot_id=? AND removed_at IS NULL "
+                    "SELECT * FROM bot_memory WHERE bot_id=? AND removed_at IS NULL AND owner_id IS NULL "
                     "ORDER BY id LIMIT ?",
                     (bot_id, -1 if limit is None else limit),
                 )
@@ -875,7 +865,7 @@ class BotStore:
                 and 0 < memory_id < 2**63
                 and conn.execute(
                     "UPDATE bot_memory SET removed_at=? WHERE id=? AND bot_id=? "
-                    "AND removed_at IS NULL",
+                    "AND removed_at IS NULL AND owner_id IS NULL",
                     (stamp(), memory_id, bot_id),
                 ).rowcount
                 == 1
