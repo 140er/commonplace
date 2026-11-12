@@ -154,7 +154,10 @@ block. When the item named by `ref` cannot be read, nothing is created and the c
 (`unreadable`). `POST /api/bots/<id>/confirm {pending, accept:true}` moves it from `open` to `done`
 once and runs exactly the stored action as the person; the result is an `event` message with
 the action block. `accept:false` cancels it. A second confirm is 409 `conflict`, an expired one
-409 `expired`, another person's 404. A confirm tool receives the frozen `version` among its
+409 `expired`, another person's 404. The tool's `check` runs before the action is consumed:
+when it refuses for a reason the person can fix (the item changed), the event message says so
+and the same chip can be tapped again; text that is not the person's words closes it. Only an
+attempted action is consumed, by the compare-and-set, so it still runs at most once. A confirm tool receives the frozen `version` among its
 arguments.
 
 **Writing a tool.** `commonplace/bots/tools.py` defines `Tool` (name, description, a closed
@@ -164,18 +167,87 @@ argument validation and before anything is labelled, stored or written: a confir
 writes the person's text calls `turn.words()` there, so model text is refused before a
 pending action or chip exists. `/confirm` rebuilds the turn with the message that asked for
 the action (even when newer messages exist) and calls `check` again before `run`; a routine
-tool's `check` also runs before `run`. A `project`-scope tool acts on the bot's own project; for a bot
+tool's `check` also runs before `run`. A confirm tool whose schema takes free text (a string
+without an `enum`) must have `check`, or `register()` refuses it. A successful `Result` may
+carry `say`, a plain outcome sentence that becomes the text of the confirmed action's event
+message (redacted, at most 500 characters); without it the text is "Done.". A tool call
+naming a tool that was not offered is refused with `invalid` and the turn goes on. A `project`-scope tool acts on the bot's own project; for a bot
 without one the model must name a readable project in a `project` argument, and
 `Turn.board(args)` returns it. Tool modules are listed in `bots.TOOL_MODULES` and imported at
 install; a missing module is skipped.
 
 ## Project tools
 
-Filled by a later slice.
+A project's bot (or the General bot, when you name the project) can run the project for you
+in plain language. You never open a board: the bot calls the same services you would, as you,
+so it can do nothing you may not do yourself. When a service refuses, the bot says so in one
+plain sentence with what to do next.
+
+What the bot can do:
+
+- **Look.** `project_status` (counts by status, who is working, what waits and why, whether the
+  orchestrator is connected and woken), `list_work` (up to 20 tasks, filtered by status),
+  `work_detail` (one task with its latest notes and links) and `list_decisions` (the open
+  questions waiting for you).
+- **File and order work.** `create_work` files your message as a new task, `prioritize_work`
+  changes a task's priority (project owner only) or moves it before or after another task, and
+  `comment_work` adds a comment.
+- **Steer.** `tell_orchestrator` passes your words to the project's orchestrator and says
+  honestly whether it is connected and woken, or will only see them when it next checks. New
+  work goes through `create_work` only, never also forwarded. One message that does both uses
+  the span arguments: one part is filed, another is forwarded.
+- **Answer and approve, with one tap.** `answer_decision` (an offered option, or your own
+  reply), `approve_work` and `create_project` never run from the bot's own call. The bot shows
+  a confirm chip whose text the server builds from the frozen arguments; your tap runs exactly
+  that action once. An answer or approval is tied to the item's version: if it changed after
+  the chip was shown, the tap is refused and the bot asks you to look again.
+
+**Your words only.** Every text a writing tool uses (a title, body, comment, forwarded
+message, decision reply or project name) must be copied verbatim from your current message,
+or the tool refuses (`not_your_words`) and nothing is written. Without arguments the whole
+message is used (the title is its first non-blank line, cut to 200 characters). The bot
+chooses which tool, which item and which part of your message, never what gets written, so
+text it read in other people's work cannot end up in a task, the project chat or an answer.
+
+Filing work is routine: on a project whose owner configured starts for new tasks, a filed
+task starts an agent exactly as when you file it by hand. Each filed task and each forwarded
+post is remembered for the bot (`bot_work`, `bot_forwards`) so later slices can tell you when
+it needs you or is done. A post forwarded by a bot is made inside `chat.front.skipping()`, so
+project chat adds no receipt, answer or fallback card for it.
+
+A new project is created through the same service the web app uses, with its permission
+rules. The project's own bot appears in the roster on the next read.
 
 ## Machines
 
-Filled by a later slice.
+A bot can list the machines its person may use and start or cancel an agent on one. It does
+this as the person, through the same checks the runner applies to a person who starts an
+agent from a task: nothing is widened. Today that means workspace owners; a member gets an
+empty list and a short reason.
+
+- **What is listed.** Enrolled machines that are switched on and not revoked: the machine's
+  name, when it was last seen (empty if no contact is recorded), what it may do (start an
+  agent; run a command) and what the owner granted it (projects, topics, areas, the highest
+  run mode). No credential, token or host name is ever shown. A machine that has not been
+  attested yet is listed as `unbound` and cannot start anything.
+- **Attested, not verified.** `owner_attested` means the workspace owner confirmed the machine
+  and its setup. Commonplace does not check the machine itself, so every machine carries
+  `verified: false`.
+- **Starting takes one tap.** The bot has three machine tools: `list_machines`, `start_work`
+  and `stop_work`. Starting an agent is a confirmed action: the bot proposes it with a button
+  whose text the server builds (`Start an agent on “<task>”`, plus the machine's name when one
+  is named) and nothing starts until the person taps. Asking twice with the same request key
+  creates one start. When no machine is named and only one can take the task, that one is
+  used; when several can, the bot asks which. `stop_work` cancels a start that has not
+  launched yet, also behind a tap; an agent that has launched cannot be stopped from here, and
+  the bot says so. While a start is in flight the task's work block reads `working`.
+- **Refusals** keep the runner's stable code (for example `not_todo`, `outside_worker_wing`,
+  `active_start`) and come with a plain sentence saying what to change.
+- **Running commands is not available** until a provider offers it. The `run_command` tool is
+  only offered to the model while some machine reports that it can run commands; without one
+  the bot says so.
+- **Other providers.** `register_provider` adds a provider; machines from all providers are
+  merged and each machine states its own capabilities.
 
 ## Updates between turns
 

@@ -41,6 +41,7 @@ from .store import (
     expire_claims,
     now,
     owns_card,
+    pr_repository,
     require_visible,
     task_number,
     task_row,
@@ -1896,6 +1897,8 @@ class BoardService(lifecycle.LifecycleMixin):
             updates["claim_expired_at"] = None
             if updates["claim_until"] is not None:
                 updates["heartbeat_at"] = now()
+        if "pr_url" in updates:  # set here, so the next BoardStore open has nothing to backfill
+            updates["pr_repo"] = pr_repository(updates["pr_url"])
         fields = ",".join(f"{key}=?" for key in updates)
         conn.execute(f"UPDATE tasks SET {fields} WHERE id=?", (*updates.values(), row["id"]))
 
@@ -2418,7 +2421,7 @@ class BoardService(lifecycle.LifecycleMixin):
             if backward:
                 messages.reverse()
             oldest = messages[0]["id"] if messages else 0
-            return {
+            page = {
                 "board": b["slug"],
                 "coordinator": b["coordinator"],
                 "messages": messages,
@@ -2431,6 +2434,10 @@ class BoardService(lifecycle.LifecycleMixin):
                     ).fetchone()
                 ),
             }
+        from commonplace.chat import live
+
+        live.mark_read(self.ctx.gateway, self.principal, b, messages)
+        return page
 
     def space_post(self, board, text):
         text = validate_text(text, "text", required=True)

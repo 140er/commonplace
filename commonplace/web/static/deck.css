@@ -79,36 +79,9 @@
 :root[data-ui="deck"] .m-tabs a[aria-current] { color: var(--text); }
 :root[data-ui="deck"] .m-tabs a[aria-current]::before { content: none; }
 
-/* ---------- Bots ---------- */
-:root[data-ui="deck"] .bots-roster { border-right: 0; }
-:root[data-ui="deck"] .bots-bar, :root[data-ui="deck"] .bots-head, :root[data-ui="deck"] .bots-compose { border: 0; }
-:root[data-ui="deck"] .bots-new { border: 0; border-radius: 22px; background: var(--text); color: var(--bg); }
-:root[data-ui="deck"] .bot-row { margin: 0 8px 2px; border: 0; border-radius: 16px; }
-:root[data-ui="deck"] .bot-row[aria-current] { box-shadow: none; }
-:root[data-ui="deck"] .bot-av { border-radius: 12px; color: var(--text); }
-:root[data-ui="deck"] .bot-unread, :root[data-ui="deck"] .bot-dot.needs_you { background: var(--wait); }
-:root[data-ui="deck"] .bot-unread { color: var(--bg); }
-:root[data-ui="deck"] .bot-dot.working { background: var(--text); }
-:root[data-ui="deck"] .bm-bubble { border: 0; border-radius: 20px; padding: 10px 16px; }
-:root[data-ui="deck"] .bm.me .bm-bubble { border-bottom-right-radius: 6px; background: var(--accent-weak); }
-:root[data-ui="deck"] .bm.bot .bm-bubble { padding-left: 0; background: none; }
-:root[data-ui="deck"] .bm.event .bm-bubble { padding-left: 0; }
-:root[data-ui="deck"] .bm-text { font-size: 15px; line-height: 22px; }
-:root[data-ui="deck"] .bb { border: 0; border-radius: 16px; }
-:root[data-ui="deck"] .bb-body { border-top-color: var(--line); }
-:root[data-ui="deck"] .bb.decision, :root[data-ui="deck"] .bb.confirm, :root[data-ui="deck"] .bb.setup { padding: 16px; gap: 10px; }
-:root[data-ui="deck"] .bb.confirm { border-left: 0; }
-:root[data-ui="deck"] .bb.confirm .bb-label, :root[data-ui="deck"] .bb-q { font-size: 16px; line-height: 22px; font-weight: 600; }
-:root[data-ui="deck"] .bb-opt { border: 0; border-radius: 22px; padding: 0 18px; background: var(--well); }
-:root[data-ui="deck"] .bb-opt.go { background: var(--text); color: var(--bg); }
 :root[data-ui="deck"] .chip { background: var(--well); }
 :root[data-ui="deck"] .chip.needs_you, :root[data-ui="deck"] .chip.ready { background: var(--wait-bg); color: var(--wait); box-shadow: none; }
 :root[data-ui="deck"] .chip.working { background: var(--accent-weak); color: var(--text); }
-:root[data-ui="deck"] .wait { border: 0; }
-:root[data-ui="deck"] .bots-box { padding: 6px 6px 6px 14px; border: 0; border-radius: 26px; background: var(--well); }
-:root[data-ui="deck"] .bots-box:focus-within { box-shadow: 0 0 0 2px var(--line-strong); }
-:root[data-ui="deck"] .bots .bots-send { border: 0; border-radius: 22px; color: var(--bg); }
-:root[data-ui="deck"] .bots .bots-send.stop { background: var(--accent-weak); color: var(--text); }
 :root[data-ui="deck"] .sheet { background: rgba(0, 0, 0, .7); }
 :root[data-ui="deck"] .sheet-body { border: 0; border-radius: 20px; padding: 22px; }
 :root[data-ui="deck"] .bb-reply input, :root[data-ui="deck"] .memory-add input, :root[data-ui="deck"] .sheet-body input, :root[data-ui="deck"] .sheet-body textarea { border-color: transparent; background: var(--well); }
@@ -116,4 +89,37 @@
 @media (max-width: 699px) {
   :root[data-ui="deck"] .sheet { background: var(--surface); }
   :root[data-ui="deck"] .sheet-body { border-radius: 0; }
+}
+
+/* ---------- Page heading, dialogs and the shared buttons of the older screens ---------- */
+:root[data-ui="deck"] .shell .head { padding: 20px var(--deck-gutter) 8px; border: 0; }
+:root[data-ui="deck"] .shell .head h1 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.01em; }
+:root[data-ui="deck"] #shell-dialog { border: 0; border-radius: 20px; background: var(--well); color: var(--text); box-shadow: 0 24px 60px rgba(0, 0, 0, .7); }
+:root[data-ui="deck"] #shell-dialog::backdrop { background: rgba(0, 0, 0, .7); }
+:root[data-ui="deck"] .opt, :root[data-ui="deck"] .blockbtn { border-radius: 18px; box-shadow: none; }
+:root[data-ui="deck"] .opt { background: var(--well); color: var(--text); font-weight: 500; }
+:root[data-ui="deck"] .opt:hover { background: var(--accent-weak); box-shadow: none; }
+:root[data-ui="deck"] .opt.go, :root[data-ui="deck"] .blockbtn, :root[data-ui="deck"] .blockbtn:hover { background: var(--text); color: var(--bg); font-weight: 600; }
+:root[data-ui="deck"] .message { border-radius: 16px; }
+
+/* ---------- Settings: one column of cards ---------- */
+:root[data-ui="deck"] .shell #content:has(> .settings) { padding: 8px var(--deck-gutter) 28px; }
+:root[data-ui="deck"] .settings { gap: 14px; }
+:root[data-ui="deck"] .settings-section { padding: 20px 22px; border-radius: 20px; background: var(--surface); box-shadow: none; }
+:root[data-ui="deck"] .settings-section h2 { margin-bottom: 10px; color: var(--text-2); font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: 0; }
+:root[data-ui="deck"] .settings-section > p { color: var(--text-2); }
+:root[data-ui="deck"] .setting-row { min-height: 56px; border-bottom-color: var(--line); }
+:root[data-ui="deck"] .setting-row button { min-height: 32px; padding: 0 14px; border-radius: 16px; background: var(--well); color: var(--text); box-shadow: none; font-weight: 500; }
+:root[data-ui="deck"] .setting-row button:hover { background: var(--accent-weak); box-shadow: none; }
+:root[data-ui="deck"] .setting-row button[aria-pressed="true"] { background: var(--text); color: var(--bg); box-shadow: none; }
+:root[data-ui="deck"] .settings :is(input:not([type=checkbox], [type=radio]), select, textarea) { min-height: 36px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
+:root[data-ui="deck"] .deck-tools { display: none; }
+:root[data-ui="deck"] .deck-tools a { display: flex; align-items: center; justify-content: space-between; min-height: 48px; color: var(--text); text-decoration: none; font-weight: 500; }
+:root[data-ui="deck"] .deck-tools a + a { border-top: 1px solid var(--line); }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell .head { padding: 14px 16px 4px; }
+  :root[data-ui="deck"] .shell #content:has(> .settings) { padding: 8px 16px 20px; }
+  :root[data-ui="deck"] .settings-section { padding: 18px; }
+  /* A phone has no account menu, so Settings carries the workspace tools. */
+  :root[data-ui="deck"] .deck-tools { display: block; }
 }
