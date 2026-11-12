@@ -261,6 +261,8 @@ CREATE INDEX IF NOT EXISTS thread_source_keys_nfkc
     ON thread_source_keys(workspace_id, source_nfkc);
 CREATE INDEX IF NOT EXISTS thread_source_keys_legacy
     ON thread_source_keys(workspace_id, legacy);
+CREATE INDEX IF NOT EXISTS thread_source_keys_length
+    ON thread_source_keys(workspace_id, length(source_key));
 """
 
 
@@ -899,8 +901,16 @@ class ThreadStore:
         target = room_match_value(value)
         if not target.startswith("mcp:"):
             return []
-        prefixes = [target[:end] for end in range(len("mcp:"), len(target) + 1)]
         with self._lock:
+            # No stored key is longer than the longest one, so a long room costs
+            # no more than a short one (indexed on the key length).
+            longest = self._conn.execute(
+                "SELECT max(length(source_key)) FROM thread_source_keys WHERE workspace_id=?",
+                (workspace_id,),
+            ).fetchone()[0]
+            if not longest:
+                return []
+            prefixes = [target[:end] for end in range(len("mcp:"), min(len(target), longest) + 1)]
             return self._keyed_threads(workspace_id, "source_key", prefixes)
 
     def by_source_value(self, workspace_id: str, value: str) -> list[StoredThread]:

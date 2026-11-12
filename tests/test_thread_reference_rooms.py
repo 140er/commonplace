@@ -991,6 +991,33 @@ def test_batch_room_checks_issue_a_bounded_number_of_queries(hub, collection, co
     assert len(statements) <= 30, (len(statements), statements[:10])
 
 
+def test_long_room_probes_no_more_prefixes_than_the_longest_stored_key(hub, monkeypatch):
+    """A room near the length cap must not probe one prefix per character."""
+    stored = store_thread(hub, "mcp_source", actor=hub.admin, wing="private_chats")
+    store = hub.gateway.handoff.store_for(hub.workspace)
+    probed = []
+    original = store._keyed_threads
+
+    def record(workspace_id, column, values):
+        probed.extend(values)
+        return original(workspace_id, column, values)
+
+    monkeypatch.setattr(store, "_keyed_threads", record)
+    room = stored.source_thread_id + "_" + "x" * 16000
+    rows = store.by_source_prefix(hub.workspace, room)
+    assert [row.id for row in rows] == [stored.id]
+    assert len(probed) <= len(stored.source_thread_id), len(probed)
+    assert sum(map(len, probed)) < 4 * len(stored.source_thread_id) ** 2
+
+
+def test_prefix_lookup_in_a_workspace_without_stored_keys_probes_nothing(hub, monkeypatch):
+    store = hub.gateway.handoff.store_for(hub.workspace)
+    probed = []
+    monkeypatch.setattr(store, "_keyed_threads", lambda *args: probed.append(args) or [])
+    assert store.by_source_prefix(hub.workspace, "mcp:" + "y" * 5000) == []
+    assert probed == []
+
+
 def test_checkpoint_item_count_is_bounded(hub, blind):
     items = [{"wing": "shared", "room": "general", "content": f"x{i}"} for i in range(501)]
     raw = mcp(hub, blind[1], "mempalace_checkpoint", items=items)
