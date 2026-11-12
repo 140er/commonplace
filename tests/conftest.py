@@ -18,6 +18,7 @@ which keeps the test-impact picture of a change honest.
 
 import hashlib
 import importlib.abc
+import logging
 import math
 import os
 import re
@@ -53,6 +54,7 @@ _REAL_EMBEDDING_TEST_MODULES = {
     "test_embeddinggemma2_device",
     "test_embeddinggemma2_integration",
     "test_embedding_model_fallback",
+    "test_embedding_service",
 }
 
 
@@ -447,6 +449,26 @@ def _utc_local_zone(monkeypatch):
     )
 
 
+def _reset_worker_observer(mcp_server):
+    """Drop the process-global worker observer and its failure latch.
+
+    A failed construction latches for the rest of the process, so a test that
+    served a request with a stub config would otherwise silence observation
+    for every later test.
+    """
+    if not hasattr(mcp_server, "_worker_observer"):
+        return
+    observer = mcp_server._worker_observer
+    if observer is not None:
+        try:
+            observer.close()
+        except Exception:
+            logging.getLogger(__name__).warning("worker observer close failed", exc_info=True)
+    mcp_server._worker_observer = None
+    mcp_server._worker_observer_failed = False
+    mcp_server._worker_observation_lost = 0
+
+
 @pytest.fixture(autouse=True)
 def _reset_mcp_cache(monkeypatch, _close_test_storage_clients):
     """Reset cached MCP state between tests without importing mcp_server.
@@ -516,6 +538,8 @@ def _reset_mcp_cache(monkeypatch, _close_test_storage_clients):
                     mcp_server._collection_cache_palace = None
                 if hasattr(mcp_server, "_collection_open_error"):
                     mcp_server._collection_open_error = None
+
+                _reset_worker_observer(mcp_server)
         except AttributeError:
             pass
 
@@ -683,8 +707,45 @@ def seeded_collection(collection):
     return collection
 
 
+def _raw_pytest_refusal(environ=None, home=None):
+    """Why this run may not start here, or None.
+
+    A shared test host opts in with the marker file ``~/.config/commonplace/require-test-runner``
+    (in the real account home, not the HOME this file redirects). The marker holds the name of the
+    environment variable that the host's test runner sets for the runs it admits; there a run
+    without that variable (a raw pytest that bypasses the runner's slot cap) does not start.
+    Machines without the marker are unaffected. ``COMMONPLACE_ALLOW_RAW_PYTEST=1`` overrides it
+    for one run; xdist workers inherit their controller's admission.
+    """
+    env = os.environ if environ is None else environ
+    if env.get("PYTEST_XDIST_WORKER") or env.get("COMMONPLACE_ALLOW_RAW_PYTEST") == "1":
+        return None
+    if home is None:
+        try:
+            import pwd
+
+            home = pwd.getpwuid(os.getuid()).pw_dir
+        except (ImportError, KeyError, AttributeError):
+            return None
+    marker = os.path.join(home, ".config", "commonplace", "require-test-runner")
+    try:
+        with open(marker, encoding="utf-8") as fh:
+            variable = fh.read().strip()
+    except OSError:
+        return None
+    if not variable or env.get(variable):
+        return None
+    return (
+        f"this host runs tests only through its test runner ({marker}), so its slot cap holds; "
+        "start this run through the runner (override for one run: COMMONPLACE_ALLOW_RAW_PYTEST=1)"
+    )
+
+
 def pytest_configure(config):
-    """On Windows, replace coverage's fail_under with the pyproject Windows gate."""
+    """Refuse raw runs on a shared test host; on Windows, use the pyproject Windows coverage gate."""
+    refusal = _raw_pytest_refusal()
+    if refusal:
+        pytest.exit(refusal, returncode=4)
     from coverage_gate import apply_platform_threshold
 
     apply_platform_threshold(config)

@@ -847,10 +847,14 @@ class ReplayJournal:
             ).fetchone()
             if row is None or row[0] not in ("consumed", "uncertain"):
                 raise ProtocolDenied("counted_helper_row_required")
-            db.execute(
-                f"UPDATE {table} SET state='operator_closed' WHERE workspace=? AND gateway=? AND {column}=?",
-                (workspace, gateway, object_id),
+            close_sql = (
+                "UPDATE compute_passive_journal SET state='operator_closed' "
+                "WHERE workspace=? AND gateway=? AND discovery=?"
+                if passive
+                else "UPDATE compute_transport_journal SET state='operator_closed' "
+                "WHERE workspace=? AND gateway=? AND execution=?"
             )
+            db.execute(close_sql, (workspace, gateway, object_id))
             db.execute(
                 "INSERT INTO compute_helper_operator_audit(workspace,gateway,object_id,purpose,note,created_at) VALUES (?,?,?,?,?,?)",
                 (workspace, gateway, object_id, purpose, note, time.time()),
