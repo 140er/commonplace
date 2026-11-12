@@ -733,6 +733,24 @@ def test_a_crash_ends_the_meeting_interrupted_and_never_rejoins(console_hub, fak
     assert fake.joins == []
 
 
+def test_a_crash_after_a_stop_still_ends_the_meeting_and_discards(console_hub, fake):
+    hub = console_hub
+    ready(hub)
+    meeting_id = new_meeting(hub)
+    make_orphan(hub, fake, meeting_id, "live", announced=True)
+    meetings = store_for(hub)
+    with meetings._tx() as conn:
+        conn.execute("INSERT INTO meeting_segments VALUES (?,1,NULL,0,10,'words')", (meeting_id,))
+    meetings.request_end(meeting_id, "stop_requested", time.time())  # then the worker crashed
+    assert state_of(hub, meeting_id)[0] == "removed"
+    assert drive(hub, fake)[0] == []
+    assert state_of(hub, meeting_id) == ("interrupted", "interrupted")
+    assert fake.leaves == [f"handle-{meeting_id}"] and fake.joins == []
+    assert count(hub, "meeting_segments", meeting_id) == 0  # a stop discards
+    assert meetings.expired(time.time(), engine.LEASE_S) == []
+    assert meetings.pending() is False  # the worker goes idle
+
+
 def test_a_worker_error_mid_meeting_fails_closed(console_hub, fake, caplog):
     hub = console_hub
     ready(hub)

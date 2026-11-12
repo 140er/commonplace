@@ -13,9 +13,8 @@ The consent rule is the whole point of this module and is kept in one place:
 A meeting ends through :meth:`Run._conclude` (or :meth:`Run._drop` when it already ended elsewhere,
 or :func:`recover` for an orphan); every state change on the way is a compare-and-set in the store
 that a stop (``removed``) refuses, and ``finish`` will not keep what was captured for a stopped
-meeting. Text from
-the meeting (chat, display names) is data: it is never logged, and only an exact ``bot stop`` has
-any effect. Nothing here names a provider.
+meeting. Text from the meeting (chat, display names) is data: it is never logged, and only an
+exact ``bot stop`` has any effect. Nothing here names a provider.
 """
 
 from __future__ import annotations
@@ -466,7 +465,8 @@ class Run:
 
 def recover(gateway, workspace_id, meeting_id, *, clock=time.time) -> str:
     """A running meeting whose worker is gone: the bot leaves, the sealed link is wiped, posts that
-    may or may not have gone out are marked ``unknown`` and the meeting ends ``interrupted``. It
+    may or may not have gone out are marked ``unknown`` and the meeting ends ``interrupted``. One
+    that was stopped (``removed``) before the worker died is discarded, as the stop asked. It
     never rejoins: listening again would need a new announcement and a person's decision."""
     meetings = store.open_meetings(gateway, workspace_id)
     row = meetings.run_row(meeting_id)
@@ -479,7 +479,8 @@ def recover(gateway, workspace_id, meeting_id, *, clock=time.time) -> str:
     except Exception as exc:
         logger.warning("meeting recovery leave failed type=%s", type(exc).__name__)
     meetings.outbox_unknown(meeting_id)
-    meetings.finish(meeting_id, "interrupted", "interrupted", clock(), discard=False)
+    stopped = row["state"] == "removed"
+    meetings.finish(meeting_id, "interrupted", "interrupted", clock(), discard=stopped)
     try:
         gateway.db.audit(
             action="meetings.end",
