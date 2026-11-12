@@ -14,6 +14,8 @@ Authority (nothing new; the stores enforce it again):
   the owner through the data directory). An agent token with role owner is refused.
 - lease, journal, gates, ``orch_card_start``: a principal that passes the runner's
   ``requester_ok`` for the config's ``[runner].machine``, plus epoch and token.
+- ``orch_reassign_step``: the same holder authority for the role the step's owner
+  reports to (``organigram``).
 
 Untrusted connections only see the read tools and ``orch_config_propose``
 (``trusted_only``); runner children see none (``available``). A configuring live accept
@@ -365,6 +367,13 @@ def void_step(ctx, board, role, step_key):
     return step
 
 
+def reassign_step(ctx, board, role, epoch, token, report, step_key):
+    from . import organigram
+
+    _board(ctx, board)
+    return organigram.reassign_step(ctx, board, role, epoch, token, report, step_key)
+
+
 def checkpoint(ctx, board, role):
     from . import durable
 
@@ -610,6 +619,17 @@ OPERATIONS = {
         "Owner/local void: retire runner-start keys and cancel only queued/leased jobs; "
         "launched jobs and history remain. Repeats preserve the first void; each successful "
         "call emits a feed notification. Gate void allows a new attempt under a new key.",
+    ),
+    "orch_reassign_step": (
+        reassign_step,
+        {**LEASE, "report": ROLE, "step_key": STEP_KEY},
+        ("board", "role", "epoch", "token", "report", "step_key"),
+        "write",
+        True,
+        False,
+        "Take back a step of a role that reports to yours (parent in the config): the step "
+        "is voided with its history kept so the work can be given out again. Only the role "
+        "it reports to may do this; runner starts, gates and holds stay with the owner.",
     ),
     "orch_checkpoint": (
         checkpoint,

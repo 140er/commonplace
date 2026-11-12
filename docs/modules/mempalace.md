@@ -59,6 +59,8 @@
 
   - Direct B2 providers reject malformed metadata with encryption errors; marked-workspace refusals retain an explicit locked diagnostic.
 
+  - A symlinked keyslot record is refused at runtime open with its own message, not the generic unavailable one.
+
   - Operator-blind token-slot primitives accept strict versioned token/grant envelopes only; opt-in B3 metadata stays locked before any B2 key provider or database open.
 
   - User content is stored verbatim; ingest is append-only; search returns original words; nothing leaves the machine unless the user configured a provider.
