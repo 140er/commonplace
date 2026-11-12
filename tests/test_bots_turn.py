@@ -332,6 +332,7 @@ def test_a_member_cannot_do_through_a_tool_what_their_role_cannot_do(bots_hub, f
 
     extra_tools(
         tools.Tool(
+            reach="none",
             name="read_asks",
             description="Open questions",
             schema={"type": "object", "properties": {}, "additionalProperties": False},
@@ -369,6 +370,7 @@ def test_the_general_bot_names_a_readable_project_for_project_tools(bots_hub, fa
 
     extra_tools(
         tools.Tool(
+            reach="project:read",
             name="peek",
             description="Look at a project",
             schema={"type": "object", "properties": {}, "additionalProperties": False},
@@ -412,6 +414,7 @@ def confirm_tool(extra_tools):
 
     extra_tools(
         tools.Tool(
+            reach="none",
             name="approve_item",
             description="Approve an item",
             schema={
@@ -868,6 +871,7 @@ def test_tool_results_that_would_overflow_are_bounded(bots_hub, fake, extra_tool
     configure(hub)
     extra_tools(
         tools.Tool(
+            reach="none",
             name="big_read",
             description="Read a lot",
             schema={"type": "object", "properties": {}, "additionalProperties": False},
@@ -973,6 +977,7 @@ def test_a_confirm_tool_checks_the_persons_words_before_any_chip(bots_hub, fake,
 
     extra_tools(
         tools.Tool(
+            reach="none",
             name="send_note",
             description="Send a note",
             schema={
@@ -1040,6 +1045,7 @@ def toggled_confirm_tool(extra_tools, runs, refuse, say=""):
 
     extra_tools(
         tools.Tool(
+            reach="none",
             name="approve_toggle",
             description="Approve an item",
             schema={
@@ -1080,6 +1086,7 @@ def test_a_confirm_tool_with_text_and_no_check_is_refused_at_registration():
     with pytest.raises(ValueError):
         tools.register(
             tools.Tool(
+                reach="none",
                 name="post_unchecked",
                 description="Post",
                 schema={
@@ -1124,6 +1131,7 @@ def test_blocks_shown_during_a_turn_use_the_persons_current_rights(bots_hub, fak
 
     extra_tools(
         tools.Tool(
+            reach="none",
             name="show_setup",
             description="Show setup",
             schema={"type": "object", "properties": {}, "additionalProperties": False},
@@ -1156,6 +1164,7 @@ def test_a_block_shown_after_access_ended_mid_turn_is_gone(bots_hub, fake, extra
 
     extra_tools(
         tools.Tool(
+            reach="none",
             name="show_work",
             description="Show work",
             schema={"type": "object", "properties": {}, "additionalProperties": False},
@@ -1193,6 +1202,7 @@ def test_the_registration_guard_sees_every_free_text_shape(text):
 def _register_shape(name, text):
     tools.register(
         tools.Tool(
+            reach="none",
             name=name,
             description="Shape",
             schema={
@@ -1212,6 +1222,7 @@ def test_the_registration_guard_lets_pinned_values_through(extra_tools):
         tools.REGISTRY.pop("pinned_shape", None)
         extra_tools(
             tools.Tool(
+                reach="none",
                 name="pinned_shape",
                 description="Shape",
                 schema={

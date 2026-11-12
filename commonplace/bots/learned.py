@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from commonplace.bots import learning
+from commonplace.bots.learn_runs import RunsMixin
 from commonplace.bots.store import BotStore, Conflict, Invalid, Missing, stamp
 
 KINDS = ("preference", "instruction", "fact", "correction")
@@ -20,12 +21,21 @@ MODES = ("off", "ask", "auto")
 TEXT_MIN, TEXT_MAX, NOTE_MAX, TOPIC_MAX = 8, 300, 200, 80
 PAGE_DEFAULT, PAGE_MAX = 50, 100
 PAUSE_MAX_DAYS = 30
+LIVE_CAP, DAILY_CAP = 200, 20  # live person items per person; new items per person per UTC day
 WORKSPACE = "workspace"
 _NOTE_ID = re.compile(r"n([0-9]{1,18})")
 
 
 class Refused(Exception):
     """The guard or a block says no. ``kind`` is one word (secret, injection, blocked, ...)."""
+
+    def __init__(self, kind):
+        super().__init__(kind)
+        self.kind = kind
+
+
+class Capped(Exception):
+    """A storage cap says no. ``kind`` is ``live`` or ``daily``."""
 
     def __init__(self, kind):
         super().__init__(kind)
@@ -109,7 +119,7 @@ def _note(row) -> dict:
     }
 
 
-class Learned:
+class Learned(RunsMixin):
     def __init__(self, bots: BotStore):
         self._bots = bots
         self._key = None
@@ -284,12 +294,16 @@ class Learned:
         board=None,
         note=None,
         state="active",
+        dedupe=False,
         now=None,
     ) -> dict:
         """Store one learned person item, or refuse. The seam the extractor writes through.
 
         The text must be a verbatim span of one of this bot's stored user messages and pass the
         guard; a note (the bot's own remark, at most 200 characters) is stored apart and marked.
+        With ``dedupe`` (the extractor) a repeated sentence only bumps ``seen_count``, a new text
+        for a known topic replaces the old item, and the caps apply; without it a repeat is a
+        :class:`Conflict`.
         """
         topic = learning.topic_key(topic)
         text = text.strip() if isinstance(text, str) else text
@@ -323,6 +337,19 @@ class Learned:
             ).fetchone():
                 raise Refused("blocked")
             at = stamp(now)
+            if dedupe:
+                same = conn.execute(
+                    "SELECT id FROM bot_learned WHERE user_id=? AND scope='person' "
+                    "AND COALESCE(board,'')=? AND quote_hash=? AND replaced_by IS NULL",
+                    (user_id, board or "", digest),
+                ).fetchone()
+                if same is not None:
+                    conn.execute(
+                        "UPDATE bot_learned SET seen_count=seen_count+1, last_seen_at=? WHERE id=?",
+                        (at, same["id"]),
+                    )
+                    return _item(self._row(conn, user_id, same["id"]))
+                self._room(conn, user_id, now)
             try:
                 conn.execute(
                     "INSERT INTO bot_learned (id,user_id,bot_id,scope,board,kind,topic,text,note,"
@@ -348,8 +375,45 @@ class Learned:
                 )
             except sqlite3.IntegrityError:
                 raise Conflict() from None
+            if dedupe:
+                self._replace(conn, user_id, item_id, topic, board, state)
             self._log(conn, user_id, bot_id, item_id, "learn", now)
             return _item(self._row(conn, user_id, item_id))
+
+    @staticmethod
+    def _room(conn, user_id, now=None) -> None:
+        """Raise :class:`Capped` when the person is at the live-items or the daily cap."""
+        live = conn.execute(
+            "SELECT COUNT(*) FROM bot_learned WHERE user_id=? AND scope='person' "
+            "AND replaced_by IS NULL",
+            (user_id,),
+        ).fetchone()[0]
+        if live >= LIVE_CAP:
+            raise Capped("live")
+        day = stamp(now)[:10]  # new items are counted from the log, so a forget gives none back
+        today = conn.execute(
+            "SELECT COUNT(*) FROM bot_learn_log WHERE user_id=? AND action='learn' AND at>=?",
+            (user_id, f"{day}T00:00:00Z"),
+        ).fetchone()[0]
+        if today >= DAILY_CAP:
+            raise Capped("daily")
+
+    @staticmethod
+    def _replace(conn, user_id, item_id, topic, board, state) -> None:
+        """A new text for a known topic: the old live item is replaced (it shows under
+        "earlier"), an old proposal is dropped. A proposal replaces nothing until it is accepted."""
+        old = conn.execute(
+            "SELECT id,state FROM bot_learned WHERE user_id=? AND scope='person' AND topic=? "
+            "AND COALESCE(board,'')=? AND replaced_by IS NULL AND id<>?",
+            (user_id, topic, board or "", item_id),
+        ).fetchall()
+        for row in old:
+            if row["state"] == "proposed":
+                conn.execute("DELETE FROM bot_learned WHERE id=?", (row["id"],))
+            elif state == "active":
+                conn.execute(
+                    "UPDATE bot_learned SET replaced_by=? WHERE id=?", (item_id, row["id"])
+                )
 
     @staticmethod
     def _row(conn, user_id, item_id):

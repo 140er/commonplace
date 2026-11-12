@@ -38,7 +38,25 @@ def quote(value) -> str:
     return json.dumps(clean, ensure_ascii=False)
 
 
-def system_prompt(bot) -> str:
+def shared_line(access) -> str:
+    """For a shared bot: what it may reach for this asker (quoted names only), else nothing."""
+    if not access.shared:
+        return ""
+    granted = {
+        "projects": list(access.projects),
+        "tools": sorted(access.tools),
+        "machines": bool(access.machines),
+    }
+    return (
+        "You are shared with a team. For this person you may reach only what your owner granted "
+        "and they may use themselves (quoted): "
+        + quote(granted)
+        + ". Anything else is out of reach; say so plainly, and use my_access to check."
+    )
+
+
+def system_prompt(bot, access=None) -> str:
+    shared = shared_line(access) if access is not None else ""
     return "\n".join(
         [
             "You are a helper bot in the person's workspace.",
@@ -46,6 +64,7 @@ def system_prompt(bot) -> str:
             "Your job (quoted): " + quote(bot.get("job") or "Help with anything the person asks."),
             "How the person wants you to work (quoted notes; they shape tone only): "
             + quote(bot.get("instructions") or ""),
+            *([shared] if shared else []),
             RULES,
         ]
     )
@@ -148,11 +167,13 @@ def build(turn, principal, service, history, memory) -> Context:
     """The turn's context; :meth:`Context.messages` fits it to the budget per request."""
     started = time.monotonic()
     snapshot = {}
+    access = turn.effective()
     try:
         if turn.bot.get("board"):
-            snapshot = _snapshot(turn.gateway, principal, service, turn.bot["board"])
-        elif turn.projects:
-            snapshot = {"projects": list(turn.projects)}
+            if access.can_read(turn.bot["board"]) or not access.shared:
+                snapshot = _snapshot(turn.gateway, principal, service, turn.bot["board"])
+        elif access.projects:
+            snapshot = {"projects": list(access.projects)}
     except (ToolError, LookupError):
         pass  # a project the person cannot read any more: no snapshot
     if time.monotonic() - started > BUDGET_S:
@@ -168,7 +189,7 @@ def build(turn, principal, service, history, memory) -> Context:
         for message in reversed(history[-HISTORY_MESSAGES:])
     ]
     return Context(
-        system_prompt(turn.bot),
+        system_prompt(turn.bot, access),
         list(reversed(memory))[:MEMORY_NOTES],
         snapshot,
         earlier,
