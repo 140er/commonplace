@@ -10,7 +10,15 @@
   - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
   - Fourteen metadata-console regression families over genuine HTTP sessions/connections and synthetic isolated stores.
 
+  - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
+  - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
+  - Coworker regression witnesses refuse workspace hosted providers for owner/member board-less DMs and render human rows carrying `bot_id` with person authors; matching bot actors retain bot labels and styling.
+
+  - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
+
   - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
+
+  - `tests/test_commonplace_invite_canary.py`, `tests/test_commonplace_invites.py` and `tests/test_invites_ui.py` (`tests/invites_ui.mjs`) hold the workspace-invite cases and second-user canaries; the `invites` module block describes them. The route inventory in `tests/test_commonplace_public_surface.py` lists the invite and workspace routes.
 
   - `commonplace_deck_compute.mjs` and its pytest wrapper cover label/segment/dot geometry for 1–12 machines on desktop and phone, owner refusals, state derivation, keyboard tabs, escaping, draft handoffs and refresh/stop races.
 
@@ -68,6 +76,10 @@
   - OAuth CSP header controls and real Chromium form submissions cover normal consent, login retry and re-rendered error consent.
 
   - OAuth CSP and destination-display controls cover normal consent, retry, canonical numeric hosts, explicit default ports and actionable validation errors.
+
+  - Project-settings regressions hold connection, chat and card reads pending while
+    exercising Connect; gateway tests cover slow and blocked wing enumeration,
+    transport budgets, bounded concurrency and fallback recovery.
 
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
@@ -303,7 +315,7 @@
 
   - Shared-proposal acceptance freezes the injection clock; a forced-expiry regression exercises the functional test and checks verbatim delivery to both agents after owner acceptance.
 
-  - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
+  - **Browser GitHub connection:** Browser GitHub merge tests cover opt-in consent and scope, own-grant-only merging, head pinning, private-repository merging on the repo scope, refusal without that scope and token secrecy with synthetic transports. Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
 
   - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, Node controller render-cache checks and direct transport bounds.
 

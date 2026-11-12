@@ -116,7 +116,7 @@
 
   - A module file holds exactly one block named like the file, a `docs/system/` file starts with a `### ` heading, and `docs-check --print modules|system` shows the assembled documents.
 
-  - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary and unproven live OAuth behavior.
+  - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary, the separate per-person repo-scope merge consent (owner decision B) and unproven live OAuth behavior.
 
   - **Connection lifecycle proof:** Records overlap fencing, process recovery proof and the deferred account-deletion integration boundary.
 

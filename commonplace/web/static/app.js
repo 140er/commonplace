@@ -16,6 +16,7 @@ import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecr
 import { createAdmin, boundedRequest } from "./admin.js";
 import { createRunnerBlock } from "./adminrunners.js";
 import { createInstanceAdmin } from "./instance-admin.js";
+import { createInviteBlock, openWorkspaces } from "./invites.js";
 import { createConsole } from "./console.js";
 import { createBots, waitingTotal } from "./bots.js";
 import { createChat } from "./chat.js";
@@ -309,6 +310,7 @@ async function paletteCommand(item) {
     if (target && location.hash === target) void state.workbenchChat?.dock.open(); else if (target) location.hash = target;
   } else if (action === "new-board") openOnboarding();
   else if (action === "coordinator" || action === "logout") shellAction(action, item.board);
+  else if (action === "workspaces") openWorkspaces({ api, e, onError: showError });
   else if (action === "move-card" || action === "edit-card") { state.selected = item.number; openSelectedCard(action); }
   else if (action === "copy-card-link") {
     try { await navigator.clipboard.writeText(new URL(`${location.pathname}${item.href}`, location.origin).href); }
@@ -1038,7 +1040,7 @@ function botsScreen() {
   title("Bots");
 }
 function adminScreen() {
-  adminUI ??= createAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, runners: createRunnerBlock({ api, e }) });
+  adminUI ??= createAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, runners: createRunnerBlock({ api, e }), invites: createInviteBlock({ api, e }) });
   adminUI.show();
   title("Workspace administration");
   navigation();

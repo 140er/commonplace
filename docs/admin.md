@@ -2,9 +2,9 @@
 
 Sign in as the current workspace's owner and choose **Account → Admin**, or choose
 **Admin** in the command palette on a phone. The direct route is `/app/#/admin`.
-The page shows the active workspace's members, connections, runtime configuration, effective limits and cards needing attention. It adds no
-workspace switching, global account directory, invitation, token reveal or editing
-form; the one write is the owner's machine requester list (see below). **Manage agents and workspace settings** opens the existing Settings page.
+The page shows the active workspace's members, connections, runtime configuration, effective limits and cards needing attention. Its sections add no
+workspace switching, global account directory, token reveal or editing
+form; the one write is the owner's machine requester list (see below). Invites live in their own block (see [Invite people](#invite-people-block)). **Manage agents and workspace settings** opens the existing Settings page.
 
 ## Authority
 
@@ -247,6 +247,15 @@ unattempted siblings explicit errors. SQLite may take bounded ordinary read lock
 
 Deployment/health and backup receipts are read-only operational sections. No deploy,
 backup-run, restore, runner control or new enforcement endpoint is present.
+
+## Invite people block
+
+Above the runner block, the Admin page hosts an **Invite people** block for the
+workspace owner. It does not use the `/api/admin` dispatcher; it calls the owner-only
+`/api/invites` routes to make an invite link, list the workspace's invites and revoke an
+open one. A new link is shown once, in a panel the page empties on dismissal, navigation,
+sign-out or session expiry; it is never stored, logged or redrawn. See
+[Workspace invites](invites.md) for the rules and what a member can reach.
 
 ## Runner machines block
 

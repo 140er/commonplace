@@ -34,6 +34,12 @@ permanently retires the key while preserving its history and linked job. Only
 queued/leased jobs are cancelled atomically with void; launched jobs are untouched.
 A new attempt needs a new key and ordinary admission.
 
+Merge policy: when the accepted config has ``[factory]`` with ``gate.required = true``, a
+new ``merge`` step needs a card whose newest unvoided gate on this board is ``gate_pass``
+(``factory_card_required``, ``factory_gate_required``). The checkpoint then carries
+``factory``: the policy, its summary lines and the board's gate counts. Without
+``[factory]`` neither applies.
+
 Checkpoint: derived from the journal, the jobs and the board, never stored: open steps,
 ``in_doubt``, ``needs_person``, holds, ``next``, jobs, gates, misses, the read-only card
 classes ``held`` / ``expired`` / ``not_held_by_caller`` and the unstarted todo cards.
@@ -754,7 +760,7 @@ def journal_intent(
         _int(card, "card")
     elif kind == "card":
         raise DurableError("invalid_card", 400, "a card step needs a card")
-    st, _version = _holder(ctx, board, role)
+    st, version = _holder(ctx, board, role)
     if card is not None:
         _card_row(ctx, board, card)
     actor = _actor_ref(ctx.principal)
@@ -765,6 +771,9 @@ def journal_intent(
             if existing["kind"] == kind and existing["card"] == card:
                 return existing
             raise DurableError("step_exists", 409, "step key already used", step=existing)
+        if kind == "merge":
+            # _holder parsed this version already (``config_invalid`` otherwise).
+            _merge_guard(conn, version.config().factory if version else None, board, card)
         state = "done" if kind == "next" else "intent"
         conn.execute(
             "INSERT INTO orch_steps(board,role,step_key,kind,card,state,detail,created_epoch,"
@@ -773,6 +782,55 @@ def journal_intent(
         )
         _log(conn, board, role, step_key, epoch, "intent", actor, now, state=state)
         return step_in(conn, board=board, role=role, step_key=step_key)
+
+
+def _policy(version):
+    """The accepted config's ``[factory]`` policy for the read-only checkpoint, or ``None``
+    (also when the stored version does not parse: a read never fails on it)."""
+    if version is None:
+        return None
+    try:
+        return version.config().factory
+    except ValueError:
+        return None
+
+
+def _merge_guard(conn, policy, board, card):
+    """Refuse a new merge step the board's merge policy does not allow."""
+    if policy is None or not policy.gate_required:
+        return
+    if card is None:
+        raise DurableError(
+            "factory_card_required", 409, "the merge policy needs the card whose gate passed"
+        )
+    gate = conn.execute(
+        "SELECT g.* FROM orch_gates g JOIN orch_steps s "
+        "ON s.board=g.board AND s.role=g.role AND s.step_key=g.step_key "
+        "WHERE g.board=? AND s.card=? AND g.voided_at IS NULL ORDER BY g.id DESC LIMIT 1",
+        (board, card),
+    ).fetchone()
+    if gate is None or gate["state"] != "gate_pass":
+        raise DurableError(
+            "factory_gate_required",
+            409,
+            "the merge policy needs a passed gate on this card's newest gated head",
+            gate=None if gate is None else _gate_public(gate),
+        )
+
+
+def _factory_view(conn, version, board):
+    """Checkpoint ``factory`` entry: ``{}`` without a policy, so the key is absent."""
+    policy = _policy(version)
+    if policy is None:
+        return {}
+    counts = dict.fromkeys(("open", *GATE_STATES), 0)
+    for row in conn.execute(
+        "SELECT state, COUNT(*) AS n FROM orch_gates WHERE board=? AND voided_at IS NULL "
+        "GROUP BY state",
+        (board,),
+    ):
+        counts[row["state"]] = row["n"]
+    return {"factory": {"policy": policy.to_dict(), "summary": policy.summary(), "gates": counts}}
 
 
 def _parse_evidence(evidence):
@@ -1426,6 +1484,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
             (board, MAX_LIST),
         ).fetchall()
         misses = _misses(conn, board)
+        factory_view = _factory_view(conn, version, board)
         escalations = _escalations(conn, version, board, role)
     view = {"open": [], "in_doubt": [], "needs_person": [], "holds": [], "finished": []}
     next_note = None
@@ -1477,6 +1536,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         "config": None
         if version is None
         else {"version": version.version, "sha256": version.sha256},
+        **factory_view,
         "restore_pending": bool(restore.flagged),
         **view,
         **({} if escalations is None else {"escalations": escalations}),
