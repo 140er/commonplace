@@ -225,6 +225,43 @@ def test_key_and_driver_fail_closed(workspace, monkeypatch, failure):
     assert not target.exists()
 
 
+@pytest.mark.parametrize(
+    "failure, match",
+    [
+        ("wrong", "Workspace keyslot could not be unlocked"),
+        ("missing-env", "requires a key store and wrapping key file"),
+        ("missing-credential", "Wrapping key file is unavailable"),
+        ("missing-record", "Workspace keyslot is unavailable"),
+        ("symlinked-record", "Keyslot file cannot be a symlink"),
+        ("unknown-slot", "requires a key store and wrapping key file"),
+    ],
+)
+def test_wrong_or_missing_key_is_refused_with_a_clear_message(
+    workspace, monkeypatch, failure, match
+):
+    data, _, wid, server, _, slots = workspace
+    enable(workspace)
+    record = slots / (wid + ".json")
+    if failure == "wrong":
+        server.write_bytes(os.urandom(32))
+    elif failure == "missing-env":
+        monkeypatch.delenv("COMMONPLACE_WRAPPING_KEY_FILE")
+    elif failure == "missing-credential":
+        server.unlink()
+    elif failure == "missing-record":
+        record.unlink()
+    elif failure == "symlinked-record":
+        moved = data.parent / "moved.json"
+        record.rename(moved)
+        record.symlink_to(moved)
+    else:
+        monkeypatch.setenv("COMMONPLACE_KEY_SLOT", "escrow")
+    target = workspace_path(data, wid) / "not-created.sqlite3"
+    with pytest.raises(crypto.EncryptionError, match=match):
+        crypto.connect(target)
+    assert not target.exists()
+
+
 def test_wrong_raw_data_key_fails_closed(workspace):
     data, _, wid, *_ = workspace
     enable(workspace)

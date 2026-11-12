@@ -65,7 +65,9 @@ on = "card.todo"               # live channel only
 
 Role kinds are `orchestrator`, `sub-orchestrator`, `planner`, `builder` and
 `reviewer`; `parent` links form an acyclic graph; role names match
-`[a-z0-9-]{1,32}`. A planner's prompt must include `design_before_code`.
+`[a-z0-9-]{1,32}`. `parent` is the reporting line: a role reports to its
+parent, and a role without one reports to the workspace owner (see
+[Reporting lines](#reporting-lines)). A planner's prompt must include `design_before_code`.
 Secrets are only references of the form `env:[A-Z][A-Z0-9_]{1,63}`; an inline
 value is refused and never echoed. Limits: a config is at most 128 KiB with at
 most 16 roles, and a prompt is at most 32 KiB.
@@ -382,6 +384,23 @@ commit is still found.
   keeps linked statuses while active journal lists omit voided steps.
   A fresh attempt requires an explicit new key and all existing admission
   checks, including the non-person rules for owner `orch_card_start` calls.
+- **Reporting lines.** <a id="reporting-lines"></a>The `parent` keys are the
+  organigram. Escalation follows them: the checkpoint of a role that others
+  report to has `escalations`, the unvoided `in_doubt` and `needs_person`
+  steps of its direct reports (each with its `role`). A role nobody reports
+  to has no such key, and a role's own lists are unchanged; the top of a line
+  still escalates to the owner through `needs_person`. Delegation follows
+  them too: with `orch_reassign_step` the lease holder of the parent role
+  takes back a step of a direct report (`report`, `step_key`). The step is
+  voided with its history kept, one `reassign` journal event is written, and a
+  repeat returns the first result. Any other role is refused (`not_in_line`,
+  403). Runner-start, gate and hold steps stay with the owner
+  (`owner_only_kind`, 403), so a reassignment never cancels a job, reopens a
+  gated head or lifts a hold. A `needs_person` step is a person's decision and
+  stays with the owner too (`needs_person_owner_only`, 403, step unchanged):
+  the parent role still sees it in `escalations`, but only the owner resolves
+  it. A config without `parent` keys has no lines:
+  nothing is escalated and every reassignment is refused.
 - **Evidence.** `runner_job` (the hub checks the job belongs to this step,
   card and board), `card_state` (the hub reads the card) and `holder_attested`
   (stored, never acted on).

@@ -774,9 +774,33 @@ class Mediator:
             return {"respond": project(self.gateway, principal, self.workers, name, args)}
 
         if name == "mempalace_status":
+            from .web.admin import ReadContext, instance_authorized
+
+            try:
+                authorized = instance_authorized(
+                    self.gateway, principal, ReadContext(self.gateway.admin_clock)
+                )
+            except Exception:
+                logger.warning(
+                    "index figure authority check failed; omitting index_stats", exc_info=True
+                )
+                authorized = False
             from .handoff.overview import summary
 
-            return {"respond": summary(self.gateway, principal, self.workers, name)}
+            result = summary(self.gateway, principal, self.workers, name)
+            if authorized:
+                from .index_stats import scoped, workspace
+
+                figures = workspace(
+                    self.gateway, principal.workspace_id, deadline=time.monotonic() + 2.0
+                )
+                if not principal.policy.has_scope("private:read"):
+                    figures = scoped(figures)
+                result = {
+                    **result,
+                    "index_stats": {"workspace_id": principal.workspace_id, **figures},
+                }
+            return {"respond": result}
         if name == "mempalace_delete_by_source":
             return self._scope_delete_by_source(principal, name, args)
         if name == "mempalace_delete_tunnel":
@@ -1948,6 +1972,10 @@ def _rest_tool(method, path):
         return {"GET": "task_list", "POST": "task_add"}.get(method)
     if parts == ["api", "needs-me"] and method == "GET":
         return "needs_me"
+    if parts == ["api", "topology"] and method == "GET":
+        return "topology_get"
+    if parts == ["api", "topology", "route"] and method == "GET":
+        return "topology_route"
     if parts[:2] == ["api", "cards"]:
         if len(parts) == 3:
             return {"GET": "task_show", "PATCH": "task_update"}.get(method)

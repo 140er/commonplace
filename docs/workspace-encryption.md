@@ -89,11 +89,57 @@ metadata. The inventory is not authenticated by keyslot AAD. Malicious host
 operator edits are outside this opt-in, server-decryptable model; it does not
 provide operator-blind encryption.
 
+## Keyslot check, credential replacement and recovery
+
+`commonplace workspace keyslot-check` proves that one credential unlocks its
+slot and that the unwrapped key opens the workspace databases; it writes
+nothing. `commonplace workspace keyslot-rewrap` wraps the unchanged data key
+for one slot under a new credential, unlocked by any current slot, so the
+recovery slot can re-create a lost server slot. It runs offline, needs the
+workspace owner, replaces the keyslot record atomically and keeps the other
+slot byte for byte. The step-by-step procedures, the refusal messages and the
+cases without recovery are in the
+[recovery runbook](recovery/encrypted-workspace.md).
+
+Replacing a credential is not revocation. The data key does not change, so an
+old credential kept together with an old keyslot record still unlocks it.
+
 Keyslots must be backed up separately with short retention. The application
 does not yet implement that retention policy, host-key unlocking, credential
-delivery, key rotation/revocation, or deletion/crypto-shredding guarantees.
-Losing both slots or both wrapping credentials loses access. Old copies of
-credentials and slots can still unlock old ciphertext.
+delivery, data-key rotation/revocation, or deletion/crypto-shredding
+guarantees. Losing both slots or both wrapping credentials loses access. Old
+copies of credentials and slots can still unlock old ciphertext.
+
+## Open decisions
+
+These are owner decisions; nothing below is built.
+
+1. **Data-key rotation (true revocation).** Option A: an offline
+   `sqlcipher_export` into a new generation under a new key and key id, the
+   same shape as the first migration, with a verified backup and a retained
+   previous generation. It reuses a tested path and keeps rollback, but needs
+   twice the disk space and every page changes, so the next backup shares
+   nothing with earlier ones. Option B: `PRAGMA rekey` in place. It needs no
+   second copy, but an interruption between files leaves one workspace under
+   two keys and there is no rollback. Recommended: A. Either way, backups made
+   before the rotation stay readable with the old key; revocation is complete
+   only when those backups and old keyslot copies are destroyed.
+2. **Recovery credential ceremony.** Today the operator creates both
+   credential files and decides where the recovery one is kept. Option A:
+   keep that, and document offline storage (the recovery runbook). Option B: the
+   command generates the recovery credential and shows it once for the owner
+   to keep, so the operator never stores it. Option C: split the recovery
+   credential between several holders. B and C change who can recover a
+   workspace and belong with the operator-blind work, which must not gain an
+   operator-held recovery path by accident.
+3. **Online backup of encrypted workspaces.** The online snapshot refuses
+   encrypted databases; such a data directory is backed up offline. Lifting
+   that needs the gateway pause to guarantee a checkpointed, writer-free file
+   for the byte copy, which is a change to the online backup protocol.
+4. **Keyslot record retention.** How many old copies of the key store are
+   kept, where, and when they are destroyed after a credential change.
+5. **Files outside SQLite.** See the last section; whole-workspace encryption
+   at rest is not claimed.
 
 This change encrypts **SQLite files only**. Revision JSONL files, entity
 registries, explicit exports, operational logs, the control database and

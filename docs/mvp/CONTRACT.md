@@ -270,3 +270,42 @@ An Idempotency-Key or include_deleted query is rejected with 400
 
 Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
 new-user migration and desktop synchronization are deferred.
+
+## Instance index figures (#284)
+
+`GET /api/admin/instance/index-stats?cursor=...` requires the same server-side
+person + workspace owner + `users.is_admin=1` authority as deploy/backups.
+It returns `{workspaces: [{workspace_id, drawers, embedding_model, dimension,
+vector_count, hnsw_capacity, tombstones}], has_more, next_cursor}`; every figure
+is `{value: number|string|null, reason: null|stable_code}`. The console labels
+unknown figures with their reasons and paginates with the existing lifecycle.
+Admin `mempalace_status` adds `index_stats: {workspace_id, ...figures}` to
+the normal overview, preserving every existing field and diagnostic. Only the
+added figures avoid worker calls; the normal overview path is unchanged. Non-admin status responses remain unchanged; no stats
+fields appear for member persons, tokens or ordinary workspace owners.
+
+Only read-only Chroma SQLite queries and the bounded fixed HNSW header supply
+figures. Live SQL rows are not necessarily persisted HNSW rows; vector_count
+explicitly means the SQL count. Model and tombstones remain unknown rather than
+assuming defaults or subtracting unsynchronized counts. No content, names,
+paths, tokens or thread IDs are exposed. See SYSTEM.md for bounds and reasons.
+
+Store overrides and active generation pointers are stat-ed only. Their presence
+returns `backend_not_established` or `generation_not_established`; reading those
+JSON files is outside the permitted figure sources, and retired legacy Chroma
+files must not be mistaken for the current store.
+
+A missing pointer with sibling generation directories is also unknown. Each SQL
+query has a 0.5-second budget within the 2-second page deadline; an expired page
+returns null/read_timeout for the current and remaining workspaces. Rollback
+journals and WAL are supported read-only. The 20-byte SQLite header is read
+before opening SQL: WAL requires both sidecars or returns wal_unavailable,
+creating no files on a closed WAL palace. Symlinked workspace/palace/database/
+segment/header paths are refused with symlink; locks return busy. Empty HNSW
+state returns header_unavailable. Non-admin index-stats requests return exactly
+404 {"error":"not found"}, identical to an unknown section.
+
+Drawer count, vector count and HNSW capacity include private wings. They are
+returned only for workspaces where the viewer is currently an owner (and, for
+status, holds `private:read`); otherwise each is `{"value":null,"reason":
+"private_scope"}`. Model and dimension are unaffected.
