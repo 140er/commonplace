@@ -39,7 +39,17 @@ from mempalace.config import normalize_wing_name
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import backfill_allowance, events, extensions, plans, privacy, ratelimit, sessions, urls
+from . import (
+    backfill_allowance,
+    events,
+    extensions,
+    plans,
+    privacy,
+    ratelimit,
+    sessions,
+    tool_policy,
+    urls,
+)
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
@@ -496,6 +506,24 @@ class Mediator:
             "result": {"content": [{"type": "text", "text": text}]},
         }
 
+    def _admit(self, principal: Principal, req_id, name: str, args: dict, local):
+        """The response that refuses this call before it is looked at further, or ``None``."""
+        refusal = principal.policy.refusal(name)
+        # Visibility and owner gates precede freshness, so hidden tools
+        # keep the same refusal regardless of the supplied rules version.
+        if (
+            local is not None
+            and (local.available is not None or refusal is None)
+            and not local.usable_by(principal, self.gateway)
+        ):
+            refusal = "unknown tool" if local.available is not None else "owner only"
+        if refusal is not None:
+            self._audit(principal, name, "deny", refusal)
+            # A hidden tool looks exactly like a tool that doesn't exist.
+            return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
+        # The owner's per-action policy, after the connection's own: it only narrows.
+        return tool_policy.check_call(self, principal, req_id, name, args)
+
     # ── tools/call ──
     def _tools_call(self, principal: Principal, request: dict) -> dict:
         # One room-check reader per call, shared by every write-side check.
@@ -517,24 +545,13 @@ class Mediator:
 
         args = user_tool_arguments(dict(args), tool_name=name) if isinstance(args, dict) else {}
         supplied_rules_seq = args.pop("rules_seq", None)
-        policy = principal.policy
         if not isinstance(name, str):
             return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
 
         local = extensions.get(name)
-        refusal = policy.refusal(name)
-        # Visibility and owner gates precede freshness, so hidden tools
-        # keep the same refusal regardless of the supplied rules version.
-        if (
-            local is not None
-            and (local.available is not None or refusal is None)
-            and not local.usable_by(principal, self.gateway)
-        ):
-            refusal = "unknown tool" if local.available is not None else "owner only"
-        if refusal is not None:
-            self._audit(principal, name, "deny", refusal)
-            # A hidden tool looks exactly like a tool that doesn't exist.
-            return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
+        held = self._admit(principal, req_id, name, args, local)
+        if held is not None:
+            return held
 
         from commonplace.rules import enforce
 
@@ -1960,6 +1977,16 @@ def _rest_tool(method, path):
     return None
 
 
+def _rest_tool_refusal(gateway, principal, tool, method, path):
+    """Why a connection's REST alias is refused: its own policy first, then the owner's."""
+    if principal is None or principal.person:
+        return None
+    if tool and not principal.policy.tool_visible(tool):
+        return {"error": "tool not allowed for this connection"}
+    held = tool_policy.rest_refusal(gateway, principal, tool, method, path)
+    return None if held is None else {"error": held, "code": "tool_policy"}
+
+
 def _origin(value):
     """A strict serialized HTTP origin, normalized for default ports."""
     try:
@@ -2522,14 +2549,10 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                     parse_error = (400, _rpc_error(None, -32700, "Parse error"))
         if not self._instance_charged and self._rate_limit(path, principal, request):
             return
-        if (
-            principal is not None
-            and not principal.person
-            and tool
-            and not principal.policy.tool_visible(tool)
-        ):
+        refused = _rest_tool_refusal(self.server.gateway, principal, tool, self.command, path)
+        if refused is not None:
             self.close_connection = True
-            self._send_json(403, {"error": "tool not allowed for this connection"})
+            self._send_json(403, refused)
             return
         # OAuth POST has a browser-bound login-token stage. Its handler
         # checks sign-in before validating the authorization form.
