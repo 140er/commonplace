@@ -274,7 +274,10 @@ commit is still found.
   repeat returns the first result. Any other role is refused (`not_in_line`,
   403). Runner-start, gate and hold steps stay with the owner
   (`owner_only_kind`, 403), so a reassignment never cancels a job, reopens a
-  gated head or lifts a hold. A config without `parent` keys has no lines:
+  gated head or lifts a hold. A `needs_person` step is a person's decision and
+  stays with the owner too (`needs_person_owner_only`, 403, step unchanged):
+  the parent role still sees it in `escalations`, but only the owner resolves
+  it. A config without `parent` keys has no lines:
   nothing is escalated and every reassignment is refused.
 - **Evidence.** `runner_job` (the hub checks the job belongs to this step,
   card and board), `card_state` (the hub reads the card) and `holder_attested`

@@ -152,20 +152,20 @@ def test_only_the_role_it_reports_to_reassigns_a_step(env):
     ctx_a, ctx_b = env.ctx(env.a), env.ctx(env.b)
     em, tm = lease(env, env.a, ROLE)
     eb, tb = lease(env, env.b, OTHER_ROLE)
-    blocked_step(env, ctx_b, OTHER_ROLE, eb, tb, "b-stuck")
+    blocked_step(env, ctx_b, OTHER_ROLE, eb, tb, "b-doubt", state="in_doubt")
     blocked_step(env, ctx_a, ROLE, em, tm, "m-stuck")
 
     # Against the line: a report cannot take its manager's work, nor its own.
-    for report, key in ((ROLE, "m-stuck"), (OTHER_ROLE, "b-stuck")):
+    for report, key in ((ROLE, "m-stuck"), (OTHER_ROLE, "b-doubt")):
         with pytest.raises(ToolError) as exc:
             organigram.reassign_step(ctx_b, BOARD, OTHER_ROLE, eb, tb, report, key, now=at(10))
         assert code_of(exc) == "not_in_line"
     # The manager role, but not its lease holder.
     with pytest.raises(ToolError) as exc:
-        organigram.reassign_step(ctx_b, BOARD, ROLE, em, "wrong-token", OTHER_ROLE, "b-stuck")
+        organigram.reassign_step(ctx_b, BOARD, ROLE, em, "wrong-token", OTHER_ROLE, "b-doubt")
     assert code_of(exc) == "fenced"
     with pytest.raises(ToolError) as exc:
-        organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, "ghost", "b-stuck", now=at(10))
+        organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, "ghost", "b-doubt", now=at(10))
     assert code_of(exc) == "unknown_role"
     with pytest.raises(ToolError) as exc:
         organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, OTHER_ROLE, "nope", now=at(10))
@@ -178,10 +178,10 @@ def test_only_the_role_it_reports_to_reassigns_a_step(env):
             == 0
         )
 
-    step = organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, OTHER_ROLE, "b-stuck", now=at(11))
+    step = organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, OTHER_ROLE, "b-doubt", now=at(11))
     assert step["voided"] and step["voided_by"] == "conn:" + env.a.connection_id
-    assert step["state"] == "needs_person"  # history kept
-    again = organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, OTHER_ROLE, "b-stuck", now=at(12))
+    assert step["state"] == "in_doubt"  # history kept
+    again = organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, OTHER_ROLE, "b-doubt", now=at(12))
     assert again["voided_at"] == step["voided_at"] == at(11)
     with env.runner_db() as conn:
         log = conn.execute(
@@ -191,9 +191,43 @@ def test_only_the_role_it_reports_to_reassigns_a_step(env):
 
     owner = env.ctx(env.owner)
     assert durable.checkpoint(owner, BOARD, ROLE, now=at(13))["escalations"] == []
-    assert durable.checkpoint(owner, BOARD, OTHER_ROLE, now=at(13))["needs_person"] == []
+    assert durable.checkpoint(owner, BOARD, OTHER_ROLE, now=at(13))["in_doubt"] == []
     # The owner's void is untouched, also for the top of the line.
     assert durable.void_step(owner, BOARD, ROLE, "m-stuck", now=at(14))["voided"]
+
+
+def test_needs_person_steps_stay_with_the_owner(env):
+    ctx_a, ctx_b = env.ctx(env.a), env.ctx(env.b)
+    em, tm = lease(env, env.a, ROLE)
+    eb, tb = lease(env, env.b, OTHER_ROLE)
+    blocked_step(env, ctx_b, OTHER_ROLE, eb, tb, "b-stuck")
+    blocked_step(env, ctx_b, OTHER_ROLE, eb, tb, "b-doubt", state="in_doubt")
+    owner = env.ctx(env.owner)
+
+    with pytest.raises(ToolError) as exc:
+        organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, OTHER_ROLE, "b-stuck", now=at(10))
+    assert code_of(exc) == "needs_person_owner_only"
+    assert "owner" in str(exc.value)
+    with env.runner_db() as conn:
+        row = conn.execute(
+            "SELECT state, voided_at FROM orch_steps WHERE step_key='b-stuck'"
+        ).fetchone()
+        assert (row["state"], row["voided_at"]) == ("needs_person", None)
+        assert (
+            conn.execute("SELECT count(*) FROM orch_journal WHERE event='reassign'").fetchone()[0]
+            == 0
+        )
+    # Still visible to the parent, so it can ask the owner; nothing was resolved.
+    view = durable.checkpoint(owner, BOARD, ROLE, now=at(11))
+    assert [s["step_key"] for s in view["escalations"]] == ["b-stuck", "b-doubt"]
+
+    # An ordinary step next to it is still the parent's to take back.
+    assert organigram.reassign_step(ctx_a, BOARD, ROLE, em, tm, OTHER_ROLE, "b-doubt", now=at(12))[
+        "voided"
+    ]
+    # The owner (a person) still resolves the needs_person step.
+    assert durable.void_step(owner, BOARD, OTHER_ROLE, "b-stuck", now=at(13))["voided"]
+    assert durable.checkpoint(owner, BOARD, ROLE, now=at(14))["escalations"] == []
 
 
 def test_gates_and_holds_stay_with_the_owner(env):
@@ -271,10 +305,10 @@ def test_reassign_is_a_holder_tool_with_a_rest_route(env):
     ctx_a, ctx_b = env.ctx(env.a), env.ctx(env.b)
     em, tm = lease(env, env.a, ROLE)
     eb, tb = lease(env, env.b, OTHER_ROLE)
-    blocked_step(env, ctx_b, OTHER_ROLE, eb, tb, "b-stuck")
+    blocked_step(env, ctx_b, OTHER_ROLE, eb, tb, "b-doubt", state="in_doubt")
     step = tools.dispatch(
         ctx_a,
         "orch_reassign_step",
-        dict(board=BOARD, role=ROLE, epoch=em, token=tm, report=OTHER_ROLE, step_key="b-stuck"),
+        dict(board=BOARD, role=ROLE, epoch=em, token=tm, report=OTHER_ROLE, step_key="b-doubt"),
     )
     assert step["voided"] and step["role"] == OTHER_ROLE

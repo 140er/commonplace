@@ -17,7 +17,8 @@ Two places respect the line:
 - Delegation: ``reassign_step`` lets the lease holder of the role a step's owner
   reports to take that step back (void it, history kept) so the work can be given
   out again. Anyone else is refused; the owner keeps ``orch_void_step``. Steps that
-  start a job, gate a head or hold a card stay owner-only (``OWNER_KINDS``).
+  start a job, gate a head or hold a card stay owner-only (``OWNER_KINDS``), and so
+  does a ``needs_person`` step: a person's decision is answered by a person.
 
 A config without ``parent`` keys has no lines: no checkpoint gains a key and every
 ``reassign_step`` is refused with ``not_in_line``.
@@ -91,7 +92,9 @@ def reassign_step(
 
     The step is voided (history kept) and returned; a repeat returns the first void
     unchanged. ``not_in_line`` (403) unless ``report`` reports to ``role``;
-    ``owner_only_kind`` (403) for ``OWNER_KINDS``; ``step_not_found`` (404)."""
+    ``owner_only_kind`` (403) for ``OWNER_KINDS``; ``needs_person_owner_only`` (403)
+    for a ``needs_person`` step, which only the workspace owner resolves;
+    ``step_not_found`` (404)."""
     now = durable._clock(now)
     durable._check_role(report)
     durable._check_step_key(step_key)
@@ -113,6 +116,12 @@ def reassign_step(
         if step["kind"] in OWNER_KINDS:
             raise durable.DurableError(
                 "owner_only_kind", 403, "only the workspace owner voids this kind of step"
+            )
+        if step["state"] == "needs_person":
+            raise durable.DurableError(
+                "needs_person_owner_only",
+                403,
+                "a needs_person step is resolved by the workspace owner, not by a role",
             )
         if step["voided"]:
             return step

@@ -28,7 +28,7 @@
 
   - Lease snapshot failures log sanitized diagnostics without exception messages.
 
-  - Escalation and delegation follow the reporting line: unsettled steps of direct reports appear only in the checkpoint of the role they report to, and only that role's lease holder (or the owner, by void) takes a step back. Runner-start, gate and hold steps stay owner-only; a config without `parent` keys behaves as before.
+  - Escalation and delegation follow the reporting line: unsettled steps of direct reports appear only in the checkpoint of the role they report to, and only that role's lease holder (or the owner, by void) takes a step back. Runner-start, gate, hold and `needs_person` steps stay owner-only (a person's decision is answered by a person); a config without `parent` keys behaves as before.
 
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
 
