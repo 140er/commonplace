@@ -181,15 +181,15 @@ def cmd_member_add(args) -> int:
 
 def cmd_token_add(args) -> int:
     db = _db(args)
-    from .bridge import CLIENT_PRESETS, DEFAULT_CLIENT_PRESET, PRESETS
+    from .bridge import client_defaults
 
     if "memory:import:read" in (_csv(args.scopes) or []):
         raise ValueError("Imported history requires explicit browser reader consent")
     if "cards:decide" in (_csv(args.scopes) or []):
         raise ValueError("Answering Needs-me questions requires the owner's browser consent")
-    # An explicit preset serves any agent type; without one the client name picks it.
-    preset = getattr(args, "preset", None)
-    defaults = PRESETS[preset] if preset else CLIENT_PRESETS.get(args.client, DEFAULT_CLIENT_PRESET)
+    if {"bots:chat", "bots:confirm"} & set(_csv(args.scopes) or []):
+        raise ValueError("Using bots from an app requires your own sign-in consent")
+    defaults = client_defaults(args.client, getattr(args, "preset", None))
 
     def value(name, fallback):
         explicit = getattr(args, name)
@@ -1181,6 +1181,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dest_dir")
     s.set_defaults(func=cmd_restore)
     orch_cli.add_parsers(sub)
+    from .evals.cli import add_parsers as add_eval_parsers
+
+    add_eval_parsers(sub)
     return p
 
 
@@ -1233,6 +1236,9 @@ def main(argv=None) -> int:
         if args.command in {"connect", "backup", "restore"} or (
             args.command == "workspace" and args.action in {"store", "prune-stores", "encrypt"}
         ):
+            return args.func(args)
+        if args.command == "eval" and args.eval_action == "preflight":
+            # Stat-only: no lock file is created, so a fresh data dir stays untouched.
             return args.func(args)
         if args.func is cmd_serve:
             # Serve never takes the backup fence; an online backup runs beside it.

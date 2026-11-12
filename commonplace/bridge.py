@@ -26,6 +26,13 @@ _CHAT_PRESET = {
 DEFAULT_CLIENT_PRESET = _CHAT_PRESET
 # A preset by what the agent does, for any client name (`token add --preset`).
 PRESETS = {"coding": _CODING_PRESET, "chat": _CHAT_PRESET}
+
+
+def client_defaults(client, preset=None):
+    """Policy defaults for a new connection: the named preset, else by client name."""
+    return PRESETS[preset] if preset else CLIENT_PRESETS.get(client, DEFAULT_CLIENT_PRESET)
+
+
 CLIENT_PRESETS = {
     "claude-code": _CODING_PRESET,
     "codex": _CODING_PRESET,
