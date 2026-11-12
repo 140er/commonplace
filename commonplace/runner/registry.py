@@ -283,6 +283,12 @@ def _active(db, owner, machine_id):
     return row
 
 
+def require_active(db, owner, machine_id):
+    """Refuse a machine outside the owner's workspace the same way whatever else was sent."""
+    _owner(owner)
+    return _active(db, owner, machine_id)
+
+
 def _expect(row, version):
     """An owner who read the machine at an older grant version must reload, not overwrite."""
     if version is not None and row["grant_version"] != version:
