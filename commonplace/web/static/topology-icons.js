@@ -11,6 +11,7 @@ export const KINDS = {
   cloud: { label: "Cloud or CDN", icon: '<path d="M-11 12h21a8 8 0 0 0 1.5-15.9A11 11 0 0 0-9.6-6.5 9.3 9.3 0 0 0-11 12z"/>' },
   website: { label: "Website", icon: '<rect x="-17" y="-15" width="34" height="30" rx="2.5"/><path d="M-17 -7.5h34M-12.5 -11.25h.1M-8.5 -11.25h.1"/><circle cx="0" cy="3.75" r="6.5"/><path d="M-6.5 3.75h13M0 -2.75c-3.6 3.6-3.6 9.4 0 13M0 -2.75c3.6 3.6 3.6 9.4 0 13"/>' },
   container: { label: "Container or app", icon: '<path d="M0 -17 14.5 -8.5v17L0 17l-14.5-8.5v-17zM-14.5 -8.5 0 0l14.5-8.5M0 0v17"/>' },
+  hub: { label: "Hub", icon: '<circle r="13"/><circle r="4"/><path d="M0 -13v9M0 4v9M-13 0h9M4 0h9"/>' },
   unknown: { label: "Unknown device", icon: '<rect x="-14" y="-14" width="28" height="28" rx="5" stroke-dasharray="3 3"/><path d="M-4.2 -4.5a4.2 4.2 0 1 1 5.9 3.9c-1.1.5-1.7 1.3-1.7 2.8M0 7.6h.1"/>' },
 };
 

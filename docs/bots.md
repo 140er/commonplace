@@ -32,6 +32,19 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `PUT /api/bots/<id>/access` | `{version, entries}`, `{version, entries}`: the owner replaces the list; web session only; `409 conflict` for a stale `version` |
 | `GET /api/bots/<id>/access/log?after=&limit=` | `{log}`: one row per change, ids and codes only |
 
+The learning memory (`docs/design/bot-learning-memory.md`, first slice: the store, the switches
+and forgetting; nothing learns yet) adds person-session routes. They are off by default and
+answer 404 to an app token, an agent token or another person's id:
+
+| Route | Body, answer |
+|---|---|
+| `GET`, `PATCH /api/bots/<id>/learning` | `{mode?: off|ask|auto, pause?: 1..30 days or null}`, `{learning}` (mode, paused, `active`, counts) |
+| `GET /api/bots/<id>/learned`, `GET /api/learned` | `?scope=&state=&kind=&limit=&offset=` (limit at most 100), `{items, counts}`; `remember` notes appear as `kind` `note` |
+| `GET`, `PATCH`, `DELETE /api/learned/<id>` | edit `{text?, pinned?}` (a secret is 400 `refused`), `{item}`; delete is real and a second delete is 404 |
+| `POST /api/bots/<id>/learned/forget-all` | `{}`, `{forgotten, notes, floor}`; the bot ignores every message up to `floor` from then on |
+| `GET`, `PATCH /api/learning/settings` | `{enabled?, shared_enabled?}` (workspace owner), `{enabled, shared_enabled, can_configure}` |
+| `GET`, `PATCH /api/projects/<slug>/learning` | `{shared_enabled}` (workspace owner), `{board, shared_enabled, can_configure}` |
+
 A bot is `{id, name, job, instructions, kind, board, archived, last, unread, waiting, state}`.
 `kind` is `project`, `general` or `custom`. `last` is the newest message (`role`, `text`
 shortened to 200 characters, `at`) or null. `unread` counts bot and event messages after the
@@ -296,7 +309,8 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   Each user message has one reply at most, and a repeated request id with the same text
   returns the stored message instead of a second one. Display text is redacted; the stored
   text is not.
-- A memory note is removed with a tombstone: it disappears from the list, the stored row stays.
+- A memory note is removed by blanking it: it disappears from the list, the row stays so ids keep
+  working, and its text is gone from the file.
 - Sharing a bot with other members (design: `docs/design/shared-team-bots.md`) is being built
   in slices. The storage for it is in place and unused: a bot that is not shared works as
   above. Sharing is off for every workspace until its owner turns it on, a share reaches

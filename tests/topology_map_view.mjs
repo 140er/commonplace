@@ -66,9 +66,9 @@ test("model: anything that is not a known status is unknown, never up", () => {
 // ---------- icons and scene ----------
 
 test("icons: one distinct original drawing per node kind, no outside artwork", async () => {
-  const kinds = ["pc", "mac", "phone", "vm", "server", "router", "cloud", "website", "container"];
+  const kinds = ["pc", "mac", "phone", "vm", "server", "router", "cloud", "website", "container", "hub"];
   assert.deepEqual(Object.keys(KINDS).sort(), [...kinds, "unknown"].sort());
-  assert.equal(new Set(Object.values(KINDS).map((kind) => kind.icon)).size, 10);
+  assert.equal(new Set(Object.values(KINDS).map((kind) => kind.icon)).size, 11);
   for (const kind of Object.values(KINDS)) { assert.ok(kind.label); assert.doesNotMatch(kind.icon, /<image|<use|href|url\(|style=/); }
   assert.equal(kindOf("toaster"), "unknown");
   assert.equal(kindOf("constructor"), "unknown");
@@ -594,4 +594,79 @@ test("wiring: the app mounts the map in one place and the account menu links to 
   const css = await read("topology.css");
   for (const state of ui.STATES) assert.ok(css.includes(`.topo-dot.s-${state}`));
   assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, "colours come from the workbench tokens");
+});
+
+// ---------- looks for a host that draws its own graph (the Deck Compute screen) ----------
+
+const RUNNERS = { wing: "topology", nodes: [{ key: "hub", values: { kind: "hub", name: "Commonplace", role: "Hub" } }, { key: "a", values: { kind: "server", name: "Build box", role: "Ready" } }], links: [{ id: "hub>a", from: "hub", to: "a", method: "runner" }], routes: [], status: { nodes: { hub: "none", a: "up" }, links: { "hub>a": { from: "none", to: "up" } } } };
+
+test("look: 'none' is a status only when the host asks for it, and draws no mark", () => {
+  assert.equal(ui.mapModel(RUNNERS).nodes[0].status, "unknown");
+  const model = ui.mapModel(RUNNERS, { none: true });
+  assert.deepEqual(model.nodes.map((node) => node.status), ["none", "up"]);
+  const core = ui.createMapCore({ none: true, words: { up: "Ready", degraded: "Waiting", down: "Down", unknown: "Off" } });
+  core.apply(RUNNERS);
+  const scene = core.scene();
+  const only = (key) => scene.split('<g class="topo-node ').find((part) => part.includes(`data-key="${key}"`));
+  assert.doesNotMatch(only("hub"), /topo-dot|Status:/);
+  assert.match(only("a"), /aria-label="Build box, Server, Ready\. Status: Ready\."/);
+  assert.equal((linkTag(scene, "hub>a").split('<g class="topo-nodes">')[0].match(/class="topo-dot /g) || []).length, 1, "one mark, at the machine's end");
+  assert.doesNotMatch(scene, /Status: Up|Hub end/);
+});
+
+test("look: a label width clips names to it and puts a plate behind every label; the classic look has none", () => {
+  const payload = { ...RUNNERS, nodes: [{ key: "a", values: { kind: "server", name: "W".repeat(30), role: "Ready" } }], links: [], status: { nodes: {}, links: {} } };
+  const classic = ui.createMapCore(); classic.apply(payload);
+  assert.doesNotMatch(classic.scene(), /topo-label-plate/);
+  assert.match(classic.scene(), new RegExp(`>${"W".repeat(23)}…<`));
+  const deck = ui.createMapCore({ labels: 160 }); deck.apply(payload);
+  // Two lines of twelve capitals fill the plate; what is left is cut with an ellipsis on the second.
+  assert.match(deck.scene(), /<g class="topo-label" transform="translate\(0 27\)"><rect class="topo-label-plate" x="-80" y="4" width="160" height="53" rx="8"\/><text class="topo-name" y="19"><tspan x="0">W{12}<\/tspan><tspan x="0" dy="15">W{1,11}…<\/tspan><\/text><text class="topo-role" y="49"><tspan x="0">Ready<\/tspan><\/text>/);
+});
+
+test("look: a cap on a row's columns and a reach for the labels", () => {
+  const nodes = Array.from({ length: 6 }, (_, i) => ({ key: `n${i}`, kind: "server" }));
+  assert.equal(new Set(Object.values(layout.autoLayout(nodes, [], { columns: 2 })).map((at) => at.y)).size, 3);
+  assert.equal(new Set(Object.values(layout.autoLayout(nodes, [])).map((at) => at.y)).size, 1);
+  const points = [{ x: 0, y: 0 }, { x: 500, y: 0 }];
+  const plain = layout.fitView(points, 600, 400), wide = layout.fitView(points, 600, 400, 24, { x: 80, top: 34, bottom: 72 });
+  assert.ok(wide.k * (500 + 160) <= 600 - 48 + 1e-6);
+  assert.deepEqual(layout.fitView(points, 600, 400), plain);
+});
+
+test("screen: interval 0 never reads by itself, refresh() reads again, select(key) is quiet and not a toggle", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const dom = fakeDom();
+  let reads = 0;
+  const screen = ui.createTopologyMap({ mount: () => dom.host, storage: fakeStorage(), interval: 0, api: async () => { reads += 1; return fixture(); } });
+  screen.show();
+  await settle();
+  t.mock.timers.tick(60000);
+  await settle();
+  assert.equal(reads, 1);
+  await screen.refresh();
+  assert.equal(reads, 2);
+  const events = [];
+  dom.section().dispatchEvent = (event) => { events.push(event.detail.key); };
+  assert.equal(screen.select("nope"), false);
+  assert.equal(screen.select("maple"), true);
+  assert.equal(screen.select("maple"), true, "choosing the chosen node keeps it chosen");
+  assert.deepEqual(events, ["maple", "maple"]);
+  assert.match(nodeTag(dom.part("world").innerHTML, "maple"), /aria-pressed="true"/);
+  screen.stop();
+  assert.equal(screen.select("maple"), false);
+});
+
+test("screen: a preselected node is chosen once, and a node that leaves the map is announced", async () => {
+  const dom = fakeDom(), events = [];
+  let payload = fixture();
+  const screen = ui.createTopologyMap({ mount: () => dom.host, storage: fakeStorage(), interval: 0, look: { preselect: (model) => model.nodes.find((node) => node.kind === "mac" || node.kind === "pc")?.key }, api: async () => payload });
+  screen.show();
+  dom.section().dispatchEvent = (event) => { events.push(event.detail.key); };
+  await settle();
+  assert.deepEqual(events, ["studio-mac"]);
+  payload = { ...fixture(), nodes: fixture().nodes.filter((node) => node.key !== "studio-mac"), links: [] };
+  await screen.refresh();
+  assert.deepEqual(events.slice(-2), [null, "tower"], "the vanished node is announced, then the next machine is chosen");
+  screen.stop();
 });
