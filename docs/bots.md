@@ -53,7 +53,10 @@ verbatim span checked against the stored message and the secret guard; anything 
 invents or rewrites is dropped. A repeated sentence is counted, new words for a known topic
 replace the old item, a sentence the person forgot is not learned again, and `ask` mode only
 proposes (proposals expire after 14 days). It uses no new service and no extra model call
-unless every switch allows it. Showing and using the items comes in later slices.
+unless every switch allows it. Each later turn then reads the person's own items that match the
+new message and offers up to 8 of them to the model as quoted, labelled data ("learned"); the
+person's current message always wins over them. Nothing is used when a switch is off or the
+person paused. Showing the items in the thread and sharing come in later slices.
 
 A bot is `{id, name, job, instructions, kind, board, archived, last, unread, waiting, state}`.
 `kind` is `project`, `general` or `custom`. `last` is the newest message (`role`, `text`
