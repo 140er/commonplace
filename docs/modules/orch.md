@@ -5,6 +5,8 @@
 
   - The no-progress nudge (`stall.py`) and the unstarted-todo list (`durable.py`) ignore snoozed cards.
 
+  - `durable.coordinator_holder_in` and `coordinator_holders_in` name the actors holding live coordinator leases, read-only and fail closed, for the board coordinator checks.
+
   - A `model_unresolved` start refusal names the role and board and where an owner sets the model (`details.role`, `details.config_role`, `details.board`); `Config.start_roles` and `split_role` give the roles a start can run to `prepare()` and to Needs me.
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
