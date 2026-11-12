@@ -23,6 +23,13 @@ created: reading a workspace that never used meetings opens no file.
     GET   /api/meetings/<id>           own meeting (state, times, end reason; never the link)
     POST  /api/meetings/<id>/leave     the inviter's leave: the bot goes, what was captured is kept
     POST  /api/meetings/<id>/stop      owner: the bot goes and everything captured is discarded
+    DELETE /api/meetings/<id>          own finished meeting and everything it owns -> {filed: [...]}
+    GET   /api/meetings/<id>/notes     own generated notes (labelled, with evidence) and how they were made
+    PATCH /api/meetings/<id>/notes/<note>      {text} (the note becomes the person's own) or {dismissed: true}
+    POST  /api/meetings/<id>/notes/<note>/file       {request_id, wing?} keep a note in memory
+    POST  /api/meetings/<id>/actions/<note>/approve  {request_id, board} create a card
+    GET   /api/meetings/<id>/transcript        only when the owner allowed it and the inviter kept it
+    DELETE /api/meetings/<id>/transcript       the transcript only; the notes stay
 
 An invite stores the meeting and nothing else: the worker joins, announces and listens
 (``engine.py``) only after the announcement is delivered. Credentials and the meeting link are
@@ -37,12 +44,14 @@ import re
 import time
 
 from commonplace import http_util
-from commonplace.meetings import adapter, engine, seal, store, worker
+from commonplace.meetings import adapter, engine, filing, seal, store, worker
 
 PREFIX = "/api/meetings"
 logger = logging.getLogger("commonplace.meetings")
 AUDIT = "meetings"
 MEETING_ID = re.compile(r"[0-9a-f]{32}\Z")
+NOTE_ID = MEETING_ID
+NOTE_PATCH_KEYS = frozenset({"text", "dismissed"})
 
 
 def _send(h, status, body):
@@ -220,6 +229,8 @@ def _person_route(gateway, h, principal, meetings, method, parts):
         return _send(h, 200, {"meetings": meetings.meetings_for(principal.user_id)})
     if parts == [] and method == "POST":
         return _invite(gateway, h, principal, meetings)
+    if _inviter_route(gateway, h, principal, meetings, method, parts):
+        return None
     if len(parts) in (1, 2) and MEETING_ID.fullmatch(parts[0]):
         if len(parts) == 1 and method == "GET":
             return _send(h, 200, {"meeting": meetings.meeting(parts[0], principal.user_id)})
@@ -228,6 +239,106 @@ def _person_route(gateway, h, principal, meetings, method, parts):
             _audit(gateway, principal, "leave", "ok", target=[parts[0]])
             return _send(h, 200, {"meeting": view})
     return _error(h, 404, "not_found", "Not found")
+
+
+def _inviter_route(gateway, h, principal, meetings, method, parts) -> bool:
+    """The inviter's notes, filing taps, transcript and deletion. False when ``parts`` is none of
+    these, so the caller answers. Every read and write is the inviter's own: another person's
+    meeting or note is 404."""
+    if not parts or not MEETING_ID.fullmatch(parts[0]):
+        return False
+    meeting_id, rest, user = parts[0], parts[1:], principal.user_id
+    if rest != [] or method == "DELETE":
+        meetings.meeting(meeting_id, user)  # not the inviter's: 404 before anything is read
+    if rest == [] and method == "DELETE":
+        filed = meetings.delete_meeting(meeting_id, user)
+        _audit(gateway, principal, "delete", "ok", target=[meeting_id])
+        _send(h, 200, {"deleted": True, "filed": filed})
+    elif rest == ["notes"] and method == "GET":
+        _send(h, 200, meetings.notes_for(meeting_id, user))
+    elif rest == ["transcript"] and method == "GET":
+        view = meetings.transcript(meeting_id, user)
+        if view["kept"]:
+            view["label"] = "Other people's speech, verbatim"
+            _send(h, 200, view)
+        else:
+            _error(h, 404, "no_transcript", "No transcript was kept for this meeting")
+    elif rest == ["transcript"] and method == "DELETE":
+        removed = meetings.delete_transcript(meeting_id, user)
+        _audit(gateway, principal, "transcript.delete", "ok", target=[meeting_id])
+        _send(h, 200, {"deleted": removed})
+    elif len(rest) == 2 and rest[0] == "notes" and NOTE_ID.fullmatch(rest[1]) and method == "PATCH":
+        _note_patch(gateway, h, principal, meetings, meeting_id, rest[1])
+    elif len(rest) == 3 and NOTE_ID.fullmatch(rest[1]) and method == "POST":
+        if rest[0] == "notes" and rest[2] == "file":
+            _filed(
+                gateway,
+                h,
+                principal,
+                meeting_id,
+                rest[1],
+                "file",
+                filing.keep_note,
+                filing.FILING_KEYS,
+            )
+        elif rest[0] == "actions" and rest[2] == "approve":
+            _filed(
+                gateway,
+                h,
+                principal,
+                meeting_id,
+                rest[1],
+                "approve",
+                filing.approve_action,
+                filing.APPROVE_KEYS,
+            )
+        else:
+            return False
+    else:
+        return False
+    return True
+
+
+def _note_patch(gateway, h, principal, meetings, meeting_id, note_id):
+    body = _body(h, NOTE_PATCH_KEYS)
+    if body is None:
+        return
+    if ("text" in body) == ("dismissed" in body):
+        raise store.Invalid("invalid_field", "Send the new text or dismissed, not both")
+    if "dismissed" in body:
+        if body["dismissed"] is not True:
+            raise store.Invalid("invalid_value", "dismissed can only be true")
+        view = meetings.update_note(
+            meeting_id, note_id, principal.user_id, dismiss=True, now=time.time()
+        )
+    else:
+        text = store.plain_text(body["text"], filing.NOTE_MAX, "invalid_text", "note")
+        view = meetings.update_note(
+            meeting_id, note_id, principal.user_id, text=text, now=time.time()
+        )
+    _audit(gateway, principal, "note", "ok", target=[meeting_id, note_id])
+    _send(h, 200, {"note": view})
+
+
+def _filed(gateway, h, principal, meeting_id, note_id, action, write, allowed):
+    body = _body(h, allowed)
+    if body is None:
+        return
+    try:
+        done = write(
+            gateway,
+            principal.workspace_id,
+            principal.user_id,
+            meeting_id,
+            note_id,
+            body,
+            time.time(),
+        )
+    except (store.Invalid, store.Refused) as exc:
+        _audit(gateway, principal, action, "refused", reason=exc.code, target=[meeting_id, note_id])
+        raise
+    _audit(gateway, principal, action, "ok", target=[meeting_id, note_id])
+    _send(h, 201 if done["created"] else 200, done)
 
 
 def _invite(gateway, h, principal, meetings):
