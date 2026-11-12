@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/runner/`, `docs/runner.md`
 - **Owns:**
 
+  - `commonplace/runner/owner_cli.py`: the `commonplace card-start resolve` command, the data-directory owner's path to resolve an uncertain start through the same `jobs.resolve` and `runner.resolve` audit row as the `card_start_resolve` tool.
+
   - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
 
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
@@ -14,6 +16,8 @@
   - `commonplace/runner/start_context.py`: the card context of a start. `assemble` is the one function that turns a card into launch text; its `SECTIONS` list is the priority order and the place to add a section. A card that points at a goal gets its own goal as an always-present line beside the title and the goals above it (nearest first) as the section after decisions.
 
 - **Promises:**
+
+  - `commonplace card-start resolve` resolves only an `uncertain` start, as `failed` (no thread) or `started` (a valid thread id), for a user who owns the workspace; it writes the `runner.resolve` audit row in the same transaction order as the tool, and any other input (not uncertain, unknown job or workspace, a non-owner, an invalid thread) is refused with exit 2 and changes nothing.
 
   - `GET /api/runners/wings` (owner only) returns the wings grant validation accepts; enroll and wing edits validate against the same fast index read, so neither waits on a drawer-by-drawer listing.
 
