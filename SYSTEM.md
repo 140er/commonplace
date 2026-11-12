@@ -227,6 +227,18 @@ person-owner fenced runner admission is requested, and a refusal leaves the
 card in place without inventing a worker launch. Model output never executes
 tools. The coworker store, runtime and task controls stay local to the workspace.
 
+### Compute control startup configuration
+
+`ControlDB` takes an optional `compute_config` at service startup. When present it
+registers the control database with the cross-process authority coordinator, attaches
+persisted write guards and wraps the database lock so each transaction holds the
+coordinator for its whole duration; shutdown signals every service before joining
+it. Without the argument nothing changes, and no request, import or environment
+variable can supply the configuration or enable execution. The owner-session
+management routes and script control path are installed through the normal
+extension list and perform no remote effect until the trusted configuration enables
+them.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and

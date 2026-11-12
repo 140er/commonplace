@@ -166,6 +166,7 @@
 
   - `tests/test_index_stats_readonly.py`, `tests/test_index_stats_r1.py`, `tests/test_index_stats_private_scope.py` and `tests/test_admin_instance_ui.py` cover the instance index figures boundary.
 
+  - Synthetic archive fixtures pin public permission preservation under a private umask and refusal to overwrite private runtime directories.
   - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Authority lookup failures pin one redacted diagnostic and no enqueue. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
 
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
