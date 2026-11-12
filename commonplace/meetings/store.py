@@ -987,8 +987,8 @@ class MeetingStore:
             return None
         if step.ends:
             if step.discard:
-                for table in ("meeting_segments", "meeting_participants"):
-                    conn.execute(f"DELETE FROM {table} WHERE meeting_id=?", (meeting_id,))
+                conn.execute("DELETE FROM meeting_segments WHERE meeting_id=?", (meeting_id,))
+                conn.execute("DELETE FROM meeting_participants WHERE meeting_id=?", (meeting_id,))
             conn.execute(
                 "UPDATE meeting_outbox SET state='cancelled' "
                 "WHERE meeting_id=? AND state IN ('queued','sending')",
