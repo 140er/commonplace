@@ -52,7 +52,9 @@ MODULES = (
     "commonplace.agent_schedules",
     "commonplace.routines",
     "commonplace.projects",
+    "commonplace.tool_policy",
     "commonplace.bots",
+    "commonplace.topology.extension",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})
@@ -149,7 +151,8 @@ def load_modules() -> list:
         try:
             loaded.append(importlib.import_module(name))
         except ModuleNotFoundError as exc:
-            if exc.name != name:
+            # The module, or the package it lives in, is not there (yet).
+            if exc.name != name and not name.startswith(f"{exc.name}."):
                 raise
     _loaded = True
     return loaded

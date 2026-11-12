@@ -114,6 +114,39 @@ The store does not authorize; the caller does, with the existing wing rules, bef
 
 The owner reads every wing, so the topology is owner-readable by default. An agent sees it when its connection's wing grants include `topology`. A store is one workspace's file, so no read returns another workspace's facts.
 
+## Tools and routes
+
+Two read tools, with a matching REST route each, let every agent ask the map instead of guessing. Code: `commonplace/topology/answers.py` (the answers, pure functions over `read_graph`) and `commonplace/topology/extension.py` (the tools, the routes and the access check). Tests: `tests/test_topology_tools.py`.
+
+Access is the same as any memory read: the connection needs the `memory:read` scope and `policy.can_read_wing(TOPOLOGY_WING)`. A connection without the scope does not see the tools; a connection that has the scope but no read grant on the `topology` wing gets `no: this connection cannot read the topology wing` (REST: 403) and no data. The owner reads every wing. The store is one workspace's file, so an answer never holds another workspace's facts, and it holds no secrets because none are stored. Both tools are in every tool profile, so an agent with only these tools can answer both questions.
+
+| Tool | REST | Arguments |
+| --- | --- | --- |
+| `topology_get` | `GET /api/topology` | `node` (a machine or site key) or `site` (a website's route); neither returns the whole graph |
+| `topology_route` | `GET /api/topology/route` | `target` (required), `from` (the machine you start from) |
+
+Every answer carries `as_of` (when it was read) and says `found: false` with an `answer` starting `unknown:` when nothing is recorded; an unknown key is an answer, not an error. Bad arguments are refused with a `no:` message (REST: 400).
+
+### `topology_get`
+
+- `node`: `found`, the node record (values, fields with provenance and expiry, conflicts), `links` (every link that starts or ends at it) and `routes` (when the node is a site).
+- `site`: `found`, the route record with every hop resolved, and the site's node if it has one.
+- neither: `counts`, `nodes`, `links`, `routes` and the open `conflicts`.
+
+Records have the shape described under Reads: `values` holds fresh values only, `fields` also holds stale values with `stale: true`.
+
+### `topology_route`
+
+The target decides which question is answered. A target that has a route, or is a `website` node, is a hosting question; any other target is a connection question.
+
+**Where is site Y hosted** (`mode: "hosting"`): the recorded route in order (for example DNS provider, proxy or CDN, reverse proxy, host, container). `status` is `complete` when every hop is known and fresh and the route itself was confirmed recently, `partial` when not, and `unknown` when the site has no route. `unknown_hops`, `stale_hops` and `down_hops` name the links; `hosted_on` is the node the route ends at; `answer` is one plain sentence. A hop with no link facts has `known: false` and is never filled in.
+
+**How do I connect to X** (`mode: "connect"`): with `from`, up to three loop-free paths over the links whose method is `direct`, `jump_host`, `tailscale`, `relay` or `hosts`, best first. A way ranks by hop count, with a penalty for a hop that is degraded, down, unknown or stale, so a fresh working way comes before a doubtful one. Without `from`, the recorded single-hop ways in to the target (`status: "partial"`; pass `from` for the full path). `node` holds what to use on the target: `aliases`, `hostname`, `tailscale_name`, `runner_id`, `wings` (fresh values; `stale_fields` names the ones that expired).
+
+A route's `status` is `down` if any hop is down, else `unknown` if any hop has no fresh status or is stale, else `degraded` if any hop is, else `up`. A start that is not recorded, a target that is not recorded, and a target nothing reaches each answer `status: "unknown"` with `routes: []` and the reason in `answer`.
+
+A hop shows `link`, `from` and `to` (`key`, `known`, and `kind` and `name` when recorded), `method`, `known`, `stale`, `status` (`unknown` when the last status expired, with `status_observed_at`, `status_expires_at` and a `status_note` so a reader can say "last seen up three days ago"), and `via`, `alias`, `port` when set and fresh.
+
 ## Python API
 
 ```python
@@ -188,27 +221,138 @@ A route's `hops` is a list of `{"link", "from", "to", "method", "known", "stale"
 
 `read_graph` returns `{"wing", "nodes", "links", "routes", "conflicts"}`. A conflict is `{"conflict_id", "subject", "predicate", "state", "created_at", "resolved_by", "resolved_at", "current", "contender"}`, where both values have the field shape above. `history` returns every value a subject held, newest first, each with `predicate`, `state` and `superseded_by`.
 
+## Live status
+
+Live status of machines and of the two ends of every link, derived from signals that runners already send. There is no probing daemon: nothing in this section opens a connection to a machine.
+
+Code: `commonplace/topology/status.py`. Tests: `tests/test_topology_status.py`.
+
+### The read
+
+The one read the read tools (`topology_get`) and the canvas call:
+
+```python
+from commonplace.topology import status
+
+status.read_status(gateway, workspace_id, *, graph=None, now=None, config=None) -> dict
+```
+
+`graph` is a `store.read_graph` result the caller already holds (so the map and its status describe the same moment); when `None` the function reads the workspace's graph itself. `now` is an optional timezone-aware `datetime` (tests pass a fake clock). `config` is a `status.StatusConfig`; `None` means `StatusConfig.from_env()`. The caller authorizes (`policy.can_read_wing(TOPOLOGY_WING)`) before calling; the read opens no workspace other than `workspace_id` and creates no topology file.
+
+The pure core, which tests and other callers can use with their own signals, takes no gateway:
+
+```python
+status.derive(graph, signals, *, now, config) -> dict      # signals: dict[machine_id, MachineSignals]
+status.machine_status(signals, *, now, config) -> dict     # one MachineSignals -> one status record
+status.collect_signals(gateway, workspace_id, *, now) -> dict[str, MachineSignals]   # the only reader of the hub's tables
+```
+
+The result:
+
+```python
+{
+    "as_of": "2026-01-01T10:00:00Z",
+    "config": {"green_within_s": 180, "red_after_s": 900, "path_fresh_s": 900, "path_unknown_after_s": 3600},
+    "machines": {"mach_…": STATUS},      # every enrolled runner machine, with or without a node
+    "nodes":    {"web1": STATUS},        # every node of the graph
+    "links":    {"laptop>web1:tailscale": {**STATUS, "ends": {"from": STATUS, "to": STATUS}}},
+}
+```
+
+A `STATUS` record:
+
+```python
+{"status": "up" | "degraded" | "down" | "unknown",
+ "color": "green" | "orange" | "red" | "grey",     # grey is unknown, never green
+ "reason": "<code>",
+ "last_signal_at": "2026-01-01T09:59:12Z" | None,  # machines and nodes; for a link end: the path report
+ "last_signal_source": "<signal name>" | None,
+ "age_s": 48 | None}
+```
+
+A link's record is a `STATUS` plus `ends`; each end is a `STATUS` plus `basis` (`node` when the end's own node decided it, `path` when the path report did). `last_signal_at` and `age_s` of a link end are those of the record that decided it.
+
+The status words are the ones a link's `status` fact already uses, so a link's reported status and its derived status compare directly.
+
+### Rules
+
+One rule set, applied in this order. Times are ages at `now`; a signal dated in the future counts as age 0.
+
+**Machine** (an enrolled runner machine; a node is its machine when its `runner_id` names it):
+
+| Condition | Status | Reason |
+| --- | --- | --- |
+| machine revoked | down | `revoked` |
+| machine disabled | down | `disabled` |
+| no signal ever | unknown | `never_reported` |
+| newest signal older than `red_after_s` | down | `no_heartbeat` |
+| newest signal older than `green_within_s` | degraded | `late_heartbeat` |
+| a start is leased or starting | degraded | `start_in_progress` |
+| otherwise | up | `heartbeat` |
+
+The newest signal is the latest of the signals below. A machine that never produced one is unknown, not green, and a card start never makes an unknown machine green.
+
+**Link path.** A runner (or an agent) may report a path with `upsert_link(..., {"status": ...})`; that is the optional path report. The report's age is `now - observed_at` of the link's newest `status` observation, stale or not:
+
+| Report | Age | Path status | Reason |
+| --- | --- | --- | --- |
+| none | | unknown | `no_report` |
+| any | up to `path_fresh_s` | as reported | `reported` |
+| `up` | up to `path_unknown_after_s` | degraded | `late_report` |
+| `down` or `degraded` | up to `path_unknown_after_s` | as reported | `late_report` |
+| any | older | unknown | `report_stale` |
+
+A path that is `down` while another link between the same two nodes (any direction, any other method) is `up` is `degraded` with reason `alternate_path_up`: the target is still reachable, one path is failing.
+
+**Link end.** An end shows the worse of its node's status and the path's status, ignoring `unknown`; when both are unknown the end is unknown, with the reason of the one that saw a signal (a stale report) when there is one. Worse means `down` over `degraded` over `up`. A node that is not a runner machine has no signals of its own, so its end shows the path report alone.
+
+**Link.** The link's own status is the worse of its two ends by the same rule.
+
+### Signals that exist today
+
+Each signal is read from state the hub already keeps; none is new.
+
+| Signal | Source | What it proves |
+| --- | --- | --- |
+| `machine_connection` | `connections.last_used_at` of the machine's connection (`runner_machines.machine_connection_id`), touched by the hub on every authenticated runner request, at most once a minute | the runner reached the hub |
+| `worker_connection` | `connections.last_used_at` of the machine's worker connection (`runner_machines.worker_connection_id`) | an agent started on the machine is working |
+| `chat_poll` | `chat_runners_seen.seen_at` | the runner's chat relay polled |
+| `start_success` | newest `runner_jobs.updated_at` in state `started` for the machine | the machine launched a card start |
+| `start_in_progress` | any `runner_jobs` row of the machine in state `leased` or `starting` | a start is underway (orange) |
+
+`runner_machines.enabled` and `revoked_at` give the disabled and revoked rows of the rule table.
+
+### What does not exist, and the gap
+
+- **No per-path reachability signal from runners.** Nothing on the hub carries a runner's view of a direct, jump host, Tailscale or relay path. The only path signal is the optional `status` fact of a link written through the store; until runners write it, every link's path is `unknown` / `no_report` and a link end shows its node alone. The Compute stack (not on develop) may add such a report; it must write the same `status` fact so this code needs no change.
+- **No heartbeat for a non-runner node** (router, cloud, website, container): they stay `unknown` unless a path report names them.
+- **No failed-start signal in the rules.** A failed or uncertain start does not change a machine's status; a machine that fails starts but keeps polling is `up`.
+- **The thresholds are per hub, not per machine.** A machine configured with `poll_seconds` near 300 needs `green_within_s` of at least twice that.
+
+### Configuration
+
+Thresholds are configuration, not constants. `StatusConfig` holds them; build it with `StatusConfig(green_within_s=…)`, `StatusConfig.from_mapping({...})` or `StatusConfig.from_env()`.
+
+| Field | Environment variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `green_within_s` | `COMMONPLACE_TOPOLOGY_GREEN_S` | 180 | a signal this young is green |
+| `red_after_s` | `COMMONPLACE_TOPOLOGY_RED_S` | 900 | no signal for longer is red |
+| `path_fresh_s` | `COMMONPLACE_TOPOLOGY_PATH_FRESH_S` | 900 | a path report this young is trusted as reported |
+| `path_unknown_after_s` | `COMMONPLACE_TOPOLOGY_PATH_STALE_S` | 3600 | a path report older than this is unknown |
+
+Each is a whole number of seconds; `green_within_s` must be below `red_after_s` and `path_fresh_s` below `path_unknown_after_s`, or the config is refused with a `TopologyError`.
+
 ## Map read
 
-`GET /api/topology/map` is what the map canvas in the web app draws from. It is an interim, deliberately small read in its own module (`commonplace/topology/map_route.py`): the agent tools add the general graph read and the live status read adds status derived from runner heartbeats, and the canvas then reads those instead.
-
-Only a signed-in workspace owner whose policy reads the `topology` wing gets an answer; anyone else gets `403`, and a request without a session `401`. It reads one workspace's store and creates no file.
+The map canvas in the web app draws from `GET /api/topology` (the `topology_get` read with no `node` and no `site`), the same answer agents get. Beside `nodes`, `links`, `routes` and `conflicts` the whole-graph answer holds `status`: one state per node and one per end of a link, `up`, `degraded`, `down` or `unknown`. It is `status.read_status` of the same graph (see Live status), reduced to the one word that is drawn by `answers.status_words`; reasons and times stay in that read. A node that is not a runner machine and a link without a path report are `unknown`, never `up`. A node or site read has no `status` block.
 
 ```json
 {
-  "graph": {
-    "wing": "topology",
-    "nodes": [{"subject": "node:web1", "wing": "topology", "key": "web1",
-               "values": {"kind": "server", "name": "Web 1", "role": "app host"},
-               "stale": false, "conflicted": false, "last": {}}],
-    "links": [{"subject": "link:laptop>web1:tailscale", "wing": "topology",
-               "id": "laptop>web1:tailscale", "from": "laptop", "to": "web1", "method": "tailscale",
-               "values": {"method": "tailscale", "status": "up"}, "stale": false, "conflicted": false}],
-    "routes": [{"subject": "route:example.test", "wing": "topology", "site": "example.test",
-                "values": {"hops": ["example.test>web1:reverse_proxy"]}, "stale": false, "conflicted": false,
-                "hops": [{"link": "example.test>web1:reverse_proxy", "from": "example.test", "to": "web1",
-                          "method": "reverse_proxy", "known": true, "stale": false, "status": "unknown"}]}]
-  },
+  "scope": "graph", "found": true, "as_of": "2026-11-12T10:00:00Z",
+  "counts": {"nodes": 1, "links": 1, "routes": 0, "conflicts": 0},
+  "nodes": [{"subject": "node:web1", "key": "web1", "values": {"kind": "server", "name": "Web 1"},
+             "fields": {"kind": {"value": "server", "stale": false}}, "stale": false, "conflicted": false}],
+  "links": [], "routes": [], "conflicts": [],
   "status": {
     "nodes": {"web1": "unknown"},
     "links": {"laptop>web1:tailscale": {"from": "up", "to": "up"}}
@@ -216,8 +360,7 @@ Only a signed-in workspace owner whose policy reads the `topology` wing gets an 
 }
 ```
 
-- `graph` is `read_graph` without `fields` and without `conflicts`: no evidence and no observers, only what is drawn. A node also has `last`: the `kind`, `name` and `role` that have expired, so a stale node keeps its icon and label and is marked stale.
-- `status` has one state per node and one per end of a link: `up`, `degraded`, `down` or `unknown`. Until the live status read exists, every node is `unknown` and both ends of a link carry the link's own fresh `status` fact; an expired or missing status is `unknown`, never `up`.
+The read needs the `memory:read` scope and a read grant on the `topology` wing, like every topology read. A stale node keeps its last `kind`, `name` and `role` in `fields` (each with `stale: true`), so the canvas draws a faded icon with its label and marks it stale.
 
 ## The map in the app
 

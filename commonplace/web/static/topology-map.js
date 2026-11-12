@@ -13,7 +13,7 @@ import { KINDS, kindOf } from "./topology-icons.js";
 import { createNodePanel } from "./topology-detail.js";
 import { autoLayout, fitView, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
 
-export const MAP_PATH = "/api/topology/map";
+export const MAP_PATH = "/api/topology";
 export const STATES = ["up", "degraded", "down", "unknown"];
 export const STATUS_TEXT = { up: "Up", degraded: "Degraded", down: "Down", unknown: "Unknown" };
 export const MAP_COPY = {
@@ -40,16 +40,19 @@ const clip = (text, max) => { const chars = Array.from(String(text)); return cha
 const text = (value) => (typeof value === "string" ? value : "");
 const finite = (...values) => values.every((n) => typeof n === "number" && Number.isFinite(n));
 
-/** The drawable model of one read: `{ nodes, links, routes }`.
+/** The last known kind, name and role of a node whose facts expired: a faded icon needs them. */
+const lastKnown = (record) => Object.fromEntries(["kind", "name", "role"].filter((name) => record.fields?.[name]?.stale && typeof record.fields[name].value === "string").map((name) => [name, record.fields[name].value]));
+
+/** The drawable model of one read (`GET /api/topology`): `{ nodes, links, routes }`.
  * A link or route hop may name a node or link that has no facts; it is drawn as "not recorded"
  * instead of being dropped or invented. */
 export function mapModel(payload) {
-  const graph = payload?.graph || {}, status = payload?.status || {};
+  const graph = payload || {}, status = payload?.status || {};
   const nodes = [], seen = new Set(), links = [], linkIds = new Set();
   for (const record of graph.nodes || []) {
     if (typeof record?.key !== "string" || seen.has(record.key)) continue;
     seen.add(record.key);
-    const values = { ...(record.last || {}), ...(record.values || {}) };
+    const values = { ...lastKnown(record), ...(record.values || {}) };
     nodes.push({ key: record.key, kind: kindOf(values.kind), name: text(values.name) || record.key, role: text(values.role), stale: !!record.stale, conflicted: !!record.conflicted, missing: false, status: stateOf(status.nodes?.[record.key]) });
   }
   const ghost = (key) => { if (typeof key !== "string" || seen.has(key)) return; seen.add(key); nodes.push({ key, kind: "unknown", name: key, role: "", stale: false, conflicted: false, missing: true, status: "unknown" }); };

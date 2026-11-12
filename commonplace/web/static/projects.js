@@ -13,6 +13,7 @@ export const PROJECT_COPY = Object.freeze({
   loadError: "Could not load project settings.", connectError: "Could not connect the agent.",
   saveError: "Could not save project models.", saved: "Project models saved.",
   unknownModel: "That model is not in this workspace's list. Pick one from the list, or add it first.",
+  escalationError: "Could not save the escalation rule.", escalationSaved: "Escalation rule saved.",
   modelAdded: "Model added to the list.", addModelError: "Could not add that model.",
   copyError: "Copy failed. Select the token and copy it manually.",
 });
@@ -220,15 +221,35 @@ const modelValue = (choice) => choice ? `${choice.provider} ${choice.model}` : "
 const parseModel = (value) => { const at = value.indexOf(" "); return at < 1 ? null : { provider: value.slice(0, at), model: value.slice(at + 1) }; };
 
 // Each role picks from the workspace's list; the stored choice always stays an option and is shown as stored.
+export const MODEL_ROLE_LABELS = {main: "Orchestrator", worker: "Builder", reviewer: "Reviewer", gate: "Gate"};
+
+function modelOptions(project, e, choice, empty) {
+  const catalog = project.model_catalog || [];
+  const options = choice && !catalog.some((item) => sameModel(item, choice)) ? [...catalog, choice] : catalog;
+  return `<option value="">${empty}</option>` + options.map((item) => `<option value="${e(modelValue(item))}"${sameModel(item, choice) ? " selected" : ""}>${e(item.provider)} · ${e(item.model)}</option>`).join("");
+}
+
+export function escalationHTML(project, e) {
+  const rule = project.escalation, locked = project.can_configure ? "" : "disabled";
+  return `<form data-project-escalation><h3>Escalation</h3><p>Use a stronger model only when needed: after failed rounds, or for cards with certain labels. Builders and reviewers switch to it; with no rule they keep their default.</p><fieldset ${locked}><legend>Stronger model</legend><label>After failed rounds<input name="after_failures" type="number" min="1" max="10" value="${e(rule?.after_failures)}"></label><label>Or for card labels (comma separated)<input name="labels" value="${e((rule?.labels || []).join(", "))}" maxlength="700" autocomplete="off"></label><label>Model<select name="escalation_model" data-model-role="escalation">${modelOptions(project, e, rule?.model, "No model")}</select></label>${rule ? `<p class="set-note">Stored: <code data-model-stored="escalation">${e(rule.model.provider)}/${e(rule.model.model)}</code></p>` : ""}</fieldset>${project.can_configure ? '<button class="blockbtn" type="submit">Save escalation</button>' : ""}<p role="status" data-project-escalation-status>${rule ? `Escalates to ${e(rule.model.model)}${rule.after_failures ? ` after ${e(rule.after_failures)} failed rounds` : ""}${rule.labels.length ? ` or for ${e(rule.labels.join(", "))}` : ""}.` : "No escalation rule."}</p></form>`;
+}
+
+export function escalationBody(read) {
+  const after = read("after_failures").trim(), model = parseModel(read("escalation_model"));
+  const labels = read("labels").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!after && !labels.length && !model) return {rule: null};
+  if (!model || (!after && !labels.length)) return null;
+  return {rule: {after_failures: after ? Number(after) : null, labels, model}};
+}
+
 export function modelsHTML(project, e) {
-  const catalog = project.model_catalog || [], disabled = project.can_configure ? "" : "disabled";
-  const roles = ["main", "worker"].map((role) => {
+  const disabled = project.can_configure ? "" : "disabled";
+  const roles = Object.keys(MODEL_ROLE_LABELS).map((role) => {
     const choice = project.models?.[role];
-    const options = choice && !catalog.some((item) => sameModel(item, choice)) ? [...catalog, choice] : catalog;
-    return `<fieldset ${disabled}><legend>${role === "main" ? "Main orchestrator" : "Worker"}</legend><label>Model<select name="${role}_model" data-model-role="${role}"><option value="">Runner default</option>${options.map((item) => `<option value="${e(modelValue(item))}"${sameModel(item, choice) ? " selected" : ""}>${e(item.provider)} · ${e(item.model)}</option>`).join("")}</select></label>${choice ? `<p class="set-note">Stored: <code data-model-stored="${role}">${e(choice.provider)}/${e(choice.model)}</code></p>` : ""}</fieldset>`;
+    return `<fieldset ${disabled}><legend>${MODEL_ROLE_LABELS[role]}</legend><label>Model<select name="${role}_model" data-model-role="${role}">${modelOptions(project, e, choice, "Runner default")}</select></label>${choice ? `<p class="set-note">Stored: <code data-model-stored="${role}">${e(choice.provider)}/${e(choice.model)}</code></p>` : ""}</fieldset>`;
   }).join("");
   const add = project.can_configure ? `<form data-project-model-add><h3>Add a model to the list</h3><label>Provider<input name="provider" maxlength="128" autocomplete="off" required></label><label>Model<input name="model" maxlength="120" autocomplete="off" required></label><button class="opt" type="submit">Add to list</button><p role="status" data-project-model-add-status></p></form>` : "";
-  return `<form data-project-models><p>Pick a model from this workspace's list, or leave a role on the runner's default.</p>${roles}${project.can_configure ? '<button class="blockbtn" type="submit">Save models</button>' : ""}<p role="status" data-project-model-status></p></form>${add}`;
+  return `<form data-project-models><p>Pick a model from this workspace's list, or leave a role on the runner's default.</p>${roles}${project.can_configure ? '<button class="blockbtn" type="submit">Save models</button>' : ""}<p role="status" data-project-model-status></p></form>${escalationHTML(project, e)}${add}`;
 }
 
 // Options the shell passes when a button opens project settings (Needs me, board header).
@@ -538,25 +559,50 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     await Promise.all([
       mountChatAnswers(host.querySelector("[data-project-chat]"), {project, api, e, current: active, onSaved: markSaved}),
       mountProjectAgents(host.querySelector("[data-project-agents]"), {project, api, e, current: active, onUpdate: latest => { project = latest; renderMain(); }}),
+      mountProjectReview(host.querySelector("[data-project-review]"), {project, api, e, current: active}),
       restart && loadNotAnswering(),
     ]);
     if (!active()) return;
   }
   renderMain();
   // The models form is redrawn from `project`, so a saved or added model shows at once.
+  // Edits not saved yet survive a redraw triggered by another form: the role pickers, the
+  // escalation picker and the escalation fields. The form just saved is redrawn from the saved data.
+  // Function declarations: the first draw runs inside renderMain, before this point is reached.
+  function modelsHost() { return host.querySelector("[data-project-models-host]"); }
+  function unsavedPicks(wanted = () => true) {
+    const picks = {};
+    for (const role of [...Object.keys(MODEL_ROLE_LABELS), "escalation"]) {
+      const value = wanted(role) ? modelsHost()?.querySelector(`[data-model-role="${role}"]`)?.value : undefined;
+      if (value !== undefined) picks[role] = value;
+    }
+    return picks;
+  }
+  function unsavedRule() {
+    const fields = {};
+    for (const name of ["after_failures", "labels"]) {
+      const value = modelsHost()?.querySelector(`[name="${name}"]`)?.value;
+      if (value !== undefined) fields[name] = value;
+    }
+    return fields;
+  }
   function drawModels(message = {}, keep = {}) {
-    const holder = host.querySelector("[data-project-models-host]");
+    const holder = modelsHost();
     if (!holder) return;
     holder.innerHTML = modelsHTML(project, e);
-    // Picks not saved yet survive a redraw (adding a model must not undo them).
-    for (const [role, value] of Object.entries(keep)) {
+    for (const [role, value] of Object.entries(keep.picks || {})) {
       const select = holder.querySelector(`[data-model-role="${role}"]`);
       if (select && [...select.querySelectorAll("option")].some((option) => option.getAttribute("value") === value)) select.value = value;
+    }
+    for (const [name, value] of Object.entries(keep.fields || {})) {
+      const input = holder.querySelector(`[name="${name}"]`);
+      if (input) input.value = value;
     }
     const form = holder.querySelector("[data-project-models]");
     const status = (selector, text) => { const node = holder.querySelector(selector); if (node && text) node.textContent = text; };
     status("[data-project-model-status]", message.save);
     status("[data-project-model-add-status]", message.add);
+    status("[data-project-escalation-status]", message.escalation);
     if (!project.can_configure) return;
     form.onsubmit = async (event) => {
       event.preventDefault();
@@ -564,7 +610,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       const button = form.querySelector('button[type="submit"]');
       if (button.disabled) return;
       const body = {};
-      for (const role of ["main", "worker"]) {
+      for (const role of Object.keys(MODEL_ROLE_LABELS)) {
         const value = form.querySelector(`[name="${role}_model"]`).value;
         body[role] = value ? parseModel(value) : null;
       }
@@ -575,11 +621,31 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
         project = saved;
         markSaved();
         renderMain();
-        drawModels({ save: PROJECT_COPY.saved });
+        drawModels({ save: PROJECT_COPY.saved }, { picks: unsavedPicks((role) => role === "escalation"), fields: unsavedRule() });
         // A saved model can clear a Needs me item: the shell re-reads its lists.
         refresh();
       } catch (failure) {
         if (active()) form.querySelector("[data-project-model-status]").textContent = failure?.payload?.code === "unknown_model" ? PROJECT_COPY.unknownModel : PROJECT_COPY.saveError;
+      } finally { button.disabled = false; }
+    };
+    const escalate = holder.querySelector("[data-project-escalation]");
+    escalate.onsubmit = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const button = escalate.querySelector('button[type="submit"]');
+      if (button.disabled) return;
+      const body = escalationBody((name) => escalate.querySelector(`[name="${name}"]`).value);
+      const note = escalate.querySelector("[data-project-escalation-status]");
+      if (!body) { note.textContent = "Pick a model, and either a number of failed rounds or a label."; return; }
+      button.disabled = true;
+      try {
+        const saved = await api(`${path}/escalation`, { method: "PUT", body });
+        if (!active()) return;
+        project = saved;
+        markSaved();
+        drawModels({ escalation: PROJECT_COPY.escalationSaved }, { picks: unsavedPicks((role) => role !== "escalation") });
+      } catch (failure) {
+        if (active()) note.textContent = failure?.payload?.code === "unknown_model" ? PROJECT_COPY.unknownModel : PROJECT_COPY.escalationError;
       } finally { button.disabled = false; }
     };
     const add = holder.querySelector("[data-project-model-add]");
@@ -591,9 +657,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
         const saved = await api(`${path}/models/catalog`, { method: "POST", body: { provider, model } });
         if (!active()) return;
         project = saved;
-        const pending = {};
-        for (const role of ["main", "worker"]) pending[role] = holder.querySelector(`[data-model-role="${role}"]`)?.value;
-        drawModels({ add: PROJECT_COPY.modelAdded }, pending);
+        drawModels({ add: PROJECT_COPY.modelAdded }, { picks: unsavedPicks(), fields: unsavedRule() });
       } catch {
         if (active()) add.querySelector("[data-project-model-add-status]").textContent = PROJECT_COPY.addModelError;
       }
@@ -833,7 +897,7 @@ function installProjectStyles() {
 
 export function projectSettingsHTML(project, e, {origin = "", restart = false} = {}) {
   const back = settingsOrigin(project.board, origin);
-  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec" data-project-models-section><summary>Agent models</summary><div data-project-models-host>${modelsHTML(project, e)}</div></details></div></div></section>`;
+  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div><div data-project-review></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec" data-project-models-section><summary>Agent models and escalation</summary><div data-project-models-host>${modelsHTML(project, e)}</div></details></div></div></section>`;
 }
 
 export async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {
@@ -915,6 +979,7 @@ export function mountWorkspaceOrchestration(host, {api, e, enabled, current = ()
   render();
 }
 
+// Owner-only: config versions to accept and cards an agent can no longer release.
 export function mountOrchestratorTrust(host, {project, api, e, current = () => true}) {
   installOrchestrationStyles();
   const active = () => current() && host.isConnected;
@@ -945,5 +1010,61 @@ export function mountOrchestratorTrust(host, {project, api, e, current = () => t
     } catch { if (active()) status = "Could not save orchestrator permissions"; }
     finally { busy = false; render(); }
   }
+  render();
+}
+
+export async function mountProjectReview(host, {project, api, e, current = () => true}) {
+  if (!host) return;
+  if (!project.can_configure) { host.replaceChildren(); return; }
+  const active = () => current() && host.isConnected;
+  const board = encodeURIComponent(project.board), base = `/api/orch/boards/${board}`;
+  let versions = [], waiting = [], changes = new Map(), status = "", busy = false;
+  async function compare(version, accepted) {
+    if (!accepted) return (await api(`${base}/configs/${version.version}`)).body || "";
+    return (await api(`${base}/diff?old=${accepted.version}&new=${version.version}`)).diff || "";
+  }
+  async function load() {
+    const [configs, cards] = await Promise.allSettled([api(`${base}/configs`), api(`/api/boards/${board}/cards`)]);
+    const notes = [];
+    if (configs.status === "fulfilled") {
+      versions = configs.value.versions || [];
+      const proposed = versions.filter(v => v.status === "proposed");
+      const shown = await Promise.allSettled(proposed.map(v => compare(v, configs.value.accepted)));
+      changes = new Map(proposed.map((v, i) => [v.version, shown[i].status === "fulfilled" ? shown[i].value : null]));
+    } else notes.push("Could not load config versions");
+    if (cards.status === "fulfilled") waiting = (cards.value.cards || []).filter(c => c.awaiting_release && c.can_approve);
+    else notes.push("Could not load cards waiting for release");
+    status = notes.join(". ");
+  }
+  function render() {
+    if (!active()) return;
+    const rows = versions.map(v => {
+      const change = changes.get(v.version);
+      return `<li data-config-version="${e(v.version)}"><span>${e(v.ref)} · ${e(v.status)} · ${e(String(v.proposed_by || "").replace(/^conn:/, ""))}</span>${v.status === "proposed" ? `<details><summary>Changes</summary><pre data-config-diff>${e(change ?? "Could not load the changes")}</pre></details><button type="button" class="btn sm" data-config-accept="${e(v.version)}"${busy ? " disabled" : ""}>Accept</button>` : ""}</li>`;
+    }).join("");
+    const cards = waiting.map(c => `<form data-project-release="${e(c.number)}"><span>#${e(c.number)} ${e(c.title)}</span><label>Reason<input name="reason" required maxlength="500"></label><button class="btn sm"${busy ? " disabled" : ""}>Release</button></form>`).join("");
+    host.innerHTML = `<h3>Config versions</h3>${rows ? `<ul data-config-versions>${rows}</ul>` : '<p class="set-note">No config versions yet.</p>'}<h3>Waiting for release</h3>${cards || '<p class="set-note">No cards are waiting for release.</p>'}<p role="status" data-project-review-status>${e(status)}</p>`;
+    host.querySelectorAll("[data-config-accept]").forEach(button => {
+      const version = versions.find(v => String(v.version) === button.getAttribute("data-config-accept"));
+      button.onclick = () => act(() => api(`${base}/configs/${version.version}/accept`, {method: "POST", body: {sha256: version.sha256}}), `Accepted ${version.ref}`);
+    });
+    host.querySelectorAll("[data-project-release]").forEach(form => {
+      const card = waiting.find(c => String(c.number) === form.getAttribute("data-project-release"));
+      form.onsubmit = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const reason = form.querySelector("input").value;
+        act(() => api(`/api/cards/${card.number}/approve`, {method: "POST", body: {approve: true, version: card.version, reason}}), `Released #${card.number}`);
+      };
+    });
+  }
+  async function act(action, done) {
+    if (busy || !active()) return;
+    busy = true; status = ""; render();
+    try { await action(); await load(); status = status || done; }
+    catch (error) { status = error.message || "That did not work. Try again."; }
+    finally { busy = false; render(); }
+  }
+  await load();
   render();
 }

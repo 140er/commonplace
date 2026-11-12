@@ -197,9 +197,9 @@ def workspace_key(directory, info):
         if external.resolve().is_relative_to(data_root):
             raise EncryptionError("Key store and wrapping keys must be outside the data directory")
     path = Path(key_store) / (info["workspace_id"] + ".json")
+    if path.is_symlink():
+        raise EncryptionError("Keyslot file cannot be a symlink")
     try:
-        if path.is_symlink():
-            raise EncryptionError("Keyslot file cannot be a symlink")
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         raise EncryptionError("Workspace keyslot is unavailable") from None

@@ -13,7 +13,7 @@ document.querySelector("#board-nav").outerHTML = renderRail({ workspace: "Northw
 document.querySelector("#phone-bar").innerHTML = renderPhoneBar({ board, needs: 2, can_admin: true });
 document.querySelector("#phone-tabs").innerHTML = renderPhoneTabs({ view: "map" });
 
-const EMPTY = { graph: { wing: "topology", nodes: [], links: [], routes: [] }, status: { nodes: {}, links: {} } };
+const EMPTY = { wing: "topology", nodes: [], links: [], routes: [], status: { nodes: {}, links: {} } };
 let payload = scene === "empty" ? EMPTY : scene === "large" ? largeFixture(300) : fixture();
 const workspace = `harness-${scene}`;
 const memoryKey = `commonplace.topology.${workspace}`;

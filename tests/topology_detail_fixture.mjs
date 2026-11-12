@@ -45,7 +45,7 @@ const hopAt = (hop, at) => ({ link: hop.link, from: hop.from, to: hop.to, method
 /** The sites part of a node read, derived from the map fixture's routes. */
 function sitesOf(key, payload) {
   const found = [];
-  for (const route of payload.graph.routes) {
+  for (const route of payload.routes) {
     const mine = route.hops.map((hop, index) => ({ hop, index })).filter(({ hop }) => hop.from === key || hop.to === key);
     if (route.site !== key && !mine.length) continue;
     const last = route.hops.length - 1;
@@ -57,7 +57,7 @@ function sitesOf(key, payload) {
 
 export function nodeRead(key, payload = fixture()) {
   const fields = FIELDS[key];
-  const record = payload.graph.nodes.find((node) => node.key === key);
+  const record = payload.nodes.find((node) => node.key === key);
   const stale = !!record?.stale;
   return structuredClone({
     as_of: new Date(NOW).toISOString(),
@@ -69,23 +69,23 @@ export function nodeRead(key, payload = fixture()) {
 
 const hopView = (id, payload, observed = 5) => {
   const [from, rest] = id.split(">"); const [to, method] = rest.split(":");
-  const link = payload.graph.links.find((item) => item.id === id);
+  const link = payload.links.find((item) => item.id === id);
   const ends = payload.status.links[id];
-  const brief = (key) => { const node = payload.graph.nodes.find((item) => item.key === key); return node ? { key, known: true, name: node.values.name || key } : { key, known: false }; };
+  const brief = (key) => { const node = payload.nodes.find((item) => item.key === key); return node ? { key, known: true, name: node.values.name || key } : { key, known: false }; };
   return { link: id, from: brief(from), to: brief(to), method, known: !!link, stale: false, status: ends ? ends.to : "unknown", ...(link?.values?.via ? { via: link.values.via } : {}), ...(link ? { observed_at: ago(observed) } : { note: "no facts are recorded for this link" }) };
 };
 
 /** What topology_route answers for `target`: hosting for a site, the recorded ways in for a machine. */
 export function routeRead(target, payload = fixture()) {
   const base = { target, as_of: new Date(NOW).toISOString() };
-  const site = payload.graph.routes.find((route) => route.site === target);
+  const site = payload.routes.find((route) => route.site === target);
   if (site) {
     const hops = site.hops.map((hop) => hopView(hop.link, payload));
     return { ...base, mode: "hosting", found: true, status: hops.every((hop) => hop.known) ? "complete" : "partial", route: { site: target, stale: false, hops }, hosted_on: null, answer: `site '${target}' is routed ${[hops[0].from.key, ...hops.map((hop) => hop.to.key)].join(" -> ")}.` };
   }
-  const node = payload.graph.nodes.find((item) => item.key === target);
+  const node = payload.nodes.find((item) => item.key === target);
   if (!node) return { ...base, mode: "connect", found: false, status: "unknown", node: null, routes: [], answer: `unknown: nothing is recorded for '${target}'; it is not a known machine or site` };
-  const inbound = payload.graph.links.filter((link) => link.to === target && ["direct", "jump_host", "tailscale", "relay", "hosts"].includes(link.method));
+  const inbound = payload.links.filter((link) => link.to === target && ["direct", "jump_host", "tailscale", "relay", "hosts"].includes(link.method));
   return { ...base, mode: "connect", found: true, node: { key: target, known: true }, status: inbound.length ? "partial" : "unknown", routes: inbound.map((link) => ({ status: payload.status.links[link.id].to, stale: false, hops: [hopView(link.id, payload)] })), answer: inbound.length ? `${inbound.length} recorded way(s) in to '${target}'; pass 'from' for the full path from one machine` : `unknown: no recorded way to reach '${target}'` };
 }
 
