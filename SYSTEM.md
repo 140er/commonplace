@@ -132,6 +132,8 @@ records of another agent or session. No Cursor database reader is claimed.
 
 - Voided steps keep counting their jobs; refusal is `at_cap` with workspace orchestration off and `project_limit` with it on.
 
+- A card may declare a path contract: `paths`, up to 32 repo-relative globs set with `task_update(paths=[...])` (`[]` clears) and shown on the card. Globs are stored canonical and brace-free: empty and `.` segments dropped, `name/..` collapsed, `.` is the repo root `**`, `{a,b}` alternatives expanded into separate globs (at most 64 per glob and 64 stored per card). A `..` that would leave the repo or follows a wildcard, a leading `/` (also at the start of a brace alternative, whatever precedes the group), an unbalanced or comma-less brace group and a larger expansion are refused when the contract is set. **Who may change it:** `paths` is an editing field, so only the holder of a `doing` card, the review editor, or the creator of an unassigned todo or backlog card (and a person) may change it. While the card has a runner job (queued, leased, starting, uncertain or started, of any age) only the workspace owner (a signed-in person with the owner role) may clear or narrow it; anyone else who may edit the card can only keep every glob and add more. An agent that is refused because of a running job asks the owner to clear that card's paths (`task_update(paths=[])`). Any change, the owner's included, takes the runner write lock before the board transaction (runner, then board: the order of starts), so it cannot land between a start's contract read and its job commit; a non-owner's clear waits for the start and is then refused. A card that counts as running (a live job, or a `doing` claim held by a connection) that gains globs is checked like a start against the other running cards inside that lock, whoever edits it, and is refused with `path_overlap` (or `path_contract_too_large`), so two running cards cannot be edited into an overlap; a card that does not run is checked when it starts. A workspace without a runner database has no jobs, so a contract change there skips the lock and does not create the database. **What is checked:** every runner start of a card refuses with `path_overlap` (409) while another card of the board that holds a start declares a glob that can match the same path: `orch_card_start`, owner `card_start` on a configured board, the trigger sweep, and `card_start` on a board without an orchestrator config (checked inside the runner write transaction before the job is inserted). A card holds a start while it has a runner job that is queued, leased, starting, uncertain or started, whatever its own status and **whatever the age of a started job** (the cap still counts a started job for one hour only), or while it is `doing` with a connection assignee. The jobs, the doing cards and every contract are read inside the lock, and a running card's paths are read as they are now. The refusal names the running card and both globs. **Known gaps:** (1) `started` is the last state of a job (there is no completed or stopped state, `cancel` refuses a started job and `resolve` only takes an uncertain one; confirmed stop of a launched worker, #384, is not in), so a crashed or finished worker's card keeps blocking overlapping contracts until the owner clears its `paths`; no action ends the job itself, and the rule stays fail closed by decision. (2) Only runner starts and edits that add globs to a running card are checked: a card a connection takes by hand (`task_take_next`, or `task_update` to `doing`) is not, so two connections can hold overlapping cards. Two behaviours follow, both pinned by tests: the holder of a manual `doing` claim (no runner job) may clear or narrow its own contract, since the owner-only rule applies only while a runner job exists (globs it adds are checked against the other running cards); and a `doing` claim held by a person (`user:` assignee) does not hold a start at all, because only a connection's claim counts as running. The refusal for a claim says it is claimed by its holder, not that a job exists. A single `task_update` that both adds globs and claims the card (`status` to `doing`) is checked as a card that is not yet running, so it skips the add re-check; the end state is the same as two calls in sequence. Covering manual claims with the owner rule and the overlap check, at the `doing` transition, is a later slice. (3) A claim takes the runner write lock from inside its board transaction (board, then runner; pre-existing), while a paths edit takes the runner lock first (runner, then board), now including the owner's edits and the add re-check. The two can wait on each other until the 10 s busy timeouts end the wait: the claim is refused as busy or the edit fails with a locked-database error. Starts only read the board, so they are not part of it. (4) A paths edit alone does not create the runner database; one that also claims the card on an orchestrated workspace can, because the claim does. The no-database decision is made before the board transaction, so a first-ever runner database created within that window can make an add re-check miss that job. (5) The SQL read of the running cards' contracts happens before the budget and is not billed: 0.17 s at 220 000 rows with contracts and 0.04 s without, measured. Matching is conservative: names compare case-insensitively, `**` matches any depth, a glob that ends where the other goes deeper owns that directory, and a stored value that is not canonical (written outside `task_update`) is read defensively: only NULL is no contract; an unreadable value (an empty string included), an unbalanced group, an over-cap expansion or a `..` that cannot collapse count as `**`, and the card shows such a value as `**`. A wildcard segment is matched by a matcher that means what `fnmatch` means (classes included) but never backtracks the way a regex does: at most one pass over the pattern per character of the name, plus one (one pass when the pattern has no `*`), so its cost is bounded before it runs. One start spends a budget of 2 200 000 work units, calibrated on the development host at about 0.3 microseconds per unit. It bills each running card 16 units for handling it (parse, prepare, loop) and its stored size before that card's contract is parsed or expanded (1 unit, plus 10 per glob, 1 per `/` and 1 per 32 characters); building each wildcard segment's matcher by what it costs (10 units, plus 1 per character and 8 per `[`), a rebuild after the shared cache was cleared included; and each comparison as pairs times the shallower side's deepest glob times the dearest segment comparison (equal literals 1 unit plus 1 per 32 characters; a pattern with a `*` against a name of n characters 1 + (n + 2) x w / 6 units and one without 1 + (w + 1) / 6, where w is 1 plus the pattern's length plus 8 per `[`). Each glob's sizes and wildcard flags are computed once. Measured on that host over 36 shapes (three runs each, 1-minute load about 10 on 14 cores), a start took 0.00 to 0.64 s to run into the budget or through its running cards; the slowest were a `?` segment of ~180 characters against literals and 366 running cards of 64 globs of 89 segments (0.55 to 0.64 s). The per-shape table is in docs/orchestrator.md. The measured set is not exhaustive: a shape that costs more per unit than these, or a slower host, takes longer. Past the budget it refuses with `path_contract_too_large` instead of holding the lock. A card with no contract, or running next to cards with none, is never refused, so existing boards behave as before. Triggers record the refusal as a final miss like any other code. Not yet: role-level contracts, queueing or `blocked_by`, gate flagging of out-of-contract edits, checking manual claims, in-app editing, contracts across boards, recording the paths on the job at start, releasing contracts when a job ends (depends on #384).
+
 - Owner/local void permanently retires a runner-start key while preserving its request, link, state, evidence and history.
 
 - Only queued/leased jobs are cancelled, in the void transaction; starting/uncertain/started and finished jobs are untouched.
@@ -634,6 +636,14 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - The plan is also re-checked when the runner reports `starting`; a refused job ends `cancelled` with outcome `plan_pending`.
 
+### Bots from a person's own app (`bots:chat`, `bots:confirm`)
+
+- A person's own native or mobile app can use `/api/bots*` as that person through two scopes the person grants themselves. Unlike `cards:decide` (owner-only), any signed-in member grants them, and only for their own top-level PAT or OAuth connection in that workspace; the shared classifier `decide_grant.machinery` refuses child agents, runner connections, orchestrator seats and agent-started connections, and board coordinators are refused by the web layer and again at use.
+- At use, `bots.auth.person` re-checks everything on every request (scope, live top-level app owned by that person, not a coordinator, the person still a member) and then returns the person's own `sessions.person_principal`, so every downstream check is the person's and an app reaches only that person's bots. Anything else stays 404; a revoked or expired connection is 401.
+- `bots:confirm` is separate and useless without `bots:chat`; `/confirm` through an app without it is 403 `scope_required` and runs nothing. Buttons on a question remain the existing `cards:decide` route.
+- OAuth apps get either scope only through a ticked consent; PAT grants and withdrawals go through `PATCH /api/connections/<id>` (`bots_chat`, `bots_confirm`) or Settings > Agents, and a member may use that PATCH for their own connection only. The command line and session policies never carry them. Becoming a coordinator or expiring clears the grants.
+- Every grant and withdrawal is audited per scope, and every write made through an app adds one `bots.write` row with the connection id, route and the status actually sent as `ok`, `refused` or `error` (never text; a refused confirm and a request that dies before answering are recorded too); person-session writes add none.
+
 ### Owner-granted answers from the owner's own apps (`cards:decide`)
 
 - Answering a Needs-me ask stays a signed-in owner action by default. A separate,
@@ -938,7 +948,7 @@ A routine (name, card template, schedule, owner) creates one card per due time. 
 | Wait budgets | Guesses until measured (see Numbers). |
 | CLI acts as owner | Yes, through data-dir access. |
 | Members' moves fire triggers | No. |
-| Model slots | Two (`main`, `worker`). |
+| Model slots | Four (`main` = orchestrator, `worker` = builder, `reviewer`, `gate`), set per project by the owner. An optional per-project escalation rule (`after_failures` 1–10 and/or card `labels`, plus a stronger model) swaps the builder and reviewer model at start: the card's `failed` jobs are counted inside the start transaction, so a card that failed twice is retried on the escalation model. The job stores the model and `model_reason` (`failed_rounds:<n>` or `label:<name>`); the rule's model comes from the workspace model list; a keyed retry replays its stored job whatever escalation decided, judged by the job's pre-escalation request digest (`request_base_hash`, default model included), so a changed default is still a conflict; a role with no default stays unmapped; with no rule a start resolves exactly as before. |
 
 ### Live chat delivery state
 
@@ -969,6 +979,7 @@ every wake attempt failed. See `docs/chat.md`.
 - The signed-in workspace owner may explicitly release any card awaiting origin release, including with a live coordinator or while coordinator configuration is needed. Implicit release by moving a card stays limited to boards with no live coordinator. Cards awaiting release expose `awaiting_release`, and the card panel offers Release with a required reason.
 - The owner and the live board coordinator may take over or drop a released todo reservation held by another connection. Unreleased cards, doing cards, pending/rejected proposals and person decisions stay protected.
 - Handoff recipients accept `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool; a board with no coordinator and an unknown recipient get a refusal naming the valid choices. Known limit: these four words are reserved, so an agent named one of them cannot be handed a card by name. A workspace owner may close a released restricted-origin todo card directly, and refused card actions appear inside the open card panel. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor on any route (update, web move or handoff).
+- Project settings show the owner each orchestrator config version with its changes and an Accept control, and a Release control for cards waiting for release. Accept uses the existing owner-only route and refuses agent tokens.
 - A creator may cancel its own todo reservation with a status-only `task_update status=backlog`, including after a handoff when origin release has lapsed. Cancellation clears the assignee without changing provenance or the approval marker, and does not authorize activation. Another connection's reservation, pending/rejected proposals and person decisions remain protected.
 - The signed-in owner receives one approvals item per origin awaiting person recovery. An absent/non-live configured record, or a verified independent record lacking any required release grant, yields approval_kind=origin, need=release and actions=[approve]. Live creator/descendant conflicts, unsafe lineage or an unverifiable stamp with any live configured record yield origin_configuration, need=you and actions=[configure_coordinator], with can_approve=false on that queue item; the card itself still offers the owner Release. Owner-role tokens receive no person fallback. An independent fully eligible coordinator yields no owner origin item or notice.
 - Configuration navigates to existing board settings. An invalid creator stamp requires clearing the coordinator before existing owner recovery; this is board-wide and sends other unreleased cards on that board to owner recovery too. Changing to another live coordinator cannot cure an invalid stamp.
@@ -1025,9 +1036,53 @@ every wake attempt failed. See `docs/chat.md`.
 
 - **Deck bots:** the same bots routes show responsive tiles or a focused conversation with bot chips while Deck is on; the classic layout stays unchanged. A project bot’s glance reads open work and dated completions through the existing signed-in person’s project API, groups the bot work statuses, and offers no mutations. A session draft (`cmmn.deck.draft`, `{bot,text}`) is consumed only into the named bot’s loaded composer, without sending, in either look; another bot’s draft survives and malformed input is discarded.
 
+- **Deck Today home:** when Deck is on, `#/` lands on `#/today`; with it off, Today remains an unknown address and its module is never loaded. Today reads only the existing bot roster and waiting blocks, prefers a project bot for repeated questions, posts `{version, choice}` to the existing decide route, and reloads a changed question after 409. A successful answer stays settled until refresh; failures keep the question open. Refresh preserves the composer controls, and stopping aborts pending reads and answers and removes listeners. The composer stores only its explicit hand-off `{bot, text}` in session storage (`cmmn.deck.draft`) before opening that bot; the receiving thread is a separate slice. Working rows and project agent counts use reported data; no finished-work history is inferred.
+
+- **Deck Compute:** `#/compute` reads only `/api/runners` and `/api/bots`. Revoked machines are omitted; disabled machines are Off, enabled owner-attested machines are Ready, and other enabled machines wait for attestation. These are enrollment states, not online status; attestation is the owner's statement, not verification. The map reserves label boxes outside its link lanes, widens within a scrollable field for crowded layers and keeps SVG type at real pixel size. Physical details, sites and running work have honest empty states. Add machine opens Admin; the two bot actions store a `cmmn.deck.draft` in session storage and open General without sending it.
+
 - **Bots web screens (S5):** `#/bots` and `#/bots/<id>` (`web/static/bots.js`, `botstream.js`, `bots.css`) talk only to the `/api/bots*` contract and the existing `POST /api/cards/<n>/decide`; they hold no conversation text beyond the open page, store nothing in the browser except an unsent draft in memory, and never send a model or mode choice. Every server string is escaped before it is drawn. A turn is streamed with `fetch` and a stream reader; a connection lost after the `ack` event is not a failure, the page polls `GET /api/bots/<id>/messages?after=` until `running` is false. The roster is polled every 15 s and an open thread every 5 s (1.5 s while a turn runs), both paused while the tab is hidden. A failed send keeps the text and retries under the same `request_id`. Work stays "work", "task" and "question" in the screen's wording.
 
 - **Bots-first navigation (S8):** `#/` resolves to `#/bots` for a person who has at least one project and to `#/start` for one who has none; no storage, API or permission changes. The rail and phone tabs list Bots and Memory; the Bots badge is the number of questions waiting on the person, read from the same `GET /api/bots` roster the bots screen loads (the shell reads it itself only on other screens, so the screen adds no second poll), and it counts the General bot's total when that bot exists because that total already covers every project. Projects, Needs me and Console moved into a "Workspace" group of the account menu, still gated by the same rules as before (Admin only for `can_admin`); no route was removed.
+
+### Coordinator release authority
+
+- A seat counts as the board coordinator when it is the board's configured coordinator, or when it holds a live coordinator lease of exactly that board. The coordinator lease is the lease of the accepted live config's orchestrator role; the configured coordinator is preferred when it qualifies. A replaced epoch (a newer claim by another holder), an expired or released lease, a lease of another board, a missing or unparsable config, a pending restore and an unreadable runner store name nobody. Releasing needs every release grant and independence from the card's creator; being counted as an approver candidate needs a holder that can see the card in needs-me (needs_me and task_approve visible, memory read and write, wing read).
+- The lease holder has the whole coordinator role on that board: it releases restricted-origin cards, is a candidate approver and supervisor for the board's pending proposals and plans, may edit the title and body of an unassigned restricted-origin todo card, is the target of the `orchestrator`/`coordinator` handoff alias when no live configured coordinator exists, and receives release discovery (needs-me, release boards) for the board. The owner's needs-you item is hidden only while a candidate that can see the card in needs-me, configured or leased, can act on it: for restricted-origin work, a coordinator that can release it; for a pending proposal or plan, an approver candidate that can see it. A candidate that cannot see needs-me never hides the owner's item. Routed asks (`ask`, coordinated ask boards) and runner or planner routing still follow the configured coordinator only.
+- A coordinator may release a restricted-origin card reserved for it and keep working it after later handoffs. A seat that is neither the configured coordinator nor the live lease holder is refused on approve, update and take, and the creator never releases its own card.
+- A release recorded by an agent authorizes handed-over work only while that agent keeps every release grant (task_approve, needs_me, space_read, space_post, memory read and write, and write access to the board's wing). This holds for every agent route that can store a release: coordinator, parent, top-level agent and other trusted agents. A former approver that loses any grant no longer authorizes work it released, whoever holds the card.
+
+### Eval archives (slice 1)
+
+- `commonplace eval` is an owner-only local CLI. It archives immutable runs of
+  eligible stored threads (handoff transcripts and ACL imports in the `threads`
+  wing) and reads them back as exact bytes. No REST, MCP, UI, hook, daemon,
+  network, model, judge, score or replay is part of slice 1; later slices need
+  their own plan.
+
+- Live captures, grant imports, private chats and continuity threads refuse
+  (`eval_source_gap: unsupported_in_slice1`). Owner role, eligibility, the read
+  policy and the continuity probe are rechecked inside every archive commit and
+  every list/show/read response; a hidden run keeps its quota. A lookup error
+  refuses the response rather than hiding a run. The probe covers the
+  continuity tables that record stored IDs (`sync_streams`, `sync_groups`,
+  `sync_backfill`, `capture_ops`). `handoffs.stored_thread_id` also records
+  stored IDs and is deliberately not probed: a handoff transcript is the
+  eligible case, so its handoff record must not hide it.
+
+- `eval preflight` is the one eval command dispatched without the backup fence
+  and data lock (a deviation from slice-1 plan §6.3, accepted by the lead): it
+  only stats paths and reads `workspace.json`, so it creates nothing, even on a
+  fresh data directory.
+
+- Eval uses local OS trust like every CLI command, never constructs
+  `ControlDB`, and reads the control database `?mode=ro` behind a write-denying
+  authorizer. Its principal has only `threads:read` and `memory:read`.
+
+- Runs live in `<workspace>/evals/runs.sqlite3` (WAL, 0600 in a 0700 `evals/`,
+  encrypted with the workspace). Purge by exact run ID is the only delete; keys
+  are stored only as digests and stay retired for 30 days after purge. With
+  plans enabled, the eval DB counts against plan storage, measured under the
+  thread-store writer lock.
 
 ## Numbers
 
@@ -1045,6 +1100,8 @@ every wake attempt failed. See `docs/chat.md`.
 | M | Machine queue limit 8 queued jobs | `commonplace/runner/jobs.py:16` |
 | M | `request_key` at most 128 characters | `commonplace/runner/tools.py:92,157` |
 | M | T3 launch message at most 120,000 characters | T3 MCP launch schema |
+| M | Eval run at most 16 MiB (rows, artifacts, manifest); 256 KiB chunks and read pages; 1 GiB of active runs per workspace | `commonplace/evals/__init__.py` |
+| M | Eval key retention 30 days after purge; eval lock waits 5 s | `commonplace/evals/__init__.py` |
 | T | A resume is one call; zero duplicate jobs after a lost acknowledgement | acceptance tests |
 | T | Config at most 128 KiB, at most 16 roles, a prompt at most 32 KiB | `commonplace/orch/schema.py` |
 | T | Per board at most 8 experiments and 20 open proposals, at most 5 per principal | `commonplace/orch/store.py` |
@@ -1062,6 +1119,7 @@ every wake attempt failed. See `docs/chat.md`.
 | `runner.sqlite3` | workspace | runner jobs and their run ledger; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
 | `rules.sqlite3` | workspace | rules, append-only `rule_versions`, suggestions, served state, and rule evidence: `rule_events` (capped at 50 per writer and 200 per rule) with `rule_stats` counters that keep the full history | yes |
 | `topology.sqlite3` | workspace | Compute map facts: nodes, links, site routes, their observations (observer, verbatim evidence, expiry) and conflict records; never secrets | yes |
+| `evals/runs.sqlite3` | workspace | eval runs, their chunks and payload-free purge tombstones | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
 
 - Backups copy every SQLite file in the data directory (`commonplace/backup.py`).
@@ -1148,6 +1206,30 @@ every wake attempt failed. See `docs/chat.md`.
   are unchanged.
 
 ## Residuals
+
+- **Eval guard A4 is a lint:** the scan that no code rewrites thread
+  identity or deletes thread-store content rows (the seven content tables
+  `threads`, `messages`, `line`, `message`, `block`, `blob`, `dict`) reads SQL
+  string literals, f-strings, `+` chains and `%`-formatted literals. It never
+  catches less than the original per-piece scan, allowlist included (entries
+  are scoped to a file and a statement kind). Known limits include `str.join`
+  or `+=` building, `%(name)s` formatting, comments inside or before keywords,
+  `INDEXED BY` before `SET`, tuple `SET`, quoted schemas, dynamic `SET`
+  columns, lower-case dynamic statements with an alias tail, `TRUNCATE`,
+  `ALTER TABLE … DROP COLUMN` and Postgres `DELETE FROM ONLY`. Prose with a
+  placeholder followed by the end, `;`, `)`, `WHERE` or `RETURNING` is flagged
+  as an accepted false positive and is never allowlisted (`docs/evals.md`).
+
+- **Eval archives:** slice 1 covers handoff transcripts and ACL imports only:
+  0% of live captures and grant imports, the automatic high-volume trace path;
+  the share by count is unmeasured. Purge does not erase retired store
+  generations, backups, WAL or free pages, and restoring an older generation can
+  bring runs back. Anyone who can read `runs.sqlite3` or its backup can confirm
+  a guessed key. A run whose source disappears stays unlisted until purged by
+  its retained ID. Single-part imports, palace writers and handoff filing do not
+  measure plan storage under the thread-store lock, so eval's plan-storage bound
+  holds only against writers that do. Privacy flags miss doubly escaped JSON and
+  health hints split across strings; they are signals, not gates.
 
 - **Admin observations:** All seven sections are implemented; operational sections
   request data only with instance eligibility. Health validates the existing public
@@ -2074,17 +2156,139 @@ shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
 labels, ranks or counts. Wildcard policies can reach those projections without
 private scope; literal-wing policies keep their existing tool visibility.
 
-For principals without every-wing access, CLI-compatible search acquires structured
-hits and renders only after the same drawer gate as structured search: room and
-provenance checks; body text is not scanned. This applies with a literal wing and
-with no wing. Both CLI paths use the same pure formatter. The gateway explicitly
-renders flat rows, so import-authorization metadata cannot replace a
-readable row's wing, room or source; the owner renderer retains its metadata mode.
-Restricted CLI responses contain only query, CLI text, an empty results array,
-optional searched wings and
-non-empty facts; structured search also omits acquisition counts and truncation
-flags that could include hidden candidates. Every-wing policies retain those
-diagnostics and their existing CLI output.
+A room, or a diary topic, names a thread when any copy of its value contains a
+thread ID or a T3 source ID. The copies are the raw value and every result of
+percent-decoding followed by NFKC normalisation, repeated until the value stops
+changing (at most four rounds). The thread ID may appear as a bare ID, in an
+`/app/threads/` path or URL, in a `t3-thread://v1/` link, after `mcp:`, or next
+to letters, digits or underscores (`notes_thr_…`, `thr_…_notes`); fullwidth
+spellings count after NFKC, and an upper-case `THR_` or hex spelling names the
+stored lower-case thread, so its readers keep the room. A T3 source ID may contain
+any character (`mcp:github.com/o/r`, spaces, quotes), so each `mcp:` occurrence
+(any case) names the whole remaining value, which is resolved through the
+workspace thread store: every stored source ID, or hash-variant base, that is a
+prefix of that remainder counts, including `mcp:<source>_notes`. Source IDs are
+compared after NFKC; only the namespace case-folds. A stored source is keyed as
+NFKC first, then its variant base (cut at `#sha256:` in any case), then the
+namespace folded; the room's whole value is NFKC-normalised with its namespace
+folded and never cut at a hash marker. The tested stored spellings that match
+`mcp:x` are `MCP:x`, `Mcp:x`, a fullwidth `ｍｃｐ:x`, and the mixed-width
+`mｃｐ:x`, `mcｐ:x` and `mｃｐ：x`; any other ASCII and fullwidth mix folds the
+same way through NFKC. A stored `mcp:x#` matches a room `mcp:x#sha256:...`, a
+stored variant marked with a fullwidth number sign or an upper-case marker
+matches its base, and a bare stored `mcp:` source is a prefix of every `mcp:`
+value (it fails closed). Apart from the namespace, case is exact: `mcp:Probe`
+and `mcp:probe` are different sources (thread IDs, by contrast, match in any
+case).
+
+Filing a thread or naming a successor thread accepts only canonical thread IDs:
+the ID equals its NFKC form, has no control or format characters, no leading or
+trailing whitespace and no percent-encoding, names `mcp:` (any case, after NFKC)
+only as its leading namespace, and writes any `#sha256:` marker in lower case.
+Other IDs are refused with a `thread_id ...` error before any side effect. T3
+thread IDs (`[A-Za-z0-9][A-Za-z0-9._:@-]*`) and their `mcp:` forms pass. Each
+stored thread is keyed in an indexed side table (`thread_source_keys`: NFKC
+source, match key, legacy flag), written with the thread and backfilled for
+older stores; a room check probes the room's candidate prefixes and its whole
+NFKC value with indexed lookups, cached for the response. Sources filed before
+this check that are not canonical are legacy rows: they form a small index built
+once per response from those rows only, keyed by every `mcp:` remainder the room
+resolver could extract after percent-decoding and NFKC rounds with control and
+format characters removed and trailing whitespace stripped, cut at a variant
+marker in any case; rooms are matched against it by prefix. A room value equal
+to any stored source ID after NFKC is also hidden from readers who cannot read
+that thread. If a source lookup fails, every value that is not a bare thread ID
+is hidden. Write-side room checks share one reader per gateway call, final
+tunnel pages share one reader, and a checkpoint takes at most 500 items.
+
+One definition of a thread ID (`provenance_refs.THREAD_ID`) and one room
+check (`provenance_refs.room_references`, used through
+`mirror_access.private_thread_reference`) cover every route that returns or
+writes a room or topic. Reads: drawer reads, search (structured and
+CLI-compatible), drawer listings, room lists and status (overview projection),
+taxonomy, tunnels, graph traversal and statistics, hallways, duplicate checks and
+diary reads, including drawer `metadata.topic`. Writes: add, update, delete,
+checkpoint items and diary, tunnel creation and diary writes. A reader who cannot
+read every named thread, including every thread filed under a named source ID,
+receives the drawer or entry as not found, and the room is omitted from listings,
+exactly as for a bare thread-ID room. Readers of all those threads, including
+owners, keep the room verbatim. A source ID naming no stored thread names
+nothing; a source lookup failure hides the value.
+
+Counts and flags describe only what the reader receives. Diary reads probe the
+entry topics first, and the worker excludes entries whose topic names an
+unreadable thread before it counts or windows them, so `total` and `showing`
+cover visible entries; the final gate recounts any entry it still drops. The
+probe reports which store served it (the SQLite fast path or the collection),
+and the read is pinned to that store; a store change between the two refuses the
+read in either direction. The probe reports at most 1000 distinct topics; beyond
+that every read of that diary fails closed with an error saying the agent has too
+many diary topics to check. An empty hidden-topic list leaves the read's SQLite
+page path unchanged. A diary read never falls
+back to an unscoped count: a probe validation error is returned as the read's
+answer; paused or unavailable memory is reported exactly as on other routes (an
+error, with `retry_after_s` during an online-backup pause); any other probe fault
+is logged by class only and answered with an explicit error, for owners and
+everyone else. The diary `thread_scope` is server-only: the gateway drops any
+client value before every route and always sets its own, and the worker accepts
+it without listing it. A diary entry hidden by its topic is hidden from diary
+reads, drawer reads and listings, structured search (including unified media and
+code search), CLI search text and `check_duplicate` matches: search rows and
+duplicate matches carry the entry's `topic`, so the gate drops them.
+`check_duplicate` recomputes `is_duplicate` from the matches that pass the gate. Search acquisition counters
+and truncation flags (`total_before_filter`, `filtered_by_max_distance`,
+`date_filter_pool_truncated`, `candidates_truncated`,
+`distinct_results_truncated`) precede authorization and are omitted for every
+principal.
+
+Residual costs of failing closed. A hex run shorter than 16 digits directly
+followed by an ASCII letter is an ordinary word (`thr_deadline`, `thr_notes`).
+Any other `thr_<hex>` run counts as an ID, so hex-looking ordinary names such
+as `thr_cafe` or `notes thr_add` resolve to no thread and are hidden from every
+reader, owners included. Room-name validation refuses `/`, `:`, `%` and control
+characters in rooms written through the tools, so link, `mcp:` and undecodable
+forms reach storage through older or imported data and through owner
+configuration: the project miner files drawers under room names taken from the
+project's `mempalace.yml` without that validation. Values that cannot be decoded
+(control or format characters, invalid percent-encoded UTF-8, more than four
+percent levels in one round, still changing after four decode/NFKC rounds, or
+over the citation length limit) are also hidden from every reader. Wing names
+are outside this check: a wing named like a thread ID is filtered by wing policy
+alone.
+
+Known residuals. A legacy stored source whose `mcp:` is not the leading
+namespace (for example `xmcp:x`, filed before thread IDs were checked) still
+counts as naming `mcp:x`, so a room `mcp:x` is hidden from readers who can read
+a canonical `mcp:x` thread but not that legacy twin; no new such twin can be
+filed. The diary probe and the read are two worker calls: a hidden
+entry filed between them with a `filed_at` older than the newest `last_n`
+entries is neither excluded nor in the window, so `total` can count it once.
+Its words and topic are never returned. `mcp:` source IDs in knowledge-graph
+fact sources, tunnel labels and drawer provenance (`source_thread`,
+`source_kept.thread`) are checked only for thread IDs and capture references,
+not resolved as T3 sources; those paths predate this room check.
+
+CLI rendering rule (replaces the earlier rule that
+every-wing policies keep worker-rendered CLI output and search diagnostics):
+CLI-compatible search, for every principal, acquires structured hits and renders
+only after the same drawer gate as structured search: room, topic and provenance
+checks; body text is not scanned. A see-all reader may still lack a thread that a
+room names, so no principal receives worker-rendered CLI text. This applies with
+a literal wing and with no wing. Both CLI paths use the same pure formatter. The
+gateway explicitly renders flat rows, so import-authorization metadata cannot
+replace a readable row's wing, room or source. CLI responses contain only query,
+CLI text, an empty results array, optional searched wings and non-empty facts.
+
+Owner-visible changes from this rule set. Search acquisition counters and
+truncation flags are no longer returned to owners. Owner CLI search uses the
+gateway's flat rendering, so an empty result reads `No results found for:
+"<query>"`, and owner CLI searches with `source_file`, `min_similarity`,
+`max_distance`, `context`, `include_media` or a non-search `query_task` are
+refused with the same errors as for other principals. Structured search rows and
+`check_duplicate` matches for diary entries carry their `topic`. Diary reads cost
+one extra metadata-only worker call (the topic probe). Rooms and topics naming a
+thread the owner cannot read (another person's capture thread, a hex-looking
+name, an undecodable value) are hidden from owners too.
 
 Content placed in an ordinary shared room is visible on every route. Body text
 and arbitrary provenance labels are not scanned for private words or fingerprinted;

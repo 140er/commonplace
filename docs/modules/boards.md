@@ -3,7 +3,7 @@
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/routines.py`, `commonplace/callstack.py`, `tests/test_boards_store_locking.py`
 - **Owns:**
 
-  - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest.
+  - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest. Every slot (orchestrator, builder, reviewer, gate) gets a button to its picker; only a role that names no `model_role` has none.
 
   - Canonical Space REST response projection and typed creation refusals.
 
@@ -54,6 +54,8 @@
   - Card lists share a runner read and per-board usage; a capacity refusal retains its original error when no display reason is available.
 
   - Board REST maps only database lock timeouts to busy; waiting summaries reuse one runner read and two board usage counts; split-key edits preserve child identity.
+
+  - Cards may declare a path contract (`paths`, relative globs; `commonplace/boards/contracts.py`): `task_update(paths=)` validates it and stores it canonical and brace-free (an editing field; while the card has a runner job only the workspace owner may clear or narrow it; any change takes the runner write lock before the board transaction, and a running card that gains globs is checked like a start), the card shows it, and the orchestrator start refuses `path_overlap` against a running card with an overlapping contract.
   - Card task types are owner-person edits; stable-ID grants in the workspace store guard new typed acquisition while existing holders retain their claims.
   - Owner todo assignments validate the target’s typed grant before claiming; repeat takes preserve an existing holder’s claim after grant removal.
 
@@ -72,6 +74,7 @@
   - Trusted agents retain their title/body edit alternative on unassigned restricted-origin todo cards. Coordinator-derived edits require verified independence: creators, descendants and unsafe lineage cannot use that exception. Content edits never release origin or grant claims.
 
   - With workspace orchestration enabled, claims hold runner admission through board commit and person assignments or handoffs cannot reserve a busy agent.
+  - The board coordinator is the configured coordinator or the live holder of the board's coordinator lease; stale, expired, released and other-board leases, a pending restore and an unreadable runner store name nobody. The lease holder has the whole coordinator role on that board except routed asks and runner or planner routing: release, approver and supervisor candidacy, the orchestrator handoff alias and release discovery. A candidate approver must be able to see the card in needs-me, so the owner's item is never hidden by one that cannot. A stored agent release (coordinator, parent, top-level or trusted agent) authorizes handed-over work only while the approver keeps every release grant.
 
   - The owner's `needs_me` lists boards nudged three times in a row without a done card (`orchestrator_stalled`); `board.stalled` and `orch.trigger.failing` are hub events with webhook labels.
 

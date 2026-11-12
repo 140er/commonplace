@@ -11,9 +11,15 @@
 
 - **Promises:**
 
+  - `eval preflight` is dispatched without the backup fence or data lock, so a stat-only report creates no lock file on a fresh data directory.
+
+  - `commonplace eval` is registered by the parser and dispatched like other one-shot commands (backup fence, shared data lock); its module loads no scanner or store until an eval command runs.
+
   - `runner report` sends only the values it was given for one started run; it never opens the data directory.
 
   - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
+
+  - `commonplace token add` also refuses `bots:chat` and `bots:confirm`; they need the person's own consent.
 
   - `commonplace workspace keyslot-check` runs under the ordinary shared lock and writes nothing; `commonplace workspace keyslot-rewrap` takes the exclusive data lock itself, needs `--by` the workspace owner, and prints only state, slot names, a database count and the key id.
 
