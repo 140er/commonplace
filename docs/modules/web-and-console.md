@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
+  - The owner Compute page (`web/static/compute.js`) renders machines, scopes, proposals, approvals and execution evidence from server-authoritative state, escapes every value and fences responses to the current session and route.
+
   - The separate instance console route, additive capability, explicit metadata DTOs and independent section controller.
 
   - Owner-only Project settings list orchestrator config versions with their changes and an Accept control, plus Release for cards waiting for release.
@@ -12,8 +14,6 @@
   - The discoverable Coworkers route and private DM/group UI, bot/conversation creation, explicit recipients, background job/cancel state and conversation-scoped memory controls.
 
   - The card panel offers Release with a required reason on cards awaiting release, the handoff form names the orchestrator and pool recipients, and refused card actions appear inside the open panel.
-
-  - Deck Compute (`deck-compute.js`, `deck-topology.js`) draws owner-visible enrolled machines as a pixel-sized hub map with label-safe geometry, enrollment readiness dots, keyboard selection, four detail tabs and General-bot draft handoffs; no liveness or network routes are inferred.
 
   - Deck Today (`deck-today.js`, registered lazily in `deck.js`): open bot questions de-duplicated by task with project owners preferred, versioned option answers, working bots and reported project agent counts, and a persistent composer that hands a draft to a bot thread through `sessionStorage` key `cmmn.deck.draft`. Its constructed stylesheet is scoped to `.deck-today`; `stop()` removes that class from the shell.
 

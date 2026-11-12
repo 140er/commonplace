@@ -1,6 +1,6 @@
 ## bots
 
-- **Paths:** `commonplace/bots/`, `commonplace/bots_grant.py`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_app_grant.py`, `tests/test_bots_machines.py`, `tests/test_bots_store.py`, `tests/test_bots_shares_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tests/test_bots_project_tools.py`, `tools/bots_overhead.py`
+- **Paths:** `commonplace/bots/`, `commonplace/bots_grant.py`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_learned_api.py`, `tests/test_bots_learned_store.py`, `tests/test_bots_api.py`, `tests/test_bots_app_grant.py`, `tests/test_bots_machines.py`, `tests/test_bots_store.py`, `tests/test_bots_shares_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tests/test_bots_project_tools.py`, `tools/bots_overhead.py`
 - **Owns:**
 
   - The web-app part of `docs/bots.md` also says where Projects, Needs me and Console moved (the Workspace group of the account menu) and that the Bots count is the number of questions waiting on the person.
@@ -10,6 +10,8 @@
   - Per-person chat bots: one workspace file `bots.sqlite3` (opened like `chat.sqlite3`) holding bots, append-only messages, the tool-action journal, pending confirmations, the work a bot filed, the posts it forwarded and memory notes, plus the person-only `/api/bots` read and management routes (`docs/bots.md`).
 
   - `updates` is the one hub event listener of the bots (installed by `bots.install`): when a card a bot filed needs its owner, is ready for review or is done, or the project's orchestrator answers a post a bot forwarded, it appends one `event` message to that bot's thread. It filters with one indexed lookup before doing anything else (and does nothing in a workspace without a `bots.sqlite3`), checks the owner's fresh person principal with `webhooks.can_receive_event` and the board service, and never raises. `updates.working_bots` feeds the roster `working` state. `store.work_changed` and `store.forward_answered` are the exactly-once writes: one transaction each, applying a hub event only when its `seq` is newer than `bot_work.last_seq` (a stale or racing handler is a no-op), and taking a forwarded post only while `bot_forwards.answered_by` is empty; the listener also checks that the reply is the coordinator's first one after the post. The columns are added to an existing file when it is opened. `events.is_stored` is the shared check that an event is the one the log holds.
+
+  - The learning memory, slice S1 (`docs/design/bot-learning-memory.md`): `learn_schema.py` holds its tables (policy, per-bot state, learned items with an FTS5 index kept by triggers, block hashes, run journal, action log), applied with the other tables when the file is opened, and `PRAGMA secure_delete` is on for the bots file. `learning.py` holds `guard` (refuses a secret, an injection flag, a health flag, a redaction marker, anything unreadable and any scanner error; the seam of the fail-closed scanner), the normaliser and the keyed quote hash (a 32-byte key in its own `bots-learn.key` file beside the workspace, never inside a database). `learned.py` is the store: switches (`set_policy`, `configure`), `add_item` (the only write path for an item: the text must be a verbatim span of one of the bot's stored user messages, pass the guard, not be blocked, and the workspace switch, bot mode, pause and floor must allow it), `list`, `update` (edit or pin, never a shared copy or a note), `forget` and `forget_all`. `learned_routes.py` serves `/api/learned*`, `/api/bots/<id>/learning`, `/api/bots/<id>/learned`, `/api/learning/settings` and, through the projects router, `/api/projects/<slug>/learning`; the project route is a workspace-owner switch for a project the caller can read.
 
   - `auth.person` is the single gate for `/api/bots*`: a signed-in person session, 404 for any agent token or machine credential, 401 for no credentials.
 
@@ -31,7 +33,9 @@
 
   - A bot and its thread belong to one person; every store method takes the user id and answers `Missing` for another person's bot, so a foreign id looks like an unknown one (404).
 
-  - Messages are append-only (triggers refuse UPDATE and DELETE) and verbatim; one reply per user message; a request id sent again with the same text returns the stored message, with other text it is a conflict. Memory removal is a tombstone.
+  - Messages are append-only (triggers refuse UPDATE and DELETE) and verbatim; one reply per user message; a request id sent again with the same text returns the stored message, with other text it is a conflict. Removing a memory note keeps its row (ids keep working) and blanks its text.
+
+  - Learned items are private to the person: every `Learned` method takes the user id and answers `Missing` for another person's item or bot, the workspace owner included, and the routes answer 404 to an app token (even one holding `bots:chat`), an agent token and a machine credential. Everything is off by default: a missing policy row is off, a missing state row is mode `off`, and `add_item` refuses (`Disabled`) unless the workspace switch is on, the bot's mode is `ask` or `auto`, the person is not paused and the message is after the bot's floor. Forgetting an item deletes its row and search entry and, in the same transaction, writes only a keyed hash that stops the same sentence being learned again; the deleted shared copies of it go with it; the search index is rewritten and the write-ahead log truncated so the words are in neither; the action log holds ids and an action word, never text. `forget_all` for a bot also removes its proposed and shared contributions, blanks its notes and moves the floor to its newest message, but leaves the thread. Only the workspace owner changes the workspace and project switches (403 for a member, an audit row `bot:learn_setting` either way, no text).
 
   - Defaults (one project bot per readable, non-archived project plus General) are created lazily and an archived default is never recreated. At most 50 live bots per person.
 
@@ -55,6 +59,8 @@
 
   - Before the stream starts: 400 `invalid`, 404, 409 `busy` (this bot already has a running turn) or `conflict` (request id with other text), 429 `busy` (person or process cap). After the user message is stored, every outcome is a stream event and a stored bot message with a fixed sentence per code; provider text never reaches the person. A model that is not usable gives a stored `setup` block and no request.
 
+  - An invalid learned-item value, pause or filter is 400; the guard refusing an edit is 400 `refused` with a one-word `reason`; a foreign or already forgotten id is 404. When the scanner raises, the guard refuses (a refusal is never turned into a pass).
+
   - A refused machine request raises `machines.Refused` with the runner's stable code and a plain sentence; `run_command` raises `machines.Unsupported` until a provider reports the capability.
 
 - **Tests:**
@@ -74,5 +80,9 @@
   - `tests/test_bots_api.py` covers defaults per readable project, create/rename/archive and the 50-bot bound, thread paging, block hydration and status words, waiting decisions, read marks, memory, redacted display, and 404 for another person, another workspace and agent tokens.
 
   - `tests/test_bots_app_grant.py` covers 404 without the scope on every route, an app acting as its person (roster, threads, send, stop, read, memory), isolation between people and workspaces, confirm needing its own scope and running once, withdrawing the scope or revoking or expiring the connection, each kind of agent machinery refused at grant and at use, only the person granting their own app, a member app staying member-bound, audit rows without text, Settings > Agents and OAuth consent granting only what was ticked.
+
+  - `tests/test_bots_learned_store.py` covers everything off by default and each switch in turn, pause expiry and the 30-day bound, the floor, verbatim spans (paraphrase, a bot reply, another bot's message), the guard (secret, injection, health, marker, scanner failure), dedupe, real deletion (row, index, block hash, and the words absent from the file and its log after forget, with a positive control), forget-all with shared contributions and notes, edit and pin, blanked notes and the upgrade of an older file, isolation between two people, list filters and the hash key file.
+
+  - `tests/test_bots_learned_api.py` covers a clean workspace (owner, member, project, other workspace) with learning off for everyone, owner-only switches and their audit rows, a person's own mode and pause, isolation over HTTP (404 for every route on another person's item or bot), edit, pin, refused edit, delete and forget-all, notes in the list, listing bounds, 404 for an app token, an agent token and no credentials, cross-origin writes refused and no conversation text in audit rows or the learning tables.
 
   - Regression tests in both bots test files cover padded text bounds, unstorable text, huge memory ids, non-string boards, non-object bodies, expiry on cancel and refused cross-origin writes.

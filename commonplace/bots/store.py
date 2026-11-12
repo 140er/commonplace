@@ -1,7 +1,7 @@
 """Per-person bot threads in the workspace file ``bots.sqlite3``.
 
 Opened like ``chat.sqlite3`` (encrypted with the workspace when encryption is on). Messages are
-append-only and verbatim; memory notes are removed with a tombstone. Every method that a caller
+append-only and verbatim; a removed memory note keeps its row but loses its text. Every method that a caller
 reaches takes the user id and answers :class:`Missing` for a bot that is not that user's, so a
 foreign id is indistinguishable from an unknown one. Errors never carry conversation text.
 """
@@ -30,6 +30,7 @@ from commonplace.bots.errors import (
     message,
     stamp,
 )
+from commonplace.bots.learn_schema import LEARN_SCHEMA, MEMORY_TRIGGER
 from commonplace.bots.shares import SCHEMA_SHARES, SharesMixin, added_columns, ensure_request_index
 from mempalace.sqlite_crypto import connect, row_factory
 
@@ -132,10 +133,6 @@ CREATE TABLE IF NOT EXISTS bot_memory (
 CREATE INDEX IF NOT EXISTS bot_memory_by_bot ON bot_memory(bot_id, id);
 CREATE TRIGGER IF NOT EXISTS bot_memory_no_delete BEFORE DELETE ON bot_memory
 BEGIN SELECT RAISE(ABORT, 'bot memory is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS bot_memory_tombstone_only BEFORE UPDATE ON bot_memory
-WHEN OLD.removed_at IS NOT NULL OR NEW.text IS NOT OLD.text OR NEW.bot_id IS NOT OLD.bot_id
-    OR NEW.created_at IS NOT OLD.created_at OR NEW.removed_at IS NULL
-BEGIN SELECT RAISE(ABORT, 'bot memory is append-only'); END;
 """
 
 
@@ -186,6 +183,9 @@ class BotStore(SharesMixin):
         self._conn = None
         self._path = None
 
+    def directory(self) -> Path:
+        return Path(self._supervisor.workspace_dir(self._workspace_id)).resolve()
+
     def close(self):
         with self._lock:
             if self._conn is not None:
@@ -205,6 +205,7 @@ class BotStore(SharesMixin):
                 conn.row_factory = row_factory
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA secure_delete=ON")  # forgotten text is overwritten, not left
                 conn.executescript(_SCHEMA)
                 self._upgrade(conn)
                 conn.executescript(SCHEMA_SHARES)
@@ -220,6 +221,25 @@ class BotStore(SharesMixin):
         for table, column, kind in _ADDED:
             if column not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+        conn.executescript(MEMORY_TRIGGER)
+        conn.executescript(LEARN_SCHEMA)
+        BotStore._blank_removed_notes(conn)
+        try:  # SQLite 3.42+: deleted index terms are zeroed too
+            conn.execute(
+                "INSERT INTO bot_learned_fts(bot_learned_fts, rank) VALUES ('secure-delete', 1)"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+    @staticmethod
+    def _blank_removed_notes(conn):
+        """Notes removed by an earlier version kept their text; forget means forget."""
+        if conn.execute(
+            "SELECT 1 FROM bot_memory WHERE removed_at IS NOT NULL AND text<>'' LIMIT 1"
+        ).fetchone():
+            conn.execute("DROP TRIGGER bot_memory_tombstone_only")
+            conn.execute("UPDATE bot_memory SET text='' WHERE removed_at IS NOT NULL")
+            conn.executescript(MEMORY_TRIGGER)
         ensure_request_index(conn)
 
     @contextmanager
@@ -864,7 +884,7 @@ class BotStore(SharesMixin):
                 type(memory_id) is int
                 and 0 < memory_id < 2**63
                 and conn.execute(
-                    "UPDATE bot_memory SET removed_at=? WHERE id=? AND bot_id=? "
+                    "UPDATE bot_memory SET removed_at=?, text='' WHERE id=? AND bot_id=? "
                     "AND removed_at IS NULL AND owner_id IS NULL",
                     (stamp(), memory_id, bot_id),
                 ).rowcount
