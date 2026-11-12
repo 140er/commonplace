@@ -93,6 +93,8 @@ def script_state(admission_state):
             ScriptRuntimeConfig(state.node["id"], receipt.runtime_digest, receipt.key_principal),
         ),
     )
+    # This synthetic single-owner fixture explicitly opts into self approval.
+    object.__setattr__(workspace, "allow_script_self_approval", True)
     state.config = replace(state.config, workspaces=(workspace,))
     state.env.db._compute_config = state.config
     state.service._accept_script_runtime(
