@@ -24,10 +24,11 @@ def _plain(record: dict) -> dict:
         plain["hops"] = record["hops"]
     if "key" in record:
         # A faded icon needs the last known kind and label of a node whose facts expired.
+        fields = record.get("fields", {})
         plain["last"] = {
-            name: record["fields"][name]["value"]
+            name: fields[name]["value"]
             for name in _LABEL
-            if name in record["fields"] and record["fields"][name]["stale"]
+            if name in fields and fields[name]["stale"]
         }
     return plain
 

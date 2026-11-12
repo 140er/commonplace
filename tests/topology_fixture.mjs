@@ -1,5 +1,5 @@
 // A synthetic topology in the shape of GET /api/topology/map, shared by the node checks
-// (tests/topology_map_view.mjs) and the browser harness (tests/topology_harness.html).
+// (tests/topology_map_view.mjs and tests/commonplace_deck_compute_map.mjs).
 // Every name is invented.
 const node = (key, kind, name, role = "", extra = {}) => ({ subject: `node:${key}`, wing: "topology", key, values: { kind, name, ...(role ? { role } : {}) }, stale: false, conflicted: false, last: {}, ...extra });
 const link = (from, to, method, values = {}, extra = {}) => ({ subject: `link:${from}>${to}:${method}`, wing: "topology", id: `${from}>${to}:${method}`, from, to, method, values: { method, ...values }, stale: false, conflicted: false, ...extra });
