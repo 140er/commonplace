@@ -438,8 +438,6 @@ ADDED_SINCE_BASELINE = {
     "mempalace_kg_invalidate": {"wing", "sensitivities"},
     "mempalace_kg_query": _FILTER | {"search", "limit"},
     "mempalace_search": {"include_facts"},
-    "space_read": {"space"},
-    "space_post": {"space"},
     "mempalace_kg_timeline": _FILTER,
 }
 
