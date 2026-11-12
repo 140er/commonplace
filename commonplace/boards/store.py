@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,7 +13,10 @@ from commonplace.admission import GATE
 from commonplace.extensions import ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
+from . import contracts, decision_blocks
 from .display import need_for, plan_waiting
+from .goals import GOALS_SCHEMA
+from .priority import DEFAULT_RANK, PRIORITIES, name as priority_name
 
 STATUSES = ("backlog", "todo", "doing", "review", "done")
 TASK_COLUMNS = {
@@ -31,6 +35,7 @@ TASK_COLUMNS = {
     "status_line": "TEXT",
     "heartbeat_at": "TEXT",
     "labels": "TEXT",
+    "paths": "TEXT",
     "claim_expired_at": "TEXT",
     "agent_parent": "TEXT",
     "proposal_status": "TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected'))",
@@ -39,6 +44,9 @@ TASK_COLUMNS = {
     "escalated_to": "TEXT",
     "review_kind": "TEXT",
     "review_context": "TEXT",
+    "reviewer": "TEXT",
+    "ask_blocks": "TEXT",
+    "priority": f"INTEGER NOT NULL DEFAULT {DEFAULT_RANK} CHECK (priority BETWEEN 0 AND {len(PRIORITIES) - 1})",
 }
 
 
@@ -55,6 +63,19 @@ CREATE TABLE IF NOT EXISTS card_splits (
  state TEXT NOT NULL CHECK(state IN ('split','kept')),
  by TEXT NOT NULL, at TEXT NOT NULL
 );
+"""
+
+# One row while a card is snoozed (``commonplace.snooze``): until a time (UTC stamp) or until
+# another card is done. Waking deletes the row, so a wake happens once.
+SNOOZE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS card_snoozes (
+ task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+ until TEXT, timezone TEXT,
+ after_card INTEGER REFERENCES tasks(id),
+ by TEXT NOT NULL, at TEXT NOT NULL,
+ CHECK ((until IS NULL) != (after_card IS NULL))
+);
+CREATE INDEX IF NOT EXISTS card_snoozes_due ON card_snoozes(until);
 """
 
 
@@ -83,23 +104,37 @@ def set_blockers(conn, row, values, actor):
         or len(values) > 16
         or any(type(n) is not int or not 1 <= n < 2**63 for n in values)
     ):
-        raise CardRefused("invalid_blockers", status=400)
+        raise CardRefused(
+            "invalid_blockers",
+            "blocked_by takes a list of at most 16 card numbers",
+            status=400,
+        )
     for number in set(values):
         if number == row["id"]:
-            raise CardRefused("self", status=400)
+            raise CardRefused("self", "a card cannot be blocked by itself", status=400)
         found = conn.execute("SELECT board_id FROM tasks WHERE id=?", (number,)).fetchone()
         if found is None or found[0] != row["board_id"]:
-            raise CardRefused("other_board", status=400)
+            raise CardRefused(
+                "other_board",
+                f"#{number} is not a card on this board that you can read",
+                status=400,
+            )
         pending, seen = [number], set()
         while pending:
             current = pending.pop()
             if current == row["id"]:
-                raise CardRefused("cycle", status=400)
+                raise CardRefused(
+                    "cycle",
+                    f"#{number} already waits on this card, so the cards would wait on each other",
+                    status=400,
+                )
             if current in seen:
                 continue
             seen.add(current)
             if len(seen) > 200:
-                raise CardRefused("blocker_graph_too_large", status=400)
+                raise CardRefused(
+                    "blocker_graph_too_large", "too many chained blockers to check", status=400
+                )
             pending.extend(
                 r[0]
                 for r in conn.execute(
@@ -195,6 +230,13 @@ def owns_card(row, actor):
     )
 
 
+def _paths(raw) -> list:
+    """The card's path contract; an unreadable stored value shows as ``**``, the way the
+    start check reads it, so the owner can see it and clear it."""
+    paths = contracts.parse(raw)
+    return list(contracts.ANY) if paths is None else paths
+
+
 def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
     result = {
@@ -215,9 +257,21 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         **{
             key: row[key] if key in row.keys() else None
             for key in TASK_COLUMNS
-            if key not in ("labels", "parent_number", "pr_repo", "task_type")
+            if key
+            not in (
+                "labels",
+                "paths",
+                "parent_number",
+                "pr_repo",
+                "task_type",
+                "priority",
+                "ask_blocks",
+            )
         },
+        "ask_blocks": decision_blocks.public(row),
+        "priority": priority_name(row["priority"] if "priority" in row.keys() else None),
         "labels": json.loads(row["labels"] or "[]"),
+        "paths": _paths(row["paths"] if "paths" in row.keys() else None),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
         "created_by": row["created_by"],
@@ -228,6 +282,8 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         "restricted": "restricted_origin" in row.keys() and bool(row["restricted_origin"]),
     }
     person_owner = bool(principal and principal.person and principal.role == "owner")
+    result["can_prioritize"] = person_owner
+    result["can_set_reviewer"] = person_owner
     person_release = (
         release(row)
         if release is not None
@@ -347,22 +403,50 @@ def expire_claims(conn, board_id):
     return expired
 
 
+# Path -> (st_dev, st_ino, PRAGMA schema_version) after this process migrated it.
+# A replaced file or any DDL from elsewhere changes the identity and reruns the migration.
+_MIGRATED: dict[str, tuple] = {}
+
+BUSY_TIMEOUT = 10
+PENDING_PR_REPO = "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
+
+
+def _identity(conn, path):
+    stat = os.stat(path)
+    return stat.st_dev, stat.st_ino, conn.execute("PRAGMA schema_version").fetchone()[0]
+
+
 class BoardStore:
     """No shared connection: separate processes compete through SQLite's lock.
 
     The optional principal on memory-link methods is for policy-aware callers.
     Calls without it are the contract's trusted, local workspace API.
+
+    The schema/migration runs once per file per process; later constructions only
+    read, so read-only callers never queue for the write lock. ``timeout`` is the
+    busy timeout; keep the default unless the caller would rather fail fast.
     """
 
-    def __init__(self, workspace_dir, *, legacy_origin=None, create=True):
+    def __init__(self, workspace_dir, *, legacy_origin=None, create=True, timeout=BUSY_TIMEOUT):
         directory = Path(workspace_dir)
         if create:
             with GATE.creating(directory):
                 directory.mkdir(parents=True, exist_ok=True)
         self.create = create
+        self.timeout = timeout
         self.path = str(directory / "boards.sqlite3")
         with self.connection() as conn:
-            conn.executescript(Path(__file__).with_name("schema.sql").read_text() + BLOCKERS_SCHEMA)
+            if self._migrated(conn, legacy_origin):
+                return
+            from .lifecycle import SCHEMA as LIFECYCLE_SCHEMA
+
+            conn.executescript(
+                Path(__file__).with_name("schema.sql").read_text()
+                + BLOCKERS_SCHEMA
+                + LIFECYCLE_SCHEMA
+                + GOALS_SCHEMA
+                + SNOOZE_SCHEMA
+            )
             conn.execute("BEGIN IMMEDIATE")
             try:
                 board_columns = {r[1] for r in conn.execute("PRAGMA table_info(boards)")}
@@ -417,15 +501,12 @@ class BoardStore:
                     conn.execute(
                         "ALTER TABLE task_links ADD COLUMN invalidated INTEGER NOT NULL DEFAULT 0"
                     )
-                pending_pr_repo = (
-                    "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
-                )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS tasks_pending_pr_repo ON tasks(id) WHERE "
-                    + pending_pr_repo
+                    + PENDING_PR_REPO
                 )
                 for row in conn.execute(
-                    "SELECT id,pr_url FROM tasks WHERE " + pending_pr_repo
+                    "SELECT id,pr_url FROM tasks WHERE " + PENDING_PR_REPO
                 ).fetchall():
                     repo = pr_repository(row["pr_url"])
                     if repo:
@@ -437,6 +518,27 @@ class BoardStore:
             except BaseException:
                 conn.rollback()
                 raise
+            _MIGRATED[self.path] = _identity(conn, self.path)
+
+    def _migrated(self, conn, legacy_origin) -> bool:
+        """Read-only: this process already migrated this very file, no legacy backlog
+        row waits for a ``legacy_origin`` verdict and no PR URL written around
+        ``BoardService`` (which sets ``pr_repo`` itself) waits for its ``pr_repo``."""
+        known = _MIGRATED.get(self.path)
+        if known is None or known != _identity(conn, self.path):
+            return False
+        if (
+            legacy_origin is not None
+            and conn.execute(
+                "SELECT 1 FROM tasks WHERE status='backlog' AND restricted_origin IS NULL LIMIT 1"
+            ).fetchone()
+        ):
+            return False
+        # Unindexable URLs stay pending for good; only a resolvable one needs the write.
+        return not any(
+            pr_repository(row[0])
+            for row in conn.execute("SELECT pr_url FROM tasks WHERE " + PENDING_PR_REPO)
+        )
 
     @contextmanager
     def connection(self):
@@ -445,7 +547,7 @@ class BoardStore:
             conn = connect(
                 target,
                 uri=not self.create,
-                timeout=10 if self.create else 0.2,
+                timeout=self.timeout,
                 isolation_level=None,
             )
         conn.row_factory = row_factory

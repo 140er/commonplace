@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import threading
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -13,6 +15,7 @@ from commonplace.http_util import log_failure, query, require_principal, send_js
 LOG = logging.getLogger(__name__)
 
 STATIC = Path(__file__).parent / "static"
+CONNECTION_WINGS_TIMEOUT_S = 1.0
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; "
     "img-src 'self'; font-src 'self'; connect-src 'self'; "
@@ -65,7 +68,43 @@ def _static(h):
     _response(h, 200, target.read_bytes(), mime)
 
 
+def _connection_wings(gateway, principal, slot):
+    """Bound an optional read even if worker startup or queueing blocks."""
+    from commonplace.extensions import ToolError
+    from commonplace.rules.checks import deadline
+
+    from .agents import grantable_wings
+
+    if not slot.acquire(blocking=False):
+        raise ToolError("Memory wing listing is busy")
+    result = Future()
+
+    def list_wings():
+        try:
+            # Also bound the worker transport, not just the HTTP caller's wait.
+            with deadline(CONNECTION_WINGS_TIMEOUT_S):
+                wings = grantable_wings(gateway, principal)
+            result.set_result(wings)
+        except Exception as exc:
+            result.set_exception(exc)
+        finally:
+            slot.release()
+
+    try:
+        threading.Thread(target=list_wings, daemon=True).start()
+    except Exception:
+        slot.release()
+        raise
+    try:
+        return result.result(timeout=CONNECTION_WINGS_TIMEOUT_S)
+    except (FutureTimeoutError, TimeoutError):
+        raise ToolError("Memory wing listing timed out") from None
+
+
 def install(gateway):
+    # A timed-out read may still be unwinding; never queue more optional reads.
+    connection_wings_slot = threading.BoundedSemaphore()
+
     def login(h):
         token = query(h).get("t", "")
         if not token:
@@ -200,41 +239,42 @@ def install(gateway):
         if principal.role != "owner":
             send_json(h, 403, {"error": "Owner access required"})
             return
+        from commonplace import bots_grant, decide_grant
         from commonplace.extensions import ToolError
-        from commonplace.policy import canonical_wing, is_private_wing
 
-        from .agents import connection_view
+        from .agents import connection_view, decide_view
 
         rows = gateway.db.connections(principal.workspace_id)
+        view = decide_view(gateway, principal)
         try:
-            known = gateway.call_memory_tool(principal, "mempalace_list_wings", {}).get("wings", {})
+            wings = _connection_wings(gateway, principal, connection_wings_slot)
         except ToolError:
             # Connection management remains available while memory is offline.
-            known = {}
-        wings = sorted(
-            {
-                canonical_wing(wing)
-                for wing in known
-                if not is_private_wing(wing)
-                and principal.policy.can_read_wing(wing)
-                and not any(c in wing for c in "*?[]")
-            }
-        )
+            wings = []
         send_json(
             h,
             200,
             {
-                "connections": [connection_view(row) for row in rows],
+                "connections": [connection_view(row, **view) for row in rows],
+                "decide_consent": decide_grant.SCOPE_TEXT,
+                "bots_consent": {
+                    "chat": bots_grant.CHAT_TEXT,
+                    "confirm": bots_grant.CONFIRM_TEXT,
+                },
                 "wings": wings,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },
         )
 
-    from . import admin, agents, task_types
+    from .. import capacity
+    from . import admin, agents, goals, invites, task_types
 
     admin.install(gateway)
+    capacity.install(gateway)
+    invites.install(gateway)
     agents.install(gateway)
     task_types.install(gateway)
+    goals.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)
     gateway.add_route("POST", "/app/logout", logout)

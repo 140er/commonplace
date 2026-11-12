@@ -5,18 +5,27 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 from urllib.parse import urlparse
 
-from commonplace import events, privacy
+from commonplace import decide_grant, events, privacy, sessions
 from commonplace.callstack import LIMITS
 from commonplace.control_db import ControlError
-from commonplace.extensions import ToolError
+from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
 
-from . import task_types
+from . import (
+    contracts,
+    decision_blocks,
+    goals,
+    lifecycle,
+    priority as priorities,
+    reviewer as reviewers,
+    task_types,
+)
 from .digest import digest
 from .display import (
     _waiting_on_person as _display_waiting,
@@ -33,6 +42,7 @@ from .store import (
     expire_claims,
     now,
     owns_card,
+    pr_repository,
     require_visible,
     task_number,
     task_row,
@@ -304,6 +314,7 @@ def _plan_waiting(row):
     return plan_waiting(data)
 
 
+ORCHESTRATOR_RELEASE_REASON = "Released automatically by the project orchestrator"
 APPROVALS_TRUNCATED = "(list truncated: more approvals may be waiting; call needs_me)"
 
 
@@ -349,13 +360,14 @@ def needs_me(
     origin_pending=None,
     origin_blocks_approval=None,
     ask_owner=None,
+    reviewing=False,
 ) -> dict:
     """Decision queue: asks, done_review, backlog_from_agents, ready_to_merge, stale, count."""
     owner_queue = True
     try:
         _owner(principal, trusted_read=True)
     except ToolError:
-        if not coordinated and not release_boards:
+        if not coordinated and not release_boards and not reviewing:
             raise
         owner_queue = False
     result = {
@@ -391,7 +403,13 @@ def needs_me(
                 and row["ask_to"] == principal.actor
                 and row["review_kind"] == "decision"
             )
-            if not owner_queue and not own_ask:
+            own_review = (
+                reviewing
+                and row["status"] == "review"
+                and row["review_kind"] == "completion"
+                and row["ask_to"] == principal.actor
+            )
+            if not owner_queue and not own_ask and not own_review:
                 continue
             if origin_pending is not None and origin_pending(row):
                 continue
@@ -515,7 +533,7 @@ def needs_me(
     return result
 
 
-class BoardService:
+class BoardService(lifecycle.LifecycleMixin):
     def __init__(self, ctx, *, store=True):
         self.ctx = ctx
         self.principal = ctx.principal
@@ -636,6 +654,7 @@ class BoardService:
             row["created_at"],
             row["proposed_to"],
             row["board_coordinator"],
+            row["board"],
         )
         if key in cache:
             return cache[key]
@@ -654,6 +673,9 @@ class BoardService:
         coordinator = row["board_coordinator"] or ""
         if coordinator.startswith("conn:"):
             refs.append(coordinator[5:])
+        leased = self._lease_coordinator(row)
+        if leased is not None:
+            refs.append(leased.actor[5:])
         cache[key] = tuple(self._live_connection(ref) for ref in dict.fromkeys(refs))
         return cache[key]
 
@@ -719,7 +741,11 @@ class BoardService:
             candidates.append(self._live_connection(row["created_by"][5:]))
         live = {}
         for q in candidates:
-            if q is not None and self._approval_visible(q, row):
+            if (
+                q is not None
+                and q.policy.tool_visible("needs_me")
+                and self._approval_visible(q, row)
+            ):
                 role = self._approval_role(q, row)
                 if role:
                     live[q.actor] = role
@@ -730,13 +756,13 @@ class BoardService:
         p = self.principal
         if p.person:
             return ()
+        leased = self._leased_boards()
         with self.store.connection() as conn:
             return tuple(
                 b["id"]
-                for b in conn.execute(
-                    "SELECT * FROM boards WHERE archived=0 AND coordinator=?", (p.actor,)
-                )
-                if (q := self._live_connection(p.connection_id)) is not None
+                for b in conn.execute("SELECT * FROM boards WHERE archived=0")
+                if (b["coordinator"] == p.actor or b["slug"] in leased)
+                and (q := self._live_connection(p.connection_id)) is not None
                 and self._release_grants(q, b["wing"])
             )
 
@@ -804,14 +830,16 @@ class BoardService:
         coordinator = "b.coordinator" if "coordinator" in board_columns else "NULL"
         columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
         escalated = "AND t.escalated_to IS NULL " if "escalated_to" in columns else ""
+        leased = self._leased_boards()
+        leases = ",".join("?" for _ in leased)
         sql = (
             f"SELECT t.*, b.slug AS board,b.wing AS board_wing,{coordinator} AS board_coordinator "
             "FROM tasks t JOIN boards b ON b.id=t.board_id WHERE b.archived=0 AND t.id>? AND t.status!='done' "
             + escalated
             + "AND ((t.proposal_status='pending' OR (t.status IN ('todo','doing') AND t.labels LIKE '%\"plan\"%')) "
-            f"AND (t.proposed_to=? OR t.created_by IN ({placeholders}) OR {coordinator}=?) "
+            f"AND (t.proposed_to=? OR t.created_by IN ({placeholders}) OR {coordinator}=? OR b.slug IN ({leases})) "
             "OR ((COALESCE(t.restricted_origin,1)!=0 OR t.agent_parent IS NOT NULL) "
-            f"AND t.status IN ('backlog','todo','doing') AND (? OR {coordinator}=?))) ORDER BY t.id LIMIT 50"
+            f"AND t.status IN ('backlog','todo','doing') AND (? OR {coordinator}=? OR b.slug IN ({leases})))) ORDER BY t.id LIMIT 50"
         )
         cap = 60 if budget == "session" else 200
         checked, last = 0, 0
@@ -819,7 +847,17 @@ class BoardService:
         with self._projection():
             while True:
                 rows = conn.execute(
-                    sql, (last, p.actor, *actors, p.actor, p.person and p.role == "owner", p.actor)
+                    sql,
+                    (
+                        last,
+                        p.actor,
+                        *actors,
+                        p.actor,
+                        *leased,
+                        p.person and p.role == "owner",
+                        p.actor,
+                        *leased,
+                    ),
                 ).fetchall()
                 if not rows:
                     break
@@ -828,9 +866,11 @@ class BoardService:
                     if not p.policy.can_read_wing(row["board_wing"]):
                         continue
                     ordinary_visible = ordinary_reader and self._approval_visible(p, row)
-                    origin_visible = (p.person and p.role == "owner") or row[
-                        "board_coordinator"
-                    ] == p.actor
+                    origin_visible = (
+                        (p.person and p.role == "owner")
+                        or row["board_coordinator"] == p.actor
+                        or row["board"] in leased
+                    )
                     if not ordinary_visible and not origin_visible:
                         continue
                     if checked >= cap:
@@ -875,7 +915,13 @@ class BoardService:
     def _supervisors(self, row):
         cache = getattr(self, "_projection_cache", None)
         cache = cache if cache is not None else {}
-        key = ("supervisors", row["assignee"], row["board_coordinator"], row["board_wing"])
+        key = (
+            "supervisors",
+            row["assignee"],
+            row["board_coordinator"],
+            row["board_wing"],
+            row["board"],
+        )
         if key in cache:
             return cache[key]
         candidates = []
@@ -896,6 +942,9 @@ class BoardService:
         coordinator = row["board_coordinator"] or ""
         if coordinator.startswith("conn:"):
             candidates.append((coordinator[5:], "board coordinator"))
+        leased = self._lease_coordinator(row)
+        if leased is not None:
+            candidates.append((leased.actor[5:], "board coordinator"))
         routes = {}
         for ref, role in candidates:
             try:
@@ -926,9 +975,15 @@ class BoardService:
                 release=self._needs_person_release,
                 approver=lambda row: approval_role or self._approval_role(q, row),
             )
+            from commonplace.snooze import store as snooze
+
+            if snoozed := snooze.active(conn, row["id"]):
+                result["snoozed"] = snoozed
+            result.update(lifecycle.card_fields(conn, row, q))
             if self._restricted_origin(row):
                 result["restricted"] = True
             if self._awaits_origin_release(row):
+                result["awaiting_release"] = True
                 if q.person or row["proposal_status"] != "pending":
                     result["can_approve"] = self._can_release_origin(q, row)
             if self._feature_on():
@@ -979,12 +1034,41 @@ class BoardService:
             and (row["restricted_origin"] == 0 or self._origin_released(row))
             and not _plan_waiting(row)
         )
+        release_by = None
+        if not released and row["restricted_origin"] != 0 and row["proposal_status"] is None:
+            state = self._origin_authority(row)[0]
+            release_by = state if state in ("coordinator", "owner") else "blocked"
+        from commonplace.snooze import store as snooze
+
         return why.waiting(
-            {**dict(row), "split_stuck": stuck},
+            {**dict(row), "split_stuck": stuck, "release_by": release_by},
+            snoozed=snooze.active(conn, row["id"]),
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,
+            claim_expired=bool(
+                row["status"] == "doing" and row["claim_until"] and row["claim_until"] <= now()
+            ),
+            plan_review=_plan_waiting(row),
+            agents=self._agent_connected(row["board_wing"]),
         )
+
+    def _agent_connected(self, wing):
+        """Whether any live agent connection can write ``wing``; None when unreadable."""
+        cache = getattr(self, "_projection_cache", None)
+        cache = cache if cache is not None else {}
+        key = ("agent", wing)
+        if key not in cache:
+            try:
+                cache[key] = any(
+                    (q := self._live_connection(c["id"])) is not None
+                    and q.policy.can_write_wing(wing)
+                    for c in self.ctx.db.connections(self.principal.workspace_id)
+                    if not c["revoked_at"]
+                )
+            except (ControlError, ValueError, TypeError):
+                return None
+        return cache[key]
 
     def _usage(self, boards, runner, row):
         from commonplace.projects import orchestration as orch
@@ -1012,11 +1096,15 @@ class BoardService:
         )
 
     def _refuse_waiting(self, conn, row):
+        from commonplace.boards import why
         from commonplace.boards.store import CardRefused
+        from commonplace.snooze import store as snooze
 
+        if snoozed := snooze.active(conn, row["id"]):
+            raise CardRefused("snoozed", snoozed["text"] + "; unsnooze it first to start it now")
         if self._orchestration_on is True:
             reason = self._waiting(conn, row)
-            if reason is not None and reason["code"] != "project_limit":
+            if reason is not None and reason["code"] in why.REFUSING:
                 raise CardRefused(reason["code"], reason["text"])
 
     def orchestrator_inbox(self, board):
@@ -1048,10 +1136,14 @@ class BoardService:
         return creator is None or _restricted(creator)
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, runner_lock=False):
+        """One board transaction. ``runner_lock`` takes the runner write lock first (the
+        order of runner starts: runner, then board) and keeps it until the board
+        transaction has ended."""
         from commonplace.projects import orchestration as orch, reports
 
         self.pending = []
+        self._auto_release = []
         conflict = None
         try:
             self._report_snapshot = reports.snapshot(self.ctx.gateway, self.principal.workspace_id)
@@ -1074,6 +1166,10 @@ class BoardService:
         self._admission_conn = None
         # Commit/rollback boards before releasing the admission lock.
         with ExitStack() as self._admissions:
+            if runner_lock:
+                self._admission_conn = self._admissions.enter_context(
+                    orch.admission(self.ctx.gateway, self.principal.workspace_id)
+                )
             with self.store.transaction() as conn:
                 self._report_existing_boards = {r[0] for r in conn.execute("SELECT id FROM boards")}
                 try:
@@ -1092,8 +1188,36 @@ class BoardService:
                 )
             except Exception as exc:
                 log_failure(logger, "committed board event emission failed", exc)
+        for number in self._auto_release:
+            self._release_for_orchestrator(number)
         if conflict is not None:
             raise conflict
+
+    def _queue_orchestrator_release(self, number, parentless_restricted):
+        if parentless_restricted:
+            self._auto_release.append(number)
+
+    def _release_for_orchestrator(self, number):
+        """Release a new parentless restricted-origin card as its board's connected orchestrator.
+
+        Runs after the card committed. The release goes through ``task_approve`` as the
+        orchestrator itself, so every release rule applies unchanged (live, independent,
+        with the release grants); anything else leaves the card waiting with its reason."""
+        from commonplace.projects import seats
+
+        try:
+            with self.store.connection() as conn:
+                row = task_row(conn, number)
+            state, coordinator = self._origin_authority(row)
+            if state != "coordinator" or not seats.held_by(
+                self.ctx.db, self.principal.workspace_id, coordinator.connection_id
+            ):
+                return
+            BoardService(ToolContext(principal=coordinator, gateway=self.ctx.gateway)).task_approve(
+                number, approve=True, reason=ORCHESTRATOR_RELEASE_REASON
+            )
+        except Exception as exc:
+            log_failure(logger, "orchestrator origin release failed", exc)
 
     def _emit(self, conn, number, kind, *, actor=None, **extra):
         row = task_row(conn, number)
@@ -1125,6 +1249,41 @@ class BoardService:
 
     def _own_card(self, row):
         return owns_card(row, self.principal.actor)
+
+    def _can_manage_reservation(self, row):
+        """The owner or live coordinator may clear a released reservation before work starts."""
+        return (
+            row["status"] == "todo"
+            and row["assignee"] not in (None, self.principal.actor)
+            and row["proposal_status"] not in ("pending", "rejected")
+            and not _waiting_on_person(row)
+            and self._restricted_origin(row)
+            and self._origin_released(row)
+            and self._can_release_origin(self.principal, row)
+        )
+
+    def _member_reservation(self, row):
+        """People other than the owner never take, drop or reassign another actor's reservation."""
+        p = self.principal
+        if (
+            p.person
+            and p.role != "owner"
+            and row["status"] in ("todo", "doing")
+            and row["assignee"] not in (None, p.actor)
+        ):
+            raise ToolError(
+                "no: card is reserved for another connection; the workspace owner can move it"
+            )
+
+    def _can_cancel_reservation(self, row):
+        p = self.principal
+        return (
+            not p.person
+            and row["status"] == "todo"
+            and row["created_by"] == p.actor
+            and row["assignee"] == p.actor
+            and not _waiting_on_person(row)
+        )
 
     def _plan_gate(self, conn, board_id):
         """The orchestrator plan gate of a board with an accepted live config, else None."""
@@ -1216,11 +1375,44 @@ class BoardService:
                     not self._restricted_origin(row)
                     or self._origin_lineage(q, row) == "independent"
                 )
-                and row["board_coordinator"] == q.actor
+                and (row["board_coordinator"] == q.actor or self._holds_lease(q, row))
                 and _can_coordinate(q, row["board_wing"])
             )
         except (ControlError, ValueError, TypeError):
             return False
+
+    def _lease_holders(self):
+        """Live coordinator-lease holders by board slug; any store error names nobody.
+
+        Only a live lease of exactly one board counts: a replaced epoch, a released or
+        expired lease and another board's lease name nobody for this board."""
+        from commonplace.orch import durable
+        from commonplace.projects import split
+
+        cache = getattr(self, "_projection_cache", None)
+        cache = cache if cache is not None else {}
+        if "leases" not in cache:
+            try:
+                with split.runner_read(self.ctx.workspace_dir()) as reader:
+                    cache["leases"] = durable.coordinator_holders_in(reader)
+            except sqlite3.Error:
+                cache["leases"] = {}
+        return cache["leases"]
+
+    def _lease_coordinator(self, row):
+        """The live principal holding the coordinator lease of this card's board, if any."""
+        slug = row["board"] if "board" in row.keys() else None
+        actor = self._lease_holders().get(slug) if slug else None
+        return self._live_connection(actor[5:]) if actor and actor.startswith("conn:") else None
+
+    def _leased_boards(self):
+        """Slugs of boards whose live coordinator lease this connection holds."""
+        actor = self.principal.actor
+        return sorted(slug for slug, holder in self._lease_holders().items() if holder == actor)
+
+    def _holds_lease(self, q, row):
+        leased = self._lease_coordinator(row)
+        return leased is not None and leased.actor == q.actor
 
     def _top_level_actor(self, actor):
         try:
@@ -1266,20 +1458,30 @@ class BoardService:
             and q.policy.tool_visible("needs_me")
         )
 
-    def _origin_authority(self, row):
-        """Nonrecursive shared owner/coordinator classification for this card."""
-        actor = row["board_coordinator"] or ""
-        q = self._live_connection(actor[5:]) if actor.startswith("conn:") else None
-        if q is None:
-            return "owner", None
+    def _authority_of(self, q, row):
+        """Classify one live candidate as this card's origin coordinator."""
         lineage = self._origin_lineage(q, row)
         if row["created_by"].startswith("conn:") and self._creator_connection(row) is None:
-            return "stamp", q
+            return "stamp"
         if lineage != "independent":
-            return lineage, q
+            return lineage
         if self._release_grants(q, row["board_wing"]):
-            return "coordinator", q
-        return "owner", q
+            return "coordinator"
+        return "owner"
+
+    def _origin_authority(self, row):
+        """Nonrecursive shared owner/coordinator classification for this card.
+
+        The configured coordinator comes first; the live holder of the board's
+        coordinator lease counts when the configured one does not qualify."""
+        actor = row["board_coordinator"] or ""
+        q = self._live_connection(actor[5:]) if actor.startswith("conn:") else None
+        state = self._authority_of(q, row) if q is not None else "owner"
+        if state != "coordinator":
+            leased = self._lease_coordinator(row)
+            if leased is not None and self._authority_of(leased, row) == "coordinator":
+                return "coordinator", leased
+        return state, q
 
     @staticmethod
     def _restricted_origin(row):
@@ -1296,10 +1498,41 @@ class BoardService:
         )
 
     def _can_release_origin(self, q, row):
+        """Explicit release: the signed-in owner always, otherwise only the live coordinator."""
+        if q.person:
+            return q.role == "owner"
         state, coordinator = self._origin_authority(row)
-        if state == "coordinator":
-            return not q.person and q.actor == coordinator.actor
-        return state == "owner" and q.person and q.role == "owner"
+        return state == "coordinator" and q.actor == coordinator.actor
+
+    def _routine_origin_release(self, q, row):
+        """Implicit paths keep the owner as a fallback for boards with no live coordinator."""
+        if q.person:
+            return q.role == "owner" and self._origin_authority(row)[0] == "owner"
+        return self._can_release_origin(q, row)
+
+    def _recorded_release(self, row, approver):
+        """A completed release outlives a later appointment, never the approver's own grants.
+
+        The marker names its approver by connection name, so it counts only for the connection
+        that was already there when it was recorded: a connection holding the name that was
+        created afterwards (the name freed by a revocation) never inherits the release.
+        """
+        if not self._release_grants(approver, row["board_wing"]):
+            return False
+        name = approver.actor[5:]
+        try:
+            created = self.ctx.db.connection(name, self.principal.workspace_id)["created_at"]
+        except (ControlError, ValueError, TypeError):
+            return False
+        with self.store.connection() as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM task_events WHERE task_id=? AND kind='decide' "
+                    "AND choice='release origin' AND stamp_connection=? AND created_at>=? LIMIT 1",
+                    (row["id"], name, created),
+                ).fetchone()
+                is not None
+            )
 
     def _origin_only(self, q, row, *, role=_UNSET):
         """Whether release must preserve a separate proposal or plan review."""
@@ -1332,10 +1565,10 @@ class BoardService:
                 return None
             why = {
                 "owner": "Restricted-origin work has not been released. No live coordinator with all required release grants is available. You are the workspace owner: use task_approve with a reason to release its origin.",
-                "creator": "Restricted-origin work has not been released. The live board coordinator is this card's creator. Appoint an independent coordinator in board settings; owner release is blocked.",
-                "descendant": "Restricted-origin work has not been released. The live board coordinator acts under this card's creator. Appoint an independent coordinator in board settings; owner release is blocked.",
-                "unsafe": "Restricted-origin work has not been released. The live board coordinator's independence from this card's creator cannot be verified. Appoint an independent coordinator in board settings; owner release is blocked.",
-                "stamp": "Restricted-origin work has not been released. This card’s creator stamp cannot be verified. Clear the coordinator in board settings, then use the existing owner release path; owner release is blocked while this live record remains.",
+                "creator": "Restricted-origin work has not been released. The live board coordinator is this card's creator. Appoint an independent coordinator in board settings, or release it yourself from the card.",
+                "descendant": "Restricted-origin work has not been released. The live board coordinator acts under this card's creator. Appoint an independent coordinator in board settings, or release it yourself from the card.",
+                "unsafe": "Restricted-origin work has not been released. The live board coordinator's independence from this card's creator cannot be verified. Appoint an independent coordinator in board settings, or release it yourself from the card.",
+                "stamp": "Restricted-origin work has not been released. This card’s creator stamp cannot be verified. Clear the coordinator in board settings, or release it yourself from the card.",
             }[state]
         elif (
             state == "coordinator"
@@ -1381,27 +1614,28 @@ class BoardService:
             approver = self.ctx.db.authenticate_connection(connection["id"])
             if approver is None or approver.actor != actor:
                 return False
-            if self._restricted_origin(row):
-                lineage = self._origin_lineage(approver, row)
-                if lineage in ("descendant", "unsafe"):
-                    return False
+            restricted = self._restricted_origin(row)
+            lineage = self._origin_lineage(approver, row) if restricted else None
+            if lineage in ("descendant", "unsafe"):
+                return False
             if row["assignee"] == actor:
-                return self._restricted_origin(row) and self._can_release_origin(approver, row)
-            return bool(
-                approver is not None
-                and approver.actor == actor
-                and approver.policy.has_scope("memory:write")
-                and approver.policy.can_read_wing(row["board_wing"])
-                and (
-                    (
-                        not _restricted(approver)
-                        and self._release_role(approver, row) in ("parent", "creator-parent")
+                current = restricted and self._can_release_origin(approver, row)
+            else:
+                current = bool(
+                    approver.policy.has_scope("memory:write")
+                    and approver.policy.can_read_wing(row["board_wing"])
+                    and self._release_grants(approver, row["board_wing"])
+                    and (
+                        (
+                            not _restricted(approver)
+                            and self._release_role(approver, row) in ("parent", "creator-parent")
+                        )
+                        or _trusted_agent(approver)
+                        or self._coordinates(approver, row)
+                        or self._owning_top_level(row, approver)
                     )
-                    or _trusted_agent(approver)
-                    or self._coordinates(approver, row)
-                    or self._owning_top_level(row, approver)
                 )
-            )
+            return current or (lineage == "independent" and self._recorded_release(row, approver))
         except (ControlError, ValueError, TypeError):
             return False
 
@@ -1409,13 +1643,22 @@ class BoardService:
         return (
             not self._restricted_origin(row)
             or self._origin_released(row)
-            or (self.principal.person and self._can_release_origin(self.principal, row))
+            or (self.principal.person and self._routine_origin_release(self.principal, row))
         )
 
     def _claimable_origin(self, row):
         return self._available_origin(row)
 
-    def _write(self, board, *, submission=False, row=None, claiming=False, content_edit=False):
+    def _write(
+        self,
+        board,
+        *,
+        submission=False,
+        row=None,
+        claiming=False,
+        content_edit=False,
+        cancelling=False,
+    ):
         p = self.principal
         if not p.policy.has_scope("memory:write") or not p.policy.can_read_wing(board["wing"]):
             raise ToolError("no: this connection cannot change this board")
@@ -1425,7 +1668,11 @@ class BoardService:
                 if claiming or self._own_card(row)
                 else self._available_origin(row)
             )
-            if not available and not content_edit:
+            if (
+                not available
+                and not content_edit
+                and not (cancelling and self._can_cancel_reservation(row))
+            ):
                 raise ToolError(
                     "no: restricted-origin work needs parent or workspace owner release"
                 )
@@ -1547,6 +1794,10 @@ class BoardService:
                 actor="system",
                 **{"from": "doing", "to": "doing", "target": row["assignee"]},
             )
+        from commonplace.snooze import store as snooze
+
+        for row in snooze.wake_due(conn, snooze.clock(), board["id"]):
+            self._emit(conn, row["id"], "card.woke", actor="system")
 
     def _get(self, conn, ref):
         row = task_row(conn, ref)
@@ -1595,10 +1846,26 @@ class BoardService:
         if value.startswith("conn:"):
             value = value[5:]
         if not re.fullmatch(r"[A-Za-z0-9_.:@-]{1,120}", value):
-            raise ToolError("no: invalid connection")
+            raise ToolError(
+                "no: recipient not found; use an agent name, owner, orchestrator, "
+                "or anyone to return the card to the pool"
+            )
         return f"conn:{value}"
 
     def _work_actor(self, value, board):
+        alias = value.strip().casefold() if isinstance(value, str) else ""
+        if alias == "pool":
+            return None
+        if alias in ("orchestrator", "coordinator"):
+            value = board["coordinator"]
+            configured = (value or "").startswith("conn:") and self._live_connection(value[5:])
+            if not configured:
+                value = self._lease_holders().get(board["slug"]) or value
+            if not value:
+                raise ToolError(
+                    "no: this project has no board coordinator; name an agent, "
+                    "or use anyone to return the card to the pool"
+                )
         actor = self._actor(value)
         if actor is None or not actor.startswith("conn:"):
             return actor
@@ -1655,13 +1922,16 @@ class BoardService:
             and self.principal.person
             and self.principal.role == "owner"
             and self._restricted_origin(row)
-            and self._can_release_origin(self.principal, row)
+            and self._routine_origin_release(self.principal, row)
             and updates.get("status") in ("todo", "doing")
         ):
             updates["approved_by"] = self.principal.actor
         updates.update(
             version=row["version"] + 1, updated_at=now(), updated_by=self.principal.actor
         )
+        if "ask_options" in updates:
+            # Blocks describe one ask's options; a new or cleared ask never inherits them.
+            updates.setdefault("ask_blocks", None)
         if "status" in updates:
             updates["claim_from"] = (
                 row["status"]
@@ -1682,14 +1952,28 @@ class BoardService:
             updates["claim_expired_at"] = None
             if updates["claim_until"] is not None:
                 updates["heartbeat_at"] = now()
+        if "pr_url" in updates:  # set here, so the next BoardStore open has nothing to backfill
+            updates["pr_repo"] = pr_repository(updates["pr_url"])
         fields = ",".join(f"{key}=?" for key in updates)
         conn.execute(f"UPDATE tasks SET {fields} WHERE id=?", (*updates.values(), row["id"]))
 
         if row["status"] != "done" and updates.get("status") == "done":
             reports.capture(conn, task_row(conn, row["id"]), self._report_snapshot, "done")
 
-    def _holder(self, row, *, editing=False, reopening=False, annotating=False, completing=False):
+    def _holder(
+        self,
+        row,
+        *,
+        editing=False,
+        reopening=False,
+        annotating=False,
+        completing=False,
+        dropping=False,
+        moving=False,
+    ):
         if self.principal.person:
+            if moving:
+                self._member_reservation(row)
             return
         if row["proposal_status"] in ("pending", "rejected") and not self._own_card(row):
             raise ToolError("no: proposal needs its parent or the workspace owner")
@@ -1709,6 +1993,7 @@ class BoardService:
             row["status"] == "todo"
             and row["assignee"] not in (None, self.principal.actor)
             and not self.principal.person
+            and not (dropping and self._can_manage_reservation(row))
         ):
             raise ToolError("no: card is reserved for another connection")
         if completing and row["status"] in ("todo", "doing", "backlog") and not self._own_card(row):
@@ -1737,6 +2022,7 @@ class BoardService:
                         r["status"]: r["n"]
                         for r in conn.execute(
                             "SELECT status,count(*) n FROM tasks WHERE board_id=? "
+                            "AND id NOT IN (SELECT task_id FROM card_archive WHERE archived=1) "
                             + ("AND parent_number IS NULL " if top_level else "")
                             + "GROUP BY status",
                             (board["id"],),
@@ -1751,6 +2037,7 @@ class BoardService:
                         "coordinator": board["coordinator"],
                         "can_configure": self.principal.role == "owner",
                         "counts": counts,
+                        "archived": lifecycle.archived_count(conn, board["id"]),
                         "agents_working": len(limits.working(conn, board["id"])),
                     }
                 )
@@ -1783,20 +2070,25 @@ class BoardService:
                         from commonplace.boards import why
 
                         summary = dict.fromkeys(why.CODES, 0)
-                        for found in conn.execute(
+                        waiting_ids = conn.execute(
                             "SELECT id FROM tasks WHERE board_id=? AND status!='done' "
                             + ("AND parent_number IS NULL" if top_level else ""),
                             (board["id"],),
-                        ).fetchall():
-                            reason = self._waiting(
-                                conn,
-                                task_row(conn, found["id"]),
-                                usage=waiting_usage,
-                                runner=runner,
-                            )
-                            if reason:
-                                summary[reason["code"]] += 1
+                        ).fetchall()
+                        with self._projection():
+                            for found in waiting_ids:
+                                reason = self._waiting(
+                                    conn,
+                                    task_row(conn, found["id"]),
+                                    usage=waiting_usage,
+                                    runner=runner,
+                                )
+                                if reason:
+                                    summary[reason["code"]] += 1
                         result[-1]["waiting"] = summary
+                        result[-1]["waiting_notes"] = why.notes(
+                            summary, used=waiting_usage.used, cap=waiting_usage.cap
+                        )
             return result
 
     def space_metadata(self, slug):
@@ -1927,6 +2219,10 @@ class BoardService:
                     for candidate in [db.authenticate_connection(row["id"])]
                 ):
                     unbound.append(coordinator)
+                    # Before the NULL write and the board COMMIT (the clear is its own
+                    # control-DB commit): a grant left by a failed clear must not come
+                    # back when the app stops coordinating. A failed clear rolls back.
+                    self._clear_coordinator_grant(coordinator, "coordinator unbound")
                     coordinator = None
                     conn.execute("UPDATE boards SET coordinator=NULL WHERE id=?", (b["id"],))
             if changed or unbound:
@@ -1998,6 +2294,76 @@ class BoardService:
             for board, (r, c) in waiting.items()
         ]
 
+    def _missing_model_roles(self):
+        """One item per board and model role the board's accepted config uses with no model set.
+
+        Owner-only. The item clears itself once the role resolves to a model."""
+        if not self.principal.person or self.principal.role != "owner":
+            return []
+        from commonplace.orch import schema as orch_schema, store as orch_store
+        from commonplace.projects import models, split
+
+        items = []
+        with split.runner_read(self.ctx.workspace_dir()) as reader:
+            if (
+                reader is None
+                or not reader.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='orch_configs'"
+                ).fetchone()
+            ):
+                return []
+            with self.store.connection() as conn:
+                boards = conn.execute(
+                    "SELECT slug,name,wing FROM boards WHERE archived=0 ORDER BY slug"
+                ).fetchall()
+            for board in boards:
+                if not self.principal.policy.can_read_wing(board["wing"]):
+                    continue
+                version = orch_store.accepted_in(reader, board["slug"], orch_store.LIVE)
+                if version is None:
+                    continue
+                try:
+                    config = version.config()
+                except orch_schema.ConfigError:
+                    continue
+                if not config.has_runner:
+                    continue
+                name = board["name"] or board["slug"]
+                for gap in models.missing_roles(
+                    self.ctx.db, self.principal.workspace_id, board["slug"], config
+                ):
+                    role, uses = gap["role"], ", ".join(gap["config_roles"])
+                    if role is None:
+                        message = (
+                            f"Starts that use the {uses} role on {name} cannot run: the role "
+                            "names no model_role. Add one to that role in the board's "
+                            "orchestrator config; there is no setting for it here."
+                        )
+                        action = None
+                    else:
+                        message = (
+                            f"Starts that use the {role} role ({uses}) on {name} cannot run: no "
+                            "model is set for it. Choose one in the project's Agent models."
+                        )
+                        action = {
+                            "label": "Set the model",
+                            "type": "project_models",
+                            "board": board["slug"],
+                            "role": role,
+                        }
+                    items.append(
+                        {
+                            "kind": "model_role",
+                            "board": board["slug"],
+                            "board_name": name,
+                            "role": role,
+                            "config_roles": gap["config_roles"],
+                            "message": message,
+                            "action": action,
+                        }
+                    )
+        return items
+
     def board_set(self, board, coordinator):
         _owner(self.principal)
         with self.transaction() as conn:
@@ -2010,7 +2376,21 @@ class BoardService:
                     raise ToolError(
                         "no: coordinator must be an active agent with access to this board"
                     )
+            previous = b["coordinator"]
+            if previous and previous != actor:
+                # Replacing or unassigning: clear the previous coordinator's grant
+                # before the board COMMIT (the clear is its own control-DB commit, not
+                # atomic with this one), so a grant that survived a failed clear never
+                # comes back when it stops coordinating. A failed clear rolls back.
+                self._clear_coordinator_grant(previous, "coordinator removed")
             conn.execute("UPDATE boards SET coordinator=? WHERE id=?", (actor, b["id"]))
+            if actor is not None and actor.startswith("conn:"):
+                # A coordinator is agent machinery: assigning one ends any stored
+                # cards:decide grant, so unassigning it later needs fresh consent.
+                coordinator_row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+                self.ctx.db.clear_decide(
+                    coordinator_row["id"], reason="coordinator", user_id=self.principal.user_id
+                )
             self.pending.append(
                 (
                     "space_configured",
@@ -2020,6 +2400,13 @@ class BoardService:
                 )
             )
             result = {"board": b["slug"], "coordinator": actor}
+        if actor is not None and actor.startswith("conn:"):
+            # Again after the commit: a grant written while this transaction was
+            # open is removed too (the in-transaction clear covers a rollback).
+            coordinator_row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+            self.ctx.db.clear_decide(
+                coordinator_row["id"], reason="coordinator", user_id=self.principal.user_id
+            )
         if actor is not None:
             from commonplace import webhooks
 
@@ -2078,7 +2465,7 @@ class BoardService:
             if backward:
                 messages.reverse()
             oldest = messages[0]["id"] if messages else 0
-            return {
+            page = {
                 "board": b["slug"],
                 "coordinator": b["coordinator"],
                 "messages": messages,
@@ -2091,6 +2478,10 @@ class BoardService:
                     ).fetchone()
                 ),
             }
+        from commonplace.chat import live
+
+        live.mark_read(self.ctx.gateway, self.principal, b, messages)
+        return page
 
     def space_post(self, board, text):
         text = validate_text(text, "text", required=True)
@@ -2125,14 +2516,27 @@ class BoardService:
             return self._message(row)
 
     def task_list(
-        self, board=None, status=None, mine=False, *, all_statuses=False, top_level=False
+        self,
+        board=None,
+        status=None,
+        mine=False,
+        *,
+        all_statuses=False,
+        top_level=False,
+        include_snoozed=False,
+        archived=False,
     ):
+        """Archived cards are hidden unless ``archived`` asks for exactly those."""
+        from commonplace.snooze import store as snooze
+
         cutoff = stale_before()
+        shown = all_statuses or include_snoozed
         with self._projection(), self.transaction() as conn, ExitStack() as reads:
             boards = [self._board(conn, board)] if board is not None else self._visible_boards(conn)
             if status is not None and status not in STATUSES:
                 raise ToolError("no: invalid status")
             result = []
+            hidden = lifecycle.archived_ids(conn)
             runner = _UNSET
             if self._orchestration_on is True:
                 from commonplace.projects import split
@@ -2148,15 +2552,19 @@ class BoardService:
                 for row in conn.execute(
                     "SELECT id FROM tasks WHERE board_id=? "
                     + ("AND parent_number IS NULL " if top_level else "")
-                    + "ORDER BY position,id",
+                    + "ORDER BY priority,position,id",
                     (b["id"],),
                 ):
                     task = task_row(conn, row["id"])
+                    if not shown and snooze.active(conn, task["id"]):
+                        continue
+                    if (task["id"] in hidden) != archived:
+                        continue
                     if task["status"] not in (
                         (status,)
                         if status
                         else STATUSES
-                        if all_statuses
+                        if all_statuses or archived
                         else ("todo", "doing", "review")
                     ) and not (mine and status is None and task["proposal_status"] == "pending"):
                         continue
@@ -2257,6 +2665,40 @@ class BoardService:
             ]
             result["linked"] = linked
             result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
+            self._with_goals(conn, row, result)
+            return result
+
+    def _with_goals(self, conn, row, result):
+        """Agent card context: the goal chain, only for a card that points at a goal."""
+        block = goals.chain_block(conn, row["id"])
+        if block is not None:
+            result["goals"] = block
+
+    def goal_list(self):
+        with self.transaction() as conn:
+            return goals.tree(conn)
+
+    def goal_set(self, goal=None, title=None, detail=None, parent=None, archived=None):
+        goals.require_owner(self.principal)
+        with self.transaction() as conn:
+            return goals.put(
+                conn,
+                self.principal.actor,
+                now(),
+                goal=goal,
+                title=title,
+                detail=detail,
+                parent=parent,
+                archived=archived,
+            )
+
+    def card_goal(self, task, goal=None):
+        goals.require_owner(self.principal)
+        with self.transaction() as conn:
+            row, _board = self._get(conn, task)
+            goals.point(conn, self.principal.actor, now(), row["id"], goal)
+            result = {"number": row["id"], "board": row["board"]}
+            self._with_goals(conn, row, result)
             return result
 
     def _parent_card(self, conn, board, parent, *, delegating=False):
@@ -2426,15 +2868,23 @@ class BoardService:
         labels=None,
         ask=None,
         options=None,
+        blocks=None,
         target=None,
         message_id=None,
         parent=None,
         claim=False,
         task_type=task_types.UNSET,
         type_holder=None,
+        priority=priorities.UNSET,
+        reviewer=None,
     ):
         p = self.principal
         label = "" if task_type is task_types.UNSET else task_types.owner_value(p, task_type)
+        rank = (
+            priorities.DEFAULT_RANK
+            if priority is priorities.UNSET
+            else priorities.rank(priorities.owner_value(p, priority))
+        )
         if message_id is not None:
             if (
                 isinstance(message_id, bool)
@@ -2564,7 +3014,7 @@ class BoardService:
         number = cur.lastrowid
         conn.execute(
             "UPDATE tasks SET claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
-            "proposed_to=?,review_kind=?,task_type=? WHERE id=?",
+            "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=?,ask_blocks=? WHERE id=?",
             (
                 until,
                 at if until else None,
@@ -2573,11 +3023,15 @@ class BoardService:
                 p.parent_agent if proposal else None,
                 "decision" if ask is not None else None,
                 label,
+                rank,
+                reviewer,
+                blocks if ask is not None else None,
                 number,
             ),
         )
         self._log(conn, number, "add", to_status=status)
         self._emit(conn, number, "card.created")
+        self._queue_orchestrator_release(number, restricted_origin and not proposal)
         if status == "doing" and self._owner_assignment(assignee):
             self._log(conn, number, "claim", to_status="doing", target=assignee)
             self._emit(conn, number, "card.claimed", to="doing")
@@ -2608,9 +3062,14 @@ class BoardService:
         claim=False,
         blocked_by=_UNSET,
         task_type=task_types.UNSET,
+        priority=priorities.UNSET,
+        reviewer=reviewers.UNSET,
     ):
         if task_type is not task_types.UNSET:
             task_types.owner_value(self.principal, task_type)
+        if priority is not priorities.UNSET:
+            priorities.owner_value(self.principal, priority)
+        chosen = self._reviewer_choice(reviewer)
         type_holder = (
             self._type_holder(
                 self._actor(assignee) if assignee is not None else self.principal.actor
@@ -2637,6 +3096,8 @@ class BoardService:
                 claim=claim,
                 task_type=task_type,
                 type_holder=type_holder,
+                priority=priority,
+                reviewer=chosen,
             )
             if blocked_by is not _UNSET:
                 from commonplace.boards.store import CardRefused, set_blockers
@@ -2707,6 +3168,9 @@ class BoardService:
                 self._awaits_origin_release(row)
                 and self._origin_only(p, row)
                 and self._can_release_origin(p, row)
+                and (
+                    self._routine_origin_release(p, row) or (approve is not False and not escalate)
+                )
             ):
                 return self._release_origin(conn, row, approve, reason, escalate)
             role = self._approval_role(p, row)
@@ -2720,7 +3184,7 @@ class BoardService:
                 )
             plan = _plan_waiting(row)
             release = self._restricted_origin(row) and not self._origin_released(row)
-            can_release = self._can_release_origin(p, row)
+            can_release = self._routine_origin_release(p, row)
             if release and owner and not can_release and approve is not False and not escalate:
                 state = self._origin_authority(row)[0]
                 refusal = {
@@ -2803,6 +3267,8 @@ class BoardService:
             if approve and release and "approved_by" not in changes:
                 changes["status"] = "backlog"
             self._set(conn, row, changes, release_origin=False)
+            if release and "approved_by" in changes:
+                self._log(conn, row["id"], "decide", reason=reason, choice="release origin")
             status = changes.get("status", row["status"])
             self._log(
                 conn,
@@ -2858,6 +3324,8 @@ class BoardService:
         )
 
     def task_take_next(self, board=None, task=None):
+        from commonplace.snooze import store as snooze
+
         type_holder = self._type_holder(self.principal.actor)
         top = self._top_level_taker()
         narrow = _restricted(self.principal) and not top
@@ -2894,7 +3362,9 @@ class BoardService:
                         if self._orchestration_on is True
                         else ""
                     )
-                    + "ORDER BY assignee IS NULL,position,id",
+                    + "AND NOT "
+                    + snooze.snoozed_sql()
+                    + " ORDER BY assignee IS NULL,priority,position,id",
                     (
                         b["id"],
                         self.principal.actor,
@@ -2902,6 +3372,7 @@ class BoardService:
                         self.principal.actor,
                         self.principal.actor,
                         *((self.principal.actor, self.principal.actor) if narrow else ()),
+                        snooze.now_stamp(),
                     ),
                 )
                 for found in candidates:
@@ -2928,7 +3399,10 @@ class BoardService:
                 not available
                 or not self._claimable_origin(row)
                 or row["proposal_status"] in ("pending", "rejected")
-                or row["assignee"] not in (None, self.principal.actor)
+                or (
+                    row["assignee"] not in (None, self.principal.actor)
+                    and not self._can_manage_reservation(row)
+                )
                 or (not self.principal.person and _waiting_on_person(row))
             ):
                 raise ToolError("no: card is not available to take")
@@ -2980,7 +3454,52 @@ class BoardService:
                 # Clear the delivery marker in this same versioned mutation.
                 conn.execute("UPDATE tasks SET return_to=NULL WHERE id=?", (row["id"],))
                 result["return_to"] = None
+            self._with_goals(conn, row, result)
             return result
+
+    def task_snooze(self, task, until=None, timezone=None, after_card=None):
+        """Hide an open card from todo lists, take-next and starts until a time or until
+        another card is done (``commonplace.snooze``). Owner or assignee only."""
+        from commonplace.snooze import store as snooze
+
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, row=row)
+            self._snooze_authority(row)
+            when = snooze.clock()
+            record = snooze.set_snooze(
+                conn,
+                row,
+                until=until,
+                tz=timezone,
+                after_card=after_card,
+                actor=self.principal.actor,
+                now=when,
+            )
+            self._log(conn, row["id"], "comment", text=record["text"])
+            self._emit(conn, row["id"], "card.snoozed", snoozed=record)
+            return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def task_unsnooze(self, task):
+        """End a card's snooze now. Owner or assignee only; refused when it is not snoozed."""
+        from commonplace.boards.store import CardRefused
+        from commonplace.snooze import store as snooze
+
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, row=row)
+            self._snooze_authority(row)
+            if not snooze.clear(conn, row, actor=self.principal.actor, now=snooze.clock()):
+                raise CardRefused("not_snoozed", "this card is not snoozed", status=409)
+            self._log(conn, row["id"], "comment", text="Snooze ended by " + self.principal.actor)
+            self._emit(conn, row["id"], "card.woke", by=self.principal.actor)
+            return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def _snooze_authority(self, row):
+        from commonplace.snooze import store as snooze
+
+        if not snooze.allowed(self.principal, row):
+            raise ToolError("no: only a workspace owner or the card's assignee can snooze it")
 
     def _position(self, conn, row, updates, before=None, after=None):
         if before is None and after is None:
@@ -3089,6 +3608,16 @@ class BoardService:
             }
             if status == "backlog" or (old, status) in allowed:
                 return
+            if (
+                old == "todo"
+                and status == "done"
+                and self.principal.role == "owner"
+                and self._restricted_origin(row)
+            ):
+                if self._awaits_origin_release(row):
+                    raise ToolError("no: release this card before closing it")
+                if self._origin_released(row):
+                    return
         else:
             if old != "review" and _waiting_on_person(row):
                 raise ToolError("no: this move requires a person or a handoff")
@@ -3111,7 +3640,15 @@ class BoardService:
                 ("doing", "backlog"),
             }:
                 return
-            if old == "todo" and status == "backlog" and row["assignee"] is None:
+            if (
+                old == "todo"
+                and status == "backlog"
+                and (
+                    row["assignee"] is None
+                    or self._can_cancel_reservation(row)
+                    or self._can_manage_reservation(row)
+                )
+            ):
                 return
         raise ToolError("no: this move requires a person or a handoff")
 
@@ -3210,6 +3747,11 @@ class BoardService:
             ]
         return json.dumps(previous, ensure_ascii=False) if previous else None
 
+    def _completion_reviewer(self, chosen):
+        """Who a completion review is addressed to: the chosen reviewer, else the owner."""
+        members = self.ctx.db.members(self.principal.workspace_id)
+        return chosen if chosen in {f"user:{m['id']}" for m in members} else self._owner_actor()
+
     def _open_review(self, row, board, args, updates, done_review):
         question, offered = review_request(
             args.get(
@@ -3228,7 +3770,7 @@ class BoardService:
             ),
         )
         recipient = (
-            self._owner_actor()
+            self._completion_reviewer(updates.get("reviewer", row["reviewer"]))
             if done_review
             else self._ask_recipient(board, args.get("person_reason"))
         )
@@ -3307,6 +3849,146 @@ class BoardService:
             actor = self._update_acquisition_actor(prospective, args)
         return actor, self._type_holder(actor)
 
+    def _paths_change(self, args):
+        """Any contract change. It takes the runner write lock before the board
+        transaction (runner, then board, like a start), so it cannot land between a start's
+        contract read and its job commit, and a start cannot read half a change. A workspace
+        without a runner database has no jobs and nothing to race: the lock is skipped there
+        rather than creating the database."""
+        if "paths" not in args:
+            return False
+        from commonplace.orch import runner_bridge
+
+        return runner_bridge.runner_db_exists(self.ctx.gateway, self.principal.workspace_id)
+
+    def _paths_update(self, row, args):
+        """Stored ``paths`` for a contract update, inside the runner write lock. A card that
+        has a runner job holds its contract: only the workspace owner may clear or narrow
+        it; anyone else who may edit the card can only keep every glob and add more. A card
+        that counts as running (a live job, or a ``doing`` claim held by a connection) that
+        gains globs is checked like a start against the other running cards, whoever edits
+        it, so two running cards cannot be edited into an overlap."""
+        update = contracts.column_update(args)
+        if not update:
+            return update
+        from commonplace.orch import runner_bridge
+        from commonplace.runner import jobs
+
+        new = json.loads(update["paths"])
+        old = contracts.parse(row["paths"] if "paths" in row.keys() else None)
+        if old is None:
+            old = list(contracts.ANY)
+        live = runner_bridge.has_live_job(
+            self.ctx.gateway, self.principal.workspace_id, row["board"], row["id"]
+        )
+        owner = self.principal.person and self.principal.role == "owner"
+        if live and not owner and not set(old) <= set(new):
+            raise ToolError(
+                f"no: #{row['id']} has a running job, so only the workspace owner can clear "
+                "or narrow its paths; ask the owner (adding globs is allowed unless it makes "
+                "the card overlap another running card)"
+            )
+        claimed = row["status"] == "doing" and (row["assignee"] or "").startswith("conn:")
+        if set(new) - set(old) and (live or claimed):
+            refusal = runner_bridge.contract_refusal(
+                self._admission_conn,
+                workspace_dir=self.ctx.workspace_dir(),
+                board_slug=row["board"],
+                board_id=row["board_id"],
+                card=row["id"],
+                now=jobs._now(),
+                paths=new,
+            )
+            if refusal is not None:
+                raise refusal
+        return update
+
+    def _priority_rank(self, args):
+        """The owner's requested rank, or None when the update does not set one."""
+        if "priority" not in args:
+            return None
+        return priorities.rank(priorities.owner_value(self.principal, args["priority"]))
+
+    @staticmethod
+    def _priority_change(row, rank):
+        return {} if rank is None or rank == row["priority"] else {"priority": rank}
+
+    @staticmethod
+    def _priority_note(ask, updates):
+        if "priority" in updates and ask["text"] is None:
+            return {**ask, "text": "Priority set to " + priorities.name(updates["priority"])}
+        return ask
+
+    def _done_needs_review(self, board, row, updates):
+        """Whether this move to Done opens a completion review instead of finishing the card.
+
+        A board may gate agents' completions; a chosen reviewer also gates anyone else's, so
+        only the reviewer can move that card to Done directly.
+        """
+        if updates["status"] != "done":
+            return False
+        if board["done_needs_review"] and not self.principal.person:
+            return True
+        return reviewers.gates_done(
+            {**dict(row), **updates},
+            self.ctx.db.members(self.principal.workspace_id),
+            self.principal.actor,
+        )
+
+    def _reviewer_note(self, ask, row, updates):
+        if "reviewer" not in updates or ask["text"] is not None:
+            return ask
+        chosen = updates["reviewer"]
+        text = (
+            "Reviewer cleared" if chosen is None else "Reviewer set to " + people(self.ctx, chosen)
+        )
+        return {**ask, "text": text}
+
+    def _announce_reviewer(self, conn, row, updates):
+        """An open completion review re-addressed to a new reviewer is news to that person."""
+        if updates.get("status") != "review" and "reviewer" in updates and "ask_to" in updates:
+            self._emit(
+                conn,
+                row["id"],
+                "card.review_needed",
+                ask_to=updates["ask_to"],
+                return_to=row["return_to"],
+            )
+
+    def _reviewing(self):
+        """Whether a chosen reviewer (not the owner queue) has completion reviews waiting."""
+        p = self.principal
+        if not p.person or p.role == "owner":
+            return False
+        with self.store.connection() as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM tasks WHERE status='review' AND review_kind='completion' "
+                    "AND ask_to=? LIMIT 1",
+                    (p.actor,),
+                ).fetchone()
+                is not None
+            )
+
+    def _reviewer_choice(self, value):
+        """The owner's requested reviewer ref (None clears), or None when not given."""
+        if value is reviewers.UNSET:
+            return None
+        return reviewers.owner_value(
+            self.principal, value, self.ctx.db.members(self.principal.workspace_id)
+        )
+
+    def _reviewer_change(self, conn, row, args, updates):
+        """Apply a reviewer choice; an open completion review follows the new reviewer."""
+        if "reviewer" not in args:
+            return
+        chosen = self._reviewer_choice(args["reviewer"])
+        if chosen == row["reviewer"]:
+            return
+        updates["reviewer"] = chosen
+        if row["status"] == "review" and row["review_kind"] == "completion":
+            updates["ask_to"] = chosen or self._owner_actor()
+
     def task_update(self, task, *, version=None, **args):
         type_updates = {
             key: task_types.owner_value(self.principal, value)
@@ -3314,11 +3996,15 @@ class BoardService:
             if key == "task_type"
         }
         prospective_actor, type_holder = self._update_type_holder(task, args)
+        priority_update = self._priority_rank(args)
         permitted = {
             "task_type",
+            "priority",
+            "reviewer",
             "title",
             "body",
             "labels",
+            "paths",
             "blocked_by",
             "status",
             "before",
@@ -3340,8 +4026,9 @@ class BoardService:
             "context",
             "person_reason",
         }
-        with self.transaction() as conn:
+        with self.transaction(runner_lock=self._paths_change(args)) as conn:
             row, board = self._get(conn, task)
+            lifecycle.refuse_if_archived(conn, row)
             # Coordination may refine available work without releasing its origin.
             # Keep this exception limited to title/body edits, never work transitions.
             content_edit = (
@@ -3355,7 +4042,12 @@ class BoardService:
             inactive_annotation = (
                 set(args) == {"status_line"} and row["status"] == "backlog" and self._own_card(row)
             )
-            self._write(board, row=row, content_edit=content_edit or inactive_annotation)
+            self._write(
+                board,
+                row=row,
+                content_edit=content_edit or inactive_annotation,
+                cancelling=set(args) == {"status"} and args["status"] == "backlog",
+            )
             self._version(conn, row, version)
             if (
                 set(args) - permitted
@@ -3371,8 +4063,12 @@ class BoardService:
                 raise ToolError("no: unknown update field")
             self._holder(
                 row,
+                moving=args.get("status", row["status"]) != row["status"],
                 completing=args.get("status") == "done",
-                editing=bool(set(args) & {"title", "body", "labels", "blocked_by", "task_type"})
+                dropping=set(args) == {"status"} and args["status"] == "backlog",
+                editing=bool(
+                    set(args) & {"title", "body", "labels", "blocked_by", "task_type", "paths"}
+                )
                 and not content_edit,
                 reopening=set(args) == {"status"} and args["status"] == "todo",
                 annotating=bool(set(args) - {"status"})
@@ -3401,7 +4097,8 @@ class BoardService:
                 raise ToolError("no: card is waiting on a person")
             if "lesson" in args and args.get("status", row["status"]) != "done":
                 raise ToolError("no: a lesson requires status done")
-            updates = dict(type_updates)
+            updates = {**type_updates, **self._priority_change(row, priority_update)}
+            self._reviewer_change(conn, row, args, updates)
             self._update_waiting(conn, row, args)
             if "labels" in args:
                 labels = args["labels"]
@@ -3413,6 +4110,7 @@ class BoardService:
                 self._plan_label_check(conn, row, labels)
                 self._check_split_labels(conn, board, row, labels)
                 updates["labels"] = json.dumps(labels)
+            updates.update(self._paths_update(row, args))
             for key in ("title", "body", "branch", "status_line"):
                 if key in args:
                     updates[key] = validate_text(
@@ -3473,9 +4171,7 @@ class BoardService:
                         and not self.principal.person
                         else None
                     )
-                if status == "review" or (
-                    status == "done" and board["done_needs_review"] and not self.principal.person
-                ):
+                if status == "review" or self._done_needs_review(board, row, updates):
                     done_review = status == "done"
                     self._open_review(row, board, args, updates, done_review)
             self._position(conn, row, updates, args.get("before"), args.get("after"))
@@ -3532,6 +4228,8 @@ class BoardService:
                 if updates.get("ask") is not None
                 else {"text": review_edit_text}
             )
+            ask = self._priority_note(ask, updates)
+            ask = self._reviewer_note(ask, row, updates)
             self._record_review_withdrawal(conn, row, status, reason)
             self._log(
                 conn,
@@ -3549,6 +4247,7 @@ class BoardService:
             )
             if updates.get("status") == "review":
                 self._emit(conn, row["id"], "card.review_needed", return_to=self.principal.actor)
+            self._announce_reviewer(conn, row, updates)
             return self._card(conn, task_row(conn, row["id"]), self.principal)
 
     def _handoff(
@@ -3563,6 +4262,7 @@ class BoardService:
         *,
         ask_to=None,
         type_holder=None,
+        blocks=None,
     ):
         if row["proposal_status"] in ("pending", "rejected"):
             raise ToolError(
@@ -3571,7 +4271,7 @@ class BoardService:
         self._write(board, row=row)
         if row["status"] not in ("todo", "doing"):
             raise ToolError("no: only todo or doing cards can be handed off")
-        self._holder(row)
+        self._holder(row, moving=True)
         if not self.principal.person and _waiting_on_person(row):
             raise ToolError("no: waiting on a person, they must answer via decide")
         target = self._work_actor(to, board)
@@ -3605,6 +4305,7 @@ class BoardService:
             "assignee": None if person else target,
             "ask": note if person else None,
             "ask_options": json.dumps(options),
+            "ask_blocks": blocks if person else None,
             "ask_to": target if person else None,
             "return_to": self.principal.actor if person else None,
             "flags": json.dumps(
@@ -3666,6 +4367,7 @@ class BoardService:
         return self._start_assignment(result)
 
     def ask(self, question, options=None, board=None, task=None, context="", person_reason=None):
+        options, blocks = decision_blocks.parse(options)
         with self.transaction() as conn:
             if task is not None:
                 row, b = self._get(conn, task)
@@ -3682,6 +4384,7 @@ class BoardService:
                     options,
                     context or None,
                     ask_to=recipient,
+                    blocks=blocks,
                 )
             b = self._board(conn, board, create=True)
             self._write(b, submission=True)
@@ -3696,10 +4399,55 @@ class BoardService:
                 status="review",
                 ask=question,
                 options=choices(options),
+                blocks=blocks,
                 target=recipient,
             )
 
     def decide(self, task, choice=None, reply=None, then="return", version=None):
+        audited = []
+        try:
+            return self._decide(task, choice, reply, then, version, audited)
+        except BaseException:
+            # The audit row was written inside the board transaction. The log is
+            # append-only, so a rollback after it appends a row that cancels it.
+            p = self.principal
+            for seq, card in audited:
+                try:
+                    self.ctx.db.audit(
+                        action=decide_grant.ROLLBACK_ACTION,
+                        decision="rolled_back",
+                        workspace_id=p.workspace_id,
+                        user_id=p.user_id,
+                        connection_id=p.connection_id,
+                        auth=p.auth,
+                        tool="decide",
+                        reason=f"audit_seq={seq}",
+                        target_ids=[card],
+                    )
+                except Exception as exc:
+                    log_failure(logger, "delegated decide rollback audit failed", exc)
+            raise
+
+    def _check_decider(self, row, principal, delegated):
+        """Who may answer a review that is not addressed to the board coordinator.
+
+        A completion review follows its reviewer (the owner when none is chosen); the
+        owner's own app answers only an ask addressed to its person, as for any ask.
+        """
+        if row["review_kind"] == "completion" and row["status"] == "review":
+            members = self.ctx.db.members(principal.workspace_id)
+            if not delegated and not reviewers.may_decide(row, members, principal):
+                raise ToolError(
+                    "no: only the chosen reviewer can answer this completion review"
+                    if reviewers.effective(row, members)
+                    else "no: only a signed-in workspace owner can answer this"
+                )
+            return
+        _owner(principal)
+        if not principal.person and not delegated:
+            raise ToolError("no: only a signed-in workspace owner can answer this")
+
+    def _decide(self, task, choice, reply, then, version, audited):
         with self.transaction() as conn:
             row, board = self._get(conn, task)
             p = self.principal
@@ -3710,11 +4458,27 @@ class BoardService:
                 and coordinator.actor == p.actor == row["ask_to"]
                 and row["review_kind"] == "decision"
             )
+            # An owner's own app may answer only asks addressed to that owner;
+            # seats and board coordinators are agents, never the owner's app.
+            delegated = (
+                not addressed
+                and decide_grant.answers_for(p, row)
+                and not self._agent_connection(conn, p)
+            )
             if not addressed:
-                _owner(p)
-                if not p.person:
-                    raise ToolError("no: only a signed-in workspace owner can answer this")
-            self._write(board)
+                self._check_decider(row, p, delegated)
+            if delegated:
+                # The app holds memory:write and may see the board, and its owner,
+                # as a person, may write the board's wing: what the owner could
+                # decide in the browser. The app's own write wings do not apply.
+                if (
+                    not p.policy.has_scope("memory:write")
+                    or not p.policy.can_read_wing(board["wing"])
+                    or not self._owner_writes(board["wing"])
+                ):
+                    raise ToolError("no: this connection cannot change this board")
+            else:
+                self._write(board)
             self._version(conn, row, version)
             if row["status"] != "review":
                 raise ToolError("no: card is not in review")
@@ -3792,7 +4556,60 @@ class BoardService:
                     "ask_to": row["ask_to"],
                 },
             )
+            if delegated:
+                # Inside the board transaction: a failed audit write fails the answer.
+                # A later rollback appends a cancelling row in decide().
+                seq = self.ctx.db.audit(
+                    action=decide_grant.AUDIT_ACTION,
+                    decision="ok",
+                    workspace_id=p.workspace_id,
+                    user_id=p.user_id,
+                    connection_id=p.connection_id,
+                    auth=p.auth,
+                    tool="decide",
+                    reason=f"board={board['slug']}",
+                    target_ids=[str(row["id"])],
+                )
+                audited.append((seq, str(row["id"])))
             return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def _owner_writes(self, wing):
+        """Whether the app's person, signed in, could write this wing right now."""
+        p = self.principal
+        person = sessions.person_principal(self.ctx.db, p.user_id, p.workspace_id)
+        return bool(
+            person is not None
+            and person.role == "owner"
+            and person.policy.has_scope("memory:write")
+            and person.policy.can_read_wing(wing)
+            and person.policy.can_write_wing(wing)
+        )
+
+    def _clear_coordinator_grant(self, actor, reason):
+        """Clear a ``conn:`` coordinator's stored cards:decide grant (errors propagate)."""
+        if not actor or not actor.startswith("conn:"):
+            return
+        try:
+            row = self.ctx.db.connection(actor[5:], self.principal.workspace_id)
+        except ControlError:
+            return  # no such connection: nothing to clear
+        self.ctx.db.clear_decide(row["id"], reason=reason, user_id=self.principal.user_id)
+
+    def coordinator_actors(self):
+        """Every board coordinator actor in this workspace (archived boards included)."""
+        with self.store.connection() as conn:
+            return frozenset(
+                r[0]
+                for r in conn.execute(
+                    "SELECT coordinator FROM boards WHERE coordinator IS NOT NULL"
+                )
+            )
+
+    def _agent_connection(self, conn, p):
+        """A project seat or any board's coordinator: agent machinery, not an owner's app."""
+        return decide_grant.is_seat(self.ctx.db, p.connection_id, p.client) or bool(
+            conn.execute("SELECT 1 FROM boards WHERE coordinator=? LIMIT 1", (p.actor,)).fetchone()
+        )
 
     def needs_me(self, format="list"):
         if not self.principal.policy.has_scope(
@@ -3815,9 +4632,10 @@ class BoardService:
                 origin_pending=self._origin_pending,
                 origin_blocks_approval=lambda row: (
                     self._awaits_origin_release(row)
-                    and not self._can_release_origin(self.principal, row)
+                    and not self._routine_origin_release(self.principal, row)
                 ),
                 ask_owner=self._ask_owner,
+                reviewing=self._reviewing(),
             )
             approvals = self.approvals_for_me()
             origin_numbers = {
@@ -3845,7 +4663,39 @@ class BoardService:
             return result
         if self.principal.role == "owner":
             groups["coordinator_waiting"] = self._coordinator_waiting()
+            groups["orchestrator_failing"] = self._orchestrator_failing()
+            groups["orchestrator_stalled"] = self._orchestrator_stalled()
+            if self.principal.person:
+                groups["model_roles"] = self._missing_model_roles()
+                groups["count"] += len(groups["model_roles"])
         return groups
+
+    def _orchestrator_stalled(self):
+        if not self.principal.person:
+            return []
+        from commonplace.orch import stall
+
+        return [
+            item
+            for item in stall.stalled(self.ctx.gateway, self.principal.workspace_id)
+            if self._visible_board_slug(item["board"])
+        ]
+
+    def _orchestrator_failing(self):
+        if not self.principal.person:
+            return []
+        from commonplace.orch import triggers
+
+        return [
+            item
+            for item in triggers.failing(self.ctx.gateway, self.principal.workspace_id)
+            if self._visible_board_slug(item["board"])
+        ]
+
+    def _visible_board_slug(self, slug):
+        with self.store.connection() as conn:
+            row = conn.execute("SELECT wing FROM boards WHERE slug=?", (slug,)).fetchone()
+        return row is not None and self.principal.policy.can_read_wing(row["wing"])
 
     def seed_card(
         self,
