@@ -8,6 +8,7 @@
   - Thread-ID canonicalisation regressions refuse every non-canonical reviewer form at filing and successor registration, accept T3-shaped IDs, hide legacy rows on every read, and bound the store queries of a 500-drawer batch.
 
   - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
+  - Fourteen metadata-console regression families over genuine HTTP sessions/connections and synthetic isolated stores.
 
   - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
   - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
@@ -147,6 +148,8 @@
 
 - **Promises:**
   - Project model and escalation regressions run through `tests/test_projects_escalation.py`, `tests/test_projects_escalation_unit.py`, `tests/projects_view.mjs` and the real-browser `tests/workbench_e2e/test_project_models.py`.
+
+  - New tests begin with a base-safe assertion before importing implementation modules; cursor/privacy/rate/write and lifecycle assertions cover the delivered surface.
 
   - The pinned handoff baseline in `tests/test_handoff_adversarial_off_perf.py` overlays only leaf or board modules the current board code imports (now including `commonplace/decide_grant.py` and `mempalace/deadline.py`); the pinned gateway, policy and handoff sources stay at the baseline commit.
 
@@ -342,6 +345,8 @@
 
 - **How it fails:**
 
+  - Authority, content leaks, domain read writes, stalled decoding and stale generations fail concrete assertions.
+
   - Regression assertions compare complete scoped payloads with local outputs, including ranking and result caps.
 
   - Base-only regressions must be AssertionErrors, with identical test bytes and explicit rebase provenance.
@@ -391,6 +396,8 @@
 
 
 - **Tests:**
+
+  - The selected read/UI families, focused Admin/web controls, synthetic browser acceptance and documentation obligations.
 
   - Large signed integers, booleans and Compact numerics cover wing, room and hall; locus-less cases cover siblings, suggestions and the 50-result cap.
 
