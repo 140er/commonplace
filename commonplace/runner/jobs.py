@@ -28,6 +28,7 @@ PRESPAWN_CODES = frozenset(
         "binding_not_acked",
         "job_invalid",
         "t3_missing",
+        "low_memory",
         "busy",
     )
 )
