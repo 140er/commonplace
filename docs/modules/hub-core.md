@@ -39,11 +39,15 @@
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
+  - `/app/join` (workspace invites) counts against the per-address credential rate limit, like `/app/login`.
+
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
   - Instance-admin index figures use bounded read-only SQLite and a fixed 100-byte HNSW header; the figure reader never calls a worker or collection. Non-admin status keeps its existing shape. The paginated console shows unknown reasons without content or paths. `tests/test_index_stats_readonly.py` and `tests/test_admin_instance_ui.py` cover this boundary. Admin overview stays additive; 500 ms queries obey page deadlines. Missing pointers with generation siblings, closed WAL, busy stores and symlinks fail with stable reasons; non-admin sections stay 404. `tests/test_index_stats_r1.py` covers review regressions. Size figures (drawers, vectors, HNSW capacity) cover private wings and are shown only to a current owner of that workspace, else `private_scope`; `tests/test_index_stats_private_scope.py` covers this.
 
-  - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
+  - Only the explicit worker-memory observation opt-out and `MALLOC_ARENA_MAX` are added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
+
+  - Every launched worker gets `MALLOC_ARENA_MAX=2` unless the operator sets a non-empty value, which caps the number of glibc malloc arenas its request threads use. This limits allocator retention under concurrent calls only; first-load memory of the index and model is unchanged.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 

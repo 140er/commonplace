@@ -37,6 +37,7 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   add('workspace-settings', 'Workspace settings', 'Workspace', { href: '#/settings', keywords: 'voice webhooks phone notifications plan' });
   if (can_admin === true) add('compute-map', 'Compute map', 'Workspace', { href: '#/compute-map', keywords: 'topology machines network sites routes' });
   if (can_admin === true) add('admin', 'Admin', 'Workspace', { href: '#/admin' });
+  add('workspaces', 'Switch workspace', 'Workspace', { action: 'workspaces', keywords: 'change team join' });
   add('decide', 'Decision queue', 'Workspace', { href: '#/decide' });
   add('shortcuts', 'Keyboard shortcuts', 'Workspace', { action: 'shortcuts', key: '?' });
   add('sign-out', 'Sign out', 'Workspace', { action: 'logout' });
