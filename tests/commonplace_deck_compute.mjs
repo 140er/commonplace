@@ -60,6 +60,71 @@ for (const count of [1, 2, 5, 8, 12]) for (const long of [false, true]) for (con
   });
 }
 
+// ---------- the topology case: no link through a device or a label, every link whole ----------
+
+const { largeFixture } = await import('./topology_fixture.mjs');
+const { DISC, plateOf } = await import(new URL('topology-route.js', STATIC));
+const segmentDistance = (p, a, b) => {
+  const dx = b.x - a.x, dy = b.y - a.y, span = dx * dx + dy * dy;
+  const t = span ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / span)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+};
+
+for (const phone of [false, true]) test(`topology geometry: ${phone ? 'phone' : 'desktop'} field, the fixture's links run between devices, around labels, and are whole`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const metrics = phone ? compute.METRICS.phone : compute.METRICS.desktop, field = phone ? { width: 358, height: 520 } : { width: 860, height: 600 };
+  const core = createMapCore({ labels: metrics.labels, layout: 'layered', metrics, route: true });
+  core.apply(fixture());
+  const { model, positions } = core, places = core.links();
+  const plates = model.nodes.map(node => ({ key: node.key, ...plateOf({ kind: node.kind, sub: Boolean(node.role || node.missing || node.stale || node.conflicted) }, positions[node.key], metrics.labels) }));
+  assert.equal(places.size, model.links.length);
+  for (const link of model.links) {
+    const { points } = places.get(link.id);
+    assert.ok(points?.length >= 2, `${link.id} is routed`);
+    // Whole: it starts on one disc and ends on the other.
+    for (const [point, key] of [[points[0], link.from], [points.at(-1), link.to]]) assert.ok(Math.abs(Math.hypot(point.x - positions[key].x, point.y - positions[key].y) - DISC) < 1, `${link.id} meets ${key}`);
+    for (let i = 1; i < points.length; i++) {
+      const [a, b] = [points[i - 1], points[i]];
+      assert.ok(Math.hypot(b.x - a.x, b.y - a.y) > 0, 'no empty segment');
+      for (const node of model.nodes) assert.ok(segmentDistance(positions[node.key], a, b) >= DISC - 0.5, `${link.id} passes through ${node.key}`);
+      for (const plate of plates) assert.ok(!touches({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, plate), `${link.id} crosses the label of ${plate.key}`);
+    }
+    for (const dot of [places.get(link.id).from, places.get(link.id).to]) {
+      for (const plate of plates) assert.ok(!(dot.x + 7 > plate.x && dot.x - 7 < plate.x + plate.width && dot.y + 7 > plate.y && dot.y - 7 < plate.y + plate.height), `a status mark sits in the label of ${plate.key}`);
+      for (const node of model.nodes) assert.ok(Math.hypot(dot.x - positions[node.key].x, dot.y - positions[node.key].y) > DISC + 3, `a status mark sits on ${node.key}`);
+    }
+  }
+  for (let i = 0; i < plates.length; i++) for (const other of plates.slice(i + 1)) assert.ok(!overlaps(plates[i], other), `labels of ${plates[i].key} and ${other.key} overlap`);
+  const scene = core.scene();
+  assert.equal((scene.match(/<path class="topo-route" d="M[^"]*"\/><text class="topo-method"/g) || []).length, model.links.length, 'every link is one continuous path');
+  assert.doesNotMatch(scene.split('<g class="topo-nodes">')[0], /<line /);
+  assert.equal((scene.match(/class="topo-label-plate"/g) || []).length, model.nodes.length);
+  assert.ok(scene.indexOf('class="topo-label-plate"') > scene.indexOf('<g class="topo-nodes">'));
+  // The first view uses the card: every disc, plate and route inside it with an even 32px, and the limiting axis exactly that.
+  core.fit(field.width, field.height, { remember: false }, { pad: 32 });
+  const { view } = core, edges = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
+  const see = (x, y) => { edges.left = Math.min(edges.left, x * view.k + view.x); edges.right = Math.max(edges.right, x * view.k + view.x); edges.top = Math.min(edges.top, y * view.k + view.y); edges.bottom = Math.max(edges.bottom, y * view.k + view.y); };
+  for (const plate of plates) { see(plate.x, plate.y); see(plate.x + plate.width, plate.y + plate.height); }
+  for (const key of Object.keys(positions)) { see(positions[key].x - DISC, positions[key].y - DISC); see(positions[key].x + DISC, positions[key].y + DISC); }
+  assert.ok(edges.left >= 31.5 && edges.top >= 31.5 && field.width - edges.right >= 31.5 && field.height - edges.bottom >= 31.5, `padding ${JSON.stringify(edges)}`);
+  assert.ok(Math.min(edges.left, edges.top, field.width - edges.right, field.height - edges.bottom) < 40, 'the graph fills the card on its limiting axis');
+});
+
+test('a map too big to route keeps straight links and still draws', () => {
+  const core = createMapCore({ labels: 160, layout: 'layered', metrics: { gx: 200, gy: 128, lane: 56 }, route: true });
+  core.apply(largeFixture(300));
+  const scene = core.scene();
+  assert.match(scene, /<line /);
+  assert.ok(scene.includes('data-key='));
+});
+
+test('the Deck tab bar is one row of equal columns for two, three and four sections', async () => {
+  const css = await readFile(new URL('deck.css', STATIC), 'utf8');
+  assert.match(css, /\.m-tabs\[data-count="4"\] \{ grid-template-columns: repeat\(4, 1fr\); \}/);
+  assert.match(css, /\.m-tabs\[data-count="3"\] \{ grid-template-columns: repeat\(3, 1fr\); \}/);
+  assert.match(css, /\.m-tabs\[data-count="2"\] \{ grid-template-columns: repeat\(2, 1fr\); \}/);
+});
+
 const { escape: e } = await import(new URL('api.js', STATIC));
 const compute = await import(new URL('deck-compute.js', STATIC));
 const machines = [
@@ -346,7 +411,7 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
   const { readdir } = await import('node:fs/promises');
   const files = await readdir(STATIC);
   assert.ok(!files.includes('deck-topology.js'), 'the old hub map is gone');
-  assert.deepEqual(files.filter(name => /^(?:deck-)?topology.*\.(?:js|css)$/.test(name)).sort(), ['topology-detail.css', 'topology-detail.js', 'topology-icons.js', 'topology-layout.js', 'topology-map.js', 'topology.css']);
+  assert.deepEqual(files.filter(name => /^(?:deck-)?topology.*\.(?:js|css)$/.test(name)).sort(), ['topology-detail.css', 'topology-detail.js', 'topology-icons.js', 'topology-layout.js', 'topology-map.js', 'topology-route.js', 'topology.css']);
   const users = [];
   for (const name of files.filter(name => name.endsWith('.js'))) if ((await readFile(new URL(name, STATIC), 'utf8')).includes('topology-map.js')) users.push(name);
   assert.deepEqual(users.sort(), ['app.js', 'deck-compute.js', 'topology-detail.js'].filter(name => name !== 'topology-detail.js'));

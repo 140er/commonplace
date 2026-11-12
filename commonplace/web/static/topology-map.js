@@ -11,7 +11,8 @@
 import { escape as esc } from "./api.js";
 import { KINDS, kindOf } from "./topology-icons.js";
 import { createNodePanel } from "./topology-detail.js";
-import { autoLayout, fitView, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
+import { autoLayout, fitView, layeredLayout, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
+import { DISC, plateOf, routeLinks } from "./topology-route.js";
 
 export const MAP_PATH = "/api/topology";
 export const STATES = ["up", "degraded", "down", "unknown"];
@@ -94,9 +95,24 @@ export function statusDot(state, at, title, end = "") {
 
 export const nodeLabel = (node, words = STATUS_TEXT) => `${node.name}, ${KINDS[node.kind].label}${node.role ? `, ${node.role}` : ""}.${node.status === "none" ? "" : ` Status: ${words[node.status]}.`}${node.missing ? " Not recorded." : ""}${node.stale ? " Stale." : ""}${node.conflicted ? " Has a conflict." : ""}`;
 
+const subOf = (node) => [node.role, node.missing && "not recorded", node.stale && "stale", node.conflicted && "conflict"].filter(Boolean).join(" · ");
+
+/** Every point the drawn map covers: each device's disc and label plate, and the bends of its routes. */
+function drawnPoints(model, positions, labels, places) {
+  const points = [];
+  for (const node of model.nodes) {
+    const at = positions[node.key];
+    if (!at) continue;
+    const plate = plateOf({ kind: node.kind, sub: !!subOf(node) }, at, labels);
+    points.push({ x: at.x - DISC - 6, y: at.y - DISC - 6 }, { x: at.x + DISC + 6, y: at.y + DISC + 6 }, { x: plate.x, y: plate.y }, { x: plate.x + plate.width, y: plate.y + plate.height });
+  }
+  for (const place of places?.values() || []) for (const p of place.points || []) points.push(p);
+  return points;
+}
+
 function nodeMarkup(node, at, { on, dim, sel, words, labels }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
-  const sub = [node.role, node.missing && "not recorded", node.stale && "stale", node.conflicted && "conflict"].filter(Boolean).join(" · ");
+  const sub = subOf(node);
   const label = esc(nodeLabel(node, words));
   // A plate behind the label hides whatever line passes under it, so a label is never struck through.
   // The hub's label sits above it: every line leaves the hub downwards, so below it each one would run under the label.
@@ -112,16 +128,16 @@ function linkMarkup(link, at, names, { on, dim, words }) {
   const from = names.get(link.from), to = names.get(link.to);
   const ends = [["from", from], ["to", to]].filter(([end]) => link.status[end] !== "none").map(([end, name]) => ` ${name} end: ${words[link.status[end]]}.`).join("");
   const label = `${from} to ${to}, ${method}${link.via ? ` via ${link.via}` : ""}.${ends}${link.missing ? " Not recorded." : ""}${link.stale ? " Stale." : ""}`;
-  return `<g class="${classes}" data-link="${esc(link.id)}"><title>${esc(label)}</title><line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/><text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
+  return `<g class="${classes}" data-link="${esc(link.id)}"><title>${esc(label)}</title>${at.points ? `<path class="topo-route" d="M${at.points.map((p) => `${p.x} ${p.y}`).join("L")}"/>` : `<line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/>`}<text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
 }
 
 /** The whole map as SVG markup. `route` is one of `model.routes`: its links and nodes are
  * marked `on` and everything else `dim`. `selected` is a node key. */
-export function renderScene(model, positions, { route = null, selected = null, words = STATUS_TEXT, labels = 0 } = {}) {
+export function renderScene(model, positions, { route = null, selected = null, words = STATUS_TEXT, labels = 0, places: given = null } = {}) {
   const onLinks = new Set(route?.hops.map((hop) => hop.link));
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
-  const places = layoutLinks(model.links, positions);
+  const places = given || layoutLinks(model.links, positions);
   const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id), dim: !!route && !onLinks.has(link.id), words }));
   const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
@@ -166,14 +182,24 @@ export function mapMemory(storage, workspace) {
 }
 
 /** The map without a DOM. Dragged places and the view survive a reload through `storage`. */
-export function createMapCore({ storage = null, workspace = "", words = STATUS_TEXT, none = false, labels = 0, columns = 0 } = {}) {
+export function createMapCore({ storage = null, workspace = "", words = STATUS_TEXT, none = false, labels = 0, columns = 0, layout = "auto", metrics = {}, route: routed = false } = {}) {
   const memory = mapMemory(storage, workspace);
   let { placed, view } = memory.load();
   let model = mapModel(null), raw = null, positions = {}, site = "", selected = null;
   const save = () => memory.save({ placed, view });
+  let routes = null;
   const place = () => {
-    const auto = autoLayout(model.nodes, model.links, { columns });
+    const auto = layout === "layered" ? layeredLayout(model.nodes, model.links, metrics) : autoLayout(model.nodes, model.links, { columns });
     positions = Object.fromEntries(model.nodes.map((node) => [node.key, placed[node.key] ? { ...placed[node.key] } : auto[node.key]]));
+    routes = null;
+  };
+  // Where each link runs: routed around the devices and labels when the host asks, straight otherwise.
+  // A link nobody could route keeps its straight line.
+  const linkPlaces = () => {
+    const straight = layoutLinks(model.links, positions);
+    if (!routed) return straight;
+    routes ??= routeLinks(model.links, model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node) })), positions, labels || 160) || new Map();
+    return new Map([...straight].map(([id, at]) => [id, routes.get(id) || at]));
   };
   const route = () => model.routes.find((item) => item.site === site) || null;
   return {
@@ -193,14 +219,18 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
       return true;
     },
     /** Move a node while it is being dragged; `moveNode` is what remembers the place. */
-    dragNode(key, x, y) { if (positions[key] && finite(x, y)) positions[key] = { x: Math.round(x), y: Math.round(y) }; },
+    dragNode(key, x, y) { if (positions[key] && finite(x, y)) { positions[key] = { x: Math.round(x), y: Math.round(y) }; routes = null; } },
     moveNode(key, x, y) {
       if (!positions[key] || !finite(x, y)) return false;
-      placed[key] = { x: Math.round(x), y: Math.round(y) }; positions[key] = { ...placed[key] }; save();
+      placed[key] = { x: Math.round(x), y: Math.round(y) }; positions[key] = { ...placed[key] }; routes = null; save();
       return true;
     },
     setView(next, { remember = true } = {}) { view = { x: next.x, y: next.y, k: next.k }; if (remember) save(); },
-    fit(width, height, options, { pad = 70, reach } = {}) { this.setView(fitView(Object.values(positions), width, height, pad, reach), options); },
+    fit(width, height, options, { pad = 70, reach } = {}) {
+      // With labels the view fits what is drawn: the discs, the plates and the routes, evenly padded.
+      const points = labels ? drawnPoints(model, positions, labels, routed ? linkPlaces() : null) : Object.values(positions);
+      this.setView(fitView(points, width, height, pad, reach, labels ? 1 : 1.25), options);
+    },
     /** Forget every dragged place: back to the automatic layout. */
     reset() { placed = {}; place(); save(); },
     setRoute(next) { site = model.routes.some((item) => item.site === next) ? next : ""; },
@@ -208,8 +238,9 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     /** Make `key` the selected node (not a toggle); false when the map has no such node. */
     choose(key) { if (!positions[key]) return false; selected = key; return true; },
     clear() { selected = null; },
-    scene() { return renderScene(model, positions, { route: route(), selected, words, labels }); },
-    links() { return layoutLinks(model.links, positions); },
+    scene() { return renderScene(model, positions, { route: route(), selected, words, labels, places: routed ? linkPlaces() : null }); },
+    links() { return linkPlaces(); },
+    get routed() { return routed; },
   };
 }
 
@@ -229,11 +260,14 @@ const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], Arrow
  *                  each label (it hides a line passing under it) and the automatic view shows
  *                  every label whole; 0 is the classic look
  *   columns        most nodes in one row
+ *   layout, metrics, route  "layered" rows with free lanes (metrics: gx, gy, lane) and links routed around
+ *                  every device and label
+ *   compact        the detail view says where a value came from once, in one quiet line
  *   own            `(key) => { physical, config, agents, sites }` tab bodies for nodes the host describes itself
  *   preselect      `(model) => key` chosen once, on the first read, when nobody chose yet. */
 export function createTopologyMap({ mount, api, storage = browserStorage(), workspace = () => "", onStartWork = null, interval = 5000, path = MAP_PATH, look = {} }) {
-  const { words = STATUS_TEXT, legend = STATES, none = false, labels = 0, columns = 0, own = null, preselect = null } = look;
-  const reach = labels ? { x: labels / 2, top: 72, bottom: 72 } : undefined, fitPad = labels ? 24 : 70;
+  const { words = STATUS_TEXT, legend = STATES, none = false, labels = 0, columns = 0, own = null, preselect = null, layout = "auto", metrics = {}, route: routed = false, compact = false } = look;
+  const reach = undefined, fitPad = labels ? 32 : 70;
   let section = null, stage = null, world = null, core = null, timer = null, run = 0, refused = false, error = "", stalled = false;
   let listeners = null, gesture = null, redraw = false, sites = null, sizes = null, panel = null, chosen = false;
   // True while the view is the automatic fit: it then follows the canvas when its size changes.
@@ -255,6 +289,8 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
   function paintNode(key) {
     const at = core.positions[key];
     nodeEls.get(key)?.setAttribute("transform", `translate(${at.x} ${at.y})`);
+    // A routed link may take another way once a device has moved: draw the scene again.
+    if (core.routed) { draw(); return; }
     const places = core.links();
     for (const link of core.model.links) {
       if (link.from !== key && link.to !== key) continue;
@@ -457,7 +493,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     host.innerHTML = renderFrame({ words, legend });
     section = host.querySelector("[data-topology]");
     stage = part("stage"); world = part("world");
-    core = createMapCore({ storage, workspace: workspace(), words, none, labels, columns });
+    core = createMapCore({ storage, workspace: workspace(), words, none, labels, columns, layout, metrics, route: routed });
     refused = false; error = ""; stalled = false; redraw = false; sites = null; fitted = false; chosen = false;
     listeners = new AbortController();
     const on = (target, kind, handler, options = {}) => target.addEventListener(kind, handler, { ...options, signal: listeners.signal });
@@ -465,7 +501,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     on(stage, "wheel", wheel, { passive: false });
     on(stage, "keydown", keys);
     on(section, "click", click);
-    panel = createNodePanel({ section, api, model: () => core.model, interval, own });
+    panel = createNodePanel({ section, api, model: () => core.model, interval, own, compact });
     on(part("route"), "change", (event) => { core.setRoute(event.target.value); draw(); });
     if (typeof ResizeObserver === "function") {
       sizes = new ResizeObserver(() => { if (fitted && core.view && !gesture) fit({ remember: false }); });

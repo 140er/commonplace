@@ -43,6 +43,64 @@ export function autoLayout(nodes, links = [], { columns = 0 } = {}) {
   return placed;
 }
 
+/** The layered layout for a host that routes its links around the nodes: the same rows as
+ * `autoLayout`, but a link that spans several rows leaves a free lane in each row it passes, so
+ * the router can run it between neighbours instead of through a device. Inside a row a node sits
+ * near the nodes it links to in the rows above and below (a few barycentre sweeps), and a node
+ * linked to another in its own row is moved next to it. A node takes `gx` of the row, a lane
+ * `lane`; rows are `gy` apart. Stable: it depends only on keys, kinds and links. */
+export function layeredLayout(nodes, links = [], { gx = 200, gy = 128, lane = 56 } = {}) {
+  const tiers = [...new Set(nodes.map((node) => TIER[node.kind] ?? LAST_TIER))].sort((a, b) => a - b);
+  const layerOf = new Map(nodes.map((node) => [node.key, tiers.indexOf(TIER[node.kind] ?? LAST_TIER)]));
+  const rows = tiers.map(() => []);
+  for (const node of [...nodes].sort(byKey)) rows[layerOf.get(node.key)].push({ id: node.key, w: gx });
+  const up = new Map(), down = new Map(), same = [];
+  const edge = (parent, child) => {
+    if (!up.has(child)) up.set(child, []);
+    if (!down.has(parent)) down.set(parent, []);
+    up.get(child).push(parent); down.get(parent).push(child);
+  };
+  for (const link of [...links].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    if (!layerOf.has(link.from) || !layerOf.has(link.to) || link.from === link.to) continue;
+    let [top, bottom] = [link.from, link.to];
+    if (layerOf.get(top) === layerOf.get(bottom)) { same.push([top, bottom]); continue; }
+    if (layerOf.get(top) > layerOf.get(bottom)) [top, bottom] = [bottom, top];
+    let last = top;
+    for (let layer = layerOf.get(top) + 1; layer < layerOf.get(bottom); layer++) {
+      const id = `lane:${link.id}:${layer}`;
+      rows[layer].push({ id, w: lane });
+      edge(last, id); last = id;
+    }
+    edge(last, bottom);
+  }
+  const index = (row) => new Map(row.map((item, i) => [item.id, i]));
+  const sweep = (layer, from, neighbours) => {
+    const at = index(rows[from]);
+    const keyed = rows[layer].map((item, i) => {
+      const near = (neighbours.get(item.id) || []).filter((id) => at.has(id)).map((id) => at.get(id));
+      return { item, pull: near.length ? near.reduce((sum, n) => sum + n, 0) / near.length : i };
+    });
+    keyed.sort((a, b) => a.pull - b.pull);
+    rows[layer] = keyed.map((entry) => entry.item);
+  };
+  for (let round = 0; round < 4; round++) {
+    for (let layer = 1; layer < rows.length; layer++) sweep(layer, layer - 1, up);
+    for (let layer = rows.length - 2; layer >= 0; layer--) sweep(layer, layer + 1, down);
+  }
+  for (const [a, b] of same) {
+    const row = rows[layerOf.get(a)], from = row.findIndex((item) => item.id === b);
+    const [moved] = row.splice(from, 1);
+    row.splice(row.findIndex((item) => item.id === a) + 1, 0, moved);
+  }
+  const placed = {};
+  rows.forEach((row, layer) => {
+    const width = row.reduce((sum, item) => sum + item.w, 0);
+    let x = -width / 2;
+    for (const item of row) { if (!item.id.startsWith("lane:")) placed[item.id] = { x: round(x + item.w / 2), y: layer * gy }; x += item.w; }
+  });
+  return placed;
+}
+
 export const clampZoom = (k) => Math.min(ZOOM.max, Math.max(ZOOM.min, k));
 
 /** Zoom by `factor` keeping the screen point (px, py) over the same map point. */
@@ -54,14 +112,14 @@ export function zoomAbout(view, px, py, factor) {
 
 export const toWorld = (view, px, py) => ({ x: (px - view.x) / view.k, y: (py - view.y) / view.k });
 
-/** The view that shows every point with room for labels; never closer than 1.25. `reach` widens
+/** The view that shows every point with room for labels; never closer than `most` (1.25). `reach` widens
  * the box the view must show by that much around the points, in map units (none by default). */
-export function fitView(points, width, height, pad = 70, reach = { x: 0, top: 0, bottom: 0 }) {
+export function fitView(points, width, height, pad = 70, reach = { x: 0, top: 0, bottom: 0 }, most = 1.25) {
   const w = width > 0 ? width : 800, h = height > 0 ? height : 600;
   if (!points.length) return { x: w / 2, y: h / 2, k: 1 };
   const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
   const left = Math.min(...xs) - reach.x, right = Math.max(...xs) + reach.x, top = Math.min(...ys) - reach.top, bottom = Math.max(...ys) + reach.bottom;
-  const k = clampZoom(Math.min(1.25, (w - pad * 2) / Math.max(1, right - left), (h - pad * 2) / Math.max(1, bottom - top)));
+  const k = clampZoom(Math.min(most, (w - pad * 2) / Math.max(1, right - left), (h - pad * 2) / Math.max(1, bottom - top)));
   return { k, x: w / 2 - ((left + right) / 2) * k, y: h / 2 - ((top + bottom) / 2) * k };
 }
 

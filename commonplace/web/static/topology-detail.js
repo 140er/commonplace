@@ -65,14 +65,15 @@ export function freshWords(at, stale) {
   return stale ? `stale${when ? `: last observed ${when}` : ""}` : when ? `observed ${when}` : "observed time unknown";
 }
 
-function meta(entry, { evidence = true } = {}) {
+function meta(entry, { evidence = true, fresh = true } = {}) {
   const line = entry.sources?.[0]?.evidence;
-  const parts = [sourceWords(entry.sources), freshWords(entry.observed_at, entry.stale)];
+  // A caller that already says "Last observed" in a header leaves the age out of each row, unless it is stale.
+  const parts = [sourceWords(entry.sources), ...(fresh || entry.stale ? [freshWords(entry.observed_at, entry.stale)] : [])];
   if (evidence && line) parts.push(`“${line}”`);
   return `<span class="td-meta${entry.stale ? " stale" : ""}" title="${esc(entry.observed_at || "")}">${parts.map(esc).join(" · ")}</span>`;
 }
 
-const row = (label, value, entry, name) => `<div class="td-row${entry?.stale ? " stale" : ""}" data-field="${esc(name)}"><dt>${esc(label)}</dt><dd><span class="td-val">${esc(value)}</span>${entry ? meta(entry) : ""}${entry?.stale ? '<span class="td-flag">stale</span>' : ""}${entry?.contenders ? `<span class="td-flag">${entry.contenders} disagreeing</span>` : ""}</dd></div>`;
+const row = (label, value, entry, name, fresh = true) => `<div class="td-row${entry?.stale ? " stale" : ""}" data-field="${esc(name)}"><dt>${esc(label)}</dt><dd><span class="td-val">${esc(value)}</span>${entry ? meta(entry, { fresh }) : ""}${entry?.stale ? '<span class="td-flag">stale</span>' : ""}${entry?.contenders ? `<span class="td-flag">${entry.contenders} disagreeing</span>` : ""}</dd></div>`;
 
 /** The read's node part as `{ found, fields }`; any shape problem reads as nothing recorded. */
 export function detailModel(payload) {
@@ -90,13 +91,13 @@ export function detailModel(payload) {
 
 const empty = (text, extra = "") => `<p class="td-empty" data-empty>${esc(text)}</p>${extra}`;
 
-export function physicalHTML(detail) {
+export function physicalHTML(detail, { compact = false } = {}) {
   const { fields } = detail;
   const rows = [];
-  if (fields.hardware) rows.push(row("Hardware", fields.hardware.value, fields.hardware, "hardware"));
-  if (fields.os) rows.push(row("OS", fields.os.value, fields.os, "os"));
+  if (fields.hardware) rows.push(row("Hardware", fields.hardware.value, fields.hardware, "hardware", !compact));
+  if (fields.os) rows.push(row("OS", fields.os.value, fields.os, "os", !compact));
   if (fields.resources?.value && typeof fields.resources.value === "object") {
-    for (const [key, label, unit] of RESOURCES) if (key in fields.resources.value) rows.push(row(label, `${fields.resources.value[key]}${unit}`, fields.resources, `resources.${key}`));
+    for (const [key, label, unit] of RESOURCES) if (key in fields.resources.value) rows.push(row(label, `${fields.resources.value[key]}${unit}`, fields.resources, `resources.${key}`, !compact));
   }
   if (!rows.length) return empty(detail.found ? DETAIL_COPY.noPhysical : DETAIL_COPY.notRecorded);
   const seen = ["hardware", "os", "resources"].map((name) => fields[name]).filter(Boolean).map((entry) => entry.observed_at).sort().pop();
@@ -181,23 +182,23 @@ export function sitesHTML(detail, names = new Map()) {
   return `<ul class="td-items" data-sites>${items.join("")}</ul>`;
 }
 
-export function panelHTML({ key, node, tab, detail, links, answer, routeFailure, names, loading, failure, own = null }) {
+export function panelHTML({ key, node, tab, detail, links, answer, routeFailure, names, loading, failure, own = null, compact = false }) {
   const kind = KINDS[node ? node.kind : kindOf()] || KINDS[kindOf()];
   const title = node?.name || key;
   const tabs = TABS.map((item) => `<button type="button" role="tab" id="td-tab-${item.id}" aria-controls="td-panel" aria-selected="${item.id === tab}" tabindex="${item.id === tab ? 0 : -1}" data-td-tab="${item.id}">${item.label}</button>`).join("");
   const body = own?.[tab] !== undefined ? own[tab] : failure ? empty(failure) : loading ? empty(DETAIL_COPY.loading)
-    : tab === "physical" ? physicalHTML(detail)
+    : tab === "physical" ? physicalHTML(detail, { compact })
       : tab === "config" ? configHTML(detail, { links, key, answer, routeFailure })
         : tab === "agents" ? agentsHTML(detail)
           : sitesHTML(detail, names);
   const flags = [node?.missing && "not recorded", detail?.stale && "stale", detail?.conflicted && "has a conflict"].filter(Boolean).join(" · ");
-  return `<header class="td-head"><div><h2 class="td-title">${esc(title)}</h2><p class="td-sub">${esc(kind.label)}${node?.role ? ` · ${esc(node.role)}` : ""}${flags ? ` · ${esc(flags)}` : ""}</p></div><button type="button" class="iconbtn bordered" data-td="close" aria-label="Close details">×</button></header><div class="td-tabs" role="tablist" aria-label="Device details">${tabs}</div><div class="td-body" id="td-panel" role="tabpanel" aria-labelledby="td-tab-${tab}" tabindex="0">${body}</div><p class="td-foot">${esc(DETAIL_COPY.readOnly)}</p>`;
+  return `<header class="td-head"><div><h2 class="td-title">${esc(title)}</h2><p class="td-sub">${esc(kind.label)}${node?.role ? ` · ${esc(node.role)}` : ""}${flags ? ` · ${esc(flags)}` : ""}</p></div><button type="button" class="iconbtn bordered" data-td="close" aria-label="Close details">${compact ? '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>' : "×"}</button></header><div class="td-tabs" role="tablist" aria-label="Device details">${tabs}</div><div class="td-body" id="td-panel" role="tabpanel" aria-labelledby="td-tab-${tab}" tabindex="0">${body}</div><p class="td-foot">${esc(DETAIL_COPY.readOnly)}</p>`;
 }
 
 /** Mounts the panel in `section` (the map's root). `model()` is the canvas's current drawable
  * model; `api` reads JSON. It reads the node on selection and again every `interval` ms while
  * the device stays selected and the page is visible, and removes itself with the markup. */
-export function createNodePanel({ section, api, model, interval = 5000, own = null, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
+export function createNodePanel({ section, api, model, interval = 5000, own = null, compact = false, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
   const doc = section.ownerDocument;
   // The panel's element exists from the first selection on, so a map nobody selects on pays nothing.
   let panel = null;
@@ -208,7 +209,7 @@ export function createNodePanel({ section, api, model, interval = 5000, own = nu
     if (!key) { if (panel) { panel.hidden = true; panel.innerHTML = ""; } shown = ""; return; }
     panel ??= mountPanel();
     const current = model();
-    const html = panelHTML({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure, own: own?.(key) || null });
+    const html = panelHTML({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure, own: own?.(key) || null, compact });
     if (html === shown) return;
     const focused = panel.contains(doc.activeElement) ? doc.activeElement.getAttribute("data-td-tab") || doc.activeElement.getAttribute("data-td") : null;
     const scroll = panel.querySelector(".td-body")?.scrollTop || 0;

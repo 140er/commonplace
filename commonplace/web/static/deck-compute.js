@@ -8,7 +8,8 @@ const STATES = { ready: 'Ready', waiting: 'Waiting for attestation', off: 'Off' 
 const MARK = { ready: 'up', waiting: 'degraded', off: 'unknown' };
 const RUNNER_WORDS = { up: STATES.ready, degraded: STATES.waiting, down: 'Down', unknown: STATES.off };
 const MACHINE_KINDS = new Set(['pc', 'mac', 'phone', 'vm', 'server', 'container']);
-const LABEL_WIDTH = 160;
+// Map units: a label's plate and the gaps of the layered layout (a link runs in the gap between neighbours).
+export const METRICS = { desktop: { labels: 160, gx: 200, gy: 128, lane: 56 }, phone: { labels: 120, gx: 160, gy: 124, lane: 44 } };
 const GENERIC_FAILURE = 'Machines could not be loaded. Try again.';
 let stylesheet;
 function styles(doc) {
@@ -60,8 +61,10 @@ function styles(doc) {
 .deck-compute .topo-name { fill: var(--text); font-weight: 500; }
 .deck-compute .topo-role { fill: var(--text-3); }
 .deck-compute .topo-method { fill: var(--text-3); }
-.deck-compute .topo-link line { stroke: var(--line-strong); }
-.deck-compute .topo-link.on line { stroke: var(--text); }
+.deck-compute .topo-link line, .deck-compute .topo-route { stroke: var(--line-strong); }
+.deck-compute .topo-route { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.deck-compute .topo-link.stale .topo-route, .deck-compute .topo-link.missing .topo-route { stroke-dasharray: 5 4; }
+.deck-compute .topo-link.on line, .deck-compute .topo-link.on .topo-route { stroke: var(--text); stroke-width: 3; }
 .deck-compute .topo-dot { stroke: var(--surface); }
 .deck-compute .topo-dot.s-up { fill: var(--ok); }
 .deck-compute .topo-dot.s-degraded { fill: var(--text-2); }
@@ -79,6 +82,12 @@ function styles(doc) {
 .deck-compute .td-tabs [role="tab"] { min-height: 44px; min-width: 44px; padding: 0; color: var(--text-3); font-size: 14px; }
 .deck-compute .td-tabs [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--text); font-weight: 500; }
 .deck-compute .td-tabs [role="tab"]:focus-visible, .deck-compute .td-body:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+.deck-compute .topo-detail .iconbtn { flex: none; width: 36px; height: 36px; min-width: 36px; padding: 0; display: inline-grid; place-items: center; border-radius: 50%; }
+.deck-compute .topo-detail .iconbtn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.deck-compute .td-row dd { min-width: 0; gap: 2px; }
+.deck-compute .td-row dt { color: var(--text-2); }
+/* Where a value came from is one quiet line under it, never louder than the value or its label. */
+.deck-compute .td-row .td-meta { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11.5px; line-height: 16px; color: var(--text-3); }
 .deck-compute .td-copy { border: 0; background: var(--bg); }
 .deck-compute .td-foot { border-top-color: var(--line); }
 @media (max-width: 999px) {
@@ -87,16 +96,14 @@ function styles(doc) {
 .deck-compute .topo-detail { grid-area: 5 / 1; max-height: none; margin-top: 18px; }
 }
 @media (max-width: 699px) {
-.deck-compute#content { padding: 18px 16px 104px; }
-.deck-compute .dc-title { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px 8px; margin-bottom: 18px; }
-.deck-compute h1 { grid-area: 1 / 1; }
-.deck-compute .dc-summary { grid-area: 2 / 1; }
-.deck-compute .dc-actions { display: contents; }
-.deck-compute .dc-actions .dc-action:first-child { grid-area: 1 / 2; }
-.deck-compute .dc-actions .dc-action:nth-child(2) { grid-area: 1 / 3; }
-.deck-compute .dc-action { min-height: 44px; padding: 0 14px; }
-.deck-compute .dc-actions .dc-primary { grid-area: 2 / 2 / 3 / 4; }
-.deck-compute .topo-stage { height: clamp(440px, 66dvh, 600px); }
+/* Room under the page for the tab bar (56px and its inset), so the legend, the controls and the details can be scrolled to. */
+.deck-compute#content { padding: 18px 16px calc(96px + env(safe-area-inset-bottom, 0px)); }
+.deck-compute .dc-title { flex-direction: column; align-items: stretch; gap: 10px; margin-bottom: 18px; }
+.deck-compute .dc-summary { width: 100%; }
+.deck-compute .dc-actions { width: 100%; margin-left: 0; gap: 8px; }
+.deck-compute .dc-action { flex: 0 0 auto; min-height: 44px; padding: 0 14px; }
+.deck-compute .dc-primary { flex: 1 1 auto; }
+.deck-compute .topo-stage { height: clamp(360px, calc(100dvh - 350px), 520px); }
 .deck-compute .topo-foot { padding-left: 4px; padding-right: 4px; }
 .deck-compute .topo-bar .btn, .deck-compute .topo-bar .iconbtn, .deck-compute .topo-bar select { min-height: 44px; }
 .deck-compute .topo-bar .iconbtn { width: 44px; border-radius: 22px; }
@@ -175,15 +182,15 @@ export function mount(context) {
   function build() {
     map?.stop();
     phone = narrow();
-    const runners = mode === 'runners';
+    const runners = mode === 'runners', metrics = phone ? METRICS.phone : METRICS.desktop;
     built = mode;
     map = createTopologyMap({
       mount: () => region('map'),
       // The screen reads the topology itself (refresh drives it); the canvas asks for what was read.
       api: (path, options) => path === MAP_PATH ? Promise.resolve(latest) : ctx.api(path, options),
-      workspace: () => `${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
+      workspace: () => `deck:${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
       interval: 0,
-      look: { labels: LABEL_WIDTH, columns: phone ? 2 : runners ? 6 : 0, preselect, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
+      look: { labels: runners ? METRICS.desktop.labels : metrics.labels, columns: phone ? 2 : runners ? 6 : 0, preselect, compact: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : { layout: 'layered', metrics, route: true }) },
     });
     map.show();
   }
