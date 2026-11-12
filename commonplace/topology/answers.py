@@ -177,6 +177,30 @@ def get_answer(graph, *, node=None, site=None, now: str) -> dict:
     }
 
 
+def _state(record) -> str:
+    seen = record.get("status") if isinstance(record, dict) else None
+    return seen if seen in model.LINK_STATUSES else "unknown"
+
+
+def status_words(graph, live) -> dict:
+    """``status.read_status`` of ``graph`` reduced to one word per node and per link end.
+
+    Reasons and times stay in the full read; a node or end the status read does not know, and
+    anything that is not a status word, is ``unknown``.
+    """
+    nodes, links = live.get("nodes", {}), live.get("links", {})
+    return {
+        "nodes": {node["key"]: _state(nodes.get(node["key"])) for node in graph["nodes"]},
+        "links": {
+            link["id"]: {
+                end: _state((links.get(link["id"]) or {}).get("ends", {}).get(end))
+                for end in ("from", "to")
+            }
+            for link in graph["links"]
+        },
+    }
+
+
 # ── topology_route ────────────────────────────────────────────────────────
 def route_answer(graph, target, origin=None, *, now: str) -> dict:
     """How to connect to a machine, or where a site is hosted."""

@@ -10,6 +10,13 @@ Only a signed-in person owner can enroll, attest, change grants, rotate credenti
 
 Coordinators are CLI-created trusted PATs explicitly listed in the machine's `requesters`; OAuth and ordinary standard or untrusted connections do not qualify. A start checks both the requester's card access and whether the worker could claim the unassigned, released `todo` card on a board whose wing is in the machine's grant. It does not assign or claim the card.
 
+Persistent orchestrator sessions use a separate job and thread binding from
+per-card starts. The existing runner loop watches boards with owner-accepted
+`[runner]` configs, without a `card.todo` trigger or splitting switch. See
+[persistent board sessions](orchestrator.md#persistent-board-session) for owner
+stop/resume, explicit blockers and uncertainty handling. No service is activated
+automatically and the host retains its existing credential scope.
+
 The worker PAT bounds tools and wing access (the card tools, `ask`, and `topology_propose`, which works only when the grant includes the `topology` wing; see `docs/topology.md`): it reads and writes exactly the wings in its machine grant (the first is its default write wing) and nothing else, through any tool. A start on a board outside the grant is refused with `no: card is not startable: outside_worker_wing: board wing '<wing>' is not in the machine's granted wings '<a>', '<b>'`. Its tools are `task_show`, `task_take_next`, `task_update`, `task_comment`, `task_heartbeat`, `task_handoff` and `ask`; it cannot coordinate starts or perform owner actions. The fixed `SPAWN_MESSAGE` tells the agent to claim only the requested card, stop if refused, and touch no other card. Card scope from the spawn message is guidance only. A worker can claim any startable todo card on a granted wing's boards. Also, a card manually assigned to the worker by an owner remains editable outside its granted wings under the existing assigned-card rule. The runner never assigns cards.
 
 ### Card context in the launch message
@@ -54,6 +61,8 @@ The fixed workspace strategy is `{"type":"root"}`, **unverified until D2**. Its 
 ## Capacity and uncertain launches
 
 `max_in_flight` (default 1, range 1–4) counts this machine's `leased`, `starting` and `uncertain` jobs, plus `started` jobs held for `STARTED_HOLD_SECONDS = 3600` after `started_at`. Lease selection enforces both that machine cap and one in-flight agent per project. This bounds “agents started in the last hour or starting.” An agent running past the one-hour hold is uncounted, so another agent may start in its checkout. A real end-of-thread bound needs D3. The hold is fixed, not a config key; hourly starts and the queue have separate limits.
+
+**Memory guard.** Before it reports `starting`, the runner reads the machine's available memory (`MemAvailable` on Linux). Under the optional config key `min_free_memory_mb` (default 256, `0` disables, up to 1048576) it reports `failed` with code `low_memory` and launches nothing. This is a point-in-time check of card starts only: it reads memory once per start, reserves nothing for an agent that has just started (several starts can pass together) and does not cover chat answers, so it lowers the risk of overloading a machine but does not rule out the OOM killer. The refusal is the job's `outcome_code`, visible through `card_start_status`; the card stays in Todo. An unreadable probe (non-Linux hosts) never blocks a start. Existing configs without the key use the default.
 
 An ambiguous launch becomes `uncertain`, never automatically queued again. Starting and its retries serialize fresh binding checks through the guarded write and commit in both orchestration modes. A reset committed first refuses the start (409); one committed after the write makes that already-starting job uncertain on the next sweep, without cancellation or relaunch. NULL legacy job epochs are also refused. It keeps its machine/project slot and blocks another start on the card. An owner sees it with `card_start_status(task)` (or `GET /api/card-starts?task=<n>`), and inspects the machine's grant and binding through `GET /api/runners`. A person owner must investigate and use `card_start_resolve(job, outcome, thread_id?)`: `started` requires a thread id; `failed` releases the slot. A late `started` result from the same machine with its stored lease token can also resolve uncertainty.
 

@@ -102,6 +102,12 @@ class Instance:
     gateway: object
 
 
+def close_handoff(gateway):
+    handoff = getattr(gateway, "handoff", None)
+    if handoff is not None:
+        handoff.close()
+
+
 @contextmanager
 def throwaway_instance(*, storage_limit=None, voice_limit=None):
     """An empty production gateway; never seed a user, token or content store.
@@ -148,8 +154,10 @@ def throwaway_instance(*, storage_limit=None, voice_limit=None):
         db = ControlDB(str(Path(directory) / "control.sqlite3"))
         stack.callback(db.close)
         supervisor = WorkerSupervisor(directory)
-        stack.callback(supervisor.stop_all)
+        # Close (not just stop_all): a handoff job still in flight can restart workers.
+        stack.callback(supervisor.close)
         gateway = Gateway(db, supervisor)
+        stack.callback(close_handoff, gateway)
         stack.callback(webhooks.stop, gateway)
         gateway.sign_in = SignIn(db=db, providers=[provider], signup=True)
         server = gateway.build_server("127.0.0.1", 0)

@@ -309,7 +309,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     }
     return visible;
   }
-  async function select(number) {
+  // A refresh re-reads the selection with { background: true }; only a pick by the user may open a closed panel.
+  async function select(number, { background = false } = {}) {
     if (stopped) return;
     rememberNote();
     const token = ++revision;
@@ -330,7 +331,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
         }
         draw();
       }
-      focus("[data-needs-title]"); onSelect(card);
+      focus("[data-needs-title]"); onSelect(card, { background });
     } catch (failure) {
       if (stopped || token !== revision) return;
       if (detailMount && !paused) detailMount.innerHTML = '<p role="alert">Could not load this card. Open it again to retry.</p>';
@@ -573,10 +574,10 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       for (const { card } of needsItems(data.needs)) cards.set(card.number, card);
       const number = settings.selected ?? selected ?? items()[0]?.number;
       // Start selection before reading holds; neither response may choose an older card.
-      const loading = number != null ? select(number) : Promise.resolve();
+      const loading = number != null ? select(number, { background: true }) : Promise.resolve();
       try { await refreshHolds(); } catch (failure) { showError("Could not load approvals. Check again before answering.", failure); }
       await loading;
-      if (!current && selected == null && items().length) await select(items()[0].number);
+      if (!current && selected == null && items().length) await select(items()[0].number, { background: true });
       draw();
     },
     select, setFilter, approve, approvePlan, confirm, decline, answer, stopHold, ask, refreshHolds,

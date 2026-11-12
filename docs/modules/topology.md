@@ -1,6 +1,6 @@
 ## topology
 
-- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`, `tests/test_topology_proposals.py`, `tests/test_topology_tools.py`, `tests/test_topology_status.py`
+- **Paths:** `commonplace/topology/`, `docs/topology.md`, `tests/test_topology_store.py`, `tests/test_topology_proposals.py`, `tests/test_topology_tools.py`, `tests/test_topology_status.py`, `tests/test_topology_graph_status.py`, `tests/test_topology_node_panel.py`
 - **Owns:**
 
   - The topology store behind the Compute map: nodes, links and site routes as structured `(subject, predicate, object)` facts in the workspace's `topology` wing, in the workspace file `topology.sqlite3` (`topology_facts`, `topology_observations`, `topology_conflicts`). `docs/topology.md` is the contract: node kinds, link methods, routes, provenance, expiry, conflicts, the secret filter and the Python read and write signatures.
@@ -13,6 +13,8 @@
 
   - `status.py` derives live status for machines, nodes and both ends of every link from signals the hub already keeps (the runner connections' last use, the chat relay's last poll, started and underway runner jobs) and the optional `status` path report of a link. `read_status(gateway, workspace_id, graph=, now=, config=)` is the one read; `derive` and `machine_status` are the pure core; `StatusConfig` holds the thresholds (arguments or `COMMONPLACE_TOPOLOGY_*` variables). No probing; a machine or path with no signal is `unknown`, never green. Rules, gaps and the signal list: `docs/topology.md`, "Live status".
 - **Promises:**
+
+  - The whole-graph answer of `topology_get` (and `GET /api/topology`) also carries `status`: `answers.status_words` reduces `status.read_status` of the same graph to one word per node and per link end, which is what the Compute map canvas draws; a node or site read has none.
 
   - Every fact keeps who observed it, when, from what verbatim evidence, and when it expires. A stale value leaves `values` and is still readable with `stale: true`; nothing is deleted.
 
