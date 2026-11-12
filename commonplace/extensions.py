@@ -34,6 +34,7 @@ MODULES = (
     "commonplace.memory_tools",
     "commonplace.skills",
     "commonplace.session",
+    "commonplace.account",
     "commonplace.webhooks",
     "commonplace.phone_push",
     "commonplace.oauth",
@@ -56,6 +57,7 @@ MODULES = (
     "commonplace.tool_policy",
     "commonplace.bots",
     "commonplace.chat_bridge",
+    "commonplace.topology",
     "commonplace.topology.extension",
 )
 

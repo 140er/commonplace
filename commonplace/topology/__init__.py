@@ -5,14 +5,21 @@ control database with provenance, expiry and conflict records; ``status`` derive
 from runner signals. See ``docs/topology.md``.
 """
 
-from . import model, status, store
+from . import (
+    model,
+    site_route_api,  # noqa: F401  registers topology_discover_site
+    status,
+    store,
+)
 from .model import TOPOLOGY_WING, Observer, SecretRefused, TopologyError
+from .proposal_api import install  # also registers topology_propose
 
 __all__ = [
     "TOPOLOGY_WING",
     "Observer",
     "SecretRefused",
     "TopologyError",
+    "install",
     "model",
     "status",
     "store",
