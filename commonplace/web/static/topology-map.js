@@ -194,7 +194,9 @@ const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], Arrow
 
 /** The Compute map screen. `show()` mounts it into `mount()`; it reads `path` again every
  * `interval` ms while the page is visible and stops by itself once its markup is replaced.
- * `onStartWork` is the action of the empty state's button; without one the button is off. */
+ * `onStartWork` is the action of the empty state's button; without one the button is off.
+ * An `interval` of 0 never reads on its own: the host calls `refresh()` when it has a new read.
+ * `select(key)` marks a device from the host without moving focus or announcing it. */
 export function createTopologyMap({ mount, api, storage = browserStorage(), workspace = () => "", onStartWork = null, interval = 5000, path = MAP_PATH }) {
   let section = null, stage = null, world = null, core = null, timer = null, run = 0, refused = false, error = "", stalled = false;
   let listeners = null, gesture = null, redraw = false, sites = null, sizes = null;
@@ -277,7 +279,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     const mine = run;
     if (!section?.isConnected) { stop(); return; }
     if (!section.ownerDocument.hidden) await load();
-    if (mine === run && !refused) timer = setTimeout(tick, interval);
+    if (mine === run && !refused && interval > 0) timer = setTimeout(tick, interval);
   }
   function zoom(factor, px, py) {
     if (!core.view) return;
@@ -417,5 +419,6 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     }
     void tick();
   }
-  return { show, stop, refresh: () => (section?.isConnected ? load() : undefined) };
+  function mark(key) { if (section?.isConnected && core.positions[key] && core.selected !== key) { core.select(key); draw(); } }
+  return { show, stop, select: mark, refresh: () => (section?.isConnected ? load() : undefined) };
 }

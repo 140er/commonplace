@@ -75,7 +75,8 @@ function harness({ bots = [{ id: 'general', kind: 'general' }], rows = machines,
   const f = fakeRoot(), calls = [], nav = [], data = { rows, bots, error };
   const api = async (path, options) => {
     calls.push([path, options]);
-    assert.ok(['/api/runners', '/api/bots'].includes(path), path);
+    assert.ok(['/api/runners', '/api/bots', '/api/topology/map'].includes(path), path);
+    if (path === '/api/topology/map') throw Object.assign(new Error('Not found'), { status: 404 });
     if (path === '/api/runners') { if (data.error) throw data.error; return { machines: data.rows }; }
     return { bots: data.bots };
   };
@@ -91,7 +92,7 @@ test('readiness is exactly enabled plus owner_attested, never verified or last-u
 
 test('real screen: counts, selection by click/keyboard, tab arrows, refresh and cleanup', async () => {
   const f = harness(); await flush();
-  assert.match(f.root.html, /1 of 3 machines ready/);
+  assert.match(f.regions.get('summary').textContent, /1 of 3 machines ready/);
   const map = f.regions.get('field').innerHTML;
   for (const word of ['Commonplace', 'Build box', 'Studio machine', 'Old tower', 'Ready', 'Waiting for attestation', 'Off']) assert.ok(map.includes(word));
   assert.doesNotMatch(map, /Revoked machine|online|agents working|proxy|CDN/i);
@@ -126,13 +127,13 @@ test('a refusal is a plain owner-only sentence with no map or raw error', async 
   const f = harness({ error: { status: 403, message: 'internal detail' } }); await flush();
   assert.match(f.root.html, /Only workspace owners can see the machines/);
   assert.doesNotMatch(f.root.html, /<svg|internal detail|role="alert"/);
-  assert.equal(f.calls.length, 1); f.ui.stop();
+  assert.equal(f.calls.filter(c => c[0] === '/api/runners').length, 1); f.ui.stop();
 });
 
 test('empty workspace keeps just the hub, and unavailable general bot hides both handoffs', async () => {
   const f = harness({ rows: [], bots: [] }); await flush();
   assert.equal((f.regions.get('field').innerHTML.match(/data-compute-node=/g) || []).length, 1);
-  assert.match(f.root.html, /No machines yet/);
+  assert.equal(f.regions.get('empty').hidden, false);
   assert.match(f.regions.get('actions').innerHTML, /href="#\/admin">Add machine/);
   assert.doesNotMatch(f.regions.get('actions').innerHTML, /Add site|Let a bot/);
   f.ui.stop();
@@ -146,7 +147,7 @@ test('one-click handoffs store the draft and navigate; never send a message', as
     f.click({ computeAction: 'site' }); f.click({ computeAction: 'map' });
     assert.deepEqual(saved, [['cmmn.deck.draft', { bot: 'general', text: 'Add a site to my map.' }], ['cmmn.deck.draft', { bot: 'general', text: 'Map my machines and sites.' }]]);
     assert.deepEqual(f.nav, ['#/bots/general', '#/bots/general']);
-    assert.deepEqual(f.calls.map(c => c[0]), ['/api/runners', '/api/bots']);
+    assert.deepEqual(f.calls.map(c => c[0]), ['/api/runners', '/api/topology/map', '/api/bots']);
     f.ui.stop();
   } finally { globalThis.sessionStorage = previous; }
 });
@@ -164,12 +165,12 @@ test('escaped server strings stay inert in SVG and configuration', async () => {
 
 test('late refresh and late stopped responses cannot replace the current screen', async () => {
   const f = fakeRoot(), pending = [];
-  const api = path => path === '/api/bots' ? Promise.resolve({ bots: [] }) : new Promise(resolve => pending.push(resolve));
+  const api = path => path === '/api/bots' ? Promise.resolve({ bots: [] }) : path === '/api/topology/map' ? Promise.reject(Object.assign(new Error('Not found'), { status: 404 })) : new Promise(resolve => pending.push(resolve));
   const ui = compute.mount({ root: f.root, api, e });
   const next = ui.refresh();
   pending[1]({ machines: [machines[1]] }); await next;
   pending[0]({ machines }); await flush();
-  assert.match(f.root.html, /0 of 1 machines ready/);
+  assert.match(f.regions.get('summary').textContent, /0 of 1 machines ready/);
   const last = ui.refresh(); ui.stop(); pending[2]({ machines }); await last;
   assert.equal(f.root.html, '');
 });
@@ -182,7 +183,7 @@ test('transient failures keep the map, while a later refusal clears machine data
   f.data.error = { status: 403 }; await f.ui.refresh();
   assert.doesNotMatch(f.root.html, /Build box|data-compute-region="field"/);
   f.data.error = null; await f.ui.refresh();
-  assert.match(f.root.html, /1 of 3 machines ready/); f.ui.stop();
+  assert.match(f.regions.get('summary').textContent, /1 of 3 machines ready/); f.ui.stop();
 });
 
 

@@ -342,17 +342,18 @@ Only a signed-in workspace owner whose policy reads the `topology` wing gets an 
 
 ## The map in the app
 
-The owner opens the map from **Compute map** under **Workspace** in the account menu, or from the command palette (`#/compute-map`). It is drawn as SVG by `commonplace/web/static/topology-map.js` with `topology-layout.js` (layout, pan and zoom maths) and `topology-icons.js` (one icon per node kind, drawn for this app). Nothing is loaded from another origin.
+The map has one home: the **Compute** screen of the Deck look (`#/compute`), for the owner. There is no second map screen, menu entry or command-palette entry. The screen reads `GET /api/topology/map` next to `/api/runners` and draws the answer as SVG with `commonplace/web/static/topology-map.js`, `topology-layout.js` (layout, pan and zoom maths) and `topology-icons.js` (one icon per node kind, drawn for this app). `deck-compute.js` is the only place that knows the shape of the read (`topologyView`). Nothing is loaded from another origin.
 
 - **Devices** are icons with the name and the role underneath. A stale device is faded with a dashed outline and says "stale"; a device with an open conflict says "conflict"; a device that a link or route names but that has no facts is drawn as an unknown device that says "not recorded".
 - **Links** are lines with a status mark at each end. A status is a shape and a word as well as a colour: circle for up, triangle for degraded, square for down, ring for unknown. Each mark and each device carries its status as text for a screen reader and as a tooltip, and the legend names the four shapes. Two methods between the same two devices run side by side.
 - **Layout** is automatic and the same on every load: rows from site to DNS or CDN, edge, machine and app, with the devices people sit at last. A device dragged somewhere stays there. Dragged places and the chosen view are remembered in the browser, per workspace; **Reset layout** forgets the places.
 - **Moving around:** drag the background to pan, scroll or pinch to zoom, or use the buttons. With the canvas focused, the arrow keys pan, `+` and `-` zoom and `0` fits everything. On a focused device, Enter selects it and Shift with an arrow key moves it.
 - **Route** highlights one site's route as a path, dims the rest, and writes the hops out in words, including a hop that is unknown or stale.
-- **Live:** the map reads again every five seconds while the tab is visible and redraws only when something changed. If a read fails, the last map stays and a line says it is not updating.
-- **Empty workspace:** the empty state has one button, "Start agent work on map". The canvas only offers it; the discovery work behind it is separate, and until that is connected the button is off and says so.
+- **Machines and detail:** a node whose `runner_id` names an enrolled runner machine opens that machine's detail (runner state, configuration, the existing actions from `/api/runners` and `/api/bots`) next to what the store says about the node. A node with no runner shows only what the store says: kind, role, status, flags, its links and the sites routed through it. Every machine, also one the store has no node for, is in a plain list under the canvas with its whole name and a 44 px target.
+- **Live:** the screen reads the map again whenever it refreshes and redraws only when something changed; it keeps no timer of its own. A failed read keeps the last map.
+- **No map:** an empty graph, a missing route (404), a refusal or a failing first read is no map. The screen then draws the runners alone, as before, with no error, no invented node, link, liveness or site.
 
-Selecting a device sends a `topology:select` event (`detail.key`) from the map's root element, which is where a detail panel attaches.
+Selecting a device sends a `topology:select` event (`detail.key`) from the canvas root, which the Compute screen listens to for its detail panel.
 
 ## Existing workspaces
 

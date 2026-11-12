@@ -1,4 +1,4 @@
-"""Compute geometry, machine states and screen lifecycle in the real ES modules."""
+"""Compute geometry, machine states, the topology canvas and screen lifecycle in the real ES modules."""
 
 import shutil
 import subprocess
@@ -9,7 +9,12 @@ def test_deck_compute():
     node = shutil.which("node")
     assert node, "Node is required for the Compute checks"
     result = subprocess.run(
-        [node, "--test", str(Path(__file__).with_name("commonplace_deck_compute.mjs"))],
+        [
+            node,
+            "--test",
+            str(Path(__file__).with_name("commonplace_deck_compute.mjs")),
+            str(Path(__file__).with_name("commonplace_deck_compute_map.mjs")),
+        ],
         capture_output=True,
         text=True,
         timeout=60,

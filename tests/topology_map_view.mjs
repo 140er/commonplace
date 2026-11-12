@@ -578,20 +578,32 @@ test("screen: show() again starts clean and an old answer cannot draw into the n
   screen.stop();
 });
 
-test("wiring: the app mounts the map in one place and the account menu links to it for the owner", async () => {
-  const app = await read("app.js");
-  assert.match(app, /import \{ createTopologyMap \} from "\.\/topology-map\.js";/);
-  assert.equal(app.split("createTopologyMap(").length - 1, 1);
-  assert.match(app, /state\.base === "#\/compute-map"\) \{\n\s+if \(!background\) topologyScreen\(\);/);
+test("wiring: the canvas is mounted by the Deck Compute screen only, and its stylesheet is loaded", async () => {
+  assert.match(await read("deck-compute.js"), /import \{[^}]*createTopologyMap[^}]*\} from '\.\/topology-map\.js';/);
+  for (const name of ["app.js", "rail.js", "palette.js"]) assert.doesNotMatch(await read(name), /createTopologyMap|compute-map/, name);
   assert.match(await read("index.html"), /<link rel="stylesheet" href="\/app\/topology\.css">/);
-  const rail = await import("../commonplace/web/static/rail.js");
-  // Under Workspace in the account menu, on the desktop rail and in the phone's menu alike.
-  for (const render of [rail.renderRail, rail.renderPhoneBar]) {
-    assert.match(render({ can_admin: true }), /<a href="#\/console">Console<\/a><a href="#\/compute-map">Compute map<\/a><\/div>/);
-    assert.doesNotMatch(render({ can_admin: false }), /compute-map/);
-  }
-  assert.match(app, /state\.base === "#\/compute-map" \? "map"/);
   const css = await read("topology.css");
   for (const state of ui.STATES) assert.ok(css.includes(`.topo-dot.s-${state}`));
-  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, "colours come from the workbench tokens");
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, "colours come from the Deck tokens");
+});
+
+test("screen: with no interval it never reads on its own, a host read arrives through refresh, select marks a device quietly", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const dom = fakeDom();
+  let reads = 0;
+  const screen = ui.createTopologyMap({ mount: () => dom.host, api: async () => { reads += 1; return fixture(); }, storage: fakeStorage(), interval: 0 });
+  screen.show();
+  await settle();
+  assert.equal(reads, 1);
+  t.mock.timers.tick(60000);
+  await settle();
+  assert.equal(reads, 1, "no poll loop");
+  await screen.refresh();
+  assert.equal(reads, 2);
+  screen.select("maple");
+  assert.match(dom.part("world").innerHTML, /class="topo-node[^"]* sel[^"]*" data-key="maple"/);
+  assert.deepEqual(dom.section().events, [], "a host selection is not announced back");
+  screen.select("maple");
+  assert.match(dom.part("world").innerHTML, / sel[^"]*" data-key="maple"/, "selecting the open device again keeps it open");
+  screen.stop();
 });
