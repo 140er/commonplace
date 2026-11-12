@@ -6,6 +6,14 @@ a signed-in person session; agents continue to use `space_read` and `space_post`
 The view shows the conversation, linked cards, permitted orchestrator status,
 linked start jobs and the Decisions count. Private status stays private.
 
+Bots are the main way to talk to a project: you tell a bot what you want, and it
+files your words as work, passes them on to the orchestrator or answers your
+questions (see [bots](bots.md)). This chat stays as the shared channel between
+people, the orchestrator and agents; a bot forwards into it. A post a bot forwards
+for you gets no front receipt, model answer, runner relay or five-minute fallback
+card, because you are already talking to the bot; the orchestrator is woken exactly
+as for any other post.
+
 ## Basic, runner and model modes
 
 **Basic mode is the default** (`provider: "none"`). Each post gets an immediate,
@@ -133,6 +141,31 @@ These limits apply to model answers, not the basic receipt or card fallback.
 | Per-person rate | 20 requests per minute. |
 | Output | At most 300 tokens. |
 | Total request deadline | 10 seconds, including connection and response reads. |
+
+## Live delivery state
+
+The chat page (`GET /api/chat/<board>`) carries a `live` object for the caller's
+own newest message, so the open pane shows where that message is without a
+reload. The pane reads every 2 seconds, and every second during the first
+minute after a send. The state comes only from recorded facts; the server
+calls no model and no outside service for it.
+
+| `state` | `reason` | Meaning |
+| --- | --- | --- |
+| `idle` | | The caller has no recent message on this board. |
+| `delivered` | `wake_pending`, `wake_sent`, `wake_retrying`, `wake_none` | The message is stored and the orchestrator's wake hook was queued, answered 2xx, failed and is being retried, or does not exist (the agent sees the message on its next check). |
+| `working` | | The orchestrator read the message with `space_read`. |
+| `answered` | | An agent posted in the chat after the message; `answer_id` is that message. |
+| `no_agent` | `none`, `gone` | The board has no orchestrator, or its connection is revoked or expired. |
+| `no_answer` | `not_picked_up`, `wake_failed`, `no_reply` | The orchestrator did not read the message within 60 seconds of being woken (5 minutes without a wake hook), every wake attempt failed, or it read the message and did not answer within 5 minutes. A later answer still ends this state. |
+
+`agent` is the orchestrator's redacted name, `at` the message's time and
+`seen_at` the time of the read; `seen_at` is present only for a caller who may
+see that agent in the console (an owner, or the member who owns the
+connection). Each person sees the state of their own message only. A read
+counts when the board's current orchestrator connection reads past the
+message; reads by people and by other agents do not. Only message ids, event
+ids and times are recorded for this, never message text.
 
 ## Privacy and verbatim storage
 
