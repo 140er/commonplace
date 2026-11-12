@@ -199,6 +199,15 @@ Host/rate/result/time/source-byte/line/output ceilings and cancellation are chec
 throughout each collection. Blocking trusted callbacks cannot be forcibly stopped;
 durable cross-job quotas/persistence and controller integration are separate.
 
+### Typed helper protocol and script runtime components
+
+`compute/protocol.py` carries the strict, bounded wire shared by the controller
+and the target helper, including chunked script uploads and the typed passive
+cache request. `compute/scripts.py` and `compute/script_sandbox.py` hold immutable
+script bundles and a default-off confined Python runtime, and
+`compute/target_helper.py` is the only target-side entry. These modules are inert
+until trusted configuration enables them and perform no remote effect on import.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and

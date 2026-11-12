@@ -3,6 +3,7 @@
 - **Paths:** `commonplace/compute/`
 - **Owns:**
 
+  - The typed helper wire (`protocol.py`), immutable script bundles (`scripts.py`), the default-off confined script runtime (`script_sandbox.py`) and the target-side entry (`target_helper.py`), plus passive cache collection in `discovery.py`.
   - Pure validation of explicitly approved, finite gateway discovery scopes.
   - Immutable crypto-aware script bundles/manifests, strict chunked target-helper wire and a default-off concrete namespace/cgroup/tmpfs-confined Python runtime; owner script REST, runtime receipts and existing exact approvals/one-use pinned SSH execution integrate those bundles.
   - Bounded passive ARP/IPv6 cache parsing and typed helper support, plus durable crypto-aware discovery reservations, owner-session REST, pinned outer SSH adapter and explicit default-off lifecycle.
