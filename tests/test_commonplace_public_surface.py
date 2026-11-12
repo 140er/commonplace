@@ -153,6 +153,7 @@ PREFIX = {
         for method in ("GET", "POST", "PATCH", "DELETE")
         for path in ("/api/skills/", "/api/skill-decks/", "/api/routines/", "/api/bots/")
     },
+    ("PUT", "/api/bots/"): "authenticated",
     **{
         (method, "/api/meetings/"): "authenticated"
         for method in ("GET", "POST", "PATCH", "PUT", "DELETE")
