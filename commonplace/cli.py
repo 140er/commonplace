@@ -242,6 +242,17 @@ def cmd_token_revoke(args) -> int:
     return 0
 
 
+def cmd_bridge(args) -> int:
+    from .chat_bridge import cli as bridge_cli
+
+    db = _db(args)
+    try:
+        run = bridge_cli.cmd_status if args.action == "status" else bridge_cli.cmd_disable
+        return run(args, db, _data_dir(args))
+    finally:
+        db.close()
+
+
 def cmd_audit(args) -> int:
     for e in _db(args).audit_entries(args.workspace, args.limit):
         print(
@@ -1189,6 +1200,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--workspace")
     s.add_argument("--by")
     s.set_defaults(func=cmd_token_revoke)
+
+    bridge = sub.add_parser("bridge", help="chat-platform installs: status and the kill switch")
+    bridge = bridge.add_subparsers(dest="action", required=True)
+    s = bridge.add_parser("status", help="list installs (no credentials are shown)")
+    s.add_argument("--workspace")
+    s.set_defaults(func=cmd_bridge, all=False)
+    s = bridge.add_parser("disable", help="switch installs off")
+    s.add_argument("--workspace")
+    s.add_argument("--all", action="store_true", help="every workspace on this hub")
+    s.set_defaults(func=cmd_bridge)
 
     s = sub.add_parser("audit")
     s.add_argument("--workspace")

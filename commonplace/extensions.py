@@ -55,6 +55,7 @@ MODULES = (
     "commonplace.projects",
     "commonplace.tool_policy",
     "commonplace.bots",
+    "commonplace.chat_bridge",
     "commonplace.topology.extension",
 )
 
