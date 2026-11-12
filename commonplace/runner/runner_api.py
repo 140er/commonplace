@@ -18,6 +18,9 @@ from . import jobs, predicate, registry, start_context
 
 MAX_BODY_BYTES = 4096
 BODY_KEYS = {
+    "sessions/lease": set(),
+    "sessions/starting": {"lease_token"},
+    "sessions/result": {"lease_token", "outcome", "thread_id", "code"},
     "lease": set(),
     "renew": {"lease_token"},
     "starting": {"lease_token"},
@@ -41,8 +44,8 @@ def _body(h, action):
         raise HTTPError(400, "invalid JSON") from None
     if not isinstance(value, dict) or value.keys() - BODY_KEYS[action]:
         raise HTTPError(400, "invalid request body")
-    required = set() if action == "lease" else {"lease_token"}
-    if action == "result":
+    required = set() if action in ("lease", "sessions/lease") else {"lease_token"}
+    if action in ("result", "sessions/result"):
         required.add("outcome")
     if required - value.keys():
         raise HTTPError(400, "missing required argument")
@@ -210,6 +213,35 @@ def register(gateway):
                 body = _body(h, action)
                 if url.query:
                     raise HTTPError(400, "invalid query")
+                if action.startswith("sessions/"):
+                    from . import sessions
+
+                    if action == "sessions/lease":
+                        payload = sessions.lease(gateway, principal.workspace_id, machine["id"])
+                        if payload is None:
+                            h.send_response(204)
+                            h.send_header("Content-Length", "0")
+                            h.send_header("Cache-Control", "no-store")
+                            h.end_headers()
+                            return
+                    elif action == "sessions/starting":
+                        payload = {
+                            "proceed": sessions.starting(
+                                gateway, principal.workspace_id, machine["id"], body["lease_token"]
+                            )
+                        }
+                    else:
+                        payload = sessions.result(
+                            gateway,
+                            principal.workspace_id,
+                            machine["id"],
+                            body["lease_token"],
+                            body["outcome"],
+                            body.get("thread_id"),
+                            body.get("code"),
+                        )
+                    send_json(h, 200, payload)
+                    return
                 if action == "lease":
                     row = jobs.lease(store, machine)
                     if row is None:

@@ -21,9 +21,11 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 |---|---|---|
 | `board_list` | — | slim, standard, full |
 | `space_list` | — | slim, standard, full; same operation as `board_list` |
-| `task_list` | `board?`, `status?`, `mine?` | slim, standard, full |
+| `task_list` | `board?`, `status?`, `mine?`, `include_snoozed?` | slim, standard, full |
 | `task_show` | `task` | slim, standard, full |
 | `task_add` | `title`, `body?`, `board?`, `status?` (`backlog` \| `todo` \| `doing`), `assignee?`, `claim?` | slim, standard, full |
+| `task_snooze` | `task`, `until?`, `timezone?`, `after_card?` | slim, standard, full; owner or the card's assignee |
+| `task_unsnooze` | `task` | slim, standard, full; owner or the card's assignee |
 | `task_comment` | `task`, `text` | slim, standard, full |
 | `task_take_next` | `board?`, `task?` | slim, standard, full |
 | `task_heartbeat` | `task` | slim, standard, full |
@@ -69,6 +71,14 @@ Default: `todo`, `doing` and `review`. `mine=true` also includes pending proposa
 | `expired` | a `doing` claim whose deadline passed; assignee is retained |
 | `working` | `doing`, heartbeat (or last update) under 30 minutes old |
 | `idle` | everything else, including a `doing` card with a stale heartbeat |
+
+Snoozed cards are left out of this list unless `include_snoozed=true` (see `task_snooze`); the board view (`GET /api/boards/<slug>/cards`) still lists them with a `snoozed` object.
+
+### task_snooze
+
+`task_snooze task=#n until=<ISO date and time> timezone=<IANA name>` hides a `backlog` or `todo` card from work offers until that time; `task_snooze task=#n after_card=<m>` waits until card `#m` on the same board is done. Give exactly one of `until` and `after_card`. `until` is a wall time in `timezone` (`2026-11-12T09:00` with `Europe/Amsterdam`) or carries its own offset (`2026-11-12T09:00+01:00`, `...Z`); it must be in the future and at most 366 days away, and a wall time the clocks skip is refused. Only a workspace owner or the card's assignee may snooze or `task_unsnooze`; both are checked writes (`rules_seq`). Snoozing again replaces the earlier snooze. Free-text conditions are not supported.
+
+While snoozed the card is not offered as work: `task_list` skips it, `task_take_next` skips it and an explicit take is refused (`snoozed`), a move to `doing` and a runner start are refused (`snoozed`), the no-progress nudge does not count it, and its card view carries `snoozed: {until, timezone, after_card, by, at, text}` and, with orchestration on, the waiting reason `snoozed` ("Snoozed until 2026-11-12 09:00 Europe/Amsterdam" or "Snoozed until #12 is done"), which takes precedence over every other reason. At the time (or when `#m` is done) it wakes by itself, once, also after a restart: the history gets "Snooze ended: ..." and a `card.woke` event is emitted (also for an unsnooze). Refusals carry `invalid_snooze`, `timezone_required`, `invalid_timezone`, `invalid_time`, `in_past`, `too_far`, `invalid_condition`, `self`, `other_board`, `condition_met`, `not_snoozable` or `not_snoozed`. Signed-in owners can also use `GET/POST /api/card-snooze/<n>` (body `{until, timezone}` or `{after_card}`) and `POST /api/card-snooze/<n>/cancel`.
 
 ### task_show
 
@@ -678,7 +688,7 @@ the card version and append an edit history row. Existing card ownership,
 visibility and optimistic-version rules still apply.
 
 Enabled card views include `waiting` (null or one reason). Precedence is
-`blocked_by`, `waits_on_person`, `claim_expired` (a `doing` card whose claim
+`snoozed` (the card is snoozed, see `task_snooze`; it refuses an explicit claim), `blocked_by`, `waits_on_person`, `claim_expired` (a `doing` card whose claim
 passed; the assignee is kept and its next update renews it), `plan_review` (the
 `plan` label asks for review), `not_released`, `no_agent` (a `todo` card while no
 live agent connection can write the board's wing), then `project_limit` for a new

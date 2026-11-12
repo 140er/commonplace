@@ -16,6 +16,7 @@ There is no I/O and no clock here: callers pass instants in, so a fake clock is 
 
     validate(schedule, tz, now)           -> canonical schedule dict, or ValueError
     next_due(schedule, tz, after, anchor) -> first due instant strictly after ``after``
+    at(text, tz)                          -> one instant from an ISO date and time (card snoozes)
     stamp(dt) / parse_stamp(text)         -> the ``YYYY-MM-DDTHH:MM:SSZ`` form stored in tables
 """
 
@@ -49,6 +50,32 @@ def zone(name) -> ZoneInfo:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
         raise ValueError("timezone must be an IANA name such as Europe/Amsterdam") from exc
+
+
+def at(text, tz=None) -> datetime:
+    """The UTC instant of an ISO 8601 date and time, to the whole second.
+
+    ``2026-11-12T09:00`` is a wall time in ``tz`` (required then); ``2026-11-12T09:00+01:00``
+    or ``...Z`` carries its own offset, which wins; a bare date means midnight. A wall time in
+    a spring-forward gap is refused; a repeated one (fall-back) means its first occurrence."""
+    message = "time must be an ISO 8601 date and time such as 2026-11-12T09:00"
+    if not isinstance(text, str) or not text.strip() or len(text) > 40:
+        raise ValueError(message)
+    try:
+        moment = datetime.fromisoformat(text.strip())
+    except ValueError:
+        raise ValueError(message) from None
+    moment = moment.replace(microsecond=0)
+    if moment.tzinfo is not None:
+        return moment.astimezone(timezone.utc)
+    if tz is None:
+        raise ValueError("a time without an offset needs a timezone such as Europe/Amsterdam")
+    zi = zone(tz)
+    wall = moment.replace(tzinfo=zi)
+    instant = wall.astimezone(timezone.utc)
+    if instant.astimezone(zi).replace(tzinfo=None) != moment:
+        raise ValueError(f"that time does not exist in {tz} (clocks skip it)")
+    return instant
 
 
 def _field(text: str, label: str, low: int, high: int) -> tuple[frozenset, bool]:

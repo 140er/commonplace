@@ -12,6 +12,7 @@ Public API (stable for the other orchestrator modules):
 - ``check_connections(config, known_names)`` (planner bindings vs workspace)
 - ``template(name)``, ``expand_prompt(text)``, ``role_instructions(config, role)``
 - ``render(config) -> str``
+- ``Config.factory``: the optional ``[factory]`` merge policy (``factory.Factory``)
 - ``diff(old, new) -> list[Change]`` and ``format_diff(changes) -> str``
 - ``experiment_violations(live, exp) -> list[str]`` and ``check_experiment(live, exp)``
 
@@ -32,7 +33,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from commonplace.redact import redact
@@ -41,6 +42,9 @@ try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
+
+if TYPE_CHECKING:
+    from .factory import Factory
 
 SCHEMA_ID = "commonplace.orchestrator/1"
 CONFIG_PATH = ".commonplace/orchestrator.toml"
@@ -64,7 +68,7 @@ MAX_ROLES = 16
 MAX_PROMPT_BYTES = 32 * 1024
 MAX_LAUNCH_CHARS = 120_000  # runner thread launch message limit
 SPAWN_RESERVE_CHARS = 1_024  # room kept for the runner's own SPAWN_MESSAGE
-MAX_AGENTS_RANGE = (1, 20)  # same bounds as project_limits.max_agents
+MAX_AGENTS_RANGE = (1, 100)  # same bounds as project_limits.MAX_AGENTS (a test pins both)
 MAX_WORKFLOWS = 32
 MAX_STEPS = 64
 MAX_STEP_CHARS = 500
@@ -121,6 +125,7 @@ CODES = frozenset(
         "connection_id_shaped",
         "connection_unknown",
         "experiment_not_allowed",
+        "factory_contradiction",  # [factory] declares a merge policy that cannot hold
     }
 )
 
@@ -176,6 +181,7 @@ class Runner:
     machine: str
     project: str
     runtime_mode: str
+    session: bool = False  # opt-in persistent board session; off unless the config sets it
 
 
 @dataclass(frozen=True)
@@ -196,6 +202,7 @@ class Config:
     runner: Runner | None = None
     triggers: tuple[Trigger, ...] = ()
     sha256: str | None = None
+    factory: Factory | None = None  # merge policy; ``None`` without ``[factory]``
 
     @property
     def has_runner(self) -> bool:
@@ -242,8 +249,12 @@ class Config:
             out["mcps"] = {name: _mcp_dict(self.mcps[name]) for name in sorted(self.mcps)}
         if self.runner is not None:
             out["runner"] = dataclasses.asdict(self.runner)
+            if not self.runner.session:
+                del out["runner"]["session"]
         if self.triggers:
             out["triggers"] = [{"on": t.on} for t in self.triggers]
+        if self.factory is not None:
+            out["factory"] = self.factory.to_dict()
         return out
 
 
@@ -259,7 +270,17 @@ class Change:
 
 TEMPLATE_DIR = Path(__file__).with_name("templates")
 
-_TOP_KEYS = ("schema", "project", "limits", "roles", "workflows", "mcps", "runner", "triggers")
+_TOP_KEYS = (
+    "schema",
+    "project",
+    "limits",
+    "roles",
+    "workflows",
+    "mcps",
+    "runner",
+    "triggers",
+    "factory",
+)
 _ROLE_KEYS = (
     "kind",
     "area",
@@ -274,6 +295,7 @@ _ROLE_KEYS = (
     "connections",
 )
 _RUNNER_KEYS = ("role", "machine", "project", "runtime_mode")
+_RUNNER_OPTIONAL_KEYS = ("session",)
 _SAFE_KEY = re.compile(r"[A-Za-z0-9_-]{1,40}")
 _SECRET_KEY_NAME = re.compile(
     r"(?i)password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
@@ -608,12 +630,16 @@ def _roles(value: object, workflows: Mapping, mcps: Mapping) -> dict[str, Role]:
 
 
 def _runner(value: object, roles: Mapping[str, Role]) -> Runner:
-    body = _table(value, "runner", _RUNNER_KEYS, _RUNNER_KEYS)
+    body = _table(value, "runner", _RUNNER_KEYS + _RUNNER_OPTIONAL_KEYS, _RUNNER_KEYS)
+    session = body.get("session", False)
+    if not isinstance(session, bool):
+        raise ConfigError("wrong_type", "runner.session", "must be true or false")
     runner = Runner(
         role=_str(body["role"], "runner.role", NAME),
         machine=_str(body["machine"], "runner.machine", MACHINE_ID),
         project=_str(body["project"], "runner.project", PROJECT),
         runtime_mode=_str(body["runtime_mode"], "runner.runtime_mode", choices=RUNTIME_MODES),
+        session=session,
     )
     role = roles.get(runner.role)
     if role is None:
@@ -718,6 +744,11 @@ def validate(data: Mapping[str, Any]) -> Config:
     mcps = _mcps(doc.get("mcps", {}))
     roles = _roles(doc["roles"], workflows, mcps)
     runner = _runner(doc["runner"], roles) if "runner" in doc else None
+    policy = None
+    if "factory" in doc:
+        from . import factory  # imports this module's helpers
+
+        policy = factory.parse(doc["factory"])
     config = Config(
         schema=SCHEMA_ID,
         project=project,
@@ -727,6 +758,7 @@ def validate(data: Mapping[str, Any]) -> Config:
         mcps=mcps,
         runner=runner,
         triggers=_triggers(doc.get("triggers", []), runner),
+        factory=policy,
     )
     if runner is not None:
         limit = MAX_LAUNCH_CHARS - SPAWN_RESERVE_CHARS
@@ -841,6 +873,8 @@ def render(config: Config) -> str:
         for mcp in config.mcps.values():
             auth = f" (auth: `{mcp.secret_ref}`)" if mcp.secret_ref else ""
             lines.append(f"- `{mcp.name}`: {mcp.url}{auth}")
+    if config.factory is not None:
+        lines += ["", "## Merge policy", "", *(f"- {line}" for line in config.factory.summary())]
     return "\n".join(lines) + "\n"
 
 

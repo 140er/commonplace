@@ -2376,7 +2376,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
-            or path == "/app/login"
+            or path in ("/app/login", "/app/join")
             or self.command == "POST"
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):

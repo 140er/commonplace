@@ -1099,3 +1099,89 @@ def test_consent_chromium_explicit_default_port_navigation(client, pytestconfig)
             assert shown, "Consent must show the validated default-port origin before navigation"
         finally:
             browser.close()
+
+
+NATIVE = "cmmn://auth/callback"
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "cmmn://auth/callback/",
+        "cmmn://auth/callback?x=1",
+        "cmmn://auth/callback#x",
+        "cmmn://auth/other",
+        "cmmn://other/callback",
+        "cmmn:auth/callback",
+        "cmmn:///auth/callback",
+        "CMMN://auth/callback",
+        "cmmn://user@auth/callback",
+        "other://auth/callback",
+        "cmmn-dev://auth/callback",
+        "cmmn*://auth/callback",
+    ],
+)
+def test_only_the_exact_native_redirect_is_registered(uri, client):
+    status, _, text = client.request(
+        "POST", "/oauth/register", {"client_name": "Native", "redirect_uris": [uri]}
+    )
+    assert status == 400 and json.loads(text)["error"] == "invalid_redirect_uri", text
+
+
+def test_native_redirect_is_not_a_confidential_client(client):
+    for method in ("client_secret_basic", "client_secret_post"):
+        status, _, text = client.request(
+            "POST",
+            "/oauth/register",
+            {
+                "client_name": "Native",
+                "redirect_uris": [NATIVE],
+                "token_endpoint_auth_method": method,
+            },
+        )
+        assert status == 400 and json.loads(text)["error"] == "invalid_client_metadata", text
+
+
+def test_native_redirect_completes_with_pkce_and_its_csp_names_the_scheme(client):
+    status, _, text = client.request(
+        "POST", "/oauth/register", {"client_name": "cmmn", "redirect_uris": [NATIVE]}
+    )
+    assert status == 201, text
+    cid = json.loads(text)["client_id"]
+    client.login()
+    path = client.authorize_path(cid, redirect_uri=NATIVE, state="s1")
+    status, headers, page = client.request("GET", path)
+    assert status == 200, page
+    assert "form-action 'self' cmmn:;" in headers["Content-Security-Policy"]
+    assert f"Code destination: {NATIVE}" in page
+    request = re.search(r'name="request" value="([^"]+)"', page)[1]
+    status, headers, text = client.request("POST", path, {"request": request, "decision": "allow"})
+    assert status == 303, text
+    location = urlsplit(headers["Location"])
+    assert f"{location.scheme}://{location.netloc}{location.path}" == NATIVE
+    code = parse_qs(location.query)["code"][0]
+    status, _, text = client.exchange(cid, code, redirect_uri=NATIVE)
+    assert status == 200 and json.loads(text)["refresh_token"], text
+
+
+@pytest.mark.parametrize("method", ["plain", None])
+def test_native_redirect_refuses_authorization_without_s256(method, client):
+    status, _, text = client.request(
+        "POST", "/oauth/register", {"client_name": "cmmn", "redirect_uris": [NATIVE]}
+    )
+    cid = json.loads(text)["client_id"]
+    client.login()
+    path = client.authorize_path(cid, redirect_uri=NATIVE, code_challenge_method=method)
+    status, headers, _ = client.request("GET", path)
+    assert status in (302, 303)
+    query = parse_qs(urlsplit(headers["Location"]).query)
+    assert query["error"] == ["invalid_request"] and "code" not in query
+    assert headers["Location"].startswith(NATIVE + "?")
+
+
+def test_https_registration_still_gets_an_origin_csp(client):
+    cid = client.register()
+    client.login()
+    status, headers, _ = client.request("GET", client.authorize_path(cid))
+    assert status == 200
+    assert "form-action 'self' https://client.example;" in headers["Content-Security-Policy"]

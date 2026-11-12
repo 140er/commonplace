@@ -15,6 +15,7 @@ import { childProgress } from "./children.js";
 import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
 import { createAdmin, boundedRequest } from "./admin.js";
 import { createRunnerBlock } from "./adminrunners.js";
+import { createInviteBlock, openWorkspaces } from "./invites.js";
 import { createConsole } from "./console.js";
 import { createBots, waitingTotal } from "./bots.js";
 import { createChat } from "./chat.js";
@@ -308,6 +309,7 @@ async function paletteCommand(item) {
     if (target && location.hash === target) void state.workbenchChat?.dock.open(); else if (target) location.hash = target;
   } else if (action === "new-board") openOnboarding();
   else if (action === "coordinator" || action === "logout") shellAction(action, item.board);
+  else if (action === "workspaces") openWorkspaces({ api, e, onError: showError });
   else if (action === "move-card" || action === "edit-card") { state.selected = item.number; openSelectedCard(action); }
   else if (action === "copy-card-link") {
     try { await navigator.clipboard.writeText(new URL(`${location.pathname}${item.href}`, location.origin).href); }
@@ -465,17 +467,19 @@ function needsView() {
   if (!state.needsUI || !content.querySelector("[data-needs-mount]")) {
     state.needsUI?.stop();
     content.innerHTML = '<div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div><div data-needs-mount></div>';
-    state.needsShown = "";
+    state.needsShown = ""; state.needsPanelClosed = false;
     state.needsUI = createNeeds({ mount: content.querySelector("[data-needs-mount]"), detailMount: panel, api, singleKeys: singleKeysEnabled,
       // Decline goes straight to the existing versioned route; approvals and answers wait as holds.
       onAction: (action, card, extra) => action === "need-reject" ? api(`/api/cards/${card.number}/approve`, { method: "POST", body: { approve: false, version: card.version, ...extra } }) : undefined,
-      onSelect(card) {
+      onSelect(card, { background = false } = {}) {
         state.selected = card.number;
+        if (!background) state.needsPanelClosed = false;
+        // A refresh updates the list and the highlight but never reopens a panel the user closed.
         // On a phone the first item is not opened over the list by itself.
-        if (!state.needsLoading || !matchMedia("(max-width:699px)").matches) panel.hidden = false;
+        if (!(background && state.needsPanelClosed) && (!state.needsLoading || !matchMedia("(max-width:699px)").matches)) panel.hidden = false;
         if (state.workbenchChat) mountWorkbenchChat();
       },
-      onClose() { closeCardPanel(); },
+      onClose() { state.needsPanelClosed = true; closeCardPanel(); },
       onAsk(card, about) {
         state.selected = card.number; mountWorkbenchChat();
         void state.workbenchChat?.dock.open({ from: document.activeElement, strip: askStrip(card, about) });
@@ -490,6 +494,8 @@ function needsView() {
   const ui = state.needsUI;
   // A card that left the queue (declined, answered) is not reopened by the refresh.
   const selected = state.githubCard ?? (needsCards().some((card) => card.number === state.selected) ? state.selected : undefined);
+  // An explicit jump to a card (GitHub return) is a pick, so it opens the panel again.
+  if (state.githubCard != null) state.needsPanelClosed = false;
   state.githubCard = null;
   void ui.show({ needs: state.needs, boards: state.boards, selected }).finally(() => { if (state.needsUI === ui) state.needsLoading = false; });
 }
@@ -1037,7 +1043,7 @@ function botsScreen() {
   title("Bots");
 }
 function adminScreen() {
-  adminUI ??= createAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, runners: createRunnerBlock({ api, e }) });
+  adminUI ??= createAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, runners: createRunnerBlock({ api, e }), invites: createInviteBlock({ api, e }) });
   adminUI.show();
   title("Workspace administration");
   navigation();

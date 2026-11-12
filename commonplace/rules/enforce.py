@@ -14,7 +14,7 @@ from .store import rules_sequence
 CHECKED_WRITES = frozenset(
     "task_add task_update task_comment task_take_next task_handoff ask space_post "
     "board_own_wing board_add space_add space_set space_own_wing memory_save memory_link fact_save handoff_start decide board_set rules_publish "
-    "task_approve card_split_done facts_import card_start card_start_cancel card_start_resolve "
+    "task_approve task_snooze task_unsnooze card_split_done facts_import card_start card_start_cancel card_start_resolve "
     "orch_config_propose orch_config_accept orch_config_write orch_config_reject "
     "orch_exp_retire orch_restore_ack orch_resume orch_force_release orch_card_start "
     "orch_journal_intent orch_journal_record orch_gate_open orch_gate_record "
