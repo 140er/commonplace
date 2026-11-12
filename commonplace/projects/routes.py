@@ -311,6 +311,11 @@ def _route(gateway, h):
     if action in ("panel_view", "panel_set"):
         panel_routes.handle(gateway, h, parts, action)
         return
+    if parts[1:] == ["learning"] and h.command in ("GET", "PATCH"):
+        from commonplace.bots import learned_routes
+
+        learned_routes.project_route(gateway, h, parts[0])
+        return
     splitting = action in ("inbox", "split")
     principal = require_principal(gateway, h) if splitting else _person(gateway, h)
     if principal is None:
@@ -326,5 +331,5 @@ def install(gateway) -> None:
         gateway.add_route(
             method, "/api/settings/orchestration", lambda h: orchestration_route(gateway, h)
         )
-    for method in ("GET", "POST", "PUT"):
+    for method in ("GET", "POST", "PUT", "PATCH"):
         gateway.add_prefix_route(method, "/api/projects/", lambda h: _route(gateway, h))
