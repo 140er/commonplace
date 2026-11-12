@@ -31,6 +31,17 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `GET /api/bots/<id>/access` | `{version, entries:[{kind,ref,mode,set_at}]}`: what a shared bot may reach (its owner, and members with a live share) |
 | `PUT /api/bots/<id>/access` | `{version, entries}`, `{version, entries}`: the owner replaces the list; web session only; `409 conflict` for a stale `version` |
 | `GET /api/bots/<id>/access/log?after=&limit=` | `{log}`: one row per change, ids and codes only |
+| `GET /api/bots/<id>/shares` | `{shares:[{user:{id,name},talk,see_shared,shared_at}]}`: the owner sees every live share, a member only their own |
+| `POST /api/bots/<id>/shares` | `{user, talk, see_shared}`, `{share}` (201 new, 200 same flags again): owner only, web session only, a current member other than the owner; `409 sharing_off`, `409 limit` |
+| `PATCH` / `DELETE /api/bots/<id>/shares/<user>` | `{talk?, see_shared?}` → `{share}`; `{ok}` (revoking again is a no-op); owner only, web session only |
+| `GET /api/bots/<id>/threads` | `{threads, own}`: the threads the caller reaches and the id of their own private thread (`null` for the owner, whose thread has no id) |
+| `POST /api/bots/<id>/threads` | `{visibility, title?}`, `{thread}`: opens the member's private thread (once); `visibility: shared` is `409 not_available` for now |
+| `PATCH /api/bots/<id>/threads/<tid>` | `{archived}`, `{thread}`: the person who opened it |
+| `GET` / `PATCH /api/bots/settings` | `{sharing, can_configure}`; any member reads, a workspace owner changes it (web session only) |
+
+Messages, stop, confirm, read and memory also take `?thread=<id>` (memory takes `?own=1` for a
+member's own notes). Without it a request acts on the caller's own thread: the owner's original
+thread, or a member's private one.
 
 The learning memory (`docs/design/bot-learning-memory.md`, first slices: the store, the switches,
 forgetting and the extractor) adds person-session routes. They are off by default and
@@ -342,6 +353,18 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   one log row per entry and one control-database audit row (kind, ref and mode only). Members
   read the list and the log. A bot that is not shared ignores the list. Machines and tools are
   listed only within the list, and the runner's own rule still decides who may start an agent.
+- Sharing and members' private threads (slice S3): the owner of a custom bot shares it with
+  chosen workspace members (`talk`: open their own private thread and write in it; `see_shared`:
+  read shared threads, which are not available yet) and revokes at any time. Sharing is off
+  until a workspace owner switches it on (`PATCH /api/bots/settings`); while it is off a share
+  is refused and members get 404. A member sees the bot in their roster with its owner and
+  talks to it in their own private thread, which no one else reaches: not the bot's owner, not
+  a workspace owner, not another member (404 on every route). Revoking takes effect on the
+  next request and stops a turn in flight: no tool runs after it, and the stored reply is a
+  fixed sentence. A member's memory notes are theirs; the owner's notes are bot-level and every
+  turn reads them. A task a member's turn filed, or a post it forwarded, reports to that
+  member's thread. Each shared bot runs one turn per thread and at most four at once; a turn
+  counts against the talker's own daily budget.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 

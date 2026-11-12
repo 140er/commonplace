@@ -299,6 +299,75 @@ class SharesMixin:
             raise Missing()
         return bot
 
+    def _scope(self, conn, bot_id, user_id, thread_id=None, write=False):
+        """The thread a call acts on, as ``(thread_id, read_from)``; :class:`Missing` when none.
+
+        The owner's original thread (``thread_id`` None) is reached as before. Anything else goes
+        through :meth:`_reach`, so a thread of another person, a share that ended and a switch
+        that is off all look like an unknown id. ``write`` also needs an open thread.
+        """
+        if thread_id is None and isinstance(bot_id, str) and isinstance(user_id, str):
+            if conn.execute(
+                "SELECT 1 FROM bots WHERE id=? AND user_id=?", (bot_id, user_id)
+            ).fetchone():
+                return None, 0
+        reach = self._reach(conn, user_id, bot_id, thread_id)
+        if write and not reach.can_write:
+            raise Missing()
+        return reach.thread_id, reach.read_from
+
+    @staticmethod
+    def _journal(conn, bot_id, user_id):
+        """The bot row for its owner or anyone who ever held a share (a turn that outlives its
+        share still closes its own journal; nothing else reaches it)."""
+        bot = (
+            conn.execute("SELECT * FROM bots WHERE id=?", (bot_id,)).fetchone()
+            if isinstance(bot_id, str) and isinstance(user_id, str)
+            else None
+        )
+        if bot is None or (
+            bot["user_id"] != user_id
+            and conn.execute(
+                "SELECT 1 FROM bot_shares WHERE bot_id=? AND user_id=?", (bot_id, user_id)
+            ).fetchone()
+            is None
+        ):
+            raise Missing()
+        return bot
+
+    @staticmethod
+    def _opened(conn, bot_id, user_id, thread_id):
+        """``thread_id`` when this person opened it (whether or not they still reach it)."""
+        if (
+            thread_id is None
+            or not isinstance(thread_id, str)
+            or conn.execute(
+                "SELECT 1 FROM bot_threads WHERE id=? AND bot_id=? AND user_id=?",
+                (thread_id, bot_id, user_id),
+            ).fetchone()
+            is None
+        ):
+            raise Missing()
+        return thread_id
+
+    def private_thread(self, bot_id, user_id) -> str | None:
+        """Id of this member's private thread with the bot, or None before they opened it.
+
+        The owner has the original thread (no row): None as well. :class:`Missing` unless the
+        caller is the owner or has a live share with ``talk``.
+        """
+        with self._tx(write=False) as conn:
+            bot = self._viewer(conn, user_id, bot_id)
+            if bot["user_id"] == user_id:
+                return None
+            if not self._live_share(conn, bot_id, user_id)["talk"]:
+                raise Missing()
+            row = conn.execute(
+                "SELECT id FROM bot_threads WHERE bot_id=? AND user_id=? AND visibility='private'",
+                (bot_id, user_id),
+            ).fetchone()
+            return row["id"] if row else None
+
     # Shares
 
     @staticmethod

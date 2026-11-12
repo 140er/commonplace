@@ -2805,10 +2805,18 @@ a canonical `mcp:x` thread but not that legacy twin; no new such twin can be
 filed. The diary probe and the read are two worker calls: a hidden
 entry filed between them with a `filed_at` older than the newest `last_n`
 entries is neither excluded nor in the window, so `total` can count it once.
-Its words and topic are never returned. `mcp:` source IDs in knowledge-graph
-fact sources, tunnel labels and drawer provenance (`source_thread`,
-`source_kept.thread`) are checked only for thread IDs and capture references,
-not resolved as T3 sources; those paths predate this room check.
+Its words and topic are never returned.
+
+`mcp:` source IDs outside rooms. The room rule (whole value, prefix-matched,
+every matching thread readable) also covers the other places a thread can be
+named: provenance fields that name a thread (`source_thread`, `source_url`,
+`source_link`, `origin_id`, `origin_link`, `approval_link`) on knowledge-graph
+facts and their sources and on drawer metadata, `source_kept.thread` and the
+`source` bundle of an add-drawer replay, and tunnel labels. A reader who cannot
+read every matching thread loses that field (the fact, drawer or tunnel stays;
+a tunnel whose label names such a thread is hidden, as for `thr_` references);
+a value naming no stored thread is unchanged. `source_file`, `source_path`,
+`source_drawer_id` and `source_closet` keep their existing checks.
 
 CLI rendering rule (replaces the earlier rule that
 every-wing policies keep worker-rendered CLI output and search diagnostics):

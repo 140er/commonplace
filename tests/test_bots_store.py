@@ -252,12 +252,14 @@ def test_forwards_and_filed_work_are_found_by_board_and_number(bots):
         {"board": "work", "space_message_id": 41, "message_id": m1}
     ]
     assert bots.bots_for_post("work", 41) == [
-        {"bot_id": first, "user_id": "u1", "message_id": m1},
-        {"bot_id": second, "user_id": "u2", "message_id": m2},
+        {"bot_id": first, "user_id": "u1", "thread_id": None, "message_id": m1},
+        {"bot_id": second, "user_id": "u2", "thread_id": None, "message_id": m2},
     ]
     assert bots.bots_for_post("work", 42) == [] and len(bots.bots_for_post("garden", 41)) == 1
     bots.work_add(first, "u1", "work", 7, m1)
-    assert bots.bots_for_card("work", 7) == [{"bot_id": first, "user_id": "u1", "message_id": m1}]
+    assert bots.bots_for_card("work", 7) == [
+        {"bot_id": first, "user_id": "u1", "thread_id": None, "message_id": m1}
+    ]
     assert bots.bots_for_card("garden", 7) == [] and bots.bots_for_card("work", 8) == []
     with pytest.raises(Missing):
         bots.forward_add(first, "u2", "work", 43, m1)

@@ -41,6 +41,8 @@
 
   - The write-side room check shares the handoff thread-reference check, including diary and checkpoint diary topics, so a room or topic naming an unreadable thread in any form is refused as not found.
 
+  - The same `mcp:` source-ID rule covers provenance fields that name a thread (fact sources, drawer metadata, `source_kept.thread`) and tunnel labels: a reader who cannot read every matching thread loses the field, or the tunnel for a label.
+
   - Write-side room checks (`_check_thread_room`, `_drawer_wings` and the checkpoint loop) share one reader per gateway call, and a checkpoint takes at most 500 items.
 
   - CLI-compatible search, for every principal, acquires structured hits and renders only after the final drawer gate, on literal-wing and fan-out paths. Its closed response vocabulary never includes structured hits; flat rendering ignores unrelated import metadata, the pure canonical formatter is shared with the owner worker path, and CLI argument restrictions remain.
