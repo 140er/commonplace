@@ -669,7 +669,10 @@ replay of recorded runs.
   role, fenced). Otherwise it is `parked` with a reason: `no_owning_card`,
   `no_owning_session`, `owner_session_gone` (lease released or expired) or
   `routing_off`. Parked findings stay in the board-wide checkpoint `findings`
-  list, and the role's next session sees them in `inbox_findings`. Liveness is
+  list. Those parked with an owner role (`owner_session_gone`, `routing_off`) also
+  appear in that role's `inbox_findings`, which is read on its own and not cut by
+  the board-wide list; `no_owning_card` and `no_owning_session` have no owner,
+  appear only in `findings` and cannot be acknowledged. Liveness is
   the lease, the one session signal the hub has; a routed finding is delivered
   to the checkpoint and proven received by the acknowledgement.
 - **No fresh agent while one with the context has capacity.** On `orch_card_start`

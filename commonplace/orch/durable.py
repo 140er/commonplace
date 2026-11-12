@@ -1877,6 +1877,16 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
                 (board, MAX_LIST),
             )
         ]
+        # Own query: ownerless parks can never be acknowledged and must not crowd a role's
+        # routed findings out of a board-wide window.
+        inbox_findings = [
+            _finding_public(row)
+            for row in conn.execute(
+                "SELECT * FROM orch_findings WHERE board=? AND owner_role=? AND state!='acked' "
+                "ORDER BY id DESC LIMIT ?",
+                (board, role, MAX_LIST),
+            )
+        ]
     view = {
         "open": [],
         "in_doubt": [],
@@ -1950,7 +1960,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         "misses": misses,
         "repairs": repairs,
         "findings": findings,
-        "inbox_findings": [f for f in findings if f["owner_role"] == role],
+        "inbox_findings": inbox_findings,
         "cards": cards,
         "unstarted": unstarted_todo(ctx, st, board_row)[:MAX_LIST],
     }

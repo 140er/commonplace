@@ -412,6 +412,31 @@ def test_fleet_review_finding_is_routed_and_retries_are_idempotent(env):
     assert code_of(exc) == "step_exists"
 
 
+def test_fleet_ownerless_parks_do_not_crowd_a_routed_finding_out_of_the_inbox(env, monkeypatch):
+    owner, card = _owned_card(env)
+    reporter = lease(env, env.b, role=OTHER_ROLE, now=at(2))
+    routed = durable.finding_report(
+        env.ctx(env.b), BOARD, OTHER_ROLE, *reporter, "r0", card=card, detail="x", now=at(3)
+    )["finding"]
+    assert routed["state"] == "routed"
+    monkeypatch.setattr(durable, "MAX_LIST", 3)
+    for index in range(1, 5):  # a card with no started agent: parked without an owner
+        loose = env.card()
+        durable.finding_report(
+            env.ctx(env.b),
+            BOARD,
+            OTHER_ROLE,
+            *reporter,
+            f"r{index}",
+            card=loose,
+            detail="y",
+            now=at(3 + index),
+        )
+    view = durable.checkpoint(env.ctx(env.owner), BOARD, ROLE, now=at(20))
+    assert routed["id"] not in [f["id"] for f in view["findings"]], "setup: window must be full"
+    assert [f["id"] for f in view["inbox_findings"]] == [routed["id"]]
+
+
 @pytest.mark.parametrize("why", ["no_owning_card", "no_owning_session", "owner_session_gone"])
 def test_fleet_finding_is_parked_with_a_reason_when_no_session_can_take_it(env, why):
     claim = lease(env, env.b, role=OTHER_ROLE)

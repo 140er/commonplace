@@ -1596,9 +1596,9 @@ def test_fleet_agent_reuse_is_a_board_override(world):
 
 
 def test_fleet_defaults_leave_a_lean_shaped_board_unchanged(world):
-    """A board whose lead and builders never call the orchestrator tools sees none of the fleet
-    rules: a person start next to a context-holding agent is not refused, and no repair, finding
-    or start-reason row appears."""
+    """The fleet rules act on the orchestrator tools only: a person start (the lean path) next
+    to a context-holding agent is not refused, and it adds no repair, finding or start-reason
+    row. The one agent start below is test setup."""
     parent = world.card()
     child = world.child_card(parent)
     world.configure()
