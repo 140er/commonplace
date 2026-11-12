@@ -248,7 +248,8 @@ class Learned:
         ).fetchone()
         notes = conn.execute(
             "SELECT COUNT(*) FROM bot_memory m JOIN bots b ON b.id=m.bot_id WHERE b.user_id=? "
-            "AND m.removed_at IS NULL AND m.owner_id IS NULL" + (" AND b.id=?" if bot_id is not None else ""),
+            "AND m.removed_at IS NULL AND m.owner_id IS NULL"
+            + (" AND b.id=?" if bot_id is not None else ""),
             args,
         ).fetchone()[0]
         return {**{k: row[k] for k in ("person", "shared", "proposed")}, "notes": notes}
