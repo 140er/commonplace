@@ -36,6 +36,8 @@ const context = {
     if (["/api/boards", "/api/needs-me", "/api/rules/count"].includes(path)) {
       return new Promise((resolve) => reads.push({ path, resolve }));
     }
+    // The shell reads the bots roster with the shared reads to fill the Bots badge.
+    if (path === "/api/bots") return Promise.resolve({ bots: [{ waiting: 2 }, { waiting: 1 }] });
     assert.ok(Object.hasOwn(values, path), `Unexpected API read: ${path}`);
     if (holdSettings) return new Promise((resolve) => settingsReads.push(() => resolve(values[path])));
     return Promise.resolve(values[path]);
@@ -43,9 +45,10 @@ const context = {
   remember: () => ({}), capture: () => () => {}, restore() {},
   navigation() { navigationCalls++; },
   mountToolPolicy() {},
+  waitingTotal: (bots) => bots.reduce((total, bot) => total + bot.waiting, 0),
   title() {}, message: (text) => text, e: (value) => String(value ?? ""), planView,
   agentsView: () => "", phonePushView: () => "", voice: { settings: () => "" },
-  mountWorkspaceOrchestration() {},
+  mountWorkspaceOrchestration() {}, mountAgentSchedules() {},
   consoleScreen() { renders++; content.innerHTML = "Console controls"; },
   showError: (error) => assert.equal(error, ""),
 };
@@ -61,6 +64,7 @@ function batch() {
 function completeView() {
   assert.equal(renders, 1, `First complete view never rendered: ${html}`);
   assert.doesNotMatch(html, /Loading/);
+  assert.equal(state.botsWaiting, 3, "The roster read fills the Bots badge");
   if (consoleCase) assert.equal(html, "Console controls");
   else {
     assert.match(html, /<h2>Free plan<\/h2>/);

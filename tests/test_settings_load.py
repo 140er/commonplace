@@ -101,6 +101,8 @@ const context = {
   // The tool policy mounts into its own section; tests/tool_policy_view.mjs covers that module.
   mountToolPolicy() {},
   voice: { settings: () => '' }, planView: () => '<h2>Free plan</h2>', agentsView: () => '<h2>Agents</h2>',
+  // Scheduled prompts mount into their own section; tests/agent_schedules_view.mjs covers that module.
+  mountAgentSchedules() {},
 };
 vm.createContext(context);
 vm.runInContext(read('api.js').replace(/export /g, '') + '\nconst e = escape;', context);
