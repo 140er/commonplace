@@ -842,11 +842,9 @@ def instance_authorized(gateway, principal, context):
     """Deny cheaply before the exact server user flag read, without app locks."""
     if principal is None or not principal.person or principal.role != "owner":
         return False
-    with read_control(gateway.db, context) as conn:
-        row = select(
-            conn, context, "SELECT is_admin FROM users WHERE id=?", (principal.user_id,)
-        ).fetchone()
-    return row is not None and row["is_admin"] == 1
+    from commonplace.instance_admin import stored_flag
+
+    return stored_flag(gateway, principal, context)
 
 
 def index_stats(gateway, context, principal, after=None):

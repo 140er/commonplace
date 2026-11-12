@@ -1,6 +1,6 @@
 ## bots
 
-- **Paths:** `commonplace/bots/`, `commonplace/bots_grant.py`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_app_grant.py`, `tests/test_bots_machines.py`, `tests/test_bots_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tests/test_bots_project_tools.py`, `tools/bots_overhead.py`
+- **Paths:** `commonplace/bots/`, `commonplace/bots_grant.py`, `docs/bots.md`, `tests/_bots_helpers.py`, `tests/test_bots_api.py`, `tests/test_bots_app_grant.py`, `tests/test_bots_machines.py`, `tests/test_bots_store.py`, `tests/test_bots_shares_store.py`, `tests/test_bots_updates.py`, `tests/test_bots_turn.py`, `tests/test_bots_project_tools.py`, `tools/bots_overhead.py`
 - **Owns:**
 
   - The web-app part of `docs/bots.md` also says where Projects, Needs me and Console moved (the Workspace group of the account menu) and that the Bots count is the number of questions waiting on the person.
@@ -25,6 +25,8 @@
 
   - `tools_machines` registers the machine tools: `list_machines` (read, stores a `machines` block hydrated per reader), `start_work` and `stop_work` (confirm tools with server-built labels; a start passes `request_key = <request id>:<step>` so the runner deduplicates it), and `run_command`, which is only offered while some machine reports that it can run commands. It also makes the `work` block read `working` while an agent start for the item is in flight.
 
+  - Sharing foundation (card #462, slice S1, `docs/design/shared-team-bots.md`): `shares.py` holds the tables (`bot_shares`, `bot_threads`, `bot_reads`, `bot_access`, `bot_access_log`) and the columns the design adds (`bots.shared`, `access_version`, `frozen_at`; `thread_id`/`author_id` on messages; `owner_id` on memory; `user_id`/`thread_id` on work and forwards; `thread_id` on pending), `Reach`, `SharesMixin` (`reach`, `share`, `revoke`, `shares`, `access_get`, `access_set`, `access_log`, thread open/list/archive, `thread_post`, `thread_reply`, `thread_messages`) and the upgrade of an existing file. `errors.py` holds the store's errors and shared helpers; `store` still exports `Missing`, `Invalid`, `Limit`, `Conflict` and `stamp`. `sharing_setting.py` is the control-side switch `bot_sharing_settings` (off by default, owner-only, one audit row per change). No route or tool uses any of it yet.
+
 - **Promises:**
 
   - A bot and its thread belong to one person; every store method takes the user id and answers `Missing` for another person's bot, so a foreign id looks like an unknown one (404).
@@ -41,6 +43,8 @@
 
   - Filed work, comments, forwarded messages, decision replies and project names are the person's own words: a title, body, text, reply or name that is not a verbatim part of the current message is refused (`not_your_words`) and nothing is written; without arguments the whole message is used. `create_work` records `bot_work`; `tell_orchestrator` posts as the person inside `chat.front.skipping()` and records `bot_forwards`, so the post gets no front receipt, model answer, runner relay or fallback card. A confirmed answer or approval runs with the item's frozen `version`; a changed item is refused with a plain sentence.
 
+  - A bot that is not shared behaves exactly as before. `BotStore.reach(user, bot, thread)` is the one decision for a thread: the owner's original thread (messages with no `thread_id`), a member's own private thread, a shared thread with the member's permission, or `Missing` (a foreign, unknown, unshared, revoked, frozen or switched-off case all look the same). A store built without the switch answers off, and a switch that raises fails closed. The owner's original-thread reads (`messages`, `unanswered`, roster last message and unread, `mark_read`, `reply_to`, request lookups) and `memory_list` only see `thread_id IS NULL` / `owner_id IS NULL`, so a member's thread or note never shows there. `share` refuses (`SharingOff`) while the switch is off, only shares a custom bot, needs `talk` or `see_shared`, is idempotent for equal flags, starts a new member's `history_from` at the newest message (a re-share never restores the old one), seeds one `project:read` grant for a board bot, and is bounded (20 shared bots per owner, 50 live shares and 25 `see_shared` members per bot, `Limit`). `access_set` is compare-and-set on `access_version`, writes one append-only log row per changed entry and nothing for an equal list; a wing grant is `Unsupported` until a wing tool exists. The request-id unique index is `(bot_id, COALESCE(thread_id,''), request_id)` for user messages, so two threads can reuse an id and one thread stays idempotent; the old per-bot index is replaced when an older file is opened.
+
 - **How it fails:**
 
   - Out-of-bound input is 400 `invalid`, the bot limit and conflicts are 409, a busy store is 429; error bodies carry fixed text, never conversation text.
@@ -56,6 +60,8 @@
 - **Tests:**
 
   - `tests/test_bots_store.py` covers bounds, append-only triggers, idempotent sends and conflicts, one reply, paging, unread, the action journal, pending compare-and-set, forwards and work lookups, memory tombstones, per-user isolation and reopening the store.
+
+  - `tests/test_bots_shares_store.py` covers the switch off by default and fail-closed, the owner-only workspace setting, opening an old-format file, the `reach` table for owner, members, private and shared threads, archived and frozen bots, share validation, idempotence, seeding, caps, revoke and re-share history, per-thread request ids, isolation of the owner's thread and notes from member data, compare-and-set access edits and log hygiene, and a second workspace.
 
   - `tests/test_bots_updates.py` covers each update (needs you, ready, done, an orchestrator reply, verbatim and marked), exactly-once on redelivery and on a repeated transition, only the filing or forwarding bot, no message for another person or for someone who lost access, no store write for a card no bot filed, a failing store never breaking the card write, roster state and unread, redacted titles, log hygiene and the schema upgrade of an existing file.
 

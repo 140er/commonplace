@@ -77,6 +77,8 @@ EXACT = {
     ("POST", "/api/goals/card"): "authenticated",
     ("GET", "/api/bots"): "authenticated",
     ("POST", "/api/bots"): "authenticated",
+    ("GET", "/api/meetings"): "authenticated",
+    ("POST", "/api/meetings"): "authenticated",
     ("GET", "/api/admin/instance/waitlist"): "authenticated",
     ("POST", "/api/admin/instance/waitlist"): "authenticated",
     **{
@@ -103,15 +105,22 @@ EXACT = {
     ("POST", "/api/phone-push"): "authenticated",
     ("DELETE", "/api/phone-push"): "authenticated",
     ("POST", "/api/phone-push/test"): "authenticated",
+    ("GET", "/api/account"): "authenticated",
+    ("GET", "/api/account/export"): "authenticated",
+    ("POST", "/api/account/deletion"): "authenticated",
+    ("DELETE", "/api/account/deletion"): "authenticated",
     ("GET", "/api/console"): "authenticated",
     ("GET", "/api/console/stream"): "authenticated",
     ("GET", "/api/chat"): "authenticated",
     ("GET", "/api/chat-settings"): "authenticated",
     ("PUT", "/api/chat-settings"): "authenticated",
+    ("GET", "/api/topology/proposals"): "authenticated",
+    ("POST", "/api/topology/proposals"): "authenticated",
     ("GET", "/api/tool-policy"): "authenticated",
     ("POST", "/api/tool-policy"): "authenticated",
 }
 PREFIX = {
+    ("GET", "/api/instance-admin/"): "authenticated",
     ("GET", "/api/admin/instance/"): "authenticated",
     ("GET", "/api/admin/workspaces/"): "authenticated",
     ("GET", "/api/task-types/connections/"): "authenticated",
@@ -134,10 +143,16 @@ PREFIX = {
     ("POST", "/api/card-snooze/"): "authenticated",
     ("POST", "/api/agent-schedules/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
+    ("GET", "/api/topology/proposals/"): "authenticated",
+    ("POST", "/api/topology/proposals/"): "authenticated",
     **{
         (method, path): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
         for path in ("/api/skills/", "/api/skill-decks/", "/api/routines/", "/api/bots/")
+    },
+    **{
+        (method, "/api/meetings/"): "authenticated"
+        for method in ("GET", "POST", "PATCH", "PUT", "DELETE")
     },
     ("GET", "/skills/decks/"): "public",
     **{
