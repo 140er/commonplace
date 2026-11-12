@@ -9,6 +9,7 @@ PROVENANCE_FIELDS = {
     "source_thread",
     "source_url",
     "source_file",
+    "source_path",
     "source_drawer_id",
     "source_closet",
 }
@@ -63,8 +64,9 @@ _PERCENT = re.compile(r"%[0-9a-f]{2}", re.IGNORECASE)
 
 # These domains mirror capture.SOURCES and import_sources.SOURCES plus the
 # grant-only native-memory route. They constrain new shadows, never legacy ids.
-_CAPTURE_SOURCES = frozenset({"claude-code", "codex"})
-_IMPORT_SOURCES = _CAPTURE_SOURCES | {
+_NATIVE_SOURCES = frozenset({"claude-code", "codex"})
+_CAPTURE_SOURCES = _NATIVE_SOURCES | {"agent-log"}
+_IMPORT_SOURCES = _NATIVE_SOURCES | {
     "cursor",
     "t3",
     "grok-bot",

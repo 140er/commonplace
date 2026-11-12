@@ -153,7 +153,7 @@ def http(env, tmp_path, monkeypatch):
         _Service(data, calls),
         _Recall(env.workspace, "other-workspace", calls),
     )
-    monkeypatch.setattr(memory_tools, "_save", lambda _ctx, args: ("memory", args["text"]))
+    monkeypatch.setattr(memory_tools, "_save", lambda _ctx, args: ("memory", args["text"], ""))
     monkeypatch.setattr(memory_tools, "_file_fact", lambda _ctx, _args: {"triple_id": 1})
     server = env.gateway.build_server("127.0.0.1", 0)
     thread = threading.Thread(
@@ -531,6 +531,7 @@ def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route):
         "memory_save": {"text": "Exact memory", "theme": "shared"},
         "fact_save": {"subject": "Avery", "predicate": "likes", "object": "tea"},
         "relaunch": {},
+        "project_panel_set": {"panel": {"format": "commonplace.panel/1", "highlights": ["Beta"]}},
     }
     if route.tool == "card_split_done":
         from commonplace.projects import orchestration

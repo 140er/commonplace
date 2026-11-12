@@ -1,7 +1,8 @@
 # System
 
 Decisions, numbers, stores and accepted residuals that hold across modules.
-`MODULES.md` says which module owns each path; this file says what the whole
+`MODULES.md` (the blocks are in `docs/modules/`) says which module owns each
+path; this file, with the sections in `docs/system/`, says what the whole
 system promises. A change that alters a decision, a number, a store or a
 residual updates this file in the same change; `docs-check` enforces that
 (see "Keeping this file current").
@@ -12,10 +13,26 @@ entry was written.
 
 ## Decisions
 
+- **Batch merge lane:** `CLAUDE.md` ("Merging pull requests") is the agent rule. A PR into `develop` merges on a gate PASS plus a quick PR check subset PASS on its exact head, squash with `--match-head-commit`, by its builder. The full suite runs per develop batch, not per PR; a red batch holds merges until a revert or fix lands. The coordinator never merges; `develop` to `main` needs the owner.
+
+- **OAuth consent navigation:** Only a consent form bound to a validated client and
+  exact registered redirect adds that redirect's parsed origin to CSP `form-action
+  'self'` and shows that same escaped origin as the code destination. Login forms and generic HTML pages remain self-only, including failed
+  login retries; a retry that renders authenticated consent gets the same single
+  origin allowance. Other CSP directives, PKCE, state and exact redirect matching
+  are unchanged. Redirect hosts must be DNS labels with numeric ports; IPv6 literals are refused because Chromium
+  ignores them in CSP host-sources; schemes remain HTTPS or loopback HTTP. New registrations
+  and authorization GET/POST reject unsafe legacy registrations locally before
+  rendering or redirecting. HTTPS hosts ending in digits or `0x` hex must be canonical
+  dotted-quad IPv4. Registered-but-invalid errors request re-registration; missing
+  registrations retain their separate error. Live redirect registrations must be
+  inventoried before deploy; that inventory is not performed here. No stored client
+  data is migrated.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck
-  inventories bind the decoded path ID to the authenticated workspace before any
+  inventories (the runtime panel's one write is the owner's machine requester edit: one owner-only add or remove per request on the stored list) bind the decoded path ID to the authenticated workspace before any
   projection source read. Members and owner connections receive the exact
   person-owner refusal; foreign workspace IDs are concealed with 404. Personal
   data remains workspace-local; no global directory or mutation action is added.
@@ -28,6 +45,21 @@ entry was written.
   `can_admin_instance:false`; data routes always recheck authority. Signed-out keeps
   the existing gateway 401 challenge. No authority extends to other workspaces’ personal data.
   The installed route inventory mirrors both authenticated Admin GET prefixes.
+
+- **Pre-push quick check:** `git push` runs `commonplace.guards.prepush` on the
+  files the push changes (git's pre-push input, diffed against the remote tip or
+  the development branch): ruff check and format on changed Python, other
+  detected stacks, `docs-check` against the base, and the fast tests whose
+  names match the changed modules. Default budget 60 s (`--budget` or
+  `COMMONPLACE_PREPUSH_BUDGET`) covers all steps together: a step that is
+  still running when it ends is stopped, later steps are not started, and the
+  run lists them as skipped or cut off. A failed check blocks the push (exit 1);
+  an incomplete run does not, and never prints a pass. Every run states that it
+  is a quick check, not the full suite or CI. The hooks are one pair of shell
+  scripts in the clone's shared hooks directory, written by
+  `python -m commonplace.guards.hooks install`; each run picks the environment
+  of the worktree it runs in (`COMMONPLACE_PYTHON`, `.venv`, `VIRTUAL_ENV`,
+  `python3`) and, when none has the tools, exits with the setup command.
 
 - **Admin read and lifecycle bounds:** New projections use an existing SQLite
   `mode=ro` connection, connection-local `query_only`, at most 250 ms busy/connect
@@ -81,6 +113,13 @@ Stop old processes before update and explicitly reinstall
 transcript-only or uninstall: unchanged service restart policies retry old rejected
 configs. No deployment, replacement importer or memory-coverage completion is claimed.
 
+The generic `agent-log` capture source extends feed token selection to its own
+capture token, still never an import credential. Its records name `agent` and
+`session_id`; the capture identity `<agent>:<session_id>` lives in the filing
+actor's private namespace, so privacy, opt-in, cadence and idempotency are those
+of the native sources. Native agent names are reserved and a stream cannot carry
+records of another agent or session. No Cursor database reader is claimed.
+
 ### Runner-start void semantics and limits
 
 - A same-step retry of an unvoided step returns the stored job; any mismatch is a 409 with the stored step.
@@ -119,11 +158,21 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 ### Rules initialization deadline
 
+- The read deadline lives in the stdlib-only `mempalace/deadline.py`; `commonplace.rules.checks` wraps it with its own clock, and the fact readers import the leaf instead of rules. Behaviour is unchanged. The reason is test selection: a function-level import of rules from the knowledge graph made nearly every change reach most test files, which pushed quick per-PR checks to the full suite.
+
 - Owner summary-edit checks use a fixed injection clock and a forced-expiry regression, retaining verbatim injection and acceptance assertions without changing the production deadline.
 
+- Rules-injection functional tests run on a frozen deadline clock and a slow-host regression re-runs them with a clock that exhausts the budget on every read; the production 80 ms budget and its fail-open empty text are unchanged.
+- Onboarding tests that assert startup content opt into the same frozen clock and run the installed startup hook with only its 0.4 s hub allowance lifted; a slow-hub regression re-runs them with every gateway POST slower than that allowance. The production budgets and fail-open notices are unchanged.
 - Shared-proposal acceptance is checked with a fixed injection clock; scheduler-delay regression coverage retains exact rule text and spacing for both agents without changing the production fail-open deadline.
 
 - Rules initialization deliberately returns the legacy response when its deadline expires, even after rendering; the 500-rule incomplete marker is checked with a fixed clock, separately from the unchanged informational 25 ms added p95 budget.
+
+### Rules for reviewers and at session start
+
+- `commonplace review-rules` hands a reviewer the effective rules of the token it is run with, and `--verify` checks that a verdict repeats the current rule version. That line shows which rule set the reviewer was given; it does not show that the reviewer applied each rule. Review tools outside this repository have to call both steps themselves.
+
+- The session-start hook adds a notice when its context does not open with a complete rule set. It recognises the server's own first and last rule lines; a context that only quotes those lines as data still gets the notice.
 
 ### Operator-blind token slots: primitives with production locked
 
@@ -137,6 +186,14 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Raw-key `cipher_connect` is a low-level SQLCipher utility used by B2 migration, not a B3 authority boundary. Future B3 callers must use `connect` or a dedicated guarded entry point that authenticates current control state before content opens.
 
+- Thread-store storage budgets convert SQLCipher's text `page_size` (and `page_count`) to integers, so budgeted writes in encrypted workspaces are checked rather than failing with a type error.
+
+
+### Compact rules index
+
+- `session_start rules=index` and `rules_get effective=true format=index` list each effective rule as key, section, scope, size of the full text and a short quoted title (the owner summary, else the first sentence), so a large rule set costs a few kilobytes instead of the whole text.
+- `rules_get keys=[...]` returns the selected rules in full, one key-labelled line each, and names unknown keys. Both are partial reads: they never record the set as served and give no `rules_seq`, so a checked connection must still read the full set before a write. In warn or enforce mode the index says so.
+- The default of both tools is unchanged, and replies stay within the existing reply size bound.
 
 ### Chroma session rebuilds
 
@@ -194,6 +251,53 @@ configs. No deployment, replacement importer or memory-coverage completion is cl
 
 - Rules initialization tests check remaining SQLite wait budgets with a fake clock; wall-clock budgets stay in separate timing-marked tests.
 
+### Orchestrator no-progress wake
+
+- The hub measures progress, not liveness: a runner-configured board with actionable open work and no card done for N minutes (default 20, per board, 0 = off) emits one `board.stalled` wake through the existing event and webhook path, with backoff and owner escalation after three unanswered nudges. Boards whose open cards all wait on a blocker or a person are never nudged.
+
+### Orchestrator trigger sweep never wedges
+
+- A trigger start that cannot be planned is a coded miss that advances the board's cursor; only infrastructure errors leave the cursor. A split start falls back to the `[runner]` role when the config has no `main` role, and an origin release fires the trigger.
+
+- Repeated sweep failures are visible: the second consecutive failure of a board alerts the owner once (`orch.trigger.failing`, `needs_me.orchestrator_failing`) until a sweep succeeds.
+
+- A todo start refused for a transient reason (`at_cap`, `project_limit`, `busy`, `settings_unavailable`, `config_changed`, `worker_unavailable`, `started_recently`) is retried by the sweep with bounded backoff (1, 5, 15, 30, 60 minutes, then `retry_exhausted`); every refusal stays a miss and the attempts are kept in `orch_start_retries`. A permanent refusal is never retried.
+
+### Board store opens take no write lock (#428)
+
+- `BoardStore(...)` migrates a file once per process and then only reads to decide that it is current, so the trigger sweep, the stall check and gateway reads never queue for the boards write lock. All boards connections use a 10 s busy timeout; a short one is an explicit caller choice (deploy migration). SQLite failures log their error name and code, plus the message only when it is a fixed SQLite text.
+
+### Card context in a start
+
+- A runner lease carries `card_context`: the started card as the machine's worker connection may read it. The runner appends it to the launch message, so an agent starts from the card itself and not only from its number.
+- Fields, title and body are always present and verbatim. Asks, decisions and handoff notes, comments, blockers and related cards, linked evidence and linked memory text follow in that order while the block stays inside `COMMONPLACE_START_CONTEXT_TOKENS` (default 6000; 0 sends none).
+- Nothing is shortened or summarised: an item is kept or cut whole, and a cut section ends with a marker that counts the cut items and names the call that returns them. User text is JSON-quoted.
+- A card that cannot be read at lease time never fails the lease. `commonplace/runner/start_context.py` holds the assembly in one function with an ordered section list for later additions. A started card's own goal is never cut, like its title; the goals above it are a section after decisions and are cut from the top level down.
+
+### Runner wings and the owner runner block
+
+- A runner machine's worker PAT reads and writes every wing in the machine grant and no other; its first wing is the default write wing. `startable()` accepts a card whose board wing is granted and otherwise refuses with `outside_worker_wing`, naming the board wing and the granted wings. Machines enrolled before this keep a first-wing-only worker policy until their wings are saved once (same wings do not reset the binding).
+- The Admin page's runner block lists, enrolls, attests and edits wings through the existing owner-only `/api/runners` routes. Enrollment tokens are shown once in a panel and never stored, logged or redrawn.
+- The runner block reads its wing picker from `GET /api/runners/wings`, never from the connections listing. For an owner who reads every wing, the wing names come from the palace's Chroma metadata index in one seek per wing, skipping wings that hold only miner bookkeeping rows, under a two-second deadline; other principals, compact stores and a failed index read use the memory listing. Grant validation, connection read wings and `GET /api/connections` share that read (#451: the drawer-by-drawer listing did not answer on a 2.6 million drawer palace). When the wing read still fails, the editor keeps the granted wings ticked and offers a typed wing field; the server validates every name.
+
+### Run ledger
+
+- A run is one runner start. Its ledger row (`run_ledger` in `runner.sqlite3`) is written in the start's own transaction and follows its state; the table is additive and older starts get a row when the store opens.
+
+- The hub never measures, prices or estimates usage. Tokens, cost (millionths of a currency unit plus the currency), the log pointer and the run's end are only what the run's own enabled machine reported through `POST /api/runner/usage`; an unreported value stays NULL and reads "not reported".
+
+- A reported end changes neither the start job nor machine capacity nor the card (D3 stays open).
+
+### Raw test runs on a shared test host
+
+- A host that caps concurrent test runs (its test runner holds a slot per run) opts in with `~/.config/commonplace/require-test-runner`, naming the variable the runner sets; there `tests/conftest.py` stops a pytest run without it, so agents cannot overload the host by bypassing the cap. Machines without the marker run unchanged; `COMMONPLACE_ALLOW_RAW_PYTEST=1` is the one-run override.
+
+### Mirror and search-index test waits
+
+- Tests that wait for background mirror or search-index work drain on the actual completion condition (no sweep active, no mirror job pending) through one shared test helper, with a 120 s stuck-job limit, rather than one fixed `wait_for_mirrors` budget that returns silently when it runs out.
+
+- A slow-host regression re-runs the converted selections with late-starting jobs and a wait that returns at once; the production sweep, its 20-thread and unit bounds and `wait_for_mirrors` are unchanged.
+
 ### Console activity query checks
 
 - Console activity schema and query checks freeze the store clock, keeping both dated rows within the seven-day retention window while asserting ordering, latest timestamps and redaction.
@@ -211,7 +315,9 @@ reviews, person callers and explicit person handoffs keep their owner/person rou
 A status line never hides a person decision or an item needing person release.
 
 Only the addressed, still-authorized coordinator or a signed-in workspace owner
-can answer; agents never answer their own asks. The coordinator may instead use
+can answer, plus an owner's own connection holding the owner-granted
+`cards:decide` scope for asks addressed to that owner; agents never answer their
+own asks. The coordinator may instead use
 `decide(then="escalate", reply=<reason>)` to send the unchanged question, options,
 context and return recipient to the owner; an empty reason is refused. An appointed
 coordinator may withdraw only an agent-directed decision it requested itself,
@@ -230,8 +336,28 @@ pinned MCP contract adds only optional `person_reason` to `ask` and `task_update
 with matching descriptions for `ask`, `task_update` and `decide`; tool names and
 visibility for slim, standard and full profiles remain unchanged.
 
+### Completion reviewer
+
+A card may name one reviewer of its completion, a current workspace member
+(`user:<id>`). Only a signed-in workspace owner chooses, changes or clears it
+(`reviewer` on `task_add` and `task_update`, and on the card REST routes); agents
+and members are refused. Without a reviewer nothing changes: the owner is asked
+and only an owner answers. With a reviewer, a move to Done by anyone but that
+member (an agent, the assignee or the owner) opens a completion review addressed
+to them even on a board that does not gate completions, and `decide` answers it
+only for that member. An assignee therefore reviews their own work only when the
+owner explicitly chose them. A reviewer who has left the workspace counts as no
+reviewer. Changing the reviewer re-addresses an open completion review, and the
+chosen reviewer sees it in `needs_me`. The pinned MCP contract adds only the
+optional `reviewer` argument to `task_add` and `task_update`.
+
 
 ### Project seat wake recommendations
+
+- Project Connect writes every HTTP 409 conflict to its persistent status. Shared-memory
+  and replacement conflicts retain their explanation and next step after dialog dismissal;
+  shared-memory consent and own-section conversion still require the existing explicit choices.
+  Other conflicts include the server's reason in the Orchestrator section of project settings.
 
 - Connect recommends a board-scoped webhook for `space_message` and `card.moved`, so messages and worker completion moves can wake the orchestrator.
 
@@ -242,6 +368,10 @@ visibility for slim, standard and full profiles remain unchanged.
 - Message coordinator filtering and reply-loop suppression still apply.
 
 - With orchestration enabled, the list appends `card.created` and `project.report`.
+
+### Card-lifecycle rule replay
+
+- `tests/test_statechart_card_rules.py` keeps one proof per rule of the card-lifecycle statechart replay: release of restricted and subagent cards by the live orchestrator, subagent questions to the orchestrator, approvals offered to the owner only from Needs me, claimed manual assignments, starts by an owner-trusted seat, the machine limit past an hour, and completion reaching the recommended seat webhook. It changes no behavior; a seat without the owner's trust confirmation still cannot request starts.
 
 ### Restricted-origin card content
 
@@ -288,6 +418,10 @@ visibility for slim, standard and full profiles remain unchanged.
 
 - Absent token expiry requires dated `COMMONPLACE_GITHUB_NONEXPIRING_EVIDENCE` in `YYYY-MM-DD|OAuth App|client-id|expiration disabled` form. Before enabling, record fresh-account/prior-login scope, header and expiry outcomes plus ingress/callback/backend no-secret logging canaries. Live GitHub OAuth behavior remains unproven. Merge, repository consent, refresh and reconciliation remain deferred.
 
+### Generic agent skills
+
+- `skills/untangle-codebase` is a repository-independent skill: it names no host, path, person or product of this system, and its helper only reads files. A test keeps its front matter, required sections and absence of local paths checked, and the Claude marketplace copy must match the canonical files byte for byte. It changes no stored data and is never installed or enabled by the system itself.
+
 ### Optional agent orchestration
 
 - **Default off.**
@@ -317,6 +451,10 @@ visibility for slim, standard and full profiles remain unchanged.
   - Trusted seats cannot create boards.
 
   - Connect alone never grants this trust.
+
+  - A trusted project seat may hold the orchestrator lease of its own board and seat role while the board has no `[runner]` config; no config or requester edit is needed. Its direct starts are unchanged. Demotion, switch-off or revocation ends that authority at the next lease call.
+
+  - A project seat never claims another board's lease, also when that board's runner machine lists it as a requester.
 
 - **Lock order.**
 
@@ -428,6 +566,14 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
   - Agent tokens with an owner role are refused.
 
+- **The app shows who coordinates.**
+
+  - Project settings > Orchestrator reads the read-only checkpoint for role `main` and says in words who holds the lease, when it runs out and how much work is open, in doubt or unstarted. A signed-in owner can End lease (a confirm first); it calls the same `force-release` as the CLI and MCP, so members, agent tokens and other workspaces are refused. Ending a lease changes no step: unfinished work stays listed and becomes in doubt when the next coordinator claims.
+
+- **A project can show its own panel.**
+
+  - A project panel (`commonplace.panel/1`, `docs/project-panels.md`) is a few text highlight lines and http(s) action links, set with `PUT /api/projects/<slug>/panel` by the owner or an agent with board-write authority and shown at the top of the project's board. It is untrusted: unknown fields, markup, control characters, over-limit sizes (4096 bytes) and non-http(s) links are refused, and the page draws only escaped text. Its rules are adopted as a constructed style sheet, never an inline style element, so the app's content security policy applies them. A project without a panel is unchanged.
+
 - **Channels.**
 
   - `live` and `exp:<name>`.
@@ -454,6 +600,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - A background workspace refresh that supersedes a pending foreground render inherits that render on the same screen.
 
+- Outside the bots screen every refresh also reads the bots roster, next to its three shared reads, to fill the Bots badge; a failed roster read leaves the badge as it was and never fails the refresh. The refresh harness answers that read and checks the badge total.
+
+- A background refresh leaves an edit, hand-off or ask form in the card panel alone, including a form opened after the refresh already requested the card; `state.card` stays at the version the person started from, and Cancel or Save redraws the panel from a fresh read. On Needs me the item's detail is paused while a hand-off form is open, so a changed queue redraws the list but not the form; Cancel, a saved hand-off, choosing another item or a filter that drops the item resumes it. Known limits: a hand-off form keeps the version it started from, so after a conflict Save keeps failing until the form is cancelled and opened again; on a card route a conflict redraws the panel and drops the typed note.
+
 - Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
 
 - Settings bounds each of its six section reads and three prerequisite reads to ten seconds, including response decoding. Failures name the section or request and offer Retry; successful reads show saved values. Orchestration settings lock contention returns retryable HTTP 503 after a one-second lock wait.
@@ -472,6 +622,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - Cancelling a job that belongs to a step is person-owner only.
 
+- The person owner may send `card_start` the card alone on a configured board: machine, project and topic come from the config, and values that are sent must still equal it. `GET /api/card-starts/options` (person owner only, read-only) tells the card panel what it may offer and why nothing can be started; it creates no job.
+
 - The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
 
 - The limit is `min(config.max_agents, project_limits.max_agents)` when both are set.
@@ -479,6 +631,83 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
 
 - The plan is also re-checked when the runner reports `starting`; a refused job ends `cancelled` with outcome `plan_pending`.
+
+### Owner-granted answers from the owner's own apps (`cards:decide`)
+
+- Answering a Needs-me ask stays a signed-in owner action by default. A separate,
+  unticked `cards:decide` consent lets one of the owner's own connections answer
+  asks addressed to that owner, over MCP `decide` or REST
+  `POST /api/cards/<n>/decide`.
+- Granting: the owner's browser session only. PATs get it at creation
+  (`"decide": true`) or through `PATCH /api/connections/<id>`; OAuth clients get it
+  only when the owner ticks the consent box, and the request must also carry
+  `memory:read` and `memory:write`. Members see an owner-only notice and a forged
+  tick grants nothing. Authorization-server metadata advertises the scope; OAuth
+  defaults never include it. The control layer takes the signed-in owner's
+  principal, never a bare user id: `create_token` needs it as `grantor` for its
+  own top-level, non-seat connection; `set_connection_decide` needs it as actor
+  and refuses runner (its runner message), inactive, child, agent-started and
+  seat connections with specific 409 messages; OAuth code minting rechecks a
+  person owner. The CLI refuses it; person policies, profile defaults and seat or
+  runner policies never include it. The grant route also refuses any current
+  board coordinator (checked in the board store). Settings → Agents offers the
+  grant only on the viewing owner's own eligible, unexpired, non-coordinator
+  PATs, with the consent text served from one source. Withdrawing works on any
+  connection, also expired or revoked ones; another member's row gets its own
+  message.
+- Answering: the connection must be a live PAT or OAuth connection of a current
+  owner, top-level, not a runner, hold the scope, and the ask's recipient must be
+  exactly that owner. Project seats and board coordinators are refused. The app
+  needs `memory:write` and read access to the board's wing; write access is the
+  owner's **person-level** access (`_owner_writes`: the owner's current person
+  policy can write the board's wing), so it answers wherever the owner could in
+  the browser, regardless of the app's own `inbox` write wing, and is refused
+  where the owner cannot write. It cannot escalate or answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
+  tool lists stay unchanged.
+- Audit: inside the answer's board transaction, before it commits, every
+  delegated answer writes `audit_log` action `card.decide.delegated` with user,
+  connection id, auth kind, board and card number. A failed audit write fails the
+  answer. The audit log is append-only and a separate database, so if the board
+  transaction rolls back after the row was written, a `card.decide.rolled_back`
+  row with `reason=audit_seq=<seq>` cancels it. Window: an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails. No answer commits without its audit row; no
+  reconcile exists yet. Grants and withdrawals write
+  `connection.decide.grant` and `connection.decide.revoke`.
+- Revocation: `PATCH {"decide": false}` (PAT or OAuth) or revoking the connection
+  takes effect on the next request; policies load on every request and lose the
+  scope when the holder stops being owner. Losing eligibility removes the stored
+  grant, each with a `connection.decide.revoke` audit row, so regaining it needs
+  fresh consent:
+  - demotion: a membership trigger fires on an `UPDATE` of `memberships.role`
+    from `owner` to anything else (reason "ownership lost"); deleting a
+    membership is refused by the foreign key while the user has connections;
+  - coordinator assignment: `board_set` clears the grant of the connection it
+    assigns (reason "coordinator") inside its transaction and again after the
+    commit; the grant route re-reads coordinators after writing a grant and
+    withdraws it (409) if the app became one meanwhile. Unassigning does not
+    restore it, because every path that removes or replaces a coordinator
+    (`board_set` replace or unassign, and the auto-unbind when the owner runs the
+    own-wing action and the app can no longer coordinate the board, whether or not
+    the wing changes) clears that connection's grant before the board commit. The
+    clear is its own control-database commit, ordered before the board COMMIT, not
+    one atomic transaction with it: a grant left by a failed clear or a crash is
+    gone before the app stops coordinating; a failed clear rolls the removal back;
+    a crash after the clear leaves the coordinator in place without a grant (fail
+    closed);
+  - expiry: rotating an expired PAT clears the grant (reason "expired"); rotating
+    a live PAT keeps it. Expired tokens can still be rotated, as the connection
+    docs describe.
+- OAuth token and refresh responses (and the stored token rows) carry only the
+  granted scopes the connection still holds after policy and role intersection,
+  so a withdrawn `cards:decide` never reappears in a refresh.
+
+- Test collection: the consent and Agents browser test skips without Playwright
+  (collecting `tests/` must never error); `CP_BROWSER_E2E=1` makes a missing
+  Playwright fail instead.
+
+- Compatibility baseline: the pinned handoff "off" baseline test supplies
+  `commonplace/decide_grant.py` and `mempalace/deadline.py` (leaf modules the current
+  board and rules code import);
+  its gateway, policy and handoff comparison stays pinned.
 
 ### Explicit imported-history reader consent
 
@@ -561,6 +790,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - `orch_resume` returns a checkpoint (open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses) plus the unstarted `todo` cards of each configured board: no active job and no job started strictly after the card's latest firing event (a start in the same second as the event does not count).
 
+- Checkpoint `jobs` covers runner jobs (`source=runner`) and builders started outside the runner (`source=journal`). A journal entry is listed only while two facts hold: the lease holder recorded the start of an unvoided, unfinished `thread` step for a card (`started` or `waiting`; it stays listed when a later epoch marks the step `in_doubt`), and that card is in `doing` on the same board under a live claim. Each entry carries the card, step key, assignee, claim end and the step's evidence. Nothing is stored and no card or step is changed; the hub does not verify that the thread exists.
+
 ### Thread-search ranking
 
 - For a verified thread index, search finds the scoped BM25 cutoff using the FTS rank iterator, then includes every hit at or above that cutoff before ordering by BM25, thread ID and chunk index.
@@ -584,7 +815,15 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - New typed doing entries require the final holding connection’s exact grant, with orchestration on or off; automatic take skips ineligible cards in the existing order. People acquiring for themselves bypass only type eligibility. Person-assigned connection work receives no person exemption. Missing mappings, malformed types and unreadable mappings refuse. Runner queue, configured owner starts and starting validation use the worker’s grant; starting retains `card_not_startable` translation.
 - Claim, retype and grant replacement serialize in the board transaction. Explicit denial rolls back expiry marks, versions and events; an automatic no-result commits ordinary expiry. Connection resolution precedes board transactions; control locks are never held while waiting for a board store. Runner admission is advisory; authoritative claiming can refuse after a concurrent removal. There is no cross-database atomicity or snapshot guarantee.
 - Existing doing holders retain reporting, renewal, edits, finishing, escalation and release after label removal or retyping, preserving assignee and expiry. Revocation still denies authentication. Same-ID token rotation preserves grants; new IDs inherit none. Todo reservation is not acquisition; owner recovery remains todo → backlog → todo.
+- The app sets a card’s task type from the card details and each agent’s allowed types from Settings > Agents, both person-owner writes through the routes above. A refused typed pickup names the type and points the owner to Settings > Agents; automatic take still skips ineligible cards without an error.
 - Interim choices pending owner: untyped cards behave as today, member people may acquire for themselves, labels are free slugs, missing eligibility adds no notification, and stale full replacements may re-grant labels. Deferred groups remain catalog/multiple types/agent attachments; mapping versions/audit/grant API; runner fences/replay/terminalization; handoff/ask/approval routing and recovery/notifications; platform grants/browser settings; send/pay confirmation and secret protection. The full task-types release still requires those requirements or explicit owner-approved exclusions.
+
+### Goals tree in card context
+
+- The workspace has one small goals tree (6 levels, 200 goals, plain single-line text) that only a signed-in workspace owner writes, through the REST routes or the MCP tools `goal_set` and `card_goal`; every connection can read it with `goal_list`. A card points at at most one goal, and a goal that is archived stays in the context of cards already pointing at it.
+- `task_show` and `task_take_next` add the card's goal chain, top-level first, as `goals` only when a goal is set; cards without one are unchanged. The goal text fits a fixed 1200-character budget: higher goals are dropped from the top level down and counted, and the card's own goal always stays.
+- `goal_set` and `card_goal` are checked writes under the rules freshness gate (`docs/design/RULES.md`): goals are instructions in agent context.
+- Interim choices pending owner: the tree is workspace-wide (no per-board goals), agents cannot point a card at a goal themselves, and there is no web goal picker yet.
 
 ### Opt-in blockers, waiting reasons and split delivery
 
@@ -596,8 +835,14 @@ playbooks and the original wider orchestration acceptance remain separate work.
   edges (maximum 16 per card, no self/cycles, DFS bounded to 200 nodes).
   Only Done unblocks. SQL selection skips unresolved blockers and the runner
   checks them before starting. Views use the pure `boards.why` predicate in
-  blocker/person/release/cap order; explicit claims share its waiting text.
+  blocker/person/release/cap order (the full list is in docs/boards/API.md);
+  explicit claims share its waiting text.
   Dependency waiting alone does not enter `needs_me`.
+
+- Blocker links are edited in the app through the ordinary card `PATCH` with the full `blocked_by` list and the card version, so ownership, visibility and optimistic-version rules are unchanged. Refusals (`self`, `cycle`, `other_board`, `invalid_blockers`, `blocker_graph_too_large`) carry a plain sentence; a card the caller cannot read is answered exactly like a missing number.
+
+- `boards.why` is the single source of waiting sentences. Besides blockers, person, release and capacity it explains an expired claim, a plan awaiting review, no connected agent and pending checks; only `blocked_by`, `waits_on_person`, `plan_review` and `not_released` refuse a claim or start. Board lists add `waiting_notes` built from the same counts.
+
 - `boards.sqlite3` adds `task_blockers` and `card_splits`. Keyed children use
   `split:<parent>:<key>` labels; key checks and inserts share the board write
   transaction. Inbox reads include open unsplit roots, excluding children and
@@ -636,6 +881,10 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
 
 - A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
+
+### Routines create cards on a schedule
+
+A routine (name, card template, schedule, owner) creates one card per due time. The worker claims a `routine_runs` row, unique per routine and due time, before it creates the card, and the card carries a marker label, so a restart between the claim and the card finds the existing card instead of making a second. Cards are made by `BoardService.task_add` as the routine's owner (a workspace owner), so priority, origin and authorization rules apply at run time; if the owner has lost ownership or the board is gone, the run is recorded as failed and five failed runs in a row pause the routine. A board is never created by a routine. After downtime at most three due times are made up; earlier ones become a single `skipped` history row. Time spent paused is not made up. Limits: 25 routines per workspace, 60-minute minimum interval, 200 history rows per routine. Only signed-in workspace owners read or change routines (`/api/routines`). Due times come from the shared pure `commonplace/schedule_time.py` (every N minutes or a cron, in an IANA time zone).
 
 ### Webhook dispatcher recovery
 
@@ -682,12 +931,30 @@ playbooks and the original wider orchestration acceptance remain separate work.
 | Question | Default |
 |---|---|
 | Who approves a config | The owner only. |
-| Who may hold an orchestrator lease | A principal that passes `requester_ok` for the configured machine (a listed trusted PAT or the person owner). |
+| Who may hold an orchestrator lease | A principal that passes `requester_ok` for the configured machine (a listed trusted PAT or the person owner); a project seat only on its own board. Without `[runner]`: only the board's own trusted project seat, for its seat role. |
 | Lease TTL | 1800 s (G). |
 | Wait budgets | Guesses until measured (see Numbers). |
 | CLI acts as owner | Yes, through data-dir access. |
 | Members' moves fire triggers | No. |
 | Model slots | Two (`main`, `worker`). |
+
+### Live chat delivery state
+
+The chat page (`GET /api/chat/<board>`) reports a `live` state for the caller's
+own newest message: `idle`, `delivered`, `working`, `answered`, `no_agent` or
+`no_answer`, with a reason. It is derived from stored facts only: the wake
+delivery row of the `space_message` event that carried the message
+(`chat_live_posts` maps message to event), the read cursor of the board's
+current orchestrator connection (`chat_live_reads`, advanced after that
+connection's `space_read`), and any later agent message. Both tables live in
+the control database, are keyed by workspace and board, and hold ids and times
+but no message text. The server calls no model and no outside service for this
+state. A read by a person or by an agent that is not the board's coordinator
+records nothing, and a failed cursor write never fails the read. The agent's
+read time is returned only to a caller who may see that agent in the console.
+`no_answer` follows 60 seconds after a successful wake without a read, 5
+minutes without a wake hook or after a read without a reply, and at once when
+every wake attempt failed. See `docs/chat.md`.
 
 ### Board coordinator settings
 
@@ -699,7 +966,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - A completed origin release outlives later appointment changes. A stored agent marker stays valid when the card's history records that agent's `release origin` decision and the agent remains independent of the creator with every release grant, including while it holds the card. Revocation, lost grants, creator lineage and markers with no recorded decision still lapse.
 - The signed-in workspace owner may explicitly release any card awaiting origin release, including with a live coordinator or while coordinator configuration is needed. Implicit release by moving a card stays limited to boards with no live coordinator. Cards awaiting release expose `awaiting_release`, and the card panel offers Release with a required reason.
 - The owner and the live board coordinator may take over or drop a released todo reservation held by another connection. Unreleased cards, doing cards, pending/rejected proposals and person decisions stay protected.
-- Handoff recipients accept `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool; a board with no coordinator and an unknown recipient get a refusal naming the valid choices. A workspace owner may close a released restricted-origin todo card directly, and refused card actions appear inside the open card panel. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor on any route (update, web move or handoff).
+- Handoff recipients accept `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool; a board with no coordinator and an unknown recipient get a refusal naming the valid choices. Known limit: these four words are reserved, so an agent named one of them cannot be handed a card by name. A workspace owner may close a released restricted-origin todo card directly, and refused card actions appear inside the open card panel. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor on any route (update, web move or handoff).
 - Project settings show the owner each orchestrator config version with its changes and an Accept control, and a Release control for cards waiting for release. Accept uses the existing owner-only route and refuses agent tokens.
 - A creator may cancel its own todo reservation with a status-only `task_update status=backlog`, including after a handoff when origin release has lapsed. Cancellation clears the assignee without changing provenance or the approval marker, and does not authorize activation. Another connection's reservation, pending/rejected proposals and person decisions remain protected.
 - The signed-in owner receives one approvals item per origin awaiting person recovery. An absent/non-live configured record, or a verified independent record lacking any required release grant, yields approval_kind=origin, need=release and actions=[approve]. Live creator/descendant conflicts, unsafe lineage or an unverifiable stamp with any live configured record yield origin_configuration, need=you and actions=[configure_coordinator], with can_approve=false on that queue item; the card itself still offers the owner Release. Owner-role tokens receive no person fallback. An independent fully eligible coordinator yields no owner origin item or notice.
@@ -707,6 +974,9 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Origin release never approves a pending proposal/plan. Owner recovery is two actions: release origin, then review. Outside owner fallback, owners retain ordinary rejection of pending proposals without releasing origin, including while coordinator configuration is required. The configuration item itself offers only board settings; owner rejection in these states is available via the card/API approve route with approve=false, not via that configuration item. Explicit person-targeted backlog proposals and plan reviews remain visible independently; while the person cannot release their unreleased origin, these review items advertise only reject and explain that release must precede approval. An applicable owner origin item takes precedence until recovery, then the separate review remains with its full actions.
 - The exact validated choice "release origin" is reserved for origin-release audit events: user decisions and ask options refuse it. Validation preserves case and whitespace as for other text. Claim delivery ignores decide events whose choice is "release origin", preserving the earlier return-routed decision and its verbatim reply, including reply-only decisions.
 - The signed-in owner's list includes at most one coordinator_waiting notice per visible non-archived board, counting unique owner-release and configuration cards separately. Non-person/non-owner callers omit that bucket. Digest omits notices but retains origin card reasons, approval kind, actions and can_approve, with release ordered after you and before plan. Counts deduplicate cards. Existing opt-in phone needs-you notifications also consume actionable Approvals, preserving coordinator-revocation recovery notifications. Notices use "card needs" for one card and "cards need" otherwise.
+- The signed-in owner's list includes `model_roles`: one item per visible non-archived board and model role (`main`, `worker`) that a role a start can run uses while `resolve` finds no project or workspace model. The roles are `Config.start_roles`: the runner role and the role a split start runs (`main` when the config has one), the same selection `prepare()` makes. An item carries `kind` `model_role`, `board`, `board_name`, `role`, `config_roles`, `message` and `action`. A role that names no `model_role` gives `role` null and `action` null: the message says the board config needs one, because no setting can fix it. The message says which starts cannot run. The bucket has no card number, is added to `count`, is absent from the digest and phone notifications, and disappears on the next read once the role resolves; members and agents get no such bucket. The shell draws a "Set up" row whose button opens that board's project settings with the Agent models section open and the role's picker focused; saving a model or going Back re-reads the lists.
+- Agent models (`PUT /api/projects/<board>/models`) accept only models in the board's list (`models.catalog(db, workspace, board)`): rows an owner added for that board (`POST /api/projects/<board>/models/catalog` with `{provider, model}`, owner-only, audited, idempotent), choices saved for that board and workspace defaults (scope `*`) for the roles `main`, `worker`, `reviewer` and `gate`. Rows of other boards never appear, so a reader of one project sees no other project's labels. Any other id is refused with 400 `unknown_model` and nothing is stored. A save that adds a model to the board's list is audited as `project.model_catalog`. The project view returns `model_catalog`; the UI offers a select per role, keeps the stored id visible, and never sends a free-text id. The list is `project_model_catalog` in the control database, scoped by board (additive).
+- A start refused with `model_unresolved` names the role and board and says an owner sets the model in the board's project settings under Agent models (`details.role`, `details.config_role`, `details.board`); for a role without `model_role` it says the config role needs one, never "the None role".
 - The existing Needs me consumer renders Origin release and Coordinator configuration in Approvals. Release uses a required reason and the direct approve route, preserving separate review without a proposal hold; configuration opens existing board settings. Proposal Decline and plan Reject buttons render whenever reject is allowed, independently of approve; approval controls still require approve permission. Both rejection buttons use the existing decline handler.
 - Shell project attention counts and refresh selection include origin/configuration approvals. Release items rank after person decisions and before plan review; a selected origin stays open until it leaves the queue.
 
@@ -748,6 +1018,23 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - No scope is persisted and no existing user text is rewritten. Rollback is
   a code revert; the per-request revocation window remains unchanged.
 
+- **Deck settings:** the Workspace section Deck adds to Settings is plain links to existing routes; Admin appears only when `/api/me` says `can_admin` is true, the same rule the account menu uses.
+
+- **Deck look (opt-in):** a second look and navigation for the web app, chosen per browser (`localStorage` `cmmn.ui`; nothing is stored on the server and no request carries it). It changes markup and CSS only: the same routes, APIs, permissions and CSP apply, the font it adds is a same-origin file, and with the switch off the app draws exactly as before. `#/today` and `#/compute` are reserved for Deck screens and resolve to the home screen until a screen registers for them.
+
+- **Deck bots:** the same bots routes show responsive tiles or a focused conversation with bot chips while Deck is on; the classic layout stays unchanged. A project bot’s glance reads open work and dated completions through the existing signed-in person’s project API, groups the bot work statuses, and offers no mutations. A session draft (`cmmn.deck.draft`, `{bot,text}`) is consumed only into the named bot’s loaded composer, without sending, in either look; another bot’s draft survives and malformed input is discarded.
+
+- **Bots web screens (S5):** `#/bots` and `#/bots/<id>` (`web/static/bots.js`, `botstream.js`, `bots.css`) talk only to the `/api/bots*` contract and the existing `POST /api/cards/<n>/decide`; they hold no conversation text beyond the open page, store nothing in the browser except an unsent draft in memory, and never send a model or mode choice. Every server string is escaped before it is drawn. A turn is streamed with `fetch` and a stream reader; a connection lost after the `ack` event is not a failure, the page polls `GET /api/bots/<id>/messages?after=` until `running` is false. The roster is polled every 15 s and an open thread every 5 s (1.5 s while a turn runs), both paused while the tab is hidden. A failed send keeps the text and retries under the same `request_id`. Work stays "work", "task" and "question" in the screen's wording.
+
+- **Bots-first navigation (S8):** `#/` resolves to `#/bots` for a person who has at least one project and to `#/start` for one who has none; no storage, API or permission changes. The rail and phone tabs list Bots and Memory; the Bots badge is the number of questions waiting on the person, read from the same `GET /api/bots` roster the bots screen loads (the shell reads it itself only on other screens, so the screen adds no second poll), and it counts the General bot's total when that bot exists because that total already covers every project. Projects, Needs me and Console moved into a "Workspace" group of the account menu, still gated by the same rules as before (Admin only for `can_admin`); no route was removed.
+
+### Coordinator release authority
+
+- A seat counts as the board coordinator when it is the board's configured coordinator, or when it holds a live coordinator lease of exactly that board. The coordinator lease is the lease of the accepted live config's orchestrator role; the configured coordinator is preferred when it qualifies. A replaced epoch (a newer claim by another holder), an expired or released lease, a lease of another board, a missing or unparsable config, a pending restore and an unreadable runner store name nobody. Releasing needs every release grant and independence from the card's creator; being counted as an approver candidate needs a holder that can see the card in needs-me (needs_me and task_approve visible, memory read and write, wing read).
+- The lease holder has the whole coordinator role on that board: it releases restricted-origin cards, is a candidate approver and supervisor for the board's pending proposals and plans, may edit the title and body of an unassigned restricted-origin todo card, is the target of the `orchestrator`/`coordinator` handoff alias when no live configured coordinator exists, and receives release discovery (needs-me, release boards) for the board. The owner's needs-you item is hidden only while a candidate that can see the card in needs-me, configured or leased, can act on it: for restricted-origin work, a coordinator that can release it; for a pending proposal or plan, an approver candidate that can see it. A candidate that cannot see needs-me never hides the owner's item. Routed asks (`ask`, coordinated ask boards) and runner or planner routing still follow the configured coordinator only.
+- A coordinator may release a restricted-origin card reserved for it and keep working it after later handoffs. A seat that is neither the configured coordinator nor the live lease holder is refused on approve, update and take, and the creator never releases its own card.
+- A release recorded by an agent authorizes handed-over work only while that agent keeps every release grant (task_approve, needs_me, space_read, space_post, memory read and write, and write access to the board's wing). This holds for every agent route that can store a release: coordinator, parent, top-level agent and other trusted agents. A former approver that loses any grant no longer authorizes work it released, whoever holds the card.
+
 ## Numbers
 
 | Label | Number | Source |
@@ -776,9 +1063,11 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 | Store | Scope | Holds | Backed up |
 |---|---|---|---|
-| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit | yes |
+| `control.sqlite3` | hub | users, workspaces, memberships, connections, model settings, audit, sign-up waitlist (`signup_waitlist`, additive) | yes |
 | `boards.sqlite3` | workspace | boards, cards, `task_events` (append-only) | yes |
-| `runner.sqlite3` | workspace | runner jobs; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
+| `runner.sqlite3` | workspace | runner jobs and their run ledger; orchestrator configs, cursors, leases, steps, journal, restore flag | yes |
+| `rules.sqlite3` | workspace | rules, append-only `rule_versions`, suggestions, served state, and rule evidence: `rule_events` (capped at 50 per writer and 200 per rule) with `rule_stats` counters that keep the full history | yes |
+| `topology.sqlite3` | workspace | Compute map facts: nodes, links, site routes, their observations (observer, verbatim evidence, expiry) and conflict records; never secrets | yes |
 | palace and other workspace SQLite files | workspace | verbatim memory, indexes, threads | yes |
 
 - Backups copy every SQLite file in the data directory (`commonplace/backup.py`).
@@ -972,8 +1261,23 @@ playbooks and the original wider orchestration acceptance remain separate work.
   bounds acquisition; this contract makes no timing or constant-time claim.
 - Imported holder-room counts can include rows outside a consented range,
   as before this projection; content reads retain their separate range gate.
-  Search `total_before_filter` can include hidden candidates inside a visible
-  wing before the response gate filters them.
+- Restricted structured drawer searches gate each ranked prefix before
+  applying the requested result limit, for explicit wings and fan-out alike.
+  A short readable page retries with doubled worker limits until filled,
+  the worker returns a short prefix, or the 100-candidate bound is reached.
+  At most eight worker searches share one existing request deadline; ranking
+  still uses the same joint wing pool. Readable hits beyond that bound may
+  remain unavailable. Every-wing principals keep their existing search path.
+- Refill requires an attached gateway handoff context; standalone worker
+  helpers retain their exact response shape and existing authorization gates.
+  Pinned-wing searches retain the original forwarded worker response, including
+  protocol errors and opaque replies, and refill only structured search hits.
+  The first search and every refill share the same deadline and call bound.
+- Restricted structured responses omit `total`, `total_before_filter` and
+  `filtered_by_max_distance`; any `count` describes only returned readable
+  hits. No hidden-candidate count or refill diagnostic is returned. Restricted
+  CLI-compatible search acquires structured hits, so it uses the same refill
+  before the final gate and rendering.
 - Other overview, legacy
   provenance and owner search-index progress remain separate residuals.
 
@@ -1200,6 +1504,12 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
   - Approval of the waiver list below is a manual owner review.
 
+- **Capture hook spool.**
+
+  - The capture hook stores the hook JSON as received (session metadata and a transcript path, no transcript text) in `~/.commonplace/spool` and an uploader reads the transcript later. A transcript deleted or rewritten before the upload is lost to the hub; the item is set aside under `rejected/` with a log line. The spool is bounded (500 items, 8 MiB) and drops the oldest items first, logging each drop.
+
+- **Scheduled prompts:** A schedule's prompt is delivered as an owner-authored message on the board the agent coordinates, through the ordinary `space_message` wake; delivery is at most once per due time (a missed or interrupted due time is recorded, never replayed), is re-authorised at each due time, and is limited to coordinators. Non-coordinator agents have no existing prompt channel that avoids creating a card, so they are not supported yet. The worker polls every 30 seconds, so a prompt can arrive up to that much after its due time.
+
 ## Open dependencies (D1–D3)
 
 - These are owner decisions or captures tracked in `docs/runner.md` ("Owner checklists").
@@ -1224,10 +1534,20 @@ playbooks and the original wider orchestration acceptance remain separate work.
   not extend a shared paragraph or collect unrelated additions at one section end.
   Keep each topic on its own lines, separated by blank lines. Independent
   insertion positions merge cleanly; edits at the same position can still conflict.
-  In `MODULES.md`, add a NEW indented sub-bullet to each touched module block
-  instead of extending its **Promises** or **Tests** line.
+  In the module's file in `docs/modules/`, add a NEW indented sub-bullet to each
+  touched module block instead of extending its **Promises** or **Tests** line.
 
-- `commonplace orch docs-check --base <ref> --head <ref>` exits non-zero on a changed path no `MODULES.md` block owns, a touched module whose block did not change, no change to this file (a whitespace-only edit is no change), an empty or missing block, a bad ref or any error.
+- Parallel changes must not edit the same file. Module blocks live one per file
+  in `docs/modules/<module>.md`; `MODULES.md` holds only the format. A new
+  decision, number, store or residual can be added as its own file
+  `docs/system/<slug>.md`, starting with a `### <title>` heading and written like
+  a section of this file; it counts as the change to `SYSTEM.md` that `docs-check`
+  asks for, and its place in this file is given by the heading (name the section
+  it belongs to in its first sentence). Prefer a new `docs/system/` file over an
+  insertion into `## Decisions` here. `commonplace orch docs-check --print system`
+  and `--print modules` show the assembled documents.
+
+- `commonplace orch docs-check --base <ref> --head <ref>` exits non-zero on a changed path no `MODULES.md` block owns, a touched module whose block did not change, no change to this file or `docs/system/` (a whitespace-only edit is no change), an empty or missing block, a bad ref or any error.
 
 - The test suite runs it against the merge base with the development branch and fails closed when the base is missing.
 
@@ -1238,6 +1558,28 @@ playbooks and the original wider orchestration acceptance remain separate work.
 - Owner-approved waiver ids, one per line as `W<n>: <scope>`.
 
 - None are approved yet.
+
+### Topology is one store of structured facts
+
+The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Live status of machines and link ends is derived on read from signals runners already send (connection use, chat poll, runner jobs, an optional link `status` report) with configurable thresholds; a silent machine is unknown, never green. Contract: `docs/topology.md`.
+
+### Bots keep conversations in the workspace store
+
+Bot threads live only in the workspace file `bots.sqlite3`; the control database, logs, audit reasons and error strings never hold message, model or tool-argument text. A bot is not a principal: every read goes through the board services as the person it belongs to, and `/api/bots*` serves signed-in people only (agent tokens and machine credentials get 404, anonymous callers 401). Display text is redacted while the stored message stays verbatim and append-only. Roster previews are cut to 200 characters for display only. Input bounds count raw characters, never the stripped text, so verbatim storage and the limit agree. When a person already has 50 live bots, default bots for further projects are simply not created.
+
+### Bots hear about their work without being asked
+
+A hub event listener appends one short `event` message to a bot's thread when a card the bot filed needs its owner, is ready for review or is done, and when the project's orchestrator answers a post the bot forwarded (the first coordinator reply after it; the reply is stored verbatim and marked as the orchestrator's). It runs on the emitting thread after the commit, never raises, filters with one indexed lookup before any other work and does nothing for a card or post no bot is linked to. It speaks only in the bot that filed or forwarded the item and only while the owner can still see it (fresh person principal, same visibility check as webhooks). A work item posts when its status word changes and only for an event newer than the last one applied, decided and written in one transaction, so a redelivered, repeated, stale or racing event adds nothing; a forwarded post is answered once, by the coordinator's first reply after it, even when replies are handled out of order. Card titles are redacted and cut for display; logs carry a code and a stack location, never text. A start that never launched has no hub event, so no update is made for it.
+
+A bot turn runs on its own thread and never holds a lock, the admission gate or a database handle while it waits on the provider; the HTTP handler only relays the turn's queue, so a dropped client never stops a turn. The model's output is never executed: tools are a fixed registered list, arguments are validated against each tool's schema, results go back quoted as data, and text a tool writes must be a verbatim span of the person's message. Consequential tools only create a pending action that the person confirms. The project tools (status, list, detail, file, order and comment on work, steer the orchestrator, answer questions, approve work, create a project) call the board services as the person, so a member's refusals are the service's own, worded as one plain sentence; filing and forwarding are routine, answering, approving and creating a project wait for the person's tap and run with the item's frozen version. A message a bot forwards to the project chat is posted inside `chat.front.skipping()`: the front agent adds no receipt, model answer, runner relay or five-minute fallback card for it, while the orchestrator's own wake is unchanged. A request id never runs twice; a turn interrupted by a restart is reported from its journal and never rerun. Bots and project chat draw on one model budget: bot requests are counted in the control table `bot_model_calls` (numbers only) and included in the daily count and the per-minute rate project chat uses; a bot takes its unit atomically with the daily check just before sending. The hub is not assumed to be one process (serve holds the data-directory lock shared): whether a turn is running is read from a lease in the workspace store that the turn renews, never only from process memory, and a reply that loses the race to an interrupted marker is reported and logged, not stored twice. Streamed reply text is redacted over the whole reply so far and only its settled part is sent. A confirm tool that takes free text cannot be registered without a `check`; on `/confirm` that check runs against the message that asked for the action before the action is consumed, so a fixable refusal leaves it open, and the compare-and-set still runs it at most once.
+
+### Bots use machines only through the runner's own checks
+
+A bot never holds machine rights. `commonplace/bots/machines.py` lists, starts and cancels as the person who typed, through the runner's registry, `card_start`, `card_start_status` and `card_start_cancel`, so a person can use a machine only when the runner would let them start on it. Attestation is shown as what it is, set by the owner and not verified, and the listing carries no credential, token or host name. Starting an agent and cancelling a start that has not launched are confirm actions (one tap, label built by the server, request key derived from the turn so a repeat creates one start); running commands is not offered until a provider reports that it can.
+
+### After Done: archive hides, never deletes
+
+A done card is final. A signed-in person (owner or member) may archive it, carry on from it in a new linked backlog card, and pin key facts to its Pocket; connections may not. Archiving only flags the card in `card_archive`: it leaves board lists and counts but stays readable and restorable, and nothing is deleted (restore and unpin mark rows, they never remove them). Archived cards refuse updates and Pocket changes until restored. These routes are person-only, so they sit outside the agent-write rules inventory.
 
 ### Reassigning active work
 
@@ -1250,6 +1592,19 @@ playbooks and the original wider orchestration acceptance remain separate work.
 ### Compatibility fixture coverage boundary
 
 - The overlaid board definitions share schemas between baseline and current servers; the strict fixture protects visibility, HTTP and audit compatibility, while focused card tests cover opt-in schema fields.
+
+### Refused Done moves and handoffs
+
+When the service refuses `PATCH /api/cards/<n>` with `status: "done"` or
+`POST /api/cards/<n>/handoff` with 403, the answer is
+`{error, next_step, code}`: `error` is a plain reason, `next_step` says what to do
+next (for example release the restricted-origin card first, or move a todo card to
+Doing before Done), and `code` is `done_refused` or `handoff_refused`. Refusals the
+service does not know get its own text plus a generic reload-and-ask step. Only the
+wording is added here: who may move or hand off a card, and every status code
+(404 not found, 409 version clash, 400 invalid input), stay as the service decides.
+The owner web client joins `error` and `next_step`, and shows a readable message
+for a 403 that carries no JSON body.
 
 ### Canonical Space REST foundation
 
@@ -1708,3 +2063,120 @@ Tunnel reads also inherit the earlier whole-record tunnel projection: malformed,
   semantics are unchanged, including omission of malformed scalar citations.
 - Broader semantic record/count-map collisions and search/duplicate vector
   diagnostics remain separate work.
+
+## Person private-read containment
+
+Person sessions derive private read authority only from the exact current
+workspace owner role. A missing, omitted or unexpected role grants no private
+read scope. Membership alone is insufficient. The admin callback eligibility
+reader uses that same role-aware policy. No stored membership or data migration
+is involved; owner policies retain their existing scopes and behavior.
+
+Members temporarily cannot read any private wing, including their own private
+notes, private chats, thread mirrors and diaries. Workstation wing aliases that
+require every wing, private-sensitive facts, secret/unwinged facts and the map's
+people overlay are also unavailable. Existing input-authorized projections retain
+shared overview, graph, KG, tunnel, hallway and drawer listings without hidden
+labels, ranks or counts. Wildcard policies can reach those projections without
+private scope; literal-wing policies keep their existing tool visibility.
+
+For principals without every-wing access, CLI-compatible search acquires structured
+hits and renders only after the same drawer gate as structured search: room and
+provenance checks; body text is not scanned. This applies with a literal wing and
+with no wing. Both CLI paths use the same pure formatter. The gateway explicitly
+renders flat rows, so import-authorization metadata cannot replace a
+readable row's wing, room or source; the owner renderer retains its metadata mode.
+Restricted CLI responses contain only query, CLI text, an empty results array,
+optional searched wings and
+non-empty facts; structured search also omits acquisition counts and truncation
+flags that could include hidden candidates. Every-wing policies retain those
+diagnostics and their existing CLI output.
+
+Content placed in an ordinary shared room is visible on every route. Body text
+and arbitrary provenance labels are not scanned for private words or fingerprinted;
+recognized protected references in source_file, source_path and media path/title
+aliases are still checked.
+
+Provenance containing control or format characters (for example a tab or zero-width
+space) is omitted even for ordinary paths. This remains fail-closed because hidden
+or encoded characters can make reference interpretation ambiguous; readable drawer
+text is retained without rewriting the path to guess its meaning.
+
+Unprojected whole-palace operations remain unavailable to members: mesh estate,
+duplicate detection, checkpoint, source-wide deletion, tunnel/hallway deletion,
+memories-filed-away, and low-level coordination event/artifact/patch operations.
+They have the same unknown-operation refusal as unavailable operations. Explicit
+private reads remain independent of private data presence. This containment does
+not define a restricted estate response or restore filer-specific private reads.
+
+### Event, write and durable-token boundaries
+
+Non-owner person event feeds use the same current-principal visibility as
+webhooks: boardless events require every-wing access, and board events require
+a readable active board (space messages retain coordinator checks). Their feed
+and cursor are projected onto visible events; hidden events do not change the
+member feed response. Members consequently lose boardless
+live Memory refresh signals. Card and board linked-memory state can remain stale
+until the next board event or an explicit refresh. Owner feeds retain their
+original ordered log.
+
+Each member poll snapshots readable active boards once and filters a bounded
+SQL page against that set. The opaque epoch hashes the member role and readable
+board identities, never hidden activity. A missing or changed epoch, or a cursor
+above the projected latest, returns `reset: true` without replaying events. The
+app refetches the open screen, including an open card, before adopting the reset
+cursor and epoch. Ordinary pages advance only through returned events. An owner
+request carrying a non-empty member-era epoch also returns a reset with no
+events, adopting the latest raw cursor before resuming the owner feed.
+
+Deploy note: open member tabs from before this deploy stop receiving live events
+until they reload. Reload those tabs after upgrading to resume live updates.
+
+Webhook subscriptions whose effective principal lacks `policy.sees_all_wings`
+receive no numbers: payload `seq` and delivery-list `event_seq` are omitted.
+Their payload id is `evt_` followed by the first 32 hexadecimal characters of
+HMAC-SHA256 of the raw event sequence, keyed by an independent server-only
+per-subscription key. The disclosed signing secret cannot derive those ids.
+A restricted retry keeps the same opaque id for the same event.
+The internal `(webhook_id, event_seq)` key still deduplicates enqueue attempts.
+There is no subscription counter, counter column or counter backfill. One
+nullable key column is initialized atomically on first restricted use, persists
+across restarts and is never returned by any API or logged. No operator setting
+or manual data setup is required. Subscriptions with `sees_all_wings` retain the
+raw sequence and id. Enqueue, send and listing resolve the subscription's current
+effective authority, including owner-held restricted tokens; an unresolvable
+principal is restricted. Send rechecks queued payloads after authority changes.
+Subscription lookup exceptions log one diagnostic with exception type and stack
+locations, excluding exception text and key material; admission still fails closed.
+
+Writes into unreadable private wings remain allowed, but duplicate drawer
+retries return the same successful shape as fresh writes. Replay fields and
+retained source provenance are hidden; returned structural fields depend only
+on the supplied request and current chunk configuration. Readable-owner retries
+still report already_exists. Tunnel creation additionally requires both endpoint
+wings to be readable for principals without every-wing access, and outgoing
+write results pass the wing scrubber. Denial happens before any private upsert.
+
+Token issuance refuses private read scope for a holder who is not a workspace
+owner. PAT, durable subscription connection and OAuth authentication strip both
+private read and admin scopes unless current membership is exactly owner;
+missing membership rejects authentication. Stored policies are not rewritten.
+Member PATs minted earlier with private:read silently lose it when loaded.
+
+Health-flagged member notes are always saved privately when private writing is
+allowed; they are never redirected to shared storage. The successful HTTP save
+response includes a notice, and the MCP save text states: "Saved privately. You
+cannot read this note for now." This also applies to other saves into unreadable
+private wings. The notice uses the actual filed destination after write-wing
+pinning; readable shared or inbox saves do not carry that notice. A save that
+succeeds privately but fails to link to a card includes the same notice in its
+saved-but-not-linked error.
+
+An ask may carry structured decision blocks: options given as `{label, detail,
+preview}`. The labels alone remain the offered options, so recipient routing,
+the event log, digests, push and `decide` treat a structured ask exactly like a
+plain one, and an answer is always one of the offered labels. Detail and preview
+are bounded plain text stored beside the ask (`ask_blocks`) and dropped whenever
+the offered options change. Previews are text, not images: the app's content
+security policy loads images from its own origin only, and there is no upload
+path for decision images yet.
