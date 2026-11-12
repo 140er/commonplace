@@ -32,6 +32,7 @@ from commonplace.bots.errors import (
 MAX_SHARED_BOTS = 20  # per owner
 MAX_SHARES = 50  # live shares per bot
 MAX_SEE_SHARED = 25  # live members with see_shared per bot
+MAX_SHARED_THREADS = 100  # open (not archived) shared threads per bot
 MAX_ACCESS_ENTRIES = 200
 REF_MAX, TITLE_MAX = 200, 60
 GRANTABLE = {"project": ("read", "write"), "machine": ("use",), "tool": ("use",)}
@@ -161,6 +162,7 @@ class Reach:
     read_from: int
     can_write: bool
     frozen: bool = False
+    read_only: bool = False  # a see_shared member without talk: reads a shared thread, never writes
 
 
 def _share(row) -> dict:
@@ -272,7 +274,16 @@ class SharesMixin:
         if not (share["see_shared"] or (share["talk"] and opened)):
             raise Missing()
         can_write = bool(share["talk"]) and (opened or bool(share["see_shared"])) and live
-        return Reach("shared", bot_id, row["id"], False, share["history_from"], can_write, frozen)
+        return Reach(
+            "shared",
+            bot_id,
+            row["id"],
+            False,
+            share["history_from"],
+            can_write,
+            frozen,
+            read_only=not share["talk"],
+        )
 
     def reach(self, user_id, bot_id, thread_id=None) -> Reach:
         """What ``user_id`` may do in ``thread_id`` of ``bot_id``; :class:`Missing` when nothing.
@@ -367,6 +378,50 @@ class SharesMixin:
                 (bot_id, user_id),
             ).fetchone()
             return row["id"] if row else None
+
+    def audience(self, bot_id, user_id, thread_id) -> dict | None:
+        """Who reads a shared thread, as ``user_id`` (who must reach it) acts in it.
+
+        ``None`` for a thread that is not shared (a private thread, the owner's original
+        thread): its only reader is the person. For a shared thread ``{members, floor}``:
+        ``members`` are the other people (never the owner, who is a separate term of the
+        effective access) with a live share who read it now: every ``see_shared`` member and the
+        member who opened it; ``floor`` is the newest ``history_from`` among them and the caller
+        (a turn must not carry what any of them cannot read). :class:`Missing` when the caller
+        does not reach the thread.
+        """
+        with self._tx(write=False) as conn:
+            reach = self._reach(conn, user_id, bot_id, thread_id)
+            if reach.kind != "shared":
+                return None
+            opener = conn.execute(
+                "SELECT user_id FROM bot_threads WHERE id=?", (reach.thread_id,)
+            ).fetchone()["user_id"]
+            owner = conn.execute("SELECT user_id FROM bots WHERE id=?", (bot_id,)).fetchone()[0]
+            members, floor = [], 0
+            for row in conn.execute(
+                "SELECT * FROM bot_shares WHERE bot_id=? AND revoked_at IS NULL ORDER BY user_id",
+                (bot_id,),
+            ):
+                reads = row["see_shared"] or row["user_id"] in (opener, user_id)
+                if reads and row["user_id"] != owner:
+                    members.append(row["user_id"])
+                    floor = max(floor, row["history_from"])
+            return {"members": members, "floor": floor}
+
+    def thread_shared(self, bot_id, thread_id) -> bool:
+        """Whether ``thread_id`` is a shared thread of the bot (internal: an event router asks
+        where to post, before it checks the person's own reach)."""
+        if not isinstance(thread_id, str):
+            return False
+        with self._tx(write=False) as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM bot_threads WHERE id=? AND bot_id=? AND visibility='shared'",
+                    (thread_id, bot_id),
+                ).fetchone()
+                is not None
+            )
 
     # Shares
 
@@ -640,6 +695,18 @@ class SharesMixin:
                 raise Missing()
             if bot["archived_at"] is not None or bot["frozen_at"] is not None:
                 raise Invalid("bot is not open")
+            if visibility == "shared":
+                if not bot["shared"]:
+                    raise Invalid("bot is not shared")
+                if (
+                    conn.execute(
+                        "SELECT COUNT(*) FROM bot_threads WHERE bot_id=? AND visibility='shared' "
+                        "AND archived_at IS NULL",
+                        (bot_id,),
+                    ).fetchone()[0]
+                    >= MAX_SHARED_THREADS
+                ):
+                    raise Limit()
             if visibility == "private":
                 row = conn.execute(
                     "SELECT * FROM bot_threads WHERE bot_id=? AND user_id=? "
@@ -659,7 +726,11 @@ class SharesMixin:
             )
 
     def threads(self, bot_id, user_id) -> list[dict]:
-        """The threads this person reaches, oldest first (the owner's original thread has no row)."""
+        """The threads this person reaches, oldest first (the owner's original thread has no row).
+
+        ``unread`` is this person's: messages after their read mark and their ``history_from``,
+        not counting their own.
+        """
         with self._tx(write=False) as conn:
             self._viewer(conn, user_id, bot_id)
             found = []
@@ -667,10 +738,19 @@ class SharesMixin:
                 "SELECT * FROM bot_threads WHERE bot_id=? ORDER BY created_at, id", (bot_id,)
             ):
                 try:
-                    self._reach(conn, user_id, bot_id, row["id"])
+                    reach = self._reach(conn, user_id, bot_id, row["id"])
                 except Missing:
                     continue
-                found.append(_thread(row))
+                mark = conn.execute(
+                    "SELECT upto FROM bot_reads WHERE bot_id=? AND thread_id=? AND user_id=?",
+                    (bot_id, row["id"], user_id),
+                ).fetchone()
+                unread = conn.execute(
+                    "SELECT COUNT(*) FROM bot_messages WHERE bot_id=? AND thread_id=? AND id>? "
+                    "AND (role<>'user' OR COALESCE(author_id,'')<>?)",
+                    (bot_id, row["id"], max(reach.read_from, mark["upto"] if mark else 0), user_id),
+                ).fetchone()[0]
+                found.append({**_thread(row), "unread": unread})
             return found
 
     def thread_archive(self, bot_id, user_id, thread_id, archived) -> dict:
@@ -720,8 +800,8 @@ class SharesMixin:
                     thread_id=reach.thread_id,
                     author_id=None if reach.thread_id is None else user_id,
                 )
-            if row["text"] != text:
-                raise Conflict()
+            if row["text"] != text or (reach.thread_id is not None and row["author_id"] != user_id):
+                raise Conflict()  # another member's request id is never replayed
             return message(row)
 
     def thread_reply(

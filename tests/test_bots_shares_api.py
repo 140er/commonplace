@@ -610,7 +610,7 @@ def test_a_filed_task_reports_to_the_filers_thread_and_stops_with_the_share(team
 # Threads
 
 
-def test_private_threads_are_opened_once_and_shared_threads_are_not_available_yet(team, fake):
+def test_private_threads_are_opened_once(team, fake):
     hub = team.hub
     bot_id = team.shared_bot(team.blake)
     blake = team.auth[team.blake]
@@ -621,9 +621,6 @@ def test_private_threads_are_opened_once_and_shared_threads_are_not_available_ye
     thread_id = body["thread"]["id"]
     assert hub.post(blake, f"/api/bots/{bot_id}/threads", {"visibility": "private"})[0] == 200
     assert hub.get(blake, f"/api/bots/{bot_id}/threads")[1]["own"] == thread_id
-    status, body, _ = hub.post(blake, f"/api/bots/{bot_id}/threads", {"visibility": "shared"})
-    assert (status, body["code"]) == (409, "not_available")
-    assert hub.post(hub.owner, f"/api/bots/{bot_id}/threads", {"visibility": "shared"})[0] == 409
     assert hub.post(blake, f"/api/bots/{bot_id}/threads", {"visibility": "other"})[0] == 400
     assert (
         hub.post(hub.owner, f"/api/bots/{bot_id}/threads", {"visibility": "private"})[0] == 400
