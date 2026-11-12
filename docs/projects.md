@@ -23,6 +23,13 @@ this is a memory-access boundary, not a guarantee of access to only one board.
 For a project using the shared wing, Connect requires explicit confirmation
 that the agent will have read and write access to all shared memory.
 
+Connect conflicts stay visible in the Orchestrator section of project settings.
+For shared memory, the status names the conflict and asks the owner to retry,
+choosing an own memory section or explicit access to all shared memory. Cancelling
+or dismissing the choice dialog leaves that guidance visible and changes nothing.
+Other connect conflicts show their reason there, including after a replacement
+confirmation is cancelled. The empty-board connect dialog uses the same guidance.
+
 Tokens expire after 90 days. Connecting again rotates an active token and
 invalidates the old one. After revocation or expiry, Connect creates a fresh
 connection. Giving a project its own memory section revokes its displaced seat
@@ -45,7 +52,7 @@ agent has used the connection within the last 24 hours.
 
 ## Model choices
 
-Owners pick the model for the main orchestrator and for workers in project
+Owners pick the model for the orchestrator, builder, reviewer and gate roles in project
 settings, under Agent models. Each role is a list of the models this workspace
 can use, with "Runner default" to leave it unset. The model already stored for a
 role always stays in the list and is shown as stored. A model that is not in the
@@ -58,6 +65,13 @@ Saving a choice does not call a provider or start work, and does not change the
 separate workspace chat model settings. The Save models form works as soon as project
 settings open, even while the page's other reads (chat answers, agents) are still
 loading or have timed out.
+
+The same section holds one escalation rule: after N failed rounds of a card (a failed job of any role counts), or
+for cards with chosen labels, builders and reviewers use a stronger model.
+The stronger model is picked from the same workspace list as the role models; a model
+outside the list is refused (`unknown_model`). Everyone in the workspace can read the
+rule; only owners change it. Without a
+rule every role keeps its default.
 
 Model resolution uses the project's choice, then the workspace default for
 that role, then the runner's own default. Clearing a project choice restores

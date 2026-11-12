@@ -26,6 +26,8 @@ EXACT = {
     ("GET", "/api/settings/orchestration"): "authenticated",
     ("PUT", "/api/settings/orchestration"): "authenticated",
     ("GET", "/api/holds"): "authenticated",
+    ("GET", "/api/topology"): "authenticated",
+    ("GET", "/api/topology/route"): "authenticated",
     ("POST", "/api/holds"): "authenticated",
     ("GET", "/.well-known/oauth-protected-resource"): "public",
     ("GET", "/.well-known/oauth-protected-resource/mcp"): "public",
@@ -52,9 +54,22 @@ EXACT = {
     # Machine runner (commonplace/runner), inert until an owner attests.
     ("GET", "/api/runners"): "authenticated",
     ("POST", "/api/runners"): "authenticated",
+    ("GET", "/api/runners/wings"): "authenticated",
     ("POST", "/api/card-starts"): "authenticated",
     ("GET", "/api/card-starts"): "authenticated",
+    ("POST", "/api/runner/usage"): "authenticated",
     ("GET", "/api/card-starts/options"): "authenticated",
+    ("GET", "/api/agent-schedules"): "authenticated",
+    ("POST", "/api/agent-schedules"): "authenticated",
+    ("GET", "/api/routines"): "authenticated",
+    ("POST", "/api/routines"): "authenticated",
+    ("GET", "/api/goals"): "authenticated",
+    ("POST", "/api/goals"): "authenticated",
+    ("POST", "/api/goals/card"): "authenticated",
+    ("GET", "/api/bots"): "authenticated",
+    ("POST", "/api/bots"): "authenticated",
+    ("GET", "/api/admin/instance/waitlist"): "authenticated",
+    ("POST", "/api/admin/instance/waitlist"): "authenticated",
     **{
         (method, path): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
@@ -84,6 +99,8 @@ EXACT = {
     ("GET", "/api/chat"): "authenticated",
     ("GET", "/api/chat-settings"): "authenticated",
     ("PUT", "/api/chat-settings"): "authenticated",
+    ("GET", "/api/tool-policy"): "authenticated",
+    ("POST", "/api/tool-policy"): "authenticated",
 }
 PREFIX = {
     ("GET", "/api/admin/instance/"): "authenticated",
@@ -102,11 +119,13 @@ PREFIX = {
     ("GET", "/api/orch/"): "authenticated",
     ("POST", "/api/orch/"): "authenticated",
     ("POST", "/api/runner/chat/"): "authenticated",
+    ("GET", "/api/agent-schedules/"): "authenticated",
+    ("POST", "/api/agent-schedules/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
     **{
         (method, path): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
-        for path in ("/api/skills/", "/api/skill-decks/")
+        for path in ("/api/skills/", "/api/skill-decks/", "/api/routines/", "/api/bots/")
     },
     ("GET", "/skills/decks/"): "public",
     **{
@@ -256,6 +275,8 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("POST", "/api/cards/1/handoff"),
         ("POST", "/api/cards/1/decide"),
         ("GET", "/api/needs-me"),
+        ("GET", "/api/topology"),
+        ("GET", "/api/topology/route"),
         ("POST", "/api/memory"),
         ("GET", "/api/memory/search"),
         ("GET", "/api/memory/map"),
@@ -778,6 +799,8 @@ REST_TOOLS = [
     ("POST", "/api/cards/1/handoff", "task_handoff"),
     ("POST", "/api/cards/1/decide", "decide"),
     ("GET", "/api/needs-me", "needs_me"),
+    ("GET", "/api/topology", "topology_get"),
+    ("GET", "/api/topology/route", "topology_route"),
     ("GET", "/api/memory/search", "memory_search"),
     ("GET", "/api/memory/map", "memory_search"),
     ("GET", "/api/memory/id", "memory_get"),
