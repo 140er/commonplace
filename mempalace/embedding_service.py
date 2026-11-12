@@ -12,7 +12,9 @@ process instead and every caller sends its texts there:
 Local only. The transport is a Unix domain socket (mode 0600, same-user
 peers), so texts never leave the machine and there is no network listener
 to misconfigure. The service runs the same embedding function the caller
-would have built in-process, so the vectors are the same bytes.
+would have built in-process, so the vectors are the same bytes for
+``minilm``; ``embeddinggemma`` can differ by one float32 ULP where a request
+is regrouped (see docs/embedding-service.md).
 
 When the service is down, a caller raises
 :class:`EmbeddingServiceUnavailableError`. Nothing falls back to another
@@ -246,6 +248,11 @@ class EmbeddingServiceClient:
         return parts[0] if len(parts) == 1 else np.concatenate(parts)
 
     def _embed_chunk(self, texts: list, np):
+        # One text cannot be split without changing its vector, so a single
+        # text past the service's request limit is refused here, not sent
+        # (the service would drop the connection and look down).
+        if len(texts) == 1 and len(json.dumps(texts[0])) > DEFAULT_MAX_REQUEST_BYTES - 1024:
+            raise self._unavailable("one text is over the request size limit", transport=False)
         reply, payload = self._request(
             {"v": PROTOCOL_VERSION, "op": "embed", "model": self.model, "texts": texts}
         )
@@ -259,7 +266,8 @@ class EmbeddingServiceClient:
 def _chunks(texts: list):
     chunk, size = [], 0
     for text in texts:
-        text_size = len(text) * 4 if isinstance(text, str) else 0
+        # The wire size: ensure_ascii turns an astral character into 12 bytes.
+        text_size = len(json.dumps(text)) + 1 if isinstance(text, str) else 0
         if chunk and (len(chunk) >= CLIENT_MAX_TEXTS or size + text_size > CLIENT_MAX_BYTES):
             yield chunk
             chunk, size = [], 0
