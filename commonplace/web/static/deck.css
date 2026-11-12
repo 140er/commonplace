@@ -75,6 +75,7 @@
 :root[data-ui="deck"] .m-tabs { border-top-color: var(--line); }
 :root[data-ui="deck"] .m-tabs[data-count="2"] { grid-template-columns: repeat(2, 1fr); }
 :root[data-ui="deck"] .m-tabs[data-count="3"] { grid-template-columns: repeat(3, 1fr); }
+:root[data-ui="deck"] .m-tabs[data-count="4"] { grid-template-columns: repeat(4, 1fr); }
 :root[data-ui="deck"] .m-tabs a { color: var(--text-3); font-weight: 500; }
 :root[data-ui="deck"] .m-tabs a[aria-current] { color: var(--text); }
 :root[data-ui="deck"] .m-tabs a[aria-current]::before { content: none; }

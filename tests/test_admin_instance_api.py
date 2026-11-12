@@ -41,6 +41,15 @@ def test_instance_authority(hub, monkeypatch):
     from commonplace.web import admin
 
     reads = []
+    flag_selects = []
+    spied_select = admin.select
+
+    def select_spy(conn, context, sql, parameters=()):
+        if "is_admin" in sql:
+            flag_selects.append(sql)
+        return spied_select(conn, context, sql, parameters)
+
+    monkeypatch.setattr(admin, "select", select_spy)
     real_read = admin.read_control
 
     @contextmanager
@@ -80,7 +89,8 @@ def test_instance_authority(hub, monkeypatch):
         assert (
             json.loads(request(hub, "/api/me", headers=headers)[2])["can_admin_instance"] is False
         )
-    assert not reads, "Cheap person/role refusals must not open control projections"
+    assert len(reads) == 1, "Only the admin-member navigation capability needs a flag read"
+    assert flag_selects == ["SELECT is_admin FROM users WHERE id=?"]
     assert json.loads(request(hub, "/api/me", headers=owner)[2])["can_admin_instance"] is True
     hub.db._conn.execute("UPDATE users SET is_admin=0 WHERE id=?", (hub.admin,))
     for section in ("deploy", "backups"):
@@ -119,6 +129,7 @@ def test_instance_authority(hub, monkeypatch):
         assert code == 503 and "private-source" not in json.dumps(data)
     code, _, raw = request(hub, "/api/me", headers=owner)
     assert code == 200 and json.loads(raw)["can_admin_instance"] is False
+    assert json.loads(raw)["can_manage_instance"] is False
     assert not opened, "Denied/read-error paths must not open operational sources"
 
 
@@ -280,7 +291,11 @@ def test_me_capability_read_failure_keeps_bootstrap(hub, monkeypatch):
     monkeypatch.setattr(admin, "select", select)
     code, _, raw = request(hub, "/api/me", headers=headers)
     assert code == 200
-    assert json.loads(raw) == {**expected, "can_admin_instance": False}
+    assert json.loads(raw) == {
+        **expected,
+        "can_admin_instance": False,
+        "can_manage_instance": False,
+    }
     for section in ("deploy", "backups"):
         assert instance(hub, section, headers)[0] == 503
 
@@ -350,3 +365,29 @@ def test_instance_read_error_never_opens_operational_sources(hub, monkeypatch):
     for section in ("deploy", "backups"):
         assert instance(hub, section, headers)[0] == 503
         assert not opened, "The instance handler must deny before any operational source"
+
+
+def test_operational_authority_is_not_limited_to_browser_sessions(hub):
+    """The console is session-only; the existing deploy/backup predicate is not."""
+    from types import SimpleNamespace
+
+    from commonplace import instance_admin
+    from commonplace.web import admin
+
+    def principal(auth, role="owner", person=True):
+        return SimpleNamespace(person=person, role=role, auth=auth, user_id=hub.admin)
+
+    def authorized(who):
+        return admin.instance_authorized(
+            hub.gateway, who, admin.ReadContext(hub.gateway.admin_clock)
+        )
+
+    def console(who):
+        return instance_admin.flag(hub.gateway, who, admin.ReadContext(hub.gateway.admin_clock))
+
+    for auth in ("session", "pat", "oauth"):
+        assert authorized(principal(auth)) is True
+    assert console(principal("session")) is True
+    assert console(principal("pat")) is console(principal("oauth")) is False
+    assert authorized(principal("pat", role="member")) is False
+    assert authorized(principal("session", person=False)) is False

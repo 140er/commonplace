@@ -49,6 +49,7 @@ MODULES = (
     "commonplace.orch",
     "commonplace.console",
     "commonplace.chat",
+    "commonplace.compute",
     "commonplace.holds",
     "commonplace.agent_schedules",
     "commonplace.snooze",
@@ -57,6 +58,7 @@ MODULES = (
     "commonplace.tool_policy",
     "commonplace.bots",
     "commonplace.chat_bridge",
+    "commonplace.meetings",
     "commonplace.topology",
     "commonplace.topology.extension",
 )

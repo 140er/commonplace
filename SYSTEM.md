@@ -227,6 +227,37 @@ person-owner fenced runner admission is requested, and a refusal leaves the
 card in place without inventing a worker launch. Model output never executes
 tools. The coworker store, runtime and task controls stay local to the workspace.
 
+### Compute control startup configuration
+
+`ControlDB` takes an optional `compute_config` at service startup. When present it
+registers the control database with the cross-process authority coordinator, attaches
+persisted write guards and wraps the database lock so each transaction holds the
+coordinator for its whole duration; shutdown signals every service before joining
+it. Without the argument nothing changes, and no request, import or environment
+variable can supply the configuration or enable execution. The owner-session
+management routes and script control path are installed through the normal
+extension list and perform no remote effect until the trusted configuration enables
+them.
+
+### Compute execution component
+
+`compute/executor.py` runs durable execution attempts for approved actions: each
+attempt is recorded before any exec, checks exact signed enrollment, current
+authority and custody at every stage, consumes its approval once and keeps an
+uncertain outcome reserved rather than assuming termination. Published evidence is
+bounded and redacted. The owner UI shows the observed exit, or an uncertain
+cancellation, and never implies dispatch from approval alone. The executor is
+inert until trusted configuration enables it.
+
+### Compute discovery service component
+
+The discovery service stores one durable reservation per collection and charges the
+reserved scope ceilings permanently, so a restart never re-collects automatically
+and unknown concurrency slots stay reserved. Collection reaches a target only through
+the pinned outer SSH adapter and only when trusted configuration enables discovery;
+owner-session routes expose scopes, proposals and cancellation. Cancellation records
+intent and distinguishes it from confirmed termination.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and

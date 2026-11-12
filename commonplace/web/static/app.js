@@ -15,6 +15,7 @@ import { childProgress } from "./children.js";
 import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
 import { createAdmin, boundedRequest } from "./admin.js";
 import { createRunnerBlock } from "./adminrunners.js";
+import { createInstanceAdmin } from "./instance-admin.js";
 import { createInviteBlock, openWorkspaces } from "./invites.js";
 import { createConsole } from "./console.js";
 import { createBots, waitingTotal } from "./bots.js";
@@ -83,7 +84,7 @@ state.deck = createDeck({
   context: () => ({ me: state.me, boards: state.boards, needs: state.needs, go: (hash) => { location.hash = hash; } }),
   reload: () => { if (state.me) void route(); },
 });
-let adminUI = null;
+let adminUI = null, instanceAdminUI = null;
 let consoleUI = null, botsUI = null, topologyUI = null, chatUI = null, detailsUI = null, boardDispose = null;
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -300,7 +301,7 @@ function paletteUI() {
 function shortcutsView() { paletteUI().shortcuts(); }
 function shellMenu() {
   const board = currentBoard(), cards = boardCards().filter((card) => !card.board || card.board === board?.slug);
-  paletteUI().open({ can_admin: state.me?.can_admin === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
+  paletteUI().open({ can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
 }
 async function paletteCommand(item) {
   const action = item.action;
@@ -399,10 +400,10 @@ function navigation() {
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
-  const rail = { can_admin: state.me.can_admin === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
+  const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
   // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
   boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-  root.querySelector("#phone-bar").innerHTML = state.deck?.top() || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true });
+  root.querySelector("#phone-bar").innerHTML = state.deck?.top() || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
   root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
@@ -1022,7 +1023,7 @@ function mountWorkbenchChat() {
 // The signed-in user's seen ids live on the device: clear them on sign-out and session expiry
 // even when no board service exists (Settings, Memory, …). Other users' ids stay.
 function clearWorkbenchChat() {
-  adminUI?.stop();
+  adminUI?.stop(); instanceAdminUI?.stop();
   botsUI?.stop();
   const user = state.me?.user || state.me?.actor?.replace(/^user:/, "");
   if (user) clearSeen(user);
@@ -1055,6 +1056,12 @@ function adminScreen() {
   title("Workspace administration");
   navigation();
 }
+function instanceAdminScreen() {
+  instanceAdminUI ??= createInstanceAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, denied: () => { if (state.me) state.me.can_manage_instance = false; navigation(); } });
+  instanceAdminUI.show();
+  title("Instance console");
+  navigation();
+}
 function consoleScreen() {
   consoleUI ??= createConsole({
     mount: () => root.querySelector("#content"), api, e,
@@ -1066,7 +1073,7 @@ function consoleScreen() {
 }
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
-  if (state.route === "#/admin") return;
+  if (["#/admin", "#/instance-admin"].includes(state.route)) return;
   const epoch = state.screen, request = ++state.refreshRequest;
   if (!background) state.renderPending = epoch;
   const current = () => epoch === state.screen && request === state.refreshRequest;
@@ -1371,7 +1378,7 @@ async function route() {
   let last;
   try { last = localStorage.getItem(boardPreference()); } catch { /* The first readable board is the fallback. */ }
   // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
-  const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last });
+  const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last, deck: state.deck?.owns("#/compute") === true });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
@@ -1383,15 +1390,16 @@ async function route() {
   if (direct) { state.base = boardRoute({ boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|compute-map|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|today|compute)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|compute-map|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|instance-admin|today|compute)$/.test(hash) ? hash : "#/");
     // Today and Compute exist in the Deck look only; without it they are an unknown address.
     if (/^#\/(?:today|compute)$/.test(state.base) && !state.deck?.owns(state.base)) state.base = "#/";
     state.card = null;
-  } else if (state.base === "#/admin") {
+  } else if (["#/admin", "#/instance-admin"].includes(state.base)) {
     state.base = boardRoute({ boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/admin") adminUI?.stop();
+  if (previousBase === "#/instance-admin") instanceAdminUI?.stop();
   if (previousBase.startsWith("#/console") && !state.base.startsWith("#/console")) consoleUI?.stop();
   if (previousBase.startsWith("#/bots") && !state.base.startsWith("#/bots")) botsUI?.stop();
   if (state.base !== previousBase) state.deck?.leave();
@@ -1422,6 +1430,7 @@ async function route() {
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
   showError("");
   if (hash === "#/admin") { adminScreen(); return; }
+  if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
   await refresh();
 }
 // The current view's list first, so a write never sends a version left over from another view.
@@ -1873,9 +1882,9 @@ async function poll() {
   }
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
-document.addEventListener("session-expired", () => { adminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
+document.addEventListener("session-expired", () => { adminUI?.stop(); instanceAdminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pagehide", () => { adminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {

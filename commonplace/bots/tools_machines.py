@@ -8,8 +8,8 @@ sentence. Running commands is only offered while some machine reports that it ca
 
 import logging
 
-from commonplace.bots import blocks, machines
-from commonplace.bots.tools import Result, Tool, register
+from commonplace.bots import access, blocks, machines
+from commonplace.bots.tools import OutsideBot, Result, Tool, register
 from commonplace.extensions import ToolError
 from commonplace.redact import redact
 
@@ -43,11 +43,44 @@ def _task(turn, args) -> dict:
 
 
 def _machine_name(turn, ref) -> str:
-    """The listed machine's own name; a machine the person may not use is refused up front."""
-    for machine in machines.list_machines(turn.gateway, turn.principal()):
+    """The listed machine's own name; a machine the person may not use is refused up front.
+
+    A shared bot lists only the machines its owner granted (and the owner may use): a machine
+    the person may use but the bot may not is refused as outside the bot's access.
+    """
+    for machine in turn.machines():
         if ref in (machine["id"], machine["label"]):
             return machine["label"]
+    if turn.bot.get("shared"):
+        for machine in machines.list_machines(turn.gateway, turn.principal()):
+            if ref in (machine["id"], machine["label"]):
+                raise OutsideBot("other")
     raise ToolError(machines.SENTENCES["machine_not_found"])
+
+
+def _machine_arg(turn, args):
+    """The machine to start on: as named, or for a shared bot the one granted machine.
+
+    A shared bot never lets the runner pick among machines it was not granted: with none named,
+    exactly one granted machine that can start an agent is used; none is refused as outside the
+    bot's access, several ask which one. A bot that is not shared passes the argument through.
+    """
+    named = args.get("machine")
+    if named:
+        _machine_name(turn, named)
+        return named
+    if not turn.bot.get("shared"):
+        return None
+    own = [m for m in machines.list_machines(turn.gateway, turn.principal())]
+    if not any(m["capabilities"]["start_agent"] for m in own):
+        return None  # the runner says why this person cannot start anything
+    capable = [m for m in turn.machines() if m["capabilities"]["start_agent"]]
+    if not capable:
+        raise OutsideBot("other")
+    if len(capable) > 1:
+        labels = ", ".join(m["label"] for m in capable)
+        raise ToolError(f"More than one machine can take this task; say which one: {labels}.")
+    return capable[0]["id"]
 
 
 # list_machines
@@ -71,17 +104,25 @@ def _brief(machine) -> dict:
 
 def _list(turn, args):
     principal = turn.principal()
-    listed = machines.list_machines(turn.gateway, principal)
+    listed = turn.machines()
     data = {"machines": [_brief(m) for m in listed[:LISTED]], "note": NOT_VERIFIED}
     if len(listed) > LISTED:
         data["not_shown"] = len(listed) - LISTED
     if not listed:
         data["reason"] = machines.why_none(turn.gateway, principal)
-    return Result(True, data, blocks=({"type": "machines"},))
+        if turn.bot.get("shared") and machines.list_machines(turn.gateway, principal):
+            data["reason"] = access.SENTENCES["outside_bot_other"]
+    block = {"type": "machines"}
+    if turn.bot.get("shared"):
+        block["ids"] = [m["id"] for m in listed]  # the block shows only what the bot may use
+    return Result(True, data, blocks=(block,))
 
 
 def hydrate_machines(reader, stored) -> dict:
-    return {**stored, "machines": machines.list_machines(reader.gateway, reader.principal)}
+    listed = machines.list_machines(reader.gateway, reader.principal)
+    if "ids" in stored:
+        listed = [m for m in listed if m["id"] in stored["ids"]]
+    return {**stored, "machines": listed}
 
 
 # start_work
@@ -91,10 +132,9 @@ def _start_check(turn, args) -> None:
     """Refused before any chip exists: the task is not this project's, the machine is unknown,
     or the start itself would be refused (not an owner, the task's state, the machine's area)."""
     _task(turn, args)
-    if args.get("machine"):
-        _machine_name(turn, args["machine"])
+    machine = _machine_arg(turn, args)
     try:
-        machines.preflight(turn.gateway, turn.principal(), args["ref"], args.get("machine"))
+        machines.preflight(turn.gateway, turn.principal(), args["ref"], machine)
     except machines.Refused as exc:
         raise ToolError(exc.text) from None
 
@@ -112,7 +152,7 @@ def _start(turn, args):
             turn.gateway,
             turn.principal(),
             args["ref"],
-            machine=args.get("machine"),
+            machine=_machine_arg(turn, args),
             request_key=f"{turn.request_id}:{turn.step}",
         )
     except machines.Refused as exc:
@@ -175,7 +215,7 @@ def _stop(turn, args):
 
 
 def _can_run(turn) -> bool:
-    return machines.can_run_command(turn.gateway, turn.principal())
+    return any(m["capabilities"]["run_command"] for m in turn.machines())
 
 
 def _run_check(turn, args) -> None:
@@ -193,7 +233,8 @@ def _run_label(turn, args) -> str:
 def _run(turn, args):
     command = turn.words(args["command"])
     try:
-        outcome = machines.run_command(turn.gateway, turn.principal(), args["machine"], command)
+        name = _machine_name(turn, args["machine"])
+        outcome = machines.run_command(turn.gateway, turn.principal(), name, command)
     except (machines.Refused, machines.Unsupported) as exc:
         return Result(False, say=exc.text)
     return Result(True, outcome)
@@ -212,6 +253,7 @@ def _register() -> None:
     register(
         Tool(
             name="list_machines",
+            reach="machine",
             description=(
                 "List the machines this person may use, what each may do and what the owner "
                 "granted it. Machines are attested by the owner, never verified. When the list is "
@@ -226,6 +268,7 @@ def _register() -> None:
     register(
         Tool(
             name="start_work",
+            reach="machine",
             description=(
                 "Start an agent on a machine for one task. The person has to tap to confirm; say "
                 "that it is waiting for their tap, never that it started. Name a machine only when "
@@ -242,6 +285,7 @@ def _register() -> None:
     register(
         Tool(
             name="stop_work",
+            reach="machine",
             description=(
                 "Cancel an agent start that has not launched yet. An agent that is already running "
                 "cannot be stopped from here. The person has to tap to confirm."
@@ -257,6 +301,7 @@ def _register() -> None:
     register(
         Tool(
             name="run_command",
+            reach="machine",
             description=(
                 "Run a command on a machine. `command` must be copied verbatim from the person's "
                 "current message. The person has to tap to confirm."

@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`
 - **Owns:**
 
+  - Chat installation also installs the coworker package, so the Coworkers routes and background runtime start with the chat front.
+
   - The coworker package (`chat/coworkers/`: store, routes, runtime, task controls and task progress) owns persona, conversation and message storage, the owner-session REST routes, the bounded background runtime and the projections of canonical task state back into a conversation.
 
   - Workspace-local coworker bot personas, private DM/group conversation membership, append-only original messages, conversation-scoped memories and durable response-job intake.

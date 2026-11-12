@@ -28,6 +28,32 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `GET /api/bots/<id>/memory` | `{memories:[{id,text,at}]}` |
 | `POST /api/bots/<id>/memory` | `{text}`, `{memory}` |
 | `DELETE /api/bots/<id>/memory/<mid>` | `{ok}` |
+| `GET /api/bots/<id>/access` | `{version, entries:[{kind,ref,mode,set_at}]}`: what a shared bot may reach (its owner, and members with a live share) |
+| `PUT /api/bots/<id>/access` | `{version, entries}`, `{version, entries}`: the owner replaces the list; web session only; `409 conflict` for a stale `version` |
+| `GET /api/bots/<id>/access/log?after=&limit=` | `{log}`: one row per change, ids and codes only |
+
+The learning memory (`docs/design/bot-learning-memory.md`, first slices: the store, the switches,
+forgetting and the extractor) adds person-session routes. They are off by default and
+answer 404 to an app token, an agent token or another person's id:
+
+| Route | Body, answer |
+|---|---|
+| `GET`, `PATCH /api/bots/<id>/learning` | `{mode?: off|ask|auto, pause?: 1..30 days or null}`, `{learning}` (mode, paused, `active`, counts) |
+| `GET /api/bots/<id>/learned`, `GET /api/learned` | `?scope=&state=&kind=&limit=&offset=` (limit at most 100), `{items, counts}`; `remember` notes appear as `kind` `note` |
+| `GET`, `PATCH`, `DELETE /api/learned/<id>` | edit `{text?, pinned?}` (a secret is 400 `refused`), `{item}`; delete is real and a second delete is 404 |
+| `POST /api/bots/<id>/learned/forget-all` | `{}`, `{forgotten, notes, floor}`; the bot ignores every message up to `floor` from then on |
+| `GET`, `PATCH /api/learning/settings` | `{enabled?, shared_enabled?}` (workspace owner), `{enabled, shared_enabled, can_configure}` |
+| `GET`, `PATCH /api/projects/<slug>/learning` | `{shared_enabled}` (workspace owner), `{board, shared_enabled, can_configure}` |
+
+Nothing is learned unless the owner turned learning on for the workspace and the person turned
+it on for that bot (`ask` or `auto`, not paused). After a finished turn the hub may then read the
+person's own recent messages with the chat model the owner configured and keep a few lasting
+preferences, instructions, facts and corrections. Each kept item is the person's own words, a
+verbatim span checked against the stored message and the secret guard; anything the model
+invents or rewrites is dropped. A repeated sentence is counted, new words for a known topic
+replace the old item, a sentence the person forgot is not learned again, and `ask` mode only
+proposes (proposals expire after 14 days). It uses no new service and no extra model call
+unless every switch allows it. Showing and using the items comes in later slices.
 
 A bot is `{id, name, job, instructions, kind, board, archived, last, unread, waiting, state}`.
 `kind` is `project`, `general` or `custom`. `last` is the newest message (`role`, `text`
@@ -293,12 +319,26 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   Each user message has one reply at most, and a repeated request id with the same text
   returns the stored message instead of a second one. Display text is redacted; the stored
   text is not.
-- A memory note is removed with a tombstone: it disappears from the list, the stored row stays.
+- A memory note is removed by blanking it: it disappears from the list, the row stays so ids keep
+  working, and its text is gone from the file.
 - Sharing a bot with other members (design: `docs/design/shared-team-bots.md`) is being built
   in slices. The storage for it is in place and unused: a bot that is not shared works as
   above. Sharing is off for every workspace until its owner turns it on, a share reaches
   nothing until the bot's owner grants it something, and a member never reaches another
   member's private thread.
+- What a shared bot may reach (slice S2): a turn of a shared bot acts with the bot's access
+  list, the talking member's own rights and the owner's rights, all intersected and read afresh
+  on every call. The list holds `project` entries (`read` or `write`), `machine` entries (a
+  machine id) and `tool` entries (a tool name, always needed for a tool other than `remember`,
+  `forget` and `my_access`); `wing` entries are refused (`unsupported_kind`) until a tool reads
+  wings. A `read` grant never lets the bot write. A project the asker cannot read is "can't
+  find that", one the asker reads but the bot may not use is refused with a fixed sentence that
+  names nothing. Only the bot's owner edits the list (`403 owner_only` for a member, 404 for
+  anyone else and for an app or agent token), only with something the owner reaches
+  themselves (`403 outside_your_scope`), by compare-and-set on `version`; each real change writes
+  one log row per entry and one control-database audit row (kind, ref and mode only). Members
+  read the list and the log. A bot that is not shared ignores the list. Machines and tools are
+  listed only within the list, and the runner's own rule still decides who may start an agent.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 
