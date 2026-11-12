@@ -13,6 +13,10 @@
 
   - The extension list ends with `commonplace.bots`, which installs the person-only `/api/bots` routes.
 
+  - The extension list also loads `commonplace.topology.extension`, which registers the read tools `topology_get` and `topology_route` and their `GET /api/topology` and `GET /api/topology/route` routes; `_rest_tool` maps both routes to their tools.
+
+  - `extensions.load_modules` skips a listed module when the module or the package it lives in does not exist, and still raises when an import fails inside a module that does exist.
+
   - The extension list also loads `commonplace.routines`, which starts its worker with the other background workers and stops it before the control database closes.
 
   - Extension installation registers email shutdown before GitHub shutdown; HTTP server teardown closes both in that order before SQLite closes.
