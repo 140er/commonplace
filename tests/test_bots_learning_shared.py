@@ -578,3 +578,22 @@ def test_the_shared_list_needs_both_switches_and_a_readable_project(env):
     env.learned.set_policy(learned.WORKSPACE, "owner", shared_enabled=False)
     assert env.learned.shared_list("work", "blake", ok) == []
     assert json.dumps(env.learned.shared_list("other", "blake", ok)) == "[]"
+
+
+def test_nothing_from_another_members_private_thread_can_become_an_item(env):
+    bot, own = say(env, "avery", HOSE)
+    switch_on(env, bot)
+    with env.bots._tx() as conn:
+        theirs = env.bots._add(
+            conn,
+            bot,
+            "user",
+            SHED,
+            request_id="thread-0001",
+            thread_id="t-blake",
+            author_id="blake",
+        )["id"]
+    with pytest.raises(Invalid):
+        learn(env, bot, theirs, "avery", SHED, kind="fact", topic="shed")
+    assert learn(env, bot, own, "avery", HOSE, kind="fact", topic="hose")["text"] == HOSE
+    assert query(env, "SELECT COUNT(*) FROM bot_learned") == [(1,)]

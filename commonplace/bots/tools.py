@@ -129,7 +129,16 @@ class Turn:
     """What a tool may use: the person (fresh on every call), their boards and their message."""
 
     def __init__(
-        self, gateway, workspace_id, user_id, bot, message, request_id, step=0, projects=None
+        self,
+        gateway,
+        workspace_id,
+        user_id,
+        bot,
+        message,
+        request_id,
+        step=0,
+        projects=None,
+        thread_id=None,
     ):
         self.gateway = gateway
         self.db = gateway.db
@@ -140,6 +149,7 @@ class Turn:
         self.request_id = request_id
         self.step = step
         self.projects = projects  # readable project slugs offered to a bot without a board
+        self.thread_id = thread_id  # the person's thread; None: the owner's original thread
 
     def principal(self):
         principal = sessions.person_principal(self.db, self.user_id, self.workspace_id)
@@ -346,7 +356,7 @@ def _remember(turn, args):
 
 
 def _forget(turn, args):
-    if not turn.store().memory_remove(turn.bot["id"], turn.user_id, args["id"]):
+    if not turn.store().memory_remove(turn.bot["id"], turn.user_id, args["id"], own=True):
         return Result(False, say="There is no such note.")
     return Result(True, {"id": args["id"]})
 

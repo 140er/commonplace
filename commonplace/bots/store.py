@@ -161,6 +161,7 @@ def _bot(row) -> dict:
         **{key: row[key] for key in _BOT_KEYS},
         "owner_id": row["user_id"],
         "shared": bool(row["shared"]),
+        "frozen": row["frozen_at"] is not None,
     }
 
 
@@ -382,7 +383,9 @@ class BotStore(SharesMixin):
     def roster(self, user_id, bot_id=None) -> list[dict]:
         """Live bots (or just ``bot_id``, archived or not) with last message and unread count.
 
-        Most recent activity first; bots never used come after used ones.
+        The person's own bots first, most recent activity first (bots never used come after
+        used ones), then the shared bots they hold a live share of: for those the last message
+        and the unread count are of the person's own private thread.
         """
         with self._tx(write=False) as conn:
             rows = conn.execute(
@@ -396,32 +399,79 @@ class BotStore(SharesMixin):
                 "ORDER BY (m.id IS NULL), m.id DESC, b.rowid",
                 (user_id, bot_id, bot_id),
             ).fetchall()
-        if bot_id is not None and not rows:
+            member = self._member_rows(conn, user_id, bot_id) if self._sharing_on() else []
+        if bot_id is not None and not rows and not member:
             raise Missing()
-        return [
-            {
-                **_bot(row),
-                "archived": row["archived_at"] is not None,
-                "last": {"role": row["last_role"], "text": row["last_text"], "at": row["last_at"]}
-                if row["last_id"] is not None
-                else None,
-                "unread": row["unread"],
-            }
-            for row in rows
+        return [self._listed(row, user_id, mine=True) for row in rows] + [
+            self._listed(row, user_id, mine=False) for row in member
         ]
 
-    def mark_read(self, bot_id, user_id, upto) -> int:
-        """Move the read mark forward to ``upto`` (never past the newest message)."""
+    @staticmethod
+    def _member_rows(conn, user_id, bot_id):
+        return conn.execute(
+            "SELECT b.*, s.talk AS s_talk, s.see_shared AS s_see, t.id AS thread, "
+            "m.id AS last_id, m.role AS last_role, m.text AS last_text, "
+            "m.created_at AS last_at, "
+            "(SELECT COUNT(*) FROM bot_messages u WHERE u.bot_id=b.id AND u.thread_id=t.id "
+            "AND u.role<>'user' AND u.id>COALESCE((SELECT upto FROM bot_reads r "
+            "WHERE r.bot_id=b.id AND r.thread_id=t.id AND r.user_id=?),0)) AS unread "
+            "FROM bots b JOIN bot_shares s ON s.bot_id=b.id AND s.user_id=? "
+            "AND s.revoked_at IS NULL "
+            "LEFT JOIN bot_threads t ON t.bot_id=b.id AND t.user_id=? AND t.visibility='private' "
+            "AND s.talk=1 "
+            "LEFT JOIN bot_messages m ON m.id=(SELECT MAX(id) FROM bot_messages "
+            "WHERE bot_id=b.id AND thread_id=t.id) "
+            "WHERE b.shared=1 AND b.frozen_at IS NULL AND b.user_id<>? "
+            "AND (b.id=? OR (? IS NULL AND b.archived_at IS NULL)) "
+            "ORDER BY (m.id IS NULL), m.id DESC, b.rowid",
+            (user_id, user_id, user_id, user_id, bot_id, bot_id),
+        ).fetchall()
+
+    @staticmethod
+    def _listed(row, user_id, mine) -> dict:
+        return {
+            **_bot(row),
+            "archived": row["archived_at"] is not None,
+            "mine": mine,
+            "perms": None
+            if mine
+            else {"talk": bool(row["s_talk"]), "see_shared": bool(row["s_see"])},
+            "thread": None if mine else row["thread"],
+            "last": {"role": row["last_role"], "text": row["last_text"], "at": row["last_at"]}
+            if row["last_id"] is not None
+            else None,
+            "unread": row["unread"] or 0,
+        }
+
+    def mark_read(self, bot_id, user_id, upto, thread_id=None) -> int:
+        """Move the read mark forward to ``upto`` (never past the newest message).
+
+        The owner's original thread keeps its mark on the bot; every other thread has one per
+        person in ``bot_reads``.
+        """
         if type(upto) is not int or not 0 <= upto < 2**63:
             raise Invalid("upto must be a message id")
         with self._tx() as conn:
-            row = self._own(conn, bot_id, user_id)
+            thread, _from = self._scope(conn, bot_id, user_id, thread_id)
             newest = conn.execute(
-                "SELECT COALESCE(MAX(id),0) FROM bot_messages WHERE bot_id=? AND thread_id IS NULL",
-                (bot_id,),
+                "SELECT COALESCE(MAX(id),0) FROM bot_messages WHERE bot_id=? AND thread_id IS ?",
+                (bot_id, thread),
             ).fetchone()[0]
-            mark = max(row["read_upto"], min(upto, newest))
-            conn.execute("UPDATE bots SET read_upto=? WHERE id=?", (mark, bot_id))
+            if thread is None:
+                row = self._own(conn, bot_id, user_id)
+                mark = max(row["read_upto"], min(upto, newest))
+                conn.execute("UPDATE bots SET read_upto=? WHERE id=?", (mark, bot_id))
+                return mark
+            seen = conn.execute(
+                "SELECT upto FROM bot_reads WHERE bot_id=? AND thread_id=? AND user_id=?",
+                (bot_id, thread, user_id),
+            ).fetchone()
+            mark = max(seen["upto"] if seen else 0, min(upto, newest))
+            conn.execute(
+                "INSERT INTO bot_reads (bot_id,thread_id,user_id,upto) VALUES (?,?,?,?) "
+                "ON CONFLICT(bot_id,thread_id,user_id) DO UPDATE SET upto=excluded.upto",
+                (bot_id, thread, user_id, mark),
+            )
             return mark
 
     # Messages
@@ -448,41 +498,66 @@ class BotStore(SharesMixin):
             conn.execute("SELECT * FROM bot_messages WHERE id=?", (cursor.lastrowid,)).fetchone()
         )
 
-    def add_user_message(self, bot_id, user_id, text, request_id) -> dict:
-        """Store a message once per ``request_id``. The same text returns the stored row."""
+    def add_user_message(self, bot_id, user_id, text, request_id, thread_id=None) -> dict:
+        """Store a message once per ``request_id`` (per thread). The same text returns the row."""
         _text(text, "text", 1, TEXT_MAX)
         if not isinstance(request_id, str) or REQUEST_ID.fullmatch(request_id) is None:
             raise Invalid("invalid request id")
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            thread, _from = self._scope(conn, bot_id, user_id, thread_id, write=True)
             row = conn.execute(
                 "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user' "
-                "AND thread_id IS NULL",
-                (bot_id, request_id),
+                "AND thread_id IS ?",
+                (bot_id, request_id, thread),
             ).fetchone()
             if row is None:
-                return self._add(conn, bot_id, "user", text, request_id=request_id)
+                return self._add(
+                    conn,
+                    bot_id,
+                    "user",
+                    text,
+                    request_id=request_id,
+                    thread_id=thread,
+                    author_id=None if thread is None else user_id,
+                )
             if row["text"] != text:
                 raise Conflict()
             return _message(row)
 
     def add_bot_message(
-        self, bot_id, user_id, reply_to, text, blocks=(), model=None, state="ok", learned_used=()
+        self,
+        bot_id,
+        user_id,
+        reply_to,
+        text,
+        blocks=(),
+        model=None,
+        state="ok",
+        learned_used=(),
+        thread_id=None,
     ) -> dict:
         """The one reply to user message ``reply_to``; a second reply is a conflict.
 
-        ``learned_used``: ids of the learned items (the person's, and shared ones of a project
-        they read) this reply's request carried; their use count and last use are updated in
-        the same write as the reply."""
+        A reply to a turn whose share ended meanwhile is stored only as the fixed
+        ``failed:revoked`` reply, in the thread its person opened. ``learned_used``: ids of the
+        learned items (the person's, and shared ones of a project they read) this reply's
+        request carried; their use count and last use are updated in the same write as the
+        reply.
+        """
         _text(text, "text", 0, TEXT_MAX * 4)
         if state != "ok" and state not in ("stopped",) and not state.startswith("failed:"):
             raise Invalid("invalid state")
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            try:
+                thread, _from = self._scope(conn, bot_id, user_id, thread_id)
+            except Missing:
+                if state != "failed:revoked":
+                    raise
+                thread = self._opened(conn, bot_id, user_id, thread_id)
             if not conn.execute(
                 "SELECT 1 FROM bot_messages WHERE id=? AND bot_id=? AND role='user' "
-                "AND thread_id IS NULL",
-                (reply_to, bot_id),
+                "AND thread_id IS ?",
+                (reply_to, bot_id, thread),
             ).fetchone():
                 raise Invalid("reply_to is not a message of this bot")
             try:
@@ -495,6 +570,7 @@ class BotStore(SharesMixin):
                     reply_to=reply_to,
                     model=model,
                     state=state,
+                    thread_id=thread,
                 )
             except sqlite3.IntegrityError:
                 raise Conflict() from None
@@ -507,48 +583,61 @@ class BotStore(SharesMixin):
                 )
             return message
 
-    def add_event_message(self, bot_id, user_id, text, blocks=()) -> dict:
+    def add_event_message(self, bot_id, user_id, text, blocks=(), thread_id=None) -> dict:
         _text(text, "text", 0, TEXT_MAX)
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
-            return self._add(conn, bot_id, "event", text, blocks=list(blocks))
+            thread, _from = self._scope(conn, bot_id, user_id, thread_id, write=True)
+            return self._add(conn, bot_id, "event", text, blocks=list(blocks), thread_id=thread)
 
-    def message_for_request(self, bot_id, user_id, request_id) -> dict | None:
+    def message_for_request(self, bot_id, user_id, request_id, thread_id=None) -> dict | None:
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            thread, _from = self._scope(conn, bot_id, user_id, thread_id)
             row = conn.execute(
                 "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user' "
-                "AND thread_id IS NULL",
-                (bot_id, request_id),
+                "AND thread_id IS ?",
+                (bot_id, request_id, thread),
             ).fetchone()
             return _message(row) if row else None
 
-    def unanswered(self, bot_id, user_id) -> list[dict]:
-        """User messages of this bot that have no bot reply, oldest first."""
+    def unanswered(self, bot_id, user_id, thread_id=None) -> list[dict]:
+        """User messages of this thread that have no bot reply, oldest first."""
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            thread, _from = self._scope(conn, bot_id, user_id, thread_id)
             return [
                 _message(row)
                 for row in conn.execute(
-                    "SELECT * FROM bot_messages u WHERE u.bot_id=? AND u.role='user' AND u.thread_id IS NULL "
+                    "SELECT * FROM bot_messages u WHERE u.bot_id=? AND u.role='user' "
+                    "AND u.thread_id IS ? "
                     "AND NOT EXISTS (SELECT 1 FROM bot_messages b WHERE b.bot_id=u.bot_id "
                     "AND b.role='bot' AND b.reply_to=u.id) ORDER BY u.id",
-                    (bot_id,),
+                    (bot_id, thread),
                 )
             ]
 
-    def reply_to(self, bot_id, user_id, message_id) -> dict | None:
+    def reply_to(self, bot_id, user_id, message_id, thread_id=None) -> dict | None:
+        """The bot's reply to a message. A person's own thread stays readable here after their
+        share ended, so a turn that outlived it can report its fixed reply."""
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            try:
+                thread, _from = self._scope(conn, bot_id, user_id, thread_id)
+            except Missing:
+                thread = self._opened(conn, bot_id, user_id, thread_id)
             row = conn.execute(
                 "SELECT * FROM bot_messages WHERE bot_id=? AND role='bot' AND reply_to=? "
-                "AND thread_id IS NULL",
-                (bot_id, message_id),
+                "AND thread_id IS ?",
+                (bot_id, message_id, thread),
             ).fetchone()
             return _message(row) if row else None
 
-    def messages(self, bot_id, user_id, after=None, before=None, limit=PAGE_DEFAULT) -> list[dict]:
-        """Oldest first. ``after`` pages forward; otherwise the newest ``limit``, older than ``before``."""
+    def messages(
+        self, bot_id, user_id, after=None, before=None, limit=PAGE_DEFAULT, thread_id=None
+    ) -> list[dict]:
+        """Oldest first. ``after`` pages forward; otherwise the newest ``limit``, older than ``before``.
+
+        ``thread_id`` None is the owner's original thread (a member names their own thread).
+        """
+        if thread_id is not None or not self._owns(bot_id, user_id):
+            return self.thread_messages(bot_id, user_id, thread_id, after, before, limit)
         if type(limit) is not int or not 1 <= limit <= PAGE_MAX:
             raise Invalid("limit must be 1-100")
         for value in (after, before):
@@ -572,11 +661,22 @@ class BotStore(SharesMixin):
                 ).fetchall()[::-1]
         return [_message(row) for row in rows]
 
+    def _owns(self, bot_id, user_id) -> bool:
+        with self._tx(write=False) as conn:
+            return (
+                isinstance(bot_id, str)
+                and isinstance(user_id, str)
+                and conn.execute(
+                    "SELECT 1 FROM bots WHERE id=? AND user_id=?", (bot_id, user_id)
+                ).fetchone()
+                is not None
+            )
+
     # Running-turn leases: a turn renews its lease while it runs, in whatever process
 
     def lease_start(self, bot_id, user_id, request_id) -> None:
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             conn.execute(
                 "INSERT OR REPLACE INTO bot_leases (bot_id,request_id,beat_at) VALUES (?,?,?)",
                 (bot_id, request_id, time.time()),
@@ -608,7 +708,7 @@ class BotStore(SharesMixin):
 
     def action_start(self, bot_id, user_id, request_id, step, tool, args_hash) -> int:
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             try:
                 return conn.execute(
                     "INSERT INTO bot_actions (bot_id,request_id,step,tool,args_hash,state) "
@@ -623,7 +723,7 @@ class BotStore(SharesMixin):
         if state not in ("ok", "refused"):
             raise Invalid("invalid state")
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            self._journal(conn, bot_id, user_id)
             return (
                 conn.execute(
                     "UPDATE bot_actions SET state=?,blocks=? WHERE bot_id=? AND request_id=? "
@@ -635,7 +735,7 @@ class BotStore(SharesMixin):
 
     def actions(self, bot_id, user_id, request_id) -> list[dict]:
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            self._journal(conn, bot_id, user_id)
             return [
                 {
                     "step": r["step"],
@@ -658,14 +758,16 @@ class BotStore(SharesMixin):
         data["args"] = json.loads(data["args"])
         return data
 
-    def pending_create(self, bot_id, user_id, tool, args, label, ttl_s=PENDING_TTL_S) -> dict:
+    def pending_create(
+        self, bot_id, user_id, tool, args, label, ttl_s=PENDING_TTL_S, thread_id=None
+    ) -> dict:
         now = datetime.now(timezone.utc)
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             pending_id = uuid.uuid4().hex
             conn.execute(
-                "INSERT INTO bot_pending (id,bot_id,user_id,tool,args,label,created_at,expires_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO bot_pending (id,bot_id,user_id,tool,args,label,created_at,expires_at,"
+                "thread_id) VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     pending_id,
                     bot_id,
@@ -675,6 +777,7 @@ class BotStore(SharesMixin):
                     label,
                     stamp(now),
                     stamp(now + timedelta(seconds=ttl_s)),
+                    thread_id,
                 ),
             )
             return self._pending(
@@ -683,22 +786,25 @@ class BotStore(SharesMixin):
 
     def pending_get(self, bot_id, user_id, pending_id) -> dict | None:
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             row = conn.execute(
                 "SELECT * FROM bot_pending WHERE id=? AND bot_id=?", (pending_id, bot_id)
             ).fetchone()
             return self._pending(row) if row else None
 
     def pending_for(self, user_id, pending_id) -> dict | None:
-        """A pending action of one of this person's bots (for hydrating a confirm block)."""
+        """This person's own pending action on a bot they reach (for hydrating a confirm block)."""
         if not isinstance(pending_id, str):
             return None
         with self._tx(write=False) as conn:
             row = conn.execute(
-                "SELECT p.* FROM bot_pending p JOIN bots b ON b.id=p.bot_id "
-                "WHERE p.id=? AND b.user_id=? AND p.user_id=?",
-                (pending_id, user_id, user_id),
+                "SELECT * FROM bot_pending WHERE id=? AND user_id=?", (pending_id, user_id)
             ).fetchone()
+            try:
+                if row is not None:
+                    self._viewer(conn, user_id, row["bot_id"])
+            except Missing:
+                return None
             return self._pending(row) if row else None
 
     def pending_resolve(self, bot_id, user_id, pending_id, state, now=None) -> bool:
@@ -710,7 +816,7 @@ class BotStore(SharesMixin):
             raise Invalid("invalid state")
         at = stamp(now)
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             if state != "expired":
                 conn.execute(
                     "UPDATE bot_pending SET state='expired' WHERE id=? AND bot_id=? "
@@ -727,59 +833,74 @@ class BotStore(SharesMixin):
 
     # Work the bot filed
 
-    def work_add(self, bot_id, user_id, board, card, message_id) -> None:
+    def work_add(self, bot_id, user_id, board, card, message_id, thread_id=None) -> None:
+        """Remember a card this person's turn filed: its events go to that person's thread."""
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             conn.execute(
-                "INSERT OR IGNORE INTO bot_work (bot_id,board,card,message_id) VALUES (?,?,?,?)",
-                (bot_id, board, card, message_id),
+                "INSERT OR IGNORE INTO bot_work (bot_id,board,card,message_id,user_id,thread_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (bot_id, board, card, message_id, user_id, thread_id),
             )
 
     def work_list(self, bot_id, user_id) -> list[dict]:
+        """The work this person filed through the bot (never another person's)."""
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             return [
                 {"board": r["board"], "card": r["card"], "message_id": r["message_id"]}
                 for r in conn.execute(
-                    "SELECT * FROM bot_work WHERE bot_id=? ORDER BY message_id,card", (bot_id,)
+                    "SELECT w.* FROM bot_work w JOIN bots b ON b.id=w.bot_id WHERE w.bot_id=? "
+                    "AND COALESCE(w.user_id, b.user_id)=? ORDER BY w.message_id,w.card",
+                    (bot_id, user_id),
                 )
             ]
 
     def bots_for_card(self, board, card) -> list[dict]:
-        """Every bot that filed ``card``: ``{bot_id, user_id, message_id}``, oldest first."""
+        """Every bot that filed ``card``: ``{bot_id, user_id, thread_id, message_id}``, oldest
+        first. ``user_id`` is the person whose turn filed it (the bot's owner for older rows)."""
         return self._lookup("bot_work", "card", board, card)
 
     def work_changed(
-        self, bot_id, user_id, board, card, seq, word, text=None, blocks=()
+        self, bot_id, user_id, board, card, seq, word, text=None, blocks=(), thread_id=None
     ) -> dict | None:
         """Apply hub event ``seq`` to a filed card: remember its status word, post ``text`` if it changed.
 
         Only an event newer than the last one applied counts, and the check, the marker and the
         message are one write. A redelivered, stale or racing handler is a no-op, and a repeated
-        event for the same word adds no second message. Returns the new event message, if any.
+        event for the same word adds no second message. The message goes to the thread of the
+        person who filed the card, and only while they still reach it. Returns the new event
+        message, if any.
         """
-        with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
-            row = conn.execute(
-                "SELECT last_seq FROM bot_work WHERE bot_id=? AND board=? AND card=?",
-                (bot_id, board, card),
-            ).fetchone()
-        if row is None or row["last_seq"] >= seq:
-            return None
-        with self._tx() as conn:
-            row = conn.execute(
-                "SELECT last_word FROM bot_work WHERE bot_id=? AND board=? AND card=? "
-                "AND last_seq<?",
-                (bot_id, board, card, seq),
-            ).fetchone()
-            if row is None:
+        try:
+            with self._tx(write=False) as conn:
+                self._scope(conn, bot_id, user_id, thread_id, write=True)
+                row = conn.execute(
+                    "SELECT last_seq FROM bot_work WHERE bot_id=? AND board=? AND card=?",
+                    (bot_id, board, card),
+                ).fetchone()
+            if row is None or row["last_seq"] >= seq:
                 return None
-            conn.execute(
-                "UPDATE bot_work SET last_word=?, last_seq=? WHERE bot_id=? AND board=? AND card=?",
-                (word, seq, bot_id, board, card),
-            )
-            if row["last_word"] != word and text is not None:
-                return self._add(conn, bot_id, "event", text, blocks=list(blocks))
+            with self._tx() as conn:
+                thread, _from = self._scope(conn, bot_id, user_id, thread_id, write=True)
+                row = conn.execute(
+                    "SELECT last_word FROM bot_work WHERE bot_id=? AND board=? AND card=? "
+                    "AND last_seq<?",
+                    (bot_id, board, card, seq),
+                ).fetchone()
+                if row is None:
+                    return None
+                conn.execute(
+                    "UPDATE bot_work SET last_word=?, last_seq=? "
+                    "WHERE bot_id=? AND board=? AND card=?",
+                    (word, seq, bot_id, board, card),
+                )
+                if row["last_word"] != word and text is not None:
+                    return self._add(
+                        conn, bot_id, "event", text, blocks=list(blocks), thread_id=thread
+                    )
+        except Missing:
+            return None  # the person's share (or the bot) ended: the event is dropped
         return None
 
     def work_by_bot(self, user_id) -> dict[str, list[tuple[str, int]]]:
@@ -788,7 +909,8 @@ class BotStore(SharesMixin):
             found: dict[str, list[tuple[str, int]]] = {}
             for r in conn.execute(
                 "SELECT w.bot_id, w.board, w.card FROM bot_work w JOIN bots b ON b.id=w.bot_id "
-                "WHERE b.user_id=? AND b.archived_at IS NULL AND w.last_word IS NOT 'done' "
+                "WHERE COALESCE(w.user_id, b.user_id)=? AND b.archived_at IS NULL "
+                "AND w.last_word IS NOT 'done' "
                 "ORDER BY w.bot_id, w.card",
                 (user_id,),
             ):
@@ -797,18 +919,21 @@ class BotStore(SharesMixin):
 
     # Posts forwarded to the space chat
 
-    def forward_add(self, bot_id, user_id, board, space_message_id, message_id) -> None:
+    def forward_add(
+        self, bot_id, user_id, board, space_message_id, message_id, thread_id=None
+    ) -> None:
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             conn.execute(
-                "INSERT OR IGNORE INTO bot_forwards (bot_id,board,space_message_id,message_id) "
-                "VALUES (?,?,?,?)",
-                (bot_id, board, space_message_id, message_id),
+                "INSERT OR IGNORE INTO bot_forwards "
+                "(bot_id,board,space_message_id,message_id,user_id,thread_id) VALUES (?,?,?,?,?,?)",
+                (bot_id, board, space_message_id, message_id, user_id, thread_id),
             )
 
     def forward_list(self, bot_id, user_id) -> list[dict]:
+        """The posts this person forwarded through the bot (never another person's)."""
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            self._viewer(conn, user_id, bot_id)
             return [
                 {
                     "board": r["board"],
@@ -816,13 +941,14 @@ class BotStore(SharesMixin):
                     "message_id": r["message_id"],
                 }
                 for r in conn.execute(
-                    "SELECT * FROM bot_forwards WHERE bot_id=? ORDER BY message_id,space_message_id",
-                    (bot_id,),
+                    "SELECT t.* FROM bot_forwards t JOIN bots b ON b.id=t.bot_id WHERE t.bot_id=? "
+                    "AND COALESCE(t.user_id, b.user_id)=? ORDER BY t.message_id,t.space_message_id",
+                    (bot_id, user_id),
                 )
             ]
 
     def bots_for_post(self, board, space_message_id) -> list[dict]:
-        """Every bot that forwarded this space post: ``{bot_id, user_id, message_id}``."""
+        """Every bot that forwarded this space post: ``{bot_id, user_id, thread_id, message_id}``."""
         return self._lookup("bot_forwards", "space_message_id", board, space_message_id)
 
     def unanswered_forwards(self, board, before) -> list[dict]:
@@ -832,12 +958,13 @@ class BotStore(SharesMixin):
                 {
                     "bot_id": r["bot_id"],
                     "user_id": r["user_id"],
+                    "thread_id": r["thread_id"],
                     "message_id": r["message_id"],
                     "space_message_id": r["space_message_id"],
                 }
                 for r in conn.execute(
-                    "SELECT t.bot_id, b.user_id, t.message_id, t.space_message_id "
-                    "FROM bot_forwards t "
+                    "SELECT t.bot_id, COALESCE(t.user_id, b.user_id) AS user_id, t.thread_id, "
+                    "t.message_id, t.space_message_id FROM bot_forwards t "
                     "JOIN bots b ON b.id=t.bot_id WHERE t.board=? AND t.space_message_id<? "
                     "AND t.answered_by IS NULL ORDER BY t.message_id, t.bot_id",
                     (board, before),
@@ -845,7 +972,7 @@ class BotStore(SharesMixin):
             ]
 
     def forward_answered(
-        self, bot_id, user_id, board, reply_id, posts, text, blocks=()
+        self, bot_id, user_id, board, reply_id, posts, text, blocks=(), thread_id=None
     ) -> dict | None:
         """The coordinator's reply ``reply_id`` answering this bot's forwarded ``posts``, as one event.
 
@@ -853,8 +980,16 @@ class BotStore(SharesMixin):
         message, so a redelivered, racing or later reply adds nothing and never takes them over.
         """
         _text(text, "text", 0, UPDATE_MAX)
+        try:
+            return self._forward_answered(
+                bot_id, user_id, board, reply_id, posts, text, blocks, thread_id
+            )
+        except Missing:
+            return None  # the person's share (or the bot) ended: the reply is dropped
+
+    def _forward_answered(self, bot_id, user_id, board, reply_id, posts, text, blocks, thread_id):
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            thread, _from = self._scope(conn, bot_id, user_id, thread_id, write=True)
             marked = sum(
                 conn.execute(
                     "UPDATE bot_forwards SET answered_by=? WHERE bot_id=? AND board=? "
@@ -863,15 +998,23 @@ class BotStore(SharesMixin):
                 ).rowcount
                 for post in posts
             )
-            return self._add(conn, bot_id, "event", text, blocks=list(blocks)) if marked else None
+            if not marked:
+                return None
+            return self._add(conn, bot_id, "event", text, blocks=list(blocks), thread_id=thread)
 
     def _lookup(self, table, column, board, value) -> list[dict]:
         # Internal readers (updates, the front agent) have no user yet; they get the owner from the bot.
         with self._tx(write=False) as conn:
             return [
-                {"bot_id": r["bot_id"], "user_id": r["user_id"], "message_id": r["message_id"]}
+                {
+                    "bot_id": r["bot_id"],
+                    "user_id": r["user_id"],
+                    "thread_id": r["thread_id"],
+                    "message_id": r["message_id"],
+                }
                 for r in conn.execute(
-                    f"SELECT t.bot_id, b.user_id, t.message_id FROM {table} t "
+                    f"SELECT t.bot_id, COALESCE(t.user_id, b.user_id) AS user_id, t.thread_id, "
+                    f"t.message_id FROM {table} t "
                     f"JOIN bots b ON b.id=t.bot_id WHERE t.board=? AND t.{column}=? "
                     "ORDER BY t.message_id, t.bot_id",
                     (board, value),
@@ -881,38 +1024,58 @@ class BotStore(SharesMixin):
     # Memory
 
     def memory_add(self, bot_id, user_id, text) -> dict:
+        """A note: the owner's is bot-level (every turn reads it), a member's is theirs alone."""
         _text(text, "text", 1, NOTE_MAX)
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            bot = self._viewer(conn, user_id, bot_id)
             at = stamp()
             memory_id = conn.execute(
-                "INSERT INTO bot_memory (bot_id,text,created_at) VALUES (?,?,?)",
-                (bot_id, text, at),
+                "INSERT INTO bot_memory (bot_id,text,created_at,owner_id) VALUES (?,?,?,?)",
+                (bot_id, text, at, None if bot["user_id"] == user_id else user_id),
             ).lastrowid
             return {"id": memory_id, "text": text, "at": at}
 
-    def memory_list(self, bot_id, user_id, limit=None) -> list[dict]:
+    def memory_list(self, bot_id, user_id, limit=None, own=False) -> list[dict]:
+        """Bot-level notes; with ``own`` a member's own notes (the owner's are bot-level)."""
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            bot = self._viewer(conn, user_id, bot_id)
+            holder = user_id if own and bot["user_id"] != user_id else None
             return [
                 {"id": r["id"], "text": r["text"], "at": r["created_at"]}
                 for r in conn.execute(
-                    "SELECT * FROM bot_memory WHERE bot_id=? AND removed_at IS NULL AND owner_id IS NULL "
-                    "ORDER BY id LIMIT ?",
-                    (bot_id, -1 if limit is None else limit),
+                    "SELECT * FROM bot_memory WHERE bot_id=? AND removed_at IS NULL "
+                    "AND owner_id IS ? ORDER BY id LIMIT ?",
+                    (bot_id, holder, -1 if limit is None else limit),
                 )
             ]
 
-    def memory_remove(self, bot_id, user_id, memory_id) -> bool:
+    def memory_for_turn(self, bot_id, user_id) -> list[dict]:
+        """What one person's turn reads: the bot-level notes and that person's own notes only."""
+        with self._tx(write=False) as conn:
+            self._viewer(conn, user_id, bot_id)
+            return [
+                {"id": r["id"], "text": r["text"], "at": r["created_at"]}
+                for r in conn.execute(
+                    "SELECT * FROM bot_memory WHERE bot_id=? AND removed_at IS NULL "
+                    "AND (owner_id IS NULL OR owner_id=?) ORDER BY id",
+                    (bot_id, user_id),
+                )
+            ]
+
+    def memory_remove(self, bot_id, user_id, memory_id, own=False) -> bool:
+        """Forget one note: a bot-level note (owner) or, with ``own``, one of the member's own."""
         with self._tx() as conn:
-            self._own(conn, bot_id, user_id)
+            bot = self._viewer(conn, user_id, bot_id)
+            is_owner = bot["user_id"] == user_id
+            if not is_owner and not own:
+                return False
             return (
                 type(memory_id) is int
                 and 0 < memory_id < 2**63
                 and conn.execute(
                     "UPDATE bot_memory SET removed_at=?, text='' WHERE id=? AND bot_id=? "
-                    "AND removed_at IS NULL AND owner_id IS NULL",
-                    (stamp(), memory_id, bot_id),
+                    "AND removed_at IS NULL AND owner_id IS ?",
+                    (stamp(), memory_id, bot_id, None if is_owner else user_id),
                 ).rowcount
                 == 1
             )

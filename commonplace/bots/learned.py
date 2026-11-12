@@ -328,8 +328,9 @@ class Learned(RunsMixin, RecallMixin, ShareMixin):
             BotStore._own(conn, bot_id, user_id)
             self._gate(conn, bot_id, user_id, source_message_id, now)
             message = conn.execute(
-                "SELECT role,text,created_at FROM bot_messages WHERE id=? AND bot_id=?",
-                (source_message_id, bot_id),
+                "SELECT role,text,created_at FROM bot_messages WHERE id=? AND bot_id=? "
+                "AND thread_id IS NULL AND (author_id IS NULL OR author_id=?)",
+                (source_message_id, bot_id, user_id),
             ).fetchone()
             if message is None or message["role"] != "user" or text not in message["text"]:
                 raise Invalid("not the person's words")
