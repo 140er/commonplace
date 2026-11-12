@@ -37,6 +37,8 @@ MAX_ITEMS = 32
 LIST_LIMIT = 100
 # A proposal row whose decision card never opened (a crash in between) is void after this.
 OPENING_SECONDS = 600
+# A change the owner rejected is not asked again, by anyone, for this long.
+REJECTED_QUIET_SECONDS = 7 * 24 * 3600
 
 _SCHEMA = (
     """
@@ -210,7 +212,8 @@ def _about_itself(subject, own) -> bool:
 
 
 def _plan(items, remove, current, machine_id, owner):
-    """Split a request into ``(direct changes, refreshed facts, proposed changes, unchanged)``.
+    """Split a request into direct changes, facts to observe again, proposed changes and
+    the counts of unchanged facts and of live status reports.
 
     A change is ``{subject, predicate, before, after}``; ``None`` means no value.
     """
@@ -227,7 +230,7 @@ def _plan(items, remove, current, machine_id, owner):
         if "kind" not in current.get(subject, {}) and (subject, "kind") not in written:
             raise TopologyError("no: the first write for a node needs its kind")
     own = _own_nodes(facts, current, machine_id) if machine_id else set()
-    direct, refreshed, proposed, unchanged = [], [], [], 0
+    direct, refreshed, proposed, unchanged, observed = [], [], [], 0, 0
     for subject, predicate, value in facts:
         before = current.get(subject, {}).get(predicate)
         change = {"subject": subject, "predicate": predicate, "before": before, "after": value}
@@ -237,6 +240,11 @@ def _plan(items, remove, current, machine_id, owner):
             unchanged += 1
         elif owner or (before is None and machine_id and _about_itself(subject, own)):
             direct.append(change)
+        elif machine_id and predicate == "status" and _about_itself(subject, own):
+            # A path report is a live observation that expires in minutes, not a change
+            # to the map's shape: the store weighs it against other observers.
+            refreshed.append((subject, predicate, value))
+            observed += 1
         else:
             proposed.append(change)
     removed = set()
@@ -256,7 +264,7 @@ def _plan(items, remove, current, machine_id, owner):
                 "after": None,
             }
             (direct if owner else proposed).append(change)
-    return _ordered(direct), refreshed, _ordered(proposed), unchanged
+    return _ordered(direct), refreshed, _ordered(proposed), unchanged, observed
 
 
 def _ordered(changes) -> list:
@@ -433,14 +441,20 @@ def _public(row) -> dict:
 
 
 def _waiting(topo, observer, changes):
-    """This observer's open proposal of exactly these changes, so a rerun asks only once."""
+    """The proposal that already answers this request, so the owner is asked only once.
+
+    That is this observer's open proposal of exactly these changes, or the same changes
+    the owner rejected a short while ago: a rerun must not bring a refused change back.
+    """
+    quiet = model.stamp(model.clock(None) - timedelta(seconds=REJECTED_QUIET_SECONDS))
     with _reading(topo) as conn:
         if conn is None:
             return None
         return conn.execute(
-            "SELECT * FROM topology_proposals WHERE state='pending' AND card IS NOT NULL "
-            "AND observer_kind=? AND observer_id=? AND changes=? ORDER BY created_at LIMIT 1",
-            (observer.kind, observer.id, model.encode(changes)),
+            "SELECT * FROM topology_proposals WHERE changes=? AND ("
+            "(state='pending' AND card IS NOT NULL AND observer_kind=? AND observer_id=?) "
+            "OR (state='rejected' AND decided_at>?)) ORDER BY state, created_at DESC LIMIT 1",
+            (model.encode(changes), observer.kind, observer.id, quiet),
         ).fetchone()
 
 
@@ -484,8 +498,9 @@ def _still_true(changes, current) -> bool:
 def propose(ctx, items=None, remove=None, evidence=None, ttl_seconds=None, board=None) -> dict:
     """Write what may be written at once and open one owner decision for the rest.
 
-    Returns ``{"applied", "proposal", "unchanged"}``: the applied change and the pending
-    proposal (each ``None`` or its public row) and how many facts already had the value.
+    Returns ``{"applied", "proposal", "unchanged", "observed"}``: the applied change and
+    the pending proposal (each ``None`` or its public row), how many facts already had the
+    value, and how many live status reports of a runner's own links were written.
     Refusals raise ``TopologyError`` or ``ToolError`` before anything is stored.
     """
     observer, machine_id = _caller(ctx)
@@ -496,9 +511,11 @@ def propose(ctx, items=None, remove=None, evidence=None, ttl_seconds=None, board
     settle(ctx.gateway, principal.workspace_id)
     topo = store.open_topology(ctx.gateway, principal.workspace_id)
     owner = observer.kind == "owner"
-    direct, refreshed, proposed, unchanged = _plan(items, remove, _current(topo), machine_id, owner)
+    direct, refreshed, proposed, unchanged, observed = _plan(
+        items, remove, _current(topo), machine_id, owner
+    )
     options = _decision(proposed) if proposed else None
-    result = {"applied": None, "proposal": None, "unchanged": unchanged}
+    result = {"applied": None, "proposal": None, "unchanged": unchanged, "observed": observed}
     common = {
         "observer": observer,
         "actor": principal.actor,

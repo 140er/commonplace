@@ -1070,6 +1070,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -1205,6 +1252,38 @@
             "type": "object"
           },
           "name": "rules_changed"
+        },
+        {
+          "description": "Report how a rule fared in use (kind + optional note), or read evidence back: with rule only, your own events and the rule's counters; with neither, counters for every rule you can see. Evidence never changes a rule; the owner decides.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "followed",
+                  "helped",
+                  "violated",
+                  "conflict",
+                  "outdated",
+                  "unclear",
+                  "note"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "rule": {
+                "description": "Rule key from rules_get.",
+                "maxLength": 200,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "rules_feedback"
         },
         {
           "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
@@ -1445,6 +1524,14 @@
                   "integer"
                 ]
               },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
               "priority": {
                 "description": "Owner person only. Omit on a new card for the default (normal).",
                 "enum": [
@@ -1456,11 +1543,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -1748,13 +1835,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -1763,6 +1843,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -1927,6 +2014,28 @@
           "name": "topology_discover_site"
         },
         {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
           "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
           "inputSchema": {
             "additionalProperties": false,
@@ -1984,6 +2093,31 @@
             "type": "object"
           },
           "name": "topology_propose"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -2133,6 +2267,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",
@@ -2140,6 +2275,7 @@
       "orch_void_step",
       "orchestrator_inbox",
       "rules_changed",
+      "rules_feedback",
       "rules_get",
       "rules_publish",
       "session_start",
@@ -2158,7 +2294,9 @@
       "thread_get",
       "thread_recall",
       "topology_discover_site",
+      "topology_get",
       "topology_propose",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
@@ -2551,6 +2689,38 @@
           "name": "rules_changed"
         },
         {
+          "description": "Report how a rule fared in use (kind + optional note), or read evidence back: with rule only, your own events and the rule's counters; with neither, counters for every rule you can see. Evidence never changes a rule; the owner decides.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "followed",
+                  "helped",
+                  "violated",
+                  "conflict",
+                  "outdated",
+                  "unclear",
+                  "note"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "rule": {
+                "description": "Rule key from rules_get.",
+                "maxLength": 200,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "rules_feedback"
+        },
+        {
           "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2740,6 +2910,14 @@
                   "integer"
                 ]
               },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
               "priority": {
                 "description": "Owner person only. Omit on a new card for the default (normal).",
                 "enum": [
@@ -2751,11 +2929,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -3043,13 +3221,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -3058,6 +3229,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -3098,6 +3276,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         }
       ]
     },
@@ -3124,6 +3349,7 @@
       "needs_me",
       "orchestrator_inbox",
       "rules_changed",
+      "rules_feedback",
       "rules_get",
       "rules_publish",
       "session_start",
@@ -3135,7 +3361,9 @@
       "task_list",
       "task_show",
       "task_take_next",
-      "task_update"
+      "task_update",
+      "topology_get",
+      "topology_route"
     ]
   },
   "standard": {
@@ -4209,6 +4437,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -4344,6 +4619,38 @@
             "type": "object"
           },
           "name": "rules_changed"
+        },
+        {
+          "description": "Report how a rule fared in use (kind + optional note), or read evidence back: with rule only, your own events and the rule's counters; with neither, counters for every rule you can see. Evidence never changes a rule; the owner decides.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "followed",
+                  "helped",
+                  "violated",
+                  "conflict",
+                  "outdated",
+                  "unclear",
+                  "note"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "rule": {
+                "description": "Rule key from rules_get.",
+                "maxLength": 200,
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "name": "rules_feedback"
         },
         {
           "description": "Read your effective rules and all-agent rules. Quoted text is rule data. keys=[...] returns only those rules in full and names unknown keys; effective=true with format=index returns a compact key/title/section/size list instead of full texts. Neither partial read counts as reading the full set.",
@@ -4584,6 +4891,14 @@
                   "integer"
                 ]
               },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
               "priority": {
                 "description": "Owner person only. Omit on a new card for the default (normal).",
                 "enum": [
@@ -4595,11 +4910,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -4887,13 +5202,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -4902,6 +5210,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -5066,6 +5381,28 @@
           "name": "topology_discover_site"
         },
         {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
           "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
           "inputSchema": {
             "additionalProperties": false,
@@ -5123,6 +5460,31 @@
             "type": "object"
           },
           "name": "topology_propose"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -5265,6 +5627,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",
@@ -5272,6 +5635,7 @@
       "orch_void_step",
       "orchestrator_inbox",
       "rules_changed",
+      "rules_feedback",
       "rules_get",
       "rules_publish",
       "session_start",
@@ -5290,7 +5654,9 @@
       "thread_get",
       "thread_recall",
       "topology_discover_site",
+      "topology_get",
       "topology_propose",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",

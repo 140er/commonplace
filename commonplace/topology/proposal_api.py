@@ -55,9 +55,14 @@ def _tool(ctx, args):
     if result["proposal"]:
         row = result["proposal"]
         lines.append(
-            f"proposal {row['id']} with {_count(row)} waits for the owner: "
+            f"the owner rejected this change on {row['decided_at']} ({row['id']}); "
+            "it is not asked again for now"
+            if row["state"] == "rejected"
+            else f"proposal {row['id']} with {_count(row)} waits for the owner: "
             f"#{row['card']} {card_url(ctx, row['card'])}"
         )
+    if result["observed"]:
+        lines.append(f"{result['observed']} status report(s) written")
     if result["unchanged"]:
         lines.append(f"{result['unchanged']} already on the map")
     return "\n".join(lines)
@@ -128,11 +133,11 @@ def install(gateway):
             # The next read of the proposals settles it again.
             log_failure(logger, "topology proposal not settled", exc)
 
-    previous = getattr(gateway, "_topology_decided", None)
-    if previous is not None:
-        events.remove_listener(previous)
-    gateway._topology_decided = decided
-    events.add_listener(decided)
+    if getattr(gateway, "_topology_decided", None) is None:
+        gateway._topology_decided = decided
+        events.add_listener(decided)
+        # A closed hub must not keep answering events of another one.
+        gateway.db.add_pre_close_callback(lambda: events.remove_listener(decided))
 
 
 register(

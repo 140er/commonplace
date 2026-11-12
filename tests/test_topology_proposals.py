@@ -130,8 +130,28 @@ def test_a_rerun_asks_only_once(world):
     assert len(proposals.listing(ctx(world), "pending")) == 1
     other = os_change(world, "Linux 7.0")
     assert other["id"] != first["id"]
+
+
+def test_a_rejected_change_is_not_asked_again_for_a_while(world, monkeypatch):
+    seed(world)
+    first = os_change(world)
     answer(world, first, "Reject")
-    assert os_change(world)["id"] != first["id"]
+    cards = len(board(world).task_list(board="work"))
+    # The same change again, also from another agent, gets the owner's answer back.
+    again = os_change(world)
+    assert again["id"] == first["id"] and again["state"] == "rejected"
+    _, other = world.agent("other")
+    args = {"items": [{"node": "web1", "fields": {"os": "Linux 6.9"}}], "evidence": EVIDENCE}
+    assert proposals.propose(ctx(world, other), **args)["proposal"]["id"] == first["id"]
+    response = call(world, "topology_propose", **args)
+    assert text(response).startswith("the owner rejected this change on ")
+    assert len(board(world).task_list(board="work")) == cards
+    assert store.list_conflicts(topo(world), open_only=False) == []
+    # A different change is a new question, and so is the same one after the quiet time.
+    assert os_change(world, "Linux 7.0")["state"] == "pending"
+    monkeypatch.setattr(proposals, "REJECTED_QUIET_SECONDS", 0)
+    later = os_change(world)
+    assert later["id"] != first["id"] and later["state"] == "pending"
 
 
 def test_no_decision_means_nothing_is_written(env):
@@ -250,11 +270,32 @@ def test_runner_self_report_applies_without_a_question(world):
 
     # A rerun changes nothing and asks nothing; it only refreshes what was seen.
     again = proposals.propose(ctx(world, worker), items=[own, link], evidence=EVIDENCE)
-    assert again == {"applied": None, "proposal": None, "unchanged": 5}
+    assert again == {"applied": None, "proposal": None, "unchanged": 5, "observed": 0}
     assert node["fields"]["os"]["provenance"][0]["seen_count"] == 1
     seen = store.get_node(topo(world), "runner-one")["fields"]["os"]["provenance"][0]
     assert seen["seen_count"] == 2
     assert len(proposals.listing(ctx(world))) == 1
+
+
+def test_runner_reports_its_own_link_status_without_a_question(world):
+    machine_id, worker = runner(world)
+    own = {"node": "runner-one", "fields": {"kind": "server", "runner_id": machine_id}}
+    link = {"link": ["runner-one", "hub", "direct"], "fields": {"status": "up"}}
+    proposals.propose(ctx(world, worker), items=[own, link], evidence=EVIDENCE)
+    down = {"link": ["runner-one", "hub", "direct"], "fields": {"status": "down"}}
+    result = proposals.propose(ctx(world, worker), items=[down], evidence="ping hub: timeout")
+    assert result == {"applied": None, "proposal": None, "unchanged": 1, "observed": 1}
+    assert store.get_link(topo(world), "runner-one", "hub", "direct")["values"]["status"] == "down"
+    assert len(proposals.listing(ctx(world))) == 1
+    # Another machine's link, or an agent's report of this one, is still the owner's call.
+    other = {"link": ["web1", "hub", "direct"], "fields": {"status": "up"}}
+    seed(world, [WEB1, other])
+    other["fields"]["status"] = "down"
+    assert proposals.propose(ctx(world, worker), items=[other], evidence=EVIDENCE)["proposal"]
+    up = {"link": ["runner-one", "hub", "direct"], "fields": {"status": "up"}}
+    assert proposals.propose(ctx(world), items=[up], evidence=EVIDENCE)["proposal"]["state"] == (
+        "pending"
+    )
 
 
 def test_runner_change_and_facts_about_others_need_the_owner(world):
@@ -423,7 +464,7 @@ def test_invalid_requests_are_refused_before_anything_is_stored(world):
     assert proposals.listing(ctx(world)) == before
     assert not [c for c in board(world).task_list(board="work")]
     unchanged = proposals.propose(ctx(world), items=[WEB1], evidence=EVIDENCE)
-    assert unchanged == {"applied": None, "proposal": None, "unchanged": 2}
+    assert unchanged == {"applied": None, "proposal": None, "unchanged": 2, "observed": 0}
 
 
 # ── Undo ──────────────────────────────────────────────────────────────────
@@ -524,6 +565,13 @@ def test_mcp_reply_names_the_decision(world):
     first, *_ = text(response).splitlines()
     assert first.startswith("proposal tp_") and "with 2 facts waits for the owner: #1 " in first
     assert call(world, "topology_propose", evidence=EVIDENCE, nope=1)["result"]["isError"]
+
+
+def test_listener_leaves_with_its_hub(world):
+    listener = world.gateway._topology_decided
+    assert listener in events._listeners
+    world.db.close()
+    assert listener not in events._listeners
 
 
 def test_old_workspace_reads_empty_and_creates_nothing(world):
