@@ -11,6 +11,8 @@
 
   - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
 
+  - `tests/test_commonplace_invite_canary.py`, `tests/test_commonplace_invites.py` and `tests/test_invites_ui.py` (`tests/invites_ui.mjs`) hold the workspace-invite cases and second-user canaries; the `invites` module block describes them. The route inventory in `tests/test_commonplace_public_surface.py` lists the invite and workspace routes.
+
   - `commonplace_deck_compute.mjs` and its pytest wrapper cover label/segment/dot geometry for 1–12 machines on desktop and phone, owner refusals, state derivation, keyboard tabs, escaping, draft handoffs and refresh/stop races.
 
   - `tests/test_commonplace_deck_today.py` (`commonplace_deck_today.mjs`) exercises Today decisions, project-owner de-duplication, refresh-safe draft hand-off, errors, cancellation and Deck-only routing.

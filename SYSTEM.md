@@ -321,6 +321,12 @@ records of another agent or session. No Cursor database reader is claimed.
 - The Admin page's runner block lists, enrolls, attests and edits wings through the existing owner-only `/api/runners` routes. Enrollment tokens are shown once in a panel and never stored, logged or redrawn.
 - The runner block reads its wing picker from `GET /api/runners/wings`, never from the connections listing. For an owner who reads every wing, the wing names come from the palace's Chroma metadata index in one seek per wing, skipping wings that hold only miner bookkeeping rows, under a two-second deadline; other principals, compact stores and a failed index read use the memory listing. Grant validation, connection read wings and `GET /api/connections` share that read (#451: the drawer-by-drawer listing did not answer on a 2.6 million drawer palace). When the wing read still fails, the editor keeps the granted wings ticked and offers a typed wing field; the server validates every name.
 
+### Workspace invites
+
+- An owner invites a person with a single-use link that expires (7 days, or 1 to 30) and can be revoked. The secret is shown once and stored only as a SHA-256. Joining needs a signed-in account and one confirming click, and grants the existing `member` role with no connection, token or scope. `docs/invites.md` is the contract.
+- Invites change no access rule. A member still reads no private wing, their own notes included; who may read a private wing in a shared workspace stays an open product decision.
+- A person in several workspaces switches with `/api/workspaces/switch`, which only ever accepts one of their own memberships.
+
 ### Run ledger
 
 - A run is one runner start. Its ledger row (`run_ledger` in `runner.sqlite3`) is written in the start's own transaction and follows its state; the table is additive and older starts get a row when the store opens.
