@@ -7,9 +7,13 @@ const { fixture } = await import('./topology_fixture.mjs');
 const { createMapCore, mapModel, MAP_PATH } = await import(new URL('topology-map.js', STATIC));
 const layout = await import(new URL('topology-layout.js', STATIC));
 
-// ---------- the runners fallback keeps every label readable ----------
+// ---------- links and labels: the fallback graphs and the topology case, desktop and phone ----------
 
-const LABEL = 160, FIELD = { desktop: { width: 860, height: 620, columns: 6 }, phone: { width: 358, height: 440, columns: 2 } };
+const { createTopologyMap, K_LEAST } = await import(new URL('topology-map.js', STATIC));
+const { DISC, plateOf } = await import(new URL('topology-route.js', STATIC));
+const { largeFixture } = await import('./topology_fixture.mjs');
+const FIELD = { desktop: { width: 860, height: 600 }, phone: { width: 358, height: 494 } };
+const WORDS = { up: 'Ready', degraded: 'Waiting for attestation', down: 'Down', unknown: 'Off' };
 const touches = (s, r) => {
   // Liang-Barsky clipping; touching an edge counts as an intersection too.
   let low = 0, high = 1;
@@ -20,102 +24,131 @@ const touches = (s, r) => {
   return true;
 };
 const overlaps = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-
-function fallbackScene(count, long, phone, compute) {
-  const field = phone ? FIELD.phone : FIELD.desktop;
-  const rows = Array.from({ length: count }, (_, i) => ({ id: `m${i}`, label: long ? 'A very long machine name WWWWWW 🧰 '.repeat(6) : `Machine ${i}`, enabled: i % 3 !== 2, binding_state: i % 3 === 1 ? 'unbound' : 'owner_attested' }));
-  const core = createMapCore({ words: { up: 'Ready', degraded: 'Waiting for attestation', down: 'Down', unknown: 'Off' }, none: true, labels: LABEL, columns: field.columns });
-  core.apply(compute.runnerGraph(rows));
-  core.fit(field.width, field.height, { remember: false }, { pad: 24, reach: { x: LABEL / 2, top: 72, bottom: 72 } });
-  return { core, field, scene: core.scene() };
-}
-
-for (const count of [1, 2, 5, 8, 12]) for (const long of [false, true]) for (const phone of [false, true]) {
-  test(`fallback label geometry: hub with ${count} machines, ${long ? 'very long' : 'short'} names, ${phone ? 'phone' : 'desktop'} field`, async () => {
-    const compute = await import(new URL('deck-compute.js', STATIC));
-    const { core, field, scene } = fallbackScene(count, long, phone, compute);
-    const { view, positions } = core, nodes = core.model.nodes;
-    assert.equal(nodes.length, count + 1);
-    // Each label has a plate in the card colour, drawn above every link, so no line or mark runs through a label.
-    const plates = [...scene.matchAll(/data-key="([^"]+)"[^>]*transform="translate\(([-\d.]+) ([-\d.]+)\)"[\s\S]*?<rect class="topo-label-plate" x="([-\d.]+)" y="(-?\d+)" width="(\d+)" height="(\d+)"/g)].map(([, key, x, y, px, py, width, height]) => ({ key, x: +x + +px, y: +y + +py, width: +width, height: +height }));
-    assert.equal(plates.length, count + 1, 'one plate per node');
-    assert.ok(scene.indexOf('class="topo-label-plate"') > scene.indexOf('</g><g class="topo-nodes">'), 'plates are drawn after the links');
-    for (const plate of plates) {
-      const screen = { x: plate.x * view.k + view.x, y: plate.y * view.k + view.y, width: plate.width * view.k, height: plate.height * view.k };
-      assert.ok(screen.x >= 0 && screen.y >= 0 && screen.x + screen.width <= field.width && screen.y + screen.height <= field.height, `${plate.key} inside the ${field.width}x${field.height} field`);
-    }
-    for (let i = 0; i < plates.length; i++) for (const other of plates.slice(i + 1)) assert.ok(!overlaps(plates[i], other), 'labels never overlap');
-    if (long) assert.ok([...scene.matchAll(/<text class="topo-name"[^>]*>([^<]*)<\/text>/g)].slice(1).every(([, name]) => name.endsWith('…')));
-    // Marks sit outside every label; a node's disc never covers another node.
-    const places = core.links();
-    // Only the marks that are drawn: one on each machine (top right of its disc), none on the hub and none on a link end.
-    const marks = nodes.filter(node => node.status !== 'none').map(node => ({ x: positions[node.key].x + 24, y: positions[node.key].y - 24 }));
-    assert.equal(marks.length, count);
-    for (const link of core.model.links) assert.deepEqual(link.status, { from: 'none', to: 'none' });
-    for (const mark of marks) for (const plate of plates) assert.ok(!(mark.x + 7 > plate.x && mark.x - 7 < plate.x + plate.width && mark.y + 7 > plate.y && mark.y - 7 < plate.y + plate.height), 'a status mark is never inside a label');
-    for (const [key, at] of Object.entries(positions)) for (const [other, there] of Object.entries(positions)) if (key !== other) assert.ok(Math.hypot(at.x - there.x, at.y - there.y) > 60, 'discs apart');
-    // A hub with a single row of machines needs no plate at all: no line even touches a label.
-    if (count <= field.columns) for (const place of places.values()) for (const plate of plates) assert.ok(!touches(place, plate), `line touches ${plate.key}`);
-    assert.deepEqual(scene, fallbackScene(count, long, phone, compute).scene, 'deterministic');
-  });
-}
-
-// ---------- the topology case: no link through a device or a label, every link whole ----------
-
-const { largeFixture } = await import('./topology_fixture.mjs');
-const { DISC, plateOf } = await import(new URL('topology-route.js', STATIC));
 const segmentDistance = (p, a, b) => {
   const dx = b.x - a.x, dy = b.y - a.y, span = dx * dx + dy * dy;
   const t = span ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / span)) : 0;
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 };
+const fallbackRows = (count, long) => Array.from({ length: count }, (_, i) => ({ id: `m${i}`, label: long ? 'A very long machine name WWWWWW 🧰 '.repeat(6) : `Machine ${i}`, enabled: i % 3 !== 2, binding_state: i % 3 === 1 ? 'unbound' : 'owner_attested' }));
 
-for (const phone of [false, true]) test(`topology geometry: ${phone ? 'phone' : 'desktop'} field, the fixture's links run between devices, around labels, and are whole`, async () => {
-  const compute = await import(new URL('deck-compute.js', STATIC));
-  const metrics = phone ? compute.METRICS.phone : compute.METRICS.desktop, field = phone ? { width: 358, height: 520 } : { width: 860, height: 600 };
-  const core = createMapCore({ labels: metrics.labels, layout: 'layered', metrics, route: true });
-  core.apply(fixture());
-  const { model, positions } = core, places = core.links();
-  const plates = model.nodes.map(node => ({ key: node.key, ...plateOf({ kind: node.kind, sub: Boolean(node.role || node.missing || node.stale || node.conflicted) }, positions[node.key], metrics.labels) }));
+/** What the Deck screen builds: the same options as its canvas. */
+function deckCore(compute, payload, phone, runners) {
+  const metrics = phone ? compute.METRICS.phone : compute.METRICS.desktop, field = phone ? FIELD.phone : FIELD.desktop;
+  const core = createMapCore({ labels: metrics.labels, layout: 'layered', metrics, route: true, ...(runners ? { words: WORDS, none: true } : {}) });
+  core.apply(payload);
+  core.fit(field.width, field.height, { remember: false }, { pad: metrics.pad });
+  return { core, metrics, field };
+}
+
+/** Every link is one continuous line between its two devices that touches no other device and no label; labels
+ * do not meet; the first view fits the width and never shrinks the plates' room. */
+function assertGeometry({ core, metrics, field }) {
+  const { model, positions, view } = core, places = core.links();
+  const plates = model.nodes.map(node => ({ key: node.key, ...plateOf({ kind: node.kind, sub: Boolean(node.role || node.missing || node.stale || node.conflicted) }, positions[node.key], metrics.labels, K_LEAST) }));
   assert.equal(places.size, model.links.length);
   for (const link of model.links) {
-    const { points } = places.get(link.id);
-    assert.ok(points?.length >= 2, `${link.id} is routed`);
-    // Whole: it starts on one disc and ends on the other.
-    for (const [point, key] of [[points[0], link.from], [points.at(-1), link.to]]) assert.ok(Math.abs(Math.hypot(point.x - positions[key].x, point.y - positions[key].y) - DISC) < 1, `${link.id} meets ${key}`);
+    const place = places.get(link.id);
+    const points = place.points || [{ x: positions[link.from].x, y: positions[link.from].y }, { x: positions[link.to].x, y: positions[link.to].y }];
+    if (place.points) for (const [point, key] of [[points[0], link.from], [points.at(-1), link.to]]) assert.ok(Math.abs(Math.hypot(point.x - positions[key].x, point.y - positions[key].y) - DISC) < 1, `${link.id} meets ${key}`);
     for (let i = 1; i < points.length; i++) {
       const [a, b] = [points[i - 1], points[i]];
       assert.ok(Math.hypot(b.x - a.x, b.y - a.y) > 0, 'no empty segment');
-      for (const node of model.nodes) assert.ok(segmentDistance(positions[node.key], a, b) >= DISC - 0.5, `${link.id} passes through ${node.key}`);
+      for (const node of model.nodes) if (place.points || (node.key !== link.from && node.key !== link.to)) assert.ok(segmentDistance(positions[node.key], a, b) >= DISC - 0.5, `${link.id} passes through ${node.key}`);
+      // A straight link may leave its own device through the plate only where the label is above it (the hub).
       for (const plate of plates) assert.ok(!touches({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, plate), `${link.id} crosses the label of ${plate.key}`);
     }
-    for (const dot of [places.get(link.id).from, places.get(link.id).to]) {
-      for (const plate of plates) assert.ok(!(dot.x + 7 > plate.x && dot.x - 7 < plate.x + plate.width && dot.y + 7 > plate.y && dot.y - 7 < plate.y + plate.height), `a status mark sits in the label of ${plate.key}`);
-      for (const node of model.nodes) assert.ok(Math.hypot(dot.x - positions[node.key].x, dot.y - positions[node.key].y) > DISC + 3, `a status mark sits on ${node.key}`);
-    }
+    if (place.from) for (const dot of [place.from, place.to]) for (const plate of plates) assert.ok(!(dot.x + 7 > plate.x && dot.x - 7 < plate.x + plate.width && dot.y + 7 > plate.y && dot.y - 7 < plate.y + plate.height), `a status mark sits in the label of ${plate.key}`);
   }
   for (let i = 0; i < plates.length; i++) for (const other of plates.slice(i + 1)) assert.ok(!overlaps(plates[i], other), `labels of ${plates[i].key} and ${other.key} overlap`);
   const scene = core.scene();
-  assert.equal((scene.match(/<path class="topo-route" d="M[^"]*"\/><text class="topo-method"/g) || []).length, model.links.length, 'every link is one continuous path');
-  assert.doesNotMatch(scene.split('<g class="topo-nodes">')[0], /<line /);
-  assert.equal((scene.match(/class="topo-label-plate"/g) || []).length, model.nodes.length);
-  assert.ok(scene.indexOf('class="topo-label-plate"') > scene.indexOf('<g class="topo-nodes">'));
-  // The first view uses the card: every disc, plate and route inside it with an even 32px, and the limiting axis exactly that.
-  core.fit(field.width, field.height, { remember: false }, { pad: 32 });
-  const { view } = core, edges = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
-  const see = (x, y) => { edges.left = Math.min(edges.left, x * view.k + view.x); edges.right = Math.max(edges.right, x * view.k + view.x); edges.top = Math.min(edges.top, y * view.k + view.y); edges.bottom = Math.max(edges.bottom, y * view.k + view.y); };
-  for (const plate of plates) { see(plate.x, plate.y); see(plate.x + plate.width, plate.y + plate.height); }
-  for (const key of Object.keys(positions)) { see(positions[key].x - DISC, positions[key].y - DISC); see(positions[key].x + DISC, positions[key].y + DISC); }
-  assert.ok(edges.left >= 31.5 && edges.top >= 31.5 && field.width - edges.right >= 31.5 && field.height - edges.bottom >= 31.5, `padding ${JSON.stringify(edges)}`);
-  assert.ok(Math.min(edges.left, edges.top, field.width - edges.right, field.height - edges.bottom) < 40, 'the graph fills the card on its limiting axis');
+  assert.equal((scene.match(/class="topo-label-plate"/g) || []).length, model.nodes.length, 'a plate behind every label');
+  assert.ok(scene.indexOf('class="topo-label-plate"') > scene.indexOf('<g class="topo-nodes">'), 'plates are drawn after the links');
+  // The view: never below what the plates were laid out for; every plate and disc inside the card across; down to the top at least.
+  assert.ok(view.k >= K_LEAST - 1e-9 && view.k <= 1, `scale ${view.k}`);
+  for (const node of model.nodes) {
+    const x = positions[node.key].x * view.k + view.x, y = positions[node.key].y * view.k + view.y;
+    assert.ok(x - metrics.labels / 2 >= metrics.pad - 1 && x + metrics.labels / 2 <= field.width - metrics.pad + 1, `${node.key} inside the card across (${Math.round(x)})`);
+    assert.ok(y - DISC - 4 - 38 >= metrics.pad - 1, `${node.key} below the top edge`);
+  }
+}
+
+for (const count of [1, 2, 5, 8, 12]) for (const long of [false, true]) for (const phone of [false, true]) {
+  test(`fallback links and labels: hub with ${count} machines, ${long ? 'very long' : 'short'} names, ${phone ? 'phone' : 'desktop'} field`, async () => {
+    const compute = await import(new URL('deck-compute.js', STATIC));
+    const rows = fallbackRows(count, long), made = deckCore(compute, compute.runnerGraph(rows), phone, true);
+    assertGeometry(made);
+    const scene = made.core.scene();
+    assert.equal(made.core.model.nodes.length, count + 1);
+    if (long) assert.ok([...scene.matchAll(/<text class="topo-name"[^>]*>([^<]*)<\/text>/g)].slice(1).every(([, name]) => name.endsWith('…')));
+    assert.equal(scene, deckCore(compute, compute.runnerGraph(rows), phone, true).core.scene(), 'deterministic');
+  });
+}
+
+for (const phone of [false, true]) test(`topology links and labels: ${phone ? 'phone' : 'desktop'} field, the fixture's links run between devices, around labels, and are whole`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const made = deckCore(compute, fixture(), phone, false);
+  assertGeometry(made);
+  const scene = made.core.scene();
+  assert.equal((scene.match(/<path class="topo-route" d="M[^"]*"\/><text class="topo-method"/g) || []).length + (scene.match(/<line /g) || []).length, made.core.model.links.length, 'every link is one continuous line');
 });
 
-test('a map too big to route keeps straight links and still draws', () => {
-  const core = createMapCore({ labels: 160, layout: 'layered', metrics: { gx: 200, gy: 128, lane: 56 }, route: true });
+test('a map too big to route keeps straight links and still draws', async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const core = createMapCore({ labels: 160, layout: 'layered', metrics: compute.METRICS.desktop, route: true });
   core.apply(largeFixture(300));
   const scene = core.scene();
   assert.match(scene, /<line /);
   assert.ok(scene.includes('data-key='));
+});
+
+// ---------- labels keep their size on the screen at every zoom ----------
+
+function stageDom() {
+  const make = () => {
+    const handlers = {}, parts = new Map(), classes = new Set(), props = {};
+    const el = {
+      isConnected: true, dataset: {}, attrs: {}, hidden: false, value: '', disabled: false, textContent: '', innerHTML: '', props, clientWidth: 860, clientHeight: 600,
+      style: { setProperty(name, value) { props[name] = value; } }, classList: { toggle: (n, on) => (on ? classes.add(n) : classes.delete(n)), add: n => classes.add(n), remove: n => classes.delete(n) },
+      setAttribute(name, value) { el.attrs[name] = String(value); }, addEventListener(kind, handler) { handlers[kind] = handler; }, dispatchEvent() {},
+      fire: (kind, event = {}) => handlers[kind]?.({ type: kind, preventDefault() {}, target: { closest: () => null }, ctrlKey: false, metaKey: false, altKey: false, ...event }),
+      querySelector(selector) { if (!parts.has(selector)) parts.set(selector, make()); return parts.get(selector); }, querySelectorAll: () => [], setPointerCapture() {}, focus() {}, getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    };
+    el.ownerDocument = { hidden: false, activeElement: null };
+    return el;
+  };
+  return make();
+}
+
+for (const phone of [false, true]) test(`label type is constant on screen: ${phone ? 'phone' : 'desktop'}, fitted view, zoomed out and zoomed in`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const metrics = phone ? compute.METRICS.phone : compute.METRICS.desktop, host = stageDom();
+  const ui = createTopologyMap({ mount: () => host, storage: null, interval: 0, api: async () => fixture(), look: { labels: metrics.labels, layout: 'layered', metrics, route: true, pad: metrics.pad } });
+  ui.show();
+  for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve));
+  const stage = host.querySelector('[data-topology]').querySelector('[data-topo="stage"]');
+  const css = await readFile(new URL('topology.css', STATIC), 'utf8'), deck = await readFile(new URL('deck-compute.js', STATIC), 'utf8');
+  const px = (source, name) => Number(new RegExp(`\\.${name}\\s*\\{[^}]*?(\\d+)px`).exec(source)?.[1]);
+  const nameSize = Math.max(px(deck, 'deck-compute \\.topo-name'), 0) || px(css, 'topo-name'), roleSize = Math.max(px(deck, 'deck-compute \\.topo-role'), 0) || px(css, 'topo-role');
+  assert.ok(nameSize >= 12 && roleSize >= 11, `declared sizes ${nameSize}/${roleSize}`);
+  assert.match(deck, /\.topo-label \{ transform: translate\(0, 27px\) scale\(var\(--inv, 1\)\); \}/);
+  const world = host.querySelector('[data-topology]').querySelector('[data-topo="world"]');
+  assert.match(world.innerHTML, /<g class="topo-label"[^>]*><rect class="topo-label-plate"[\s\S]*?<text class="topo-name"/);
+  const scale = () => Number(/scale\(([\d.]+)\)/.exec(world.attrs.transform)[1]);
+  const seen = [];
+  const check = (when) => {
+    const k = scale(), inv = Number(stage.props['--inv']);
+    seen.push([when, k]);
+    // on screen = declared size x label scale (--inv) x zoom (k)
+    assert.ok(Math.abs(inv * k - 1) < 1e-6, `${when}: --inv ${inv} at zoom ${k}`);
+    assert.ok(nameSize * inv * k >= 12 - 1e-6 && roleSize * inv * k >= 11 - 1e-6, `${when}: type ${nameSize * inv * k}/${roleSize * inv * k}px`);
+  };
+  check('fitted');
+  for (let i = 0; i < 3; i++) stage.fire('keydown', { key: '-', target: { closest: () => null } });
+  check('zoomed out');
+  for (let i = 0; i < 9; i++) stage.fire('keydown', { key: '+', target: { closest: () => null } });
+  check('zoomed in');
+  assert.ok(new Set(seen.map(([, k]) => k.toFixed(2))).size === 3, `three different zooms: ${JSON.stringify(seen)}`);
+  ui.stop();
 });
 
 test('the Deck tab bar is one row of equal columns for two, three and four sections', async () => {

@@ -9,7 +9,9 @@ const MARK = { ready: 'up', waiting: 'degraded', off: 'unknown' };
 const RUNNER_WORDS = { up: STATES.ready, degraded: STATES.waiting, down: 'Down', unknown: STATES.off };
 const MACHINE_KINDS = new Set(['pc', 'mac', 'phone', 'vm', 'server', 'container']);
 // Map units: a label's plate and the gaps of the layered layout (a link runs in the gap between neighbours).
-export const METRICS = { desktop: { labels: 160, gx: 200, gy: 128, lane: 56 }, phone: { labels: 120, gx: 160, gy: 124, lane: 44 } };
+// `labels` is the width of a label's plate in screen pixels (labels keep their size at every zoom); gx is
+// the room of a device in a row, laid out for a view of 0.85 or more, so plates never meet; `columns` caps a row.
+export const METRICS = { desktop: { labels: 160, gx: 216, gy: 140, lane: 56, columns: 4, pad: 32 }, phone: { labels: 124, gx: 174, gy: 140, lane: 36, columns: 2, pad: 16 } };
 const GENERIC_FAILURE = 'Machines could not be loaded. Try again.';
 let stylesheet;
 function styles(doc) {
@@ -57,6 +59,12 @@ function styles(doc) {
 .deck-compute .topo-node:focus-visible .topo-plate { stroke: var(--text-2); stroke-width: 3; stroke-dasharray: 4 3; }
 .deck-compute .topo-node.sel:focus-visible .topo-plate { stroke: var(--bg); }
 .deck-compute .topo-label-plate { fill: var(--surface); stroke: none; }
+/* A label keeps its size on the screen at every zoom: its group is scaled by the stage's --inv (1 / zoom). */
+.deck-compute .topo-label { transform: translate(0, 27px) scale(var(--inv, 1)); }
+.deck-compute .topo-label.above { transform: translate(0, -27px) scale(var(--inv, 1)); }
+.deck-compute .topo-name { font-size: 12px; }
+.deck-compute .topo-role { font-size: 11px; }
+.deck-compute .topo-stage.far .topo-role { display: inline; }
 .deck-compute .topo-name, .deck-compute .topo-role, .deck-compute .topo-method { stroke: var(--surface); }
 .deck-compute .topo-name { fill: var(--text); font-weight: 500; }
 .deck-compute .topo-role { fill: var(--text-3); }
@@ -123,7 +131,7 @@ export function machineState(machine) {
  * draw them when the topology read is empty or fails. The hub carries no status; a machine carries its
  * enrollment state (Ready, Waiting for attestation, Off) once, on the node, and nothing is said about sites or routes. */
 export function runnerGraph(rows) {
-  const nodes = [{ key: HUB, values: { kind: 'hub', name: 'Commonplace hub' } }];
+  const nodes = [{ key: HUB, values: { kind: 'hub', name: 'Commonplace', role: 'Hub' } }];
   const links = [], status = { nodes: { [HUB]: 'none' }, links: {} };
   for (const machine of rows) {
     const state = machineState(machine), id = `${HUB}>${machine.id}`;
@@ -190,7 +198,7 @@ export function mount(context) {
       api: (path, options) => path === MAP_PATH ? Promise.resolve(latest) : ctx.api(path, options),
       workspace: () => `deck:${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
       interval: 0,
-      look: { labels: runners ? METRICS.desktop.labels : metrics.labels, columns: phone ? 2 : runners ? 6 : 0, preselect, compact: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : { layout: 'layered', metrics, route: true }) },
+      look: { labels: metrics.labels, pad: metrics.pad, preselect, compact: true, layout: 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
     });
     map.show();
   }

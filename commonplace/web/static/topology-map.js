@@ -11,8 +11,8 @@
 import { escape as esc } from "./api.js";
 import { KINDS, kindOf } from "./topology-icons.js";
 import { createNodePanel } from "./topology-detail.js";
-import { autoLayout, fitView, layeredLayout, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
-import { DISC, plateOf, routeLinks } from "./topology-route.js";
+import { autoLayout, fitLabelled, fitView, layeredLayout, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
+import { DISC, GAP, routeLinks, straightClear } from "./topology-route.js";
 
 export const MAP_PATH = "/api/topology";
 export const STATES = ["up", "degraded", "down", "unknown"];
@@ -93,33 +93,21 @@ export function statusDot(state, at, title, end = "") {
   return `<g class="topo-dot s-${state}" data-state="${state}"${end ? ` data-end="${end}"` : ""} transform="translate(${at.x} ${at.y})"><title>${esc(title)}</title>${SHAPES[state]}</g>`;
 }
 
-export const nodeLabel = (node, words = STATUS_TEXT) => `${node.name}, ${KINDS[node.kind].label}${node.role ? `, ${node.role}` : ""}.${node.status === "none" ? "" : ` Status: ${words[node.status]}.`}${node.missing ? " Not recorded." : ""}${node.stale ? " Stale." : ""}${node.conflicted ? " Has a conflict." : ""}`;
+export const nodeLabel = (node, words = STATUS_TEXT) => `${node.name}, ${KINDS[node.kind].label}${node.role && node.role !== KINDS[node.kind].label ? `, ${node.role}` : ""}.${node.status === "none" ? "" : ` Status: ${words[node.status]}.`}${node.missing ? " Not recorded." : ""}${node.stale ? " Stale." : ""}${node.conflicted ? " Has a conflict." : ""}`;
 
 const subOf = (node) => [node.role, node.missing && "not recorded", node.stale && "stale", node.conflicted && "conflict"].filter(Boolean).join(" · ");
-
-/** Every point the drawn map covers: each device's disc and label plate, and the bends of its routes. */
-function drawnPoints(model, positions, labels, places) {
-  const points = [];
-  for (const node of model.nodes) {
-    const at = positions[node.key];
-    if (!at) continue;
-    const plate = plateOf({ kind: node.kind, sub: !!subOf(node) }, at, labels);
-    points.push({ x: at.x - DISC - 6, y: at.y - DISC - 6 }, { x: at.x + DISC + 6, y: at.y + DISC + 6 }, { x: plate.x, y: plate.y }, { x: plate.x + plate.width, y: plate.y + plate.height });
-  }
-  for (const place of places?.values() || []) for (const p of place.points || []) points.push(p);
-  return points;
-}
 
 function nodeMarkup(node, at, { on, dim, sel, words, labels }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
   const sub = subOf(node);
-  const label = esc(nodeLabel(node, words));
-  // A plate behind the label hides whatever line passes under it, so a label is never struck through.
-  // The hub's label sits above it: every line leaves the hub downwards, so below it each one would run under the label.
-  const height = sub ? 38 : 22, top = labels && node.kind === "hub" ? -30 - height : 30;
-  const plate = labels ? `<rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${height}" rx="8"/>` : "";
-  const nameAt = labels ? top + 15 : 45, roleAt = labels ? top + 30 : 60;
-  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${label}"><title>${label}</title>${plate}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}<text class="topo-name" y="${nameAt}">${esc(clip(node.name, 24, 12, labels))}</text>${sub ? `<text class="topo-role" y="${roleAt}">${esc(clip(sub, 36, 11, labels))}</text>` : ""}</g>`;
+  const aria = esc(nodeLabel(node, words));
+  // A label is drawn at a constant size on the screen: its group is scaled by the inverse of the view's scale
+  // (the stage's --inv), so the type is the same size at every zoom. The plate hides a line that passes under it.
+  // The hub's label sits above it: every line leaves the hub downwards.
+  const hub = node.kind === "hub", height = sub ? 38 : 22, top = hub ? -GAP - height : GAP;
+  const tag = labels ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${height}" rx="8"/><text class="topo-name" y="${top + 15}">${esc(clip(node.name, 24, 12, labels))}</text>${sub ? `<text class="topo-role" y="${top + 30}">${esc(clip(sub, 36, 11, labels))}</text>` : ""}</g>` : "";
+  const texts = labels ? "" : `<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}`;
+  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${aria}"><title>${aria}</title>${tag}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}${texts}</g>`;
 }
 
 function linkMarkup(link, at, names, { on, dim, words }) {
@@ -183,6 +171,7 @@ export function mapMemory(storage, workspace) {
 
 /** The map without a DOM. Dragged places and the view survive a reload through `storage`. */
 export function createMapCore({ storage = null, workspace = "", words = STATUS_TEXT, none = false, labels = 0, columns = 0, layout = "auto", metrics = {}, route: routed = false } = {}) {
+  const nodeInfo = () => model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node) }));
   const memory = mapMemory(storage, workspace);
   let { placed, view } = memory.load();
   let model = mapModel(null), raw = null, positions = {}, site = "", selected = null;
@@ -193,13 +182,15 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     positions = Object.fromEntries(model.nodes.map((node) => [node.key, placed[node.key] ? { ...placed[node.key] } : auto[node.key]]));
     routes = null;
   };
-  // Where each link runs: routed around the devices and labels when the host asks, straight otherwise.
-  // A link nobody could route keeps its straight line.
+  // Where each link runs: a straight line when it touches no other device and no label, else routed around them
+  // when the host asks. A link nobody could route keeps its straight line. Routes and plates are made for a
+  // view no smaller than K_LEAST, which the first view never goes below.
   const linkPlaces = () => {
     const straight = layoutLinks(model.links, positions);
     if (!routed) return straight;
-    routes ??= routeLinks(model.links, model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node) })), positions, labels || 160) || new Map();
-    return new Map([...straight].map(([id, at]) => [id, routes.get(id) || at]));
+    routes ??= routeLinks(model.links, nodeInfo(), positions, labels || 160, K_LEAST) || new Map();
+    const info = nodeInfo();
+    return new Map(model.links.filter((link) => straight.has(link.id)).map((link) => [link.id, routes.has(link.id) && !straightClear(link.from, link.to, info, positions, labels || 160, K_LEAST) ? routes.get(link.id) : straight.get(link.id)]));
   };
   const route = () => model.routes.find((item) => item.site === site) || null;
   return {
@@ -227,9 +218,11 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     },
     setView(next, { remember = true } = {}) { view = { x: next.x, y: next.y, k: next.k }; if (remember) save(); },
     fit(width, height, options, { pad = 70, reach } = {}) {
-      // With labels the view fits what is drawn: the discs, the plates and the routes, evenly padded.
-      const points = labels ? drawnPoints(model, positions, labels, routed ? linkPlaces() : null) : Object.values(positions);
-      this.setView(fitView(points, width, height, pad, reach, labels ? 1 : 1.25), options);
+      if (!labels) { this.setView(fitView(Object.values(positions), width, height, pad, reach), options); return; }
+      // Labels keep their size on the screen: fit the graph's width and let a taller graph pan.
+      const room = DISC + GAP + 38, bends = routed ? [...linkPlaces().values()].flatMap((place) => place.points || []) : [];
+      const points = [...Object.values(positions).map((at) => ({ ...at, rx: labels / 2, top: room, bottom: room })), ...bends.map((at) => ({ ...at, rx: 6, top: 6, bottom: 6 }))];
+      this.setView(fitLabelled(points, width, height, { pad, least: K_LEAST, most: 1 }), options);
     },
     /** Forget every dragged place: back to the automatic layout. */
     reset() { placed = {}; place(); save(); },
@@ -247,6 +240,8 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
 // Private browsing may refuse storage; the map then forgets places when the page closes.
 function browserStorage() { try { return globalThis.localStorage || null; } catch { return null; } }
 
+// The smallest scale the first view uses with constant-size labels: plates and routes are laid out for it.
+export const K_LEAST = 0.85;
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 
 /** The Compute map screen. `show()` mounts it into `mount()`; it reads `path` again every
@@ -256,9 +251,11 @@ const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], Arrow
  * `look` is for a host that draws a different graph in its own words:
  *   words, legend  the text of each status and the statuses the legend lists
  *   none           lets a node or link end say "none": no mark
- *   labels         the width of a label: names clip to it, a plate in the card colour sits behind
- *                  each label (it hides a line passing under it) and the automatic view shows
- *                  every label whole; 0 is the classic look
+ *   labels         the width of a label in screen pixels: it is drawn at a constant size whatever the
+ *                  zoom, names clip to it, and a plate in the card colour sits behind it (it hides
+ *                  a line passing under it). The first view fits the graph's width (a taller graph
+ *                  pans) and never shrinks below 0.85; 0 is the classic look
+ *   pad            the space the first view keeps round the graph (32)
  *   columns        most nodes in one row
  *   layout, metrics, route  "layered" rows with free lanes (metrics: gx, gy, lane) and links routed around
  *                  every device and label
@@ -267,7 +264,7 @@ const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], Arrow
  *   preselect      `(model) => key` chosen once, on the first read, when nobody chose yet. */
 export function createTopologyMap({ mount, api, storage = browserStorage(), workspace = () => "", onStartWork = null, interval = 5000, path = MAP_PATH, look = {} }) {
   const { words = STATUS_TEXT, legend = STATES, none = false, labels = 0, columns = 0, own = null, preselect = null, layout = "auto", metrics = {}, route: routed = false, compact = false } = look;
-  const reach = undefined, fitPad = labels ? 32 : 70;
+  const reach = undefined, fitPad = look.pad ?? (labels ? 32 : 70);
   let section = null, stage = null, world = null, core = null, timer = null, run = 0, refused = false, error = "", stalled = false;
   let listeners = null, gesture = null, redraw = false, sites = null, sizes = null, panel = null, chosen = false;
   // True while the view is the automatic fit: it then follows the canvas when its size changes.
@@ -280,6 +277,8 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
   function paintView() {
     const { x, y, k } = core.view;
     world.setAttribute("transform", `translate(${x} ${y}) scale(${k})`);
+    // Constant-size labels: their groups are scaled by this, so the type does not follow the zoom.
+    stage.style.setProperty?.("--inv", String(1 / k));
     stage.classList.toggle("far", k < 0.55);
     stage.classList.toggle("near", k >= 0.9);
     const step = 24 * k * (k < 0.4 ? 4 : 1);

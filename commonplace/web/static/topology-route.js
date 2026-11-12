@@ -4,15 +4,44 @@
    places always give the same routes. A link that cannot be routed (or a map too big to route)
    keeps the straight line of `layoutLinks`, and the caller can tell which (`routed`). */
 export const DISC = 27;
-const CELL = 8, MARGIN = 8, TURN = 0.6, SHARED = 6, NEAR = 2.5, MAX_CELLS = 160000, MAX_NODES = 80;
+const CELL = 8, MARGIN = 8, TURN = 0.6, SHARED = 2, NEAR = 0.8, OUTSIDE = 4, MAX_CELLS = 160000, MAX_NODES = 80;
 const DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
 const round = (n) => Math.round(n * 10) / 10;
 
-/** The label plate of a node, in map units from its centre: below the disc, above it for the hub. */
-export const plateOf = (node, at, labels) => {
-  const height = node.sub ? 38 : 22, top = node.kind === "hub" ? -30 - height : 30;
-  return { x: at.x - labels / 2, y: at.y + top, width: labels, height };
+export const GAP = 4;
+/** The label plate of a node in map units. A label is drawn at a constant size on the screen, so its
+ * plate is `labels` by 38 (22 without a second line) screen pixels, GAP below the disc (above it for the
+ * hub): in map units that is divided by the view's scale `k`. */
+export const plateOf = (node, at, labels, k = 1) => {
+  const height = (node.sub ? 38 : 22) / k, gap = GAP / k;
+  return { x: at.x - labels / 2 / k, y: node.kind === "hub" ? at.y - DISC - gap - height : at.y + DISC + gap, width: labels / k, height };
 };
+
+const touchesRect = (a, b, r) => {
+  let low = 0, high = 1;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  for (const [p, q] of [[-dx, a.x - r.x], [dx, r.x + r.width - a.x], [-dy, a.y - r.y], [dy, r.y + r.height - a.y]]) {
+    if (p === 0) { if (q < 0) return false; } else { const t = q / p; if (p < 0) low = Math.max(low, t); else high = Math.min(high, t); if (low > high) return false; }
+  }
+  return true;
+};
+const toSegment = (p, a, b) => {
+  const dx = b.x - a.x, dy = b.y - a.y, span = dx * dx + dy * dy;
+  const t = span ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / span)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+};
+/** True when the straight line between two devices touches no other device and no label. */
+export function straightClear(a, b, nodes, positions, labels, k = 1) {
+  const from = positions[a], to = positions[b];
+  for (const node of nodes) {
+    const at = positions[node.key];
+    if (!at) continue;
+    if (node.key !== a && node.key !== b && toSegment(at, from, to) < DISC + MARGIN) return false;
+    const plate = plateOf(node, at, labels, k);
+    if (touchesRect(from, to, { x: plate.x - 2, y: plate.y - 2, width: plate.width + 4, height: plate.height + 4 })) return false;
+  }
+  return true;
+}
 
 class Heap {
   constructor() { this.items = []; }
@@ -53,10 +82,10 @@ export function pointAlong(points, at) {
 /** Routes for `links` between `nodes` (`{ key, kind, sub }`) placed at `positions`, with label
  * plates `labels` wide. Returns a Map of link id to `{ points, from, to, label, x1, y1, x2, y2 }`
  * for every link that found a way; links without one are absent. `null` when the map is too big. */
-export function routeLinks(links, nodes, positions, labels) {
+export function routeLinks(links, nodes, positions, labels, k = 1) {
   const placed = nodes.filter((node) => positions[node.key]);
   if (!placed.length || placed.length > MAX_NODES) return null;
-  const reach = labels / 2 + 70;
+  const reach = labels / 2 / k + 70;
   const xs = placed.map((node) => positions[node.key].x), ys = placed.map((node) => positions[node.key].y);
   const ox = Math.min(...xs) - reach, oy = Math.min(...ys) - reach - 40;
   const W = Math.ceil((Math.max(...xs) + reach - ox) / CELL), H = Math.ceil((Math.max(...ys) + reach + 80 - oy) / CELL);
@@ -71,8 +100,11 @@ export function routeLinks(links, nodes, positions, labels) {
     }
   };
   const half = DISC + MARGIN;
+  // Past the devices' own extent a route is dear: links bundle in the lanes between devices instead of circling them.
+  const plates = placed.map((node) => plateOf(node, positions[node.key], labels, k));
+  const inside = { left: Math.min(...plates.map((p) => p.x)) - MARGIN, right: Math.max(...plates.map((p) => p.x + p.width)) + MARGIN };
   for (const node of placed) {
-    const at = positions[node.key], plate = plateOf(node, at, labels);
+    const at = positions[node.key], plate = plateOf(node, at, labels, k);
     mark(at.x - half, at.y - half, at.x + half, at.y + half);
     mark(plate.x - MARGIN, plate.y - MARGIN, plate.x + plate.width + MARGIN, plate.y + plate.height + MARGIN);
   }
@@ -108,7 +140,7 @@ export function routeLinks(links, nodes, positions, labels) {
         if (blocked[n]) continue;
         // No cutting a corner of a device or a label.
         if (d % 2 && (blocked[j * W + ni] || blocked[nj * W + i])) continue;
-        const cost = g + (d % 2 ? 1.414 : 1) + (dir !== 8 && dir !== d ? TURN : 0) + (used[n] === 2 ? SHARED : used[n] === 1 ? NEAR : 0);
+        const cost = g + (d % 2 ? 1.414 : 1) + (dir !== 8 && dir !== d ? TURN : 0) + (used[n] === 2 ? SHARED : used[n] === 1 ? NEAR : 0) + (cx(n) < inside.left || cx(n) > inside.right ? OUTSIDE : 0);
         const next = n * 9 + d;
         if (cost < best[next]) { if (best[next] === Infinity) touched.push(next); best[next] = cost; from[next] = state; heap.push(cost + h(n), next); }
       }

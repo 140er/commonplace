@@ -48,11 +48,22 @@ export function autoLayout(nodes, links = [], { columns = 0 } = {}) {
  * the router can run it between neighbours instead of through a device. Inside a row a node sits
  * near the nodes it links to in the rows above and below (a few barycentre sweeps), and a node
  * linked to another in its own row is moved next to it. A node takes `gx` of the row, a lane
- * `lane`; rows are `gy` apart. Stable: it depends only on keys, kinds and links. */
-export function layeredLayout(nodes, links = [], { gx = 200, gy = 128, lane = 56 } = {}) {
+ * `lane`; rows are `gy` apart. `columns` caps the nodes of a row (a tier with more continues in
+ * the rows below it). Links from one device that pass a row share one lane there.
+ * Stable: it depends only on keys, kinds and links. */
+export function layeredLayout(nodes, links = [], { gx = 200, gy = 128, lane = 56, columns = 0 } = {}) {
   const tiers = [...new Set(nodes.map((node) => TIER[node.kind] ?? LAST_TIER))].sort((a, b) => a - b);
-  const layerOf = new Map(nodes.map((node) => [node.key, tiers.indexOf(TIER[node.kind] ?? LAST_TIER)]));
-  const rows = tiers.map(() => []);
+  // A tier wider than `columns` becomes several rows, filled in key order.
+  const rowOf = new Map();
+  let layers = 0;
+  for (const tier of tiers) {
+    const members = nodes.filter((node) => (TIER[node.kind] ?? LAST_TIER) === tier).sort(byKey);
+    const size = columns > 0 ? columns : members.length || 1;
+    members.forEach((node, i) => rowOf.set(node.key, layers + Math.floor(i / size)));
+    layers += Math.max(1, Math.ceil(members.length / size));
+  }
+  const layerOf = rowOf;
+  const rows = Array.from({ length: layers }, () => []);
   for (const node of [...nodes].sort(byKey)) rows[layerOf.get(node.key)].push({ id: node.key, w: gx });
   const up = new Map(), down = new Map(), same = [];
   const edge = (parent, child) => {
@@ -67,18 +78,23 @@ export function layeredLayout(nodes, links = [], { gx = 200, gy = 128, lane = 56
     if (layerOf.get(top) > layerOf.get(bottom)) [top, bottom] = [bottom, top];
     let last = top;
     for (let layer = layerOf.get(top) + 1; layer < layerOf.get(bottom); layer++) {
-      const id = `lane:${link.id}:${layer}`;
-      rows[layer].push({ id, w: lane });
-      edge(last, id); last = id;
+      const id = `lane:${top}:${layer}`;
+      if (!rows[layer].some((item) => item.id === id)) rows[layer].push({ id, w: lane });
+      if (!(up.get(id) || []).includes(last)) edge(last, id);
+      last = id;
     }
     edge(last, bottom);
   }
-  const index = (row) => new Map(row.map((item, i) => [item.id, i]));
+  // Where each item of a row sits across (rows are centred), so a node pulls towards where its neighbours are.
+  const across = (row) => {
+    let x = -row.reduce((sum, item) => sum + item.w, 0) / 2;
+    return new Map(row.map((item) => { const at = x + item.w / 2; x += item.w; return [item.id, at]; }));
+  };
   const sweep = (layer, from, neighbours) => {
-    const at = index(rows[from]);
-    const keyed = rows[layer].map((item, i) => {
+    const at = across(rows[from]), own = across(rows[layer]);
+    const keyed = rows[layer].map((item) => {
       const near = (neighbours.get(item.id) || []).filter((id) => at.has(id)).map((id) => at.get(id));
-      return { item, pull: near.length ? near.reduce((sum, n) => sum + n, 0) / near.length : i };
+      return { item, pull: near.length ? near.reduce((sum, n) => sum + n, 0) / near.length : own.get(item.id) };
     });
     keyed.sort((a, b) => a.pull - b.pull);
     rows[layer] = keyed.map((entry) => entry.item);
@@ -121,6 +137,27 @@ export function fitView(points, width, height, pad = 70, reach = { x: 0, top: 0,
   const left = Math.min(...xs) - reach.x, right = Math.max(...xs) + reach.x, top = Math.min(...ys) - reach.top, bottom = Math.max(...ys) + reach.bottom;
   const k = clampZoom(Math.min(most, (w - pad * 2) / Math.max(1, right - left), (h - pad * 2) / Math.max(1, bottom - top)));
   return { k, x: w / 2 - ((left + right) / 2) * k, y: h / 2 - ((top + bottom) / 2) * k };
+}
+
+/** The view for labels drawn at a constant size on the screen. Each of `points` scales with the view and
+ * carries how far it stretches beyond itself on the screen (`rx` across, `top`, `bottom`): a device centre
+ * its label, a route bend next to nothing. The graph's width is fitted; when it is taller than the card the
+ * view keeps its size and starts at the top, so the card pans vertically. Never smaller than `least` nor
+ * larger than `most`, so a label always has the room its plate was laid out for. */
+export function fitLabelled(points, width, height, { pad = 32, least = 0.85, most = 1 } = {}) {
+  const w = width > 0 ? width : 800, h = height > 0 ? height : 600;
+  if (!points.length) return { x: w / 2, y: h / 2, k: 1 };
+  const extent = (k) => ({
+    left: Math.min(...points.map((p) => p.x * k - p.rx)), right: Math.max(...points.map((p) => p.x * k + p.rx)),
+    top: Math.min(...points.map((p) => p.y * k - p.top)), bottom: Math.max(...points.map((p) => p.y * k + p.bottom)),
+  });
+  const across = (k) => { const e = extent(k); return e.right - e.left + 2 * pad <= w; };
+  const down = (k) => { const e = extent(k); return e.bottom - e.top + 2 * pad <= h; };
+  // The widest scale at which the width fits; the height only matters while it stays at or above `least`.
+  let k = most;
+  while (k > 0.2 && !(across(k) && (down(k) || k <= least))) k = Math.round((k - 0.005) * 1000) / 1000;
+  const e = extent(k), fits = e.bottom - e.top + 2 * pad <= h;
+  return { k, x: w / 2 - (e.left + e.right) / 2, y: fits ? h / 2 - (e.top + e.bottom) / 2 : pad - e.top };
 }
 
 /** Line, dot and label places per link id. Links between the same two nodes run side by side;
