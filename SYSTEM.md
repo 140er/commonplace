@@ -258,6 +258,14 @@ the pinned outer SSH adapter and only when trusted configuration enables discove
 owner-session routes expose scopes, proposals and cancellation. Cancellation records
 intent and distinguishes it from confirmed termination.
 
+### Compute operator recovery component
+
+`compute/operator.py` gives a trusted operator fenced recovery for controller
+execution and discovery, and for helper tunnels and passive reservations that stayed
+uncertain. It requires the existing persisted guards before attaching, writes a
+private audit note for each action and has no HTTP route. Recovery never implies that
+a remote process terminated.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and
