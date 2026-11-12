@@ -35,8 +35,6 @@ export function renderRail({ workspace = 'Commonplace', user = '', view = 'board
     <button class="cmdk" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K">${icon('search')}<span>Search or do…</span><kbd>⌘/Ctrl K</kbd></button>
     <a class="nav" href="#/bots" data-nav="bots"${current(view === 'bots')}>${icon('bots')}Bots ${badge(botsWaiting, 'waiting on you')}</a>
     <a class="nav" href="#/memory" data-nav="memory"${current(view === 'memory')}>${icon('memory')}Memory</a>
-    <a class="nav" href="#/coworkers" data-nav="coworkers"${current(view === 'coworkers')}>${icon('chat')}Coworkers</a>
-    ${can_admin === true ? `<a class="nav" href="#/compute" data-nav="compute"${current(view === 'compute')}>${icon('settings')}Compute</a>` : ''}
     <div class="rail-foot"><button class="nav" id="shortcuts-link" data-action="shortcuts">${icon('keys')}Shortcuts <kbd>?</kbd></button>
     <details class="user-menu"><summary class="me"><span class="mark" aria-hidden="true">${e(Array.from(user)[0] || '?')}</span>${e(user || 'Account')}${badge(rulesWaiting, 'rules waiting')}</summary><div class="user-links">${menuLinks({ needs, rulesWaiting, can_admin, can_manage_instance })}</div></details></div>
   </nav>`;

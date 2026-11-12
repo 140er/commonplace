@@ -266,13 +266,13 @@ uncertain. It requires the existing persisted guards before attaching, writes a
 private audit note for each action and has no HTTP route. Recovery never implies that
 a remote process terminated.
 
-### Workspace pages for Compute and Coworkers
+### Workspace page controllers for Compute and Coworkers
 
-The classic look adds a Coworkers page for everyone and a Compute page for owners
-and administrators, reached from the rail, palette and the `#/compute` and
-`#/coworkers` routes. Both pages abort stale requests when the session, workspace or
-route changes and render only escaped text from server-authoritative state. In the
-Deck look the `#/compute` address stays the Deck Compute screen. Neither page enables
+`web/static/coworkers.js` and `compute.js` are self-contained page controllers: they
+abort stale requests when the session, workspace or route changes and render only
+escaped text from server-authoritative state. They are deliberately not wired into
+the shell, rail, phone navigation or palette: the Deck look owns Compute navigation,
+and a classic-look entry needs a separate design decision. Neither controller enables
 remote execution; that stays a trusted server-side configuration.
 
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,

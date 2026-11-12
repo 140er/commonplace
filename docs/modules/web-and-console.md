@@ -3,7 +3,7 @@
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
-  - The classic-look Compute page and the Coworkers page (`web/static/compute.js`, `coworkers.js`): rail and palette entries, `#/compute` and `#/coworkers` routes with session and route fencing, and the pageshow restore. In the Deck look `#/compute` stays the Deck screen.
+  - The Coworkers and Compute page controllers (`web/static/coworkers.js`, `compute.js`, with `coworkers.css` and `compute.css`) render escaped, session- and route-fenced state; they are not wired into the shell, rail, phone navigation or palette yet, and the Deck look owns Compute navigation.
 
   - The owner Compute page (`web/static/compute.js`) renders machines, scopes, proposals, approvals and execution evidence from server-authoritative state, escapes every value and fences responses to the current session and route.
 

@@ -18,8 +18,6 @@ import { createRunnerBlock } from "./adminrunners.js";
 import { createInstanceAdmin } from "./instance-admin.js";
 import { createInviteBlock, openWorkspaces } from "./invites.js";
 import { createConsole } from "./console.js";
-import { createCoworkers } from "./coworkers.js";
-import { createCompute } from "./compute.js";
 import { createBots, waitingTotal } from "./bots.js";
 import { createTopologyMap } from "./topology-map.js";
 import { createChat } from "./chat.js";
@@ -87,8 +85,6 @@ state.deck = createDeck({
   reload: () => { if (state.me) void route(); },
 });
 let adminUI = null, instanceAdminUI = null;
-let coworkersUI = null;
-let computeUI = null;
 let consoleUI = null, botsUI = null, topologyUI = null, chatUI = null, detailsUI = null, boardDispose = null;
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
@@ -247,8 +243,6 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 async function signin(code = null) {
-  computeUI?.stop();
-  coworkersUI?.stop();
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
   clearWorkbenchChat();
@@ -354,8 +348,6 @@ function cardMenuUI() {
   return state.cardMenu.ui;
 }
 function shell() {
-  computeUI?.stop();
-  coworkersUI?.stop();
   state.workbenchChat?.dispose();
   state.palette?.ui.stop(); state.palette = null; state.cardMenu?.ui.stop(); state.cardMenu = null;
   state.shellSync = null;
@@ -404,7 +396,7 @@ function navigation() {
   if (!boardNav) return;
   const board = currentBoard();
   // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
-  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : state.base === "#/compute-map" ? "map" : state.base === "#/compute" && !state.deck?.owns("#/compute") ? "compute" : state.base.startsWith("#/coworkers") ? "coworkers" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : state.base === "#/compute-map" ? "map" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
@@ -1079,29 +1071,9 @@ function consoleScreen() {
   consoleUI.show(new URLSearchParams(state.base.split("?")[1] || "").get("agent"));
   title("Console");
 }
-function coworkersScreen() {
-  coworkersUI ??= createCoworkers({ mount: () => root.querySelector("#content"), api, current: () => state.me, boards: () => state.boards });
-  const match = /^#\/coworkers(?:\/([^/?]+))?(?:\?message=([^&]+))?$/.exec(state.route);
-  try { coworkersUI.show(match?.[1] ? decodeURIComponent(match[1]) : null, match?.[2] ? decodeURIComponent(match[2]) : null); }
-  catch { coworkersUI.stop(); showError("This conversation link is invalid."); }
-  title("Coworkers");
-  navigation();
-}
-function computeScreen() {
-  computeUI ??= createCompute({ mount: () => root.querySelector("#content"), api, current: () => state.me,
-    onBoards(boards) { state.boards = boards; navigation(); },
-  });
-  computeUI.show();
-  title("Compute");
-  navigation();
-}
-// The classic Compute page; in the Deck look "#/compute" belongs to the Deck screen instead.
-const classicCompute = (hash) => hash === "#/compute" && state.deck?.owns("#/compute") !== true;
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
   if (["#/admin", "#/instance-admin"].includes(state.route)) return;
-  if (classicCompute(state.route)) return;
-  if (/^#\/coworkers(?:[/?]|$)/.test(state.route)) return;
   const epoch = state.screen, request = ++state.refreshRequest;
   if (!background) state.renderPending = epoch;
   const current = () => epoch === state.screen && request === state.refreshRequest;
@@ -1418,18 +1390,16 @@ async function route() {
   if (direct) { state.base = boardRoute({ boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|compute-map|chat(?:\/[^/?]+)?|coworkers(?:\/[^/?]+)?(?:\?message=[^&]+)?|console(?:\?agent=[^&#]+)?|settings|admin|instance-admin|today|compute)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|compute-map|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|instance-admin|today|compute)$/.test(hash) ? hash : "#/");
     // Today and Compute exist in the Deck look only; without it they are an unknown address.
-    if (state.base === "#/today" && !state.deck?.owns(state.base)) state.base = "#/";
+    if (/^#\/(?:today|compute)$/.test(state.base) && !state.deck?.owns(state.base)) state.base = "#/";
     state.card = null;
-  } else if (["#/admin", "#/instance-admin"].includes(state.base) || classicCompute(state.base) || state.base.startsWith("#/coworkers")) {
+  } else if (["#/admin", "#/instance-admin"].includes(state.base)) {
     state.base = boardRoute({ boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/admin") adminUI?.stop();
   if (previousBase === "#/instance-admin") instanceAdminUI?.stop();
-  if (previousBase === "#/compute") computeUI?.stop();
-  if (previousBase.startsWith("#/coworkers") && !state.base.startsWith("#/coworkers")) coworkersUI?.stop();
   if (previousBase.startsWith("#/console") && !state.base.startsWith("#/console")) consoleUI?.stop();
   if (previousBase.startsWith("#/bots") && !state.base.startsWith("#/bots")) botsUI?.stop();
   if (state.base !== previousBase) state.deck?.leave();
@@ -1461,8 +1431,6 @@ async function route() {
   showError("");
   if (hash === "#/admin") { adminScreen(); return; }
   if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
-  if (classicCompute(hash)) { computeScreen(); return; }
-  if (state.base.startsWith("#/coworkers")) { coworkersScreen(); return; }
   await refresh();
 }
 // The current view's list first, so a write never sends a version left over from another view.
@@ -1675,8 +1643,6 @@ root.addEventListener("click", async (event) => {
     });
     else if (action === "new-board") openOnboarding();
     else if (action === "logout") {
-      computeUI?.stop();
-      coworkersUI?.stop();
       state.needsUI?.stop(); state.needsUI = null;
       voice.stop();
       clearWorkbenchChat();
@@ -1918,11 +1884,6 @@ async function poll() {
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
 document.addEventListener("session-expired", () => { adminUI?.stop(); instanceAdminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pageshow", (event) => {
-  if (!event.persisted || !state.me) return;
-  if (state.base.startsWith("#/coworkers")) coworkersScreen();
-  if (classicCompute(state.base)) computeScreen();
-});
 window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
