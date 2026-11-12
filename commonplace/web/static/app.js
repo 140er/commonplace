@@ -1371,7 +1371,7 @@ async function route() {
   let last;
   try { last = localStorage.getItem(boardPreference()); } catch { /* The first readable board is the fallback. */ }
   // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
-  const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last });
+  const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last, deck: state.deck?.owns("#/compute") === true });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }

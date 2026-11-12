@@ -181,11 +181,11 @@ export function sitesHTML(detail, names = new Map()) {
   return `<ul class="td-items" data-sites>${items.join("")}</ul>`;
 }
 
-export function panelHTML({ key, node, tab, detail, links, answer, routeFailure, names, loading, failure }) {
+export function panelHTML({ key, node, tab, detail, links, answer, routeFailure, names, loading, failure, own = null }) {
   const kind = KINDS[node ? node.kind : kindOf()] || KINDS[kindOf()];
   const title = node?.name || key;
   const tabs = TABS.map((item) => `<button type="button" role="tab" id="td-tab-${item.id}" aria-controls="td-panel" aria-selected="${item.id === tab}" tabindex="${item.id === tab ? 0 : -1}" data-td-tab="${item.id}">${item.label}</button>`).join("");
-  const body = failure ? empty(failure) : loading ? empty(DETAIL_COPY.loading)
+  const body = own?.[tab] !== undefined ? own[tab] : failure ? empty(failure) : loading ? empty(DETAIL_COPY.loading)
     : tab === "physical" ? physicalHTML(detail)
       : tab === "config" ? configHTML(detail, { links, key, answer, routeFailure })
         : tab === "agents" ? agentsHTML(detail)
@@ -197,7 +197,7 @@ export function panelHTML({ key, node, tab, detail, links, answer, routeFailure,
 /** Mounts the panel in `section` (the map's root). `model()` is the canvas's current drawable
  * model; `api` reads JSON. It reads the node on selection and again every `interval` ms while
  * the device stays selected and the page is visible, and removes itself with the markup. */
-export function createNodePanel({ section, api, model, interval = 5000, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
+export function createNodePanel({ section, api, model, interval = 5000, own = null, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
   const doc = section.ownerDocument;
   // The panel's element exists from the first selection on, so a map nobody selects on pays nothing.
   let panel = null;
@@ -208,7 +208,7 @@ export function createNodePanel({ section, api, model, interval = 5000, copy = (
     if (!key) { if (panel) { panel.hidden = true; panel.innerHTML = ""; } shown = ""; return; }
     panel ??= mountPanel();
     const current = model();
-    const html = panelHTML({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure });
+    const html = panelHTML({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure, own: own?.(key) || null });
     if (html === shown) return;
     const focused = panel.contains(doc.activeElement) ? doc.activeElement.getAttribute("data-td-tab") || doc.activeElement.getAttribute("data-td") : null;
     const scroll = panel.querySelector(".td-body")?.scrollTop || 0;
@@ -219,6 +219,8 @@ export function createNodePanel({ section, api, model, interval = 5000, copy = (
   async function load() {
     const mine = run, target = key;
     if (!target) return;
+    // A device the host describes itself has nothing to read from the topology.
+    if (own?.(target)) { loading = false; paint(); return; }
     const [read, route] = await Promise.allSettled([api(`${NODE_PATH}?key=${encodeURIComponent(target)}`), api(`${ROUTE_PATH}?target=${encodeURIComponent(target)}`)]);
     if (mine !== run || target !== key) return;
     loading = false;
@@ -233,7 +235,7 @@ export function createNodePanel({ section, api, model, interval = 5000, copy = (
     const mine = run;
     if (!section.isConnected) { stop(); return; }
     if (key && !doc.hidden) await load();
-    if (mine === run && key) timer = setTimeout(tick, interval);
+    if (mine === run && key && interval > 0) timer = setTimeout(tick, interval);
   }
   function stop() { run += 1; clearTimeout(timer); timer = null; controller.abort(); panel?.remove(); }
   function select(next) {
@@ -295,5 +297,5 @@ export function createNodePanel({ section, api, model, interval = 5000, copy = (
   const controller = new AbortController();
   const on = (kind, handler) => section.addEventListener(kind, handler, { signal: controller.signal });
   on("topology:select", (event) => select(event.detail?.key));
-  return { select, stop, get key() { return key; }, get tab() { return tab; } };
+  return { select, stop, refresh: () => (key && section.isConnected ? load() : undefined), get key() { return key; }, get tab() { return tab; } };
 }

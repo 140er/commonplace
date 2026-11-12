@@ -2,6 +2,10 @@
 
   - The Compute map screen at `#/compute-map` (`topology-map.js` with `topology-layout.js` and `topology-icons.js`, styled by `topology.css`): an SVG canvas with pan, zoom, dragged positions and a highlighted site route. It draws only what `GET /api/topology` returns, nodes, links, routes and the `status` word per node and link end, reads again every five seconds while visible, and keeps only dragged positions and the view in the browser per workspace. Contract: `docs/topology.md`, "The map in the app".
 
+  - The Compute map in the Deck look: `deck-compute.js` is the only map there. `#/compute` mounts the same canvas (`topology-map.js`, `topology-layout.js`, `topology-icons.js`) from `GET /api/topology` inside one card, with the legend under it and the selected node's detail view (the four tabs of the node panel) as a second card; `#/compute-map` resolves to `#/compute` and the account menu has no second map entry. The Deck shell's refresh drives the reads (the canvas runs with `interval: 0`), and the chosen node survives a refresh. When the topology read is empty or fails, the screen draws the hub and the enrolled runner machines from `GET /api/runners` through the same canvas, in the states Ready, Waiting for attestation and Off, with no claim of liveness, sites or routes; its Config tab comes from the runner row (projects, topics, wings, longest runtime mode, trust "attested by the owner, not verified"). A non-owner gets one plain sentence. Add machine goes to Admin; Add site and "Let a bot map it" store a draft for the general bot in `sessionStorage` (`cmmn.deck.draft`) and open it.
+
+  - The canvas options a host such as this one uses: `interval: 0`, `refresh()`, a quiet `select(key)`, and a `look` (status words and legend, "no mark" status, label width with a plate behind each label in the card colour, columns per row, host-described detail tabs, a first selection). The classic look is unchanged.
+
 - **Promises:**
 
   - A status is never shown by colour alone (shape and text as well), a stale or unrecorded device is drawn as such instead of dropped or invented, and nothing is loaded from another origin.

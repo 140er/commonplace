@@ -6,14 +6,15 @@ export const ZOOM = { min: 0.15, max: 3 };
 
 // Rows from top to bottom, the way traffic flows: site, CDN or DNS, edge, machine, app. The
 // devices people sit at come last.
-const TIER = { website: 0, cloud: 1, router: 2, server: 3, vm: 3, container: 4, pc: 5, mac: 5, phone: 5 };
+const TIER = { website: 0, cloud: 1, router: 2, hub: 2, server: 3, vm: 3, container: 4, pc: 5, mac: 5, phone: 5 };
 const LAST_TIER = 5;
 const byKey = (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 const round = (n) => Math.round(n * 10) / 10;
 
 /** Positions for every node: `{ key: { x, y } }`. Stable: it depends only on keys, kinds and links.
- * Inside a row a node sits near the nodes it links to in the rows above; ties go by key. */
-export function autoLayout(nodes, links = []) {
+ * Inside a row a node sits near the nodes it links to in the rows above; ties go by key.
+ * `columns` caps the nodes of one row (a narrow canvas); by default a row grows with the count. */
+export function autoLayout(nodes, links = [], { columns = 0 } = {}) {
   const tiers = new Map();
   for (const node of nodes) {
     const tier = TIER[node.kind] ?? LAST_TIER;
@@ -32,7 +33,7 @@ export function autoLayout(nodes, links = []) {
     });
     // Array.prototype.sort is stable, so equal pulls keep their key order.
     scored.sort((a, b) => (a.pull === null) - (b.pull === null) || (a.pull ?? 0) - (b.pull ?? 0));
-    const perRow = Math.max(8, Math.ceil(Math.sqrt(scored.length) * 2));
+    const perRow = columns > 0 ? columns : Math.max(8, Math.ceil(Math.sqrt(scored.length) * 2));
     for (let start = 0; start < scored.length; start += perRow) {
       const row = scored.slice(start, start + perRow);
       row.forEach(({ node }, index) => { placed[node.key] = { x: round((index - (row.length - 1) / 2) * GRID.x), y }; });
@@ -53,12 +54,13 @@ export function zoomAbout(view, px, py, factor) {
 
 export const toWorld = (view, px, py) => ({ x: (px - view.x) / view.k, y: (py - view.y) / view.k });
 
-/** The view that shows every point with room for labels; never closer than 1.25. */
-export function fitView(points, width, height, pad = 70) {
+/** The view that shows every point with room for labels; never closer than 1.25. `reach` widens
+ * the box the view must show by that much around the points, in map units (none by default). */
+export function fitView(points, width, height, pad = 70, reach = { x: 0, top: 0, bottom: 0 }) {
   const w = width > 0 ? width : 800, h = height > 0 ? height : 600;
   if (!points.length) return { x: w / 2, y: h / 2, k: 1 };
   const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
-  const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
+  const left = Math.min(...xs) - reach.x, right = Math.max(...xs) + reach.x, top = Math.min(...ys) - reach.top, bottom = Math.max(...ys) + reach.bottom;
   const k = clampZoom(Math.min(1.25, (w - pad * 2) / Math.max(1, right - left), (h - pad * 2) / Math.max(1, bottom - top)));
   return { k, x: w / 2 - ((left + right) / 2) * k, y: h / 2 - ((top + bottom) / 2) * k };
 }

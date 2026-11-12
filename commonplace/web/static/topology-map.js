@@ -35,8 +35,20 @@ const SHAPES = {
   unknown: '<circle r="4.5"/>',
 };
 
-const stateOf = (value) => { const s = value && typeof value === "object" ? value.state : value; return STATES.includes(s) ? s : "unknown"; };
-const clip = (text, max) => { const chars = Array.from(String(text)); return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join(""); };
+// "none" draws no mark: a node or link end whose state nobody claims (a caller opts in with `none`).
+const stateOf = (value, none = false) => { const s = value && typeof value === "object" ? value.state : value; return STATES.includes(s) ? s : none && s === "none" ? "none" : "unknown"; };
+// A label has a count cap and, when the host sets a label width, a width estimate for the glyphs.
+// The estimate errs wide (capitals, wide letters and non-Latin glyphs count more) so a clipped label always fits.
+const glyph = (char, em) => (/[^\x20-\x7e]/.test(char) ? 1.1 : /[MW@%]/.test(char) ? 0.95 : /[A-Z0-9mw]/.test(char) ? 0.72 : /[il.,:;'|!tfIjr]/.test(char) ? 0.4 : 0.62) * em;
+const clip = (text, max, em = 0, width = 0) => {
+  const chars = Array.from(String(text));
+  let end = chars.length, used = 0;
+  if (width) { end = 0; for (const char of chars) { used += glyph(char, em); if (used > width - 16) break; end++; } }
+  end = Math.min(end, max);
+  if (end >= chars.length) return chars.join("");
+  // Leave room for the ellipsis.
+  return `${chars.slice(0, Math.max(0, end - 1)).join("")}…`;
+};
 const text = (value) => (typeof value === "string" ? value : "");
 const finite = (...values) => values.every((n) => typeof n === "number" && Number.isFinite(n));
 
@@ -46,14 +58,14 @@ const lastKnown = (record) => Object.fromEntries(["kind", "name", "role"].filter
 /** The drawable model of one read (`GET /api/topology`): `{ nodes, links, routes }`.
  * A link or route hop may name a node or link that has no facts; it is drawn as "not recorded"
  * instead of being dropped or invented. */
-export function mapModel(payload) {
+export function mapModel(payload, { none = false } = {}) {
   const graph = payload || {}, status = payload?.status || {};
   const nodes = [], seen = new Set(), links = [], linkIds = new Set();
   for (const record of graph.nodes || []) {
     if (typeof record?.key !== "string" || seen.has(record.key)) continue;
     seen.add(record.key);
     const values = { ...lastKnown(record), ...(record.values || {}) };
-    nodes.push({ key: record.key, kind: kindOf(values.kind), name: text(values.name) || record.key, role: text(values.role), stale: !!record.stale, conflicted: !!record.conflicted, missing: false, status: stateOf(status.nodes?.[record.key]) });
+    nodes.push({ key: record.key, kind: kindOf(values.kind), name: text(values.name) || record.key, role: text(values.role), stale: !!record.stale, conflicted: !!record.conflicted, missing: false, status: stateOf(status.nodes?.[record.key], none) });
   }
   const ghost = (key) => { if (typeof key !== "string" || seen.has(key)) return; seen.add(key); nodes.push({ key, kind: "unknown", name: key, role: "", stale: false, conflicted: false, missing: true, status: "unknown" }); };
   const link = (id, from, to, method, extra) => {
@@ -63,7 +75,7 @@ export function mapModel(payload) {
   };
   for (const record of graph.links || []) {
     const ends = status.links?.[record?.id];
-    link(record?.id, record?.from, record?.to, record?.method, { via: text(record?.values?.via), stale: !!record?.stale, conflicted: !!record?.conflicted, missing: false, status: { from: stateOf(ends?.from ?? ends), to: stateOf(ends?.to ?? ends) } });
+    link(record?.id, record?.from, record?.to, record?.method, { via: text(record?.values?.via), stale: !!record?.stale, conflicted: !!record?.conflicted, missing: false, status: { from: stateOf(ends?.from ?? ends, none), to: stateOf(ends?.to ?? ends, none) } });
   }
   const routes = [];
   for (const record of graph.routes || []) {
@@ -76,35 +88,42 @@ export function mapModel(payload) {
 }
 
 export function statusDot(state, at, title, end = "") {
+  if (state === "none") return "";
   return `<g class="topo-dot s-${state}" data-state="${state}"${end ? ` data-end="${end}"` : ""} transform="translate(${at.x} ${at.y})"><title>${esc(title)}</title>${SHAPES[state]}</g>`;
 }
 
-export const nodeLabel = (node) => `${node.name}, ${KINDS[node.kind].label}${node.role ? `, ${node.role}` : ""}. Status: ${STATUS_TEXT[node.status]}.${node.missing ? " Not recorded." : ""}${node.stale ? " Stale." : ""}${node.conflicted ? " Has a conflict." : ""}`;
+export const nodeLabel = (node, words = STATUS_TEXT) => `${node.name}, ${KINDS[node.kind].label}${node.role ? `, ${node.role}` : ""}.${node.status === "none" ? "" : ` Status: ${words[node.status]}.`}${node.missing ? " Not recorded." : ""}${node.stale ? " Stale." : ""}${node.conflicted ? " Has a conflict." : ""}`;
 
-function nodeMarkup(node, at, { on, dim, sel }) {
+function nodeMarkup(node, at, { on, dim, sel, words, labels }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
   const sub = [node.role, node.missing && "not recorded", node.stale && "stale", node.conflicted && "conflict"].filter(Boolean).join(" · ");
-  const label = esc(nodeLabel(node));
-  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${label}"><title>${label}</title><rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${STATUS_TEXT[node.status]}`)}<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}</g>`;
+  const label = esc(nodeLabel(node, words));
+  // A plate behind the label hides whatever line passes under it, so a label is never struck through.
+  // The hub's label sits above it: every line leaves the hub downwards, so below it each one would run under the label.
+  const height = sub ? 38 : 22, top = labels && node.kind === "hub" ? -30 - height : 30;
+  const plate = labels ? `<rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${height}" rx="8"/>` : "";
+  const nameAt = labels ? top + 15 : 45, roleAt = labels ? top + 30 : 60;
+  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${label}"><title>${label}</title>${plate}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}<text class="topo-name" y="${nameAt}">${esc(clip(node.name, 24, 12, labels))}</text>${sub ? `<text class="topo-role" y="${roleAt}">${esc(clip(sub, 36, 11, labels))}</text>` : ""}</g>`;
 }
 
-function linkMarkup(link, at, names, { on, dim }) {
+function linkMarkup(link, at, names, { on, dim, words }) {
   const classes = ["topo-link", link.stale && "stale", link.missing && "missing", on && "on", dim && "dim"].filter(Boolean).join(" ");
   const method = link.method.replace(/_/g, " ");
   const from = names.get(link.from), to = names.get(link.to);
-  const label = `${from} to ${to}, ${method}${link.via ? ` via ${link.via}` : ""}. ${from} end: ${STATUS_TEXT[link.status.from]}. ${to} end: ${STATUS_TEXT[link.status.to]}.${link.missing ? " Not recorded." : ""}${link.stale ? " Stale." : ""}`;
-  return `<g class="${classes}" data-link="${esc(link.id)}"><title>${esc(label)}</title><line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/><text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${STATUS_TEXT[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${STATUS_TEXT[link.status.to]}`, "to")}</g>`;
+  const ends = [["from", from], ["to", to]].filter(([end]) => link.status[end] !== "none").map(([end, name]) => ` ${name} end: ${words[link.status[end]]}.`).join("");
+  const label = `${from} to ${to}, ${method}${link.via ? ` via ${link.via}` : ""}.${ends}${link.missing ? " Not recorded." : ""}${link.stale ? " Stale." : ""}`;
+  return `<g class="${classes}" data-link="${esc(link.id)}"><title>${esc(label)}</title><line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/><text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
 }
 
 /** The whole map as SVG markup. `route` is one of `model.routes`: its links and nodes are
  * marked `on` and everything else `dim`. `selected` is a node key. */
-export function renderScene(model, positions, { route = null, selected = null } = {}) {
+export function renderScene(model, positions, { route = null, selected = null, words = STATUS_TEXT, labels = 0 } = {}) {
   const onLinks = new Set(route?.hops.map((hop) => hop.link));
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
   const places = layoutLinks(model.links, positions);
-  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id), dim: !!route && !onLinks.has(link.id) }));
-  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected }));
+  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id), dim: !!route && !onLinks.has(link.id), words }));
+  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
 
@@ -120,8 +139,8 @@ export function emptyState(canStart) {
   return `<div class="topo-empty"><h2>${esc(MAP_COPY.emptyTitle)}</h2><p>${esc(MAP_COPY.emptyBody)}</p><button type="button" class="btn primary" data-topo="start"${canStart ? "" : " disabled"}>${esc(MAP_COPY.start)}</button>${canStart ? "" : `<p class="topo-off">${esc(MAP_COPY.startOff)}</p>`}</div>`;
 }
 
-export function renderFrame() {
-  const legend = STATES.map((state) => `<li><svg viewBox="-8 -8 16 16" aria-hidden="true"><g class="topo-dot s-${state}">${SHAPES[state]}</g></svg>${STATUS_TEXT[state]}</li>`).join("");
+export function renderFrame({ words = STATUS_TEXT, legend: shown = STATES } = {}) {
+  const legend = shown.map((state) => `<li><svg viewBox="-8 -8 16 16" aria-hidden="true"><g class="topo-dot s-${state}">${SHAPES[state]}</g></svg>${esc(words[state])}</li>`).join("");
   return `<section class="topo" data-topology aria-label="Compute map">
     <div class="topo-bar"><label>Route <select data-topo="route" aria-label="Highlight a site route"><option value="">None</option></select></label><span class="topo-spacer"></span><div class="topo-zoom" role="group" aria-label="Zoom"><button type="button" class="iconbtn bordered" data-topo="zoom-out" aria-label="Zoom out">−</button><button type="button" class="iconbtn bordered" data-topo="zoom-in" aria-label="Zoom in">+</button><button type="button" class="btn sm" data-topo="fit">Fit</button></div><button type="button" class="btn sm" data-topo="reset">Reset layout</button></div>
     <div class="topo-stage" data-topo="stage" tabindex="0" role="group" aria-label="${esc(MAP_COPY.stage)}"><svg class="topo-svg" aria-label="Topology"><g data-topo="world"></g></svg><div class="topo-note" data-topo="note"><p class="topo-msg" role="status">${esc(MAP_COPY.loading)}</p></div></div>
@@ -147,13 +166,13 @@ export function mapMemory(storage, workspace) {
 }
 
 /** The map without a DOM. Dragged places and the view survive a reload through `storage`. */
-export function createMapCore({ storage = null, workspace = "" } = {}) {
+export function createMapCore({ storage = null, workspace = "", words = STATUS_TEXT, none = false, labels = 0, columns = 0 } = {}) {
   const memory = mapMemory(storage, workspace);
   let { placed, view } = memory.load();
   let model = mapModel(null), raw = null, positions = {}, site = "", selected = null;
   const save = () => memory.save({ placed, view });
   const place = () => {
-    const auto = autoLayout(model.nodes, model.links);
+    const auto = autoLayout(model.nodes, model.links, { columns });
     positions = Object.fromEntries(model.nodes.map((node) => [node.key, placed[node.key] ? { ...placed[node.key] } : auto[node.key]]));
   };
   const route = () => model.routes.find((item) => item.site === site) || null;
@@ -168,7 +187,7 @@ export function createMapCore({ storage = null, workspace = "" } = {}) {
     apply(payload) {
       const next = JSON.stringify(payload ?? null);
       if (next === raw) return false;
-      raw = next; model = mapModel(payload); place();
+      raw = next; model = mapModel(payload, { none }); place();
       if (!route()) site = "";
       if (selected !== null && !positions[selected]) selected = null;
       return true;
@@ -181,12 +200,15 @@ export function createMapCore({ storage = null, workspace = "" } = {}) {
       return true;
     },
     setView(next, { remember = true } = {}) { view = { x: next.x, y: next.y, k: next.k }; if (remember) save(); },
-    fit(width, height, options) { this.setView(fitView(Object.values(positions), width, height), options); },
+    fit(width, height, options, { pad = 70, reach } = {}) { this.setView(fitView(Object.values(positions), width, height, pad, reach), options); },
     /** Forget every dragged place: back to the automatic layout. */
     reset() { placed = {}; place(); save(); },
     setRoute(next) { site = model.routes.some((item) => item.site === next) ? next : ""; },
     select(key) { selected = positions[key] && key !== selected ? key : null; return selected; },
-    scene() { return renderScene(model, positions, { route: route(), selected }); },
+    /** Make `key` the selected node (not a toggle); false when the map has no such node. */
+    choose(key) { if (!positions[key]) return false; selected = key; return true; },
+    clear() { selected = null; },
+    scene() { return renderScene(model, positions, { route: route(), selected, words, labels }); },
     links() { return layoutLinks(model.links, positions); },
   };
 }
@@ -197,11 +219,23 @@ function browserStorage() { try { return globalThis.localStorage || null; } catc
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
 
 /** The Compute map screen. `show()` mounts it into `mount()`; it reads `path` again every
- * `interval` ms while the page is visible and stops by itself once its markup is replaced.
- * `onStartWork` is the action of the empty state's button; without one the button is off. */
-export function createTopologyMap({ mount, api, storage = browserStorage(), workspace = () => "", onStartWork = null, interval = 5000, path = MAP_PATH }) {
+ * `interval` ms while the page is visible (never when `interval` is 0: the owner calls `refresh()`)
+ * and stops by itself once its markup is replaced.
+ * `onStartWork` is the action of the empty state's button; without one the button is off.
+ * `look` is for a host that draws a different graph in its own words:
+ *   words, legend  the text of each status and the statuses the legend lists
+ *   none           lets a node or link end say "none": no mark
+ *   labels         the width of a label: names clip to it, a plate in the card colour sits behind
+ *                  each label (it hides a line passing under it) and the automatic view shows
+ *                  every label whole; 0 is the classic look
+ *   columns        most nodes in one row
+ *   own            `(key) => { physical, config, agents, sites }` tab bodies for nodes the host describes itself
+ *   preselect      `(model) => key` chosen once, on the first read, when nobody chose yet. */
+export function createTopologyMap({ mount, api, storage = browserStorage(), workspace = () => "", onStartWork = null, interval = 5000, path = MAP_PATH, look = {} }) {
+  const { words = STATUS_TEXT, legend = STATES, none = false, labels = 0, columns = 0, own = null, preselect = null } = look;
+  const reach = labels ? { x: labels / 2, top: 72, bottom: 72 } : undefined, fitPad = labels ? 24 : 70;
   let section = null, stage = null, world = null, core = null, timer = null, run = 0, refused = false, error = "", stalled = false;
-  let listeners = null, gesture = null, redraw = false, sites = null, sizes = null;
+  let listeners = null, gesture = null, redraw = false, sites = null, sizes = null, panel = null, chosen = false;
   // True while the view is the automatic fit: it then follows the canvas when its size changes.
   let fitted = false;
   let nodeEls = new Map(), linkEls = new Map();
@@ -239,7 +273,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     nodeEls = new Map([...world.querySelectorAll("[data-key]")].map((el) => [el.dataset.key, el]));
     linkEls = new Map([...world.querySelectorAll("[data-link]")].map((el) => [el.dataset.link, el]));
     // The first fit is automatic, so it is not remembered: only a view the person chose is.
-    if (core.loaded && core.model.nodes.length && !core.view) { core.fit(...size(), { remember: false }); fitted = true; }
+    if (core.loaded && core.model.nodes.length && !core.view) { core.fit(...size(), { remember: false }, { pad: fitPad, reach }); fitted = true; }
     if (core.view) paintView();
     if (focused) nodeEls.get(focused)?.focus({ preventScroll: true });
     const list = core.model.routes.map((route) => route.site);
@@ -267,7 +301,15 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
       const payload = await api(path);
       if (mine !== run) return;
       error = ""; stalled = false;
-      if (core.apply(payload) || part("note").innerHTML || part("live").textContent) later();
+      const before = core.selected;
+      const changed = core.apply(payload);
+      // A device that left the map takes its details with it.
+      if (before !== null && core.selected === null) { chosen = false; announce(null); }
+      if (!chosen && !core.selected && core.model.nodes.length && preselect) {
+        const first = preselect(core.model);
+        if (first && core.choose(first)) { chosen = true; announce(first); }
+      }
+      if (changed || part("note").innerHTML || part("live").textContent) later();
     } catch (failure) {
       if (mine !== run) return;
       refused = failure?.status === 403;
@@ -281,7 +323,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     const mine = run;
     if (!section?.isConnected) { stop(); return; }
     if (!section.ownerDocument.hidden) await load();
-    if (mine === run && !refused) timer = setTimeout(tick, interval);
+    if (mine === run && !refused && interval > 0) timer = setTimeout(tick, interval);
   }
   function zoom(factor, px, py) {
     if (!core.view) return;
@@ -290,12 +332,21 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     fitted = false;
     paintView();
   }
-  function fit(options) { core.fit(...size(), options); fitted = true; paintView(); }
+  function fit(options) { core.fit(...size(), options, { pad: fitPad, reach }); fitted = true; paintView(); }
+  function announce(key) { section.dispatchEvent(new CustomEvent("topology:select", { bubbles: true, detail: { key } })); }
   function select(key) {
     const selected = core.select(key);
+    chosen = true;
     draw();
     nodeEls.get(key)?.focus({ preventScroll: true });
-    section.dispatchEvent(new CustomEvent("topology:select", { bubbles: true, detail: { key: selected } }));
+    announce(selected);
+  }
+  /** Select `key` from outside (not a toggle, no focus move); false when the map has no such node. */
+  function choose(key) {
+    if (!section || !core.choose(key)) return false;
+    chosen = true;
+    draw(); announce(key);
+    return true;
   }
   const pinch = () => {
     const [a, b] = [...pointers.values()];
@@ -403,18 +454,18 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     stop();
     const host = mount();
     if (!host) return;
-    host.innerHTML = renderFrame();
+    host.innerHTML = renderFrame({ words, legend });
     section = host.querySelector("[data-topology]");
     stage = part("stage"); world = part("world");
-    core = createMapCore({ storage, workspace: workspace() });
-    refused = false; error = ""; stalled = false; redraw = false; sites = null; fitted = false;
+    core = createMapCore({ storage, workspace: workspace(), words, none, labels, columns });
+    refused = false; error = ""; stalled = false; redraw = false; sites = null; fitted = false; chosen = false;
     listeners = new AbortController();
     const on = (target, kind, handler, options = {}) => target.addEventListener(kind, handler, { ...options, signal: listeners.signal });
     on(stage, "pointerdown", down); on(stage, "pointermove", move); on(stage, "pointerup", up); on(stage, "pointercancel", up);
     on(stage, "wheel", wheel, { passive: false });
     on(stage, "keydown", keys);
     on(section, "click", click);
-    createNodePanel({ section, api, model: () => core.model, interval });
+    panel = createNodePanel({ section, api, model: () => core.model, interval, own });
     on(part("route"), "change", (event) => { core.setRoute(event.target.value); draw(); });
     if (typeof ResizeObserver === "function") {
       sizes = new ResizeObserver(() => { if (fitted && core.view && !gesture) fit({ remember: false }); });
@@ -422,5 +473,5 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     }
     void tick();
   }
-  return { show, stop, refresh: () => (section?.isConnected ? load() : undefined) };
+  return { show, stop, select: choose, refresh: () => { if (!section?.isConnected) return undefined; panel?.refresh(); return load(); } };
 }
