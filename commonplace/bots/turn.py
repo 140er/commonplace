@@ -106,6 +106,7 @@ class TurnRun:
         self._sent = ""  # redacted reply text already streamed
         self._held = False  # the redacted text changed under what was sent; send no more
         self._blocks = []
+        self._learned = []  # ids of learned items the sent request carried
         self._model = None
         self._reader = blocks.Reader(gateway, principal)
 
@@ -207,6 +208,7 @@ class TurnRun:
             if refused:
                 return refused
             sent = []
+            carried = list(ctx.learned_used)
             try:
                 calls, said = self._model_call(
                     config, key, ctx.system, messages, specs, remaining, sent
@@ -219,7 +221,9 @@ class TurnRun:
             except ValueError:
                 return "model_error"  # input over the bound, or the provider is unusable
             finally:
-                if not sent:  # the unit is for a request sent; this one never was
+                if sent:
+                    self._learned = carried
+                else:  # the unit is for a request sent; this one never was
                     limits.give_back(self.gateway, self.workspace_id, self.user_id, day)
             if not calls:
                 return ""
@@ -392,15 +396,21 @@ class TurnRun:
             text = (text + "\n\n" if text else "") + SENTENCES[outcome]
         state = "ok" if not outcome else "stopped" if outcome == "stopped" else f"failed:{code}"
         bots = store.open_bots(self.gateway, self.workspace_id)
+        shown = (
+            [*self._blocks, {"type": "learned", "ids": self._learned}]
+            if self._learned
+            else self._blocks
+        )
         try:
             self.reply = bots.add_bot_message(
                 self.bot_id,
                 self.user_id,
                 self.message["id"],
                 text,
-                self._blocks,
+                shown,
                 model=self._model,
                 state=state,
+                learned_used=self._learned,
             )
         except store.Conflict:
             # Another process closed this request (as interrupted) first; report what is stored.

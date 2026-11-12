@@ -107,12 +107,37 @@ def confirm(reader, stored) -> dict:
     return {**stored, "label": _clean(pending["label"]), "state": state}
 
 
+def learned(reader, stored) -> dict:
+    """The learned items a reply used that this person still has; forgotten ones are omitted."""
+    from commonplace.bots import learned as store
+
+    ids = stored.get("ids")
+    slugs = None
+
+    def can_read(slug):
+        nonlocal slugs
+        if slugs is None:
+            slugs = {board["slug"] for board in reader.boards.board_list()}
+        return slug in slugs
+
+    items = store.open_learned(reader.gateway, reader.principal.workspace_id).visible(
+        reader.principal.user_id, ids if isinstance(ids, list) else [], can_read
+    )
+    if not items:
+        return {"type": "learned", "gone": True}
+    return {
+        "type": "learned",
+        "items": [{**item, "text": _clean(item["text"])} for item in items],
+    }
+
+
 HYDRATORS = {
     "work": work,
     "decision": decision,
     "action": action,
     "setup": setup,
     "confirm": confirm,
+    "learned": learned,
 }
 
 
