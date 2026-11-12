@@ -20,6 +20,8 @@ from commonplace.sessions import person_principal
 
 logger = logging.getLogger(__name__)
 
+START_LEASE_SECONDS = 600  # room for the host call; a later result is still bound, as uncertain
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runner_sessions (
  board TEXT PRIMARY KEY,
@@ -387,13 +389,31 @@ def lease(gateway, ws, machine_id):
     return None
 
 
-def _fenced(conn, machine_id, token):
+def _fenced(conn, machine_id, token, *, expired_ok=False):
     row = conn.execute(
         "SELECT * FROM runner_sessions WHERE machine_id=? AND lease_token=?", (machine_id, token)
     ).fetchone()
-    if row is None or row["lease_until"] <= jobs._now():
+    if row is None or (not expired_ok and row["lease_until"] <= jobs._now()):
         raise jobs.Conflict("session lease is no longer current")
     return row
+
+
+def _late_result(conn, row, outcome, thread_id):
+    """A result that arrives after its lease expired (a replayed journal after a crash).
+
+    The command may have created a thread, so the binding is kept and the session is marked
+    uncertain for a person to reconcile; it is never treated as a clean outcome."""
+    thread_id = thread_id or row["thread_id"]
+    if outcome not in ("running", "uncertain") or not thread_id:
+        raise jobs.Conflict("session lease is no longer current")
+    if row["thread_id"] and row["thread_id"] != thread_id:
+        raise jobs.Conflict("session thread changed")
+    conn.execute(
+        "UPDATE runner_sessions SET state='uncertain',thread_id=?,action=NULL,phase=NULL,"
+        "lease_token=NULL,lease_until=NULL,code='effect_unknown',updated_at=? WHERE board=?",
+        (thread_id, jobs._now(), row["board"]),
+    )
+    return {"state": "uncertain"}
 
 
 def starting(gateway, ws, machine_id, token):
@@ -420,7 +440,10 @@ def starting(gateway, ws, machine_id, token):
                 (name,),
             )
             return False
-        conn.execute("UPDATE runner_sessions SET phase='starting' WHERE board=?", (name,))
+        conn.execute(
+            "UPDATE runner_sessions SET phase='starting',lease_until=? WHERE board=?",
+            (jobs._after(jobs._now(), START_LEASE_SECONDS), name),
+        )
     return True
 
 
@@ -433,12 +456,14 @@ def result(gateway, ws, machine_id, token, outcome, thread_id=None, code=None):
         raise ValueError("invalid thread id")
     st = _open(gateway, ws)
     with st.connection() as conn:
-        candidate = _fenced(conn, machine_id, token)
+        candidate = _fenced(conn, machine_id, token, expired_ok=True)
         name = candidate["board"]
     # Read under the runner write transaction below: claims serialize via runner
     # admission, and an event committed later is found by the next idle sweep.
     with st.transaction() as conn:
-        row = _fenced(conn, machine_id, token)
+        row = _fenced(conn, machine_id, token, expired_ok=True)
+        if row["lease_until"] <= jobs._now():
+            return _late_result(conn, row, outcome, thread_id)
         if outcome == "refused":
             if row["phase"] != "leased" or _uncertain(row):
                 raise jobs.Conflict("session command is not leased")

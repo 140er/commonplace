@@ -1,4 +1,4 @@
-"""Persistent sessions: paired base/head proofs through the real runner loop and HTTP."""
+"""Persistent sessions: lifecycle proofs through the real runner loop and HTTP."""
 
 import json
 from types import SimpleNamespace

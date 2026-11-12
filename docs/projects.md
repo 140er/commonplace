@@ -241,8 +241,8 @@ arrange completion. Marking the root ends reconciliation.
 Persistent board sessions (opt-in with `session = true`) use the accepted runner
 without requiring a webhook or `card.todo` trigger. Without a session, delivery uses a subscribed
 `card.created` webhook and the inbox on the next session; otherwise it waits for
-that session. The project response reports session state and blocker reasons;
-owners can stop or resume it through the project session endpoints.
+that session. The project response reports session state to everyone and blocker details to
+owners only; owners can stop or resume it through the project session endpoints.
 Turning the switch off preserves configured todo triggers and the prior card
 shapes; the new blocker arguments and inbox tools are unavailable.
 

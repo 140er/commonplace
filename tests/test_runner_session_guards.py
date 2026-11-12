@@ -1,7 +1,11 @@
-"""Session fencing and recovery checks; behavioral base/head proofs live separately."""
+"""Session fencing and recovery checks; lifecycle contracts live in test_orch_sessions."""
+
+import json
+from types import SimpleNamespace
 
 import pytest
 
+from commonplace.runner import agent
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_orch_sessions import session_world as session_world, start
 
@@ -134,3 +138,55 @@ def test_session_running_board_does_not_starve_another(session_world):
     assert w.tick() == 0
     assert len(w.wakes()) == 2
     assert "plain" in w.wakes()[-1][1]["title"]
+
+
+def test_result_after_lease_expiry_keeps_the_thread_binding(session_world):
+    """A journal replayed after a crash can arrive after the lease ran out: the created thread
+    stays bound, and the session waits for a person instead of forgetting it."""
+    w = session_world
+    w.card()
+    _, command = w.machine_call("sessions/lease")
+    token = {"lease_token": command["lease_token"]}
+    assert w.machine_call("sessions/starting", token) == (200, {"proceed": True})
+    with w.st.transaction() as conn:
+        conn.execute("UPDATE runner_sessions SET lease_until='2000-01-01T00:00:00Z'")
+    late = w.machine_call(
+        "sessions/result", {**token, "outcome": "running", "thread_id": "session-thread"}
+    )
+    assert late[0] == 200, "a late result must not be fenced away with its thread"
+    state = w.session()
+    assert (state["state"], state["thread_id"]) == ("uncertain", "session-thread")
+    assert w.tick() == 0
+    assert len(w.wakes()) == 0, "an uncertain session is never replayed"
+
+
+def test_starting_extends_the_lease_for_the_host_call(session_world):
+    w = session_world
+    w.card()
+    _, command = w.machine_call("sessions/lease")
+    token = {"lease_token": command["lease_token"]}
+    with w.st.connection() as conn:
+        leased = conn.execute("SELECT lease_until FROM runner_sessions").fetchone()[0]
+    assert w.machine_call("sessions/starting", token)[0] == 200
+    with w.st.connection() as conn:
+        started = conn.execute("SELECT lease_until FROM runner_sessions").fetchone()[0]
+    assert started > leased, "the starting step must give the host call more time"
+
+
+def test_launch_without_a_run_keeps_the_created_thread_bound(session_world, monkeypatch):
+    w = session_world
+    run = agent.subprocess.run
+
+    def no_run(argv, **kwargs):
+        response = run(argv, **kwargs)
+        if argv[-2] == "t3_thread_launch":
+            data = json.loads(response.stdout)
+            data["structuredContent"].pop("runId")
+            return SimpleNamespace(returncode=0, stdout=json.dumps(data))
+        return response
+
+    monkeypatch.setattr(agent.subprocess, "run", no_run)
+    w.card()
+    assert w.tick() == 0
+    state = w.session()
+    assert (state["state"], state["thread_id"]) == ("uncertain", "session-thread")

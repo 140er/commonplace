@@ -1,4 +1,4 @@
-"""Gate regressions: the same behavior checks run on the reviewed head and the fix."""
+"""Session availability, journal and transport failures, and local refusals."""
 
 import hashlib
 
@@ -76,11 +76,7 @@ def test_session_journal_or_error_keeps_card_leasing(session_world, tmp_path, mo
         monkeypatch.setattr(agent._Hub, "post", transport)
     else:
         (journal / "session-command.json").write_text("{" if failure == "invalid_json" else "[]")
-    # Convert the observable runner crash into data, rather than a setup/error RED.
-    try:
-        exit_code = w.tick()
-    except (ValueError, TypeError, KeyError) as exc:
-        exit_code = type(exc).__name__
+    exit_code = w.tick()
     card_launches = [
         args
         for name, args in w.calls

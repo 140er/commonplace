@@ -75,7 +75,7 @@ def _effect(config, command, env, secrets):
             "interrupted",
             "rolled_back",
         ):
-            return {"outcome": "uncertain"}
+            return {"outcome": "uncertain", "thread_id": bound}  # a created thread stays bound
         return {"outcome": "running", "thread_id": bound}
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError, AttributeError):
         return {"outcome": "uncertain"}

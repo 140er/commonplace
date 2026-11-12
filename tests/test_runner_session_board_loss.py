@@ -1,4 +1,4 @@
-"""Session board-loss regressions, paired against the previously reviewed head."""
+"""Session board-loss regressions: archived or missing boards during live and replayed turns."""
 
 import json
 

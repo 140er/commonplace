@@ -8,9 +8,9 @@
 
 - **Tests:**
 
-  - `tests/test_runner_session_board_loss.py` pairs board-loss behavior against the rejected head, including journal clearance during active turns.
+  - `tests/test_runner_session_board_loss.py` covers board loss, including journal clearance during active turns.
 
-  - `tests/test_runner_session_regressions.py` runs unchanged on the rejected head and the fixes, alongside the six lifecycle cases and twelve existing fence checks.
+  - `tests/test_runner_session_regressions.py` covers session availability, journal and transport failures and local refusals.
 
-  - `tests/test_orch_sessions.py` proves the six base/head lifecycle contracts; `tests/test_runner_session_guards.py` covers authority, races, duplicate leases and uncertain recovery.
+  - `tests/test_orch_sessions.py` proves the six lifecycle contracts; `tests/test_runner_session_guards.py` covers authority, races, duplicate leases and uncertain recovery.
 
