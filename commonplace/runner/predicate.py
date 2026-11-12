@@ -54,7 +54,11 @@ def startable(gateway, machine, row, board) -> None:
     service = BoardService(ToolContext(worker, gateway), store=False)
     from commonplace.boards.store import active_blockers
     from commonplace.projects import orchestration as orch
+    from commonplace.snooze import store as snooze
 
+    with orch.board_read(gateway.workspace_dir(machine["workspace_id"])) as conn:
+        if snooze.active(conn, row["id"]):
+            raise Refused("snoozed")
     if orch.enabled(gateway.db, machine["workspace_id"]):
         with orch.board_read(gateway.workspace_dir(machine["workspace_id"])) as conn:
             if active_blockers(conn, row["id"]):

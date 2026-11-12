@@ -19,6 +19,8 @@
 
   - Drawer retries retain replay status for readable owners while also returning request-derived fresh-write fields, allowing the gateway to hide replay status for unreadable wings.
 
+  - The eager-warmup setting description distinguishes directly launched servers from gateway workers, which do not inherit it.
+
   - Graph snapshots use local SQL locus expressions, including native booleans and integers outside int64; descriptors also bind stored sort values.
 
   - Graph page descriptors carry their source order key; grouped Chroma and exact numeric loci retain SQLite text casts.
@@ -62,6 +64,8 @@
   - A symlinked keyslot record is refused at runtime open with its own message, not the generic unavailable one.
 
   - Operator-blind token-slot primitives accept strict versioned token/grant envelopes only; opt-in B3 metadata stays locked before any B2 key provider or database open.
+
+  - A restricted caller's fact term counts and seed ranking, and the vector-disabled Chroma fallback's candidate pool and its BM25 order, are computed from readable facts and drawers only; unrestricted callers keep the index's own counts.
 
   - User content is stored verbatim; ingest is append-only; search returns original words; nothing leaves the machine unless the user configured a provider.
 

@@ -9,6 +9,8 @@
 
   - Inert area declarations and topology validation, their render/diff representation and test-only accepted-area fixtures.
 
+  - `limits.max_agents` accepts 1 to 100, the same bound as the project limit; the effective start count is still bounded by each machine (`max_in_flight`, the runner memory guard).
+
   - The planner grammar, including leading numeric labels and repository-relative existing test-file mappings; the orchestrator config format and its versions and experiments, config-driven starts, triggers, leases, the journal, resume, the restore flag and acknowledgement, `plan-check` and `docs-check`.
 
   - The read-only mapping from journaled thread starts and doing-card claims to checkpoint jobs.

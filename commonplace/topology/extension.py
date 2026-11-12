@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from commonplace.extensions import ALL_PROFILES, LocalTool, ToolContext, ToolError, register
 from commonplace.http_util import log_failure, query, require_principal, send_json
 
-from . import answers, model, store
+from . import answers, model, status, store
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +49,14 @@ def topology_get(ctx, args):
     args = _arguments(args, {"node", "site"})
     graph, now = _graph(ctx)
     try:
-        return answers.get_answer(graph, node=args.get("node"), site=args.get("site"), now=now)
+        answer = answers.get_answer(graph, node=args.get("node"), site=args.get("site"), now=now)
     except model.TopologyError as exc:
         raise ToolError(str(exc)) from None
+    if answer["scope"] == "graph":
+        # The same graph goes to the status read, so the map and its status describe one moment.
+        live = status.read_status(ctx.gateway, ctx.principal.workspace_id, graph=graph)
+        answer["status"] = answers.status_words(graph, live)
+    return answer
 
 
 def topology_route(ctx, args):

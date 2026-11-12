@@ -3,6 +3,12 @@
 - **Paths:** `commonplace/chat/`, `commonplace/voice.py`, `commonplace/phone_push/`
 - **Owns:**
 
+  - The coworker package (`chat/coworkers/`: store, routes, runtime, task controls and task progress) owns persona, conversation and message storage, the owner-session REST routes, the bounded background runtime and the projections of canonical task state back into a conversation.
+
+  - Workspace-local coworker bot personas, private DM/group conversation membership, append-only original messages, conversation-scoped memories and durable response-job intake.
+
+  - The bounded concurrent coworker front runtime, conversation-local model context, provider admission limits, canonical task intake/progress and durable targeted task follow-up/stop receipts.
+
   - The control-database `project_model_catalog` table, created beside the model settings, holds each board's list of models owners can pick for projects.
 
   - Person-message and space-created listeners (the chat front, project seats) share `events.is_stored` to confirm an event is the one the log holds.
@@ -18,6 +24,14 @@
   - `commonplace/chat/model.py` holds the shared connection code (`resolve_endpoint`, `Call`) behind both `complete` and the streaming client `commonplace/chat/model_stream.py`, which yields reply text, complete tool calls and one stop reason as the provider sends them.
 
 - **Promises:**
+
+  - Coworker REST writes require a signed-in person and exact same-origin JSON boundary; current workspace/user/connection and conversation audiences are checked before reads, intake and runtime publication.
+  - Task controls journal explicit immutable intents before cross-store mutation; exact replays never repeat effects. Follow-ups preserve exact task comments without claiming worker application; queued stops use canonical cancellation and in-flight requests never imply termination.
+  - Canonical task progress is projected only for freshly authorized origin/viewer/audience bindings, never copied into shared chat history. Lost front acknowledgements recover existing origin links without launching work; exact fields are bounded by whole-field omission with notices.
+  - Explicit coworker task requests can enter the existing configured person-owner runner admission path with stable canonical origin deduplication; refusal preserves the card and does not invent a worker launch.
+  - Internal runtime dispatch rechecks the exact originating session before sending context; bounded lexical recall considers later relevant memories without truncating their words; only explicit task syntax reaches canonical boards and model output never executes tools.
+  - Board-less coworker turns require a local provider; workspace hosted settings yield `needs_configuration` before context, credentials or provider calls. Board-associated hosted turns retain project Turn on consent.
+  - Coworker messages and jobs commit together with actor-scoped retry identity. Memory tombstones suppress future recall and invalidate stale response publication. Cancellation and restart do not silently replay possibly attempted work.
 
   - The live state (`idle`, `delivered`, `working`, `answered`, `no_agent`, `no_answer`) is read from stored facts only: the wake delivery row, the orchestrator's own `space_read` and a later agent message. It calls no model or outside service, stores ids and times but no message text, describes only the caller's own message, stays inside the caller's workspace, and gives the agent's read time only to a caller who may see that agent.
 
@@ -41,6 +55,12 @@
   - An empty or invalid voice setting stops startup with a message naming the setting, and a missing model at load time is an error; neither falls back to another model.
 
 - **Tests:**
+
+  - `tests/test_coworker_controls.py` covers real canonical cancellation/comments, strict origin/run authority, replay/restart/lost acknowledgements, concurrency, explicit sharing and bounded crypto-aware receipts.
+  - `tests/test_coworker_progress.py` covers real canonical progress/results/decisions/evidence, lost acknowledgement recovery, per-viewer privacy and revocation, bounded read-only snapshots and continued front responsiveness.
+  - `tests/test_coworker_dispatch.py` verifies real canonical runner ledgers with synthetic admission, including configuration, replay/restart/lost acknowledgements, guards, authority changes and responsiveness.
+  - `tests/test_coworker_runtime.py` proves independent conversation progress, bounded scoped memory, configured provider limits, current authority/cancellation fences and atomic task intent without model-driven effects.
+  - `tests/test_coworker_store.py` and `tests/test_coworker_api.py` exercise durable intake/reopen, private/group membership, request conflicts, scoped memory visibility, current session/connection authority, late replies and recovery.
 
   - The `tests/test_chat_` files, `tests/test_commonplace_voice.py`, the `tests/test_commonplace_phone_push_` files.
   - `tests/test_chat_live.py` covers delivery to the orchestrator, every live state, a member beside an owner and two workspaces with the same board and message id; `tests/test_chat_live_view.py` (`tests/chat_live_view.mjs`) covers the pane's text per state and role and that states and the answer arrive through the poll.
