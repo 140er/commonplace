@@ -37,7 +37,7 @@ entry was written.
   pages workspace IDs in creation/ID order, 100 per page, and closes the control
   snapshot before workspace file reads. Each SQLite query has a 500 ms
   monotonic budget capped by the page deadline, 10 ms busy wait and a progress interrupt; the console request
-  retains its 2 s budget and returns unknown for remaining workspaces.
+  retains its 2 s budget and returns unknown for remaining workspaces. Status reads its one workspace under the same 2 s budget.
   Figures expose only `{value, reason}` and workspace IDs. Chroma live SQLite
   embedding rows supply drawers and vector_count (including changes not yet
   synced into HNSW); collections.dimension supplies dimension. Capacity comes

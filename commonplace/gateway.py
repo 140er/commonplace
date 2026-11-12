@@ -749,6 +749,9 @@ class Mediator:
                     self.gateway, principal, ReadContext(self.gateway.admin_clock)
                 )
             except Exception:
+                logger.warning(
+                    "index figure authority check failed; omitting index_stats", exc_info=True
+                )
                 authorized = False
             from .handoff.overview import summary
 
@@ -756,7 +759,9 @@ class Mediator:
             if authorized:
                 from .index_stats import scoped, workspace
 
-                figures = workspace(self.gateway, principal.workspace_id)
+                figures = workspace(
+                    self.gateway, principal.workspace_id, deadline=time.monotonic() + 2.0
+                )
                 if not principal.policy.has_scope("private:read"):
                     figures = scoped(figures)
                 result = {

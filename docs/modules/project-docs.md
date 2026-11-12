@@ -57,7 +57,7 @@
 
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
 
-  - Instance-admin index figures use bounded read-only SQLite and a fixed 100-byte HNSW header; the figure reader never calls a worker or collection. Non-admin status keeps its existing shape. The paginated console shows unknown reasons without content or paths. `tests/test_index_stats_readonly.py` and `tests/test_admin_instance_ui.py` cover this boundary. Admin overview stays additive; 500 ms queries obey page deadlines. Missing pointers with generation siblings, closed WAL, busy stores and symlinks fail with stable reasons; non-admin sections stay 404. `tests/test_index_stats_r1.py` covers review regressions. Size figures (drawers, vectors, HNSW capacity) cover private wings and are shown only to a current owner of that workspace, else `private_scope`; `tests/test_index_stats_private_scope.py` covers this.
+  - `docs/mvp/CONTRACT.md` documents the instance index figures contract and its unknown-reason codes.
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
