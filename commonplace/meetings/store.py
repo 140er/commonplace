@@ -30,6 +30,24 @@ SETTINGS_KEYS = frozenset(FLAGS) | frozenset(LIMITS)
 PERSON_KEYS = frozenset({"enabled", "keep_transcript", "language", "notes_wing"})
 # A meeting in none of these is active: it holds a join link and may hold segments.
 ENDED = ("done", "cancelled", "timeout", "discarded", "interrupted")
+RUNNING = ("joining", "lobby", "announcing", "live", "ending", "processing", "removed")
+ADVANCE_FIELDS = frozenset({"ext_meeting", "announced_at", "started_at", "end_reason"})
+INVITE_KEYS = frozenset(
+    {
+        "link",
+        "title",
+        "keep_transcript",
+        "board",
+        "disclosure",
+        "start_at",
+        "attested",
+        "request_id",
+        "connection_id",
+    }
+)
+TITLE_MAX, BOARD_MAX, START_AHEAD_S, JOIN_LEAD_S = 120, 80, 12 * 3600, 120
+REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
+START_AT = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meeting_settings (
@@ -125,6 +143,9 @@ CREATE TABLE IF NOT EXISTS meeting_outbox (
   ext_post TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT,
   UNIQUE (meeting_id, kind, ref)
 );
+CREATE TABLE IF NOT EXISTS meeting_days (
+  day TEXT PRIMARY KEY, n INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meeting_events (
   meeting_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL,
   PRIMARY KEY (meeting_id, seq)
@@ -154,6 +175,29 @@ class Refused(Exception):
 
 def stamp(now=None) -> str:
     return (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def stamp_ts(ts: float) -> str:
+    return stamp(datetime.fromtimestamp(ts, timezone.utc))
+
+
+def parse_stamp(value: str) -> float:
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+
+
+def is_ended(state: str) -> bool:
+    return state in ENDED or state.startswith("failed:")
+
+
+def plain_text(value, limit, code, what) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value.strip()) > limit
+        or any(ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        raise Invalid(code, f"The {what} must be 1-{limit} plain characters")
+    return value.strip()
 
 
 def _bool(value):
@@ -234,7 +278,7 @@ def connection_view(row) -> dict:
 def meeting_view(row) -> dict:
     keys = (
         "id provider title bot_name state keep_transcript board disclosure start_at started_at "
-        "ended_at end_reason created_at"
+        "announced_at ended_at end_reason created_at"
     ).split()
     return {key: row[key] for key in keys}
 
@@ -579,7 +623,7 @@ class MeetingStore:
             return Refused("no_connection", "No meeting provider is switched on")
         return None
 
-    # --- meetings (read side; the lifecycle arrives later) ---------------------------------
+    # --- meetings -------------------------------------------------------------------------
 
     def meetings_for(self, user_id) -> list[dict]:
         with self._tx(write=False) as conn:
@@ -635,3 +679,452 @@ class MeetingStore:
             "connections": c["n"],
             "connections_enabled": c["e"],
         }
+
+    # --- invite ---------------------------------------------------------------------------
+
+    def _enabled_connection(self, connection_id):
+        with self._tx(write=False) as conn:
+            rows = (
+                conn.execute(
+                    "SELECT * FROM meeting_connections WHERE enabled=1 ORDER BY created_at, id"
+                ).fetchall()
+                if conn
+                else []
+            )
+        if connection_id is not None:
+            rows = [r for r in rows if r["id"] == connection_id]
+            if not rows:
+                raise Invalid("unknown_connection", "That provider connection is not available")
+        elif len(rows) != 1:
+            raise Invalid("connection_required", "Choose which provider connection to use")
+        return rows[0]
+
+    def invite(self, user_id, body: dict, *, bot_name: str, now: float) -> tuple[dict, bool]:
+        """Store one invite and return ``(meeting, created)``. A repeat of the same ``request_id``
+        returns the first meeting, whatever else the request says. The meeting link is sealed
+        before it is stored and is not returned by anything."""
+        required = {"link", "title", "attested", "request_id"}
+        if set(body) - INVITE_KEYS or not required <= set(body):
+            raise Invalid("invalid_field", "Link, title, attestation and request id are required")
+        if body["attested"] is not True:
+            raise Invalid(
+                "attestation_required", "Confirm you may bring a notes bot into this meeting"
+            )
+        request_id = body["request_id"]
+        if not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
+            raise Invalid("invalid_request_id", "The request id must be 8-64 letters or digits")
+        existing = self._by_request(user_id, request_id)
+        if existing is not None:
+            return meeting_view(existing), False
+        title = plain_text(body["title"], TITLE_MAX, "invalid_title", "title")
+        disclosure = body.get("disclosure", "none")
+        if disclosure not in ("none", "titles", "full"):
+            raise Invalid("invalid_disclosure", "Disclosure must be none, titles or full")
+        board = body.get("board")
+        board = None if board is None else plain_text(board, BOARD_MAX, "invalid_board", "board")
+        settings = self.settings()
+        if "keep_transcript" in body:
+            keep = bool(_bool(body["keep_transcript"]))
+            if keep and not settings["transcript_ok"]:
+                raise Refused(
+                    "transcript_not_allowed", "The workspace owner has not allowed transcripts"
+                )
+        else:  # the person's default, which the owner's switch can still veto
+            keep = self.person(user_id)["keep_transcript"] and bool(settings["transcript_ok"])
+        start_at = body.get("start_at")
+        if start_at is not None:
+            try:
+                when = parse_stamp(start_at) if START_AT.fullmatch(start_at or "") else None
+            except (TypeError, ValueError):
+                when = None
+            if when is None or not now - 60 <= when <= now + START_AHEAD_S:
+                raise Invalid("invalid_start", "Start time must be within the next 12 hours")
+        row = self._enabled_connection(body.get("connection_id"))
+        provider = adapter.get(row["provider"])
+        if provider is None:
+            raise Refused("no_connection", "No meeting provider is switched on")
+        if not provider.caps.chat_send:
+            raise Refused("no_chat_send", "That provider cannot announce the bot in the meeting")
+        link = body["link"]
+        try:
+            parsed = (
+                provider.parse_link(link) if isinstance(link, str) and len(link) <= 2048 else None
+            )
+        except Exception:
+            parsed = None
+        if not isinstance(parsed, adapter.JoinRef):
+            raise Invalid("invalid_link", "That meeting link is not accepted")
+        meeting_id = uuid.uuid4().hex
+        blob = seal.seal(self.data_dir, self.workspace_id, "join_ref", meeting_id, parsed.ref)
+        stamped = stamp_ts(now)
+        try:
+            with self._tx() as conn:
+                day = stamped[:10]
+                used = conn.execute("SELECT n FROM meeting_days WHERE day=?", (day,)).fetchone()
+                if used and used["n"] >= settings["daily_meetings"]:
+                    raise Refused("daily_limit", "The daily meeting limit is reached", 429)
+                conn.execute(
+                    "DELETE FROM meeting_days WHERE day < ?", (stamp_ts(now - 7 * 86400)[:10],)
+                )
+                conn.execute(
+                    "INSERT INTO meeting_days(day, n) VALUES (?, 1) "
+                    "ON CONFLICT(day) DO UPDATE SET n = n + 1",
+                    (day,),
+                )
+                conn.execute(
+                    "INSERT INTO meetings(id, user_id, connection_id, provider, join_ref, "
+                    "ext_meeting, title, bot_name, state, keep_transcript, board, disclosure, "
+                    "attested_at, start_at, request_id, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,'requested',?,?,?,?,?,?,?)",
+                    (
+                        meeting_id,
+                        user_id,
+                        row["id"],
+                        row["provider"],
+                        blob,
+                        parsed.ext_meeting,
+                        title,
+                        bot_name,
+                        int(keep),
+                        board,
+                        disclosure,
+                        stamped,
+                        start_at,
+                        request_id,
+                        stamped,
+                    ),
+                )
+                self._event(conn, meeting_id, "requested", stamped)
+                return meeting_view(self._meeting_row(conn, meeting_id)), True
+        except sqlite3.IntegrityError:
+            existing = self._by_request(user_id, request_id)
+            if existing is None:
+                raise
+            return meeting_view(existing), False
+
+    def _by_request(self, user_id, request_id):
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return None
+            return conn.execute(
+                "SELECT * FROM meetings WHERE user_id=? AND request_id=?", (user_id, request_id)
+            ).fetchone()
+
+    @staticmethod
+    def _meeting_row(conn, meeting_id):
+        row = conn.execute("SELECT * FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+        if row is None:
+            raise Missing
+        return row
+
+    @staticmethod
+    def _event(conn, meeting_id, kind, at):
+        seq = conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM meeting_events WHERE meeting_id=?",
+            (meeting_id,),
+        ).fetchone()["n"]
+        conn.execute(
+            "INSERT INTO meeting_events(meeting_id, seq, kind, at) VALUES (?,?,?,?)",
+            (meeting_id, seq, kind, at),
+        )
+
+    def meeting(self, meeting_id, user_id=None) -> dict:
+        """One meeting as its inviter sees it; another person's id is ``Missing``. ``user_id=None``
+        is the engine and the owner's stop, never a route's reader."""
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute("SELECT * FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+                if conn
+                else None
+            )
+        if row is None or (user_id is not None and row["user_id"] != user_id):
+            raise Missing
+        return meeting_view(row)
+
+    def events_for(self, meeting_id) -> list[str]:
+        """The lifecycle journal's kinds in order (tests and diagnostics; it holds no text)."""
+        with self._tx(write=False) as conn:
+            rows = (
+                conn.execute(
+                    "SELECT kind FROM meeting_events WHERE meeting_id=? ORDER BY seq", (meeting_id,)
+                )
+                if conn
+                else []
+            )
+            return [r["kind"] for r in rows]
+
+    # --- lifecycle: claim, lease, transitions ---------------------------------------------
+
+    def run_row(self, meeting_id) -> dict:
+        """The meeting row for its worker, without the sealed link."""
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute("SELECT * FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+                if conn
+                else None
+            )
+        if row is None:
+            raise Missing
+        return {k: v for k, v in dict(row).items() if k != "join_ref"}
+
+    def open_join_ref(self, meeting_id) -> str:
+        with self._tx(write=False) as conn:
+            row = self._meeting_row(conn, meeting_id) if conn else None
+        if row is None or row["join_ref"] is None:
+            raise Missing
+        return seal.unseal(
+            self.data_dir, self.workspace_id, "join_ref", meeting_id, bytes(row["join_ref"])
+        )
+
+    def open_connection(self, connection_id) -> adapter.Connection:
+        return self.open_for_test(connection_id)
+
+    def connection_enabled(self, connection_id) -> bool:
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT enabled FROM meeting_connections WHERE id=?", (connection_id,)
+                ).fetchone()
+                if conn
+                else None
+            )
+        return bool(row and row["enabled"])
+
+    def due(self, now: float) -> list[str]:
+        """Requested meetings whose join time has come (a scheduled one, two minutes early)."""
+        horizon = stamp_ts(now + JOIN_LEAD_S)
+        with self._tx(write=False) as conn:
+            rows = (
+                conn.execute(
+                    "SELECT id FROM meetings WHERE state='requested' "
+                    "AND (start_at IS NULL OR start_at <= ?) ORDER BY created_at, id",
+                    (horizon,),
+                )
+                if conn
+                else []
+            )
+            return [r["id"] for r in rows]
+
+    def pending(self) -> bool:
+        """Is anything requested or running (the worker keeps beating while so)."""
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return False
+            marks = ",".join("?" * len(ENDED))
+            return bool(
+                conn.execute(
+                    f"SELECT 1 FROM meetings WHERE state NOT IN ({marks}) "
+                    "AND state NOT LIKE 'failed:%' LIMIT 1",
+                    ENDED,
+                ).fetchone()
+            )
+
+    def claim(self, meeting_id, now: float, lease_s: float) -> bool:
+        """``requested`` -> ``joining`` with a fresh lease, at most once and only while the
+        workspace is under ``max_concurrent``. A second fire of the same meeting finds another
+        state and gets False."""
+        with self._tx() as conn:
+            row = self._meeting_row(conn, meeting_id)
+            if row["state"] != "requested":
+                return False
+            if row["start_at"] and row["start_at"] > stamp_ts(now + JOIN_LEAD_S):
+                return False
+            limit = self.settings()["max_concurrent"]
+            marks = ",".join("?" * len(RUNNING))
+            busy = conn.execute(
+                f"SELECT COUNT(*) AS n FROM meetings WHERE state IN ({marks}) AND lease_at > ?",
+                (*RUNNING, now - lease_s),
+            ).fetchone()["n"]
+            if busy >= limit:
+                return False
+            conn.execute(
+                "UPDATE meetings SET state='joining', lease_at=? WHERE id=?", (now, meeting_id)
+            )
+            self._event(conn, meeting_id, "joining", stamp_ts(now))
+            return True
+
+    def renew(self, meeting_id, now: float) -> bool:
+        """Heartbeat. False once the meeting ended, whoever ended it."""
+        marks = ",".join("?" * len(ENDED))
+        with self._tx() as conn:
+            return (
+                conn.execute(
+                    f"UPDATE meetings SET lease_at=? WHERE id=? AND state NOT IN ({marks}) "
+                    "AND state NOT LIKE 'failed:%'",
+                    (now, meeting_id, *ENDED),
+                ).rowcount
+                == 1
+            )
+
+    def advance(self, meeting_id, to, now: float, *, wipe_ref=False, **fields) -> bool:
+        """Move a running meeting to ``to`` (compare-and-set: False if it already ended)."""
+        if set(fields) - ADVANCE_FIELDS:
+            raise ValueError("unknown field")
+        sets = ["state=?", *(f"{name}=?" for name in fields)]
+        values = [to, *fields.values()]
+        if wipe_ref:
+            sets.append("join_ref=NULL")
+        marks = ",".join("?" * len(ENDED))
+        with self._tx() as conn:
+            changed = conn.execute(
+                f"UPDATE meetings SET {', '.join(sets)} WHERE id=? AND state NOT IN ({marks}) "
+                "AND state NOT LIKE 'failed:%'",
+                (*values, meeting_id, *ENDED),
+            ).rowcount
+            if changed:
+                self._event(conn, meeting_id, to, stamp_ts(now))
+            return bool(changed)
+
+    def finish(self, meeting_id, state, reason, now: float, *, discard: bool) -> bool:
+        """End the meeting for good: the sealed link is wiped, queued chat posts are cancelled and,
+        with ``discard``, everything captured (working segments, participants) is deleted for real.
+        False if it had already ended (a kill switch got there first)."""
+        marks = ",".join("?" * len(ENDED))
+        with self._tx() as conn:
+            changed = conn.execute(
+                "UPDATE meetings SET state=?, end_reason=?, ended_at=?, join_ref=NULL, "
+                f"lease_at=NULL WHERE id=? AND state NOT IN ({marks}) AND state NOT LIKE 'failed:%'",
+                (state, reason, stamp_ts(now), meeting_id, *ENDED),
+            ).rowcount
+            if not changed:
+                return False
+            if discard:
+                for table in ("meeting_segments", "meeting_participants"):
+                    conn.execute(f"DELETE FROM {table} WHERE meeting_id=?", (meeting_id,))
+            conn.execute(
+                "UPDATE meeting_outbox SET state='cancelled' "
+                "WHERE meeting_id=? AND state IN ('queued','sending')",
+                (meeting_id,),
+            )
+            self._event(conn, meeting_id, state, stamp_ts(now))
+            return True
+
+    def request_end(self, meeting_id, kind, now: float, user_id=None) -> dict:
+        """The inviter's leave (``inviter_left``) or the owner's stop (``stop_requested``). A meeting
+        that has not joined yet is simply cancelled; a running one is flagged and its worker acts at
+        its next beat (the stop discards, the leave keeps what was captured). An ended meeting is
+        returned unchanged."""
+        with self._tx() as conn:
+            row = self._meeting_row(conn, meeting_id)
+            if user_id is not None and row["user_id"] != user_id:
+                raise Missing
+            if is_ended(row["state"]):
+                return meeting_view(row)
+            if row["state"] == "requested":
+                conn.execute(
+                    "UPDATE meetings SET state='cancelled', end_reason='cancelled', ended_at=?, "
+                    "join_ref=NULL WHERE id=?",
+                    (stamp_ts(now), meeting_id),
+                )
+                self._event(conn, meeting_id, "cancelled", stamp_ts(now))
+            elif kind == "stop_requested":
+                conn.execute(
+                    "UPDATE meetings SET state='removed', end_reason='stop_requested' WHERE id=?",
+                    (meeting_id,),
+                )
+                self._event(conn, meeting_id, "removed", stamp_ts(now))
+            elif row["state"] not in ("removed", "ending", "processing"):
+                conn.execute(
+                    "UPDATE meetings SET state='ending', end_reason='inviter_left' WHERE id=?",
+                    (meeting_id,),
+                )
+                self._event(conn, meeting_id, "ending", stamp_ts(now))
+            return meeting_view(self._meeting_row(conn, meeting_id))
+
+    def expired(self, now: float, lease_s: float) -> list[str]:
+        """Running meetings whose worker stopped beating: crashed, restarted or lost."""
+        marks = ",".join("?" * len(RUNNING))
+        with self._tx(write=False) as conn:
+            rows = (
+                conn.execute(
+                    f"SELECT id FROM meetings WHERE state IN ({marks}) "
+                    "AND (lease_at IS NULL OR lease_at < ?) ORDER BY created_at, id",
+                    (*RUNNING, now - lease_s),
+                )
+                if conn
+                else []
+            )
+            return [r["id"] for r in rows]
+
+    # --- participants and the chat outbox -------------------------------------------------
+
+    def participant_seen(self, meeting_id, ext, label, host, now: float) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO meeting_participants(meeting_id, ext_participant, label, host, "
+                "joined_at) VALUES (?,?,?,?,?) ON CONFLICT(meeting_id, ext_participant) "
+                "DO UPDATE SET left_at=NULL, host=excluded.host, label=excluded.label",
+                (meeting_id, ext, label, int(host), stamp_ts(now)),
+            )
+
+    def participant_left(self, meeting_id, ext, now: float) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE meeting_participants SET left_at=? WHERE meeting_id=? "
+                "AND ext_participant=?",
+                (stamp_ts(now), meeting_id, ext),
+            )
+
+    def participants_present(self, meeting_id) -> int:
+        with self._tx(write=False) as conn:
+            return (
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM meeting_participants WHERE meeting_id=? "
+                    "AND left_at IS NULL",
+                    (meeting_id,),
+                ).fetchone()["n"]
+                if conn
+                else 0
+            )
+
+    def outbox_begin(self, meeting_id, kind, ref) -> tuple[str, str]:
+        """Claim the right to post once. Returns ``(outbox id, prior state)``; the prior state is
+        ``new`` or ``queued`` when the caller may post (the row is now ``sending``), anything else
+        (``sent``, ``sending``, ``unknown``, ``cancelled``) when it may not."""
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT id, state FROM meeting_outbox WHERE meeting_id=? AND kind=? AND ref=?",
+                (meeting_id, kind, ref),
+            ).fetchone()
+            if row is None:
+                outbox_id = uuid.uuid4().hex
+                conn.execute(
+                    "INSERT INTO meeting_outbox(id, meeting_id, kind, ref, state, attempts) "
+                    "VALUES (?,?,?,?, 'sending', 1)",
+                    (outbox_id, meeting_id, kind, ref),
+                )
+                return outbox_id, "new"
+            if row["state"] == "queued":
+                conn.execute(
+                    "UPDATE meeting_outbox SET state='sending', attempts=attempts+1 WHERE id=?",
+                    (row["id"],),
+                )
+            return row["id"], row["state"]
+
+    def outbox_mark(self, outbox_id, state, ext_post="") -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE meeting_outbox SET state=?, ext_post=COALESCE(NULLIF(?, ''), ext_post) "
+                "WHERE id=?",
+                (state, ext_post, outbox_id),
+            )
+
+    def outbox_state(self, meeting_id, kind, ref):
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT state FROM meeting_outbox WHERE meeting_id=? AND kind=? AND ref=?",
+                    (meeting_id, kind, ref),
+                ).fetchone()
+                if conn
+                else None
+            )
+        return row["state"] if row else None
+
+    def outbox_unknown(self, meeting_id) -> None:
+        """A post that was ``sending`` when its worker died may or may not have gone out."""
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE meeting_outbox SET state='unknown' WHERE meeting_id=? AND state='sending'",
+                (meeting_id,),
+            )
