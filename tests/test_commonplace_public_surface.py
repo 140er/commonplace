@@ -58,6 +58,7 @@ EXACT = {
     ("POST", "/api/runner/usage"): "authenticated",
     ("GET", "/api/card-starts/options"): "authenticated",
     ("GET", "/api/agent-schedules"): "authenticated",
+    ("GET", "/api/topology/map"): "authenticated",
     ("POST", "/api/agent-schedules"): "authenticated",
     ("GET", "/api/routines"): "authenticated",
     ("POST", "/api/routines"): "authenticated",
