@@ -13,6 +13,8 @@ PIN_PUBLIC = {
     ("GET", "/app/auth/"),
     ("GET", "/app/auth/email/verify"),
     ("GET", "/app/cards/"),
+    # The invite page: public so a signed-out visitor can be sent to sign-in.
+    ("GET", "/app/join"),
     ("GET", "/app/login"),
     ("GET", "/app/settings/memory"),
     ("GET", "/app/static/"),
