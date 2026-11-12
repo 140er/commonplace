@@ -10,7 +10,10 @@ The consent rule is the whole point of this module and is kept in one place:
 * a host removing the bot, anyone typing ``bot stop``, the owner's stop, or any worker error closes
   the gate first, discards what was captured, leaves, and ends the meeting.
 
-Every exit goes through :meth:`Run._conclude`; there is no other way out of a meeting. Text from
+A meeting ends through :meth:`Run._conclude` (or :meth:`Run._drop` when it already ended elsewhere,
+or :func:`recover` for an orphan); every state change on the way is a compare-and-set in the store
+that a stop (``removed``) refuses, and ``finish`` will not keep what was captured for a stopped
+meeting. Text from
 the meeting (chat, display names) is data: it is never logged, and only an exact ``bot stop`` has
 any effect. Nothing here names a provider.
 """
@@ -418,15 +421,10 @@ class Run:
         self._join_audio()
         now = self.clock()
         if not end.discard:
-            # ending wipes the sealed link; a stop that landed meanwhile still wins and discards
-            if self.meetings.advance(
-                self.meeting_id, "ending", now, wipe_ref=True, end_reason=end.reason
-            ):
-                self.sink.finish(self.meeting_id)
-                self.meetings.advance(self.meeting_id, "processing", now)
-                self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
-                self._audit(end)
+            if self._finish_kept(end, now):
                 return
+            # Not finished: it ended elsewhere, or a stop landed at one of the steps. A stop wins
+            # whatever the step, so what was captured is discarded.
             row = self.meetings.run_row(self.meeting_id)
             if store.is_ended(row["state"]):
                 return
@@ -434,6 +432,23 @@ class Run:
             self.sink.discard(self.meeting_id)
         self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=True)
         self._audit(end)
+
+    def _finish_kept(self, end, now) -> bool:
+        """``ending`` (wipes the sealed link), ``processing``, then the end state, keeping what was
+        captured. Every step is a compare-and-set that a stop (``removed``) refuses; False as soon as
+        one is refused."""
+        if not self.meetings.advance(
+            self.meeting_id, "ending", now, wipe_ref=True, end_reason=end.reason
+        ):
+            return False
+        self.sink.finish(self.meeting_id)
+        if not (
+            self.meetings.advance(self.meeting_id, "processing", now)
+            and self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
+        ):
+            return False
+        self._audit(end)
+        return True
 
     def _audit(self, end):
         try:

@@ -997,13 +997,16 @@ class MeetingStore:
     def finish(self, meeting_id, state, reason, now: float, *, discard: bool) -> bool:
         """End the meeting for good: the sealed link is wiped, queued chat posts are cancelled and,
         with ``discard``, everything captured (working segments, participants) is deleted for real.
-        False if it had already ended (a kill switch got there first)."""
-        marks = ",".join("?" * len(ENDED))
+        False if it had already ended (a kill switch got there first). A meeting that was stopped
+        (``removed``) cannot be finished while keeping what it captured: that is refused, and the
+        caller must finish it with ``discard=True``."""
+        skipped = ENDED if discard else (*ENDED, "removed")
+        marks = ",".join("?" * len(skipped))
         with self._tx() as conn:
             changed = conn.execute(
                 "UPDATE meetings SET state=?, end_reason=?, ended_at=?, join_ref=NULL, "
                 f"lease_at=NULL WHERE id=? AND state NOT IN ({marks}) AND state NOT LIKE 'failed:%'",
-                (state, reason, stamp_ts(now), meeting_id, *ENDED),
+                (state, reason, stamp_ts(now), meeting_id, *skipped),
             ).rowcount
             if not changed:
                 return False
