@@ -159,7 +159,12 @@ _BOT_KEYS = ("id", "name", "job", "instructions", "kind", "board", "read_upto", 
 
 
 def _bot(row) -> dict:
-    return {key: row[key] for key in _BOT_KEYS}
+    """The bot's public fields plus who owns it and whether it is shared (for a turn)."""
+    return {
+        **{key: row[key] for key in _BOT_KEYS},
+        "owner_id": row["user_id"],
+        "shared": bool(row["shared"]),
+    }
 
 
 _message = message
@@ -265,6 +270,15 @@ class BotStore(SharesMixin):
     def get(self, bot_id, user_id) -> dict:
         with self._tx(write=False) as conn:
             row = self._own(conn, bot_id, user_id)
+            return {**_bot(row), "archived": row["archived_at"] is not None}
+
+    def viewable(self, bot_id, user_id) -> dict:
+        """The bot for its owner or a member with a live share (else :class:`Missing`).
+
+        ``get`` stays owner-only; a turn of a shared bot reads the bot through this.
+        """
+        with self._tx(write=False) as conn:
+            row = self._viewer(conn, user_id, bot_id)
             return {**_bot(row), "archived": row["archived_at"] is not None}
 
     def create(self, user_id, name, job="", instructions="", kind="custom", board=None) -> dict:

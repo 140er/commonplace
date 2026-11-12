@@ -556,6 +556,7 @@ def _static(text):
 register(
     Tool(
         name="project_status",
+        reach="project:read",
         description=(
             "Task counts, who is working, what waits and why, and whether the orchestrator "
             "is connected and woken."
@@ -570,6 +571,7 @@ register(
 register(
     Tool(
         name="list_work",
+        reach="project:read",
         description=("List up to 20 tasks (open ones unless a status is given)."),
         schema=_schema({"status": {"type": "string", "enum": list(STATUSES)}}),
         kind="read",
@@ -581,6 +583,7 @@ register(
 register(
     Tool(
         name="work_detail",
+        reach="project:read",
         description="One task: status, latest notes, links.",
         schema=_schema({"ref": REF}, ["ref"]),
         kind="read",
@@ -592,6 +595,7 @@ register(
 register(
     Tool(
         name="create_work",
+        reach="project:write",
         description=(
             "File new work as a task, in the person's own words, only on a clear request. "
             "Without arguments the whole message is filed; `title` and `body` must be copied "
@@ -615,6 +619,7 @@ register(
 register(
     Tool(
         name="prioritize_work",
+        reach="project:write",
         description=(
             "Change a task's priority (project owner only), or move it `before` or `after` "
             "another task in the same column."
@@ -632,6 +637,7 @@ register(
 register(
     Tool(
         name="comment_work",
+        reach="project:write",
         description=(
             "Comment on a task with the person's own words: `text` copied verbatim from the "
             "message, or the whole message."
@@ -648,6 +654,7 @@ register(
 register(
     Tool(
         name="tell_orchestrator",
+        reach="project:write",
         description=(
             "Pass the person's own words to the orchestrator to steer the work: `text` copied "
             "verbatim from the message, or the whole message. Not for new work (use "
@@ -663,6 +670,7 @@ register(
 register(
     Tool(
         name="list_decisions",
+        reach="project:read",
         description="The open questions waiting for this person in the project.",
         schema=_schema(),
         kind="read",
@@ -674,6 +682,7 @@ register(
 register(
     Tool(
         name="answer_decision",
+        reach="project:write",
         description=(
             "Answer an open question with exactly one of `choice` (an offered option, as "
             "listed) or `reply` (copied verbatim from the message). Waits for the person's tap."
@@ -696,6 +705,7 @@ register(
 register(
     Tool(
         name="approve_work",
+        reach="project:write",
         description=(
             "Approve a task that waits for approval, or decline it (`approve` false). Waits "
             "for the person's tap."
@@ -711,6 +721,7 @@ register(
 register(
     Tool(
         name="create_project",
+        reach="wing:write",
         description=(
             "Create a new project; `name` copied verbatim from the message. Waits for the "
             "person's tap."
