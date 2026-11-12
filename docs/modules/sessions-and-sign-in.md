@@ -9,8 +9,6 @@
 
 - **Promises:**
 
-  - `session_created_at` reports when a live session was started and nothing for a revoked, expired or unknown one; account deletion uses it as its recent sign-in proof.
-
   - OAuth authentication strips loaded private/admin scope when current workspace membership is not exactly owner, independently of token scope narrowing.
 
   - Person private read scope requires the exact current workspace owner role. Omitted, missing and unexpected roles fail closed; members temporarily lose their own private wings too.
