@@ -540,8 +540,9 @@ class BotStore(SharesMixin):
 
         A reply to a turn whose share ended meanwhile is stored only as the fixed
         ``failed:revoked`` reply, in the thread its person opened. ``learned_used``: ids of the
-        person's learned items this reply's request carried; their use count and last use are
-        updated in the same write as the reply.
+        learned items (the person's, and shared ones of a project they read) this reply's
+        request carried; their use count and last use are updated in the same write as the
+        reply.
         """
         _text(text, "text", 0, TEXT_MAX * 4)
         if state != "ok" and state not in ("stopped",) and not state.startswith("failed:"):
@@ -575,7 +576,8 @@ class BotStore(SharesMixin):
                 raise Conflict() from None
             if learned_used:
                 conn.execute(
-                    "UPDATE bot_learned SET use_count=use_count+1, last_used_at=? WHERE user_id=? "
+                    "UPDATE bot_learned SET use_count=use_count+1, last_used_at=? "
+                    "WHERE (user_id=? OR scope='shared') "
                     f"AND id IN ({','.join('?' * len(learned_used))})",
                     (stamp(), user_id, *learned_used),
                 )

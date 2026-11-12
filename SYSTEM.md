@@ -266,6 +266,15 @@ uncertain. It requires the existing persisted guards before attaching, writes a
 private audit note for each action and has no HTTP route. Recovery never implies that
 a remote process terminated.
 
+### Workspace page controllers for Compute and Coworkers
+
+`web/static/coworkers.js` and `compute.js` are self-contained page controllers: they
+abort stale requests when the session, workspace or route changes and render only
+escaped text from server-authoritative state. They are deliberately not wired into
+the shell, rail, phone navigation or palette: the Deck look owns Compute navigation,
+and a classic-look entry needs a separate design decision. Neither controller enables
+remote execution; that stays a trusted server-side configuration.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and
@@ -2805,10 +2814,18 @@ a canonical `mcp:x` thread but not that legacy twin; no new such twin can be
 filed. The diary probe and the read are two worker calls: a hidden
 entry filed between them with a `filed_at` older than the newest `last_n`
 entries is neither excluded nor in the window, so `total` can count it once.
-Its words and topic are never returned. `mcp:` source IDs in knowledge-graph
-fact sources, tunnel labels and drawer provenance (`source_thread`,
-`source_kept.thread`) are checked only for thread IDs and capture references,
-not resolved as T3 sources; those paths predate this room check.
+Its words and topic are never returned.
+
+`mcp:` source IDs outside rooms. The room rule (whole value, prefix-matched,
+every matching thread readable) also covers the other places a thread can be
+named: provenance fields that name a thread (`source_thread`, `source_url`,
+`source_link`, `origin_id`, `origin_link`, `approval_link`) on knowledge-graph
+facts and their sources and on drawer metadata, `source_kept.thread` and the
+`source` bundle of an add-drawer replay, and tunnel labels. A reader who cannot
+read every matching thread loses that field (the fact, drawer or tunnel stays;
+a tunnel whose label names such a thread is hidden, as for `thr_` references);
+a value naming no stored thread is unchanged. `source_file`, `source_path`,
+`source_drawer_id` and `source_closet` keep their existing checks.
 
 CLI rendering rule (replaces the earlier rule that
 every-wing policies keep worker-rendered CLI output and search diagnostics):
