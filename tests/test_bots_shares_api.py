@@ -11,7 +11,7 @@ import threading
 import pytest
 
 from commonplace import sessions
-from commonplace.bots import turn
+from commonplace.bots import learned, turn
 from commonplace.chat import model_stream
 from tests._bots_helpers import bots_hub_fixture  # noqa: F401
 from tests.test_bots_app_grant import app as app_token, bearer
@@ -779,3 +779,26 @@ def test_a_bot_that_is_not_shared_behaves_as_before(team, fake):
     assert "shared with a team" not in fake.calls[0]["system"]
     assert team.thread(team.blake, plain)[0] == 404
     assert sessions.person_principal(team.hub.hub.db, team.blake, team.workspace) is not None
+
+
+def test_learned_items_stay_with_their_person_and_never_reach_a_members_turn(team, fake):
+    bot_id = team.shared_bot(team.blake)
+    keep = "Please keep answers short and in plain language."
+    items = learned.open_learned(team.hub.hub.gateway, team.workspace)
+    items.set_policy(learned.WORKSPACE, team.avery, enabled=True)
+    items.configure(bot_id, team.avery, mode="auto")
+    source = team.store.add_user_message(bot_id, team.avery, keep, "request-9001")["id"]
+    items.add_item(
+        team.avery,
+        bot_id,
+        kind="preference",
+        topic="answer style",
+        text=keep,
+        source_message_id=source,
+    )
+    team.ask(fake, team.avery, bot_id, "How long are answers?", request_id="request-0001")
+    assert keep in json.dumps(fake.calls[-1]["messages"])  # the owner's own turn uses it
+    team.ask(fake, team.blake, bot_id, "How long are answers?", request_id="request-0001")
+    assert keep not in json.dumps(fake.calls[-1]["messages"])
+    assert keep not in fake.calls[-1]["system"]
+    assert keep not in json.dumps(team.thread(team.blake, bot_id)[1])

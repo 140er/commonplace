@@ -249,6 +249,23 @@ bounded and redacted. The owner UI shows the observed exit, or an uncertain
 cancellation, and never implies dispatch from approval alone. The executor is
 inert until trusted configuration enables it.
 
+### Compute discovery service component
+
+The discovery service stores one durable reservation per collection and charges the
+reserved scope ceilings permanently, so a restart never re-collects automatically
+and unknown concurrency slots stay reserved. Collection reaches a target only through
+the pinned outer SSH adapter and only when trusted configuration enables discovery;
+owner-session routes expose scopes, proposals and cancellation. Cancellation records
+intent and distinguishes it from confirmed termination.
+
+### Compute operator recovery component
+
+`compute/operator.py` gives a trusted operator fenced recovery for controller
+execution and discovery, and for helper tunnels and passive reservations that stayed
+uncertain. It requires the existing persisted guards before attaching, writes a
+private audit note for each action and has no HTTP route. Recovery never implies that
+a remote process terminated.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and

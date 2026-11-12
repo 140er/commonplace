@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/compute/`
 - **Owns:**
 
+  - Operator recovery (`operator.py`): fenced controller execution and discovery recovery and helper tunnel and passive recovery, with private audit notes and no HTTP route.
+  - Durable discovery (`discovery_store.py`, `discovery_service.py`, `discovery_routes.py`, `discovery_transport.py`): reservations with permanent scope-ceiling charges, owner-session REST, a pinned outer SSH adapter and an explicit default-off lifecycle.
   - Durable execution attempts (`executor.py`): signed enrollment receipts, exact-stage checks, one-shot approval consumption and bounded redacted evidence, started only by the trusted default-off configuration.
   - Owner-session management (`control.py`, `routes.py`), the script control path (`script_control.py`) and the trusted, default-off startup configuration (`ExecutionConfig`) that `ControlDB` accepts as an explicit constructor argument; the package `__init__` installs it and nothing else enables execution.
   - Encrypted SSH key custody (`credentials.py`), the pinned two-hop SSH transport and script transfer (`transport.py`, `script_transport.py`) and the cross-process authority fence (`fence.py`).
