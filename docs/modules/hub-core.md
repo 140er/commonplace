@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/index_stats.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
 
+  - `ControlDB(path, compute_config=...)` accepts trusted Compute startup configuration; its transaction wrapper holds the compute coordinator lock across the whole transaction, and without configuration behavior is unchanged.
+
   - Canonical Space REST aliases mapped to existing board tool authority.
 
   - Trusted Compute startup configuration wraps central ControlDB authority access in the bounded cross-process coordinator, with persisted guards and durable epoch invalidation; no configuration leaves existing behavior unchanged.
