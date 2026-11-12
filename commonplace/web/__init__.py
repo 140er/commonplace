@@ -228,10 +228,11 @@ def install(gateway):
         )
 
     from .. import capacity
-    from . import admin, agents, goals, task_types
+    from . import admin, agents, goals, invites, task_types
 
     admin.install(gateway)
     capacity.install(gateway)
+    invites.install(gateway)
     agents.install(gateway)
     task_types.install(gateway)
     goals.install(gateway)

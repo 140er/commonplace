@@ -14,6 +14,8 @@ Authority (nothing new; the stores enforce it again):
   the owner through the data directory). An agent token with role owner is refused.
 - lease, journal, gates, ``orch_card_start``: a principal that passes the runner's
   ``requester_ok`` for the config's ``[runner].machine``, plus epoch and token.
+- ``orch_reassign_step``: the same holder authority for the role the step's owner
+  reports to (``organigram``).
 
 Untrusted connections only see the read tools and ``orch_config_propose``
 (``trusted_only``); runner children see none (``available``). A configuring live accept
@@ -175,8 +177,20 @@ def config_get(ctx, board, version=None, channel="live"):
         "board": board,
         "channel": channel,
         "accepted": accepted.public(body=True) if accepted else None,
+        **_factory(accepted),
         "versions": [row.public() for row in st.versions(board)[:MAX_VERSIONS]],
     }
+
+
+def _factory(version) -> dict:
+    """``{"factory": ...}`` when the accepted version declares a merge policy, else ``{}``."""
+    try:
+        policy = version.config().factory if version else None
+    except ValueError:
+        policy = None
+    if policy is None:
+        return {}
+    return {"factory": {"policy": policy.to_dict(), "summary": policy.summary()}}
 
 
 def config_render(ctx, board, version=None, channel="live"):
@@ -363,6 +377,13 @@ def void_step(ctx, board, role, step_key):
     step = durable.void_step(ctx, board, role, step_key)
     _emit(ctx, "orch.step.voided", board, board=board, role=role, step_key=step_key)
     return step
+
+
+def reassign_step(ctx, board, role, epoch, token, report, step_key):
+    from . import organigram
+
+    _board(ctx, board)
+    return organigram.reassign_step(ctx, board, role, epoch, token, report, step_key)
 
 
 def checkpoint(ctx, board, role):
@@ -610,6 +631,17 @@ OPERATIONS = {
         "Owner/local void: retire runner-start keys and cancel only queued/leased jobs; "
         "launched jobs and history remain. Repeats preserve the first void; each successful "
         "call emits a feed notification. Gate void allows a new attempt under a new key.",
+    ),
+    "orch_reassign_step": (
+        reassign_step,
+        {**LEASE, "report": ROLE, "step_key": STEP_KEY},
+        ("board", "role", "epoch", "token", "report", "step_key"),
+        "write",
+        True,
+        False,
+        "Take back a step of a role that reports to yours (parent in the config): the step "
+        "is voided with its history kept so the work can be given out again. Only the role "
+        "it reports to may do this; runner starts, gates and holds stay with the owner.",
     ),
     "orch_checkpoint": (
         checkpoint,

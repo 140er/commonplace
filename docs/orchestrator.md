@@ -65,7 +65,9 @@ on = "card.todo"               # live channel only
 
 Role kinds are `orchestrator`, `sub-orchestrator`, `planner`, `builder` and
 `reviewer`; `parent` links form an acyclic graph; role names match
-`[a-z0-9-]{1,32}`. A planner's prompt must include `design_before_code`.
+`[a-z0-9-]{1,32}`. `parent` is the reporting line: a role reports to its
+parent, and a role without one reports to the workspace owner (see
+[Reporting lines](#reporting-lines)). A planner's prompt must include `design_before_code`.
 Secrets are only references of the form `env:[A-Z][A-Z0-9_]{1,63}`; an inline
 value is refused and never echoed. Limits: a config is at most 128 KiB with at
 most 16 roles, and a prompt is at most 32 KiB.
@@ -77,6 +79,7 @@ most 16 roles, and a prompt is at most 32 KiB.
 | `runner.machine`, `runner.project`, `runner.runtime_mode` | **Enforced** through the machine's existing grant checks. |
 | `triggers` (`card.todo`, live), `limits.max_agents`, planner `connections` | **Enforced** (below). |
 | other roles, `skills`, `mcps` | **Advisory.** Rendered for sessions to read. |
+| `[factory]` (optional) | `gate.required` is **enforced** on new `merge` steps; checks and batch cadence are **declared** for agents and tools to read (see Merge policy). |
 
 ### Area preview slice 1, preview-only
 
@@ -381,6 +384,23 @@ commit is still found.
   keeps linked statuses while active journal lists omit voided steps.
   A fresh attempt requires an explicit new key and all existing admission
   checks, including the non-person rules for owner `orch_card_start` calls.
+- **Reporting lines.** <a id="reporting-lines"></a>The `parent` keys are the
+  organigram. Escalation follows them: the checkpoint of a role that others
+  report to has `escalations`, the unvoided `in_doubt` and `needs_person`
+  steps of its direct reports (each with its `role`). A role nobody reports
+  to has no such key, and a role's own lists are unchanged; the top of a line
+  still escalates to the owner through `needs_person`. Delegation follows
+  them too: with `orch_reassign_step` the lease holder of the parent role
+  takes back a step of a direct report (`report`, `step_key`). The step is
+  voided with its history kept, one `reassign` journal event is written, and a
+  repeat returns the first result. Any other role is refused (`not_in_line`,
+  403). Runner-start, gate and hold steps stay with the owner
+  (`owner_only_kind`, 403), so a reassignment never cancels a job, reopens a
+  gated head or lifts a hold. A `needs_person` step is a person's decision and
+  stays with the owner too (`needs_person_owner_only`, 403, step unchanged):
+  the parent role still sees it in `escalations`, but only the owner resolves
+  it. A config without `parent` keys has no lines:
+  nothing is escalated and every reassignment is refused.
 - **Evidence.** `runner_job` (the hub checks the job belongs to this step,
   card and board), `card_state` (the hub reads the card) and `holder_attested`
   (stored, never acted on).
@@ -412,6 +432,69 @@ commit is still found.
   whose claim expired, and steps of another board or role are not listed.
   Runner jobs carry `source: "runner"`. The list is derived on every read;
   the hub does not check that the thread exists.
+
+## Merge policy
+
+A config may carry one optional `[factory]` section: what guards a merge on
+this board. It is versioned, diffed and accepted with the rest of the config,
+so there is one place to read it and one owner approval to change it. An
+experiment cannot change it. A config without `[factory]` has no policy and
+the board behaves as it did before the section existed.
+
+```toml
+[factory.gate]
+required = true                # a merge step needs a passed gate
+name = "merge gate review"     # optional label
+[factory.checks.affected-tests]   # one table per check, named [a-z0-9-]{1,32}
+required = true                # default true
+scope = "affected"             # "affected" (default) or "full": the tests it runs
+pass = ["PASS"]                # the only outcomes that count
+never_pass = ["FALLBACK", "SUPERSEDED"]      # named so nobody argues later
+[factory.batch]
+branch = "develop"
+full_suite = "per-batch"       # "per-pr", "per-batch" or "off"
+on_red = "hold-merges"         # or "report"
+```
+
+The example is the policy this project ran on 11 November 2026: a pull request
+merges on a passed gate plus a green check of the affected tests on the same
+head; the full suite runs once per batch on the integration branch and a red
+batch holds further merges.
+
+What the schema refuses (`factory_contradiction` unless noted):
+
+- `timeout`, `skip`, `skipped` or `error` in `pass`, in any letter case. These
+  never count as a pass, and every summary names them.
+- The same outcome in `pass` and `never_pass`.
+- A policy that requires neither the gate nor any check.
+- `full_suite = "per-batch"` with a required check of `scope = "full"`, and
+  `full_suite = "per-pr"` without one.
+- `on_red` with `full_suite = "off"`.
+- Unknown keys, an empty `pass`, more than 16 checks or 16 outcomes per list
+  (the usual `unknown_key`, `invalid_value`, `too_many`).
+
+Where it is read:
+
+- **The journal.** With `gate.required = true`, a new `merge` step
+  (`orch_journal_intent`) needs a card, and the newest unvoided gate opened
+  for that card on this board must be `gate_pass`. Otherwise the step is
+  refused with `factory_card_required` or `factory_gate_required` (409; the
+  details carry the blocking gate) and nothing is written. A fail, error,
+  budget or still-open gate on a newer head blocks the merge of an older
+  passed head. A retry of a stored merge step still returns it.
+- **Agents.** `orch_config_get` returns `factory` (`policy`, `summary`) next
+  to the accepted version; `orch_checkpoint` and `orch_resume` carry `factory`
+  (`policy`, `summary`, `gates`) in the checkpoint; `orch_config_render` and
+  `commonplace orch render` end with a "Merge policy" list. The key is absent
+  when the accepted config has no `[factory]`.
+- **The app.** Project settings shows the summary lines under "Merge policy",
+  beside the accepted config version, with the board's gate counts.
+
+`gates` counts the board's unvoided gates by state (`open`, `gate_pass`,
+`gate_fail`, `gate_error`, `gate_budget`). Check outcomes are not reported to
+the hub, so the hub does not enforce `checks` or `batch`: the tool that runs a
+check reads them from the accepted version. `.commonplace/checks.toml` is a
+different file: the quick commands a repository runs before a push.
 
 ## Restore
 

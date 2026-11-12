@@ -48,6 +48,8 @@ _PASSED_ENV = frozenset(
         "HF_HUB_OFFLINE",
         "TRANSFORMERS_OFFLINE",
         "MEMPALACE_WORKER_MEMORY_OBSERVE",
+        # Opt-in: the socket of the operator's shared local embedding service.
+        "MEMPALACE_EMBEDDING_SERVICE",
         "MEMPALACE_EMBEDDING_DEVICE",
         "MEMPALACE_EMBEDDING_THREADS",
         "MEMPALACE_EMBEDDINGGEMMA_BATCH_SIZE",

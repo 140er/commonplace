@@ -28,6 +28,8 @@
 
   - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
 
+  - `docs/admin.md` describes the Admin invite block; `docs/invites.md` (module `invites`) is the contract it links to.
+
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
   - `docs/chat.md` lists the live delivery states of a chat message, their reasons and timing, and who sees the agent's read time.
@@ -53,6 +55,8 @@
 
   - `docs/project-panels.md` documents the project panel file format, limits and routes.
 
+  - `docs/recovery/encrypted-workspace.md` is the recovery runbook for encrypted workspaces (keyslot check, restore on a new host, lost server credential, credential replacement, cases without recovery); `docs/workspace-encryption.md` lists the open keyslot decisions and `docs/backups.md` links the runbook.
+
 - **Promises:**
   - Project documentation and the project routes table describe the four model roles and the owner-only escalation rule.
 
@@ -61,6 +65,8 @@
   - The handoff guide uses generic agent, provider and model placeholders and names the T3 home directory rather than a host-specific variable.
 
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
+
+  - `docs/mvp/CONTRACT.md` documents the instance index figures contract and its unknown-reason codes.
 
   - `docs/agent-connections.md` also explains granting and withdrawing `bots:chat` and `bots:confirm` for a member's own app.
 
