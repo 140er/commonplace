@@ -361,7 +361,9 @@ def _create_work(turn, args):
         except ToolError:
             note = "Filed without the priority: only the project owner can set it."
     card = turn.boards().task_add(title=title, body=body, board=board, status="todo", **extra)
-    turn.store().work_add(turn.bot["id"], turn.user_id, board, card["number"], turn.message["id"])
+    turn.store().work_add(
+        turn.bot["id"], turn.user_id, board, card["number"], turn.message["id"], turn.thread_id
+    )
     data = {"number": card["number"], "title": _clip(card["title"], 200)}
     data["status"] = _Words(turn)(card)[0]
     if note:
@@ -411,7 +413,9 @@ def _tell_orchestrator(turn, args):
     text = turn.words(args["text"]) if "text" in args else turn.message["text"]
     with front.skipping():  # the person already talks to this bot: no receipt, no fallback card
         posted = turn.boards().space_post(board, text)
-    turn.store().forward_add(turn.bot["id"], turn.user_id, board, posted["id"], turn.message["id"])
+    turn.store().forward_add(
+        turn.bot["id"], turn.user_id, board, posted["id"], turn.message["id"], turn.thread_id
+    )
     state = _orchestrator(turn, board)
     return Result(True, {"passed_on": True, **state})
 
