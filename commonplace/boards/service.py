@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -975,6 +976,10 @@ class BoardService(lifecycle.LifecycleMixin):
                 release=self._needs_person_release,
                 approver=lambda row: approval_role or self._approval_role(q, row),
             )
+            from commonplace.snooze import store as snooze
+
+            if snoozed := snooze.active(conn, row["id"]):
+                result["snoozed"] = snoozed
             result.update(lifecycle.card_fields(conn, row, q))
             if self._restricted_origin(row):
                 result["restricted"] = True
@@ -1034,8 +1039,11 @@ class BoardService(lifecycle.LifecycleMixin):
         if not released and row["restricted_origin"] != 0 and row["proposal_status"] is None:
             state = self._origin_authority(row)[0]
             release_by = state if state in ("coordinator", "owner") else "blocked"
+        from commonplace.snooze import store as snooze
+
         return why.waiting(
             {**dict(row), "split_stuck": stuck, "release_by": release_by},
+            snoozed=snooze.active(conn, row["id"]),
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,
@@ -1091,7 +1099,10 @@ class BoardService(lifecycle.LifecycleMixin):
     def _refuse_waiting(self, conn, row):
         from commonplace.boards import why
         from commonplace.boards.store import CardRefused
+        from commonplace.snooze import store as snooze
 
+        if snoozed := snooze.active(conn, row["id"]):
+            raise CardRefused("snoozed", snoozed["text"] + "; unsnooze it first to start it now")
         if self._orchestration_on is True:
             reason = self._waiting(conn, row)
             if reason is not None and reason["code"] in why.REFUSING:
@@ -1262,8 +1273,7 @@ class BoardService(lifecycle.LifecycleMixin):
             and row["assignee"] not in (None, p.actor)
         ):
             raise ToolError(
-                "no: card is reserved for another connection; the workspace owner or the "
-                "board coordinator can move it"
+                "no: card is reserved for another connection; the workspace owner can move it"
             )
 
     def _can_cancel_reservation(self, row):
@@ -1785,6 +1795,10 @@ class BoardService(lifecycle.LifecycleMixin):
                 actor="system",
                 **{"from": "doing", "to": "doing", "target": row["assignee"]},
             )
+        from commonplace.snooze import store as snooze
+
+        for row in snooze.wake_due(conn, snooze.clock(), board["id"]):
+            self._emit(conn, row["id"], "card.woke", actor="system")
 
     def _get(self, conn, ref):
         row = task_row(conn, ref)
@@ -2510,10 +2524,14 @@ class BoardService(lifecycle.LifecycleMixin):
         *,
         all_statuses=False,
         top_level=False,
+        include_snoozed=False,
         archived=False,
     ):
         """Archived cards are hidden unless ``archived`` asks for exactly those."""
+        from commonplace.snooze import store as snooze
+
         cutoff = stale_before()
+        shown = all_statuses or include_snoozed
         with self._projection(), self.transaction() as conn, ExitStack() as reads:
             boards = [self._board(conn, board)] if board is not None else self._visible_boards(conn)
             if status is not None and status not in STATUSES:
@@ -2539,6 +2557,8 @@ class BoardService(lifecycle.LifecycleMixin):
                     (b["id"],),
                 ):
                     task = task_row(conn, row["id"])
+                    if not shown and snooze.active(conn, task["id"]):
+                        continue
                     if (task["id"] in hidden) != archived:
                         continue
                     if task["status"] not in (
@@ -3090,6 +3110,150 @@ class BoardService(lifecycle.LifecycleMixin):
                 result = self._card(conn, row)
         return self._start_assignment(result)
 
+    def ensure_chat_task(self, origin_key, request):
+        """Create/replay one explicitly requested chat task in the boards transaction.
+
+        The origin is an opaque internal dispatch key, never private message text.
+        This method is intentionally absent from agent tool/HTTP registration.
+        Conversation membership and intent checks belong to the caller; board
+        permission is always checked here under the actual person's principal.
+        """
+        if not self.principal.person:
+            raise ToolError("no: chat task dispatch requires a person")
+        if (
+            not isinstance(origin_key, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", origin_key)
+            or not isinstance(request, dict)
+            or set(request) - {"board", "title", "body"}
+            or not {"board", "title"} <= set(request)
+        ):
+            raise ToolError("no: invalid chat task intent")
+        with self.transaction() as conn:
+            board = self._board(conn, request["board"])
+            self._write(board, submission=True)
+            title = validate_text(request["title"], "title", required=True, limit=500)
+            body = validate_text(request.get("body", ""), "body", limit=100_000)
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {"board": board["slug"], "title": title, "body": body},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            previous = conn.execute(
+                "SELECT request_digest,task_id FROM chat_task_origins "
+                "WHERE actor=? AND origin_key=?",
+                (self.principal.actor, origin_key),
+            ).fetchone()
+            if previous is not None:
+                if previous["request_digest"] != fingerprint:
+                    raise ToolError("no: chat task intent conflicts with its origin")
+                row, _ = self._get(conn, previous["task_id"])
+                return self._card(conn, row, self.principal)
+            card = self._new_card(conn, board, title=title, body=body, status="todo")
+            conn.execute(
+                "INSERT INTO chat_task_origins(actor,origin_key,request_digest,task_id) "
+                "VALUES (?,?,?,?)",
+                (self.principal.actor, origin_key, fingerprint, card["number"]),
+            )
+        return card
+
+    def start_chat_task(self, origin_key, task, *, board, authorize):
+        """Admit an existing chat-origin card through the configured person fence.
+
+        Internal only, like ``ensure_chat_task``. The caller must recheck the
+        originating session and conversation in ``authorize``; persona identity
+        never enters this path. Creating the card and queuing its runner are
+        separate durable facts. A refusal leaves the card untouched.
+        """
+        from commonplace.orch import runner_bridge
+        from commonplace.projects import orchestration
+        from commonplace.runner import jobs, tools
+
+        if (
+            not isinstance(origin_key, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", origin_key)
+            or type(task) is not int
+            or not callable(authorize)
+        ):
+            raise ToolError("no: invalid chat task dispatch")
+        authorize()
+        if not tools.person_owner(self.principal):
+            raise runner_bridge.StartRefused("not_allowed")
+        ws, gateway = self.principal.workspace_id, self.ctx.gateway
+        if not orchestration.enabled(self.ctx.db, ws):
+            raise runner_bridge.StartRefused("orchestration_disabled")
+
+        def card_snapshot():
+            with self.store.connection() as conn:
+                row = task_row(conn, task)
+                found = conn.execute(
+                    "SELECT * FROM boards WHERE id=?", (row["board_id"],)
+                ).fetchone()
+                if (
+                    found is None
+                    or found["slug"] != board
+                    or found["archived"]
+                    or not self.principal.policy.can_read_wing(found["wing"])
+                ):
+                    raise runner_bridge.StartRefused("card_not_found")
+                self._write(found, row=row)
+                return dict(row), dict(found)
+
+        with self.store.connection() as conn:
+            origin = conn.execute(
+                "SELECT task_id FROM chat_task_origins WHERE actor=? AND origin_key=?",
+                (self.principal.actor, origin_key),
+            ).fetchone()
+            if origin is None or origin["task_id"] != task:
+                raise ToolError("no: chat task origin not found")
+        if not runner_bridge.configured(gateway, ws, board):
+            raise runner_bridge.StartRefused("not_configured")
+        store = jobs.open_store(gateway, ws)
+        jobs.sweep(store, self.ctx.db, ws)
+        version = runner_bridge.resolve_version(gateway, ws, board)
+        row, board_row = card_snapshot()
+        # Same control snapshot and fenced admission as person_start; all launch
+        # arguments come from the accepted config, never from chat/model output.
+        plan = runner_bridge.prepare(
+            gateway,
+            ws,
+            board_row=board_row,
+            card_row=row,
+            version=version,
+            principal=self.principal,
+            requested_by=jobs.requester_ref(self.principal),
+            person=True,
+        )
+        authorize()
+        current_row, current_board = card_snapshot()
+        if (current_row, current_board) != (row, board_row):
+            raise runner_bridge.StartRefused("card_changed")
+        current_plan = runner_bridge.prepare(
+            gateway,
+            ws,
+            board_row=current_board,
+            card_row=current_row,
+            version=version,
+            principal=self.principal,
+            requested_by=jobs.requester_ref(self.principal),
+            person=True,
+        )
+        if current_plan != plan:
+            raise runner_bridge.StartRefused("config_changed")
+        if not orchestration.enabled(self.ctx.db, ws):
+            raise runner_bridge.StartRefused("orchestration_disabled")
+        # No boards transaction or control lock spans runner admission. Hash the
+        # opaque origin to fit the runner's 128-character request-key ceiling.
+        outcome = runner_bridge.fenced_start(
+            store,
+            plan,
+            path="person",
+            request_key="chat:" + hashlib.sha256(origin_key.encode("utf-8")).hexdigest(),
+        )
+        return runner_bridge.launch_reply(plan, outcome)
+
     def _release_origin(self, conn, row, approve, reason, escalate):
         p = self.principal
         if not self._can_release_origin(p, row):
@@ -3305,6 +3469,8 @@ class BoardService(lifecycle.LifecycleMixin):
         )
 
     def task_take_next(self, board=None, task=None):
+        from commonplace.snooze import store as snooze
+
         type_holder = self._type_holder(self.principal.actor)
         top = self._top_level_taker()
         narrow = _restricted(self.principal) and not top
@@ -3341,7 +3507,9 @@ class BoardService(lifecycle.LifecycleMixin):
                         if self._orchestration_on is True
                         else ""
                     )
-                    + "ORDER BY assignee IS NULL,priority,position,id",
+                    + "AND NOT "
+                    + snooze.snoozed_sql()
+                    + " ORDER BY assignee IS NULL,priority,position,id",
                     (
                         b["id"],
                         self.principal.actor,
@@ -3349,6 +3517,7 @@ class BoardService(lifecycle.LifecycleMixin):
                         self.principal.actor,
                         self.principal.actor,
                         *((self.principal.actor, self.principal.actor) if narrow else ()),
+                        snooze.now_stamp(),
                     ),
                 )
                 for found in candidates:
@@ -3432,6 +3601,50 @@ class BoardService(lifecycle.LifecycleMixin):
                 result["return_to"] = None
             self._with_goals(conn, row, result)
             return result
+
+    def task_snooze(self, task, until=None, timezone=None, after_card=None):
+        """Hide an open card from todo lists, take-next and starts until a time or until
+        another card is done (``commonplace.snooze``). Owner or assignee only."""
+        from commonplace.snooze import store as snooze
+
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, row=row)
+            self._snooze_authority(row)
+            when = snooze.clock()
+            record = snooze.set_snooze(
+                conn,
+                row,
+                until=until,
+                tz=timezone,
+                after_card=after_card,
+                actor=self.principal.actor,
+                now=when,
+            )
+            self._log(conn, row["id"], "comment", text=record["text"])
+            self._emit(conn, row["id"], "card.snoozed", snoozed=record)
+            return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def task_unsnooze(self, task):
+        """End a card's snooze now. Owner or assignee only; refused when it is not snoozed."""
+        from commonplace.boards.store import CardRefused
+        from commonplace.snooze import store as snooze
+
+        with self.transaction() as conn:
+            row, board = self._get(conn, task)
+            self._write(board, row=row)
+            self._snooze_authority(row)
+            if not snooze.clear(conn, row, actor=self.principal.actor, now=snooze.clock()):
+                raise CardRefused("not_snoozed", "this card is not snoozed", status=409)
+            self._log(conn, row["id"], "comment", text="Snooze ended by " + self.principal.actor)
+            self._emit(conn, row["id"], "card.woke", by=self.principal.actor)
+            return self._card(conn, task_row(conn, row["id"]), self.principal)
+
+    def _snooze_authority(self, row):
+        from commonplace.snooze import store as snooze
+
+        if not snooze.allowed(self.principal, row):
+            raise ToolError("no: only a workspace owner or the card's assignee can snooze it")
 
     def _position(self, conn, row, updates, before=None, after=None):
         if before is None and after is None:

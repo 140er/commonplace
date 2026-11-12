@@ -15,6 +15,11 @@
   - Coworker regression witnesses refuse workspace hosted providers for owner/member board-less DMs and render human rows carrying `bot_id` with person authors; matching bot actors retain bot labels and styling.
 
   - Deterministic no-network Compute scope authorization tests for actor/task isolation, finite bounds, expiry/revocation, CIDR classes and immutable approval inputs.
+  - Import-reader CLI regressions retain allowed row locations and verbatim text; union fixtures acquire a protected-room hit in the readable wing before testing the drawer gate. Source-path controls pin control/format-character refusal alongside ordinary-path preservation.
+
+  - Whole-response source-path and hidden-candidate regressions cover both search routes and wing selections; canonical output goldens and the three-backend union test distinguish raw owner rendering from the member's final gated render.
+
+  - Protected shared-room CLI regressions cover literal-wing and fan-out search with independently readable controls; owner renderer controls, both room-list paths, cited and uncited cross-workspace mutations, and all nine projected-read literal refusals retain their distinct boundaries.
 
   - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
 
@@ -158,7 +163,15 @@
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
 
+  - A mocked gateway launch pins exclusion of parent eager-warmup settings without loading a real model.
+
   - `tests/test_index_stats_readonly.py`, `tests/test_index_stats_r1.py`, `tests/test_index_stats_private_scope.py` and `tests/test_admin_instance_ui.py` cover the instance index figures boundary.
+
+  - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Authority lookup failures pin one redacted diagnostic and no enqueue. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
+
+  - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
+
+  - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 

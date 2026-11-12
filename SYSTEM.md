@@ -199,6 +199,34 @@ Host/rate/result/time/source-byte/line/output ceilings and cancellation are chec
 throughout each collection. Blocking trusted callbacks cannot be forcibly stopped;
 durable cross-job quotas/persistence and controller integration are separate.
 
+### Typed helper protocol and script runtime components
+
+`compute/protocol.py` carries the strict, bounded wire shared by the controller
+and the target helper, including chunked script uploads and the typed passive
+cache request. `compute/scripts.py` and `compute/script_sandbox.py` hold immutable
+script bundles and a default-off confined Python runtime, and
+`compute/target_helper.py` is the only target-side entry. These modules are inert
+until trusted configuration enables them and perform no remote effect on import.
+
+### Credential custody and pinned SSH transport components
+
+`compute/credentials.py` holds encrypted SSH key custody: strict protected wrapping
+keys and binding-authenticated ciphertext, with only public enrollment data
+returned. `compute/transport.py` and `compute/script_transport.py` open the pinned
+two-hop SSH channel for the fixed probe and confined helper command, and
+`compute/fence.py` guards authority writes with a cross-process fence. All of them
+are inert until trusted configuration enables them, deny on host-key mismatch,
+replay or unknown operations, and use no live endpoints in tests.
+
+### Coworker task dispatch component
+
+A coworker chat message that carries explicit task syntax reaches the canonical
+boards only through `BoardService.ensure_chat_task` and `start_chat_task`: the
+origin binding commits atomically with a stable per-actor key, the existing
+person-owner fenced runner admission is requested, and a refusal leaves the
+card in place without inventing a worker launch. Model output never executes
+tools. The coworker store, runtime and task controls stay local to the workspace.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and
@@ -930,7 +958,7 @@ optional `reviewer` argument to `task_add` and `task_update`.
 
   - Without a runner or subscribed `card.created` webhook, a new card waits for the orchestrator's next session.
 
-  - An always-running orchestrator is separate work.
+  - An accepted live `[runner]` with `session = true` enables a persistent session through the existing machine runner loop, without requiring a `card.todo` trigger; configs without the key are unchanged and no service is activated automatically.
 
   - Splitting and inbox behavior are not introduced by this switch.
 
@@ -1090,7 +1118,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 - The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
 
-- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set.
+- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set. Both accept 1–100. Per machine, `max_in_flight` and `max_starts_per_hour` still apply at lease time, and the runner refuses a leased start with the pre-spawn code `low_memory` when its available memory is under `min_free_memory_mb` (the job ends `failed`, shown by `card_start_status`; the guard never blocks when the probe is unreadable).
 
 - A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
 
@@ -1325,7 +1353,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
   the selected `launch_role` in an additive runner column, so later switch
   changes cannot change a queued job's launch instructions. Messages include
   inbox context; the agent creates missing stable keys and marks completion.
-- Each runner sweep reconciles eligible roots older than 10 minutes with no
+- Each trigger-enabled runner sweep reconciles eligible roots older than 10 minutes with no
   active/started job. Retry keys are `split-retry:<card>:<n>`; gaps are 10, 30,
   90 minutes and n is bounded to 3. Attempts (including refusals) use the existing
   `orch_misses` log with negative event ids. Eligibility and attempt number are
@@ -1340,8 +1368,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   return `409 busy` without mutation. No external service is called.
 - Without a runner, card delivery uses a subscribed `card.created` webhook
   plus the inbox at the next session. Without either, a new card waits for that
-  session. Continuous orchestration, done/stuck routing and runner-job events
-  remain separate work. Stable keys are the agent's responsibility; changing
+  session. Runner-owned persistent board sessions are described below; richer
+  done/stuck routing and runner-job events remain separate work. Stable keys are the agent's responsibility; changing
   keys after a crash can create additional children.
 
 - `runner.sqlite3`: runner jobs with pinned launch role; orchestrator configs, cursors, leases, steps, journal, retry attempts, restore flag
@@ -1554,7 +1582,8 @@ every wake attempt failed. See `docs/chat.md`.
 
 | Label | Number | Source |
 |---|---|---|
-| M | `max_agents` range 1–20, counting distinct connection assignees | `commonplace/projects/limits.py:26,34-57` |
+| M | `max_agents` range 1–100 (`MAX_AGENTS`; older tables are widened on the next write), counting distinct connection assignees | `commonplace/projects/limits.py` |
+| M | Runner `min_free_memory_mb` default 256 (0 disables): below it the runner fails the lease `low_memory` before any launch | `commonplace/runner/agent.py` |
 | M | One worker PAT per machine | `commonplace/runner/registry.py:61` |
 | M | Runner store writes use `BEGIN IMMEDIATE`; busy timeout 10 s | `commonplace/runner/jobs.py:68-95` |
 | M | One active start per card | `commonplace/runner/jobs.py:47-50` |
@@ -2104,6 +2133,8 @@ every wake attempt failed. See `docs/chat.md`.
 ### Topology is one store of structured facts
 
 The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Live status of machines and link ends is derived on read from signals runners already send (connection use, chat poll, runner jobs, an optional link `status` report) with configurable thresholds; a silent machine is unknown, never green. Agents read it through two tools, `topology_get` and `topology_route` (REST `GET /api/topology`, `GET /api/topology/route`), under the same scope and wing grant as other memory reads; an answer states how fresh each hop is and says plainly when a hop is unknown or stale. Contract: `docs/topology.md`.
+
+The owner sees the store as a map at `#/compute-map`: an SVG canvas (`web/static/topology-map.js`) that draws only what `GET /api/topology` returns, the graph plus the live status as one word per node and per link end (`status` in the whole-graph answer, the same read the agent tools use). The canvas keeps nothing but dragged positions and the view, in the browser per workspace; it loads nothing from another origin, and a status is never shown by colour alone.
 
 ### Bots keep conversations in the workspace store
 

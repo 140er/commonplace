@@ -27,6 +27,7 @@ def test_pure_precedence_and_text_for_every_code():
     full = SimpleNamespace(used=1, cap=1)
     blocked = [{"number": 7, "title": "Dependency"}]
     cases = {
+        "snoozed": _wait(snoozed={"until": PAST, "after_card": None, "text": "Snoozed until X"}),
         "blocked_by": _wait(blockers=blocked),
         "waits_on_person": _wait(_row(ask="Which one?")),
         "claim_expired": _wait(_row(status="doing"), claim_expired=True),

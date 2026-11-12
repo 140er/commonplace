@@ -69,6 +69,7 @@ EXACT = {
     ("GET", "/api/card-starts/options"): "authenticated",
     ("GET", "/api/agent-schedules"): "authenticated",
     ("POST", "/api/agent-schedules"): "authenticated",
+    ("GET", "/api/topology/node"): "authenticated",
     ("GET", "/api/routines"): "authenticated",
     ("POST", "/api/routines"): "authenticated",
     ("GET", "/api/goals"): "authenticated",
@@ -130,6 +131,8 @@ PREFIX = {
     ("POST", "/api/orch/"): "authenticated",
     ("POST", "/api/runner/chat/"): "authenticated",
     ("GET", "/api/agent-schedules/"): "authenticated",
+    ("GET", "/api/card-snooze/"): "authenticated",
+    ("POST", "/api/card-snooze/"): "authenticated",
     ("POST", "/api/agent-schedules/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
     **{

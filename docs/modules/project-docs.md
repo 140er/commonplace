@@ -17,8 +17,9 @@
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
   - `docs/design/RULES.md` places the Rules entry in the account menu rather than the sidebar and phone tabs.
+  - `docs/design/chat-platform-bots.md` is the design note for chat-platform bots (Slack first, then Teams and Discord, behind one adapter interface): data model, permission and privacy rules, threats, replay behaviour and the slice plan. Nothing in it is built yet.
 
-  - The OAuth contract records the displayed callback origin, numeric-host tightening and required pre-deploy registration inventory.
+  - The OAuth contract records the displayed callback origin, numeric-host tightening, the required pre-deploy registration inventory and the one exact native redirect `cmmn://auth/callback`.
 
   - The rules write-check documentation lists the goals writes as checked (`docs/design/RULES.md`).
 

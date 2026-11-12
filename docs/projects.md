@@ -209,8 +209,10 @@ table means off.
 With orchestration on, Connect suggests `space_message,card.created` subscriptions.
 The recommendation also includes `card.moved`; pass the three events as the array
 `["space_message", "card.moved", "card.created"]`.
-Without a runner or a subscribed card webhook, new work waits for the seat's next
-session; this switch does not run the orchestrator continuously.
+With an accepted live `[runner]` that sets `session = true`, the machine runner
+maintains the board session, independently of this switch or a `card.todo` trigger. Without an
+accepted runner, or without `session = true`, the session reports `no_host`; legacy webhook delivery remains
+available. See [persistent board sessions](orchestrator.md#persistent-board-session).
 
 ## Opt-in card inbox and splitting
 
@@ -243,9 +245,11 @@ attempt under the runner fence. Three refusals show `not_released: split stuck`
 in card waiting reasons and checkpoints; a person must resolve the cause and
 arrange completion. Marking the root ends reconciliation.
 
-Without a runner, delivery uses a subscribed `card.created` webhook and the
-inbox on the next session. Without either a runner or a webhook, a new card
-waits until that session; an always-running coordinator is separate work.
+Persistent board sessions (opt-in with `session = true`) use the accepted runner
+without requiring a webhook or `card.todo` trigger. Without a session, delivery uses a subscribed
+`card.created` webhook and the inbox on the next session; otherwise it waits for
+that session. The project response reports session state to everyone and blocker details to
+owners only; owners can stop or resume it through the project session endpoints.
 Turning the switch off preserves configured todo triggers and the prior card
 shapes; the new blocker arguments and inbox tools are unavailable.
 
