@@ -5,6 +5,8 @@
 
   - The owner Compute page (`web/static/compute.js`) renders machines, scopes, proposals, approvals and execution evidence from server-authoritative state, escapes every value and fences responses to the current session and route.
 
+  - The separate instance console route, additive capability, explicit metadata DTOs and independent section controller.
+
   - Owner-only Project settings list orchestrator config versions with their changes and an Accept control, plus Release for cards waiting for release.
 
   - The owner Compute route, real-inventory enrollment/scope/proposal/approval/passive collection forms, immutable UTF-8 script upload/source inspection/proposal UI, escaped observations and session/route response fencing; transport capabilities remain server-authoritative.
@@ -63,6 +65,7 @@
 - **Promises:**
   - Project settings show a model field pair for each role (orchestrator, builder, reviewer, gate) and an escalation rule form (failed rounds, labels, stronger model); non-owners see both read-only without a save button.
 
+  - The operational Admin owner predicate stays intact; console sections bind target generations and five-second transport/body deadlines with clearing on teardown.
   - Coworker navigation and sign-out abort stale private requests; request keys survive ambiguous send retries, group messages address at most one bot, and pending jobs do not disable the message composer; task creation and runner admission/recorded launch/refusal/uncertainty are labeled separately from completed work.
   - Compute execution evidence is escaped and distinguishes observed exit from uncertain cancellation or stored consent; control metadata is escaped and responses are fenced to the exact session/workspace/actor/route; ambiguous mutations require reconciliation and approval never implies dispatch.
   - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
@@ -165,6 +168,8 @@
 
 - **How it fails:**
 
+  - Unknown stores differ from empty inventories; failed sections retry independently and exact authority loss clears all metadata.
+
   - A hub that sends no ledger with a start shows the Runs list as before, without ledger lines.
 
   - Runtime suberrors preserve completed sibling facts; needs-me and stuck settle independently. Deployment/health and backup receipts have independent subpanels. Missing optional data stays absent and corrupt sources return safe errors.
@@ -176,6 +181,12 @@
   - Rendering errors surface in the browser; the server state is unaffected.
 
 - **Tests:**
+
+  - `tests/test_instance_admin_ui.py` and its deterministic served-asset harness exercise denial, target changes, stalled decoding and rail/mobile command navigation; `tests/workbench_e2e/test_instance_admin.py` covers real-browser retry, foreign targets and responsive navigation.
+
+  - Stale submit, expired cursor and hidden project pagination each have independent served-asset regression nodes; browser settlement independently guards unsubmitted filter drafts. Workspace settings retain Refresh without hidden-row counts or pagination.
+
+  - Workspace limits render for absent stores; stale forms prevent navigation, draft filters survive section settlement and expired cursors prompt a refresh.
 
   - `tests/test_card_runs_ui.py` (ledger case) covers reported and unreported usage, end words, cost formatting and log pointer escaping.
 
