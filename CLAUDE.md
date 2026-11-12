@@ -27,12 +27,44 @@ These are non-negotiable. Every PR, every feature, every refactor must honor the
 - **Performance budgets** — Hooks under 500ms. Startup injection under 100ms. Memory should feel instant.
 - **Privacy by architecture** — The system physically cannot send your data because it never leaves your machine. No telemetry, no phone-home, no external service dependencies for core operations.
 - **Background everything** — Filing, indexing, timestamps, and pipeline work happen via hooks in the background. Nothing interrupts the user's conversation. Zero tokens spent on bookkeeping in the chat window.
+- **Agentic first** (owner, 11 Nov 2026) — Every setup flow (Compute runner installer, orchestrator/project setup, any other setup) is one click plus ONE accept prompt. After that, agents do everything on that machine with no further approval prompts on the machine itself (no per-command OS, UAC or local confirm dialogs). Approvals appear only in the browser (app.cmmn.dev) or the cmmn app.
 
 ## Contributing
 
 We welcome bug fixes, performance improvements, new language support, better entity disambiguation, documentation, and test coverage.
 
 We do not accept summarization of user content, cloud storage/sync features, telemetry or analytics, features requiring API keys for core memory, or shortcuts that bypass verbatim storage.
+
+## Testing and merging (batch merge rule)
+
+Tests must never be the bottleneck. Agents keep building while checks run; nobody idles waiting for a full suite.
+
+- **Per PR (merge gate):** a PR into `develop` merges on a review/gate PASS plus the **affected tests** on the exact
+  head: the tests that import or name the changed modules, nearest first, plus lint. That is the whole per-PR test
+  bill. Do not run, request or wait for a full-suite run per PR.
+- **Per batch (develop):** the full suite runs on the `develop` tip after merges, one run at a time, about every five
+  merges or every hour. When it turns red the batch is bisected to one PR, a revert PR is opened, and merges into
+  `develop` hold **only while `develop` is red**. Fix forward or merge the revert; the hold lifts when it is green.
+- **Global changes** (dependency/lock files, `pyproject.toml`, `tests/conftest.py`, migrations) are the exception:
+  they run the full suite per PR, because no subset can be trusted for them.
+- **Waiting is a bug.** A wave never waits for a check: start the next independent item while one runs. A timeout or
+  infrastructure error is not a verdict on the code (rerun once or report it), never a reason to stop other work.
+- **Your own runs:** only the few test files your change touches,
+  `uv run pytest <files> -q -p no:cacheprovider`. Never the whole suite on a shared machine.
+
+`develop` to `main` and deploys are separate, owner-approved steps; this rule does not cover them.
+
+## Merging pull requests (batch lane)
+
+- A pull request into `develop` is merge-ready on its exact head when it has a gate PASS and a quick PR check subset PASS (affected or narrow tests plus smoke, about 2 minutes; never the full suite). Only a PASS result counts. SKIP, ERROR and TIMEOUT are not a pass.
+- The builder that owns the PR merges it: `gh pr merge <n> -R <owner>/<repo> --squash --match-head-commit <full sha>`.
+- No full-suite check per PR. The full suite runs per batch on `develop`, about every 5 merges or 60 minutes. If a batch is red, bisect it, open a revert or fix PR, and hold merges while `develop` is red.
+- The coordinator never merges. `develop` to `main` needs the owner's go.
+
+## Host and test limits
+
+- At most 12 concurrent Claude agents/turns on the shared host across all orchestrators and their delegated children. Queue the rest; start no new child above the cap.
+- No raw pytest on the shared host: run tests only through the project's test runners so the slot cap holds; full batches prefer a dedicated runner.
 
 ## Setup
 

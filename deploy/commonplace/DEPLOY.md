@@ -38,9 +38,10 @@ when relocating it so Compose manages the existing container and network. Leave
 
 The service publishes only `127.0.0.1:8765`. Caddy terminates TLS and proxies
 requests to that listener. The container runs as `10001:10001`, mounts its
-persistent data at `/data`, and has a 3 GiB memory limit. Use a local
-filesystem with working SQLite/Chroma locks, encrypted storage where
-required, and an off-host backup. Never rebuild or initialize an existing
+persistent data at `/data`, and has a 20 GiB memory limit with 6 GiB swap
+(`memswap_limit: 26g` is memory plus swap). Use a local filesystem with
+working SQLite/Chroma locks, encrypted storage where required, and an
+off-host backup. Never rebuild or initialize an existing
 data directory during an application update.
 
 The image preloads the local MiniLM embedding model as the runtime user.
@@ -53,6 +54,16 @@ Stage a reviewed release into the app directory with git or rsync. An rsync
 update must leave `.env`, `compose.yml`, and other operator files outside
 its destination. Do not use `--delete` against the operator directory.
 Keep the previous source release and image tag for rollback.
+
+For a trusted, reviewed git source archive, use
+`bash deploy/commonplace/stage-archive.sh SOURCE.tar NEW_SOURCE_DIR`.
+The destination must not exist; its parent must already allow the webserver
+reader to traverse it. The helper preserves archive member modes even under
+`umask 077`, so public asset directories remain traversable and files readable.
+Plain unprivileged `tar -xf` can instead leave directories 0700 and files 0600.
+Keep runtime data, configuration and credentials outside this source directory.
+Never repair this with recursive chmod on the operator directory. This helper
+only stages source; it does not select, attest, activate or deploy a release.
 
 Copy `deploy/commonplace.caddy.example` or
 `deploy/commonplace-public.caddy.example` to your private Caddy site
@@ -173,8 +184,8 @@ Verify health, search, cards and a new backup.
 uv run pytest -q -p no:cacheprovider tests/test_commonplace_deploy.py
 uv run ruff check .
 uv run ruff format --check .
-bash -n backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh
-shellcheck backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh
+bash -n backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh deploy/backup/host-backup-lvm-snapshot.sh
+shellcheck backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh deploy/backup/host-backup-lvm-snapshot.sh
 ```
 
 ## Deploy
@@ -205,8 +216,8 @@ expansions or command substitutions. Environment values override file values.
 Only these keys are accepted from deploy.env; other keys are ignored:
 `DEPLOY_BACKUP_UNIT`, `DEPLOY_BACKUP_TIMEOUT`, `DEPLOY_BACKUP_CHECK_CMD`,
 `DEPLOY_BACKUP_LATEST_CMD`, `DEPLOY_BACKUP_MAX_AGE`, `APP_PORT`, `COMPOSE_FILE`,
-`COMPOSE_ENV_FILE`, `COMMONPLACE_SOURCE_DIR`, `COMMONPLACE_ENV_FILE`,
-and `COMMONPLACE_DATA_DIR`.
+`COMPOSE_ENV_FILE`, `COMMONPLACE_BUILD_COMMIT`, `COMMONPLACE_SOURCE_DIR`,
+`COMMONPLACE_ENV_FILE`, and `COMMONPLACE_DATA_DIR`.
 Command values split on whitespace into an executable and arguments; shell
 quoting, pipelines and glob patterns are not interpreted.
 
@@ -258,9 +269,17 @@ The script performs these steps in order:
    run a trap: inspect and stop any leftover `commonplace-deploy-proof-*.service`
    before retrying.
 5. Validate Compose JSON so every published port binds to `127.0.0.1`,
-   require the published port equals APP_PORT, run `up -d --build`, show `ps`,
-   and print the health HTTP status. The health probe is informational and has
-   a 10-second timeout; verify readiness separately as described above.
+   require the published port equals APP_PORT, run `up -d --build --wait
+   --wait-timeout 90` (Compose waits up to 90 seconds for service readiness),
+   show `ps`, and print the health HTTP status (10-second timeout).
+   When `COMMONPLACE_BUILD_COMMIT` is set (deploy.env or the environment), it
+   must be a full lowercase commit; the health status must then be 200, and the
+   installed package's build resource, read inside the running service together
+   with an internal health probe, must equal it. A mismatch, missing identity or
+   failed probe exits nonzero and only a match prints `verified release`. When it
+   is unset the script prints `release attestation: not requested` and does not
+   fail on identity. A failure after `up` may leave the new container running:
+   inspect it and use the explicit image rollback above if needed.
 
 The deploy script makes no docker/compose call until steps 2–4 pass. The backup unit never stops, restarts or replaces the gateway; it snapshots the running service. MAX_AGE must exceed your measured backup duration (restic stamps `time` at the start of the backup); the default 7200 seconds covers the hook's 75-minute snapshot deadline plus upload for typical data sizes.
 
@@ -273,7 +292,9 @@ When staging a clean reviewed source tree, set `COMMONPLACE_BUILD_COMMIT` to its
 full reviewed commit (40 or 64 hexadecimal characters) before building with the
 tracked host compose example. The actual image recipe validates the build argument
 and writes `commonplace/web/_build_commit.txt` before package installation. This
-resource travels with the installed wheel. An empty build argument is permitted
+resource travels with the installed wheel. Setting `COMMONPLACE_BUILD_COMMIT` for
+the deployment wrapper makes it compare the running package with that commit. An
+empty build argument is permitted
 and reports **Running commit unknown**; an invalid nonempty argument fails the
 build. No runtime environment or checkout HEAD overrides image identity. Admin
 shows both installed package versions separately from the commit.

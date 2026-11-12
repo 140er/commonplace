@@ -367,7 +367,11 @@ def test_m2_bridge_shape(signup_hub, owners, tmp_path):  # noqa: F811
 def test_m3_fixed_agent_message(signup_hub, owners, tmp_path):  # noqa: F811
     _, _, _, number, job_id, _ = _spawn_control(signup_hub, owners["A"], tmp_path)
     launch = launches(tmp_path)[0]["launch"]
-    assert launch["message"] == _MESSAGE.format(n=number, job_id=job_id)
+    fixed, context = launch["message"].split("\n\n", 1)
+    assert fixed == _MESSAGE.format(n=number, job_id=job_id)
+    # The card itself follows the fixed message (tests/test_runner_start_context.py).
+    assert context.startswith(f"Card context for #{number}, ")
+    assert '\nTitle: "' in context and "\nBody: " in context
     assert launch["title"] == f"Card #{number} [commonplace-job:{job_id}]"
 
 
@@ -493,6 +497,26 @@ def test_s2_ambiguous_launch(signup_hub, owners, tmp_path, mode):  # noqa: F811
     assert _invoke(path, env).returncode == 0
     assert len(launches(tmp_path)) == 1
     assert _state(signup_hub, owners["A"], number, job_id)["state"] == "uncertain"
+
+
+def test_launch_output_is_kept_per_job_with_credentials_redacted(signup_hub, owners, tmp_path):  # noqa: F811
+    machine, path, env = _run_control(signup_hub, owners["A"], tmp_path, mode="leaky")
+    number, job_id = _queue(signup_hub, owners["A"], machine)
+    assert _invoke(path, env).returncode == 0
+    log = tmp_path / "journal" / f"{job_id}.launch.log"
+    text = log.read_text()
+    assert "refused:" in text and "exit 1" in text
+    assert "synthetic-grant" not in text and "x" * 40 not in text and "<redacted>" in text
+    assert os.stat(log).st_mode & 0o777 == 0o600
+    assert _state(signup_hub, owners["A"], number, job_id)["state"] == "uncertain"
+
+
+def test_launch_log_says_why_a_tool_error_was_refused(signup_hub, owners, tmp_path):  # noqa: F811
+    machine, path, env = _run_control(signup_hub, owners["A"], tmp_path, mode="is-error")
+    _, job_id = _queue(signup_hub, owners["A"], machine)
+    assert _invoke(path, env).returncode == 0
+    text = (tmp_path / "journal" / f"{job_id}.launch.log").read_text()
+    assert "runtime_mode_escalation_denied" in text
 
 
 def test_s3_restart_never_respawns_and_late_result_fenced(signup_hub, owners, tmp_path):  # noqa: F811
