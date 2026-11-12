@@ -73,9 +73,10 @@ if (which === "need_items") {
   const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve)); };
   try {
     context.navigation();
-    const project = nodes["#board-nav"].outerHTML.match(/<a class="proj" href="#\/board\/atlas"[^>]*>[\s\S]*?<\/a>/);
-    assert.ok(project, "Atlas rail entry missing");
-    assert.match(project[0], />2<span class="sr"> need you<\/span>/, "Owner origin release must count in its project's rail badge");
+    // The rail no longer lists projects: the release shows in the Needs me count of the account menu.
+    const rail = nodes["#board-nav"].outerHTML;
+    assert.ok(!rail.includes('class="proj"'), "The rail lists no projects");
+    assert.match(rail, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> items<\/span>/, "Owner origin release must count in the Needs me total");
     assert.deepEqual(home.needItems(needs).map(({ card }) => card.number), [22, 7, 1], "Release must rank after you and before plan, regardless of card number");
     context.needsView(); await flush();
     assert.equal(shows.at(-1), origin.number, "Origin approval must remain selected when opening Needs me");
@@ -90,6 +91,62 @@ if (which === "need_items") {
     context.needsView(); await flush();
     assert.equal(shows.at(-1), undefined, "A departed origin must not be passed through the shell selection gate");
   } finally { state.needsUI?.stop(); }
+} else if (which === "closed_panel") {
+  // A refresh with a changed payload updates the list and highlight but must not reopen a panel the user closed.
+  const { createNeeds } = await import(file("needs.js"));
+  const rail = await import(file("rail.js"));
+  const first = card(31, { title: "First item", ask: "Pick?", ask_options: ["A", "B"], actions: ["answer"], why: "Worker asks you: Pick?" });
+  const second = card(32, { title: "Second item", ask: "Again?", ask_options: ["A", "B"], actions: ["answer"], why: "Worker asks you: Again?" });
+  const third = card(33, { title: "Third item", ask: "More?", ask_options: ["A", "B"], actions: ["answer"], why: "Worker asks you: More?" });
+  const node = (extra = {}) => ({ innerHTML: "", hidden: true, dataset: {}, contains: () => false, querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {}, setAttribute() {}, focus() {}, ...extra });
+  const mount = node();
+  const content = node({ querySelector: (selector) => selector === "[data-needs-mount]" && content.innerHTML.includes("data-needs-mount") ? mount : null });
+  const panel = node();
+  const nodes = { "#content": content, "#card-panel": panel, "#title": node(), "#head-actions": node(), "#digest-captions": node() };
+  const state = { me: { actor: "user:maya" }, needs: { asks: [first, second], count: 2 }, boards: [{ slug: "atlas", name: "Atlas" }], selected: null, route: "#/needs", base: "#/needs" };
+  const controllers = [];
+  const context = {
+    state, ...rail, needItems: home.needItems,
+    document: { activeElement: null, title: "" }, root: { querySelector: (selector) => nodes[selector] || null },
+    speech: { supported: false }, speechView() {},
+    api: async (path) => {
+      if (path === "/api/holds") return { holds: [] };
+      const number = Number(/^\/api\/cards\/(\d+)$/.exec(path)?.[1]);
+      const found = [first, second, third].find((item) => item.number === number);
+      assert.ok(found, `Unexpected API request: ${path}`);
+      return { ...found, events: [] };
+    },
+    createNeeds: (options) => { const ui = createNeeds({ ...options, setInterval: () => 1, clearInterval() {} }); controllers.push({ ui, options }); return ui; },
+    singleKeysEnabled: () => true, matchMedia: () => ({ matches: false }), mountWorkbenchChat() {}, refresh() {},
+    closeCardPanel() { panel.hidden = true; },
+  };
+  runInNewContext([slice("function title(", "function decision("), slice("function needsCards()", "const hhmm")].join("\n"), context);
+  const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve)); };
+  try {
+    context.needsView(); await flush();
+    assert.equal(panel.hidden, false, "The first load opens the detail panel");
+    // The close button calls the component's onClose.
+    controllers[0].options.onClose(); await flush();
+    assert.equal(panel.hidden, true, "Closing hides the panel");
+    // A new item arrives: the payload changes and the refresh runs.
+    state.needs = { asks: [first, second, third], count: 3 };
+    context.needsView(); await flush();
+    assert.equal(panel.hidden, true, "A background refresh must not reopen the closed panel");
+    assert.ok(mount.innerHTML.includes("Third item"), "The refresh still updates the list");
+    assert.ok(mount.innerHTML.includes('is-selected'), "The refresh keeps the selection highlight");
+    assert.equal(state.selected, first.number);
+    // The selected item leaves the queue: the next one is highlighted, the panel stays closed.
+    state.needs = { asks: [second, third], count: 2 };
+    context.needsView(); await flush();
+    assert.equal(panel.hidden, true, "A departed selection must not reopen the closed panel");
+    // A pick by the user opens it again, and refreshes then keep it open.
+    await controllers[0].ui.select(third.number); await flush();
+    assert.equal(panel.hidden, false, "Selecting an item reopens the panel");
+    assert.equal(state.selected, third.number);
+    state.needs = { asks: [second, third, { ...first, number: 34, title: "Fourth item" }], count: 3 };
+    context.needsView(); await flush();
+    assert.equal(panel.hidden, false, "An open panel stays open through a refresh");
+  } finally { for (const { ui } of controllers) ui.stop(); }
 } else if (which === "home_removed") {
   // RED: Home's tiles and open-task table are removed with their stylesheet link.
   assert.equal(home.homeView, undefined, "homeView must be removed");

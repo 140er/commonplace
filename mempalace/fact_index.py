@@ -2,8 +2,10 @@
 
 import json
 import logging
+import math
+import sqlite3
 
-from . import fact_provenance
+from . import deadline as read_deadline, fact_provenance
 
 FALLBACK_SEED_MULTIPLIER = 20
 SELECTIVE_SCOPE_LIMIT = 1000
@@ -115,6 +117,19 @@ def _create(conn):
     )
 
 
+def _install_log(conn):
+    """Register ``mempalace_log`` once per connection.
+
+    SQLite refuses to redefine an existing function while any statement on the
+    connection is still stepping, and the graph's connection is shared across
+    threads, so re-registering on every scoped search fails under load.
+    """
+    try:
+        conn.execute("SELECT mempalace_log(1.0)").fetchone()
+    except sqlite3.OperationalError:
+        conn.create_function("mempalace_log", 1, math.log, deterministic=True)
+
+
 def candidates(
     conn,
     tokens,
@@ -126,9 +141,12 @@ def candidates(
     limit,
     common_term_fraction,
 ):
-    """One SQL query: distinct BM25 seed keys, scoped history, sources and IDF.
+    """One SQL query: seed keys, scoped history, sources and IDF.
 
-    Selective terms start with BM25 seeds; refills use recent scoped matches.
+    A restricted caller's term counts, document count and seed relevance come
+    from the readable facts only; an unrestricted caller reads the whole graph
+    anyway and uses the index's own counts. Selective terms start with ranked
+    seeds; refills use recent scoped matches.
     Small scopes use bounded FTS rowids when cheaper than following matches.
     Wide scopes check each FTS hit by primary key. History remains uncapped.
     """
@@ -147,7 +165,9 @@ def candidates(
     scope_sql = visible_sql + temporal_sql
     scope_params = [*visible_params, *temporal_params]
     scope_cte = ""
-    params = [*words, common_term_fraction]
+    # The scoped statistics CTE follows ``words`` and consumes the scope once;
+    # ``scope_params`` is empty when the caller is unrestricted.
+    params = [*words, *scope_params, common_term_fraction]
     scope_filter, scope_gate = "", "1"
     scope_exists = "1"
     if scoped:
@@ -178,17 +198,63 @@ def candidates(
             "AND (SELECT size FROM scope_size) < (SELECT documents FROM match_estimate)"
         )
         scope_gate = "NOT (" + small_gate + ")"
+    if scoped:
+        # Count only readable documents: the scope's docids, then each term's
+        # postings inside that docid range. Unreadable facts never add to N or df.
+        stats_cte = (
+            "scope_docids AS MATERIALIZED (SELECT k.docid FROM triples t "
+            "JOIN fact_search_keys k ON k.triple_id=t.id WHERE 1" + scope_sql + "), "
+            "term_matches AS MATERIALIZED (SELECT words.term, fact_search.rowid AS docid "
+            "FROM words JOIN fact_search ON fact_search MATCH "
+            "'\"'||replace(words.term, '\"', '\"\"')||'\"' "
+            "WHERE fact_search.rowid >= (SELECT min(docid) FROM scope_docids) "
+            "AND fact_search.rowid <= (SELECT max(docid) FROM scope_docids) "
+            "AND +fact_search.rowid IN (SELECT docid FROM scope_docids)), "
+            "term_stats AS MATERIALIZED ("
+            "SELECT words.term, count(m.docid) AS doc FROM words "
+            "LEFT JOIN term_matches m ON m.term=words.term GROUP BY words.term), "
+            "stats AS MATERIALIZED ("
+            "SELECT json_group_object(term, doc) AS frequencies, "
+            "(SELECT count(*) FROM scope_docids) AS documents FROM term_stats), "
+        )
+    else:
+        stats_cte = (
+            "term_stats AS MATERIALIZED ("
+            "SELECT words.term, COALESCE(v.doc, 0) AS doc FROM words "
+            "LEFT JOIN fact_search_vocab v ON v.term=words.term), "
+            "stats AS MATERIALIZED ("
+            "SELECT json_group_object(term, doc) AS frequencies, "
+            "(SELECT count(*) FROM fact_search_keys) AS documents FROM term_stats), "
+        )
+    if scoped:
+        # FTS5's rank weighs terms by whole-index counts, which include facts
+        # the caller cannot read. Weigh by readable counts instead: matched
+        # terms' IDF, then facts with fewer words first, as bm25's length
+        # normalisation does. Seeds then break ties by document order, on both
+        # paths, so equal-relevance seed caps pick the same facts.
+        _install_log(conn)
+        relevance = (
+            "-(SELECT sum(mempalace_log((stats.documents + 1.0)/(ts.doc + 0.5))) "
+            "FROM term_matches m JOIN term_stats ts ON ts.term=m.term CROSS JOIN stats "
+            "WHERE m.docid=fact_search.rowid AND m.term IN (SELECT term FROM chosen_terms)) "
+            "+ (SELECT sum(length(trim(c)) - length(replace(trim(c), ' ', '')) + 1) "
+            "FROM (SELECT fact_search.subject AS c UNION ALL SELECT fact_search.predicate "
+            "UNION ALL SELECT fact_search.object)) * 1e-6"
+        )
+    else:
+        relevance = "fact_search.rank"
     match_sql = (
         "SELECT t.subject, t.predicate, fact_search.triple_id, "
-        "fact_search.rank AS relevance, fact_search.rowid AS docid FROM fact_search "
+        + relevance
+        + " AS relevance, fact_search.rowid AS docid FROM fact_search "
         "JOIN triples t ON t.id=fact_search.triple_id "
         "WHERE fact_search MATCH COALESCE("
         "(SELECT group_concat('\"'||term||'\"', ' OR ') FROM chosen_terms), '\"\"')"
     )
     if scoped:
         # Bound the rowid range and test membership without restarting FTS
-        # for each id: those restarts recompute BM25's global term counts.
-        # Only small scopes materialize ids; wide scopes take the PK path.
+        # for each id. Only local term coverage supplies seed relevance.
+        # Seed lookups use small ID sets or the wide-scope PK path.
         scope_cte += (
             "small_docids AS MATERIALIZED (SELECT k.docid FROM triples t "
             "JOIN fact_search_keys k ON k.triple_id=t.id WHERE 1" + scope_sql + " "
@@ -209,7 +275,7 @@ def candidates(
     def seed_query(order, term_gate, seed_limit):
         queries = []
         if scoped:
-            small_order = "relevance, docid" if order == "fact_search.rank" else "docid DESC"
+            small_order = order if order == "relevance, docid" else "docid DESC"
             queries.append(
                 "SELECT * FROM (SELECT * FROM small_matches ORDER BY "
                 + small_order
@@ -238,7 +304,7 @@ def candidates(
         return " UNION ALL ".join(queries)
 
     selective = "EXISTS (SELECT 1 FROM selective_terms)"
-    ranked_sql = seed_query("fact_search.rank", selective, limit)
+    ranked_sql = seed_query("relevance, docid", selective, limit)
     params.append(limit)
     recent_sql = seed_query(
         "fact_search.rowid DESC",
@@ -248,14 +314,11 @@ def candidates(
     )
     params.extend([limit, *scope_params])
     rows = conn.execute(
-        "WITH words(term) AS (VALUES " + ",".join("(?)" for _ in words) + "), "
-        "term_stats AS MATERIALIZED ("
-        "SELECT words.term, COALESCE(v.doc, 0) AS doc FROM words "
-        "LEFT JOIN fact_search_vocab v ON v.term=words.term), "
-        "stats AS MATERIALIZED ("
-        "SELECT json_group_object(term, doc) AS frequencies, "
-        "(SELECT count(*) FROM fact_search_keys) AS documents FROM term_stats), "
-        "selective_terms AS MATERIALIZED ("
+        "WITH words(term) AS (VALUES "
+        + ",".join("(?)" for _ in words)
+        + "), "
+        + stats_cte
+        + "selective_terms AS MATERIALIZED ("
         "SELECT term FROM term_stats WHERE doc > 0 AND doc <= ?*(SELECT documents FROM stats)), "
         "chosen_terms AS MATERIALIZED (SELECT term FROM selective_terms UNION ALL "
         "SELECT term FROM term_stats WHERE doc > 0 AND NOT EXISTS (SELECT 1 FROM selective_terms)), "
@@ -304,32 +367,30 @@ def snapshot_candidates(snapshot, *args, **kwargs):
     import sqlite3
     from time import monotonic
 
-    from commonplace.rules import checks
-
-    checks.remaining(0)
+    read_deadline.remaining(0)
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    end = checks._deadline.get()
+    end = read_deadline._deadline.get()
     if end is not None:
         conn.set_progress_handler(lambda: monotonic() >= end, 1000)
     try:
         for schema, _ in snapshot.values():
-            checks.remaining(0)
+            read_deadline.remaining(0)
             conn.execute(schema)
         # Install while empty, then insert in original document order. The same
         # triggers/tokenizer preserve seed ordering without global hidden terms.
         install(conn)
         for table, (_, rows) in snapshot.items():
             for row in rows:
-                checks.remaining(0)
+                read_deadline.remaining(0)
                 columns = ", ".join('"' + key.replace('"', '""') + '"' for key in row)
                 conn.execute(
                     f'INSERT INTO "{table}" ({columns}) VALUES ({", ".join("?" for _ in row)})',
                     tuple(row.values()),
                 )
-        checks.remaining(0)
+        read_deadline.remaining(0)
         result = candidates(conn, *args, **kwargs)
-        checks.remaining(0)
+        read_deadline.remaining(0)
         return result
     finally:
         conn.close()

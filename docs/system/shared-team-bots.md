@@ -1,0 +1,5 @@
+### Shared team bots
+
+- `docs/design/shared-team-bots.md` is the design note for sharing a bot with workspace members (card #462). Decisions it proposes: a shared bot acts with the intersection of the bot's owner-set access, the talking member's rights and the owner's rights; private threads stay private to their person; sharing is off by default per workspace and a new share reaches nothing until the owner grants it. No code changed; slices follow one PR each.
+
+- Slice S1 (store foundation, no routes or tools): the tables, the upgrade of an old `bots.sqlite3`, `BotStore.reach`, store-level share, revoke and access edits, and the control-side `bot_sharing_settings` switch (off by default) exist and are unused. Decisions taken from the note's recommendations: a per-workspace switch the workspace owner turns on and any member may then share their own custom bots (question 1); a member's own notes live apart from bot-level notes (question 4). Membership checks stay with the caller (a route in a later slice); the store checks the share, the switch and the thread.

@@ -403,6 +403,8 @@ def test_g7_private_hygiene():
         for p in (
             "MODULES.md",
             "SYSTEM.md",
+            *sorted(str(f) for f in Path("docs/modules").glob("*.md")),
+            *sorted(str(f) for f in Path("docs/system").glob("*.md")),
             "commonplace/boards/service.py",
             "commonplace/orch/runner_bridge.py",
             "commonplace/projects/__init__.py",
@@ -460,6 +462,8 @@ def test_g9_off_json_and_arguments(world):
         "can_configure",
         "counts",
         "agents_working",
+        # The count of archived cards is a card-lifecycle field, the same with orchestration on or off.
+        "archived",
     }
     with pytest.raises((ToolError, TypeError)):
         w.boards.task_add("Blocked", board="acme", blocked_by=[1])
