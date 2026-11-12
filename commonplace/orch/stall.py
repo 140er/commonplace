@@ -12,8 +12,8 @@ Backoff: after a nudge, the next one waits another ``minutes`` with no done card
 card resets the streak. After ``ESCALATE_AFTER`` nudges in a row without a done card, the
 board is listed in the owner's Needs me (``stalled``).
 
-Never nudged: a board whose open cards are all blocked by another open card or waiting on a
-person (that is a clear board for the orchestrator), a board with no open card, a board
+Never nudged: a board whose open cards are all blocked by another open card, snoozed or
+waiting on a person (that is a clear board for the orchestrator), a board with no open card, a board
 at its agent cap with no expired claim and nothing unstarted.
 
 State lives in ``runner.sqlite3`` (``orch_stall``). Reads of ``boards.sqlite3`` are plain
@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 
 from commonplace.boards.store import BoardStore
 from commonplace.http_util import log_failure
+from commonplace.snooze import store as snooze
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,10 @@ def assess(directory, board_row: dict, cap: int | None, now: str, minutes: int, 
     with BoardStore(directory, create=False).connection() as conn:
         rows = conn.execute(
             "SELECT id, title, status, assignee, ask, ask_to, claim_until, claim_expired_at, "
-            "updated_at FROM tasks WHERE board_id=? AND status IN ('todo','doing') ORDER BY id",
-            (board_row["id"],),
+            "updated_at FROM tasks WHERE board_id=? AND status IN ('todo','doing') AND NOT "
+            + snooze.snoozed_sql()
+            + " ORDER BY id",
+            (board_row["id"], now),
         ).fetchall()
         actionable = [r for r in rows if not _on_person(r) and not _blocked(conn, r["id"])]
         last_done = conn.execute(

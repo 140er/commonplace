@@ -23,7 +23,7 @@ with the standard library from Python 3.11 and with `tomli` on 3.10.
 schema = "commonplace.orchestrator/1"
 project = "example-shop"
 [limits]
-max_agents = 3                 # config-driven starts; min with the project limit
+max_agents = 3                 # 1-100; config-driven starts; min with the project limit
 [roles.main]
 kind = "orchestrator"
 harness = "t3"
@@ -79,6 +79,7 @@ most 16 roles, and a prompt is at most 32 KiB.
 | `runner.machine`, `runner.project`, `runner.runtime_mode` | **Enforced** through the machine's existing grant checks. |
 | `triggers` (`card.todo`, live), `limits.max_agents`, planner `connections` | **Enforced** (below). |
 | other roles, `skills`, `mcps` | **Advisory.** Rendered for sessions to read. |
+| `[factory]` (optional) | `gate.required` is **enforced** on new `merge` steps; checks and batch cadence are **declared** for agents and tools to read (see Merge policy). |
 
 ### Area preview slice 1, preview-only
 
@@ -283,6 +284,9 @@ Inside it, in this order:
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with
    `at_cap` when workspace orchestration is off, or `project_limit` when on.
+   `max_agents` accepts 1 to 100. The effective number of concurrent starts is
+   also bounded by the machines: `max_in_flight`, one agent per project, and
+   the runner's memory guard (see [runner.md](runner.md)).
    Voided steps do not exempt their jobs from capacity accounting.
 5. **Insert** the step row and the runner job, with the existing guards: one
    active start per card, and a non-person start within 24 h is refused
@@ -442,6 +446,69 @@ commit is still found.
   whose claim expired, and steps of another board or role are not listed.
   Runner jobs carry `source: "runner"`. The list is derived on every read;
   the hub does not check that the thread exists.
+
+## Merge policy
+
+A config may carry one optional `[factory]` section: what guards a merge on
+this board. It is versioned, diffed and accepted with the rest of the config,
+so there is one place to read it and one owner approval to change it. An
+experiment cannot change it. A config without `[factory]` has no policy and
+the board behaves as it did before the section existed.
+
+```toml
+[factory.gate]
+required = true                # a merge step needs a passed gate
+name = "merge gate review"     # optional label
+[factory.checks.affected-tests]   # one table per check, named [a-z0-9-]{1,32}
+required = true                # default true
+scope = "affected"             # "affected" (default) or "full": the tests it runs
+pass = ["PASS"]                # the only outcomes that count
+never_pass = ["FALLBACK", "SUPERSEDED"]      # named so nobody argues later
+[factory.batch]
+branch = "develop"
+full_suite = "per-batch"       # "per-pr", "per-batch" or "off"
+on_red = "hold-merges"         # or "report"
+```
+
+The example is the policy this project ran on 11 November 2026: a pull request
+merges on a passed gate plus a green check of the affected tests on the same
+head; the full suite runs once per batch on the integration branch and a red
+batch holds further merges.
+
+What the schema refuses (`factory_contradiction` unless noted):
+
+- `timeout`, `skip`, `skipped` or `error` in `pass`, in any letter case. These
+  never count as a pass, and every summary names them.
+- The same outcome in `pass` and `never_pass`.
+- A policy that requires neither the gate nor any check.
+- `full_suite = "per-batch"` with a required check of `scope = "full"`, and
+  `full_suite = "per-pr"` without one.
+- `on_red` with `full_suite = "off"`.
+- Unknown keys, an empty `pass`, more than 16 checks or 16 outcomes per list
+  (the usual `unknown_key`, `invalid_value`, `too_many`).
+
+Where it is read:
+
+- **The journal.** With `gate.required = true`, a new `merge` step
+  (`orch_journal_intent`) needs a card, and the newest unvoided gate opened
+  for that card on this board must be `gate_pass`. Otherwise the step is
+  refused with `factory_card_required` or `factory_gate_required` (409; the
+  details carry the blocking gate) and nothing is written. A fail, error,
+  budget or still-open gate on a newer head blocks the merge of an older
+  passed head. A retry of a stored merge step still returns it.
+- **Agents.** `orch_config_get` returns `factory` (`policy`, `summary`) next
+  to the accepted version; `orch_checkpoint` and `orch_resume` carry `factory`
+  (`policy`, `summary`, `gates`) in the checkpoint; `orch_config_render` and
+  `commonplace orch render` end with a "Merge policy" list. The key is absent
+  when the accepted config has no `[factory]`.
+- **The app.** Project settings shows the summary lines under "Merge policy",
+  beside the accepted config version, with the board's gate counts.
+
+`gates` counts the board's unvoided gates by state (`open`, `gate_pass`,
+`gate_fail`, `gate_error`, `gate_budget`). Check outcomes are not reported to
+the hub, so the hub does not enforce `checks` or `batch`: the tool that runs a
+check reads them from the accepted version. `.commonplace/checks.toml` is a
+different file: the quick commands a repository runs before a push.
 
 ## Restore
 

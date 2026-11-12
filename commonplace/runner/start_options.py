@@ -16,7 +16,7 @@ from .tools import _card, person_owner
 
 # The card cannot be started whatever the setup is: the panel shows no control at all.
 NOT_CLAIMABLE = frozenset(
-    {"not_todo", "assigned", "proposal_open", "waiting_on_person", "blocked_by"}
+    {"not_todo", "assigned", "proposal_open", "waiting_on_person", "blocked_by", "snoozed"}
 )
 
 

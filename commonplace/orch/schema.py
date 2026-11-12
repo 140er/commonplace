@@ -12,6 +12,7 @@ Public API (stable for the other orchestrator modules):
 - ``check_connections(config, known_names)`` (planner bindings vs workspace)
 - ``template(name)``, ``expand_prompt(text)``, ``role_instructions(config, role)``
 - ``render(config) -> str``
+- ``Config.factory``: the optional ``[factory]`` merge policy (``factory.Factory``)
 - ``diff(old, new) -> list[Change]`` and ``format_diff(changes) -> str``
 - ``experiment_violations(live, exp) -> list[str]`` and ``check_experiment(live, exp)``
 
@@ -32,7 +33,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from commonplace.redact import redact
@@ -41,6 +42,9 @@ try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
+
+if TYPE_CHECKING:
+    from .factory import Factory
 
 SCHEMA_ID = "commonplace.orchestrator/1"
 CONFIG_PATH = ".commonplace/orchestrator.toml"
@@ -64,7 +68,7 @@ MAX_ROLES = 16
 MAX_PROMPT_BYTES = 32 * 1024
 MAX_LAUNCH_CHARS = 120_000  # runner thread launch message limit
 SPAWN_RESERVE_CHARS = 1_024  # room kept for the runner's own SPAWN_MESSAGE
-MAX_AGENTS_RANGE = (1, 20)  # same bounds as project_limits.max_agents
+MAX_AGENTS_RANGE = (1, 100)  # same bounds as project_limits.MAX_AGENTS (a test pins both)
 MAX_WORKFLOWS = 32
 MAX_STEPS = 64
 MAX_STEP_CHARS = 500
@@ -123,6 +127,7 @@ CODES = frozenset(
         "connection_id_shaped",
         "connection_unknown",
         "experiment_not_allowed",
+        "factory_contradiction",  # [factory] declares a merge policy that cannot hold
     }
 )
 
@@ -214,6 +219,7 @@ class Config:
     triggers: tuple[Trigger, ...] = ()
     fleet: Fleet | None = None
     sha256: str | None = None
+    factory: Factory | None = None  # merge policy; ``None`` without ``[factory]``
 
     @property
     def fleet_rules(self) -> Fleet:
@@ -269,6 +275,8 @@ class Config:
             out["triggers"] = [{"on": t.on} for t in self.triggers]
         if self.fleet is not None:
             out["fleet"] = dataclasses.asdict(self.fleet)
+        if self.factory is not None:
+            out["factory"] = self.factory.to_dict()
         return out
 
 
@@ -294,6 +302,7 @@ _TOP_KEYS = (
     "runner",
     "triggers",
     "fleet",
+    "factory",
 )
 _ROLE_KEYS = (
     "kind",
@@ -781,6 +790,11 @@ def validate(data: Mapping[str, Any]) -> Config:
     mcps = _mcps(doc.get("mcps", {}))
     roles = _roles(doc["roles"], workflows, mcps)
     runner = _runner(doc["runner"], roles) if "runner" in doc else None
+    policy = None
+    if "factory" in doc:
+        from . import factory  # imports this module's helpers
+
+        policy = factory.parse(doc["factory"])
     config = Config(
         schema=SCHEMA_ID,
         project=project,
@@ -791,6 +805,7 @@ def validate(data: Mapping[str, Any]) -> Config:
         runner=runner,
         triggers=_triggers(doc.get("triggers", []), runner),
         fleet=_fleet(doc.get("fleet")),
+        factory=policy,
     )
     if runner is not None:
         limit = MAX_LAUNCH_CHARS - SPAWN_RESERVE_CHARS
@@ -912,6 +927,8 @@ def render(config: Config) -> str:
         for mcp in config.mcps.values():
             auth = f" (auth: `{mcp.secret_ref}`)" if mcp.secret_ref else ""
             lines.append(f"- `{mcp.name}`: {mcp.url}{auth}")
+    if config.factory is not None:
+        lines += ["", "## Merge policy", "", *(f"- {line}" for line in config.factory.summary())]
     return "\n".join(lines) + "\n"
 
 
