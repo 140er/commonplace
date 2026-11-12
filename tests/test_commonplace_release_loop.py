@@ -3,6 +3,7 @@
 import pytest
 
 from commonplace import sessions
+from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.policy import Policy
 from commonplace.projects.types import SEAT_CLIENT
@@ -357,6 +358,29 @@ def test_recorded_release_lapses_when_the_approver_is_revoked(hub, fresh):
     hub.db.revoke(coordinator.id, actor=fresh.user, workspace_ref=fresh.workspace)
     assert fresh.owner.task_show(number).get("awaiting_release") is True
     refuse(fresh.owner, number, lambda: seat.work.task_take_next(task=number))
+
+
+def test_recorded_release_is_not_inherited_by_a_connection_created_under_the_name(hub, fresh):
+    creator, coordinator, number = released(hub, fresh)
+    creator.work.task_handoff(number, coordinator.principal.actor, NOTE)
+    fresh.owner.board_set("work", fresh.connect("replacement").principal.actor)
+    hub.db.revoke(coordinator.id, actor=fresh.user, workspace_ref=fresh.workspace)
+    # The connect call refuses a name still in use (see the next test), so free the name directly.
+    hub.db._conn.execute("UPDATE connections SET name='retired' WHERE id=?", (coordinator.id,))
+    twin = fresh.connect("coordinator", trust="standard")
+    hub.db._conn.execute(
+        "UPDATE connections SET created_at='2999-01-01T00:00:00Z' WHERE id=?", (twin.id,)
+    )
+    assert twin.principal.actor == coordinator.principal.actor
+    assert fresh.owner.task_show(number).get("awaiting_release") is True
+    refuse(fresh.owner, number, lambda: twin.work.task_take_next(task=number))
+
+
+def test_a_revoked_approvers_name_cannot_be_taken_again_in_its_workspace(hub, fresh):
+    creator, coordinator, number = released(hub, fresh)
+    hub.db.revoke(coordinator.id, actor=fresh.user, workspace_ref=fresh.workspace)
+    with pytest.raises(ControlError, match="already exists"):
+        fresh.connect("coordinator", trust="standard")
 
 
 def test_recorded_release_by_a_creator_descendant_is_not_authority(hub, fresh):

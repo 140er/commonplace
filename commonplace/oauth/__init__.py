@@ -17,7 +17,7 @@ from html import escape
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import urlsplit
 
-from .. import import_grant, sessions, urls
+from .. import bots_grant, decide_grant, import_grant, sessions, urls
 from . import store
 from .http import OAuthError, body, callback, query, redirect, send, send_error, send_json
 from .store import OAuthAuthenticator
@@ -37,11 +37,12 @@ a.provider+form{margin-top:24px}a.provider:focus-visible{outline:2px solid #e8e9
 """
 
 
-def _page(h, content: str, *, status=200, headers=()) -> None:
+def _page(h, content: str, *, status=200, headers=(), form_origin=None) -> None:
     style_hash = base64.b64encode(hashlib.sha256(_CSS.encode()).digest()).decode("ascii")
+    form_action = "'self'" + (" " + form_origin if form_origin else "")
     csp = (
         "default-src 'none'; style-src 'sha256-" + style_hash + "'; "
-        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        f"form-action {form_action}; base-uri 'none'; frame-ancestors 'none'"
     )
     html = (
         '<!doctype html><html lang="en"><meta charset="utf-8">'
@@ -57,6 +58,41 @@ def _page(h, content: str, *, status=200, headers=()) -> None:
     )
 
 
+def _redirect_origin(uri) -> str | None:
+    """Serialize parsed URL parts, never untrusted authority text, into CSP."""
+    try:
+        parts = urlsplit(uri)
+        host = parts.hostname
+        port = parts.port
+        if not host or parts.username is not None or parts.password is not None:
+            return None
+        if port is not None and not 0 < port < 65536:
+            return None
+        # urlsplit accepts an empty port and punctuation in DNS hostnames.
+        if parts.netloc.endswith(":"):
+            return None
+        host = host.lower()
+        # CSP host-source has no IPv6-literal syntax. Do not allow a redirect
+        # that would need a broader scheme source to complete browser consent.
+        if len(host) > 253 or not all(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in host.removesuffix(".").split(".")
+        ):
+            return None
+        last_label = host.removesuffix(".").rsplit(".", 1)[-1]
+        if parts.scheme == "https" and re.fullmatch(r"[0-9]+|0x[0-9a-f]*", last_label):
+            if str(ipaddress.IPv4Address(host)) != host:
+                return None
+        if parts.scheme != "https":
+            if parts.scheme != "http":
+                return None
+            if host != "localhost" and not ipaddress.ip_address(parts.hostname).is_loopback:
+                return None
+        return f"{parts.scheme}://{host}" + (f":{port}" if port is not None else "")
+    except ValueError:
+        return None
+
+
 def _valid_redirect(uri) -> bool:
     if (
         not isinstance(uri, str)
@@ -67,22 +103,7 @@ def _valid_redirect(uri) -> bool:
         or any(ord(c) <= 32 or ord(c) >= 127 for c in uri)
     ):
         return False
-    try:
-        parts = urlsplit(uri)
-        host = parts.hostname
-        if not host or parts.username is not None or parts.password is not None:
-            return False
-        if parts.port is not None and not 0 < parts.port < 65536:
-            return False
-        if parts.scheme == "https":
-            return True
-        if parts.scheme != "http":
-            return False
-        if host == "localhost":
-            return True
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return _redirect_origin(uri) is not None
 
 
 def _register(db, data: dict) -> dict:
@@ -92,7 +113,11 @@ def _register(db, data: dict) -> dict:
         or not 1 <= len(redirects) <= 20
         or not all(_valid_redirect(uri) for uri in redirects)
     ):
-        raise OAuthError("invalid_redirect_uri")
+        raise OAuthError(
+            "invalid_redirect_uri",
+            "Use HTTPS or loopback HTTP with a valid DNS hostname or canonical IPv4 address "
+            "and optional numeric port; IPv6 and empty ports are not supported",
+        )
     name = data.get("client_name", "Application")
     if (
         not isinstance(name, str)
@@ -151,8 +176,13 @@ def _response(parameters, **values):
 
 def _validate_authorization(db, parameters):
     client = store.client(db, parameters.get("client_id", ""))
-    if parameters.get("redirect_uri") not in json.loads(client["redirect_uris"]):
+    uri = parameters.get("redirect_uri")
+    if uri not in json.loads(client["redirect_uris"]):
         raise OAuthError("invalid_request", "Redirect URI is not registered")
+    if not _valid_redirect(uri):
+        raise OAuthError(
+            "invalid_request", "Redirect URI no longer passes validation; register the client again"
+        )
     # Only errors after exact client/redirect validation may leave this server.
     try:
         if parameters.get("response_type") != "code":
@@ -219,6 +249,7 @@ def _show_authorize(gateway, h, *, status=200):
         )
     hidden = f'<input type="hidden" name="request" value="{escape(request, quote=True)}">'
     action = escape(authorize_path, quote=True)
+    form_origin = _redirect_origin(parameters["redirect_uri"]) if principal else None
     if principal:
         workspace = gateway.db.workspace(principal.workspace_id)["name"]
         consent = ""
@@ -239,8 +270,28 @@ def _show_authorize(gateway, h, *, status=200):
                 )
             else:
                 consent += f"<p>{escape(import_grant.OWNER_ONLY_TEXT)}</p>"
+        if decide_grant.DECIDE_SCOPE in parameters["scope"].split():
+            if decide_grant.eligible(gateway.db, principal.user_id, principal.workspace_id):
+                consent += (
+                    '<label><input type="checkbox" name="grant_decide" value="1"> '
+                    f"{escape(decide_grant.SCOPE_TEXT)}</label>"
+                )
+            else:
+                consent += f"<p>{escape(decide_grant.OWNER_ONLY_TEXT)}</p>"
+        requested = parameters["scope"].split()
+        if bots_grant.CHAT_SCOPE in requested:
+            consent += (
+                '<label><input type="checkbox" name="grant_bots_chat" value="1"> '
+                f"{escape(bots_grant.CHAT_TEXT)}</label>"
+            )
+            if bots_grant.CONFIRM_SCOPE in requested:
+                consent += (
+                    '<label><input type="checkbox" name="grant_bots_confirm" value="1"> '
+                    f"{escape(bots_grant.CONFIRM_TEXT)}</label>"
+                )
         content = (
             f"<h1>{escape(client['client_name'])}</h1><p>{escape(workspace)}</p>"
+            f"<p>Code destination: {escape(form_origin, quote=True)}</p>"
             f'<form method="post" action="{action}">{hidden}{consent}'
             '<button name="decision" value="allow">Allow</button>'
             '<button name="decision" value="deny">Deny</button></form>'
@@ -261,7 +312,13 @@ def _show_authorize(gateway, h, *, status=200):
             '<button type="submit">Sign in</button></form>'
         )
         headers = (("Set-Cookie", cookie),)
-    _page(h, content, status=status, headers=headers)
+    _page(
+        h,
+        content,
+        status=status,
+        headers=headers,
+        form_origin=form_origin,
+    )
 
 
 def _submit_authorize(gateway, h):
@@ -320,6 +377,15 @@ def _submit_authorize(gateway, h):
                 and "memory:read" not in parameters["scope"].split()
             ):
                 location = _response(parameters, error="invalid_scope")
+            elif decide_grant.DECIDE_SCOPE in parameters["scope"].split() and not {
+                "memory:read",
+                "memory:write",
+            }.issubset(parameters["scope"].split()):
+                location = _response(parameters, error="invalid_scope")
+            elif bots_grant.CONFIRM_SCOPE in parameters["scope"].split() and (
+                bots_grant.CHAT_SCOPE not in parameters["scope"].split()
+            ):
+                location = _response(parameters, error="invalid_scope")
             elif data["decision"] == "deny":
                 location = _response(parameters, error="access_denied")
             else:
@@ -334,6 +400,22 @@ def _submit_authorize(gateway, h):
                     and import_grant.eligible(db, principal.user_id, principal.workspace_id)
                 ):
                     granted.remove(import_grant.READER_SCOPE)
+                if decide_grant.DECIDE_SCOPE in granted and not (
+                    data.get("grant_decide") == "1"
+                    and decide_grant.eligible(db, principal.user_id, principal.workspace_id)
+                ):
+                    granted.remove(decide_grant.DECIDE_SCOPE)
+                for scope, field in (
+                    (bots_grant.CHAT_SCOPE, "grant_bots_chat"),
+                    (bots_grant.CONFIRM_SCOPE, "grant_bots_confirm"),
+                ):
+                    if scope in granted and not (
+                        data.get(field) == "1"
+                        and bots_grant.eligible(db, principal.user_id, principal.workspace_id)
+                    ):
+                        granted.remove(scope)
+                if bots_grant.CONFIRM_SCOPE in granted and bots_grant.CHAT_SCOPE not in granted:
+                    granted.remove(bots_grant.CONFIRM_SCOPE)
                 if not granted:
                     location = _response(parameters, error="invalid_scope")
                 else:
