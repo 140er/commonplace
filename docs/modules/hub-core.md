@@ -3,8 +3,6 @@
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
 
-  - The extension seam lists `commonplace.snooze`, installed after agent_schedules.
-
   - Canonical Space REST aliases mapped to existing board tool authority.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.

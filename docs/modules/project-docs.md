@@ -3,8 +3,6 @@
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
-  - The board API guide documents `task_snooze`, `task_unsnooze`, `include_snoozed`, the `snoozed` waiting reason and `/api/card-snooze`; the contract lists `card.snoozed` and `card.woke`.
-
   - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; the full suite runs per develop batch, never per PR.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.

@@ -3,8 +3,6 @@
 - **Paths:** `commonplace/orch/`, `docs/orchestrator.md`, `tests/_orch_helpers.py`, `tests/test_orch_acceptance.py`, `tests/test_orch_schema.py`, `tests/test_orch_areas.py`, `tests/test_orch_store.py`, `tests/test_orch_durable.py`, `tests/test_orch_checkpoint_threads.py`, `tests/test_orch_runner.py`, `tests/test_orch_surfaces.py`, `tests/test_orch_checks.py`, `tests/test_orch_plan_gate.py`, `tests/test_orch_trigger_stall.py`, `tests/test_orch_start_retry.py`, `tests/test_orch_stall_wake.py`, `tests/test_docs_obligations.py`, `tests/test_docs_fragments.py`
 - **Owns:**
 
-  - The no-progress nudge (`stall.py`) and the unstarted-todo list (`durable.py`) ignore snoozed cards.
-
   - `durable.coordinator_holder_in` and `coordinator_holders_in` name the actors holding live coordinator leases, read-only and fail closed, for the board coordinator checks.
 
   - A `model_unresolved` start refusal names the role and board and where an owner sets the model (`details.role`, `details.config_role`, `details.board`); `Config.start_roles` and `split_role` give the roles a start can run to `prepare()` and to Needs me.
@@ -17,7 +15,7 @@
 
 - **Promises:**
 
-  - `docs-check` reads the module map from `docs/modules/<module>.md` (plus any block left in `MODULES.md`) and accepts `docs/system/` sections as changes to `SYSTEM.md`; editing those files is not itself a module change.
+  - `docs-check` reads the module map from `docs/modules/<module>.md` (plus any block left in `MODULES.md`) and accepts `docs/system/` sections as changes to `SYSTEM.md`; editing those files is not itself a module change. A module many changes touch (`tests`) also takes field fragments in `docs/modules/<module>.d/<name>.md` (`- **Owns|Promises|How it fails|Tests:**` bullets, no `Paths`): they are appended to the module's fields, and editing one is an edit of that module's block, so concurrent changes add their own file instead of editing the same lines.
 
   - Up to eight distinct area sub-orchestrators sit directly under one parentless orchestrator; areas remain preview-only across live and experiment accept/write paths. No-area graph rules and main/worker model slots remain unchanged.
 
@@ -31,6 +29,8 @@
   - Lease snapshot failures log sanitized diagnostics without exception messages.
 
   - Only owner-accepted versions run; every config-driven start is one fenced, capped transaction; a retry returns the stored job; external effects are never re-issued by the hub; after a restore nothing config-driven runs until the owner acknowledges.
+
+  - A runner start is refused with `path_overlap` while a running card of the board (a queued, leased, starting, uncertain or started job of any age whatever the card's status, or doing with a connection assignee) declares an overlapping path contract; the check reads jobs, doing cards and contracts in the write lock for configured and unconfigured boards alike, treats an unreadable contract as `**`, refuses with `path_contract_too_large` past its work-unit budget (running cards' stored size per glob, wildcard compiles by length, stars and classes, comparisons), and never refuses cards without a contract. A started job has no end state, so only the workspace owner releases its card, by clearing its paths. Manual claims are not checked at the `doing` transition: their holder may clear or narrow its own contract (globs it adds are checked), and a person's claim does not hold a start.
 
   - Configured starts share project admission with claims and plain jobs when workspace orchestration is enabled; boards without a `[runner]` config retain earlier behavior with the workspace switch off.
 

@@ -5,7 +5,7 @@
 
   - Scheduled prompts per agent: an owner gives an agent (a connection) a schedule, a timezone and a prompt, in the control database (`agent_schedules`, `agent_schedule_runs`), through `/api/agent-schedules` and the Scheduled prompts section of Settings.
 
-  - `schedule_time.py` is the one due-time calculation: validation of the two schedule forms (`{every_minutes}` or a five-field `{cron}`, with an IANA timezone), `next_due`, `at` (one instant from an ISO date and time, used by card snoozes) and the stored timestamp form. It has no I/O and no clock, so other features (routines) import it instead of re-deriving due times.
+  - `schedule_time.py` is the one due-time calculation: validation of the two schedule forms (`{every_minutes}` or a five-field `{cron}`, with an IANA timezone), `next_due` and the stored timestamp form. It has no I/O and no clock, so other features (routines) import it instead of re-deriving due times.
 
   - Delivery uses the existing wake path and no second channel: an owner-authored board message (`space_post`) on the board the agent coordinates, which emits the ordinary `space_message` event that wakes the coordinator and is read with `space_read`. A schedule creates no card.
 

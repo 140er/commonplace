@@ -3,8 +3,6 @@
 - **Paths:** `commonplace/rules/`, `commonplace/guards/`, `commonplace/privacy.py`, `commonplace/redact.py`
 - **Owns:**
 
-  - `task_snooze` and `task_unsnooze` in the checked write inventory.
-
   - Canonical Space create in the checked REST write inventory.
 
   - The goals writes `goal_set` and `card_goal` in the checked MCP write inventory, because goals become agent card context.
