@@ -21,6 +21,8 @@
 
   - `commonplace token add` also refuses `bots:chat` and `bots:confirm`; they need the person's own consent.
 
+  - `commonplace workspace keyslot-check` runs under the ordinary shared lock and writes nothing; `commonplace workspace keyslot-rewrap` takes the exclusive data lock itself, needs `--by` the workspace owner, and prints only state, slot names, a database count and the key id.
+
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
   - Opt-in backup reporting records only the final selected mode; check/cleanup/restore never report. Receipt failure preserves backup return/exception; test_backup_status.py covers both outcomes and fallback.
 
