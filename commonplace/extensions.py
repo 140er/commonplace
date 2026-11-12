@@ -53,6 +53,7 @@ MODULES = (
     "commonplace.agent_schedules",
     "commonplace.routines",
     "commonplace.projects",
+    "commonplace.tool_policy",
     "commonplace.bots",
 )
 
