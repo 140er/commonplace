@@ -1,6 +1,6 @@
 ## cli-and-client
 
-- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/client_hooks.py`, `commonplace/hook_spool.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
+- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/adapter.py`, `docs/agent-adapter.md`, `commonplace/client_hooks.py`, `commonplace/hook_spool.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
 - **Owns:**
 
   - The `runner report` argument parser; the command itself lives in `commonplace/runner/report.py`.

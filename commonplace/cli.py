@@ -181,7 +181,7 @@ def cmd_member_add(args) -> int:
 
 def cmd_token_add(args) -> int:
     db = _db(args)
-    from .bridge import CLIENT_PRESETS, DEFAULT_CLIENT_PRESET
+    from .bridge import client_defaults
 
     if "memory:import:read" in (_csv(args.scopes) or []):
         raise ValueError("Imported history requires explicit browser reader consent")
@@ -189,7 +189,7 @@ def cmd_token_add(args) -> int:
         raise ValueError("Answering Needs-me questions requires the owner's browser consent")
     if {"bots:chat", "bots:confirm"} & set(_csv(args.scopes) or []):
         raise ValueError("Using bots from an app requires your own sign-in consent")
-    defaults = CLIENT_PRESETS.get(args.client, DEFAULT_CLIENT_PRESET)
+    defaults = client_defaults(args.client, getattr(args, "preset", None))
 
     def value(name, fallback):
         explicit = getattr(args, name)
@@ -1165,6 +1165,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--user", help="token holder (default: --by)")
     s.add_argument("--client", default="other")
     s.add_argument("--parent", help="parent connection name or id")
+    s.add_argument(
+        "--preset",
+        choices=("coding", "chat"),
+        help="policy defaults by what the agent does, for any --client "
+        "(default: chosen by client name)",
+    )
     s.add_argument("--profile", choices=sorted(PROFILES))
     s.add_argument("--tools", help="explicit tool list instead of --profile")
     s.add_argument("--scopes")
