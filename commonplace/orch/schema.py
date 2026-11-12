@@ -48,7 +48,8 @@ CONFIG_PATH = ".commonplace/orchestrator.toml"
 KINDS = ("orchestrator", "sub-orchestrator", "planner", "builder", "reviewer")
 HARNESSES = ("t3", "claude-code", "codex")
 RUNNER_HARNESS = "t3"
-MODEL_ROLES = ("main", "worker")  # same slots as commonplace.projects.types.MODEL_ROLES
+# Same slots as commonplace.projects.types.MODEL_ROLES.
+MODEL_ROLES = ("main", "worker", "reviewer", "gate")
 RUNTIME_MODES = ("approval-required", "auto-accept-edits", "auto", "full-access")
 TRIGGER_EVENTS = ("card.todo",)
 TEMPLATES = ("design_before_code", "resume_protocol")
@@ -200,6 +201,21 @@ class Config:
     def has_runner(self) -> bool:
         """True when the config has ``[runner]``: the board is "configured"."""
         return self.runner is not None
+
+    @property
+    def split_role(self) -> str | None:
+        """The role a split start runs: ``main`` when the config has one, else the runner role."""
+        if self.runner is None:
+            return None
+        return "main" if "main" in self.roles else self.runner.role
+
+    @property
+    def start_roles(self) -> tuple[str, ...]:
+        """Roles of this config a start can run: the runner role and the split start role."""
+        if self.runner is None:
+            return ()
+        names = dict.fromkeys((self.runner.role, self.split_role))
+        return tuple(name for name in names if name in self.roles)
 
     @property
     def runner_role(self) -> Role | None:
