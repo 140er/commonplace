@@ -34,6 +34,7 @@ from typing import Callable, Iterable, Optional
 
 from . import bots_grant, decide_grant, tokens
 from .admission import GATE
+from .db_busy import BUSY_TIMEOUT_S, begin_immediate
 from .decide_grant import DECIDE_SCOPE
 from .policy import Policy
 
@@ -251,7 +252,9 @@ class ControlDB:
         self._close_lock = threading.Lock()
         self._closed = False
         self._pre_close: list[Callable[[], None]] = []
-        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._conn = sqlite3.connect(
+            path, timeout=BUSY_TIMEOUT_S, check_same_thread=False, isolation_level=None
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
@@ -337,7 +340,7 @@ class ControlDB:
 
         class _Tx:
             def __enter__(self_inner):
-                conn.execute("BEGIN IMMEDIATE")
+                begin_immediate(conn)
                 return conn
 
             def __exit__(self_inner, exc_type, exc, tb):

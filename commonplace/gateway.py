@@ -41,6 +41,7 @@ from mempalace.tool_capabilities import classify_tool
 
 from . import (
     backfill_allowance,
+    db_busy,
     events,
     extensions,
     plans,
@@ -139,6 +140,19 @@ def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> 
     if data is not None:
         error["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": error}
+
+
+# JSON-RPC server-error range: a busy database is retryable, unlike -32603.
+BUSY_RPC_CODE = -32001
+_LABEL = re.compile(r"[A-Za-z0-9_.\-/]{1,64}")
+
+
+def _call_label(request) -> str:
+    """The tool (or method) name for a log line; never arguments or other user content."""
+    params = request.get("params") if isinstance(request, dict) else None
+    method = request.get("method") if isinstance(request, dict) else None
+    name = params.get("name") if isinstance(params, dict) and method == "tools/call" else method
+    return f"call={name}" if isinstance(name, str) and _LABEL.fullmatch(name) else "call=?"
 
 
 def _kg_argument_error(req_id, name, args):
@@ -2612,9 +2626,20 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         try:
             response = self.server.gateway.mediator.handle(principal, request)
         except Exception as exc:
-            log_failure(logger, "gateway MCP request failed", exc)
-            self.close_connection = True
             req_id = request.get("id") if isinstance(request, dict) else None
+            log_failure(logger, f"gateway MCP request failed ({_call_label(request)})", exc)
+            if db_busy.is_busy(exc):
+                self._send_json(
+                    200,
+                    _rpc_error(
+                        req_id,
+                        BUSY_RPC_CODE,
+                        "The workspace database is busy right now; retry shortly",
+                        {"retryable": True, "retry_after_s": db_busy.RETRY_AFTER_S},
+                    ),
+                )
+                return
+            self.close_connection = True
             self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
             return
         if response is None:
