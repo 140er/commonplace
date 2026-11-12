@@ -34,6 +34,7 @@ MODULES = (
     "commonplace.memory_tools",
     "commonplace.skills",
     "commonplace.session",
+    "commonplace.account",
     "commonplace.webhooks",
     "commonplace.phone_push",
     "commonplace.oauth",
