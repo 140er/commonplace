@@ -17,23 +17,32 @@ created: reading a workspace that never used meetings opens no file.
     GET   /api/meetings/me             own opt-in and defaults
     PATCH /api/meetings/me             {enabled?, keep_transcript?, language?, notes_wing?}
     GET   /api/meetings                own meetings (no text)
-    POST  /api/meetings                invite: refused unless the person opted in and a connection
-                                       is switched on; the lifecycle itself is not built yet (501)
+    POST  /api/meetings                invite {link, title, attested: true, request_id, connection_id?,
+                                       keep_transcript?, board?, disclosure?, start_at?} -> 201, or
+                                       200 with the first meeting for a repeated request_id
+    GET   /api/meetings/<id>           own meeting (state, times, end reason; never the link)
+    POST  /api/meetings/<id>/leave     the inviter's leave: the bot goes, what was captured is kept
+    POST  /api/meetings/<id>/stop      owner: the bot goes and everything captured is discarded
 
-Credentials are write-only: no route returns them. Every change by the owner or a person is one
+An invite stores the meeting and nothing else: the worker joins, announces and listens
+(``engine.py``) only after the announcement is delivered. Credentials and the meeting link are
+write-only: no route returns them. Every change by the owner or a person is one
 audit row: ids and a fixed code, never text.
 """
 
 from __future__ import annotations
 
 import logging
+import re
+import time
 
 from commonplace import http_util
-from commonplace.meetings import adapter, seal, store
+from commonplace.meetings import adapter, engine, seal, store, worker
 
 PREFIX = "/api/meetings"
 logger = logging.getLogger("commonplace.meetings")
 AUDIT = "meetings"
+MEETING_ID = re.compile(r"[0-9a-f]{32}\Z")
 
 
 def _send(h, status, body):
@@ -150,6 +159,15 @@ def _connection_test(gateway, h, principal, meetings, connection_id):
     _send(h, 200, {"ok": result.ok, "reason": reason, "connection": view})
 
 
+def _owner_stop(gateway, h, principal, meetings, meeting_id):
+    """The owner's stop: any meeting in the workspace, never its content (the answer is a state)."""
+    if h.command != "POST" or not _is_owner(principal):
+        return _error(h, 404, "not_found", "Not found")
+    view = meetings.request_end(meeting_id, "stop_requested", time.time())
+    _audit(gateway, principal, "stop", "ok", target=[meeting_id])
+    return _send(h, 200, {"meeting": {"id": view["id"], "state": view["state"]}})
+
+
 def _owner_route(gateway, h, principal, meetings, method, parts):
     if parts == ["overview"] and method == "GET":
         return _send(h, 200, {"overview": meetings.overview()})
@@ -201,12 +219,35 @@ def _person_route(gateway, h, principal, meetings, method, parts):
     if parts == [] and method == "GET":
         return _send(h, 200, {"meetings": meetings.meetings_for(principal.user_id)})
     if parts == [] and method == "POST":
-        refusal = meetings.refusal_for_invite(principal.user_id)
-        if refusal is not None:
-            _audit(gateway, principal, "invite", "refused", reason=refusal.code)
-            return _error(h, refusal.status, refusal.code, refusal.message)
-        return _error(h, 501, "not_available", "Inviting a bot is not available yet")
+        return _invite(gateway, h, principal, meetings)
+    if len(parts) in (1, 2) and MEETING_ID.fullmatch(parts[0]):
+        if len(parts) == 1 and method == "GET":
+            return _send(h, 200, {"meeting": meetings.meeting(parts[0], principal.user_id)})
+        if parts[1:] == ["leave"] and method == "POST":
+            view = meetings.request_end(parts[0], "inviter_left", time.time(), principal.user_id)
+            _audit(gateway, principal, "leave", "ok", target=[parts[0]])
+            return _send(h, 200, {"meeting": view})
     return _error(h, 404, "not_found", "Not found")
+
+
+def _invite(gateway, h, principal, meetings):
+    body = _body(h, store.INVITE_KEYS)
+    if body is None:
+        return None
+    refusal = meetings.refusal_for_invite(principal.user_id)
+    if refusal is not None:
+        _audit(gateway, principal, "invite", "refused", reason=refusal.code)
+        return _error(h, refusal.status, refusal.code, refusal.message)
+    try:
+        name = engine.bot_name(gateway.db.user(principal.user_id)["name"])
+        meeting, created = meetings.invite(principal.user_id, body, bot_name=name, now=time.time())
+    except (store.Invalid, store.Refused) as exc:
+        _audit(gateway, principal, "invite", "refused", reason=exc.code)
+        raise
+    _audit(gateway, principal, "invite", "ok", target=[meeting["id"]])
+    if created:
+        worker.of(gateway).kick(principal.workspace_id)
+    return _send(h, 201 if created else 200, {"meeting": meeting})
 
 
 def handle(gateway, h):
@@ -229,6 +270,8 @@ def handle(gateway, h):
             return _send(h, 200, _settings_view(principal, settings))
         if not meetings.enabled():
             return _off(h, principal)
+        if len(parts) == 2 and parts[1] == "stop" and MEETING_ID.fullmatch(parts[0]):
+            return _owner_stop(gateway, h, principal, meetings, parts[0])
         owner_only = parts[:1] in (["connections"], ["overview"])
         if owner_only:
             if not _is_owner(principal):

@@ -366,7 +366,10 @@ def test_a_person_who_did_not_opt_in_cannot_invite(console_hub):
         hub.owner, "PATCH", f"/api/meetings/connections/{go_live_connection}", {"enabled": True}
     )
     status, body, _ = hub.request(hub.member, "POST", "/api/meetings", {})
-    assert (status, body["code"]) == (501, "not_available")  # the lifecycle is a later slice
+    assert (status, body["code"]) == (
+        400,
+        "invalid_field",
+    )  # opted in, connection on: the body rules
     assert hub.get(hub.member, "/api/meetings")[1] == {"meetings": []}
     # opting in is per person: the owner never opted in
     assert hub.request(hub.owner, "POST", "/api/meetings", {})[1]["code"] == "not_opted_in"
@@ -542,7 +545,7 @@ def test_the_fake_adapter_refuses_foreign_links_and_makes_no_network_calls(keys_
         "x",
     ):
         assert fake.parse_link(link) == adapter.Reject("foreign_host")
-    with pytest.raises(NotImplementedError):
-        fake.post_chat(None, None, "x", "k")
+    with pytest.raises(NotImplementedError):  # the interface itself has no behaviour
+        adapter.Adapter().post_chat(None, None, "x", "k")
     with pytest.raises(ValueError):
         adapter.register(adapter.FakeAdapter(provider="Bad Name"))
