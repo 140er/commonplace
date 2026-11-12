@@ -266,6 +266,15 @@ uncertain. It requires the existing persisted guards before attaching, writes a
 private audit note for each action and has no HTTP route. Recovery never implies that
 a remote process terminated.
 
+### Workspace page controllers for Compute and Coworkers
+
+`web/static/coworkers.js` and `compute.js` are self-contained page controllers: they
+abort stale requests when the session, workspace or route changes and render only
+escaped text from server-authoritative state. They are deliberately not wired into
+the shell, rail, phone navigation or palette: the Deck look owns Compute navigation,
+and a classic-look entry needs a separate design decision. Neither controller enables
+remote execution; that stays a trusted server-side configuration.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and
