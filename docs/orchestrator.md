@@ -8,8 +8,9 @@ prompt, workflow and model and records the config version and model on every
 job. For other harnesses the rendered config is advisory.
 
 A board has no attached host until its owner accepts a live config with a
-`[runner]` table. That config enables a persistent board session by default,
-independently of `[[triggers]]` and the workspace splitting switch. Decisions, numbers and residuals are in `SYSTEM.md`.
+`[runner]` table. Adding `session = true` to that table opts the board into a
+persistent board session, independently of `[[triggers]]` and the workspace
+splitting switch. Without it the board behaves as before: no session, no wake. Decisions, numbers and residuals are in `SYSTEM.md`.
 
 ## The config
 
@@ -60,6 +61,7 @@ role = "builder"
 machine = "mach_0123456789abcdef"
 project = "example"
 runtime_mode = "approval-required"
+session = true                 # optional, default false: opt in to a persistent board session
 [[triggers]]
 on = "card.todo"               # live channel only
 ```
@@ -317,9 +319,10 @@ board's cursor and fires when a card moves into `todo` from another status
 in `todo` starts once it is released. An event emission that failed after
 commit is still found.
 
-Without that trigger, both the per-card event sweep and bounded split-root
-reconciliation are skipped: no automatic per-card starts or split retries are
-created. The persistent board session still watches and continues independently.
+Without that trigger, a config that opted into a session (`session = true`)
+skips both the per-card event sweep and bounded split-root reconciliation: no
+automatic per-card starts or split retries are created. A config without
+`session = true` keeps its earlier sweep behaviour unchanged. The persistent board session still watches and continues independently.
 
 - **Cursor.** Accepting a config that adds `[runner]` commits the board's
   cursor as unset with a new generation; arming then sets it to the current
@@ -383,8 +386,9 @@ and no model turns. Running threads are inspected without sending model input.
 `GET /api/projects/<board>` includes session state, reason and pending command.
 Only workspace owners receive the thread ID, actionable card numbers and
 blocker details; non-owner projections omit those fields. An absent
-accepted `[runner]` is `no_host`, with reason `no host attached`; no machine is
-chosen implicitly. `unavailable` reports withdrawn grants or changed config,
+accepted `[runner]` is `no_host`, with reason `no host attached`; a `[runner]`
+without `session = true` is `no_host` with reason `sessions not enabled`. No
+machine is chosen implicitly. `unavailable` reports withdrawn grants or changed config,
 binding or model instead of claiming the orchestrator is running.
 
 Signed-in owners can POST `{}` to

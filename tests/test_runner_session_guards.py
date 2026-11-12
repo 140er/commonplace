@@ -119,11 +119,11 @@ def test_session_running_board_does_not_starve_another(session_world):
     import hashlib
 
     from commonplace.projects import models
-    from tests.test_orch_runner import MODEL, PROVIDER, config_text
+    from tests.test_orch_runner import MODEL, PROVIDER, session_config_text
 
     w = session_world
     start(w)
-    text = config_text(w.machine_id, board="plain").split("[[triggers]]")[0]
+    text = session_config_text(w.machine_id, board="plain")
     w.st.write(
         w.owner, "plain", text, connections=[], sha256=hashlib.sha256(text.encode()).hexdigest()
     )

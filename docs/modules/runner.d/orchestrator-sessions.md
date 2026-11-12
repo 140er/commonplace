@@ -4,7 +4,7 @@
 
   - Owner stop never clears an unknown-effect marker. Session leasing filters by machine and skips bad boards, session failures leave per-card leasing available, and fenced local refusals expose their code without host effects.
 
-  - Persistent board sessions use accepted runner authority without todo triggers, retain thread bindings and durable owner stops, continue actionable boards and leave clear boards idle. Ambiguous effects and changed bindings fail closed; per-card worker slots remain separate.
+  - Persistent board sessions are opt-in (`[runner] session = true`) and use accepted runner authority without todo triggers, retain thread bindings and durable owner stops, continue actionable boards and leave clear boards idle. Ambiguous effects and changed bindings fail closed; per-card worker slots remain separate.
 
 - **Tests:**
 

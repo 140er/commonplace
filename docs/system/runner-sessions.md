@@ -1,9 +1,11 @@
 ### Runner-owned persistent board sessions
 
-- Every owner-accepted live `[runner]` enables a separate `runner_sessions`
-  record, without `[[triggers]]`, a manual watch/webhook or the workspace
-  splitting switch. No accepted runner is `no_host: no host attached`; no
-  machine is selected implicitly.
+- An owner-accepted live `[runner]` with `session = true` (optional, default
+  false, so existing configs are unchanged) enables a separate
+  `runner_sessions` record, without `[[triggers]]`, a manual watch/webhook or
+  the workspace splitting switch. No accepted runner is `no_host: no host
+  attached`; a runner without the key is `no_host: sessions not enabled`, makes
+  no host call and starts no wake. No machine is selected implicitly.
 - The runner launches the parentless orchestrator role with the accepted
   machine/project/runtime, its role topic/instructions and resolved model,
   retains the returned thread binding, inspects host turns and continues the

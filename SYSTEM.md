@@ -507,7 +507,7 @@ optional `reviewer` argument to `task_add` and `task_update`.
 
   - Without a runner or subscribed `card.created` webhook, a new card waits for the orchestrator's next session.
 
-  - An accepted live `[runner]` now enables a persistent session through the existing machine runner loop, without requiring a `card.todo` trigger; no service is activated automatically.
+  - An accepted live `[runner]` with `session = true` enables a persistent session through the existing machine runner loop, without requiring a `card.todo` trigger; configs without the key are unchanged and no service is activated automatically.
 
   - Splitting and inbox behavior are not introduced by this switch.
 

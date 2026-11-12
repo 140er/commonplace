@@ -11,7 +11,7 @@ from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._phase_b_helpers import cap, doing
 from tests._projects_helpers import ProjectsHub
 from tests._split_helpers import blockers
-from tests.test_orch_runner import World, config_text
+from tests.test_orch_runner import World, config_text, session_config_text
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def session_world(hub, tmp_path, monkeypatch):
     p = ProjectsHub(hub)
     w.project_http = p
     w.board_id = w.board_row()["id"]
-    w.write(config_text(w.machine_id).split("[[triggers]]")[0])
+    w.write(session_config_text(w.machine_id))
     # Arm the legacy cursor: base failure must not be an arming/setup miss.
     triggers.arm_cursor(w.gw, w.ws, "acme")
     w.calls = []
@@ -145,3 +145,33 @@ def test_session_no_accepted_runner_has_no_host(session_world):
     assert w.session().get("state") == "no_host", "no accepted runner means no host attached"
     assert w.session()["reason"] == "no host attached"
     assert not w.calls
+
+
+def lean_board(w):
+    """A board shaped like the lean live config: `[runner]`, no triggers, no `session` key."""
+    w.write(config_text(w.machine_id).split("[[triggers]]")[0])
+    assert "session" not in w.st.get_accepted(w.owner, "acme").config().to_dict()["runner"]
+
+
+def test_runner_without_session_key_starts_no_session_and_no_wake(session_world):
+    w = session_world
+    lean_board(w)
+    w.card(status="backlog")
+    for _ in range(3):
+        assert w.tick() == 0
+    assert w.calls == [], "an accepted runner alone must not launch or wake an orchestrator"
+    state = w.session()
+    assert state["state"] == "no_host" and state["reason"] == "sessions not enabled"
+    assert w.control("resume")[0] != 200, "no session to resume while the board did not opt in"
+    assert not w.all_jobs()
+
+
+def test_runner_session_key_must_be_boolean_and_is_omitted_when_off(session_world):
+    from commonplace.orch import schema
+
+    text = session_config_text(session_world.machine_id)
+    assert schema.parse(text).runner.session is True
+    assert "session" not in schema.parse(text.replace("session = true\n", "")).to_dict()["runner"]
+    with pytest.raises(schema.ConfigError) as err:
+        schema.parse(text.replace("session = true", 'session = "yes"'))
+    assert err.value.code == "wrong_type"

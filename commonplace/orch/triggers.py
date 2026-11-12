@@ -165,6 +165,11 @@ def _actor(gateway, workspace_id, event, machine):
     return principal, ref, None
 
 
+def _session_only(config) -> bool:
+    """A session-enabled config without triggers: per-card sweeps and split retries stay off."""
+    return config.runner.session and not config.triggers
+
+
 def _sweep_board(js, st, board: str, now) -> list[dict]:
     gateway, ws = js.gateway, js.workspace_id
     directory = gateway.workspace_dir(ws)
@@ -190,7 +195,7 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
         if not events and not on and not retries:
             return results
         version = orch_store.resolve_in(conn, board)
-        if not version.config().triggers:
+        if _session_only(version.config()):
             return results
         machine = registry.get_machine(gateway.db, ws, version.config().runner.machine)
         stopped = False
@@ -331,7 +336,7 @@ def _reconcile(js, st, board, now):
         if pair is None or pair[0] is None:
             return results
         version = orch_store.resolve_in(conn, board)
-        if not version.config().triggers:
+        if _session_only(version.config()):
             return results
         machine = registry.get_machine(gateway.db, ws, version.config().runner.machine)
         for row in roots:

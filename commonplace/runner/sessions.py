@@ -87,8 +87,11 @@ def board_state(gateway, ws, board):
 
 def _host(conn, board):
     version = configs.accepted_in(conn, board)
-    if version is None or not version.config().has_runner:
+    if version is None:
         return None
+    runner = version.config().runner
+    if runner is None or not runner.session:
+        return None  # sessions are opt-in: `[runner] session = true`
     return version
 
 
@@ -201,7 +204,13 @@ def status(gateway, ws, board):
             return {"state": "no_host", "reason": "no host attached", **work}
         version = _host(conn, board)
         if version is None:
-            return {"state": "no_host", "reason": "no host attached", **work}
+            accepted = configs.accepted_in(conn, board)
+            reason = (
+                "sessions not enabled"
+                if accepted is not None and accepted.config().has_runner
+                else "no host attached"
+            )
+            return {"state": "no_host", "reason": reason, **work}
         has_sessions = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE name='runner_sessions'"
         ).fetchone()

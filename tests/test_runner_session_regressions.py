@@ -7,7 +7,7 @@ import pytest
 from commonplace.runner import agent, sessions
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._phase_b_helpers import machine_two
-from tests.test_orch_runner import config_text
+from tests.test_orch_runner import session_config_text
 from tests.test_orch_sessions import session_world as session_world, start
 
 
@@ -32,7 +32,7 @@ def test_unavailable_configured_board_does_not_starve_session(session_world, bro
     machine = machine_two(w)["id"] if broken == "foreign_archived" else w.machine_id
     name = "aaa-unavailable"
     w.boards.board_add(slug=name, wing="shared")
-    text = config_text(machine, board=name).split("[[triggers]]")[0]
+    text = session_config_text(machine, board=name)
     w.st.write(
         w.owner, name, text, connections=[], sha256=hashlib.sha256(text.encode()).hexdigest()
     )
