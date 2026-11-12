@@ -140,6 +140,15 @@
           "name": "board_set"
         },
         {
+          "description": "Read-only (workspace owner): the chat-platform installs of this workspace, whether each is on, tested, how many channels are mapped and when it last received an event. Never returns credentials.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "name": "bridge_status"
+        },
+        {
           "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2080,6 +2089,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "bridge_status",
       "card_goal",
       "card_split_done",
       "card_start",
@@ -2294,6 +2304,15 @@
           "name": "board_own_wing"
         },
         {
+          "description": "Read-only (workspace owner): the chat-platform installs of this workspace, whether each is on, tested, how many channels are mapped and when it last received an event. Never returns credentials.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "name": "bridge_status"
+        },
+        {
           "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
           "inputSchema": {
             "additionalProperties": false,
@@ -3258,6 +3277,7 @@
       "board_add",
       "board_list",
       "board_own_wing",
+      "bridge_status",
       "card_goal",
       "card_split_done",
       "decide",
@@ -3434,6 +3454,15 @@
             "type": "object"
           },
           "name": "board_set"
+        },
+        {
+          "description": "Read-only (workspace owner): the chat-platform installs of this workspace, whether each is on, tested, how many channels are mapped and when it last received an event. Never returns credentials.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {},
+            "type": "object"
+          },
+          "name": "bridge_status"
         },
         {
           "description": "Point a card at a goal, or clear it with goal omitted. Signed-in workspace owner only.",
@@ -5376,6 +5405,7 @@
       "board_list",
       "board_own_wing",
       "board_set",
+      "bridge_status",
       "card_goal",
       "card_split_done",
       "card_start",
