@@ -11,9 +11,15 @@
 
 - **Promises:**
 
+  - `eval preflight` is dispatched without the backup fence or data lock, so a stat-only report creates no lock file on a fresh data directory.
+
+  - `commonplace eval` is registered by the parser and dispatched like other one-shot commands (backup fence, shared data lock); its module loads no scanner or store until an eval command runs.
+
   - `runner report` sends only the values it was given for one started run; it never opens the data directory.
 
   - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
+
+  - `commonplace token add` also refuses `bots:chat` and `bots:confirm`; they need the person's own consent.
 
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
   - Opt-in backup reporting records only the final selected mode; check/cleanup/restore never report. Receipt failure preserves backup return/exception; test_backup_status.py covers both outcomes and fallback.
