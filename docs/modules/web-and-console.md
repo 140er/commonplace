@@ -48,6 +48,8 @@
 
   - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
 
+  - Settings mounts the owner-only Tool policy section (`tool-policy.js`) after Scheduled prompts; the section removes itself for anyone the route refuses.
+
 - **Promises:**
   - Project settings show a model field pair for each role (orchestrator, builder, reviewer, gate) and an escalation rule form (failed rounds, labels, stronger model); non-owners see both read-only without a save button.
 
