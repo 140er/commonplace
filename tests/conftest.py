@@ -18,6 +18,7 @@ which keeps the test-impact picture of a change honest.
 
 import hashlib
 import importlib.abc
+import logging
 import math
 import os
 import re
@@ -448,6 +449,26 @@ def _utc_local_zone(monkeypatch):
     )
 
 
+def _reset_worker_observer(mcp_server):
+    """Drop the process-global worker observer and its failure latch.
+
+    A failed construction latches for the rest of the process, so a test that
+    served a request with a stub config would otherwise silence observation
+    for every later test.
+    """
+    if not hasattr(mcp_server, "_worker_observer"):
+        return
+    observer = mcp_server._worker_observer
+    if observer is not None:
+        try:
+            observer.close()
+        except Exception:
+            logging.getLogger(__name__).warning("worker observer close failed", exc_info=True)
+    mcp_server._worker_observer = None
+    mcp_server._worker_observer_failed = False
+    mcp_server._worker_observation_lost = 0
+
+
 @pytest.fixture(autouse=True)
 def _reset_mcp_cache(monkeypatch, _close_test_storage_clients):
     """Reset cached MCP state between tests without importing mcp_server.
@@ -517,6 +538,8 @@ def _reset_mcp_cache(monkeypatch, _close_test_storage_clients):
                     mcp_server._collection_cache_palace = None
                 if hasattr(mcp_server, "_collection_open_error"):
                     mcp_server._collection_open_error = None
+
+                _reset_worker_observer(mcp_server)
         except AttributeError:
             pass
 

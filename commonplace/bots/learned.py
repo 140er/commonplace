@@ -248,7 +248,7 @@ class Learned:
         ).fetchone()
         notes = conn.execute(
             "SELECT COUNT(*) FROM bot_memory m JOIN bots b ON b.id=m.bot_id WHERE b.user_id=? "
-            "AND m.removed_at IS NULL" + (" AND b.id=?" if bot_id is not None else ""),
+            "AND m.removed_at IS NULL AND m.owner_id IS NULL" + (" AND b.id=?" if bot_id is not None else ""),
             args,
         ).fetchone()[0]
         return {**{k: row[k] for k in ("person", "shared", "proposed")}, "notes": notes}
@@ -370,7 +370,7 @@ class Learned:
             return None
         return conn.execute(
             "SELECT m.* FROM bot_memory m JOIN bots b ON b.id=m.bot_id "
-            "WHERE m.id=? AND b.user_id=? AND m.removed_at IS NULL",
+            "WHERE m.id=? AND b.user_id=? AND m.removed_at IS NULL AND m.owner_id IS NULL",
             (int(match[1]), user_id),
         ).fetchone()
 
@@ -428,7 +428,7 @@ class Learned:
                     _note(r)
                     for r in conn.execute(
                         "SELECT m.* FROM bot_memory m JOIN bots b ON b.id=m.bot_id "
-                        "WHERE b.user_id=? AND m.removed_at IS NULL"
+                        "WHERE b.user_id=? AND m.removed_at IS NULL AND m.owner_id IS NULL"
                         + (" AND b.id=?" if bot_id is not None else "")
                         + " ORDER BY m.id DESC LIMIT ?",
                         (user_id, *([bot_id] if bot_id is not None else []), limit + offset),
@@ -521,7 +521,8 @@ class Learned:
             ).fetchall()
             forgotten = self._delete(conn, user_id, rows)
             notes = conn.execute(
-                "UPDATE bot_memory SET removed_at=?, text='' WHERE bot_id=? AND removed_at IS NULL",
+                "UPDATE bot_memory SET removed_at=?, text='' WHERE bot_id=? AND removed_at IS NULL "
+                "AND owner_id IS NULL",
                 (stamp(), bot_id),
             ).rowcount
             newest = conn.execute(

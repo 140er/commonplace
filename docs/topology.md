@@ -2,7 +2,7 @@
 
 The single source of truth for the Compute map: machines, how they reach each other, and how a website is routed to the app that serves it. Everything is a structured fact in the workspace's `topology` wing. The map, the agent tools and the live status all read from this store; nothing else holds a second copy.
 
-Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`.
+Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`. How agents write and the owner approves is under Proposals below; how an agent finds a website's route is under Site route discovery.
 
 ## Facts
 
@@ -221,6 +221,83 @@ A route's `hops` is a list of `{"link", "from", "to", "method", "known", "stale"
 
 `read_graph` returns `{"wing", "nodes", "links", "routes", "conflicts"}`. A conflict is `{"conflict_id", "subject", "predicate", "state", "created_at", "resolved_by", "resolved_at", "current", "contender"}`, where both values have the field shape above. `history` returns every value a subject held, newest first, each with `predicate`, `state` and `superseded_by`.
 
+## Proposals: agents write, the owner approves
+
+Agents do not call the store. They hand in facts through one tool, `topology_propose`, and the hub decides what may be written at once and what the owner must approve. Code: `commonplace/topology/proposals.py` (the rules) and `commonplace/topology/proposal_api.py` (the tool, the routes and the decision listener). Tests: `tests/test_topology_proposals.py`.
+
+```
+topology_propose(items=[...], remove=[...], evidence="...", ttl_seconds=None, board=None)
+POST /api/topology/proposals      the same arguments as JSON
+```
+
+`items` are the write items of the store. `remove` lists subjects to take off the map (`"route:example.test"`), or `{"subject": "node:web1", "field": "os"}` for one field. `evidence` is required and kept verbatim. The caller needs write access to the `topology` wing; the observer comes from the authenticated caller, never from the arguments.
+
+The request is compared with the map as it is now, fact by fact:
+
+| Caller | Fact | What happens |
+| --- | --- | --- |
+| a runner, about itself | new | applied at once |
+| a runner, about itself | same value | refreshed: one more observation, a later expiry |
+| a runner, about itself | different value | proposed |
+| a runner, the `status` of its own link | different value | written at once as an observation (the optional path report of Live status); counted as `observed` |
+| a runner, about anything else | new or different | proposed |
+| any other agent | new or different | proposed |
+| any other agent | same value | nothing; counted as `unchanged` |
+| the signed-in owner | new, different or removed | applied at once, as the authoritative value |
+| anyone but the owner | removed | proposed |
+
+A runner is the worker connection of an enabled machine whose grant includes the `topology` wing; its observer is `runner` with the machine id. "About itself" is a node whose `runner_id` is that machine, a new node the runner declares with its own `runner_id`, and a link with such a node at either end. Routes, other nodes, and binding itself to a node that already exists are not about itself.
+
+Everything proposed in one call is one proposal and one decision. The reply holds `applied` and `proposal` (each `null` or a row), `unchanged` and `observed`. The same observer proposing exactly the same change while its decision is still open gets that proposal back instead of a second card. The decision is opened before anything is written: when it cannot be opened (no board the caller may write), the call fails and stores no fact.
+
+### The decision
+
+A proposal opens one ask for the workspace owner through the ordinary ask path, so it shows up in "needs you" like any other question. It carries two structured options:
+
+- **Approve**, with the map after the change as its preview;
+- **Reject**, with the map before the change as its preview.
+
+```
+Before:                 After:
+node web1               node web1
+  os: Linux 6.8           os: Linux 6.9
+  role: (not set)         role: web server
+```
+
+A removed value reads `(removed)`. The ask's context holds the proposal id, the observer and the evidence. Nothing is cut short: a change that does not fit one preview is refused with "propose it in smaller parts", so the owner never approves a line they could not read.
+
+The owner answers the card as they answer any ask. Then:
+
+- **Approve** applies the change with the proposing observer and its evidence as provenance, as an authoritative write (`replace=True`). The old values stay in history.
+- **Reject**, or a written reply without a choice, changes nothing. The old fact stays. The same change proposed again within seven days, by any observer, gets that rejected proposal back instead of a new card; a different change, or the owner's own write, is not held back. Proposals never reach the store before approval, so a rejected proposal leaves no conflict record and a repeat opens none.
+- The proposal is **void**, and nothing is applied, when the card was edited, withdrawn or asked again before the owner answered it, when the answer does not come from a workspace owner, or when the map no longer matches the "before" that was shown. A void proposal can simply be proposed again.
+
+Only the owner can answer: the board's decide path refuses everyone else, and the proposal checks the answer again against the card's own history. An owner's connection that holds `cards:decide` answers on the owner's behalf, as for any ask.
+
+The answer is applied when the card is decided. If the hub stopped in between, the next read of the proposals settles it; applying is safe to repeat.
+
+### History and undo
+
+Every applied change, a runner's self-report and an owner's own write included, is kept as a row with each fact's value before and after.
+
+```
+GET  /api/topology/proposals[?state=pending|applied|rejected|void|undone]
+GET  /api/topology/proposals/<id>
+POST /api/topology/proposals/<id>/undo        the signed-in workspace owner only
+```
+
+A row: `id`, `state`, `origin` (`proposal`, `self_report` or `owner`), `observer`, `proposed_by`, `evidence`, `changes` (`subject`, `predicate`, `before`, `after`; `null` means no value), `card`, `created_at`, `decided_by`, `decided_at`, `note`, `undone_by`, `undone_at`. Reading needs read access to the `topology` wing.
+
+Undo puts back what the change replaced: a changed or removed value is written again as the owner's authoritative value, and a subject or field the change added is retracted. A fact that changed again since is left alone and listed under `skipped`. Undo deletes nothing; the undone values stay in the store's history.
+
+### The secret filter
+
+A proposal passes the same filter as a write (`model.facts_for`, `model.evidence_text`) before a row or a decision card exists. A refused proposal stores nothing and asks nothing, and the refusal names the field and the kind of secret, never the value.
+
+### Storage
+
+Proposals are rows of `topology_proposals` in `topology.sqlite3`, next to the facts. The table is added to an existing file by the first proposal; a workspace without proposals reads as an empty list and reading creates nothing.
+
 ## Live status
 
 Live status of machines and of the two ends of every link, derived from signals that runners already send. There is no probing daemon: nothing in this section opens a connection to a machine.
@@ -341,6 +418,168 @@ Thresholds are configuration, not constants. `StatusConfig` holds them; build it
 | `path_unknown_after_s` | `COMMONPLACE_TOPOLOGY_PATH_STALE_S` | 3600 | a path report older than this is unknown |
 
 Each is a whole number of seconds; `green_within_s` must be below `red_after_s` and `path_fresh_s` below `path_unknown_after_s`, or the config is refused with a `TopologyError`.
+
+## Map read
+
+The map canvas in the web app draws from `GET /api/topology` (the `topology_get` read with no `node` and no `site`), the same answer agents get. Beside `nodes`, `links`, `routes` and `conflicts` the whole-graph answer holds `status`: one state per node and one per end of a link, `up`, `degraded`, `down` or `unknown`. It is `status.read_status` of the same graph (see Live status), reduced to the one word that is drawn by `answers.status_words`; reasons and times stay in that read. A node that is not a runner machine and a link without a path report are `unknown`, never `up`. A node or site read has no `status` block.
+
+```json
+{
+  "scope": "graph", "found": true, "as_of": "2026-11-12T10:00:00Z",
+  "counts": {"nodes": 1, "links": 1, "routes": 0, "conflicts": 0},
+  "nodes": [{"subject": "node:web1", "key": "web1", "values": {"kind": "server", "name": "Web 1"},
+             "fields": {"kind": {"value": "server", "stale": false}}, "stale": false, "conflicted": false}],
+  "links": [], "routes": [], "conflicts": [],
+  "status": {
+    "nodes": {"web1": "unknown"},
+    "links": {"laptop>web1:tailscale": {"from": "up", "to": "up"}}
+  }
+}
+```
+
+The read needs the `memory:read` scope and a read grant on the `topology` wing, like every topology read. A stale node keeps its last `kind`, `name` and `role` in `fields` (each with `stale: true`), so the canvas draws a faded icon with its label and marks it stale.
+
+## The map in the app
+
+The owner opens the map from **Compute map** under **Workspace** in the account menu, or from the command palette (`#/compute-map`). It is drawn as SVG by `commonplace/web/static/topology-map.js` with `topology-layout.js` (layout, pan and zoom maths) and `topology-icons.js` (one icon per node kind, drawn for this app). Nothing is loaded from another origin.
+
+- **Devices** are icons with the name and the role underneath. A stale device is faded with a dashed outline and says "stale"; a device with an open conflict says "conflict"; a device that a link or route names but that has no facts is drawn as an unknown device that says "not recorded".
+- **Links** are lines with a status mark at each end. A status is a shape and a word as well as a colour: circle for up, triangle for degraded, square for down, ring for unknown. Each mark and each device carries its status as text for a screen reader and as a tooltip, and the legend names the four shapes. Two methods between the same two devices run side by side.
+- **Layout** is automatic and the same on every load: rows from site to DNS or CDN, edge, machine and app, with the devices people sit at last. A device dragged somewhere stays there. Dragged places and the chosen view are remembered in the browser, per workspace; **Reset layout** forgets the places.
+- **Moving around:** drag the background to pan, scroll or pinch to zoom, or use the buttons. With the canvas focused, the arrow keys pan, `+` and `-` zoom and `0` fits everything. On a focused device, Enter selects it and Shift with an arrow key moves it.
+- **Route** highlights one site's route as a path, dims the rest, and writes the hops out in words, including a hop that is unknown or stale.
+- **Live:** the map reads again every five seconds while the tab is visible and redraws only when something changed. If a read fails, the last map stays and a line says it is not updating.
+- **Empty workspace:** the empty state has one button, "Start agent work on map". The canvas only offers it; the discovery work behind it is separate, and until that is connected the button is off and says so.
+
+Selecting a device sends a `topology:select` event (`detail.key`) from the map's root element, which is where the detail panel attaches (see below).
+
+## Node detail read
+
+`GET /api/topology/node?key=<node key>` is what the node detail panel reads. It lives in `commonplace/topology/node_panel.py` and `node_agents.py`. Access is the `topology` wing grant (`policy.can_read_wing`), the same rule as the agent tools, so it is not owner-only; what the agents part adds is decided separately, below. It reads one workspace's store and creates no file.
+
+```json
+{
+  "as_of": "2026-01-01T10:20:00Z",
+  "node": {"key": "web1", "found": true, "stale": false, "conflicted": false,
+           "fields": {"os": {"value": "Linux 6.8", "stale": false,
+                             "observed_at": "2026-01-01T10:00:00Z", "expires_at": "2026-01-31T10:00:00Z",
+                             "sources": [{"kind": "agent", "id": "conn_…", "observed_at": "…", "seen_count": 1, "evidence": "uname -sr"}],
+                             "contenders": 0}}},
+  "sites": [{"site": "example.test", "role": "hosted", "stale": false, "observed_at": "…", "expires_at": "…",
+             "sources": [], "hops": 3, "at": [{"index": 2, "link": "web1>app:hosts", "from": "web1", "to": "app",
+                                               "method": "hosts", "known": true, "stale": false, "status": "up",
+                                               "observed_at": "…", "status_observed_at": "…"}]}],
+  "agents": {"applicable": true, "machine": {"id": "mach_…", "label": "web1-runner", "enabled": true, "revoked": false},
+             "connections": [{"kind": "machine", "name": "…", "last_used_at": "…", "revoked": false}],
+             "runs": [{"job": "…", "state": "started", "board": "atlas", "card": 442, "project": "…", "topic": "…",
+                       "thread_id": "…", "updated_at": "…", "started_at": "…", "log_ref": "…"}],
+             "coordinators": [{"board": "atlas", "lease": {"epoch": 4, "holder": "…", "expires_at": "…", "live": true},
+                               "open_steps": 2, "threads": [{"thread_id": "…", "card": 444, "state": "started", "updated_at": "…"}]}]}
+}
+```
+
+- `node.fields` holds only the node fields of the allow-list (see Facts), with a stale value kept and marked `stale: true`; a key nothing is recorded for is `{"key": …, "found": false}`. `sources` are the observers of the value, newest first, with the first line of their evidence (up to 200 characters; evidence has already passed the secret filter).
+- `sites` lists every route that starts at, ends at or passes through the node. `role` is `site` (the node is the website), `hosted` (the node ends the route, or is the machine that `hosts` what ends it) or `through`. `at` has the node's hops with their freshness; a hop without link facts says `known: false` and carries no times.
+- `agents` is for a node whose `runner_id` is a machine enrolled in this workspace; any other node answers `{"applicable": false, "reason": "not_a_runner" | "machine_not_found"}`. Runs are start jobs of that machine that are queued, leased, starting or uncertain, or started with no end reported in the last six hours. Coordinators are boards whose live orchestrator config runs on the machine, with the checkpoint's lease and thread builders.
+- Grants: `connections` is `null` unless the caller is a signed-in workspace owner. A run or coordinator is listed only when the caller may read the board's wing. A caller without the `topology` wing gets `403`, a request without a session `401`, a key that is not a node key `400`.
+
+## The node detail panel
+
+`commonplace/web/static/topology-detail.js` (with `topology-detail.css`) is a read-only panel for the device selected on the canvas. It creates its element on the first `topology:select`, reads the node read and `GET /api/topology/route?target=<key>` (the `topology_route` answer), and reads them again every five seconds while the device stays selected and the tab is visible. The canvas mounts it with one call; it changes the canvas only by setting the canvas's own route picker.
+
+| Tab | Shows | From |
+| --- | --- | --- |
+| Physical | hardware, OS, CPU, GPU, cores, memory, storage; the newest observation time | `node.fields` |
+| Config | hostname, Tailscale name, ssh alias, runner id, wings and the links that end at the device, as rows and as copyable text; below, the `topology_route` answer exactly as an agent gets it (answer sentence, each way in or each hop with method, alias, jump host, port and status), copyable | `node.fields`, the map's links, `GET /api/topology/route` |
+| Agents | the machine, its connections, its runs with a link to the card and the log, and each coordinator's lease with the thread builders its checkpoint lists, each linking to its card or board | `agents` |
+| Sites | each site the device hosts or passes, the hops where it appears with status, and a button that highlights that route on the map | `sites` |
+
+- Every value shows where it came from (observer kind and id, or "runner registry", "start job", "checkpoint", "connection") and how old it is; a stale value is marked `stale` in words, dashed and shows when it was last observed.
+- A device with nothing to show has a plain empty state (no hardware recorded, not a runner machine, no agents working, no site routed), and a device the map draws but the store has no facts for says "not recorded".
+- Nothing is editable: there is no input, textarea or write call. Changes go through agent proposals.
+- Only fields of the store's allow-list are shown, so a field outside it never appears even if a read carried one. Every value is escaped; a log reference that is not an `http` or `https` link is shown as text.
+- A read the caller may not make says so in words ("You may not read the details of this device"); a missing route answer leaves the rest of the tab working.
+
+The Config tab depends on the agent tools' REST read (`GET /api/topology/route`, card 438). Without it the facts still show and the route part says the answer is not available.
+
+## Site route discovery
+
+How a website is routed is found by an agent, read-only, and handed to the owner as a proposal. Code: `commonplace/topology/site_dns.py` (the DNS step), `commonplace/topology/proxy_adapters.py` (the reverse proxy adapters), `commonplace/topology/site_routes.py` (the mapping to nodes, links and a route) and `commonplace/topology/site_route_api.py` (the tool). Tests: `tests/test_topology_site_adapters.py`, `tests/test_topology_site_routes.py`.
+
+```
+topology_discover_site(site="example.com",
+                       proxies=[{"node": "web1", "kind": "caddy", "config": "<the config text>"}],
+                       machines=[{"node": "web1", "addresses": ["203.0.113.10"]}],
+                       apps=[{"node": "blog", "host": "web1", "port": 3000, "names": ["blog"]}],
+                       ttl_seconds=None, board=None)
+```
+
+Only `site` is required. The caller needs write access to the `topology` wing, and that is checked before anything is looked up. The agent reads the proxy configuration on the user's machine itself, without changing anything there, and passes the text in; the hub never reaches into a machine.
+
+The route is derived in three steps, and every hop keeps the lines it was derived from:
+
+1. **DNS.** One lookup of the public name through the hub's resolver: the alias chain and the addresses. Only public domain names are looked up: an address, a single label, `localhost` and special-use suffixes such as `.local`, `.internal` or `.test` are refused without a lookup. The step never connects to what it finds. The answer is matched against the `hostname` of the nodes on the map and against `machines`, the addresses the agent saw for a node. The match is the first hop, `<site>><node>:dns`.
+2. **Reverse proxy.** The config handed in for that node is read by its adapter, which returns the sites it names and their upstream targets. A node of kind `cloud` or `router` is a proxy or CDN in front: the route continues with a `proxy` hop to the machine whose config names the site.
+3. **Upstream.** The upstream for the whole site becomes the `reverse_proxy` hop:
+
+| The upstream is | The route continues to |
+| --- | --- |
+| the machine itself (`localhost`, a loopback address, a unix socket, the node's own name) | the app the map or `apps` knows on that port, else a new container node `<node>-port-<port>` |
+| a container or app known from `apps` or the map | that node; through a `reverse_proxy` hop to its machine and a `hosts` hop when it runs on another machine |
+| another machine on the map (by `hostname`, `tailscale_name`, an alias or its key) | that machine, then a `hosts` hop to the app known on that port, if any |
+| a bare name nobody listed (`blog:3000`) | a new container node `<node>-<name>` on the proxy's machine |
+| any other name or address, or a placeholder the config does not spell out | an external node |
+
+A site whose entry has no upstream (the machine serves it itself), a machine without a config handed in and a config that does not name the site all end the route at the machine, with a note that says which.
+
+**External / unknown.** When the name points at nothing on the map, or the upstream is nobody's, the route ends in an explicit node of kind `cloud` named `External / unknown`, keyed `ext-<address or name>` and with that name as its `hostname`. Nothing is guessed past it: a proxy config that names the site on a machine DNS does not lead to is reported as a note, not stitched onto the route. To continue such a route, name the node in front under `machines` (kind `cloud` for a proxy or CDN) or record its hostname on the map, and run the discovery again.
+
+**A proposal, never a write.** The derived nodes, links and route go through `proposals.propose` with the caller as observer. Nodes already on the map are not written again. A first route is one decision for the owner; a rerun that finds the same route asks nothing; a changed upstream shows up as the route's hops before and after and is applied only when the owner approves. A name without DNS records proposes nothing and removes nothing. The reply holds `site`, `resolved`, `ends` (`app`, `host`, `edge` or `external`), `hops` (each with its `link` and `evidence`), `notes`, `withheld`, and `applied`, `proposal` and `unchanged` as for `topology_propose`.
+
+### Reverse proxy adapters
+
+An adapter gets configuration text and returns the sites it names and, per site, the upstream targets with the config line as evidence. Two ship:
+
+| `kind` | Reads |
+| --- | --- |
+| `caddy` | a Caddyfile (site blocks, the one-site form, snippets in the same file, `handle`, `handle_path` and `route` blocks, `reverse_proxy` with upstreams or a `to` line), or Caddy's JSON config |
+| `nginx_proxy_manager` | its proxy-host rows as JSON (the API's list or rows of the `proxy_host` table), or the nginx server files it generates |
+
+What every adapter guarantees:
+
+- It reads only the text handed to it. An `import` or `include` of another file is not followed, no environment variable is read, nothing is run and nothing is connected to.
+- It keeps only site names and upstream targets. Basic-auth users and hashes, API tokens, TLS keys, headers and everything else in the config are never copied. Credentials inside an upstream URL are cut off. A site or upstream line that still looks like a secret to the secret filter is left out and counted in `withheld`.
+- A refusal (unknown `kind`, no text, more than 512 KB) never repeats any of the config. A config it cannot make sense of yields no sites instead of an error.
+
+Another proxy is one class:
+
+```python
+from commonplace.topology import proxy_adapters
+
+class TraefikAdapter(proxy_adapters.ProxyAdapter):
+    kind = "traefik"
+    label = "Traefik"
+
+    def read(self, text, found):
+        handle = found.site(["example.com"], "line 3: rule Host(`example.com`)")
+        found.upstream(handle, "http://app:3000", "line 7: url http://app:3000")
+
+proxy_adapters.register(TraefikAdapter())
+```
+
+`found.site` and `found.upstream` are the only way anything leaves an adapter; they apply the rules above. Add the new `kind` to the fixtures in `tests/test_topology_site_adapters.py`, including the secret tests.
+
+### Python API
+
+```python
+site_dns.lookup(site, resolver=None) -> {"name", "cnames", "addresses", "evidence"}
+proxy_adapters.parse(kind, text) -> Parsed(sites, withheld)
+site_routes.derive(site, proxies=None, machines=None, apps=None, *, graph, resolver=None) -> dict
+site_routes.discover(ctx, site, proxies=None, machines=None, apps=None,
+                     ttl_seconds=None, board=None, *, resolver=None) -> dict
+```
+
+A resolver is a callable `resolver(name) -> site_dns.DnsAnswer(addresses, cnames)`. The hub uses the system resolver unless `gateway.topology_resolver` is set; tests pass a fake. A lookup that fails or takes longer than five seconds raises `DnsUnavailable` and proposes nothing. `derive` computes the route from `store.read_graph`'s result without proposing it.
 
 ## Existing workspaces
 

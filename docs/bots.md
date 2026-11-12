@@ -308,6 +308,11 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   text is not.
 - A memory note is removed by blanking it: it disappears from the list, the row stays so ids keep
   working, and its text is gone from the file.
+- Sharing a bot with other members (design: `docs/design/shared-team-bots.md`) is being built
+  in slices. The storage for it is in place and unused: a bot that is not shared works as
+  above. Sharing is off for every workspace until its owner turns it on, a share reaches
+  nothing until the bot's owner grants it something, and a member never reaches another
+  member's private thread.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 
