@@ -54,6 +54,9 @@ RULES = {
     "capture_settings": Rule(workspace=_W),
     "chat_front_jobs": Rule(user=_U, workspace=_W),
     "chat_handoffs": Rule(user=_U, workspace=_W),
+    "chat_live_posts": Rule(workspace=_W),
+    # Read marks name their reader as an actor ref (``user:<id>``), like card history.
+    "chat_live_reads": Rule(workspace=_W),
     "chat_model_settings": Rule(workspace=_W),
     "chat_runner_jobs": Rule(user=_U, workspace=_W),
     "chat_runners_seen": Rule(user=_U, workspace=_W),
