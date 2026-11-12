@@ -104,8 +104,8 @@ def inject(env, stored_id):
         )
 
 
-# ── B6: every refusal fixture of §3 ──
-def test_b6_every_refusal_fixture_refuses_without_filer_lookup(env, cont, monkeypatch):
+# ── every refusal case refuses without a filer lookup ──
+def test_every_refusal_case_refuses_without_filer_lookup(env, cont, monkeypatch):
     c = cont
     records = [native(word=str(i)) for i in range(3)]
     push(c, b"".join(records), name="main")
@@ -167,7 +167,7 @@ def test_b6_every_refusal_fixture_refuses_without_filer_lookup(env, cont, monkey
     monkeypatch.setattr(continuity_read, "filing_user", lambda *a: calls.append(a))
     for stored_id in sorted(targets):
         refused(archive(env, stored_id), UNSUPPORTED)
-    assert calls == [], "B6: filing_user ran before the rule refused"
+    assert calls == [], "filing_user ran before the rule refused"
     assert db_rows(env) == []
 
 
