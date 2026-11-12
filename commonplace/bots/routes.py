@@ -3,27 +3,39 @@ app holding ``bots:chat`` (``bots:confirm`` for confirm).
 
     GET    /api/bots                       {bots, model:{ready,label,code}, can_configure}
     POST   /api/bots                       {name, job?, instructions?, board?} -> 201 {bot}
-    PATCH  /api/bots/<id>                  {name?, job?, instructions?, archived?} -> {bot}
-    GET    /api/bots/<id>/messages         ?after=&before=&limit= -> {bot, messages, waiting, running}
-    POST   /api/bots/<id>/messages         {text, request_id} -> text/event-stream
+    PATCH  /api/bots/<id>                  {name?, job?, instructions?, archived?} -> {bot} (owner)
+    GET    /api/bots/<id>/messages         ?thread=&after=&before=&limit= -> {bot, messages, waiting, running}
+    POST   /api/bots/<id>/messages         ?thread= {text, request_id} -> text/event-stream
                                            (?stream=0 -> {message, reply} when the turn ends)
-    POST   /api/bots/<id>/stop             {request_id} -> {ok}
-    POST   /api/bots/<id>/confirm          {pending, accept} -> {message}
-    POST   /api/bots/<id>/read             {upto} -> {ok}
-    GET    /api/bots/<id>/memory           {memories}
-    POST   /api/bots/<id>/memory           {text} -> {memory}
-    DELETE /api/bots/<id>/memory/<mid>     {ok}
+    POST   /api/bots/<id>/stop             ?thread= {request_id} -> {ok}
+    POST   /api/bots/<id>/confirm          ?thread= {pending, accept} -> {message}
+    POST   /api/bots/<id>/read             ?thread= {upto} -> {ok}
+    GET    /api/bots/<id>/memory           ?own=1 {memories}
+    POST   /api/bots/<id>/memory           ?own=1 {text} -> {memory}
+    DELETE /api/bots/<id>/memory/<mid>     ?own=1 {ok}
     GET    /api/bots/<id>/access           {version, entries}   (owner and members with a share)
     PUT    /api/bots/<id>/access           {version, entries} -> {version, entries} (owner only,
                                            web session only, compare-and-set on version)
     GET    /api/bots/<id>/access/log       ?after=&limit= -> {log}
+    GET    /api/bots/<id>/shares           {shares} (owner: all; member: their own row)
+    POST   /api/bots/<id>/shares           {user, talk, see_shared} -> {share} (owner, web session)
+    PATCH  /api/bots/<id>/shares/<user>    {talk?, see_shared?} -> {share} (owner, web session)
+    DELETE /api/bots/<id>/shares/<user>    {ok} (owner, web session; idempotent)
+    GET    /api/bots/<id>/threads          {threads, own}
+    POST   /api/bots/<id>/threads          {visibility, title?} -> {thread} (private only for now)
+    PATCH  /api/bots/<id>/threads/<tid>    {archived} -> {thread} (the opener)
+    GET    /api/bots/settings              {sharing, can_configure}
+    PATCH  /api/bots/settings              {sharing} -> {sharing} (workspace owner, web session)
 
-A bot id that is unknown or belongs to someone else is 404. ``HANDLERS`` maps (method, path
-tail) to a handler, so a later route (sending a message) is one more entry.
+A bot id that is unknown, belongs to someone else or is shared with another person is 404. A
+bot's owner has the original thread; a member's thread is their own private one, opened on first
+use, and every route that takes ``?thread=`` answers 404 for a thread that is not theirs.
+``HANDLERS`` maps (method, path tail) to a handler, so a later route is one more entry.
 """
 
 import json
 import queue
+import re
 import time
 
 from commonplace import bots_grant, redact
@@ -35,12 +47,14 @@ from commonplace.bots import (
     limits,
     modelcfg,
     shares,
+    sharing_setting,
     store,
     tools,
     turn,
     updates,
 )
-from commonplace.bots.errors import Unsupported
+from commonplace.bots.errors import SharingOff, Unsupported
+from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, read_json, send_json
 
@@ -66,12 +80,27 @@ def _asks(gateway, principal):
         return []  # a member without the needs-me tool has none waiting
 
 
-def _view(bot, asks, working=()) -> dict:
+def _who(gateway, user_id) -> dict:
+    """A member as other members may see them: id and name (the email's first part if unnamed)."""
+    try:
+        user = gateway.db.user(user_id)
+        name = user["name"] or user["email"].split("@")[0]
+    except (ControlError, LookupError, KeyError):
+        name = ""
+    return {"id": user_id, "name": name}
+
+
+def _view(gateway, bot, asks, working=()) -> dict:
     waiting = sum(1 for ask in asks if bot["board"] in (None, ask["board"]))
     last = bot["last"]
     return {
         **{key: bot[key] for key in ("id", "name", "job", "instructions", "kind", "board")},
         "archived": bot["archived"],
+        "mine": bot["mine"],
+        "shared": bot["shared"],
+        "owner": _who(gateway, bot["owner_id"]),
+        "perms": bot["perms"],
+        "frozen": bot["frozen"],
         "last": None
         if last is None
         else {
@@ -85,8 +114,8 @@ def _view(bot, asks, working=()) -> dict:
     }
 
 
-def _running(principal, bot_id) -> bool:
-    return limits.REGISTRY.running(principal.workspace_id, bot_id) is not None
+def _running(principal, bot_id, thread=None) -> bool:
+    return limits.REGISTRY.running(principal.workspace_id, bot_id, thread) is not None
 
 
 def _working(gateway, principal, bots) -> set[str]:
@@ -99,6 +128,7 @@ def _working(gateway, principal, bots) -> set[str]:
 def _bot(gateway, principal, bot_id) -> dict:
     bots = _bots(gateway, principal)
     return _view(
+        gateway,
         bots.roster(principal.user_id, bot_id)[0],
         _asks(gateway, principal),
         _working(gateway, principal, bots),
@@ -124,7 +154,7 @@ def _listing(gateway, h, principal):
         h,
         200,
         {
-            "bots": [_view(bot, asks, working) for bot in bots.roster(principal.user_id)],
+            "bots": [_view(gateway, bot, asks, working) for bot in bots.roster(principal.user_id)],
             "model": _model(gateway, principal),
             "can_configure": principal.role == "owner",
         },
@@ -164,6 +194,30 @@ def _create(gateway, h, principal):
     send_json(h, 201, {"bot": _bot(gateway, principal, bot["id"])})
 
 
+THREAD_ID = re.compile(r"[0-9a-f]{32}")
+NO_THREAD_YET = object()  # a member who has not opened their private thread
+
+
+def _thread(h, bots, principal, bot_id, create=False):
+    """The thread this request acts on: ``?thread=``, else the caller's own.
+
+    ``None`` is the owner's original thread. A member's own thread is opened on first use when
+    ``create`` (``NO_THREAD_YET`` otherwise). Whether the caller reaches it is the store's call.
+    """
+    asked = query(h).get("thread")
+    if asked is not None:
+        if THREAD_ID.fullmatch(asked) is None:
+            raise store.Missing()
+        return asked
+    bot = bots.viewable(bot_id, principal.user_id)
+    if bot["owner_id"] == principal.user_id:
+        return None
+    own = bots.private_thread(bot_id, principal.user_id)
+    if own is None and create:
+        own = bots.thread_open(bot_id, principal.user_id, "private")["id"]
+    return NO_THREAD_YET if own is None else own
+
+
 def _patch(gateway, h, principal, bot_id, rest):
     if rest:
         _error(h, 404, "not_found", "Not found")
@@ -171,7 +225,11 @@ def _patch(gateway, h, principal, bot_id, rest):
     body = _body(h, {"name", "job", "instructions", "archived"})
     if body is None:
         return
-    _bots(gateway, principal).update(bot_id, principal.user_id, **body)
+    bots = _bots(gateway, principal)
+    if bots.viewable(bot_id, principal.user_id)["owner_id"] != principal.user_id:
+        _error(h, 403, "owner_only", "Only the bot's owner can change that.")
+        return
+    bots.update(bot_id, principal.user_id, **body)
     send_json(h, 200, {"bot": _bot(gateway, principal, bot_id)})
 
 
@@ -182,8 +240,12 @@ def _messages(gateway, h, principal, bot_id, rest):
     except ValueError:
         raise store.Invalid("invalid cursor") from None
     bots = _bots(gateway, principal)
-    turn.recover(gateway, principal.workspace_id, principal.user_id, bot_id)
-    page = bots.messages(bot_id, principal.user_id, **cursors)
+    thread = _thread(h, bots, principal, bot_id)
+    if thread is NO_THREAD_YET:
+        page = []
+    else:
+        turn.recover(gateway, principal.workspace_id, principal.user_id, bot_id, thread)
+        page = bots.messages(bot_id, principal.user_id, thread_id=thread, **cursors)
     reader = blocks.Reader(gateway, principal)
     asks = _asks(gateway, principal)
     bot = bots.roster(principal.user_id, bot_id)[0]
@@ -192,12 +254,12 @@ def _messages(gateway, h, principal, bot_id, rest):
         for ask in asks
         if bot["board"] in (None, ask["board"])
     ]
-    running = _running(principal, bot_id)
+    running = thread is not NO_THREAD_YET and _running(principal, bot_id, thread)
     send_json(
         h,
         200,
         {
-            "bot": _view(bot, asks, _working(gateway, principal, bots)),
+            "bot": _view(gateway, bot, asks, _working(gateway, principal, bots)),
             "messages": [blocks.message_view(reader, m) for m in page],
             "waiting": blocks.hydrate(reader, waiting),
             "running": running,
@@ -209,7 +271,10 @@ def _read(gateway, h, principal, bot_id, rest):
     body = _body(h, {"upto"})
     if body is None:
         return
-    _bots(gateway, principal).mark_read(bot_id, principal.user_id, body.get("upto"))
+    bots = _bots(gateway, principal)
+    thread = _thread(h, bots, principal, bot_id)
+    if thread is not NO_THREAD_YET:
+        bots.mark_read(bot_id, principal.user_id, body.get("upto"), thread)
     send_json(h, 200, {"ok": True})
 
 
@@ -217,25 +282,44 @@ def _note(memory) -> dict:
     return {**memory, "text": redact.redact(memory["text"])[0]}
 
 
+def _own_notes(h) -> bool:
+    return query(h).get("own") == "1"
+
+
 def _memory_list(gateway, h, principal, bot_id, rest):
-    notes = _bots(gateway, principal).memory_list(bot_id, principal.user_id)
+    notes = _bots(gateway, principal).memory_list(bot_id, principal.user_id, own=_own_notes(h))
     send_json(h, 200, {"memories": [_note(n) for n in notes]})
+
+
+def _memory_owner_only(gateway, h, principal, bot_id) -> bool:
+    """False (after a 403) when a member writes bot-level notes: those are the owner's."""
+    if _own_notes(h) or (
+        _bots(gateway, principal).viewable(bot_id, principal.user_id)["owner_id"]
+        == principal.user_id
+    ):
+        return True
+    _error(h, 403, "owner_only", "Only the bot's owner can change that.")
+    return False
 
 
 def _memory_add(gateway, h, principal, bot_id, rest):
     body = _body(h, {"text"})
-    if body is None:
+    if body is None or not _memory_owner_only(gateway, h, principal, bot_id):
         return
     memory = _bots(gateway, principal).memory_add(bot_id, principal.user_id, body.get("text"))
     send_json(h, 200, {"memory": _note(memory)})
 
 
 def _memory_remove(gateway, h, principal, bot_id, rest):
+    if not _memory_owner_only(gateway, h, principal, bot_id):
+        return
     try:
         memory_id = int(rest[0]) if len(rest) == 1 else None
     except ValueError:
         memory_id = None
-    if not _bots(gateway, principal).memory_remove(bot_id, principal.user_id, memory_id):
+    if not _bots(gateway, principal).memory_remove(
+        bot_id, principal.user_id, memory_id, own=_own_notes(h)
+    ):
         _error(h, 404, "not_found", "Not found")
         return
     send_json(h, 200, {"ok": True})
@@ -296,14 +380,17 @@ def _send(gateway, h, principal, bot_id, rest):
     if not isinstance(request_id, str) or store.REQUEST_ID.fullmatch(request_id) is None:
         raise store.Invalid("request_id")
     bots = _bots(gateway, principal)
-    bot = bots.get(bot_id, principal.user_id)
-    seen = bots.message_for_request(bot_id, principal.user_id, request_id)
+    bot = bots.viewable(bot_id, principal.user_id)
+    thread = _thread(h, bots, principal, bot_id, create=True)
+    if thread is not None and not bots.reach(principal.user_id, bot_id, thread).can_write:
+        raise store.Conflict()  # an archived thread or bot takes no new message
+    seen = bots.message_for_request(bot_id, principal.user_id, request_id, thread)
     if seen is not None:
         if seen["text"] != text:
             raise store.Conflict()
-        _replay(gateway, h, principal, bot_id, seen, stream)
+        _replay(gateway, h, principal, bot_id, seen, stream, thread)
         return
-    run = turn.TurnRun(gateway, principal, bot, request_id, started)
+    run = turn.TurnRun(gateway, principal, bot, request_id, started, thread_id=thread)
     try:
         limits.REGISTRY.admit(run)
     except limits.Busy as busy:
@@ -311,19 +398,21 @@ def _send(gateway, h, principal, bot_id, rest):
         return
     try:
         # A same-id request may have finished between the first look and admission.
-        seen = bots.message_for_request(bot_id, principal.user_id, request_id)
+        seen = bots.message_for_request(bot_id, principal.user_id, request_id, thread)
         if seen is None:
-            bots.lease_start(bot_id, principal.user_id, request_id)
-            message = bots.add_user_message(bot_id, principal.user_id, text, request_id)
+            bots.lease_start(bot_id, principal.user_id, run.key)
+            message = bots.add_user_message(
+                bot_id, principal.user_id, text, request_id, thread_id=thread
+            )
     except BaseException:
-        bots.lease_end(bot_id, request_id)
+        bots.lease_end(bot_id, run.key)
         limits.REGISTRY.release(run)
         raise
     if seen is not None:
         limits.REGISTRY.release(run)
         if seen["text"] != text:
             raise store.Conflict()
-        _replay(gateway, h, principal, bot_id, seen, stream)
+        _replay(gateway, h, principal, bot_id, seen, stream, thread)
         return
     run.start(message)
     if stream:
@@ -337,15 +426,15 @@ def _send(gateway, h, principal, bot_id, rest):
     send_json(h, 200, {"message": run.view(message), "reply": run.view(run.reply)})
 
 
-def _replay(gateway, h, principal, bot_id, message, stream):
-    events = turn.replay(gateway, principal, bot_id, message)
+def _replay(gateway, h, principal, bot_id, message, stream, thread=None):
+    events = turn.replay(gateway, principal, bot_id, message, thread)
     if stream:
         _relay(h, events)
         return
-    running = limits.REGISTRY.running(principal.workspace_id, bot_id)
+    running = limits.REGISTRY.running(principal.workspace_id, bot_id, thread)
     if events[-1][0] == "running" and running is not None:
         running.finished.wait()
-        events = turn.replay(gateway, principal, bot_id, message)
+        events = turn.replay(gateway, principal, bot_id, message, thread)
     if events[-1][0] == "running":
         _error(h, 409, "busy", "Still running")
         return
@@ -356,8 +445,15 @@ def _stop(gateway, h, principal, bot_id, rest):
     body = _body(h, {"request_id"})
     if body is None:
         return
-    _bots(gateway, principal).get(bot_id, principal.user_id)
-    running = limits.REGISTRY.running(principal.workspace_id, bot_id)
+    bots = _bots(gateway, principal)
+    thread = _thread(h, bots, principal, bot_id)
+    if thread is not NO_THREAD_YET:
+        bots.reach(principal.user_id, bot_id, thread)
+    running = (
+        None
+        if thread is NO_THREAD_YET
+        else limits.REGISTRY.running(principal.workspace_id, bot_id, thread)
+    )
     stopping = running is not None and running.request_id == body.get("request_id")
     if stopping:
         running.cancel.set()
@@ -370,8 +466,11 @@ def _confirm(gateway, h, principal, bot_id, rest):
         return
     if not isinstance(body.get("pending"), str) or type(body.get("accept")) is not bool:
         raise store.Invalid("pending")
+    thread = _thread(h, _bots(gateway, principal), principal, bot_id)
+    if thread is NO_THREAD_YET:
+        raise store.Missing()
     try:
-        message = turn.confirm(gateway, principal, bot_id, body["pending"], body["accept"])
+        message = turn.confirm(gateway, principal, bot_id, body["pending"], body["accept"], thread)
     except turn.Refused as refused:
         if refused.code == "expired":
             _error(h, 409, "expired", "This request expired. Ask again.")
@@ -462,6 +561,228 @@ def _access_put(gateway, h, principal, bot_id, rest):
     send_json(h, 200, _access_view(updated))
 
 
+# Sharing: who may reach a bot. Changed only by its owner, in a web session.
+
+
+def _web_only(h) -> bool:
+    """False (after a 404) for an app connection: sharing changes have no app scope."""
+    if auth.app(h) is None:
+        return True
+    _error(h, 404, "not_found", "Not found")
+    return False
+
+
+def _owner(gateway, h, principal, bots, bot_id) -> bool:
+    """True for the bot's owner; a 403 for a member who can see it (an unknown one is a 404)."""
+    if bots.viewable(bot_id, principal.user_id)["owner_id"] == principal.user_id:
+        return True
+    _error(h, 403, "owner_only", "Only the bot's owner can change that.")
+    return False
+
+
+def _share_view(gateway, share) -> dict:
+    return {
+        "user": _who(gateway, share["user_id"]),
+        "talk": share["talk"],
+        "see_shared": share["see_shared"],
+        "shared_at": share["shared_at"],
+    }
+
+
+def _audit_share(gateway, principal, bot_id, member_id, action) -> None:
+    """One control-database row per real change: ids and the kind of change, never text."""
+    gateway.db.audit(
+        action="bot_share:set",
+        decision="ok",
+        workspace_id=principal.workspace_id,
+        user_id=principal.user_id,
+        reason=f"bot={bot_id} member={member_id} {action}",
+        target_ids=[bot_id],
+    )
+
+
+def _shares_get(gateway, h, principal, bot_id, rest):
+    if rest:
+        _error(h, 404, "not_found", "Not found")
+        return
+    rows = _bots(gateway, principal).shares(bot_id, principal.user_id)
+    send_json(h, 200, {"shares": [_share_view(gateway, row) for row in rows]})
+
+
+def _put_share(gateway, h, principal, bots, bot_id, member_id, talk, see_shared):
+    """Share (or change a share), idempotently; 201 for a new share, 200 otherwise."""
+    before = {r["user_id"]: r for r in bots.shares(bot_id, principal.user_id)}.get(member_id)
+    try:
+        share = bots.share(bot_id, principal.user_id, member_id, talk, see_shared)
+    except SharingOff:
+        _error(h, 409, "sharing_off", "Sharing is switched off for this workspace.")
+        return
+    except store.Limit:
+        _error(h, 409, "limit", "That is as many shares as this bot can have.")
+        return
+    if before is None:
+        _audit_share(gateway, principal, bot_id, member_id, "share")
+    elif (before["talk"], before["see_shared"]) != (share["talk"], share["see_shared"]):
+        _audit_share(gateway, principal, bot_id, member_id, "permissions")
+    send_json(h, 200 if before else 201, {"share": _share_view(gateway, share)})
+
+
+def _shares_post(gateway, h, principal, bot_id, rest):
+    if rest or not _web_only(h):
+        _error(h, 404, "not_found", "Not found")
+        return
+    body = _body(h, {"user", "talk", "see_shared"})
+    if body is None:
+        return
+    bots = _bots(gateway, principal)
+    if not _owner(gateway, h, principal, bots, bot_id):
+        return
+    member = body.get("user")
+    if (
+        not isinstance(member, str)
+        or member == principal.user_id
+        or access.person(gateway, member, principal.workspace_id) is None
+    ):
+        raise store.Invalid("invalid member")  # unknown and non-members look the same
+    _put_share(
+        gateway,
+        h,
+        principal,
+        bots,
+        bot_id,
+        member,
+        body.get("talk", False),
+        body.get("see_shared", False),
+    )
+
+
+def _shares_patch(gateway, h, principal, bot_id, rest):
+    if len(rest) != 1 or not _web_only(h):
+        _error(h, 404, "not_found", "Not found")
+        return
+    body = _body(h, {"talk", "see_shared"})
+    if body is None:
+        return
+    bots = _bots(gateway, principal)
+    if not _owner(gateway, h, principal, bots, bot_id):
+        return
+    current = {r["user_id"]: r for r in bots.shares(bot_id, principal.user_id)}.get(rest[0])
+    if current is None:
+        raise store.Missing()
+    _put_share(
+        gateway,
+        h,
+        principal,
+        bots,
+        bot_id,
+        rest[0],
+        body.get("talk", current["talk"]),
+        body.get("see_shared", current["see_shared"]),
+    )
+
+
+def _shares_delete(gateway, h, principal, bot_id, rest):
+    if len(rest) != 1 or not _web_only(h):
+        _error(h, 404, "not_found", "Not found")
+        return
+    bots = _bots(gateway, principal)
+    if not _owner(gateway, h, principal, bots, bot_id):
+        return
+    if bots.revoke(bot_id, principal.user_id, rest[0]):
+        _audit_share(gateway, principal, bot_id, rest[0], "unshare")
+    send_json(h, 200, {"ok": True})
+
+
+# Threads: a member's private thread, and (later) shared ones
+
+
+def _thread_view(row) -> dict:
+    return {key: row[key] for key in ("id", "visibility", "title", "created_at", "archived")}
+
+
+def _threads_get(gateway, h, principal, bot_id, rest):
+    if rest:
+        _error(h, 404, "not_found", "Not found")
+        return
+    bots = _bots(gateway, principal)
+    rows = bots.threads(bot_id, principal.user_id)
+    try:
+        own = bots.private_thread(bot_id, principal.user_id)
+    except store.Missing:
+        own = None  # a member who may only read shared threads has no private one
+    send_json(
+        h,
+        200,
+        {
+            "threads": [
+                {**_thread_view(r), "mine": r["user_id"] == principal.user_id} for r in rows
+            ],
+            "own": own,
+        },
+    )
+
+
+def _threads_post(gateway, h, principal, bot_id, rest):
+    if rest:
+        _error(h, 404, "not_found", "Not found")
+        return
+    body = _body(h, {"visibility", "title"})
+    if body is None:
+        return
+    bots = _bots(gateway, principal)
+    visibility = body.get("visibility")
+    if visibility == "shared":  # shared threads and their audience rule come in a later release
+        bots.viewable(bot_id, principal.user_id)
+        _error(h, 409, "not_available", "Shared threads are not available yet.")
+        return
+    existed = bots.private_thread(bot_id, principal.user_id) is not None
+    thread = bots.thread_open(bot_id, principal.user_id, visibility, body.get("title", ""))
+    send_json(h, 200 if existed else 201, {"thread": _thread_view(thread)})
+
+
+def _threads_patch(gateway, h, principal, bot_id, rest):
+    if len(rest) != 1 or THREAD_ID.fullmatch(rest[0]) is None:
+        _error(h, 404, "not_found", "Not found")
+        return
+    body = _body(h, {"archived"})
+    if body is None:
+        return
+    thread = _bots(gateway, principal).thread_archive(
+        bot_id, principal.user_id, rest[0], body.get("archived")
+    )
+    send_json(h, 200, {"thread": _thread_view(thread)})
+
+
+# The workspace switch for sharing
+
+
+def _settings(gateway, principal) -> dict:
+    return {
+        "sharing": sharing_setting.enabled(gateway.db, principal.workspace_id),
+        "can_configure": principal.role == "owner",
+    }
+
+
+def _settings_get(gateway, h, principal):
+    send_json(h, 200, _settings(gateway, principal))
+
+
+def _settings_patch(gateway, h, principal):
+    if not _web_only(h):
+        return
+    body = _body(h, {"sharing"})
+    if body is None:
+        return
+    try:
+        sharing_setting.set_enabled(gateway.db, principal, body.get("sharing"))
+    except sharing_setting.NotOwner:
+        _error(h, 403, "owner_only", "Only a workspace owner can change that.")
+        return
+    except ValueError:
+        raise store.Invalid("sharing") from None
+    send_json(h, 200, _settings(gateway, principal))
+
+
 # (method, first segment after the id) -> handler(gateway, h, principal, bot_id, rest)
 HANDLERS = {
     ("PATCH", None): _patch,
@@ -475,6 +796,13 @@ HANDLERS = {
     ("DELETE", "memory"): _memory_remove,
     ("GET", "access"): _access_get,
     ("PUT", "access"): _access_put,
+    ("GET", "shares"): _shares_get,
+    ("POST", "shares"): _shares_post,
+    ("PATCH", "shares"): _shares_patch,
+    ("DELETE", "shares"): _shares_delete,
+    ("GET", "threads"): _threads_get,
+    ("POST", "threads"): _threads_post,
+    ("PATCH", "threads"): _threads_patch,
 }
 
 
@@ -517,6 +845,8 @@ def _guarded(gateway, h, run, tool="", scope=None):
         _error(h, 404, "not_found", "Not found")
     except Unsupported:
         _error(h, 400, "unsupported_kind", "That kind of access cannot be granted yet")
+    except SharingOff:
+        _error(h, 409, "sharing_off", "Sharing is switched off for this workspace.")
     except store.Invalid:
         _error(h, 400, "invalid", "Invalid request")
     except store.Limit:
@@ -562,6 +892,18 @@ def install(gateway) -> None:
         "POST",
         "/api/bots",
         lambda h: _guarded(gateway, h, lambda p: _create(gateway, h, p), tool="POST bots"),
+    )
+    gateway.add_route(
+        "GET",
+        "/api/bots/settings",
+        lambda h: _guarded(gateway, h, lambda p: _settings_get(gateway, h, p)),
+    )
+    gateway.add_route(
+        "PATCH",
+        "/api/bots/settings",
+        lambda h: _guarded(
+            gateway, h, lambda p: _settings_patch(gateway, h, p), tool="PATCH settings"
+        ),
     )
     for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         gateway.add_prefix_route(method, PREFIX, dispatch(method))
