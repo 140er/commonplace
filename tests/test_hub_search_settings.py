@@ -71,10 +71,6 @@ _NOT_SEARCH_SETTINGS = {
     # Embedding batch size changes throughput, not the vectors.
     "MEMPALACE_EMBEDDINGGEMMA_BATCH_SIZE",
     "MEMPALACE_EMBEDDINGGEMMA2_BATCH_SIZE",
-    # Where the same local model runs (shared process or in-process): the
-    # service runs the caller's own embedding function, so vectors are the
-    # same bytes.
-    "MEMPALACE_EMBEDDING_SERVICE",
 }
 
 _SETTING_SOURCES = (
@@ -145,6 +141,30 @@ def test_pgvector_shared_namespace_changes_the_fingerprint(monkeypatch, tmp_path
     assert _fingerprint(tmp_path, base) != _fingerprint(
         tmp_path, dict(base, pgvector_shared_namespace="fleet")
     )
+
+
+def test_the_embedding_service_changes_the_fingerprint_unless_the_model_is_remote(tmp_path):
+    """A down or different service ranks lexically or with another model, so a
+    hub started with another service must not answer; an openai-compat palace
+    never reaches the service, so the setting is dormant there."""
+    local = {"embedding_model": "minilm"}
+    on = dict(local, embedding_service="/run/mempalace/embedding.sock")
+    other = dict(local, embedding_service="/run/mempalace/other.sock")
+    assert len({_fingerprint(tmp_path, p) for p in (local, on, other)}) == 3
+    remote = {
+        "embedding_model": "openai-compat",
+        "embedding_api_url": "http://127.0.0.1:1",
+        "embedding_api_model": "m",
+    }
+    assert _fingerprint(tmp_path, remote) == _fingerprint(
+        tmp_path, dict(remote, embedding_service="/run/mempalace/embedding.sock")
+    )
+
+
+def test_an_unusable_embedding_service_value_keeps_the_fingerprint_total(tmp_path):
+    payload = {"embedding_model": "minilm", "embedding_service": "relative/e.sock"}
+    assert _fingerprint(tmp_path, payload) == _fingerprint(tmp_path, payload)
+    assert _fingerprint(tmp_path, payload) != _fingerprint(tmp_path, {"embedding_model": "minilm"})
 
 
 def test_an_invalid_embeddinggemma2_setting_keeps_the_fingerprint_total(tmp_path):
