@@ -3,7 +3,7 @@
 - **Paths:** `commonplace/sessions.py`, `commonplace/session.py`, `commonplace/email_auth.py`, `commonplace/mailer.py`, `commonplace/capacity.py`, `commonplace/oauth/`, `commonplace/social/`
 - **Owns:**
 
-  - Authenticated consent displays the validated code destination origin and permits only that origin in form-action; login and generic pages remain self-only. IPv6 redirects fail closed because Chromium ignores IPv6 CSP host-sources.
+  - Authenticated consent displays the validated code destination origin and permits only that origin in form-action; login and generic pages remain self-only. IPv6 redirects fail closed because Chromium ignores IPv6 CSP host-sources. The only native redirect is the exact `cmmn://auth/callback` (`oauth.NATIVE_REDIRECTS`); registration stays public-client only and every authorization still requires PKCE S256, so no other scheme, path, query or case variant registers.
 
   - Web sign-in links and cookies, startup context reads, email challenges, outgoing mail, OAuth for MCP clients and provider sign-in.
 
