@@ -150,7 +150,7 @@ def test_session_no_accepted_runner_has_no_host(session_world):
 def lean_board(w):
     """A board shaped like the lean live config: `[runner]`, no triggers, no `session` key."""
     w.write(config_text(w.machine_id).split("[[triggers]]")[0])
-    assert "session" not in w.st.get_accepted(w.owner, "acme").config().to_dict()["runner"]
+    assert "session" not in w.st.accepted("acme").config().to_dict()["runner"]
 
 
 def test_runner_without_session_key_starts_no_session_and_no_wake(session_world):

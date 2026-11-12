@@ -127,6 +127,7 @@ def test_session_running_board_does_not_starve_another(session_world):
     w.st.write(
         w.owner, "plain", text, connections=[], sha256=hashlib.sha256(text.encode()).hexdigest()
     )
+    models.catalog_add(w.db, w.owner, "plain", {"provider": PROVIDER, "model": MODEL})
     models.put(w.db, w.owner, "plain", {"main": {"provider": PROVIDER, "model": MODEL}})
     w.card(board="plain")
     w.host_status = "running"
