@@ -3,6 +3,7 @@
 import importlib
 
 from commonplace.bots import (  # noqa: F401  (tools registers the built-in tools)
+    learned_routes,
     routes,
     tools,
     updates,
@@ -27,5 +28,6 @@ def install(gateway):
         return
     _load_tools()
     routes.install(gateway)
+    learned_routes.install(gateway)
     updates.install(gateway)
     gateway.bots_installed = True
