@@ -18,6 +18,7 @@ Kinds in use (add, never rename):
     webhook.failed
     orch.config.proposed  orch.config.accepted  orch.config.rejected
     orch.experiment.retired  orch.restore.acked  orch.lease.forced  orch.step.voided
+    orch.trigger.failing  board.stalled
 """
 
 from __future__ import annotations
@@ -119,6 +120,13 @@ def record(
     )
     row = db._conn.execute("SELECT * FROM events WHERE seq = ?", (cur.lastrowid,)).fetchone()
     return _row(row)
+
+
+def is_stored(db, event: dict) -> bool:
+    """Whether ``event`` is exactly the event the log holds under its sequence number."""
+    with db._lock:
+        row = db._conn.execute("SELECT * FROM events WHERE seq=?", (event.get("seq"),)).fetchone()
+    return row is not None and _row(row) == event
 
 
 def notify(event: dict) -> None:

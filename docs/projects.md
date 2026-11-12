@@ -23,6 +23,13 @@ this is a memory-access boundary, not a guarantee of access to only one board.
 For a project using the shared wing, Connect requires explicit confirmation
 that the agent will have read and write access to all shared memory.
 
+Connect conflicts stay visible in the Orchestrator section of project settings.
+For shared memory, the status names the conflict and asks the owner to retry,
+choosing an own memory section or explicit access to all shared memory. Cancelling
+or dismissing the choice dialog leaves that guidance visible and changes nothing.
+Other connect conflicts show their reason there, including after a replacement
+confirmation is cancelled. The empty-board connect dialog uses the same guidance.
+
 Tokens expire after 90 days. Connecting again rotates an active token and
 invalidates the old one. After revocation or expiry, Connect creates a fresh
 connection. Giving a project its own memory section revokes its displaced seat
@@ -45,14 +52,36 @@ agent has used the connection within the last 24 hours.
 
 ## Model choices
 
-Owners can save provider and model labels for the main orchestrator and workers
-in project settings. These choices are stored only: saving them does not call a
-provider or start work. Applying them through the runner comes later. They do
-not change the separate workspace chat model settings.
+Owners pick the model for the orchestrator, builder, reviewer and gate roles in project
+settings, under Agent models. Each role is a list of the models this workspace
+can use, with "Runner default" to leave it unset. The model already stored for a
+role always stays in the list and is shown as stored. A model that is not in the
+list is refused (`unknown_model`) and nothing is saved. To add one, use "Add a
+model to the list" in the same section (an owner action, also available as
+`POST /api/projects/<board>/models/catalog`). The list belongs to the board: it holds the models an owner added to it, the models
+chosen for it and the workspace defaults, never another board's choices.
+
+Saving a choice does not call a provider or start work, and does not change the
+separate workspace chat model settings. The Save models form works as soon as project
+settings open, even while the page's other reads (chat answers, agents) are still
+loading or have timed out.
+
+The same section holds one escalation rule: after N failed rounds of a card (a failed job of any role counts), or
+for cards with chosen labels, builders and reviewers use a stronger model.
+The stronger model is picked from the same workspace list as the role models; a model
+outside the list is refused (`unknown_model`). Everyone in the workspace can read the
+rule; only owners change it. Without a
+rule every role keeps its default.
 
 Model resolution uses the project's choice, then the workspace default for
 that role, then the runner's own default. Clearing a project choice restores
 that fallback. No API key is stored with these labels.
+
+When a board's accepted orchestrator config uses a model role that resolves to
+no model, the owner gets one Needs me item per board and role, naming the starts that cannot run. Its button
+opens that role's picker, and the item clears once the role is set. A role in the
+board config with no `model_role` gets an item that says so, without a button. A card start
+refused for the same reason names the role and where to set it.
 
 ## Events and API
 
@@ -135,9 +164,30 @@ in Project settings, choosing machines and confirming trust. The API is
 `{"confirm":true,"machines":["<machine-id>"]}`. Trust allows the seat to request
 starts, inspect status, cancel its own starts, read permitted project data and
 repository rules, release/approve and annotate cards, and stamp trusted submissions.
-It does not allow board creation or handoff launch. Invalid grants return 400,
+It does not allow board creation or handoff launch.
+
+A trusted seat can also hold the orchestrator lease of its own board and role
+(`orch_resume`, `orch_heartbeat`, the journal and gates) with no further setup:
+no orchestrator config and no server-side step. Starts on such a board still use
+`card_start`; `orch_card_start` needs an accepted config with `[runner]`. Before
+trust the seat is refused `not_allowed` with a pointer to Project settings; it is
+never allowed on another project's board.
+
+Invalid grants return 400,
 unknown machines 404, and revoked/disabled machines or conflicting authority 409.
 A database lock timeout returns 409 `busy`. The whole change rolls back. Only signed-in workspace owners may use this route.
+
+**Coordinator status.** With orchestration on, Project settings > Orchestrator shows
+who holds the project's coordinator lease (role `main`), when it runs out, the accepted
+config version and how many steps are open, in doubt or still unstarted Todo cards. It
+reads `GET /api/orch/boards/<slug>/roles/main/checkpoint`, which claims and renews
+nothing, and is visible to anyone who can read the board. A signed-in owner also gets
+**End lease**, with a confirm; it calls `POST /api/orch/boards/<slug>/roles/main/force-release`,
+the owner-only route that already exists. Members, agent tokens and people of other
+workspaces are refused. Ending a lease changes no step: unfinished work stays listed
+(it becomes "in doubt" when the next coordinator claims the lease). The checkpoint
+does not say since when the lease is held or when it was last renewed, so only the
+expiry time is shown.
 
 `{"trusted":false}` demotes the seat and removes only its requester id from
 machines, preserving other entries even when stale. Switching orchestration off
@@ -175,7 +225,8 @@ Finish with `card_split_done(task=N, state="split"|"kept")`, or
 The first marker wins and is recorded in card history.
 
 On a runner-configured board, enabled orchestration changes root todo triggers
-to role `main`, with an inbox snapshot and instructions in the launch message.
+to role `main` (or to the `[runner]` role when the config has no role named
+`main`), with an inbox snapshot and instructions in the launch message.
 Split children never trigger that start. The existing event deduplication,
 one-active-start rule and 24-hour non-person start restriction still apply.
 Every runner sweep reconciles unsplit roots older than 10 minutes without an

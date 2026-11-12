@@ -418,6 +418,99 @@ def orchestrators(conn, board_conn, workspace_id, context):
     return result
 
 
+REQUESTER_LIMIT = 32
+CANDIDATE_LIMIT = 100
+
+
+def requester_views(conn, workspace_id, context, raw):
+    """Name and state of a machine's stored requester ids, as the owner may write them back.
+
+    The state follows the start check: only an active, trusted, personal-token agent counts.
+    Ids of other workspaces stay unnamed."""
+    try:
+        refs = json.loads(raw or "[]")
+    except ValueError:
+        return [], 0
+    refs = [ref for ref in refs if isinstance(ref, str)]
+    result = []
+    for ref in refs:
+        if len(result) == REQUESTER_LIMIT:
+            break
+        if identifier(ref) is None:
+            continue
+        context.remaining()
+        row = select(
+            conn,
+            context,
+            "SELECT name,auth,policy FROM connections WHERE id=? AND workspace_id=?",
+            (ref, workspace_id),
+        ).fetchone()
+        live = (
+            row is not None
+            and row["auth"] == "pat"
+            and Policy.from_json(row["policy"]).trust == "trusted"
+            and current_connection(conn, workspace_id, context, cid=ref) is not None
+        )
+        result.append(
+            {
+                "id": ref,
+                "name": display(row["name"]) if row else None,
+                "state": "active" if live else "inactive",
+            }
+        )
+    return result, len(refs)
+
+
+def attach_requesters(conn, workspace_id, context, items):
+    """Add each listed machine's requesters; only the machines on the page are resolved."""
+    if not items or "requesters" not in columns(conn, context, "runner_machines"):
+        for item in items:
+            item.update(requesters=[], requesters_total=0)
+        return
+    for item in items:
+        context.remaining()
+        row = select(
+            conn,
+            context,
+            "SELECT requesters FROM runner_machines WHERE id=? AND workspace_id=?",
+            (item["id"], workspace_id),
+        ).fetchone()
+        views, total = requester_views(
+            conn, workspace_id, context, row["requesters"] if row else "[]"
+        )
+        item.update(requesters=views, requesters_total=total)
+
+
+def requester_candidates(conn, workspace_id, context):
+    """Active trusted workspace agents an owner may name as requesters (what the write accepts).
+
+    Returns the first CANDIDATE_LIMIT and whether more exist."""
+    if not has_table(conn, context, "runner_connections"):
+        return [], False
+    rows = select(
+        conn,
+        context,
+        "SELECT c.id,c.name,c.policy,c.expires_at FROM connections c "
+        "JOIN memberships m ON m.workspace_id=c.workspace_id AND m.user_id=c.user_id "
+        "JOIN users u ON u.id=c.user_id "
+        "LEFT JOIN runner_connections r ON r.connection_id=c.id "
+        "WHERE c.workspace_id=? AND c.auth='pat' AND c.revoked_at IS NULL "
+        "AND u.disabled_at IS NULL AND r.connection_id IS NULL ORDER BY c.name,c.id",
+        (workspace_id,),
+    ).fetchall()
+    result = []
+    for row in rows:
+        context.remaining()
+        expires = control_db._parse(row["expires_at"])
+        if (expires is None or expires > context.now) and (
+            Policy.from_json(row["policy"]).trust == "trusted"
+        ):
+            result.append({"id": identifier(row["id"]), "name": display(row["name"])})
+            if len(result) > CANDIDATE_LIMIT:
+                break
+    return result[:CANDIDATE_LIMIT], len(result) > CANDIDATE_LIMIT
+
+
 def machines(conn, workspace_id, context, *, active_only=False):
     if not has_table(conn, context, "runner_machines"):
         return []
@@ -425,7 +518,7 @@ def machines(conn, workspace_id, context, *, active_only=False):
         conn,
         context,
         "SELECT m.id,m.label,m.enabled,m.revoked_at,m.binding_state,m.max_in_flight,"
-        "m.max_starts_per_hour,m.created_at,mc.last_used_at AS machine_last_used_at,"
+        + "m.max_starts_per_hour,m.grant_version,m.created_at,mc.last_used_at AS machine_last_used_at,"
         "wc.last_used_at AS worker_last_used_at FROM runner_machines m "
         "LEFT JOIN connections mc ON mc.id=m.machine_connection_id AND mc.workspace_id=m.workspace_id "
         "LEFT JOIN connections wc ON wc.id=m.worker_connection_id AND wc.workspace_id=m.workspace_id "
@@ -453,6 +546,7 @@ def machines(conn, workspace_id, context, *, active_only=False):
                 "worker_activity": status(row["worker_last_used_at"], context.now),
                 "max_in_flight": row["max_in_flight"],
                 "max_starts_per_hour": row["max_starts_per_hour"],
+                "grant_version": row["grant_version"],
                 "created_at": timestamp(row["created_at"]),
             }
         )
@@ -524,6 +618,9 @@ def runtime(gateway, workspace_id, context, after):
                         after,
                         lambda r: (r["created_at"], r["id"]),
                     )
+                    attach_requesters(conn, workspace_id, context, value["items"])
+                    candidates, more = requester_candidates(conn, workspace_id, context)
+                    value.update(requester_candidates=candidates, requester_candidates_more=more)
             context.remaining()
             result[source] = {"state": "ready", **value}
         except Exception as exc:
@@ -752,6 +849,45 @@ def instance_authorized(gateway, principal, context):
     return row is not None and row["is_admin"] == 1
 
 
+def index_stats(gateway, context, principal, after=None):
+    from commonplace.index_stats import scoped, unknown, workspace
+
+    # Close the control snapshot before any workspace file work.
+    with read_control(gateway.db, context) as conn:
+        rows = select(
+            conn,
+            context,
+            "SELECT id,created_at FROM workspaces "
+            + ("WHERE (created_at,id)>(?,?) " if after else "")
+            + "ORDER BY created_at,id LIMIT ?",
+            (*(after or ()), PAGE_SIZE + 1),
+        ).fetchall()
+        # Size figures sum every wing, private ones included; only a current
+        # owner of that workspace may see them (person private reads are owner-only).
+        owned = {
+            r["workspace_id"]
+            for r in select(
+                conn,
+                context,
+                "SELECT workspace_id FROM memberships WHERE user_id=? AND role='owner'",
+                (principal.user_id,),
+            ).fetchall()
+        }
+    figures = []
+    for row in rows[:PAGE_SIZE]:
+        values = (
+            unknown("read_timeout")
+            if context.clock.monotonic() >= context.deadline
+            else workspace(
+                gateway, row["id"], clock=context.clock.monotonic, deadline=context.deadline
+            )
+        )
+        if row["id"] not in owned:
+            values = scoped(values)
+        figures.append({"workspace_id": identifier(row["id"]), **values})
+    return {"workspaces": figures, **page(rows, "created_at", "instance", "index-stats")}
+
+
 def deploy(context):
     from commonplace import __version__ as commonplace_version
     from mempalace.version import __version__ as mempalace_version
@@ -838,14 +974,30 @@ def install(gateway):
         if principal is None:
             return
         parts = path_parts(h, "/api/admin/instance/")
-        if len(parts) != 1 or parts[0] not in ("deploy", "backups"):
+        if len(parts) != 1 or parts[0] not in ("deploy", "backups", "index-stats"):
             send_json(h, 404, {"error": "not found"})
             return
         section = parts[0]
         try:
             context = ReadContext(gateway.admin_clock)
             if not instance_authorized(gateway, principal, context):
-                send_json(h, 403, {"error": INSTANCE_DENIAL})
+                if section == "index-stats":
+                    send_json(h, 404, {"error": "not found"})
+                else:
+                    send_json(h, 403, {"error": INSTANCE_DENIAL})
+                return
+            if section == "index-stats":
+                try:
+                    pairs = parse_qsl(
+                        urlsplit(h.path).query, keep_blank_values=True, strict_parsing=True
+                    )
+                    if len(pairs) > 1 or any(key != "cursor" for key, _ in pairs):
+                        raise ValueError()
+                    after = cursor_key(pairs[0][1], "instance", section) if pairs else None
+                except (ValueError, TypeError):
+                    send_json(h, 400, {"error": "Invalid admin query"})
+                    return
+                send_json(h, 200, index_stats(gateway, context, principal, after))
                 return
             if urlsplit(h.path).query:
                 send_json(h, 400, {"error": "Invalid admin query"})
