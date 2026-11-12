@@ -20,9 +20,11 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 | Tool | Arguments | Profiles |
 |---|---|---|
 | `board_list` | — | slim, standard, full |
-| `task_list` | `board?`, `status?`, `mine?` | slim, standard, full |
+| `task_list` | `board?`, `status?`, `mine?`, `include_snoozed?` | slim, standard, full |
 | `task_show` | `task` | slim, standard, full |
 | `task_add` | `title`, `body?`, `board?`, `status?` (`backlog` \| `todo` \| `doing`), `assignee?`, `claim?` | slim, standard, full |
+| `task_snooze` | `task`, `until?`, `timezone?`, `after_card?` | slim, standard, full; owner or the card's assignee |
+| `task_unsnooze` | `task` | slim, standard, full; owner or the card's assignee |
 | `task_comment` | `task`, `text` | slim, standard, full |
 | `task_take_next` | `board?`, `task?` | slim, standard, full |
 | `task_heartbeat` | `task` | slim, standard, full |
@@ -66,6 +68,14 @@ Default: `todo`, `doing` and `review`. `mine=true` also includes pending proposa
 | `working` | `doing`, heartbeat (or last update) under 30 minutes old |
 | `idle` | everything else, including a `doing` card with a stale heartbeat |
 
+Snoozed cards are left out of this list unless `include_snoozed=true` (see `task_snooze`); the board view (`GET /api/boards/<slug>/cards`) still lists them with a `snoozed` object.
+
+### task_snooze
+
+`task_snooze task=#n until=<ISO date and time> timezone=<IANA name>` hides a `backlog` or `todo` card from work offers until that time; `task_snooze task=#n after_card=<m>` waits until card `#m` on the same board is done. Give exactly one of `until` and `after_card`. `until` is a wall time in `timezone` (`2026-11-12T09:00` with `Europe/Amsterdam`) or carries its own offset (`2026-11-12T09:00+01:00`, `...Z`); it must be in the future and at most 366 days away, and a wall time the clocks skip is refused. Only a workspace owner or the card's assignee may snooze or `task_unsnooze`; both are checked writes (`rules_seq`). Snoozing again replaces the earlier snooze. Free-text conditions are not supported.
+
+While snoozed the card is not offered as work: `task_list` skips it, `task_take_next` skips it and an explicit take is refused (`snoozed`), a move to `doing` and a runner start are refused (`snoozed`), the no-progress nudge does not count it, and its card view carries `snoozed: {until, timezone, after_card, by, at, text}` and, with orchestration on, the waiting reason `snoozed` ("Snoozed until 2026-11-12 09:00 Europe/Amsterdam" or "Snoozed until #12 is done"), which takes precedence over every other reason. At the time (or when `#m` is done) it wakes by itself, once, also after a restart: the history gets "Snooze ended: ..." and a `card.woke` event is emitted (also for an unsnooze). Refusals carry `invalid_snooze`, `timezone_required`, `invalid_timezone`, `invalid_time`, `in_past`, `too_far`, `invalid_condition`, `self`, `other_board`, `condition_met`, `not_snoozable` or `not_snoozed`. Signed-in owners can also use `GET/POST /api/card-snooze/<n>` (body `{until, timezone}` or `{after_card}`) and `POST /api/card-snooze/<n>/cancel`.
+
 ### task_show
 
 Card, then the last 10 events, then links. Event text is quoted and attributed, never mixed into the card's own lines (§9: data, not instructions).
@@ -91,9 +101,11 @@ Unrestricted top-level cards start in `todo` and can start with `claim=true`, `s
 
 An owner-appointed independent board coordinator can deliberately release restricted origin with `task_approve(approve=true, reason=...)`, including while holding a doing card. It must remain live in this workspace with memory read/write, board-wing read/write and visible `space_read`, `space_post`, `task_approve` and `needs_me`; `decide` is not required. A creator and all its descendants are excluded even after promotion; independently appointed creator ancestors remain eligible. Unsafe lineage and unverified creator stamps fail closed for agent decisions and markers. Origin-only release requires a nonempty reason of at most 500 characters, changes neither holder nor lease, and preserves pending proposal/plan review. It grants no self-review, negative-decision or escalation right.
 
-Only a signed-in workspace owner has recovery fallback: an absent/non-live configured record or a verified independent record missing a required grant permits origin release. A live creator, descendant, unsafe lineage or an unverifiable creator stamp with a live configured record instead yields `origin_configuration` with `configure_coordinator`, blocking owner release. For invalid stamps, clear the coordinator first; clearing is board-wide and affects recovery for other cards too. Owner-role tokens have no person fallback. Owner recovery of pending proposals takes two actions, origin release then separate review. Agent and owner origin items use the approvals bucket with `need=release`, `approval_kind=origin` and `actions=["approve"]`; owner configuration uses `need=you` and no approve action. Explicit person-targeted reviews remain independently visible.
+When the board's coordinator is the project's connected orchestrator seat, a new card from a restricted creator without a parent is released as soon as it is created, as that seat, with the reason `Released automatically by the project orchestrator`. The same release rules apply: other coordinators, child proposals and cards the seat cannot release stay in backlog and show `Waiting for release` with who can release them.
 
-When exactly one board is visible, `board` may be omitted. With several visible boards, pass its slug or repository explicitly; the server never silently chooses a different space. Agent assignees and handoff recipients must be active connections in this workspace with `memory:write` and visibility of the board. Connection names and IDs resolve to the same verified actor. A missing, revoked, expired or inaccessible recipient is refused before the card changes.
+Only a signed-in workspace owner has recovery fallback: an absent/non-live configured record or a verified independent record missing a required grant permits origin release. A live creator, descendant, unsafe lineage or an unverifiable creator stamp with a live configured record instead yields `origin_configuration` with `configure_coordinator` in Needs me. The owner may still release such a card explicitly with `task_approve`, as with any card awaiting release; moving a card releases it implicitly only with no live coordinator. Clearing a coordinator is board-wide and affects recovery for other cards too. Owner-role tokens have no person fallback. Owner recovery of pending proposals takes two actions, origin release then separate review. Agent and owner origin items use the approvals bucket with `need=release`, `approval_kind=origin` and `actions=["approve"]`; owner configuration uses `need=you` and no approve action. Explicit person-targeted reviews remain independently visible.
+
+When exactly one board is visible, `board` may be omitted. With several visible boards, pass its slug or repository explicitly; the server never silently chooses a different space. Agent assignees and handoff recipients must be active connections in this workspace with `memory:write` and visibility of the board. Connection names and IDs resolve to the same verified actor. A missing, revoked, expired or inaccessible recipient is refused before the card changes. `task_handoff` also accepts `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool. The owner and the live board coordinator may take over (`task_take_next task=#n`) or drop (status-only `task_update status=backlog`) a released todo reservation held by another connection. A workspace owner may move a released restricted-origin todo card directly to done. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor.
 
 Connection ancestry uses the existing nullable `connections.parent_id` foreign key (`token add --parent <connection>`). Authentication exposes `parent_agent`; cards expose the creator's `agent_parent`. A parent's card assigned to its active direct child is immediately ready; `claim=true` starts that child's claim. Self-created child cards instead have `status=backlog`, `proposal_status=pending`, `proposed_to=<direct parent>`, and the child as assignee. These fields are server-stamped, not client inputs. Agents cannot claim, promote, complete, or hand off pending/rejected proposals. Nested proposals may be approved by their direct parent or owning top-level root, not an arbitrary intermediate ancestor. A root has no approval role solely from ancestry on an advisory plan review.
 
@@ -109,7 +121,7 @@ An authority change, owner decision 5 Nov 2026: `task_approve task=#n approve=tr
 | Restricted non-root parent or restricted creator-parent | no |
 | Holder, unrelated agent or top-level claimer | no |
 
-Within approval decisions, only approval writes `approved_by`, and only when the new approver releases and the stored value no longer does. An owner moving restricted work to todo or doing also records an owner release. Reject never writes this column. Stored release markers are checked against current membership, activity and permissions; every agent marker is void while that agent holds the card. Approving a proposal also drops the plan label. The plan label is advisory, and a doing holder may drop it. Backlog plan-labelled cards and review-without-ask cards no longer derive need=plan. Nullable `escalated_to` is migrated additively; schema.sql is unchanged.
+Within approval decisions, only approval writes `approved_by`, and only when the new approver releases and the stored value no longer does. An owner moving restricted work to todo or doing also records an owner release. Reject never writes this column. Stored release markers are checked against current membership, activity and permissions. An agent marker is void while that agent holds the card unless it is the live coordinator or the card's history records its `release origin` decision and it keeps every release grant and its independence from the creator. Cards awaiting release return `awaiting_release: true`. Approving a proposal also drops the plan label. The plan label is advisory, and a doing holder may drop it. Backlog plan-labelled cards and review-without-ask cards no longer derive need=plan. Nullable `escalated_to` is migrated additively; schema.sql is unchanged.
 
 ### task_heartbeat
 
@@ -134,7 +146,7 @@ connections reserve new cards for their creator by default, including trusted
 connections that still write to an inbox. Those restricted-origin protections,
 explicit reservations, person decisions and child approvals still apply.
 
-The claim. Without `task`: the caller's reserved `todo` card with the lowest position, else the unassigned one with the lowest position. It never falls back to backlog, so the ready-work queue keeps its priority. With `task`: that card, if it is in `todo` and free or reserved for the caller. An unrestricted connection with policy trust `trusted` and write access to the board may also claim a `backlog` card explicitly by number. The claim moves it to `doing`, assigns the caller, and starts the normal claim expiry. `task_update task=#n status=doing` gives the same explicit backlog pickup and lease. The audit differs: `task_take_next` records `claim` / `card.claimed`; the status update records `move` / `card.moved`.
+The claim. Without `task`: the caller's reserved `todo` card with the highest priority (then the lowest position), else the unassigned one in the same order. It never falls back to backlog, so the ready-work queue keeps its priority. With `task`: that card, if it is in `todo` and free or reserved for the caller. An unrestricted connection with policy trust `trusted` and write access to the board may also claim a `backlog` card explicitly by number. The claim moves it to `doing`, assigns the caller, and starts the normal claim expiry. `task_update task=#n status=doing` gives the same explicit backlog pickup and lease. The audit differs: `task_take_next` records `claim` / `card.claimed`; the status update records `move` / `card.moved`.
 
 Agents cannot claim backlog cards filed by restricted connections, or cards with an open ask or a person in `assignee` or `ask_to`. A person in `return_to` also protects a backlog card. Outside backlog, an answered decision's return marker does not block normal moves or annotations after the person releases the card. Automatic selection skips pending person decisions. Other agents' reservations remain protected. An agent may also promote or claim its own available backlog, including an older inbox submission. Pending/rejected child proposals always require approval first. Expired claims retain the assignee and lane.
 
@@ -148,16 +160,22 @@ The `decision` line appears only on a card that came back from `review`. Empty c
 
 Claims and expiries use `BEGIN IMMEDIATE`, so concurrent agents never take the same ready card. Expiry records an event without releasing it; only a holder heartbeat or write renews it.
 
+### Priority
+
+Every card carries `priority`: `urgent`, `high`, `normal` (the default) or `low`. The owner sets it from the card in the app or with `task_add` / `task_update`; connections cannot, and cards report `can_prioritize` for the caller. `task_list` (todo, backlog or any status), the board and `task_take_next` order by priority first, then board position, so an orchestrator reading the list top-down sees the most urgent work first. Each `task_list` / `task_show` line carries `priority:<name>`, and the orchestrator checkpoint's `unstarted` todo cards are listed in the same order with their `priority`.
+
 ### task_update
 
 Only the holder of a `doing` card, or a person, may change it. Anyone else gets `no: #142 is held by conn:codex:example until 14:30Z`.
 
 - Agents may claim available `todo` cards with `task_update status=doing` as well as `task_take_next`. Only their own cards may be completed. They may move free or self-reserved `todo` cards to `review`, and held `doing` cards to `review` or `done`. A status-only update can reopen `done` to `todo`; other edits to completed cards remain blocked. Requesters may maintain their review feedback, but agents cannot close or withdraw person-directed reviews. An authorized coordinator may withdraw its own agent-directed ask as described below. Person decisions require `decide` by a signed-in workspace owner; agent-claimed approval never counts as a person's answer.
+- A creator can cancel its own `todo` reservation with a status-only `task_update status=backlog`, including after `task_handoff` and when the earlier origin release has lapsed. The update clears the assignee and preserves origin provenance and the approval marker. It does not release origin or permit activation, modify another connection's reservation, approve a pending/rejected proposal or answer a person decision.
 - Trusted, unrestricted board writers may promote an available `backlog` card to `todo`, or pick it up with `status=doing`. Restricted-origin cards require a person's release. Promotion preserves the caller's reservation. An open ask or a person in `assignee` or `ask_to` blocks agent moves. A person in `return_to` additionally blocks backlog pickup; stale return markers on released `todo` or `done` cards do not block normal moves or annotations.
 - Completed-card exception for trusted, unrestricted board writers: an update containing only `lesson`, `pr` and/or `link` may annotate a `done` card without reopening it. Optional `status=done` is accepted. Removing links and other edits stay frozen. These annotations emit the normal link history and `card.updated` event, preserving completion time and status.
 - `status: "done"` closes the card. On a board with `done_needs_review`, an agent's `done` moves the card to `review` instead, with a substantive completion question, the card context, and options to accept or return the work.
 - `lesson` (with `status: "done"`, or on an already completed card) files the text as a new drawer through the normal memory write path and links it. It lands in the token's write wing.
-- `before` / `after` take a task ID; the server picks a position between the neighbours.
+- `before` / `after` take a task ID; the server picks a position between the neighbours. Position orders cards of equal priority.
+- `priority` (`urgent` \| `high` \| `normal` \| `low`) is set by a signed-in workspace owner only; any other caller gets `no: only a signed-in workspace owner can set a priority`. `task_add` takes it too. Every card has one: without it a new card is `normal`, as are cards that predate the field. Setting the current value changes nothing.
 - `link` / `unlink` take a drawer ID.
 - `callstack` takes the PR's call tree as printed by `python -m commonplace.callstack --base origin/develop` (or `null` to clear; `--card N --hub URL` uploads it directly). The web card shows its head commit, so a stale tree is visible. The server checks its shape and caps it at 64 KB; `task_show` returns it and the web card shows it next to the review. The agent that asked for review may still update this one field while the card waits on a person.
 - Any update by the holder renews the claim.
@@ -225,6 +243,30 @@ Ends the caller's hold and gives the card to someone else. `note` is required, s
 | a person, e.g. `avery` | `review`, with `note` as the ask | — (comes back to the caller after the decision) |
 
 `options` (people only) requires two to six distinct choices. A substantive question and context are required; free-text replies remain available in addition to the options.
+
+### Structured decision blocks
+
+`ask` also accepts structured options: each entry of `options` is a label, or an object
+`{"label", "detail"?, "preview"?}`. `detail` is a short explanation (up to 280 characters);
+`preview` is plain text (up to 1200 characters and 24 lines: a mockup, a snippet, sample copy)
+that the app shows side by side in a fixed-width font. A structured list needs two to six
+distinct labels; unknown keys, empty or non-text values and control characters are refused.
+
+```json
+{"question": "Which header should the app use?",
+ "context": "Both variants pass the layout checks.",
+ "options": [
+   {"label": "Compact header", "detail": "One row; search moves into the menu.",
+    "preview": "[logo]  Boards  Memory   (o)"},
+   {"label": "Tall header", "preview": "[logo]\nBoards  Memory  [ search ]"},
+   "Keep the current header"]}
+```
+
+The labels are stored in `ask_options` as for a plain ask, so routing, events and `decide` do
+not change: the person answers with one label, and a choice that was not offered is refused.
+The card adds `ask_blocks`, one `{label, detail?, preview?}` per offered label (an empty list
+for a plain ask); it is cleared with the ask. `task_show` prints each option's detail and
+preview under the ask line. `task_handoff` and `task_update` take plain labels only.
 
 ```
 ok #145 → user:avery  review
@@ -546,10 +588,11 @@ return 404. Only workspace owners may Connect, give a project its own wing, or w
 
 | Method | Route | Body / result |
 |---|---|---|
-| GET | `/api/projects/<slug>` | `{board, name, main, models, memory, can_configure}` |
+| GET | `/api/projects/<slug>` | `{board, name, main, models, escalation, memory, can_configure}` |
 | POST | `/api/projects/<slug>/orchestrator/connect` | `{}` or boolean `replace` / `allow_shared` flags; 201 for a new connection, 200 for rotation. |
 | POST | `/api/projects/<slug>/wing` | Exactly `{}`; returns the re-read project view plus the own-wing result below. |
-| PUT | `/api/projects/<slug>/models` | Optional `main` and `worker` keys, each `{provider, model}` or `null` to clear; returns the project view. |
+| PUT | `/api/projects/<slug>/models` | Optional `main` (orchestrator), `worker` (builder), `reviewer` and `gate` keys, each `{provider, model}` or `null` to clear; returns the project view. |
+| PUT | `/api/projects/<slug>/escalation` | Exactly `{rule}`: `{after_failures: 1–10 or null, labels: [≤10 labels], model: {provider, model}}` (at least one of failures or labels), or `null` to clear. The model must be in the workspace list (`unknown_model`, 400). Owner only; returns the project view with `escalation` (`null` when unset). |
 
 `main` contains `role`, `name`, `source` (`seat` or `coordinator`), `connected`,
 `seen`, `status`, `wakeable` and `connectable`. `seen` means the connection has
@@ -641,13 +684,32 @@ the card version and append an edit history row. Existing card ownership,
 visibility and optimistic-version rules still apply.
 
 Enabled card views include `waiting` (null or one reason). Precedence is
-`blocked_by`, `waits_on_person`, `not_released`, then `project_limit` for a new
-agent. Reasons include `text`; blockers include same-board numbers and titles,
-and a project limit includes `used` and `cap`. Board lists include a `waiting`
-count by code. A blocked-card wait alone does not appear in `needs_me`.
+`snoozed` (the card is snoozed, see `task_snooze`; it refuses an explicit claim), `blocked_by`, `waits_on_person`, `claim_expired` (a `doing` card whose claim
+passed; the assignee is kept and its next update renews it), `plan_review` (the
+`plan` label asks for review), `not_released`, `no_agent` (a `todo` card while no
+live agent connection can write the board's wing), then `project_limit` for a new
+agent, and last `checks_pending` (a `doing` or `review` card whose checks are
+pending). Every reason carries a plain-sentence `text` from one function
+(`boards.why`), so the app and the API cannot disagree; blockers include
+same-board numbers and titles, and a project limit includes `used` and `cap`.
+Only `blocked_by`, `waits_on_person`, `plan_review` and `not_released` refuse an
+explicit claim or start; the others only explain. Board lists include a `waiting`
+count by code and `waiting_notes`, a list of `{code, count, text}` sentences that
+say why cards wait and why few agents are working (for example `Agent limit
+reached (1 of 1 working): 2 cards wait for a free slot.`). The app shows the card
+sentence as a tag on the board and under "Why this card waits" in the details, and
+the notes in a strip above the board. A blocked-card wait alone does not appear in `needs_me`.
 Explicit claims use the same waiting text for blocker and project-cap refusals;
 existing-agent admission exemptions still apply. Board tags show the blocker
 title or occupied-slot count instead of advertising a waiting card as available.
+In the app, a card's details show a **Blocked by** section: each blocker with its
+title and whether it is still waiting or Done, a Clear button per blocker, and an
+Add blocker box that takes a card number (`12` or `#12`). Both send the ordinary
+card `PATCH` with the full `blocked_by` list and the card `version`. A refused link
+(itself, a loop, a card that is not on this board or that the caller cannot read)
+comes back as a `400` whose `error` is a plain sentence and whose `code` is
+`self`, `cycle`, `other_board`, `invalid_blockers` or `blocker_graph_too_large`;
+a card the caller cannot read gets the same `other_board` answer as a missing number.
 With orchestration off these fields and the `blocked_by` schema properties are absent,
 and `blocked_by` is refused. `not_released` applies only to Todo/Backlog cards.
 
@@ -707,3 +769,23 @@ new-user migration and desktop synchronization are deferred.
 
 Workspace owners can inspect members and connections through the separate
 [Admin GET API](../admin.md); board actions retain their existing authority.
+
+## After Done: Archive, carry on and the Pocket
+
+A done card is final. Four actions follow it, all `POST` with the card `version` and open to signed-in
+people only (workspace owner or member). Connections get 403 `no: only a signed-in person can ...`. There
+are no MCP tools for them yet.
+
+| Route | Body | Result |
+| --- | --- | --- |
+| `/api/cards/<n>/archive` | `version` | The card, `archived: true`. Only a done card; archiving twice changes nothing. |
+| `/api/cards/<n>/restore` | `version` | The card, `archived: false`, back in Done. |
+| `/api/cards/<n>/follow-up` | `version`, optional `title`, `body` | 201 `{origin, card}`: a new backlog card on the same board, linked by `follow_up_of` / `follow_ups`. Only from a done card. |
+| `/api/cards/<n>/pocket` | `version`, `text` | The card with the fact pinned (verbatim, up to 2000 characters, at most 25 per card, no duplicates). |
+| `/api/cards/<n>/unpocket` | `version`, `pin` | The card without that fact. The row stays in storage, marked unpinned. |
+
+Archive hides, it never deletes. Archived cards leave `GET /api/boards/<slug>/cards` and the board
+`counts` (the board reports `archived` separately), stay readable through `GET /api/cards/<n>` and
+`GET /api/boards/<slug>/cards?archived=1`, and refuse updates and Pocket changes until restored.
+Every card carries `final`, `archived`, `archived_at`, `archived_by`, `follow_up_of`, `follow_ups`,
+`pocket` and the caller's `can_archive`, `can_restore`, `can_follow_up` and `can_pocket`.

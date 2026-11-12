@@ -45,9 +45,9 @@ def dispatch(env):
             "worker_connection_id": enrolled["worker_connection_id"],
         },
     )
-    models.put(
-        env.db, env.principal, "work", {"worker": {"provider": "fixture", "model": "fixture"}}
-    )
+    choice = {"provider": "fixture", "model": "fixture"}
+    models.catalog_add(env.db, env.principal, "work", choice)
+    models.put(env.db, env.principal, "work", {"worker": choice})
     runner_store = jobs.open_store(env.gateway, env.wid)
     configs = orch_store.open_store(env.gateway, env.wid)
 

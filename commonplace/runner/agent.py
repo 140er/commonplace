@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import os
 import re
 import stat
@@ -16,7 +17,10 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from ..client import ClientError, _endpoint
 from ..handoff.hook import _atomic_text, _NoRedirect
+from ..http_util import log_failure
 from ..mailer import _loopback
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE_STRATEGY = {"type": "root"}  # UNVERIFIED until D2
 SPAWN_MESSAGE = (
@@ -59,6 +63,8 @@ _CONFIG_KEYS = {
     "binding_acks",
     "projects",
 }
+_OPTIONAL_CONFIG_KEYS = {"min_free_memory_mb"}
+DEFAULT_MIN_FREE_MEMORY_MB = 256  # headroom below which this machine refuses a start
 _PROJECT_KEYS = {"project_id", "shared_checkout_ack", "runtime_ceiling", "runtime_ack"}
 
 
@@ -117,7 +123,14 @@ def _read(config_path) -> dict:
 
 def _load(config_path):
     config = _read(config_path)
-    _require(isinstance(config, dict) and config.keys() - {"chat"} == _CONFIG_KEYS)
+    _require(isinstance(config, dict))
+    keys = config.keys() - {"chat"}
+    _require(_CONFIG_KEYS <= keys <= _CONFIG_KEYS | _OPTIONAL_CONFIG_KEYS)
+    config.setdefault("min_free_memory_mb", DEFAULT_MIN_FREE_MEMORY_MB)
+    _require(
+        type(config["min_free_memory_mb"]) is int and 0 <= config["min_free_memory_mb"] <= 1 << 20,
+        "invalid min_free_memory_mb",
+    )
     _url(config["hub_url"])
     _url(config["t3_mcp_endpoint"])
     for key in ("token_env", "t3_grant_env"):
@@ -193,15 +206,25 @@ def _launch_text(job):
 
     A config-driven job carries ``message`` (``SPAWN_MESSAGE`` for this job, then the
     pinned role prompt and workflow) and ``modelSelection``; other jobs carry neither
-    and get ``SPAWN_MESSAGE``."""
+    and get ``SPAWN_MESSAGE``. Either kind may carry ``card_context`` (the card's own
+    text, built by the hub), which follows the message after a blank line."""
     base = SPAWN_MESSAGE.format(n=job["task_number"], job_id=job["job_id"])
     message, model = job.get("message"), job.get("modelSelection")
+    context = job.get("card_context")
+    if context is None:
+        tail = ""
+    elif isinstance(context, str) and context:
+        tail = "\n\n" + context
+    else:
+        raise ValueError("job_invalid")
     if message is None and model is None:
-        return base, None
+        if len(base) + len(tail) > MAX_MESSAGE_CHARS:
+            raise ValueError("job_invalid")
+        return base + tail, None
     if (
         not isinstance(message, str)
         or not message.startswith(base)
-        or len(message) > MAX_MESSAGE_CHARS
+        or len(message) + len(tail) > MAX_MESSAGE_CHARS
         or not isinstance(model, dict)
         or set(model) != {"instanceId", "model"}
         or not isinstance(model["instanceId"], str)
@@ -210,7 +233,28 @@ def _launch_text(job):
         or not _MODEL.fullmatch(model["model"])
     ):
         raise ValueError("job_invalid")
-    return message, {"instanceId": model["instanceId"], "model": model["model"]}
+    return message + tail, {"instanceId": model["instanceId"], "model": model["model"]}
+
+
+def _available_memory_mb(meminfo_path="/proc/meminfo"):
+    """Memory this machine can give a new process without swapping, or None when unknown."""
+    try:
+        with open(meminfo_path, encoding="ascii") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _memory_code(config):
+    """``low_memory`` when free memory is known and under the configured headroom.
+
+    An unreadable probe never blocks a start: the guard only refuses on evidence."""
+    floor = config.get("min_free_memory_mb", DEFAULT_MIN_FREE_MEMORY_MB)
+    available = _available_memory_mb() if floor else None
+    return "low_memory" if available is not None and available < floor else None
 
 
 def _job_code(config, job):
@@ -219,6 +263,10 @@ def _job_code(config, job):
         _launch_text(job)
     except ValueError:
         return "job_invalid"
+    return _local_grant_code(config, job)
+
+
+def _local_grant_code(config, job):
     project = job.get("project")
     if not isinstance(project, str) or project not in config["projects"]:
         return "project_not_configured"
@@ -233,7 +281,7 @@ def _job_code(config, job):
         return "mode_not_allowed"
     if not Path(config["t3_executable"][0]).is_file():
         return "t3_missing"
-    return None
+    return _memory_code(config)
 
 
 class _HubError(Exception):
@@ -280,14 +328,18 @@ class _Hub:
                 if status == 204:
                     result = None
                 else:
-                    limit = _MAX_LEASE_BYTES if route == "lease" else _MAX_REPLY_BYTES
+                    limit = (
+                        _MAX_LEASE_BYTES
+                        if route in ("lease", "sessions/lease")
+                        else _MAX_REPLY_BYTES
+                    )
                     raw = response.read(limit + 1)
                     if len(raw) > limit:
                         raise ValueError
                     result = json.loads(raw)
                     if not isinstance(result, dict):
                         raise ValueError
-                    if route == "lease" and (
+                    if route in ("lease", "sessions/lease") and (
                         not isinstance(result.get("lease_token"), str) or not result["lease_token"]
                     ):
                         raise ValueError
@@ -300,7 +352,9 @@ class _Hub:
                 else "refused"
                 if status == 404
                 else "fenced"
-                if status == 409 and route in {"starting", "result", "answer", "fail"}
+                if status == 409
+                and route
+                in {"starting", "result", "answer", "fail", "sessions/starting", "sessions/result"}
                 else "transient"
             )
         except (
@@ -435,6 +489,8 @@ def _run(config, once):
     while True:
         try:
             for path in sorted(journal.glob("*.json")):
+                if path.name == "session-command.json":
+                    continue
                 try:
                     entry = json.loads(path.read_text(encoding="utf-8"))
                     if (
@@ -450,9 +506,20 @@ def _run(config, once):
                     print("runner: invalid journal quarantined", file=sys.stderr)
                     continue
                 _deliver(hub, path, entry, replay=True)
+            from . import session_agent
+
+            session_error = None
+            try:
+                session_agent.tick(hub, config, journal, env, (token, grant))
+            except _HubError as exc:
+                session_error = exc
+            except Exception as exc:
+                log_failure(logger, "orchestrator session pass failed", exc)
             job = hub.post("lease", {})
             if job is not None:
                 _start(hub, config, job, journal, env, (token, grant))
+            if session_error is not None:
+                session_error.report()
         except _HubError as exc:
             exc.report()
             if exc.kind == "credential":
