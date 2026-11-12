@@ -112,6 +112,8 @@ EXACT = {
     ("GET", "/api/chat"): "authenticated",
     ("GET", "/api/chat-settings"): "authenticated",
     ("PUT", "/api/chat-settings"): "authenticated",
+    ("GET", "/api/topology/proposals"): "authenticated",
+    ("POST", "/api/topology/proposals"): "authenticated",
     ("GET", "/api/tool-policy"): "authenticated",
     ("POST", "/api/tool-policy"): "authenticated",
 }
@@ -138,6 +140,8 @@ PREFIX = {
     ("POST", "/api/card-snooze/"): "authenticated",
     ("POST", "/api/agent-schedules/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
+    ("GET", "/api/topology/proposals/"): "authenticated",
+    ("POST", "/api/topology/proposals/"): "authenticated",
     **{
         (method, path): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")

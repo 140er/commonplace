@@ -56,6 +56,7 @@ MODULES = (
     "commonplace.projects",
     "commonplace.tool_policy",
     "commonplace.bots",
+    "commonplace.topology",
     "commonplace.topology.extension",
 )
 
