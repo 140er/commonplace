@@ -579,6 +579,8 @@ def legacy(tmp_path_factory):
     # Current rules checks import the read deadline: a leaf module (stdlib only), so
     # the pinned gateway, policy and handoff stay as-is.
     shutil.copy2(ROOT / "mempalace" / "deadline.py", snapshot / "mempalace" / "deadline.py")
+    # Current stores take their busy timeout and lock retry from a stdlib-only leaf module.
+    shutil.copy2(ROOT / "commonplace" / "db_busy.py", snapshot / "commonplace" / "db_busy.py")
     # Current board and rules stores create files through the admission gate.
     shutil.copy2(ROOT / "commonplace" / "admission.py", snapshot / "commonplace" / "admission.py")
     # Overlaid board tools use the current registry contract; handoff remains
