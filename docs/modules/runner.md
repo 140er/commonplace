@@ -5,7 +5,7 @@
 
   - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
 
-  - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
+  - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes. The same block edits a machine's projects and maximum runtime mode with a partial `PATCH` (`{projects, max_runtime_mode}` plus `If-Match: <grant_version>`), so wings and topics stay untouched and the binding stays `owner_attested`; `tests/admin_runners_ui.mjs` covers render, save and the 409/400 paths and `tests/test_runner_owner.py` the server side.
 
 
   - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
