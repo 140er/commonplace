@@ -1221,6 +1221,9 @@ def tool_check_duplicate(content: str, threshold: float = 0.9):
                             "id": drawer_id,
                             "wing": meta.get("wing", "?"),
                             "room": meta.get("room", "?"),
+                            # A diary entry's topic, so a gateway can check
+                            # any thread it names before returning the match.
+                            **({"topic": meta["topic"]} if meta.get("topic") is not None else {}),
                             "similarity": similarity,
                             "content": doc[:200] + "..." if len(doc) > 200 else doc,
                         }
@@ -1300,7 +1303,7 @@ def tool_graph_stats(thread_scope: dict = None):
     col = _get_collection()
     if not col:
         return _collection_error_or_no_palace()
-    return graph_stats(col=col)
+    return graph_stats(col=col, config=_config)
 
 
 def tool_mesh_peers():
@@ -1344,6 +1347,7 @@ def tool_create_tunnel(
             label=label,
             source_drawer_id=source_drawer_id,
             target_drawer_id=target_drawer_id,
+            config=_config,
         )
     except (ValueError, GraphUnavailable) as e:
         return {"error": str(e)}
@@ -1355,7 +1359,7 @@ def tool_list_tunnels(wing: str = None, thread_scope: dict = None):
         wing = _sanitize_optional_name(wing, "wing")
     except ValueError as e:
         return {"error": str(e)}
-    rows = list_tunnels(wing)
+    rows = list_tunnels(wing, config=_config)
     if thread_scope is not None:
         from ..tunnel_scope import scoped_tunnels
 
@@ -1377,9 +1381,9 @@ def tool_delete_tunnel(tunnel_id: str, thread_scope: dict = None):
     except ValueError as exc:
         return {"error": str(exc)}
     if scope == "probe":
-        target = next((t for t in list_tunnels() if t.get("id") == tunnel_id), None)
+        target = next((t for t in list_tunnels(config=_config) if t.get("id") == tunnel_id), None)
         return {"probe": target}
-    return delete_tunnel(tunnel_id, expect=scope)
+    return delete_tunnel(tunnel_id, expect=scope, config=_config)
 
 
 def tool_list_hallways(
@@ -1460,6 +1464,7 @@ def tool_follow_tunnels(wing: str, room: str, record: bool = True, thread_scope:
         wing,
         room,
         col=col,
+        config=_config,
         record=bool(record) and not _READ_ONLY,
         **({"tunnels": rows} if thread_scope is not None else {}),
     )

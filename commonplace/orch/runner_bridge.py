@@ -18,7 +18,8 @@ in this order: (trigger only) the ``(cursor, gen)`` re-check as the first statem
 current, ``plan`` label -> ``plan_pending``; 2. existing step (orch) or existing keyed
 job (person with a ``request_key``, trigger): a voided runner-start key refuses
 ``step_voided`` before matching; an unvoided exact match returns the stored job,
-a mismatch is a 409; then card/grant refusals; 4. the cap; 5. ``jobs.create_in`` and (orch)
+a mismatch is a 409; then card/grant refusals; 3. path contracts (``path_overlap``,
+``path_contract_too_large``); 4. the cap; 5. ``jobs.create_in`` and (orch)
 the step row, the lease re-check and renewal; (trigger) the cursor advance with the job
 or the miss row. A refusal after a write rolls back to a savepoint, so nothing partial
 is ever committed.
@@ -32,15 +33,16 @@ import logging
 import sqlite3
 from dataclasses import dataclass, replace
 
+from commonplace.boards import contracts
 from commonplace.boards.service import BoardService
 from commonplace.boards.store import BoardStore, task_row
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
-from commonplace.projects import limits as project_limits, models
+from commonplace.projects import escalation, limits as project_limits, models
 from commonplace.runner import jobs, registry
 from commonplace.runner.predicate import Refused, grant_values, requester_ok, startable
 
-from . import durable, schema, store as orch_store
+from . import durable, schema, start_retry, store as orch_store
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,9 @@ class Plan:
     orchestration_on: bool = False
     workers: frozenset = frozenset()
     workspace_dir: str | None = None
+    escalation: escalation.Rule | None = None  # the project's rule, read with the snapshot
+    labels: tuple = ()  # the card's labels
+    model_reason: str | None = None  # why ``model`` is the escalation model
 
     @property
     def role(self) -> schema.Role:
@@ -129,7 +134,8 @@ class TriggerRef:
     cursor: int
     gen: int
     actor: str | None = None
-    retry: int = 0
+    retry: int = 0  # split reconciliation attempt (``orch_misses`` rows with a negative event)
+    redo: int = 0  # transient-refusal retry number of the event (``start_retry``)
 
 
 @dataclass
@@ -149,8 +155,10 @@ def ensure_schema(conn) -> None:
     durable.ensure_schema(conn)
     for statement in MISSES_SCHEMA:
         conn.execute(statement)
-    if "launch_role" not in {r[1] for r in conn.execute("PRAGMA table_info(runner_jobs)")}:
-        conn.execute("ALTER TABLE runner_jobs ADD COLUMN launch_role TEXT")
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(runner_jobs)")}
+    for name in ("launch_role", "model_reason", "request_base_hash"):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE runner_jobs ADD COLUMN {name} TEXT")
 
 
 def _has_configs(directory) -> bool:
@@ -258,8 +266,7 @@ def prepare(
         # The split start runs the board's orchestrator role. Configs may name it freely
         # (``main`` by convention); without a ``main`` role keep the runner's own role, so
         # a differently named orchestrator never turns every trigger sweep into an error.
-        split_role = "main" if "main" in config.roles else config.runner.role
-        config = replace(config, runner=replace(config.runner, role=split_role))
+        config = replace(config, runner=replace(config.runner, role=config.split_role))
     if config.runner is not None and config.runner.role not in config.roles:
         raise StartRefused("unknown_role", "the config has no role for this start")
     role = config.runner_role
@@ -300,7 +307,29 @@ def prepare(
         orchestration_on=on,
         workers=workers,
         workspace_dir=gateway.workspace_dir(workspace_id),
+        escalation=escalation.get(gateway.db, workspace_id, board_row["slug"]),
+        labels=tuple(str(x) for x in _labels(card_row)),
     )
+
+
+def _escalated(conn, plan: Plan) -> Plan:
+    """Swap in the escalation model when the project's rule applies to this start.
+
+    Failed rounds are the card's ``failed`` jobs, counted inside the start transaction."""
+    rule = plan.escalation
+    if rule is None:
+        return plan
+    failed = 0
+    if rule.after_failures is not None:
+        failed = conn.execute(
+            "SELECT COUNT(*) FROM runner_jobs WHERE board_slug=? AND task_number=? "
+            "AND state='failed'",
+            (plan.board, plan.card),
+        ).fetchone()[0]
+    model, reason = escalation.pick(
+        rule, plan.role.model_role, plan.model, failed=failed, labels=plan.labels
+    )
+    return replace(plan, model=model, model_reason=reason)
 
 
 def request_hash(plan: Plan, role: str) -> str:
@@ -341,14 +370,142 @@ def request_key_for(path: str, *, role=None, step_key=None, event=None, request_
 # -------------------------------------------------------------- fenced start
 
 
-def _cap_count(conn, plan: Plan, now: str) -> int:
-    rows = conn.execute(
+def _live_cards(conn, board: str, now: str, *, hold: bool) -> set:
+    """Cards with a live runner job on ``board``: queued, leased, starting or uncertain,
+    or started, whatever the card's own status says. ``hold`` (the cap) counts a started
+    job for ``STARTED_HOLD_SECONDS`` only; without it (path contracts) a started job counts
+    whatever its age, because a started job never leaves that state."""
+    sql = (
         "SELECT DISTINCT task_number FROM runner_jobs WHERE board_slug=? AND "
-        "(state IN ('queued','leased','starting','uncertain') "
-        "OR (state='started' AND started_at>?))",
-        (plan.board, jobs._after(now, -jobs.STARTED_HOLD_SECONDS)),
-    ).fetchall()
-    return len({row[0] for row in rows} | set(plan.doing))
+        "(state IN ('queued','leased','starting','uncertain') OR (state='started'"
+    )
+    if hold:
+        rows = conn.execute(
+            sql + " AND started_at>?))",
+            (board, jobs._after(now, -jobs.STARTED_HOLD_SECONDS)),
+        )
+    else:
+        rows = conn.execute(sql + "))", (board,))
+    return {row[0] for row in rows.fetchall()}
+
+
+def runner_db_exists(gateway, workspace_id: str) -> bool:
+    """True when the workspace has a runner database. A workspace without one has no jobs,
+    so there is nothing a contract change could race, and nothing here creates it."""
+    from pathlib import Path
+
+    return (Path(gateway.workspace_dir(workspace_id)) / orch_store.DB_NAME).is_file()
+
+
+def has_live_job(gateway, workspace_id: str, board: str, card: int) -> bool:
+    """True when ``card`` has a runner job that holds its contract (queued, leased,
+    starting, uncertain or started, of any age). Read-only: it never creates the runner
+    database or a table."""
+    from pathlib import Path
+
+    from mempalace.sqlite_crypto import connect
+
+    if not runner_db_exists(gateway, workspace_id):
+        return False
+    path = Path(gateway.workspace_dir(workspace_id)) / orch_store.DB_NAME
+    conn = connect(str(path), timeout=10, isolation_level=None)
+    try:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runner_jobs'"
+        ).fetchone():
+            return False
+        return card in _live_cards(conn, board, jobs._now(), hold=False)
+    finally:
+        conn.close()
+
+
+def _cap_count(conn, plan: Plan, now: str) -> int:
+    return len(_live_cards(conn, plan.board, now, hold=True) | set(plan.doing))
+
+
+def contract_refusal(
+    conn, *, workspace_dir, board_slug: str, board_id: int, card: int, now: str, paths=None
+) -> StartRefused | None:
+    """``path_overlap`` when ``card`` declares a path contract that overlaps the contract
+    of another card of the board that holds a start: a runner job that has not failed or
+    been cancelled (a started job counts whatever its age, because nothing ends it) or
+    ``doing`` with a ``conn:`` assignee. Call it inside the runner write transaction
+    (``conn``): the jobs, the doing cards and every contract are read there. A running
+    card's paths are read as they are now, so clearing them releases the card. An
+    unreadable stored contract counts as ``**``. A card with no contract, or running next
+    to cards with none, is never refused; a comparison past the work budget refuses
+    (``path_contract_too_large``) rather than hold the lock. A ``doing`` claim held by a
+    person (``user:``) does not hold a start. ``paths`` checks a contract that is about to be
+    stored (a running card that gains globs) instead of the one stored for ``card``. ``conn``
+    is None when the workspace has no runner database: there are no jobs then, so only
+    ``doing`` claims count."""
+    from commonplace.projects import orchestration as orch
+
+    live = set() if conn is None else _live_cards(conn, board_slug, now, hold=False)
+    with orch.board_read(workspace_dir) as boards:
+        if paths is not None:
+            mine = list(paths)
+        else:
+            row = boards.execute("SELECT paths FROM tasks WHERE id=?", (card,)).fetchone()
+            mine = contracts.parse(row["paths"] if row is not None else None)
+        if mine is None:
+            mine = list(contracts.ANY)
+        if not mine:
+            return None
+        running = live | {
+            r["id"]
+            for r in boards.execute(
+                "SELECT id FROM tasks WHERE board_id=? AND status='doing' "
+                "AND assignee LIKE 'conn:%'",
+                (board_id,),
+            )
+        }
+        running.discard(card)
+        ids, stored = sorted(running), []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            stored += [
+                (r["id"], r["paths"])
+                for r in boards.execute(
+                    "SELECT id, paths FROM tasks WHERE paths IS NOT NULL AND id IN "
+                    f"({','.join('?' * len(chunk))}) ORDER BY id",
+                    chunk,
+                )
+            ]
+        stored.sort(key=lambda item: item[0])
+    try:
+        found = contracts.first_overlap_running(mine, stored, contracts.Budget())
+    except contracts.TooLarge as exc:
+        other = getattr(exc, "key", None)
+        where = f"stopped at running card #{other}" if other is not None else "before any"
+        return StartRefused(
+            "path_contract_too_large",
+            f"comparing card #{card}'s path contract with the running cards' contracts "
+            f"needs more than {contracts.MAX_STEPS} comparison work units ({where}); "
+            f"narrow the paths of #{card}" + (f" or of #{other}" if other is not None else ""),
+            card=other,
+            paths=mine,
+            budget=contracts.MAX_STEPS,
+        )
+    if found is None:
+        return None
+    other, globs, pair = found
+    head = (
+        f"card #{card} declares {pair[0]!r}, which overlaps {pair[1]!r} of running card #{other}. "
+    )
+    if other in live:
+        how = (
+            f"#{other} holds its contract while its job exists (a started job never ends): "
+            f"narrow #{card}'s paths, or ask the workspace owner to clear #{other}'s paths "
+            f"(task_update paths=[]) once its work is over; an agent cannot clear them while "
+            f"the job exists"
+        )
+    else:
+        how = (
+            f"#{other} is claimed by its holder: start #{card} after the holder finishes or "
+            f"releases #{other}, or narrow #{card}'s paths"
+        )
+    return StartRefused("path_overlap", head + how, card=other, paths=mine, other_paths=globs)
 
 
 def _job(conn, job_id):
@@ -366,10 +523,55 @@ def _wrap(exc) -> StartRefused:
     )
 
 
+def model_unresolved(plan: Plan) -> StartRefused:
+    """The refusal for a start whose role has no model: it names the role and where to fix it."""
+    role = plan.role
+    if role.model_role is None:
+        message = (
+            f"the {role.name} role of board {plan.board} has no model_role; "
+            "add one to the role in the board's orchestrator config"
+        )
+    else:  # config validation accepts only the four slots, so project settings can set it
+        message = (
+            f"no model is set for the {role.model_role} role of board {plan.board}; "
+            "an owner sets it in the board's project settings under Agent models"
+        )
+    return StartRefused(
+        "model_unresolved", message, role=role.model_role, config_role=role.name, board=plan.board
+    )
+
+
+def _replayed(stored_hash: str, stored_job: dict | None, base_digest: str) -> bool:
+    """Is this retry the request that created the stored job?
+
+    Which model escalation picked is a decision, not part of the request. A job records
+    the digest of its request before escalation (``request_base_hash``: the default
+    model included), and a retry replays only when its own pre-escalation digest equals
+    it, whether the job ran on the default or on the escalation model and whether or not
+    the rule applies now. A changed default model, config or other argument changes that
+    digest, so it conflicts. A job without the column was never escalated: its request
+    hash is the pre-escalation digest."""
+    expected = stored_job.get("request_base_hash") if stored_job else None
+    return (expected or stored_hash) == base_digest
+
+
+def base_digest(base: Plan) -> str:
+    """The person/trigger request digest of the plan before escalation."""
+    return jobs.request_digest(
+        base.config.runner.machine,
+        base.config.runner.project,
+        base.role.topic,
+        base.config.runner.runtime_mode,
+        base.run_record(),
+    )
+
+
 def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now, clock):
-    # 0. resolve: the model is pinned from the snapshot; the hash covers it.
+    # 0. resolve: the model is pinned from the snapshot (or the project's escalation
+    # rule); the hash covers it.
+    base, plan = plan, _escalated(conn, plan)
     if plan.model is None:
-        raise StartRefused("model_unresolved", f"no model is set for {plan.role.model_role}")
+        raise model_unresolved(plan)
     digest = request_hash(plan, role)
     record = plan.run_record(step_key if path == "orch" else None)
     # 1. restore flag, lease (orch), version still accepted, plan label.
@@ -400,8 +602,11 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
                     status=409,
                     step=stored,
                 )
-            if stored["card"] == plan.card and stored["request_hash"] == digest:
-                return Outcome(200, _job(conn, stored["job_id"]), stored)
+            job = _job(conn, stored["job_id"])
+            if stored["card"] == plan.card and _replayed(
+                stored["request_hash"], job, request_hash(base, role)
+            ):
+                return Outcome(200, job, stored)
             raise StartRefused(
                 "step_conflict", "step_key reused with a different request", step=stored
             )
@@ -411,13 +616,7 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
             (plan.card, plan.requested_by, request_key),
         ).fetchone()
         if previous is not None:
-            if previous["request_hash"] == jobs.request_digest(
-                plan.config.runner.machine,
-                plan.config.runner.project,
-                plan.role.topic,
-                plan.config.runner.runtime_mode,
-                record,
-            ):
+            if _replayed(previous["request_hash"], dict(previous), base_digest(base)):
                 return Outcome(200, dict(previous))
             raise StartRefused(
                 "request_conflict",
@@ -426,6 +625,17 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
             )
     if plan.refusal is not None:
         raise StartRefused(plan.refusal, f"card is not startable: {plan.refusal}")
+    # 3. path contracts: no two running cards own the same files.
+    overlap = contract_refusal(
+        conn,
+        workspace_dir=plan.workspace_dir,
+        board_slug=plan.board,
+        board_id=plan.board_id,
+        card=plan.card,
+        now=now,
+    )
+    if overlap is not None:
+        raise overlap
     # 4. cap.
     if plan.orchestration_on:
         from commonplace.projects import orchestration as orch
@@ -470,6 +680,16 @@ def _fenced(conn, plan, *, path, role, step_key, epoch, token, request_key, now,
     if path == "trigger" and plan.orchestration_on:
         conn.execute(
             "UPDATE runner_jobs SET launch_role=? WHERE id=?", (plan.config.runner.role, row["id"])
+        )
+        row = _job(conn, row["id"])
+    if status == 201:
+        conn.execute(
+            "UPDATE runner_jobs SET model_reason=?, request_base_hash=? WHERE id=?",
+            (
+                plan.model_reason,
+                request_hash(base, role) if path == "orch" else base_digest(base),
+                row["id"],
+            ),
         )
         row = _job(conn, row["id"])
     step = None
@@ -531,7 +751,12 @@ def trigger_miss(store, board: str, card: int, trigger: TriggerRef, code: str, *
                 now,
             ),
         )
-        if not trigger.retry:
+        if trigger.redo:
+            start_retry.settle(
+                conn, board=board, card=card, event=trigger.event, code=code, now=now,
+                retry=trigger.redo,
+            )  # fmt: skip
+        elif not trigger.retry:
             conn.execute(
                 "UPDATE orch_cursor SET cursor=? WHERE board=? AND gen=? AND cursor=?",
                 (trigger.event, board, trigger.gen, trigger.cursor),
@@ -583,11 +808,14 @@ def fenced_start(
         if plan.orchestration_on
         else store.transaction() as conn
     ):
-        if trigger is not None and not trigger.retry:
+        if trigger is not None and not trigger.retry and not trigger.redo:
             # First statement in the lock: the pair the sweep recorded must still hold.
             if orch_store.cursor_in(conn, plan.board) != (trigger.cursor, trigger.gen):
                 return Outcome(dropped=True)
         ensure_schema(conn)
+        if trigger is not None and trigger.redo:
+            if not start_retry.claimable(conn, plan.board, trigger.event, trigger.redo):
+                return Outcome(dropped=True)
         if trigger is not None and plan.orchestration_on:
             from commonplace.projects import split
 
@@ -644,8 +872,19 @@ def fenced_start(
                         now,
                     ),
                 )
-            if not trigger.retry:
+            if not trigger.retry and not trigger.redo:
                 _advance(conn, plan, trigger)
+            if not trigger.retry and not plan.orchestration_on:
+                start_retry.settle(
+                    conn,
+                    board=plan.board,
+                    card=plan.card,
+                    event=trigger.event,
+                    code=refusal.code if refusal else None,
+                    now=now,
+                    retry=trigger.redo,
+                    job=outcome.job,
+                )
     if refusal is not None and trigger is None:
         raise refusal
     return outcome
@@ -692,6 +931,7 @@ def launch_reply(plan: Plan, outcome: Outcome) -> dict:
             "provider": job.get("model_provider", plan.model.provider if plan.model else None),
             "model": job.get("model", plan.model.model if plan.model else None),
         },
+        "model_reason": job.get("model_reason", plan.model_reason),
     }
 
 
@@ -707,7 +947,8 @@ def orch_card_start(
     ``invalid_step_key``, ``invalid_request_key``, ``board_not_found``,
     ``card_not_found``, ``unknown_role``, ``not_allowed``, ``not_configured``,
     ``fenced``, ``restore_pending``, ``config_changed``, ``plan_pending``,
-    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``at_cap``
+    ``model_unresolved``, ``step_conflict``, ``step_voided``, card codes, ``path_overlap``,
+    ``path_contract_too_large``, ``at_cap``
     (switch off), ``project_limit`` (switch on), ``active_start``,
     ``started_recently``, ``busy``) or pass ``OrchError``s of ``resolve_in`` through."""
     principal = ctx.principal
