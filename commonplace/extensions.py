@@ -34,6 +34,7 @@ MODULES = (
     "commonplace.memory_tools",
     "commonplace.skills",
     "commonplace.session",
+    "commonplace.account",
     "commonplace.webhooks",
     "commonplace.phone_push",
     "commonplace.oauth",
@@ -50,7 +51,15 @@ MODULES = (
     "commonplace.chat",
     "commonplace.compute",
     "commonplace.holds",
+    "commonplace.agent_schedules",
+    "commonplace.snooze",
+    "commonplace.routines",
     "commonplace.projects",
+    "commonplace.tool_policy",
+    "commonplace.bots",
+    "commonplace.meetings",
+    "commonplace.topology",
+    "commonplace.topology.extension",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})
@@ -71,6 +80,8 @@ class LocalTool:
     kind: str = "read"  # "read" or "write"; writes are audited
     profiles: frozenset = ALL_PROFILES
     trusted_only: bool = False  # refused to untrusted tokens
+    # An explicitly granted scope that admits an untrusted token anyway.
+    untrusted_scope: Optional[str] = None
     owner_only: bool = False  # only workspace owners
     # Optional live gate, e.g. "only while this workspace uses the feature".
     # False hides the tool exactly like a tool the token can't use.
@@ -145,7 +156,8 @@ def load_modules() -> list:
         try:
             loaded.append(importlib.import_module(name))
         except ModuleNotFoundError as exc:
-            if exc.name != name:
+            # The module, or the package it lives in, is not there (yet).
+            if exc.name != name and not name.startswith(f"{exc.name}."):
                 raise
     _loaded = True
     return loaded

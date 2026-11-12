@@ -14,6 +14,8 @@ Authority (nothing new; the stores enforce it again):
   the owner through the data directory). An agent token with role owner is refused.
 - lease, journal, gates, ``orch_card_start``: a principal that passes the runner's
   ``requester_ok`` for the config's ``[runner].machine``, plus epoch and token.
+- ``orch_reassign_step``: the same holder authority for the role the step's owner
+  reports to (``organigram``).
 
 Untrusted connections only see the read tools and ``orch_config_propose``
 (``trusted_only``); runner children see none (``available``). A configuring live accept
@@ -175,8 +177,20 @@ def config_get(ctx, board, version=None, channel="live"):
         "board": board,
         "channel": channel,
         "accepted": accepted.public(body=True) if accepted else None,
+        **_factory(accepted),
         "versions": [row.public() for row in st.versions(board)[:MAX_VERSIONS]],
     }
+
+
+def _factory(version) -> dict:
+    """``{"factory": ...}`` when the accepted version declares a merge policy, else ``{}``."""
+    try:
+        policy = version.config().factory if version else None
+    except ValueError:
+        policy = None
+    if policy is None:
+        return {}
+    return {"factory": {"policy": policy.to_dict(), "summary": policy.summary()}}
 
 
 def config_render(ctx, board, version=None, channel="live"):
@@ -317,11 +331,12 @@ def force_release(ctx, board, role):
     return result
 
 
-def card_start(ctx, board, role, card, step_key, epoch, token, config_ref=None):
+def card_start(ctx, board, role, card, step_key, epoch, token, config_ref=None, fresh_reason=None):
     from . import runner_bridge
 
+    extra = {} if fresh_reason is None else {"fresh_reason": fresh_reason}
     return runner_bridge.orch_card_start(
-        ctx, board, role, card, step_key, epoch, token, config_ref=config_ref
+        ctx, board, role, card, step_key, epoch, token, config_ref=config_ref, **extra
     )
 
 
@@ -355,6 +370,20 @@ def gate_record(ctx, board, role, epoch, token, step_key, verdict):
     return durable.gate_record(ctx, board, role, epoch, token, step_key, verdict)
 
 
+def finding(ctx, board, role, epoch, token, step_key, card, detail):
+    from . import durable
+
+    return durable.finding_report(
+        ctx, board, role, epoch, token, step_key, card=card, detail=detail
+    )
+
+
+def finding_ack(ctx, board, role, epoch, token, finding):
+    from . import durable
+
+    return durable.finding_ack(ctx, board, role, epoch, token, finding)
+
+
 def void_step(ctx, board, role, step_key):
     from . import durable
 
@@ -363,6 +392,13 @@ def void_step(ctx, board, role, step_key):
     step = durable.void_step(ctx, board, role, step_key)
     _emit(ctx, "orch.step.voided", board, board=board, role=role, step_key=step_key)
     return step
+
+
+def reassign_step(ctx, board, role, epoch, token, report, step_key):
+    from . import organigram
+
+    _board(ctx, board)
+    return organigram.reassign_step(ctx, board, role, epoch, token, report, step_key)
 
 
 def checkpoint(ctx, board, role):
@@ -525,6 +561,7 @@ OPERATIONS = {
             "card": CARD,
             "step_key": STEP_KEY,
             "config_ref": CHANNEL,
+            "fresh_reason": {"type": "string", "minLength": 1, "maxLength": 200},
         },
         (*LEASE, "card", "step_key"),
         "write",
@@ -532,7 +569,9 @@ OPERATIONS = {
         False,
         "As the lease holder, start the config's runner role on a card. The same step key "
         "returns the stored job unless voided (step_voided, 409); a fresh start needs a new "
-        "key and normal admission. config_ref is live or exp:<name>.",
+        "key and normal admission. config_ref is live or exp:<name>. While an agent that holds "
+        "the card's context has capacity the start is refused (agent_has_capacity) unless "
+        "fresh_reason says why a fresh agent is needed; the step records that reason.",
     ),
     "orch_journal_intent": (
         journal_intent,
@@ -585,7 +624,8 @@ OPERATIONS = {
         "write",
         True,
         False,
-        "Reserve the one gate attempt for a pull request head.",
+        "Reserve the one gate attempt for a pull request head. Refused (repair_exhausted) "
+        "once the pull request's repair used its failure bound.",
     ),
     "orch_gate_record": (
         gate_record,
@@ -598,7 +638,32 @@ OPERATIONS = {
         "write",
         True,
         False,
-        "Record the gate verdict; every verdict is final for that head.",
+        "Record the gate verdict; every verdict is final for that head. A fail opens or joins "
+        "the pull request's one repair and routes a finding to the card's owning session.",
+    ),
+    "orch_finding": (
+        finding,
+        {
+            **LEASE,
+            "step_key": STEP_KEY,
+            "card": CARD,
+            "detail": {"type": "string", "minLength": 1, "maxLength": 2000},
+        },
+        (*LEASE, "step_key", "card", "detail"),
+        "write",
+        True,
+        False,
+        "Report a review finding about a card. The hub routes it to the role whose lease "
+        "started the card's work while that lease is live, else parks it with a reason.",
+    ),
+    "orch_finding_ack": (
+        finding_ack,
+        {**LEASE, "finding": {"type": "integer", "minimum": 1}},
+        (*LEASE, "finding"),
+        "write",
+        True,
+        False,
+        "As the owning role, acknowledge a finding routed or parked to you.",
     ),
     "orch_void_step": (
         void_step,
@@ -610,6 +675,17 @@ OPERATIONS = {
         "Owner/local void: retire runner-start keys and cancel only queued/leased jobs; "
         "launched jobs and history remain. Repeats preserve the first void; each successful "
         "call emits a feed notification. Gate void allows a new attempt under a new key.",
+    ),
+    "orch_reassign_step": (
+        reassign_step,
+        {**LEASE, "report": ROLE, "step_key": STEP_KEY},
+        ("board", "role", "epoch", "token", "report", "step_key"),
+        "write",
+        True,
+        False,
+        "Take back a step of a role that reports to yours (parent in the config): the step "
+        "is voided with its history kept so the work can be given out again. Only the role "
+        "it reports to may do this; runner starts, gates and holds stay with the owner.",
     ),
     "orch_checkpoint": (
         checkpoint,

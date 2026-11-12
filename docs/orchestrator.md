@@ -7,8 +7,10 @@ settings and the `todo` trigger. Commonplace's own runner (see
 prompt, workflow and model and records the config version and model on every
 job. For other harnesses the rendered config is advisory.
 
-Nothing changes for a board until its owner accepts a live config with a
-`[runner]` table. Decisions, numbers and residuals are in `SYSTEM.md`.
+A board has no attached host until its owner accepts a live config with a
+`[runner]` table. Adding `session = true` to that table opts the board into a
+persistent board session, independently of `[[triggers]]` and the workspace
+splitting switch. Without it the board behaves as before: no session, no wake. Decisions, numbers and residuals are in `SYSTEM.md`.
 
 ## The config
 
@@ -23,7 +25,7 @@ with the standard library from Python 3.11 and with `tomli` on 3.10.
 schema = "commonplace.orchestrator/1"
 project = "example-shop"
 [limits]
-max_agents = 3                 # config-driven starts; min with the project limit
+max_agents = 3                 # 1-100; config-driven starts; min with the project limit
 [roles.main]
 kind = "orchestrator"
 harness = "t3"
@@ -59,13 +61,16 @@ role = "builder"
 machine = "mach_0123456789abcdef"
 project = "example"
 runtime_mode = "approval-required"
+session = true                 # optional, default false: opt in to a persistent board session
 [[triggers]]
 on = "card.todo"               # live channel only
 ```
 
 Role kinds are `orchestrator`, `sub-orchestrator`, `planner`, `builder` and
 `reviewer`; `parent` links form an acyclic graph; role names match
-`[a-z0-9-]{1,32}`. A planner's prompt must include `design_before_code`.
+`[a-z0-9-]{1,32}`. `parent` is the reporting line: a role reports to its
+parent, and a role without one reports to the workspace owner (see
+[Reporting lines](#reporting-lines)). A planner's prompt must include `design_before_code`.
 Secrets are only references of the form `env:[A-Z][A-Z0-9_]{1,63}`; an inline
 value is refused and never echoed. Limits: a config is at most 128 KiB with at
 most 16 roles, and a prompt is at most 32 KiB.
@@ -77,6 +82,7 @@ most 16 roles, and a prompt is at most 32 KiB.
 | `runner.machine`, `runner.project`, `runner.runtime_mode` | **Enforced** through the machine's existing grant checks. |
 | `triggers` (`card.todo`, live), `limits.max_agents`, planner `connections` | **Enforced** (below). |
 | other roles, `skills`, `mcps` | **Advisory.** Rendered for sessions to read. |
+| `[factory]` (optional) | `gate.required` is **enforced** on new `merge` steps; checks and batch cadence are **declared** for agents and tools to read (see Merge policy). |
 
 ### Area preview slice 1, preview-only
 
@@ -93,8 +99,35 @@ writes refuse every area-bearing config, including experiment channels, with
 versions, cursors, leases, jobs and events. No area seats, tokens, subscriptions
 or runtime are created; activation belongs to a later slice.
 
-Model routing has two slots, `main` and `worker`, set per project by the owner
-(`PUT /api/projects/<board>/models`).
+Model routing has four slots, `main` (orchestrator), `worker` (builder),
+`reviewer` and `gate`, set per project by the owner
+(`PUT /api/projects/<board>/models`) from the workspace's model list. A role the
+accepted config uses that has no model raises one owner item in Needs me; a start
+refused as `model_unresolved` names that role and where to set it.
+
+A project may also carry one escalation rule
+(`PUT /api/projects/<board>/escalation`, body `{"rule": {"after_failures": 2,
+"labels": ["security"], "model": {"provider": "…", "model": "…"}}}`, or
+`{"rule": null}` to clear it); the rule's model must be in the workspace's model
+list like a role model (`unknown_model`, HTTP 400, nothing stored). It applies to runner roles whose `model_role` is
+`worker` or `reviewer`. At start, inside the fenced transaction, the card's
+`failed` jobs are counted, whatever role they ran (a failed reviewer or gate job
+counts toward a builder's escalation); when that reaches `after_failures`, or the card
+carries one of the `labels` (case-insensitive), the job is pinned to the
+rule's model instead of the slot's. The job records `model_provider`, `model`
+and `model_reason` (`failed_rounds:<n>` or `label:<name>`), and the start
+reply carries `model_reason`. Without a rule nothing changes, and a role with no
+default model stays unmapped (`model_unresolved`) even when a rule exists. Which
+model escalation picked is a decision, not part of the request: a keyed retry
+(`request_key` or an orchestrator `step_key`) replays its stored job whether it ran
+on the default or the escalation model and whether or not the rule still applies.
+The job records the digest of its request before escalation (default model
+included, `runner_jobs.request_base_hash`; an orchestrator step reaches it through
+its job), and a retry replays only when its own pre-escalation digest equals it:
+a changed default model, config or other argument is a conflict
+(`request_conflict` / `step_conflict`) for an escalated job as for any other. The rule is
+read like the rest of the control snapshot, so a change applies to the next
+start, never to a queued job.
 
 ## Versions and experiments
 
@@ -132,7 +165,7 @@ Agent tokens with an owner role are not the owner. The project's Connect seat
 
 | Path | Who | Lease | Cap |
 |---|---|---|---|
-| `orch_card_start(board, role, card, step_key, epoch, token, config_ref?)` | the lease holder | yes | yes |
+| `orch_card_start(board, role, card, step_key, epoch, token, config_ref?, fresh_reason?)` | the lease holder | yes | yes |
 | `card_start(…, config_ref?)` over MCP or `POST /api/card-starts` | the person owner only; anyone else gets `no: use orch_card_start` | no | yes |
 | trigger | the event's actor | no | yes |
 | `card_start_cancel` of a job that belongs to a step | the person owner only | – | – |
@@ -154,10 +187,109 @@ Inside it, in this order:
    (409) wins over matching or changed requests. Other kinds retain
    `step_conflict`. For an unvoided exact match the stored job is returned;
    any mismatch is a 409 with the stored step or job.
+3b. **Path contracts.** A card with `paths` (canonical, brace-free,
+   repo-relative globs, set with `task_update`) is refused with `path_overlap`
+   (409; details `card`, `paths`, `other_paths`) while another card of the board
+   that holds a start declares a glob that can match the same path. Holding a
+   start means a runner job that is queued, leased, starting, uncertain or
+   started (a started job counts whatever its age, unlike the cap's one-hour
+   hold; no state ends it) whatever the card's status, or `doing` with a
+   connection assignee. The jobs, the doing cards and the contracts are read
+   inside the write lock, and a running card's paths are read live. `paths` is
+   an editing field (holder, review editor, creator of an unassigned card, or a
+   person), and while the card has a job only the workspace owner may clear or
+   narrow it (`task_update(paths=[])`); others can only add globs, so an agent
+   asks the owner to release a card. Any change, the owner's
+   included, takes the runner write lock before the board transaction (runner,
+   then board, like a start), so it cannot land between a start's contract read
+   and its job commit. A card that counts as running (a live job, or a `doing`
+   claim held by a connection) that gains globs is checked like a start
+   against the other running cards inside that lock, whoever edits it
+   (`path_overlap` or `path_contract_too_large`); a card that does not run is
+   checked when it starts. Without a runner database there is nothing to lock
+   and the change does not create it. Unreadable stored contracts count as
+   `**`. A wildcard segment is matched by a matcher that means what `fnmatch`
+   means (classes included) but never backtracks the way a regex does: it makes
+   at most one pass over the pattern per character of the name, plus one (one
+   pass in all when the pattern has no `*`), so its cost has a bound that is
+   known before it runs. One start spends a budget of 2 200 000 work units,
+   calibrated on the development host at about 0.3 microseconds per unit: each
+   running card costs 16 units to handle plus its stored size (1, plus 10 per
+   glob, 1 per `/` and 1 per 32 characters), billed before its contract is
+   parsed; building the matcher of each wildcard segment is billed by what it
+   costs (10, plus 1 per character and 8 per `[`), a rebuild after a cache clear
+   included; and a comparison costs pairs times the shallower side's deepest
+   glob times the dearest segment comparison: equal literals 1 unit plus 1 per
+   32 characters, a pattern with a `*` against a name of n characters
+   1 + (n + 2) x w / 6 units and a pattern without one 1 + (w + 1) / 6, where
+   w is 1 plus the pattern's length plus 8 per `[`. The SQL read of the running
+   cards' contracts is not billed (0.17 s at 220 000 rows with contracts, 0.04 s
+   without). Measured on the development host, in seconds to run into the
+   budget (or through all running cards where the shape
+   never reached it), minimum to maximum over the runs made:
+
+   | shape | running cards compared | seconds |
+   |---|---|---|
+   | A 89 segments, `?` against literal | 5 | 0.37 to 0.42 |
+   | B one ~180-character segment, `?` against literal | 17 | 0.58 to 0.64 |
+   | C one star-dense segment against literal | refused at the first | 0.00 |
+   | D 89 segments, literal against literal | 5 | 0.10 to 0.11 |
+   | E one ~180-character segment, literal against literal | 85 | 0.10 to 0.11 |
+   | G 4 segments of ~53 characters, `?` against literal | 13 | 0.43 to 0.45 |
+   | H one segment of character classes | 6 | 0.18 to 0.21 |
+   | I one `*?` segment | refused at the first | 0.00 |
+   | J one segment, many stars, end mismatch | refused at the first | 0.00 |
+   | L 366 running cards of 64 globs of 89 segments | 323 | 0.55 to 0.64 |
+   | M new card of 64 globs of 89 segments, 1000 one-glob cards (never reaches the budget) | 1000 | 0.04 |
+   | Q2 64 globs of 8 segments, distinct 20-character wildcard patterns | 42 | 0.09 to 0.12 |
+   | T1 64 tiny literal globs per card | 2 952 | 0.53 to 0.60 |
+   | T2 64 distinct 185-character wildcard globs per card | 141 | 0.15 |
+   | T2s 64 distinct 19-character wildcard globs per card, 600 cards (never reaches the budget) | 600 | 0.23 to 0.27 |
+   | T3 64 distinct 185-character literal globs, 1200 cards (never reaches the budget) | 1200 | 0.32 to 0.37 |
+   | M2 an edit adding 64 long wildcard globs, 64-glob literal cards | 16 | 0.04 to 0.05 |
+   | S1 new card against one literal glob per card | 73 332 | 0.44 to 0.50 |
+   | G64x1 new card of 64 one-segment literal globs, one glob per card | 24 168 | 0.55 to 0.58 |
+   | G64x1W the same with 64 wildcard globs | 4 210 | 0.24 |
+   | G64x64 new card of 64 one-segment literal globs, 64 per card | 460 | 0.50 to 0.55 |
+   | G64x64W the same with 64 wildcard globs | 59 | 0.20 to 0.25 |
+   | P31 32 trailing-star globs of 31 characters, one 31-character name per card | 386 | 0.07 |
+   | L127 the same at 127 characters | 24 | 0.02 |
+   | L199 the same at 199 characters | 10 | 0.01 |
+   | P199x20 64 trailing-star globs of ~196 characters, 20 cards of 64 such names | refused at the first | 0.00 |
+   | L199x64 64 trailing-star globs of 199 characters, 64 such names per card | refused at the first | 0.00 |
+   | CL199 32 globs of ~193 characters, a class run before the tail | 4 | 0.01 |
+   | MEM 600 cards of 64 distinct 5-character wildcard globs (never reaches the budget) | 600 | 0.21 to 0.23 |
+   | W1 32 globs of `*`, 1 to 33 `?` and two letters, one 199-character name per card | 55 to 406 | 0.30 to 0.53 |
+   | W1x64 64 such globs, 64 199-character names per card | 1 | 0.24 to 0.27 |
+   | WC 32 globs of `*`, three classes and two letters, one 199-character name per card | 44 to 51 | 0.04 to 0.27 |
+   | WR 32 globs of `*` and one class of 60 ranges | 10 | 0.01 to 0.02 |
+   | WS one 199-character new name, 64 distinct `*?????z` patterns per card | 60 | 0.25 to 0.30 |
+   | WD 64 globs of 49 `*?z` segments, one 49-segment name per card | 116 | 0.01 |
+   | WX 400 cards of 64 distinct wide-range class globs (never reaches the budget) | 400 | 0.21 to 0.23 |
+
+   Three runs per shape with the host's 1-minute load at about 10 (14 cores).
+   Before this matcher, a depth-1 wildcard comparison was billed one unit
+   whatever its cost and a class was compiled into a regex: P31 took 1.5 s,
+   P199x20 1.7 s (28% of the budget), L199x64 6.0 s, and 20 WX cards 2.5 s
+   with 4% of the budget used. The measured set is not exhaustive. Beyond the
+   budget it
+   refuses with `path_contract_too_large` (details `card`, `paths`,
+   `other_paths`, `budget`). `card_start` on a board without an orchestrator
+   config runs the same check before the job is inserted. Only runner starts
+   and edits that add globs to a running card are checked: a card a connection
+   takes by hand is not (and one `task_update` that adds globs and claims the
+   card skips the add re-check), its holder may
+   clear or narrow its own contract (the owner-only rule needs a runner job;
+   globs it adds are checked against the other running cards),
+   and a `doing` claim held by a person does not hold a start. Cards without a
+   contract never conflict.
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with
    `at_cap` when workspace orchestration is off, or `project_limit` when on.
+   `max_agents` accepts 1 to 100. The effective number of concurrent starts is
+   also bounded by the machines: `max_in_flight`, one agent per project, and
+   the runner's memory guard (see [runner.md](runner.md)).
    Voided steps do not exempt their jobs from capacity accounting.
 5. **Insert** the step row and the runner job, with the existing guards: one
    active start per card, and a non-person start within 24 h is refused
@@ -182,11 +314,19 @@ and recent-start guards still apply. These are existing limits of admission.
 
 ## Triggers
 
-Only boards with an accepted live `[runner]` config are swept, on each wake-up
+Automatic per-card starts require an accepted live `[runner]` config with a `card.todo`
+trigger. Those boards are swept on each wake-up
 and on each runner lease. The sweep reads committed `task_events` after the
 board's cursor and fires when a card moves into `todo` from another status
-(`add`, `move`, `decide`) and on the plan-approval row. An event emission that
-failed after commit is still found.
+(`add`, `move`, `decide`), on the plan-approval row and on an origin release
+(`decide` with choice `release origin`), so a restricted-origin card that waited
+in `todo` starts once it is released. An event emission that failed after
+commit is still found.
+
+Without that trigger, a config that opted into a session (`session = true`)
+skips both the per-card event sweep and bounded split-root reconciliation: no
+automatic per-card starts or split retries are created. A config without
+`session = true` keeps its earlier sweep behaviour unchanged. The persistent board session still watches and continues independently.
 
 - **Cursor.** Accepting a config that adds `[runner]` commits the board's
   cursor as unset with a new generation; arming then sets it to the current
@@ -199,10 +339,102 @@ failed after commit is still found.
   `requester_not_allowed`. Members' moves do not start work.
 - **Misses.** Every refusal (`assigned`, `not_todo`, `started_recently`,
   `busy`, `plan_pending`, …) is recorded as a coded miss and shown on resume;
-  the cursor moves past it. Only infrastructure errors leave the cursor for the
-  next sweep. A refused card is not retried automatically, even when the
-  refusal was transient (`busy`, `at_cap`, `started_recently`): it stays in the
-  checkpoint's unstarted list and as a miss. Move it to `todo` again to retry.
+  the cursor moves past it. A start that cannot be planned is a miss too
+  (`not_configured`, `unknown_role`, or `config_invalid`), so one card never
+  blocks the board's later cards. Only infrastructure errors leave the cursor
+  for the next sweep.
+- **No-progress wake.** After a clean sweep, a board with actionable open
+  work (not blocked, not waiting on a person), a free slot, an unstarted card
+  or an expired claim, and no card done for `minutes` (default 20; 0 turns it
+  off) emits one `board.stalled` event (app and webhooks) naming the doing,
+  unstarted and expired cards. The next nudge waits another `minutes`; a done
+  card resets the count; after three nudges in a row the owner's `needs_me`
+  lists the board under `orchestrator_stalled`.
+- **Failing sweeps.** Two failed sweeps of a board in a row emit one
+  `orch.trigger.failing` event (app and webhooks), and the owner's `needs_me`
+  lists the board under `orchestrator_failing` until a sweep succeeds. Only
+  the exception type is stored.
+- **Transient refusals are retried.** On a board without workspace
+  orchestration, a todo start refused as `at_cap`, `project_limit`, `busy`,
+  `settings_unavailable`, `config_changed`, `worker_unavailable` or
+  `started_recently` is recorded as a miss, advances the cursor as before, and
+  is started again by the sweep after 1, 5, 15, 30 and 60 minutes (same request
+  key as the first start, so a start that landed meanwhile is never doubled).
+  Each refused retry adds a miss; after the fifth the start is marked exhausted
+  with a `retry_exhausted` miss. Any other refusal (a card that left `todo`,
+  grants, the actor, an unresolved model, a pending restore) is final and not
+  retried. The attempts live in `orch_start_retries` (`pending`, `started`,
+  `refused`, `exhausted`). With orchestration on, root cards keep the split
+  reconciliation (three attempts at 10, 30 and 90 minutes). A card left in
+  `exhausted` or `refused` stays in the checkpoint's unstarted list; move it to
+  `todo` again to start it.
+
+## Persistent board session
+
+The machine runner owns one session record per board in `runner_sessions`,
+separate from `runner_jobs` and from role leases. Its regular polling pass
+watches board state without a webhook or `card.todo` trigger. It launches the
+sole parentless orchestrator role into the accepted runner's machine/project,
+with that role's topic, prompt, workflow and resolved model. It retains the
+returned thread ID and sends continuations to that same thread.
+
+A card is actionable unless it is done, has an unresolved `task_blockers`
+dependency, or has a person-directed ask. Blocked cards expose their dependency
+names or question in the project response. Backlog, unfinished split children,
+Doing and other Review cards still count; capacity limits are not blockers.
+When a host turn ends, the hub checks the entire board again. Actionable cards
+schedule continuation; otherwise the session becomes idle. A later new card or
+unblocked card wakes an idle session. A clear idle board causes no host calls
+and no model turns. Running threads are inspected without sending model input.
+
+`GET /api/projects/<board>` includes session state, reason and pending command.
+Only workspace owners receive the thread ID, actionable card numbers and
+blocker details; non-owner projections omit those fields. An absent
+accepted `[runner]` is `no_host`, with reason `no host attached`; a `[runner]`
+without `session = true` is `no_host` with reason `sessions not enabled`. No
+machine is chosen implicitly. `unavailable` reports withdrawn grants or changed config,
+binding or model instead of claiming the orchestrator is running.
+
+Signed-in owners can POST `{}` to
+`/api/projects/<board>/orchestrator/stop` or `/resume`. Stop persists across
+polls and new cards until explicit resume. `stopping` means interruption is
+pending; `stopped` is distinct from idle. A stop racing a launch retains the
+in-flight acknowledgement so its thread can be interrupted. Neither an agent
+seat nor a worker token gains owner or requester authority.
+
+The machine-only `POST /api/runner/sessions/lease`, `/starting` and `/result`
+protocol leases one fenced command at a time. Fresh accepted config, its
+accepting owner's current requester identity, machine binding/epoch, grants,
+wing access and model selection are checked before host effects. Restore
+markers and flags refuse commands. Launches, continuations and stops have a
+local replay journal: ambiguous effects become `uncertain`, never automatically
+replayed or cleared by resume. Owner stop preserves the uncertainty marker,
+including for a subsequent resume. Config/binding/model changes also fail closed.
+
+A lease pass filters configs by the requesting machine before reading board
+cards, and skips unavailable boards individually. Archived or missing boards
+cannot starve another board or machine. If a board disappears before a command
+starts, the command closes without a host effect. If it disappears during a
+turn, the result is still acknowledged and the local journal is cleared. An
+observed finished/stopped thread becomes idle/stopped; a possibly running thread
+retains its binding and becomes uncertain. Prior uncertainty and owner stop
+remain durable. Status reports `unavailable` without thread or card details;
+control refuses an already missing board but acknowledges a stop committed
+before its disappearance. Storage failures still fail closed and retain results
+for retry. Invalid local session journals are
+quarantined. Session journal, transport or command failures are isolated from
+per-card leasing in the same runner pass.
+
+A local command refusal sends `sessions/result` with `outcome="refused"` and a
+known `code` while the command is still leased, before any host effect. The
+project session then reports `unavailable` and that reason. Refusals are fenced
+and journaled; they cannot replace an already-starting or uncertain result.
+
+Recovery/rebinding after ambiguity or changed configuration, runner service
+activation, richer owner UI, and coordination beyond the host's existing
+credential scope remain follow-up work. The runner must already be running;
+this feature does not enroll machines, activate a service, change credentials
+or grant access. Session commands do not reserve per-card worker slots.
 
 ## Durable orchestrator
 
@@ -210,7 +442,10 @@ failed after commit is still found.
   held, after release or expiry, or when the owner forces it. The token is
   returned once. TTL 1800 s, renewed by fenced writes and `orch_heartbeat`;
   waits are sliced to at most 10 minutes with heartbeats. Expiry only fences.
-  A lost token means waiting for expiry or an owner force.
+  A lost token means waiting for expiry or an owner force. A board without
+  `[runner]` has one possible holder: its own project seat, once an owner
+  trusted it in Project settings, for its seat role (`main`). A project seat
+  never claims another board's lease.
 - **Journal.** `intent → started → waiting → done | failed | in_doubt`;
   `in_doubt` moves on to `done`, `failed` or `needs_person`. A job maps to its
   step as: queued, leased or starting → `waiting`; started → `done`;
@@ -228,11 +463,39 @@ failed after commit is still found.
   keeps linked statuses while active journal lists omit voided steps.
   A fresh attempt requires an explicit new key and all existing admission
   checks, including the non-person rules for owner `orch_card_start` calls.
+- **Reporting lines.** <a id="reporting-lines"></a>The `parent` keys are the
+  organigram. Escalation follows them: the checkpoint of a role that others
+  report to has `escalations`, the unvoided `in_doubt` and `needs_person`
+  steps of its direct reports (each with its `role`). A role nobody reports
+  to has no such key, and a role's own lists are unchanged; the top of a line
+  still escalates to the owner through `needs_person`. Delegation follows
+  them too: with `orch_reassign_step` the lease holder of the parent role
+  takes back a step of a direct report (`report`, `step_key`). The step is
+  voided with its history kept, one `reassign` journal event is written, and a
+  repeat returns the first result. Any other role is refused (`not_in_line`,
+  403). Runner-start, gate and hold steps stay with the owner
+  (`owner_only_kind`, 403), so a reassignment never cancels a job, reopens a
+  gated head or lifts a hold. A `needs_person` step is a person's decision and
+  stays with the owner too (`needs_person_owner_only`, 403, step unchanged):
+  the parent role still sees it in `escalations`, but only the owner resolves
+  it. A config without `parent` keys has no lines:
+  nothing is escalated and every reassignment is refused.
 - **Evidence.** `runner_job` (the hub checks the job belongs to this step,
   card and board), `card_state` (the hub reads the card) and `holder_attested`
   (stored, never acted on).
 - **Gates.** `gate_pass`, `gate_fail`, `gate_error`, `gate_budget`; one gate
   per `(board, repo, PR, head)` across roles unless the owner voids it.
+- **Result destinations.** Each journal step records a `destination` before
+  its effect: `{kind: "card", board, card}` when it has an owning card,
+  otherwise `{kind: "parked", reason: "no_owning_card"}`. This covers journal
+  completions, gate verdicts, `next` notes and runner-start results derived
+  from their jobs. The checkpoint includes destinations on steps and a
+  bounded `parked` list of finished results, including `next` notes. `next_step`
+  exposes the full latest note and its destination alongside the existing `next`
+  text. A park
+  records the missing ownership explicitly; it requires owner follow-up and
+  does not dispatch a message. Existing journal rows gain destination metadata
+  on first open without changing their content, evidence, state or history.
 - **External effects** are never re-issued by the hub. Before any re-issue the
   resume protocol checks the truth source: merge → PR state and head; gate →
   the PR's `Reviewed head:` and `Verdict:` lines, else `needs_person`; runner
@@ -243,9 +506,85 @@ failed after commit is still found.
   checkpoint: open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses,
   and the unstarted `todo` cards of each configured board (a `todo` card with no
   active job and no job started after it last entered `todo`; a start in the
-  same second as that entry cannot be ordered, so the card is listed). Cards are
+  same second as that entry cannot be ordered, so the card is listed; they come
+  most urgent `priority` first). Cards are
   classified read-only as `held`, `expired` or `not_held_by_caller`; only the
   caller's own held cards get a heartbeat.
+- **Builders started outside the runner.** A lead that starts a builder itself
+  (for example a T3 thread) journals it: `orch_journal_intent` with kind
+  `thread` and the card, then `orch_journal_record` with state `started` once
+  the builder runs (a `holder_attested` note can name the thread). The
+  checkpoint's `jobs` then lists that builder with `source: "journal"`, the
+  card, step key, assignee, claim end, detail and evidence, for as long as the
+  step is unfinished and unvoided and the card is in `doing` on this board
+  under a live claim. It stays listed when a new lease epoch marks the step
+  `in_doubt`. An intent without a recorded start, a card that left `doing` or
+  whose claim expired, and steps of another board or role are not listed.
+  Runner jobs carry `source: "runner"`. The list is derived on every read;
+  the hub does not check that the thread exists.
+
+## Merge policy
+
+A config may carry one optional `[factory]` section: what guards a merge on
+this board. It is versioned, diffed and accepted with the rest of the config,
+so there is one place to read it and one owner approval to change it. An
+experiment cannot change it. A config without `[factory]` has no policy and
+the board behaves as it did before the section existed.
+
+```toml
+[factory.gate]
+required = true                # a merge step needs a passed gate
+name = "merge gate review"     # optional label
+[factory.checks.affected-tests]   # one table per check, named [a-z0-9-]{1,32}
+required = true                # default true
+scope = "affected"             # "affected" (default) or "full": the tests it runs
+pass = ["PASS"]                # the only outcomes that count
+never_pass = ["FALLBACK", "SUPERSEDED"]      # named so nobody argues later
+[factory.batch]
+branch = "develop"
+full_suite = "per-batch"       # "per-pr", "per-batch" or "off"
+on_red = "hold-merges"         # or "report"
+```
+
+The example is the policy this project ran on 11 November 2026: a pull request
+merges on a passed gate plus a green check of the affected tests on the same
+head; the full suite runs once per batch on the integration branch and a red
+batch holds further merges.
+
+What the schema refuses (`factory_contradiction` unless noted):
+
+- `timeout`, `skip`, `skipped` or `error` in `pass`, in any letter case. These
+  never count as a pass, and every summary names them.
+- The same outcome in `pass` and `never_pass`.
+- A policy that requires neither the gate nor any check.
+- `full_suite = "per-batch"` with a required check of `scope = "full"`, and
+  `full_suite = "per-pr"` without one.
+- `on_red` with `full_suite = "off"`.
+- Unknown keys, an empty `pass`, more than 16 checks or 16 outcomes per list
+  (the usual `unknown_key`, `invalid_value`, `too_many`).
+
+Where it is read:
+
+- **The journal.** With `gate.required = true`, a new `merge` step
+  (`orch_journal_intent`) needs a card, and the newest unvoided gate opened
+  for that card on this board must be `gate_pass`. Otherwise the step is
+  refused with `factory_card_required` or `factory_gate_required` (409; the
+  details carry the blocking gate) and nothing is written. A fail, error,
+  budget or still-open gate on a newer head blocks the merge of an older
+  passed head. A retry of a stored merge step still returns it.
+- **Agents.** `orch_config_get` returns `factory` (`policy`, `summary`) next
+  to the accepted version; `orch_checkpoint` and `orch_resume` carry `factory`
+  (`policy`, `summary`, `gates`) in the checkpoint; `orch_config_render` and
+  `commonplace orch render` end with a "Merge policy" list. The key is absent
+  when the accepted config has no `[factory]`.
+- **The app.** Project settings shows the summary lines under "Merge policy",
+  beside the accepted config version, with the board's gate counts.
+
+`gates` counts the board's unvoided gates by state (`open`, `gate_pass`,
+`gate_fail`, `gate_error`, `gate_budget`). Check outcomes are not reported to
+the hub, so the hub does not enforce `checks` or `batch`: the tool that runs a
+check reads them from the accepted version. `.commonplace/checks.toml` is a
+different file: the quick commands a repository runs before a push.
 
 ## Restore
 
@@ -309,3 +648,56 @@ project limit; model or harness routing for non-runner roles and more than two
 model slots; non-T3 runner harnesses, other triggers and experiment triggers;
 lease-fenced card moves and early handoff transfer; an owner UI; evaluations and
 replay of recorded runs.
+
+- **One bounded repair per failing check.** The checks the hub observes are
+  gates. The first `gate_fail` of a pull request opens its one repair and pins
+  the recording role as owner. Failed gates on later heads of that pull
+  request, from any role, join it; no second repair starts. `gate_pass`
+  resolves it. Work identity spans the successive heads of one pull request.
+  After `fleet.repair_attempts` failures (default 3) the repair is exhausted:
+  its destination is `{kind: "parked", reason: "repair_exhausted"}` and
+  `orch_gate_open` refuses that pull request (`repair_exhausted`) until the
+  owner raises the bound in the accepted config. The checkpoint lists
+  `repairs` with owner, failures, bound and state; `gate_record` returns the
+  `repair` it fed.
+- **Findings go to the owning session.** A failed gate and `orch_finding` (a
+  review finding about a card) are routed by the hub, never by the reporter, to
+  the role whose lease started the card's latest unvoided runner start, while
+  that lease is live. The finding is `routed` with destination
+  `{kind: "session", board, role}`; the owner reads it in its checkpoint
+  (`inbox_findings`) and acknowledges it with `orch_finding_ack` (only that
+  role, fenced). Otherwise it is `parked` with a reason: `no_owning_card`,
+  `no_owning_session`, `owner_session_gone` (lease released or expired) or
+  `routing_off`. Parked findings stay in the board-wide checkpoint `findings`
+  list. Those parked with an owner role (`owner_session_gone`, `routing_off`) also
+  appear in that role's `inbox_findings`, which is read on its own and not cut by
+  the board-wide list; `no_owning_card` and `no_owning_session` have no owner,
+  appear only in `findings` and cannot be acknowledged. Liveness is
+  the lease, the one session signal the hub has; a routed finding is delivered
+  to the checkpoint and proven received by the acknowledgement.
+- **No fresh agent while one with the context has capacity.** On `orch_card_start`
+  the context holder is the latest started agent (a started job with a thread)
+  of the card or its parent or children that is unfinished and started within
+  six hours. It has capacity while the unfinished cards it carries, plus this
+  one, stay within `fleet.agent_cards` (default 2). With a holder that has
+  capacity the start is refused (`agent_has_capacity`, details: `thread_id`,
+  `job`, `card`) unless the caller passes `fresh_reason`. Every new runner-start
+  step records `fresh_reason`: the caller's text, or `no_context_agent`,
+  `agent_full` or `reuse_off`; the checkpoint shows it. Person starts and
+  trigger starts are not subject to this rule and record no reason.
+
+The three rules are defaults of every board. A board overrides them in the
+accepted config's optional table:
+
+```toml
+[fleet]
+repair_attempts = 3    # 1-10 failed gates one repair absorbs
+route_findings = true  # false parks every finding as routing_off
+reuse_agents = true    # false never refuses a start; the reason is reuse_off
+agent_cards = 2        # 1-20 unfinished cards one agent may carry
+```
+
+Recorded destinations establish where a result belongs. Only an
+acknowledgement proves that a session received a finding, and only the runner's
+started job with a thread proves that an agent exists; the hub does not know
+whether that thread still has room beyond `fleet.agent_cards`.

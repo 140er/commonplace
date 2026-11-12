@@ -91,6 +91,38 @@ def cmd_plan_set(args) -> int:
         db.close()
 
 
+def cmd_waitlist_list(args) -> int:
+    from . import capacity
+
+    db = _db(args)
+    try:
+        capacity.ensure_schema(db)
+        state = capacity.status(db)
+        limit = state["max_accounts"]
+        print(f"accounts  {state['accounts']} of {limit if limit is not None else 'unlimited'}")
+        for entry in capacity.waitlist(db):
+            print(f"{entry['status']:<9} {entry['email']}  {entry['created_at']}")
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_waitlist_admit(args) -> int:
+    from . import capacity
+
+    db = _db(args)
+    try:
+        capacity.ensure_schema(db)
+        actor = db.user(_actor(db, args))
+        if not actor["is_admin"]:
+            raise ControlError("admin access required")
+        for email in capacity.admit(db, actor=actor["id"], email=args.email, next_n=args.next or 0):
+            print(f"admitted  {email}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_plan_show(args) -> int:
     from .workers import WorkerSupervisor
 
@@ -133,6 +165,10 @@ def cmd_workspace_add(args) -> int:
     return 0
 
 
+def _meetings(command, args) -> int:
+    return command(args, _db(args), _data_dir(args))
+
+
 def cmd_workspace_list(args) -> int:
     db = _db(args)
     for w in db.workspaces():
@@ -149,11 +185,15 @@ def cmd_member_add(args) -> int:
 
 def cmd_token_add(args) -> int:
     db = _db(args)
-    from .bridge import CLIENT_PRESETS, DEFAULT_CLIENT_PRESET
+    from .bridge import client_defaults
 
     if "memory:import:read" in (_csv(args.scopes) or []):
         raise ValueError("Imported history requires explicit browser reader consent")
-    defaults = CLIENT_PRESETS.get(args.client, DEFAULT_CLIENT_PRESET)
+    if "cards:decide" in (_csv(args.scopes) or []):
+        raise ValueError("Answering Needs-me questions requires the owner's browser consent")
+    if {"bots:chat", "bots:confirm"} & set(_csv(args.scopes) or []):
+        raise ValueError("Using bots from an app requires your own sign-in consent")
+    defaults = client_defaults(args.client, getattr(args, "preset", None))
 
     def value(name, fallback):
         explicit = getattr(args, name)
@@ -786,9 +826,10 @@ def _client_parsers(sub):
         parser.set_defaults(func=handler)
     check = sub.add_parser("check", help="warn about instructions or memory saved only locally")
     check.set_defaults(func=cmd_check)
-    from . import sync_cli
+    from . import review_rules, sync_cli
 
     sync_cli.register(sub)
+    review_rules.register(sub)
     for parser in (sub.choices["onboard"], check):
         parser.add_argument("--home", type=Path)
         project = parser.add_mutually_exclusive_group()
@@ -849,6 +890,62 @@ def cmd_workspace_encrypt(args) -> int:
                 key_store=args.key_store,
                 server_key_file=args.server_key_file,
                 recovery_key_file=args.recovery_key_file,
+                authorize=authorize,
+            ),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def cmd_workspace_keyslot_check(args) -> int:
+    from .workspace_keyslots import check_keyslot
+
+    def resolve(ref):
+        db = _db(args)
+        try:
+            return db.workspace(ref)["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            check_keyslot(
+                _data_dir(args),
+                args.workspace,
+                key_store=args.key_store,
+                slot=args.slot,
+                key_file=args.key_file,
+                authorize=resolve,
+            ),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def cmd_workspace_keyslot_rewrap(args) -> int:
+    from .workspace_keyslots import rewrap_keyslot
+
+    def authorize(ref):
+        db = _db(args)
+        try:
+            workspace = db.workspace(ref)
+            db.require_owner(workspace["id"], db.user(args.by)["id"])
+            return workspace["id"]
+        finally:
+            db.close()
+
+    print(
+        json.dumps(
+            rewrap_keyslot(
+                _data_dir(args),
+                args.workspace,
+                key_store=args.key_store,
+                slot=args.slot,
+                new_key_file=args.new_key_file,
+                unlock_slot=args.unlock_slot,
+                unlock_key_file=args.unlock_key_file,
                 authorize=authorize,
             ),
             sort_keys=True,
@@ -947,6 +1044,11 @@ def cmd_runner(args) -> int:
 
         return chat_agent.run(args.config, args.once)
 
+    if args.action == "report":
+        from .runner import report
+
+        return report.run(args)
+
     from .runner.agent import check, run
 
     if args.action == "check":
@@ -968,6 +1070,15 @@ def build_parser() -> argparse.ArgumentParser:
         if action in ("run", "chat"):
             s.add_argument("--once", action="store_true")
         s.set_defaults(func=cmd_runner)
+    s = runner.add_parser("report", help="report a started run's status, log and usage")
+    s.add_argument("--config", required=True)
+    s.add_argument("--job", required=True, help="job id of the started run")
+    s.add_argument("--status", choices=("completed", "errored", "stopped"))
+    s.add_argument("--log-ref")
+    for flag in ("--input-tokens", "--output-tokens", "--cost-micros"):
+        s.add_argument(flag, type=int)
+    s.add_argument("--currency")
+    s.set_defaults(func=cmd_runner)
 
     s = sub.add_parser("init", help="create the control database and the first admin")
     s.add_argument("--admin-email", required=True)
@@ -992,6 +1103,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("user")
     s.set_defaults(func=cmd_plan_show)
 
+    waitlist = sub.add_parser("waitlist").add_subparsers(dest="action", required=True)
+    waitlist.add_parser("list").set_defaults(func=cmd_waitlist_list)
+    s = waitlist.add_parser("admit")
+    s.add_argument("email", nargs="?")
+    s.add_argument("--next", type=int, help="admit the oldest N waiting people")
+    s.add_argument("--by")
+    s.set_defaults(func=cmd_waitlist_admit)
+
     ws = sub.add_parser("workspace").add_subparsers(dest="action", required=True)
     s = ws.add_parser("add")
     s.add_argument("name")
@@ -1006,6 +1125,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--server-key-file", required=True)
     s.add_argument("--recovery-key-file", required=True)
     s.set_defaults(func=cmd_workspace_encrypt)
+    s = ws.add_parser("keyslot-check")
+    s.add_argument("workspace")
+    s.add_argument("--key-store", required=True)
+    s.add_argument("--slot", choices=("server", "recovery"), required=True)
+    s.add_argument("--key-file", required=True)
+    s.set_defaults(func=cmd_workspace_keyslot_check)
+    s = ws.add_parser("keyslot-rewrap")
+    s.add_argument("workspace")
+    s.add_argument("--by", required=True)
+    s.add_argument("--key-store", required=True)
+    s.add_argument("--slot", choices=("server", "recovery"), required=True)
+    s.add_argument("--new-key-file", required=True)
+    s.add_argument("--unlock-slot", choices=("server", "recovery"), required=True)
+    s.add_argument("--unlock-key-file", required=True)
+    s.set_defaults(func=cmd_workspace_keyslot_rewrap)
     s = ws.add_parser("store")
     s.add_argument("workspace")
     s.add_argument("store", choices=("v1", "compact"))
@@ -1035,6 +1169,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--user", help="token holder (default: --by)")
     s.add_argument("--client", default="other")
     s.add_argument("--parent", help="parent connection name or id")
+    s.add_argument(
+        "--preset",
+        choices=("coding", "chat"),
+        help="policy defaults by what the agent does, for any --client "
+        "(default: chosen by client name)",
+    )
     s.add_argument("--profile", choices=sorted(PROFILES))
     s.add_argument("--tools", help="explicit tool list instead of --profile")
     s.add_argument("--scopes")
@@ -1116,6 +1256,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dest_dir")
     s.set_defaults(func=cmd_restore)
     orch_cli.add_parsers(sub)
+    from .meetings import cli as meetings_cli
+
+    meetings_cli.add_parsers(sub, _meetings)
+    from .runner import owner_cli
+
+    owner_cli.add_parsers(sub)
+    from .evals.cli import add_parsers as add_eval_parsers
+
+    add_eval_parsers(sub)
     return p
 
 
@@ -1142,7 +1291,7 @@ def main(argv=None) -> int:
     if args.command == "runner" or orch_cli.repo_only(args):
         # Repository checks and the runner client never open the data directory.
         return args.func(args)
-    if args.command in {"onboard", "remember", "rule", "check", "sync"}:
+    if args.command in {"onboard", "remember", "rule", "check", "sync", "review-rules"}:
         from .client import ClientError
 
         # Client operations neither open server databases nor take their lock.
@@ -1166,8 +1315,12 @@ def main(argv=None) -> int:
         errors += (HandoffDBError, SettingsError, ThreadNotFound, ManualHandoffError, T3Error)
     try:
         if args.command in {"connect", "backup", "restore"} or (
-            args.command == "workspace" and args.action in {"store", "prune-stores", "encrypt"}
+            args.command == "workspace"
+            and args.action in {"store", "prune-stores", "encrypt", "keyslot-rewrap"}
         ):
+            return args.func(args)
+        if args.command == "eval" and args.eval_action == "preflight":
+            # Stat-only: no lock file is created, so a fresh data dir stays untouched.
             return args.func(args)
         if args.func is cmd_serve:
             # Serve never takes the backup fence; an online backup runs beside it.
@@ -1179,7 +1332,15 @@ def main(argv=None) -> int:
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
-        if args.command not in {"login-link", "seed", "backup", "workspace", "doctor", "orch"}:
+        if args.command not in {
+            "login-link",
+            "seed",
+            "backup",
+            "workspace",
+            "doctor",
+            "orch",
+            "card-start",
+        }:
             raise
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2

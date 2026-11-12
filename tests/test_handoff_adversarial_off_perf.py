@@ -468,13 +468,20 @@ TOOLS_ADDED_SINCE_BASELINE = {
     "rules_get",
     "rules_changed",
     "session_start",
+    # The Compute map's write tools (not part of handoff).
+    "topology_propose",
+    "topology_discover_site",
+    # Compute map read tools (not part of handoff).
+    "topology_get",
+    "topology_route",
     # Orchestrator config, lease, journal and gate tools (not part of handoff).
     *"""
     orch_card_start orch_checkpoint orch_config_accept orch_config_diff orch_config_get
     orch_config_propose orch_config_reject orch_config_render orch_config_write orch_exp_retire
-    orch_force_release orch_gate_open orch_gate_record orch_heartbeat orch_journal_intent
+    orch_finding orch_finding_ack orch_force_release orch_gate_open orch_gate_record
+    orch_heartbeat orch_journal_intent
     orch_journal_record orch_release orch_restore_ack orch_restore_status orch_resume
-    orch_void_step
+    orch_void_step orch_reassign_step
     """.split(),
 }
 STARTUP_ADDED_SINCE_BASELINE = (
@@ -564,6 +571,16 @@ def legacy(tmp_path_factory):
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     shutil.copy2(ROOT / "commonplace" / "callstack.py", snapshot / "commonplace" / "callstack.py")
+    # Current board code imports the cards:decide grant rules: a leaf module with
+    # no commonplace imports, so the pinned gateway, policy and handoff stay as-is.
+    shutil.copy2(
+        ROOT / "commonplace" / "decide_grant.py", snapshot / "commonplace" / "decide_grant.py"
+    )
+    # Current rules checks import the read deadline: a leaf module (stdlib only), so
+    # the pinned gateway, policy and handoff stay as-is.
+    shutil.copy2(ROOT / "mempalace" / "deadline.py", snapshot / "mempalace" / "deadline.py")
+    # Current stores take their busy timeout and lock retry from a stdlib-only leaf module.
+    shutil.copy2(ROOT / "commonplace" / "db_busy.py", snapshot / "commonplace" / "db_busy.py")
     # Current board and rules stores create files through the admission gate.
     shutil.copy2(ROOT / "commonplace" / "admission.py", snapshot / "commonplace" / "admission.py")
     # Overlaid board tools use the current registry contract; handoff remains
