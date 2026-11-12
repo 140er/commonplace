@@ -50,8 +50,10 @@ export function autoLayout(nodes, links = [], { columns = 0 } = {}) {
  * linked to another in its own row is moved next to it. A node takes `gx` of the row, a lane
  * `lane`; rows are `gy` apart. `columns` caps the nodes of a row (a tier with more continues in
  * the rows below it). Links from one device that pass a row share one lane there.
+ * With `below` (a node's label height on the screen) rows are as far apart as their labels need, plus
+ * `channel` clear for the links, for a view of at least `least`; without it rows are `gy` apart.
  * Stable: it depends only on keys, kinds and links. */
-export function layeredLayout(nodes, links = [], { gx = 200, gy = 128, lane = 56, columns = 0 } = {}) {
+export function layeredLayout(nodes, links = [], { gx = 200, gy = 128, lane = 56, columns = 0, below = null, channel = 28, least = 0.85 } = {}) {
   const tiers = [...new Set(nodes.map((node) => TIER[node.kind] ?? LAST_TIER))].sort((a, b) => a - b);
   // A tier wider than `columns` becomes several rows, filled in key order.
   const rowOf = new Map();
@@ -109,10 +111,18 @@ export function layeredLayout(nodes, links = [], { gx = 200, gy = 128, lane = 56
     row.splice(row.findIndex((item) => item.id === a) + 1, 0, moved);
   }
   const placed = {};
+  // Where each row sits down the page.
+  const tops = [];
+  let offset = 0;
+  for (const row of rows) {
+    tops.push(offset);
+    const label = Math.max(0, ...row.filter((item) => !item.id.startsWith("lane:")).map((item) => (4 + (below ? below(item.id) : 0)) / least));
+    offset += below ? 54 + label + channel : gy;
+  }
   rows.forEach((row, layer) => {
     const width = row.reduce((sum, item) => sum + item.w, 0);
     let x = -width / 2;
-    for (const item of row) { if (!item.id.startsWith("lane:")) placed[item.id] = { x: round(x + item.w / 2), y: layer * gy }; x += item.w; }
+    for (const item of row) { if (!item.id.startsWith("lane:")) placed[item.id] = { x: round(x + item.w / 2), y: tops[layer] }; x += item.w; }
   });
   return placed;
 }
@@ -141,23 +151,21 @@ export function fitView(points, width, height, pad = 70, reach = { x: 0, top: 0,
 
 /** The view for labels drawn at a constant size on the screen. Each of `points` scales with the view and
  * carries how far it stretches beyond itself on the screen (`rx` across, `top`, `bottom`): a device centre
- * its label, a route bend next to nothing. The graph's width is fitted; when it is taller than the card the
- * view keeps its size and starts at the top, so the card pans vertically. Never smaller than `least` nor
- * larger than `most`, so a label always has the room its plate was laid out for. */
-export function fitLabelled(points, width, height, { pad = 32, least = 0.85, most = 1 } = {}) {
-  const w = width > 0 ? width : 800, h = height > 0 ? height : 600;
-  if (!points.length) return { x: w / 2, y: h / 2, k: 1 };
+ * its label, a route bend next to nothing. The graph's width is fitted at the widest scale up to `most`;
+ * the card is then as tall as the graph with `pad` round it (but not under `minHeight`), so the
+ * page scrolls rather than the card. Only when that is more than `maxHeight` the card stops there and
+ * the graph pans inside it from the top. Returns the view and the card's `height`. */
+export function fitLabelled(points, width, height, { pad = 32, most = 1, minHeight = 240, maxHeight = Infinity } = {}) {
+  const w = width > 0 ? width : 800;
+  if (!points.length) return { x: w / 2, y: minHeight / 2, k: 1, height: minHeight };
   const extent = (k) => ({
     left: Math.min(...points.map((p) => p.x * k - p.rx)), right: Math.max(...points.map((p) => p.x * k + p.rx)),
     top: Math.min(...points.map((p) => p.y * k - p.top)), bottom: Math.max(...points.map((p) => p.y * k + p.bottom)),
   });
-  const across = (k) => { const e = extent(k); return e.right - e.left + 2 * pad <= w; };
-  const down = (k) => { const e = extent(k); return e.bottom - e.top + 2 * pad <= h; };
-  // The widest scale at which the width fits; the height only matters while it stays at or above `least`.
   let k = most;
-  while (k > 0.2 && !(across(k) && (down(k) || k <= least))) k = Math.round((k - 0.005) * 1000) / 1000;
-  const e = extent(k), fits = e.bottom - e.top + 2 * pad <= h;
-  return { k, x: w / 2 - (e.left + e.right) / 2, y: fits ? h / 2 - (e.top + e.bottom) / 2 : pad - e.top };
+  while (k > 0.2 && (() => { const e = extent(k); return e.right - e.left + 2 * pad > w; })()) k = Math.round((k - 0.005) * 1000) / 1000;
+  const e = extent(k), tall = Math.ceil(e.bottom - e.top + 2 * pad), card = Math.min(maxHeight, Math.max(minHeight, tall));
+  return { k, x: w / 2 - (e.left + e.right) / 2, y: tall >= card ? pad - e.top : (card - (e.bottom - e.top)) / 2 - e.top, height: card };
 }
 
 /** Line, dot and label places per link id. Links between the same two nodes run side by side;

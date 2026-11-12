@@ -10,9 +10,15 @@ const RUNNER_WORDS = { up: STATES.ready, degraded: STATES.waiting, down: 'Down',
 const MACHINE_KINDS = new Set(['pc', 'mac', 'phone', 'vm', 'server', 'container']);
 // Map units: a label's plate and the gaps of the layered layout (a link runs in the gap between neighbours).
 // `labels` is the width of a label's plate in screen pixels (labels keep their size at every zoom); gx is
-// the room of a device in a row, laid out for a view of 0.85 or more, so plates never meet; `columns` caps a row.
-export const METRICS = { desktop: { labels: 160, gx: 216, gy: 140, lane: 56, columns: 4, pad: 32 }, phone: { labels: 124, gx: 174, gy: 140, lane: 36, columns: 2, pad: 16 } };
+// the room of a device in a row, laid out for a view of 0.85 or more, so plates never meet; `lane` the width
+// kept free in a row for links that pass it.
+export const METRICS = { desktop: { labels: 140, gx: 186, lane: 56, pad: 32 }, phone: { labels: 124, gx: 165, lane: 36, pad: 16 } };
 const GENERIC_FAILURE = 'Machines could not be loaded. Try again.';
+/** How many devices a row holds at `width` (the card's): as many as fit at the plate width, down to a scale of
+ * 0.85, with room for `lanes` lanes of passing links in the row. */
+export const columnsFor = (width, m, lanes = 0) => Math.max(1, Math.floor((width - 2 * m.pad - m.labels - lanes * m.lane * 0.85) / (m.gx * 0.85)) + 1);
+/** A star of `machines` (a single row, no lane needed, while they all fit) or the topology (`null`: lanes for passing links). */
+export const layoutColumns = (width, m, machines = null) => (machines !== null && machines <= columnsFor(width, m) ? columnsFor(width, m) : columnsFor(width, m, 2));
 let stylesheet;
 function styles(doc) {
   if (!doc || !globalThis.CSSStyleSheet) return;
@@ -80,7 +86,9 @@ function styles(doc) {
 .deck-compute .topo-dot.s-unknown { fill: var(--surface); stroke: var(--text-3); stroke-width: 2; }
 /* Amber means one thing: a machine waiting on the person to attest it. */
 .deck-compute.dc-runners .topo-dot.s-degraded { fill: var(--wait); }
-.deck-compute.dc-runners .topo-stage .topo-method { display: none; }
+/* The method of a link shows only along a highlighted route: at full size it would sit over other links. */
+.deck-compute .topo-stage .topo-method { display: none; }
+.deck-compute .topo-link.on .topo-method { display: inline; }
 .deck-compute .topo-note .topo-empty { border: 0; border-radius: 20px; background: var(--well); }
 /* The details card: Physical, Config, Agents, Sites for the node chosen on the canvas. */
 .deck-compute .topo-detail { grid-area: 1 / 2 / 4 / 3; position: static; z-index: auto; width: auto; height: auto; max-height: max(440px, calc(100dvh - 196px)); border: 0; border-radius: 20px; background: var(--surface); box-shadow: none; padding: 10px 8px 6px; }
@@ -156,7 +164,7 @@ export function summaryText({ mode, rows, payload }) {
 
 export function mount(context) {
   let ctx = context, rows = [], general = null, mode = '', latest = null, map = null, built = '';
-  let stopped = false, epoch = 0, request = null, framed = false, phone = false;
+  let stopped = false, epoch = 0, request = null, framed = false, phone = false, builtColumns = 0, observer = null;
   const root = context.root, doc = root.ownerDocument || globalThis.document;
   styles(doc);
   root.classList.add('deck-compute');
@@ -187,10 +195,23 @@ export function mount(context) {
   }
   // A machine to start on: the first computer, else whatever is first.
   const preselect = model => (model.nodes.find(n => MACHINE_KINDS.has(n.kind)) || model.nodes[0])?.key;
+  // The width of the map card: the screen's column, less the details card beside it on a wide screen.
+  function cardWidth() {
+    const host = region('map')?.clientWidth || 0, wide = globalThis.matchMedia?.('(min-width:1000px)').matches === true;
+    return host ? (wide ? host - 340 : host) : narrow() ? 358 : 860;
+  }
+  const resized = () => {
+    if (stopped || !map) return;
+    const metrics = narrow() ? METRICS.phone : METRICS.desktop;
+    if (layoutColumns(cardWidth(), metrics, mode === 'runners' ? rows.length : null) !== builtColumns) build();
+  };
   function build() {
     map?.stop();
     phone = narrow();
-    const runners = mode === 'runners', metrics = phone ? METRICS.phone : METRICS.desktop;
+    const metrics = { ...(phone ? METRICS.phone : METRICS.desktop) };
+    metrics.columns = layoutColumns(cardWidth(), metrics, mode === 'runners' ? rows.length : null);
+    builtColumns = metrics.columns;
+    const runners = mode === 'runners';
     built = mode;
     map = createTopologyMap({
       mount: () => region('map'),
@@ -198,16 +219,17 @@ export function mount(context) {
       api: (path, options) => path === MAP_PATH ? Promise.resolve(latest) : ctx.api(path, options),
       workspace: () => `deck:${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
       interval: 0,
-      look: { labels: metrics.labels, pad: metrics.pad, preselect, compact: true, layout: 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
+      look: { labels: metrics.labels, pad: metrics.pad, grow: true, preselect, compact: true, layout: 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
     });
     map.show();
+    if (globalThis.ResizeObserver && !observer && region('map')) { observer = new ResizeObserver(resized); observer.observe(region('map')); }
   }
   function actions() {
     const host = region('actions');
     if (host) host.innerHTML = '<a class="dc-action" href="#/admin">Add machine</a>' + (general ? '<button class="dc-action" type="button" data-compute-action="site">Add site</button><button class="dc-action dc-primary" type="button" data-compute-action="map">Let a bot map it</button>' : '');
   }
   function frame() {
-    map?.stop(); map = null; built = '';
+    map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
     root.innerHTML = '<header class="dc-title"><h1>Compute</h1><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>';
     framed = true; actions();
   }
@@ -265,7 +287,7 @@ export function mount(context) {
   void refresh();
   return { refresh, stop() {
     if (stopped) return;
-    stopped = true; epoch++; request?.abort(); map?.stop(); map = null;
+    stopped = true; epoch++; request?.abort(); map?.stop(); map = null; observer?.disconnect();
     root.removeEventListener('click', click);
     root.classList.remove('deck-compute', 'dc-runners'); root.innerHTML = '';
     for (const { node, hidden } of shellHeaders) node.hidden = hidden;

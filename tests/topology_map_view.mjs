@@ -620,7 +620,8 @@ test("look: a label width clips names to it and puts a plate behind every label;
   assert.doesNotMatch(classic.scene(), /topo-label-plate/);
   assert.match(classic.scene(), new RegExp(`>${"W".repeat(23)}…<`));
   const deck = ui.createMapCore({ labels: 160 }); deck.apply(payload);
-  assert.match(deck.scene(), /<g class="topo-label" transform="translate\(0 27\)"><rect class="topo-label-plate" x="-80" y="4" width="160" height="38" rx="8"\/><text class="topo-name" y="19">W{1,12}…<\/text>/);
+  // Two lines of twelve capitals fill the plate; what is left is cut with an ellipsis on the second.
+  assert.match(deck.scene(), /<g class="topo-label" transform="translate\(0 27\)"><rect class="topo-label-plate" x="-80" y="4" width="160" height="53" rx="8"\/><text class="topo-name" y="19"><tspan x="0">W{12}<\/tspan><tspan x="0" dy="15">W{1,11}…<\/tspan><\/text><text class="topo-role" y="49"><tspan x="0">Ready<\/tspan><\/text>/);
 });
 
 test("look: a cap on a row's columns and a reach for the labels", () => {

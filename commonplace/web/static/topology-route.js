@@ -4,16 +4,16 @@
    places always give the same routes. A link that cannot be routed (or a map too big to route)
    keeps the straight line of `layoutLinks`, and the caller can tell which (`routed`). */
 export const DISC = 27;
-const CELL = 8, MARGIN = 8, TURN = 0.6, SHARED = 2, NEAR = 0.8, OUTSIDE = 4, MAX_CELLS = 160000, MAX_NODES = 80;
+const CELL = 8, MARGIN = 8, TURN = 0.6, SHARED = 2, NEAR = 0.8, OUTSIDE = 12, MAX_CELLS = 160000, MAX_NODES = 80;
 const DIRS = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
 const round = (n) => Math.round(n * 10) / 10;
 
 export const GAP = 4;
 /** The label plate of a node in map units. A label is drawn at a constant size on the screen, so its
- * plate is `labels` by 38 (22 without a second line) screen pixels, GAP below the disc (above it for the
+ * plate is `labels` wide and `node.height` (38 for two lines) screen pixels, GAP below the disc (above it for the
  * hub): in map units that is divided by the view's scale `k`. */
 export const plateOf = (node, at, labels, k = 1) => {
-  const height = (node.sub ? 38 : 22) / k, gap = GAP / k;
+  const height = (node.height ?? (node.sub ? 38 : 22)) / k, gap = GAP / k;
   return { x: at.x - labels / 2 / k, y: node.kind === "hub" ? at.y - DISC - gap - height : at.y + DISC + gap, width: labels / k, height };
 };
 

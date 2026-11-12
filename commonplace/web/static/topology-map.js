@@ -13,6 +13,7 @@ import { KINDS, kindOf } from "./topology-icons.js";
 import { createNodePanel } from "./topology-detail.js";
 import { autoLayout, fitLabelled, fitView, layeredLayout, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
 import { DISC, GAP, routeLinks, straightClear } from "./topology-route.js";
+import { labelBox } from "./topology-text.js";
 
 export const MAP_PATH = "/api/topology";
 export const STATES = ["up", "degraded", "down", "unknown"];
@@ -38,21 +39,9 @@ const SHAPES = {
 
 // "none" draws no mark: a node or link end whose state nobody claims (a caller opts in with `none`).
 const stateOf = (value, none = false) => { const s = value && typeof value === "object" ? value.state : value; return STATES.includes(s) ? s : none && s === "none" ? "none" : "unknown"; };
-// A label has a count cap and, when the host sets a label width, a width estimate for the glyphs.
-// The estimate errs wide (capitals, wide letters and non-Latin glyphs count more) so a clipped label always fits.
-const glyph = (char, em) => (/[^\x20-\x7e]/.test(char) ? 1.1 : /[MW@%]/.test(char) ? 0.95 : /[A-Z0-9mw]/.test(char) ? 0.72 : /[il.,:;'|!tfIjr]/.test(char) ? 0.4 : 0.62) * em;
-const clip = (text, max, em = 0, width = 0) => {
-  const chars = Array.from(String(text));
-  let end = chars.length, used = 0;
-  if (width) { end = 0; for (const char of chars) { used += glyph(char, em); if (used > width - 16) break; end++; } }
-  end = Math.min(end, max);
-  if (end >= chars.length) return chars.join("");
-  // Leave room for the ellipsis.
-  return `${chars.slice(0, Math.max(0, end - 1)).join("")}…`;
-};
+const clip = (text, max) => { const chars = Array.from(String(text)); return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join(""); };
 const text = (value) => (typeof value === "string" ? value : "");
 const finite = (...values) => values.every((n) => typeof n === "number" && Number.isFinite(n));
-
 /** The last known kind, name and role of a node whose facts expired: a faded icon needs them. */
 const lastKnown = (record) => Object.fromEntries(["kind", "name", "role"].filter((name) => record.fields?.[name]?.stale && typeof record.fields[name].value === "string").map((name) => [name, record.fields[name].value]));
 
@@ -104,9 +93,11 @@ function nodeMarkup(node, at, { on, dim, sel, words, labels }) {
   // A label is drawn at a constant size on the screen: its group is scaled by the inverse of the view's scale
   // (the stage's --inv), so the type is the same size at every zoom. The plate hides a line that passes under it.
   // The hub's label sits above it: every line leaves the hub downwards.
-  const hub = node.kind === "hub", height = sub ? 38 : 22, top = hub ? -GAP - height : GAP;
-  const tag = labels ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${height}" rx="8"/><text class="topo-name" y="${top + 15}">${esc(clip(node.name, 24, 12, labels))}</text>${sub ? `<text class="topo-role" y="${top + 30}">${esc(clip(sub, 36, 11, labels))}</text>` : ""}</g>` : "";
-  const texts = labels ? "" : `<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}`;
+  const hub = node.kind === "hub", box = labels ? labelBox(node.name, sub, labels) : null;
+  const top = box ? (hub ? -GAP - box.height : GAP) : 0;
+  const lines = (list, y, name) => (list.length ? `<text class="${name}" y="${y}">${list.map((line, i) => `<tspan x="0"${i ? ' dy="15"' : ""}>${esc(line)}</tspan>`).join("")}</text>` : "");
+  const tag = box ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${box.height}" rx="8"/>${lines(box.nameLines, top + 15, "topo-name")}${lines(box.roleLines, top + 15 + 15 * box.nameLines.length, "topo-role")}</g>` : "";
+  const texts = box ? "" : `<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}`;
   return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${aria}"><title>${aria}</title>${tag}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}${texts}</g>`;
 }
 
@@ -171,14 +162,20 @@ export function mapMemory(storage, workspace) {
 
 /** The map without a DOM. Dragged places and the view survive a reload through `storage`. */
 export function createMapCore({ storage = null, workspace = "", words = STATUS_TEXT, none = false, labels = 0, columns = 0, layout = "auto", metrics = {}, route: routed = false } = {}) {
-  const nodeInfo = () => model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node) }));
+  let boxes = [];
+  const nodeInfo = () => boxes;
   const memory = mapMemory(storage, workspace);
   let { placed, view } = memory.load();
+  // A host that sizes the card to the graph (labels) always opens at the fitted view; only dragged places are kept.
+  if (labels) view = null;
   let model = mapModel(null), raw = null, positions = {}, site = "", selected = null;
   const save = () => memory.save({ placed, view });
   let routes = null;
   const place = () => {
-    const auto = layout === "layered" ? layeredLayout(model.nodes, model.links, metrics) : autoLayout(model.nodes, model.links, { columns });
+    // What each label needs: its height on the screen sets how far apart the rows are.
+    boxes = model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node), height: labels ? labelBox(node.name, subOf(node), labels).height : 0 }));
+    const heights = new Map(boxes.map((box) => [box.key, box.height]));
+    const auto = layout === "layered" ? layeredLayout(model.nodes, model.links, labels ? { ...metrics, below: (key) => heights.get(key) ?? 38, least: K_LEAST } : metrics) : autoLayout(model.nodes, model.links, { columns });
     positions = Object.fromEntries(model.nodes.map((node) => [node.key, placed[node.key] ? { ...placed[node.key] } : auto[node.key]]));
     routes = null;
   };
@@ -218,11 +215,15 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     },
     setView(next, { remember = true } = {}) { view = { x: next.x, y: next.y, k: next.k }; if (remember) save(); },
     fit(width, height, options, { pad = 70, reach } = {}) {
-      if (!labels) { this.setView(fitView(Object.values(positions), width, height, pad, reach), options); return; }
+      if (!labels) { this.setView(fitView(Object.values(positions), width, height, pad, reach), options); return null; }
       // Labels keep their size on the screen: fit the graph's width and let a taller graph pan.
-      const room = DISC + GAP + 38, bends = routed ? [...linkPlaces().values()].flatMap((place) => place.points || []) : [];
-      const points = [...Object.values(positions).map((at) => ({ ...at, rx: labels / 2, top: room, bottom: room })), ...bends.map((at) => ({ ...at, rx: 6, top: 6, bottom: 6 }))];
-      this.setView(fitLabelled(points, width, height, { pad, least: K_LEAST, most: 1 }), options);
+      const heights = new Map(boxes.map((box) => [box.key, box]));
+      const bends = routed ? [...linkPlaces().values()].flatMap((place) => place.points || []) : [];
+      // A device reaches its disc one way and its label the other (the hub's label is above it).
+      const points = [...Object.entries(positions).map(([key, at]) => { const box = heights.get(key), label = DISC + GAP + (box?.height || 38); return { ...at, rx: labels / 2, top: box?.kind === "hub" ? label : DISC, bottom: box?.kind === "hub" ? DISC : label }; }), ...bends.map((at) => ({ ...at, rx: 6, top: 6, bottom: 6 }))];
+      const view = fitLabelled(points, width, height, { pad, most: 1, maxHeight: (globalThis.innerHeight || 0) * 2 || Infinity });
+      this.setView(view, options);
+      return view;
     },
     /** Forget every dragged place: back to the automatic layout. */
     reset() { placed = {}; place(); save(); },
@@ -234,6 +235,8 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     scene() { return renderScene(model, positions, { route: route(), selected, words, labels, places: routed ? linkPlaces() : null }); },
     links() { return linkPlaces(); },
     get routed() { return routed; },
+    /** What each device's label needs, for a host or a test that reasons about plates. */
+    get boxes() { return boxes; },
   };
 }
 
@@ -256,6 +259,7 @@ const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], Arrow
  *                  a line passing under it). The first view fits the graph's width (a taller graph
  *                  pans) and never shrinks below 0.85; 0 is the classic look
  *   pad            the space the first view keeps round the graph (32)
+ *   grow           the card takes the height of the fitted graph (two screens at most) instead of a fixed one
  *   columns        most nodes in one row
  *   layout, metrics, route  "layered" rows with free lanes (metrics: gx, gy, lane) and links routed around
  *                  every device and label
@@ -274,6 +278,10 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
   const part = (name) => section.querySelector(`[data-topo="${name}"]`);
   const size = () => [stage.clientWidth, stage.clientHeight];
 
+  // The card is as tall as the fitted graph, so the page scrolls instead of the card (up to a cap).
+  function grow(view) {
+    if (look.grow && view?.height && Math.abs(stage.clientHeight - view.height) > 1) stage.style.height = `${view.height}px`;
+  }
   function paintView() {
     const { x, y, k } = core.view;
     world.setAttribute("transform", `translate(${x} ${y}) scale(${k})`);
@@ -308,7 +316,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     nodeEls = new Map([...world.querySelectorAll("[data-key]")].map((el) => [el.dataset.key, el]));
     linkEls = new Map([...world.querySelectorAll("[data-link]")].map((el) => [el.dataset.link, el]));
     // The first fit is automatic, so it is not remembered: only a view the person chose is.
-    if (core.loaded && core.model.nodes.length && !core.view) { core.fit(...size(), { remember: false }, { pad: fitPad, reach }); fitted = true; }
+    if (core.loaded && core.model.nodes.length && !core.view) { grow(core.fit(...size(), { remember: false }, { pad: fitPad, reach })); fitted = true; }
     if (core.view) paintView();
     if (focused) nodeEls.get(focused)?.focus({ preventScroll: true });
     const list = core.model.routes.map((route) => route.site);
@@ -367,7 +375,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     fitted = false;
     paintView();
   }
-  function fit(options) { core.fit(...size(), options, { pad: fitPad, reach }); fitted = true; paintView(); }
+  function fit(options) { grow(core.fit(...size(), options, { pad: fitPad, reach })); fitted = true; paintView(); }
   function announce(key) { section.dispatchEvent(new CustomEvent("topology:select", { bubbles: true, detail: { key } })); }
   function select(key) {
     const selected = core.select(key);
