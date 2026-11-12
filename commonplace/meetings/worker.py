@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 
-from commonplace.meetings import engine, store
+from commonplace.meetings import engine, notes, store
 
 logger = logging.getLogger("commonplace.meetings")
 
@@ -39,6 +39,7 @@ class Worker:
         now = self.clock()
         for meeting_id in meetings.expired(now, engine.LEASE_S):
             engine.recover(self.gateway, workspace_id, meeting_id, clock=self.clock)
+        notes.retry(self.gateway, workspace_id, now=now, inline=inline)
         if not meetings.enabled():
             return []
         started = []
@@ -78,14 +79,14 @@ class Worker:
         while True:
             try:
                 self.beat(workspace_id)
-                busy = meetings.pending()
+                busy = meetings.pending() or meetings.holds_segments()
             except Exception as exc:  # a failing beat must not end the worker
                 logger.warning("meeting beat failed type=%s", type(exc).__name__)
                 busy = True
             with self._lock:
                 # decided under the lock ``kick`` takes: an invite that committed before this
                 # look keeps the loop alive, one that commits after it starts a new loop
-                if not busy and not meetings.pending():
+                if not busy and not (meetings.pending() or meetings.holds_segments()):
                     self._beating.discard(workspace_id)
                     return
             time.sleep(BEAT_S)
@@ -104,7 +105,7 @@ def resume(gateway) -> None:
     try:
         for row in gateway.db.workspaces():
             meetings = store.open_meetings(gateway, row["id"])
-            if meetings.exists() and meetings.pending():
+            if meetings.exists() and (meetings.pending() or meetings.holds_segments()):
                 of(gateway).kick(row["id"])
     except Exception as exc:
         logger.warning("meeting resume failed type=%s", type(exc).__name__)

@@ -27,7 +27,7 @@ import threading
 import time
 from typing import Optional
 
-from commonplace.meetings import adapter, lifecycle, store
+from commonplace.meetings import adapter, lifecycle, notes, store
 
 logger = logging.getLogger("commonplace.meetings")
 
@@ -185,7 +185,10 @@ class Run:
         the lease). It stops by itself a little after the hard time limit, so a wedged call cannot
         hold a meeting forever."""
         while not stop.wait(LEASE_S / 3):
-            if self.clock() - self._t0 > self.meetings.settings()["max_minutes"] * 60 + LEASE_S:
+            if (
+                self.clock() - self._t0
+                > self.meetings.settings()["max_minutes"] * 60 + LEASE_S + notes.BUDGET_S
+            ):
                 return
             try:
                 if not self.meetings.renew(self.meeting_id, self.clock()):
@@ -459,9 +462,18 @@ class Run:
         ):
             return False
         self.sink.finish(self.meeting_id)
-        return self.meetings.advance(self.meeting_id, lifecycle.PROCESSING, now) and (
-            self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
-        )
+        if not self.meetings.advance(self.meeting_id, lifecycle.PROCESSING, now):
+            return False
+        self._notes()
+        return self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
+
+    def _notes(self):
+        """The notes, made while the meeting is ``processing``. A failure here never blocks the
+        end: the segments wait for the beat's retry and the sweep."""
+        try:
+            notes.generate(self.gateway, self.workspace_id, self.meeting_id, now=self.clock())
+        except Exception as exc:
+            logger.warning("meeting notes failed type=%s", type(exc).__name__)
 
     def _audit(self):
         """One audit row for the end, with the reason the store recorded (the first cause wins)."""

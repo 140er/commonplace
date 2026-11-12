@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from commonplace.admission import GATE
-from commonplace.meetings import adapter, lifecycle, seal
+from commonplace.meetings import adapter, lifecycle, notes_store, seal
 from mempalace.sqlite_crypto import connect, row_factory
 
 LABEL_MAX = 60
@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS meeting_events (
   PRIMARY KEY (meeting_id, seq)
 );
 """
+_SCHEMA += notes_store.SCHEMA
 
 
 class Missing(LookupError):
@@ -301,7 +302,7 @@ def open_meetings(gateway, workspace_id: str) -> "MeetingStore":
     return stores[workspace_id]
 
 
-class MeetingStore:
+class MeetingStore(notes_store.NotesMixin):
     def __init__(self, locate, data_dir, workspace_id):
         self._locate = locate
         self.data_dir = data_dir
@@ -989,6 +990,11 @@ class MeetingStore:
             if step.discard:
                 conn.execute("DELETE FROM meeting_segments WHERE meeting_id=?", (meeting_id,))
                 conn.execute("DELETE FROM meeting_participants WHERE meeting_id=?", (meeting_id,))
+                if (
+                    step.state != lifecycle.CANCELLED
+                ):  # a removal or a failure keeps no notes either
+                    conn.execute("DELETE FROM meeting_notes WHERE meeting_id=?", (meeting_id,))
+                    conn.execute("DELETE FROM meeting_note_runs WHERE meeting_id=?", (meeting_id,))
             conn.execute(
                 "UPDATE meeting_outbox SET state='cancelled' "
                 "WHERE meeting_id=? AND state IN ('queued','sending')",
