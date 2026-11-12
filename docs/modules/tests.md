@@ -306,7 +306,7 @@
 
   - Shared-proposal acceptance freezes the injection clock; a forced-expiry regression exercises the functional test and checks verbatim delivery to both agents after owner acceptance.
 
-  - **Browser GitHub connection:** Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
+  - **Browser GitHub connection:** Browser GitHub merge tests cover opt-in consent and scope, own-grant-only merging, head pinning, private-repository merging on the repo scope, refusal without that scope and token secrecy with synthetic transports. Browser GitHub grant tests cover ownership migration, generation fencing, consent, encryption, scope evidence and safe Needs links using synthetic transports. Separate temporary roots on one database preserve in-flight state; crash leases exclude restart until expiry, then permit recovery.
 
   - **Connection lifecycle proof:** Adds independent-database ownership arbitration, held revocation overlap, subprocess crash recovery, revocation matrices, callback variants, Node controller render-cache checks and direct transport bounds.
 

@@ -132,6 +132,8 @@
 
   - **Browser GitHub connection:** Needs shows local GitHub connection state and validated PR links; selection and session teardown discard connection state.
 
+  - **Merge through the person's own connection:** Merge-ready cards offer "Connect GitHub with repo access to merge", then Merge with a second Confirm merge click, only on a safe github.com PR URL and a consented connection; refusals keep Open PR with a plain reason.
+
   - **Connection lifecycle proof:** Versioned fixture cards preserve the loading assertion; stopped Needs controllers clear the detail DOM as well as cached connection state.
 
   - **Connection teardown boundary:** Stopping clears rendered GitHub details while preserving the established teardown contract for other Needs details.
