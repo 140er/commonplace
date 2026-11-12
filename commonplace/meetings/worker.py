@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 
-from commonplace.meetings import engine, store
+from commonplace.meetings import engine, notes, store
 
 logger = logging.getLogger("commonplace.meetings")
 
@@ -39,6 +39,7 @@ class Worker:
         now = self.clock()
         for meeting_id in meetings.expired(now, engine.LEASE_S):
             engine.recover(self.gateway, workspace_id, meeting_id, clock=self.clock)
+        notes.retry(self.gateway, workspace_id, now=now, inline=inline)
         if not meetings.enabled():
             return []
         started = []

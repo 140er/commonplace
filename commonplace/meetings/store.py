@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from commonplace.admission import GATE
-from commonplace.meetings import adapter, lifecycle, seal
+from commonplace.meetings import adapter, lifecycle, notes_store, seal
 from mempalace.sqlite_crypto import connect, row_factory
 
 LABEL_MAX = 60
@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS meeting_events (
   PRIMARY KEY (meeting_id, seq)
 );
 """
+_SCHEMA += notes_store.SCHEMA
 
 
 class Missing(LookupError):
@@ -301,7 +302,7 @@ def open_meetings(gateway, workspace_id: str) -> "MeetingStore":
     return stores[workspace_id]
 
 
-class MeetingStore:
+class MeetingStore(notes_store.NotesMixin):
     def __init__(self, locate, data_dir, workspace_id):
         self._locate = locate
         self.data_dir = data_dir
@@ -903,16 +904,18 @@ class MeetingStore:
             return [r["id"] for r in rows]
 
     def pending(self) -> bool:
-        """Is anything requested or running (the worker keeps beating while so)."""
+        """Is anything requested or running, or holding segments for notes (the worker keeps beating
+        while so)."""
         marks = ",".join("?" * len(ACTIVE))
         with self._tx(write=False) as conn:
             if conn is None:
                 return False
-            return bool(
-                conn.execute(
-                    f"SELECT 1 FROM meetings WHERE state IN ({marks}) LIMIT 1", ACTIVE
-                ).fetchone()
-            )
+            if conn.execute(
+                f"SELECT 1 FROM meetings WHERE state IN ({marks}) LIMIT 1", ACTIVE
+            ).fetchone():
+                return True
+        # a finished meeting still holding working segments waits for its notes or the sweep
+        return self.holds_segments(time.time())
 
     @staticmethod
     def _busy(conn, now: float, lease_s: float) -> int:
@@ -987,7 +990,12 @@ class MeetingStore:
             return None
         if step.ends:
             if step.discard:
-                for table in ("meeting_segments", "meeting_participants"):
+                tables = ["meeting_segments", "meeting_participants"]
+                if (
+                    step.state != lifecycle.CANCELLED
+                ):  # a removal or a failure keeps no notes either
+                    tables += ["meeting_notes", "meeting_note_runs"]
+                for table in tables:
                     conn.execute(f"DELETE FROM {table} WHERE meeting_id=?", (meeting_id,))
             conn.execute(
                 "UPDATE meeting_outbox SET state='cancelled' "
