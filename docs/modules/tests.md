@@ -3,13 +3,23 @@
 - **Paths:** `tests/`
 - **Owns:**
 
+  - Thread-reference room regressions run every reference form against every room- or topic-returning MCP read and REST get/search, and the writable forms against every room- or topic-writing tool, with thread-reader parity on every route, owner-session, ordinary-room and undecodable-value controls; count rows prove diary totals, search counters and duplicate flags describe only visible rows, and a partial source-family reader is refused; source IDs containing each character the old token scan stopped at, upper-case IDs, a client `thread_scope`, store pinning, probe faults, unavailable memory, hidden-topic diary words on search, CLI search, media/code search, duplicate checks and REST search, `mcp` namespace spellings, non-leading `mcp:` sources (`xmcp:`, leading space or no-break space, percent-encoded namespace), the topic cap and the empty-exclusion fast path have their own rows.
+
+  - Thread-ID canonicalisation regressions refuse every non-canonical reviewer form at filing and successor registration, accept T3-shaped IDs, hide legacy rows on every read, and bound the store queries of a 500-drawer batch.
+
   - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
 
   - #451 wing editor regressions: `tests/test_runner_owner.py` (W1-W3: picker and wing edit with the memory listing failing, fallback, bookkeeping-only and private wings), case 4g of `tests/admin_runners_ui.mjs`, and two Chromium cases in `tests/workbench_e2e/test_admin_runners.py` that add a wing while `/api/connections` hangs or the wing read fails.
 
+  - `commonplace_deck_compute.mjs` and its pytest wrapper cover label/segment/dot geometry for 1–12 machines on desktop and phone, owner refusals, state derivation, keyboard tabs, escaping, draft handoffs and refresh/stop races.
+
+  - `tests/test_commonplace_deck_today.py` (`commonplace_deck_today.mjs`) exercises Today decisions, project-owner de-duplication, refresh-safe draft hand-off, errors, cancellation and Deck-only routing.
+
   - `tests/test_commonplace_deck_bots.py` (`commonplace_deck_bots.mjs`) covers draft hand-off in both looks, Deck tile and strip markup, project work status mapping, week-bounded completion groups, escaped text and the read-only project sheet lifecycle.
 
   - The navigation tests follow the bots-first rail: `tests/workbench_shell_wiring.mjs`, `tests/workbench_chat_wiring.mjs`, `tests/commonplace_home_render.mjs`, `tests/commonplace_board_defaults_render.mjs`, `tests/card_log_links.mjs`, `tests/admin_ui.mjs` and the phone scenarios of `tests/workbench_e2e/test_keys.py` no longer expect project rows, a Needs me or Console rail entry or a Chat tab (the phone Chat button is the dock toggle in the header).
+
+  - `tests/test_commonplace_import_grant.py` expects the OAuth server metadata to advertise the `bots:chat` and `bots:confirm` scopes next to the other opt-in scopes.
 
   - `tests/conftest.py` refuses a raw pytest run (exit 4 at configure) on a shared test host that opts in with `~/.config/commonplace/require-test-runner` in the real account home; the marker names the environment variable the host's test runner sets for admitted runs. xdist workers pass; `COMMONPLACE_ALLOW_RAW_PYTEST=1` overrides one run. `tests/test_raw_pytest_guard.py` pins the cases.
 
@@ -112,6 +122,7 @@
   - `tests/test_fact_readers_import_graph.py` runs a fresh interpreter over the fact read and search path and asserts `commonplace.rules` is never loaded, scans the three fact readers for any `commonplace` import, and pins the shared read deadline.
 
 - **Promises:**
+  - Project model and escalation regressions run through `tests/test_projects_escalation.py`, `tests/test_projects_escalation_unit.py`, `tests/projects_view.mjs` and the real-browser `tests/workbench_e2e/test_project_models.py`.
 
   - The pinned handoff baseline in `tests/test_handoff_adversarial_off_perf.py` overlays only leaf or board modules the current board code imports (now including `commonplace/decide_grant.py` and `mempalace/deadline.py`); the pinned gateway, policy and handoff sources stay at the baseline commit.
 
@@ -230,6 +241,7 @@
   - Origin overflow stays out of ordinary proposal buckets when the bounded approvals projection truncates; list and digest retain their truncation signals.
   - Stranded-reservation tests exercise coordinator release of its own reservation, creator cancellation after a real handoff with current or lapsed release, and atomic refusals for unrelated/descendant release, stored descendant markers, other reservations, bundled updates and pending reviews.
   - Release-loop tests replay the real release, creator claim and handoff through the service, then cover coordinator replacement, idle seats, owner Release, handoff aliases, reservation takeover and drop, and refusals for lost grants, creator markers, unrelated and descendant connections. Member tests cover take-over, drop and handoff through REST and the service for released and ordinary reservations; lapse tests cover revocation, creator descendants and a same-named agent in another workspace. Browser tests cover the card Release control, handoff recipients and visible refusals after the page settles, without retries.
+  - Project-review browser tests cover owner Accept of a proposed config after reading its changes, refusal for an agent token and for a member session (which also gets no configure flag), and owner Release from Project settings.
   - Origin-holder regressions cover assertion-level RED evidence on a pinned base for same-holder and child-held release, lease preservation, exact agent/owner queues, MCP discovery, REST, notices, digest and direct web actions. The web action harness keeps required reasons and configuration navigation separate from delayed proposal review.
   - Coordinator-handover tests cover the configured coordinator seat (plain or project seat) releasing and working a restricted card reserved for it, an owner or coordinator release surviving the handoff to the coordinator with or without a later replacement or clearing, a coordinator release lapsing when the releaser loses tool grants or wing write, and refusals, with row and event snapshots unchanged, for a seat that is not the configured coordinator or that coordinates another board. Coordinator-lease tests cover the live lease holder releasing a card, and refusals for a replaced epoch, an expired or released lease, another board's lease and a seat without the lease. Lease discovery tests cover needs-me and release boards for a lease-only holder, the owner's recovery item while the holder cannot release, approver and supervisor candidacy, the orchestrator handoff alias, a locked runner store and every fail-closed branch of the lease read. Ancestor-release tests cover tool and wing-write loss through a direct parent and through a middle agent. Member-role lease holders are covered at trusted and at standard trust, the owner's item for a pending proposal follows whether a lease or configured candidate sees needs-me, and the lease read is tested with zero and with two orchestrator roles.
   - Owner rejection of person-targeted restricted proposals with a healthy coordinator preserves origin state; owner fallback still refuses rejection. Existing release, connection, default-client and delayed-approval contracts supply explicit recovery reasons and separate required proposal review.
