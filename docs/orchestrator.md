@@ -165,7 +165,7 @@ Agent tokens with an owner role are not the owner. The project's Connect seat
 
 | Path | Who | Lease | Cap |
 |---|---|---|---|
-| `orch_card_start(board, role, card, step_key, epoch, token, config_ref?)` | the lease holder | yes | yes |
+| `orch_card_start(board, role, card, step_key, epoch, token, config_ref?, fresh_reason?)` | the lease holder | yes | yes |
 | `card_start(…, config_ref?)` over MCP or `POST /api/card-starts` | the person owner only; anyone else gets `no: use orch_card_start` | no | yes |
 | trigger | the event's actor | no | yes |
 | `card_start_cancel` of a job that belongs to a step | the person owner only | – | – |
@@ -485,6 +485,17 @@ or grant access. Session commands do not reserve per-card worker slots.
   (stored, never acted on).
 - **Gates.** `gate_pass`, `gate_fail`, `gate_error`, `gate_budget`; one gate
   per `(board, repo, PR, head)` across roles unless the owner voids it.
+- **Result destinations.** Each journal step records a `destination` before
+  its effect: `{kind: "card", board, card}` when it has an owning card,
+  otherwise `{kind: "parked", reason: "no_owning_card"}`. This covers journal
+  completions, gate verdicts, `next` notes and runner-start results derived
+  from their jobs. The checkpoint includes destinations on steps and a
+  bounded `parked` list of finished results, including `next` notes. `next_step`
+  exposes the full latest note and its destination alongside the existing `next`
+  text. A park
+  records the missing ownership explicitly; it requires owner follow-up and
+  does not dispatch a message. Existing journal rows gain destination metadata
+  on first open without changing their content, evidence, state or history.
 - **External effects** are never re-issued by the hub. Before any re-issue the
   resume protocol checks the truth source: merge → PR state and head; gate →
   the PR's `Reviewed head:` and `Verdict:` lines, else `needs_person`; runner
@@ -637,3 +648,56 @@ project limit; model or harness routing for non-runner roles and more than two
 model slots; non-T3 runner harnesses, other triggers and experiment triggers;
 lease-fenced card moves and early handoff transfer; an owner UI; evaluations and
 replay of recorded runs.
+
+- **One bounded repair per failing check.** The checks the hub observes are
+  gates. The first `gate_fail` of a pull request opens its one repair and pins
+  the recording role as owner. Failed gates on later heads of that pull
+  request, from any role, join it; no second repair starts. `gate_pass`
+  resolves it. Work identity spans the successive heads of one pull request.
+  After `fleet.repair_attempts` failures (default 3) the repair is exhausted:
+  its destination is `{kind: "parked", reason: "repair_exhausted"}` and
+  `orch_gate_open` refuses that pull request (`repair_exhausted`) until the
+  owner raises the bound in the accepted config. The checkpoint lists
+  `repairs` with owner, failures, bound and state; `gate_record` returns the
+  `repair` it fed.
+- **Findings go to the owning session.** A failed gate and `orch_finding` (a
+  review finding about a card) are routed by the hub, never by the reporter, to
+  the role whose lease started the card's latest unvoided runner start, while
+  that lease is live. The finding is `routed` with destination
+  `{kind: "session", board, role}`; the owner reads it in its checkpoint
+  (`inbox_findings`) and acknowledges it with `orch_finding_ack` (only that
+  role, fenced). Otherwise it is `parked` with a reason: `no_owning_card`,
+  `no_owning_session`, `owner_session_gone` (lease released or expired) or
+  `routing_off`. Parked findings stay in the board-wide checkpoint `findings`
+  list. Those parked with an owner role (`owner_session_gone`, `routing_off`) also
+  appear in that role's `inbox_findings`, which is read on its own and not cut by
+  the board-wide list; `no_owning_card` and `no_owning_session` have no owner,
+  appear only in `findings` and cannot be acknowledged. Liveness is
+  the lease, the one session signal the hub has; a routed finding is delivered
+  to the checkpoint and proven received by the acknowledgement.
+- **No fresh agent while one with the context has capacity.** On `orch_card_start`
+  the context holder is the latest started agent (a started job with a thread)
+  of the card or its parent or children that is unfinished and started within
+  six hours. It has capacity while the unfinished cards it carries, plus this
+  one, stay within `fleet.agent_cards` (default 2). With a holder that has
+  capacity the start is refused (`agent_has_capacity`, details: `thread_id`,
+  `job`, `card`) unless the caller passes `fresh_reason`. Every new runner-start
+  step records `fresh_reason`: the caller's text, or `no_context_agent`,
+  `agent_full` or `reuse_off`; the checkpoint shows it. Person starts and
+  trigger starts are not subject to this rule and record no reason.
+
+The three rules are defaults of every board. A board overrides them in the
+accepted config's optional table:
+
+```toml
+[fleet]
+repair_attempts = 3    # 1-10 failed gates one repair absorbs
+route_findings = true  # false parks every finding as routing_off
+reuse_agents = true    # false never refuses a start; the reason is reuse_off
+agent_cards = 2        # 1-20 unfinished cards one agent may carry
+```
+
+Recorded destinations establish where a result belongs. Only an
+acknowledgement proves that a session received a finding, and only the runner's
+started job with a thread proves that an agent exists; the hub does not know
+whether that thread still has room beyond `fleet.agent_cards`.
