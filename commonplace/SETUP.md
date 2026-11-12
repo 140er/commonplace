@@ -69,3 +69,5 @@ Owners configure the workspace default or a connection override with
 Use `{"agent":"conn:builder","mode":"default"}` to remove an override.
 The shared core stores these settings; connection injection, session hooks and
 write enforcement are separate integrations.
+
+For cross-workspace management metadata, see the [Instance console guide](../docs/instance-admin.md). Its read-only authority is separate from workspace ownership.
