@@ -58,7 +58,9 @@ async function pendingSettings(pending, fail = false) {
   const mounting = ui.mountProject(host, {slug: "atlas", api, e, settings: true});
   try {
     await new Promise(setImmediate);
-    assert.equal(resolvers.length, pending.length, "prerequisite requests must still be pending");
+    // The agents list and the config-versions section each read the board's cards.
+    const expected = pending.reduce((count, part) => count + (part === "/cards" ? 2 : 1), 0);
+    assert.equal(resolvers.length, expected, "prerequisite requests must still be pending");
     const heading = host.querySelector("[data-project-heading]");
     assert.match(heading.innerHTML || "", /Atlas orchestrator/, "the card must render before prerequisite reads settle");
     assert.match(heading.innerHTML, /Connect agent/);
