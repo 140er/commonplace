@@ -1,8 +1,9 @@
 """Human-managed agent tokens, sharing the existing connection authority."""
 
 import logging
+from pathlib import Path
 
-from commonplace import control_db, decide_grant, import_grant, urls
+from commonplace import bots_grant, control_db, decide_grant, import_grant, urls
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import (
@@ -16,6 +17,92 @@ from commonplace.policy import Policy, canonical_wing, is_private_wing
 
 TOKEN_DAYS = 90
 logger = logging.getLogger(__name__)
+
+
+WING_NAMES_TIMEOUT_S = 2.0
+# One index seek per distinct wing (a loose index scan), never one row per drawer.
+_WING_NAMES_SQL = """
+WITH RECURSIVE w(v) AS (
+  SELECT (SELECT min(string_value) FROM embedding_metadata
+          WHERE key = 'wing' AND string_value IS NOT NULL)
+  UNION ALL
+  SELECT (SELECT min(string_value) FROM embedding_metadata
+          WHERE key = 'wing' AND string_value IS NOT NULL AND string_value > w.v)
+  FROM w WHERE w.v IS NOT NULL
+)
+SELECT v FROM w WHERE v IS NOT NULL
+"""
+_WING_ROWS_SQL = """
+SELECT m.id, e.embedding_id FROM embedding_metadata m JOIN embeddings e ON e.id = m.id
+WHERE m.key = 'wing' AND m.string_value = ?
+"""
+_BOOKKEEPING_KEYS_SQL = """
+SELECT key, string_value, int_value, float_value, bool_value FROM embedding_metadata
+WHERE id = ? AND key IN ('ingest_mode', 'is_sentinel')
+"""
+
+
+def _palace_db(gateway, workspace_id):
+    """The workspace's Chroma metadata file, or None when its store is not Chroma."""
+    from commonplace.workspace_store import settings_for
+
+    directory = Path(gateway.supervisor.workspace_dir(workspace_id))
+    if settings_for(directory).get("store", "v1") != "v1":
+        return None
+    path = directory / "palace" / "chroma.sqlite3"
+    return path if path.is_file() else None
+
+
+def _palace_wing_names(path):
+    """Wings holding at least one drawer that is not miner bookkeeping, as list_wings counts."""
+    from commonplace.rules import checks
+    from mempalace.metadata_types import is_bookkeeping
+
+    names = set()
+    with checks.deadline(WING_NAMES_TIMEOUT_S):
+        with checks.connection(path, timeout=WING_NAMES_TIMEOUT_S) as conn:
+            for (wing,) in conn.execute(_WING_NAMES_SQL).fetchall():
+                for row_id, drawer_id in conn.execute(_WING_ROWS_SQL, (wing,)):
+                    meta = {
+                        key: next((v for v in values if v is not None), None)
+                        for key, *values in conn.execute(_BOOKKEEPING_KEYS_SQL, (row_id,))
+                    }
+                    if not is_bookkeeping(meta, drawer_id):
+                        names.add(wing)
+                        break
+    return names
+
+
+def workspace_wing_names(gateway, principal):
+    """Names of the workspace's existing memory wings, before any grant filtering.
+
+    A principal that reads every wing gets them from the palace's metadata index
+    in milliseconds. The memory-tool listing authorizes every drawer, which takes
+    minutes on a palace with millions of drawers. Everyone else, and any store or
+    read the index path cannot serve, keeps that listing.
+    """
+    if principal.policy.sees_all_wings:
+        try:
+            path = _palace_db(gateway, principal.workspace_id)
+            if path is not None:
+                return _palace_wing_names(path)
+        except Exception as exc:  # noqa: BLE001 - the memory listing below is the fallback
+            log_failure(logger, "Wing index read failed; using the memory listing", exc)
+    known = gateway.call_memory_tool(principal, "mempalace_list_wings", {}).get("wings", {})
+    return set(known)
+
+
+def grantable_wings(gateway, principal):
+    """Sorted wings an owner may grant: readable, nonprivate and without patterns."""
+    return sorted(
+        {
+            canonical_wing(wing)
+            for wing in workspace_wing_names(gateway, principal)
+            if not is_private_wing(wing)
+            and principal.policy.can_read_wing(wing)
+            and not any(c in wing for c in "*?[]")
+        }
+    )
 
 
 def _read_wings(gateway, principal, data):
@@ -34,8 +121,7 @@ def _read_wings(gateway, principal, data):
         for wing in wings
     ):
         raise ValueError
-    known = gateway.call_memory_tool(principal, "mempalace_list_wings", {}).get("wings", {})
-    known = {canonical_wing(wing) for wing in known}
+    known = {canonical_wing(wing) for wing in workspace_wing_names(gateway, principal)}
     if any(canonical_wing(wing) not in known for wing in wings):
         raise ValueError
     return list(dict.fromkeys(canonical_wing(wing) for wing in wings))
@@ -133,6 +219,20 @@ def connection_view(row, db=None, *, viewer=None, coordinators=None):
         and f"conn:{row['name']}" not in coordinators
         and decide_grant.refusal(db, row) is None
     )
+    view["bots_chat"] = policy.has_scope(bots_grant.CHAT_SCOPE)
+    view["bots_confirm"] = policy.has_scope(bots_grant.CONFIRM_SCOPE)
+    # Same rule for the person's bots, but any member's own app qualifies.
+    view["bots_grantable"] = bool(
+        db is not None
+        and viewer is not None
+        and coordinators is not None
+        and row["user_id"] == viewer.user_id
+        and row["auth"] == "pat"
+        and not row["revoked_at"]
+        and not _expired(row)
+        and f"conn:{row['name']}" not in coordinators
+        and bots_grant.refusal(db, row) is None
+    )
     return view
 
 
@@ -169,6 +269,65 @@ def _update_decide(gateway, h, principal, row, data):
             return
     fresh = gateway.db.connection(row["id"], principal.workspace_id)
     send_json(h, 200, {"connection": connection_view(fresh, **decide_view(gateway, principal))})
+
+
+def _update_bots(gateway, h, principal, row, data):
+    keys = {"bots_chat", "bots_confirm"}
+    if not data or set(data) - keys or any(type(v) is not bool for v in data.values()):
+        send_json(h, 400, {"error": "Use bots_chat and bots_confirm true or false"})
+        return
+    policy = Policy.from_json(row["policy"])
+    chat = data.get("bots_chat", policy.has_scope(bots_grant.CHAT_SCOPE))
+    if data.get("bots_confirm") and not chat:
+        send_json(h, 409, {"error": bots_grant.NEEDS_CHAT_TEXT})
+        return
+    # Withdrawing chat withdraws confirm with it.
+    confirm = data.get("bots_confirm", policy.has_scope(bots_grant.CONFIRM_SCOPE)) and chat
+    if chat or confirm:
+        # Coordinators live in the board store; control_db cannot see them.
+        current = coordinators(gateway, principal)
+        if current is None:
+            send_json(h, 503, {"error": "Boards are unavailable; try again"})
+            return
+        if f"conn:{row['name']}" in current:
+            send_json(h, 409, {"error": bots_grant.AGENT_TEXT})
+            return
+    try:
+        gateway.db.set_connection_bots(
+            row["id"],
+            chat=chat,
+            confirm=confirm,
+            actor=principal,
+            workspace_ref=principal.workspace_id,
+        )
+    except ControlError as exc:
+        send_json(h, 409, {"error": str(exc)})
+        return
+    if chat or confirm:
+        # Re-read after the write: a coordinator assigned meanwhile loses the grant.
+        current = coordinators(gateway, principal)
+        if current is None or f"conn:{row['name']}" in current:
+            gateway.db.clear_decide(row["id"], reason="coordinator", user_id=principal.user_id)
+            if current is None:
+                send_json(h, 503, {"error": "Boards are unavailable; try again"})
+            else:
+                send_json(h, 409, {"error": bots_grant.AGENT_TEXT})
+            return
+    fresh = gateway.db.connection(row["id"], principal.workspace_id)
+    send_json(h, 200, {"connection": connection_view(fresh, **decide_view(gateway, principal))})
+
+
+def _may_manage(principal, h, parts):
+    """An owner manages every connection; any other signed-in person may only PATCH one
+    connection, and ``_own_bots_body`` limits that to their own bots scopes."""
+    return bool(
+        principal.person
+        and (principal.role == "owner" or (h.command == "PATCH" and len(parts) == 1))
+    )
+
+
+def _own_bots_body(principal, row, data):
+    return not set(data) - {"bots_chat", "bots_confirm"} and row["user_id"] == principal.user_id
 
 
 def _update_read_wings(gateway, h, principal, row, data):
@@ -216,8 +375,13 @@ def _consents(data, db, principal):
 
 
 def _patch(gateway, h, principal, row, data):
+    if principal.role != "owner" and not _own_bots_body(principal, row, data):
+        send_json(h, 403, {"error": bots_grant.NOT_YOURS_TEXT})
+        return
     if "decide" in data:
         _update_decide(gateway, h, principal, row, data)
+    elif set(data) & {"bots_chat", "bots_confirm"}:
+        _update_bots(gateway, h, principal, row, data)
     elif row["auth"] != "pat":
         send_json(h, 409, {"error": "Manage this connection in its sign-in client"})
     else:
@@ -231,10 +395,10 @@ def install(gateway):
         principal = require_principal(gateway, h)
         if principal is None:
             return
-        if not principal.person or principal.role != "owner":
+        parts = path_parts(h, "/api/connections")
+        if not _may_manage(principal, h, parts):
             send_json(h, 403, {"error": "Sign in as a workspace owner to manage agents"})
             return
-        parts = path_parts(h, "/api/connections")
         if h.command == "POST" and not parts:
             try:
                 data = read_json(h)

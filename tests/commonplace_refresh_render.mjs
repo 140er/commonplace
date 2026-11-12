@@ -44,6 +44,7 @@ const context = {
   },
   remember: () => ({}), capture: () => () => {}, restore() {},
   navigation() { navigationCalls++; },
+  mountToolPolicy() {},
   waitingTotal: (bots) => bots.reduce((total, bot) => total + bot.waiting, 0),
   title() {}, message: (text) => text, e: (value) => String(value ?? ""), planView,
   agentsView: () => "", phonePushView: () => "", voice: { settings: () => "" },

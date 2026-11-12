@@ -10,8 +10,9 @@ streams the reply of the workspace's chat model, runs tools as the person and st
 
 ## Routes
 
-All routes need a signed-in person session. An agent token or machine credential gets 404,
-exactly like a path that does not exist; an anonymous caller gets 401. Writes pass the
+All routes need a signed-in person session, or that person's own app holding a granted scope
+(see [Using bots from your own app](#using-bots-from-your-own-app)). Any other agent token or
+machine credential gets 404, exactly like a path that does not exist; an anonymous caller gets 401. Writes pass the
 gateway's same-origin check. A bot id that is unknown or belongs to someone else is 404.
 
 | Route | Body, result |
@@ -168,7 +169,7 @@ writes the person's text calls `turn.words()` there, so model text is refused be
 pending action or chip exists. `/confirm` rebuilds the turn with the message that asked for
 the action (even when newer messages exist) and calls `check` again before `run`; a routine
 tool's `check` also runs before `run`. A confirm tool whose schema takes free text (a string
-without an `enum`) must have `check`, or `register()` refuses it. A successful `Result` may
+without an `enum` or `const`, including type lists, `anyOf`/`oneOf` branches, untyped values and open nested objects) must have `check`, or `register()` refuses it. A successful `Result` may
 carry `say`, a plain outcome sentence that becomes the text of the confirmed action's event
 message (redacted, at most 500 characters); without it the text is "Done.". A tool call
 naming a tool that was not offered is refused with `invalid` and the turn goes on. A `project`-scope tool acts on the bot's own project; for a bot
@@ -178,7 +179,45 @@ install; a missing module is skipped.
 
 ## Project tools
 
-Filled by a later slice.
+A project's bot (or the General bot, when you name the project) can run the project for you
+in plain language. You never open a board: the bot calls the same services you would, as you,
+so it can do nothing you may not do yourself. When a service refuses, the bot says so in one
+plain sentence with what to do next.
+
+What the bot can do:
+
+- **Look.** `project_status` (counts by status, who is working, what waits and why, whether the
+  orchestrator is connected and woken), `list_work` (up to 20 tasks, filtered by status),
+  `work_detail` (one task with its latest notes and links) and `list_decisions` (the open
+  questions waiting for you).
+- **File and order work.** `create_work` files your message as a new task, `prioritize_work`
+  changes a task's priority (project owner only) or moves it before or after another task, and
+  `comment_work` adds a comment.
+- **Steer.** `tell_orchestrator` passes your words to the project's orchestrator and says
+  honestly whether it is connected and woken, or will only see them when it next checks. New
+  work goes through `create_work` only, never also forwarded. One message that does both uses
+  the span arguments: one part is filed, another is forwarded.
+- **Answer and approve, with one tap.** `answer_decision` (an offered option, or your own
+  reply), `approve_work` and `create_project` never run from the bot's own call. The bot shows
+  a confirm chip whose text the server builds from the frozen arguments; your tap runs exactly
+  that action once. An answer or approval is tied to the item's version: if it changed after
+  the chip was shown, the tap is refused and the bot asks you to look again.
+
+**Your words only.** Every text a writing tool uses (a title, body, comment, forwarded
+message, decision reply or project name) must be copied verbatim from your current message,
+or the tool refuses (`not_your_words`) and nothing is written. Without arguments the whole
+message is used (the title is its first non-blank line, cut to 200 characters). The bot
+chooses which tool, which item and which part of your message, never what gets written, so
+text it read in other people's work cannot end up in a task, the project chat or an answer.
+
+Filing work is routine: on a project whose owner configured starts for new tasks, a filed
+task starts an agent exactly as when you file it by hand. Each filed task and each forwarded
+post is remembered for the bot (`bot_work`, `bot_forwards`) so later slices can tell you when
+it needs you or is done. A post forwarded by a bot is made inside `chat.front.skipping()`, so
+project chat adds no receipt, answer or fallback card for it.
+
+A new project is created through the same service the web app uses, with its permission
+rules. The project's own bot appears in the roster on the next read.
 
 ## Machines
 
@@ -205,6 +244,9 @@ empty list and a short reason.
   the bot says so. While a start is in flight the task's work block reads `working`.
 - **Refusals** keep the runner's stable code (for example `not_todo`, `outside_worker_wing`,
   `active_start`) and come with a plain sentence saying what to change.
+  A start the runner would refuse is refused before any button is shown (only owners start
+  agents, the task's state, the machine's area, a named machine that cannot take the task),
+  and checked again at the tap.
 - **Running commands is not available** until a provider offers it. The `run_command` tool is
   only offered to the model while some machine reports that it can run commands; without one
   the bot says so.
@@ -254,6 +296,48 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
 - A memory note is removed with a tombstone: it disappears from the list, the stored row stays.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
+
+## Using bots from your own app
+
+A native or mobile app of yours can use your bots as you, through its own connection and two
+scopes that you grant yourself:
+
+- `bots:chat` lets the app use `/api/bots*` as you: the roster, threads, memory, sending a
+  message, stopping a reply and marking a thread read. It reaches only your own bots, with only
+  your own permissions (a member's app can do what a member can, nothing more).
+- `bots:confirm` additionally lets the app confirm what a bot proposes
+  (`POST /api/bots/<id>/confirm`), the same as tapping the confirm button yourself. It is
+  useless without `bots:chat` and is granted separately. Without it that route answers 403
+  `scope_required` and nothing runs. Buttons on a question use the separate `cards:decide`
+  scope described in the connections guide.
+
+**How to grant.** Any signed-in member can do it for their own app. Owners: Settings → Agents,
+**Allow using my bots** on the app's row (and **Allow confirming** if you want that too), or
+`PATCH /api/connections/<id>` with `{"bots_chat": true}` and optionally `{"bots_confirm": true}`.
+An app that signs in with OAuth asks for the scopes and you tick the boxes on its authorization
+form; an unticked box grants nothing. Members use the same PATCH for their own connection, or
+the authorization form.
+
+**What never qualifies.** Child agents, runner connections, project orchestrator seats, board
+coordinators, connections that belong to someone else, and revoked or expired connections. They
+are refused when granting and again on every request, even if a stored scope claims otherwise;
+they get the same 404 as any other token. Assigning an app as a board coordinator removes its
+grants. The command line cannot grant these scopes.
+
+**How to revoke.** **Stop using bots** (or `{"bots_chat": false}`, which withdraws confirming as
+well), or revoke the connection. It takes effect on the next request: a withdrawn scope answers
+404 and a revoked or expired connection 401.
+
+**Limits of this release.** There is no member-scoped list of connections, so a member grants
+through the OAuth authorization form or by `PATCH` on their own connection (the web Settings →
+Agents list is for owners). There is no create-time option on `POST /api/connections`: create the
+connection, then grant.
+
+**Audit.** Granting and withdrawing each scope is recorded with the connection. Every write the
+app makes (creating or renaming a bot, memory, sending, stopping, read marks, confirming) adds
+one record with the connection id, the route and the outcome (`ok`, `refused` or `error`; a refused
+confirm is recorded too); reads add none, and
+no message text is ever recorded.
 
 ## Using bots in the web app
 

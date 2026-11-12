@@ -16,6 +16,13 @@ CODES = (
     "checks_pending",
 )
 
+# Who can release a restricted-origin card, by the board's release authority.
+RELEASE_DETAIL = {
+    "coordinator": "the board coordinator releases it",
+    "owner": "no connected orchestrator can release it, so the workspace owner does",
+    "blocked": "the board coordinator cannot release it; the workspace owner must change the coordinator first",
+}
+
 # Reasons that stop an explicit claim or start; the others only explain what the board shows.
 REFUSING = ("blocked_by", "waits_on_person", "plan_review", "not_released")
 
@@ -33,7 +40,10 @@ def text(reason: dict) -> str:
     if code == "plan_review":
         return "Waiting for plan review"
     if code == "not_released":
-        return "Waiting for release" + (": split stuck" if reason.get("split_stuck") else "")
+        detail = ": split stuck" if reason.get("split_stuck") else ""
+        if reason.get("release") and not reason.get("split_stuck"):
+            detail = ": " + RELEASE_DETAIL[reason["release"]]
+        return "Waiting for release" + detail
     if code == "no_agent":
         return "No agent is connected to this project yet"
     if code == "project_limit":
@@ -72,6 +82,8 @@ def waiting(
         reason = {"code": "plan_review"}
     elif not released and open_work:
         reason = {"code": "not_released"}
+        if row.get("release_by"):
+            reason["release"] = row["release_by"]
         if row.get("split_stuck"):
             reason["split_stuck"] = True
     elif status == "todo" and agents is False:

@@ -9,7 +9,7 @@ const { fixture, largeFixture } = await import("./topology_fixture.mjs");
 const read = (name) => readFile(new URL(`../commonplace/web/static/${name}`, import.meta.url), "utf8");
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise((resolve) => setImmediate(resolve)); };
 const HOSTILE = '<img src=x onerror=alert(1)>"';
-const EMPTY = { graph: { wing: "topology", nodes: [], links: [], routes: [] }, status: { nodes: {}, links: {} } };
+const EMPTY = { wing: "topology", nodes: [], links: [], routes: [], status: { nodes: {}, links: {} } };
 const nodeTag = (scene, key) => new RegExp(`<g class="[^"]*" data-key="${key.replace(/\./g, "\\.")}"[\\s\\S]*?</g></g>`).exec(scene)?.[0] ?? assert.fail(`no node ${key}`);
 const linkTag = (scene, id) => scene.split('<g class="topo-link').find((part) => part.includes(`data-link="${id.replace(/>/g, "&gt;")}"`)) ?? assert.fail(`no link ${id}`);
 const placeOf = (scene, key) => /transform="translate\((-?[\d.]+) (-?[\d.]+)\)"/.exec(nodeTag(scene, key)).slice(1).map(Number);
@@ -58,7 +58,7 @@ test("model: anything that is not a known status is unknown, never up", () => {
   assert.deepEqual(ends("gate>maple:reverse_proxy"), { from: "unknown", to: "unknown" });
   assert.deepEqual(ends("maple>orchard-web:hosts"), { from: "unknown", to: "unknown" });
   assert.deepEqual(ends("maple>birch:hosts"), { from: "degraded", to: "degraded" });
-  for (const junk of [null, undefined, {}, { graph: null }, { graph: { nodes: [null, { key: 7 }], links: [null, {}], routes: [null, {}] } }]) {
+  for (const junk of [null, undefined, {}, { nodes: null }, { nodes: [null, { key: 7 }], links: [null, {}], routes: [null, {}] }]) {
     assert.deepEqual(ui.mapModel(junk), { nodes: [], links: [], routes: [] });
   }
 });
@@ -125,9 +125,9 @@ test("status is never colour alone: four different shapes, each with its word", 
 
 test("scene: text from the store is escaped everywhere it is drawn", () => {
   const payload = fixture();
-  payload.graph.nodes[5].values = { kind: "server", name: HOSTILE, role: HOSTILE };
-  payload.graph.links[0].method = HOSTILE;
-  payload.graph.routes[0].site = HOSTILE;
+  payload.nodes[5].values = { kind: "server", name: HOSTILE, role: HOSTILE };
+  payload.links[0].method = HOSTILE;
+  payload.routes[0].site = HOSTILE;
   const core = ui.createMapCore();
   core.apply(payload);
   assert.doesNotMatch(core.scene(), /<img/);
@@ -136,7 +136,7 @@ test("scene: text from the store is escaped everywhere it is drawn", () => {
 
 test("scene: long names are cut for the label and kept whole for assistive text", () => {
   const payload = fixture();
-  payload.graph.nodes[5].values.name = "A".repeat(60);
+  payload.nodes[5].values.name = "A".repeat(60);
   const core = ui.createMapCore();
   core.apply(payload);
   const maple = nodeTag(core.scene(), "maple");
@@ -164,7 +164,7 @@ test("route: the chosen site's path is marked on, the rest dimmed, and said in w
   // A route that disappears from the store stops being highlighted.
   core.setRoute("orchard.example");
   const without = fixture();
-  without.graph.routes = [];
+  without.routes = [];
   core.apply(without);
   assert.equal(core.route, null);
 });
@@ -335,7 +335,7 @@ test("screen: loads the map, reads again every few seconds and shows a status ch
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const dom = fakeDom();
   let payload = fixture(), calls = 0;
-  const screen = ui.createTopologyMap({ mount: () => dom.host, storage: fakeStorage(), workspace: () => "ws_a", api: async (path) => { calls += 1; assert.equal(path, "/api/topology/map"); return payload; } });
+  const screen = ui.createTopologyMap({ mount: () => dom.host, storage: fakeStorage(), workspace: () => "ws_a", api: async (path) => { calls += 1; assert.equal(path, "/api/topology"); return payload; } });
   screen.show();
   assert.match(dom.host.innerHTML, /Loading the map…/);
   await settle();

@@ -1,7 +1,7 @@
-// A synthetic topology in the shape of GET /api/topology/map, shared by the node checks
+// A synthetic topology in the shape of GET /api/topology, shared by the node checks
 // (tests/topology_map_view.mjs) and the browser harness (tests/topology_harness.html).
 // Every name is invented.
-const node = (key, kind, name, role = "", extra = {}) => ({ subject: `node:${key}`, wing: "topology", key, values: { kind, name, ...(role ? { role } : {}) }, stale: false, conflicted: false, last: {}, ...extra });
+const node = (key, kind, name, role = "", extra = {}) => ({ subject: `node:${key}`, wing: "topology", key, values: { kind, name, ...(role ? { role } : {}) }, stale: false, conflicted: false, fields: {}, ...extra });
 const link = (from, to, method, values = {}, extra = {}) => ({ subject: `link:${from}>${to}:${method}`, wing: "topology", id: `${from}>${to}:${method}`, from, to, method, values: { method, ...values }, stale: false, conflicted: false, ...extra });
 const hop = (id, status, known = true) => { const [from, rest] = id.split(">"); const [to, method] = rest.split(":"); return { link: id, from, to, method, known, stale: false, status }; };
 
@@ -34,18 +34,16 @@ export function fixture({ gate = "degraded" } = {}) {
     node("studio-mac", "mac", "Studio Mac", "desk"),
     node("tower", "pc", "Tower", "workstation"),
     node("pocket", "phone", "Pocket", "on the go"),
-    { ...node("old-nas", "server", "Old NAS"), values: {}, stale: true, last: { kind: "server", name: "Old NAS", role: "archive" } },
+    { ...node("old-nas", "server", "Old NAS"), values: {}, stale: true, fields: Object.fromEntries(Object.entries({ kind: "server", name: "Old NAS", role: "archive" }).map(([name, value]) => [name, { value, stale: true }])) },
   ];
   return {
-    graph: {
-      wing: "topology",
-      nodes,
-      links,
-      routes: [
+    wing: "topology",
+    nodes,
+    links,
+    routes: [
         { subject: "route:orchard.example", wing: "topology", site: "orchard.example", values: {}, stale: false, conflicted: false, hops: [hop("orchard.example>nimbus-dns:dns", "up"), hop("nimbus-dns>nimbus-cdn:proxy", "up"), hop("nimbus-cdn>gate:reverse_proxy", gate), hop("gate>maple:reverse_proxy", "up"), hop("maple>orchard-web:hosts", "up")] },
         { subject: "route:shop.orchard.example", wing: "topology", site: "shop.orchard.example", values: {}, stale: false, conflicted: false, hops: [hop("shop.orchard.example>nimbus-dns:dns", "unknown"), hop("nimbus-dns>shop-edge:proxy", "unknown", false)] },
-      ],
-    },
+    ],
     status: {
       nodes: Object.fromEntries(nodes.map((item) => [item.key, { maple: "up", birch: "degraded", "shop-api": "down", "studio-mac": "up", tower: "up" }[item.key] || "unknown"])),
       links: Object.fromEntries(Object.entries(ends).map(([id, [from, to]]) => [id, { from, to }])),
@@ -60,5 +58,5 @@ export function largeFixture(count = 300) {
   const links = [];
   for (let i = 1; i < count; i++) links.push(link(nodes[i - 1].key, nodes[i].key, "direct"));
   for (let i = 0; i + 17 < count; i += 5) links.push(link(nodes[i].key, nodes[i + 17].key, "tailscale"));
-  return { graph: { wing: "topology", nodes, links, routes: [] }, status: { nodes: {}, links: Object.fromEntries(links.map((item, i) => [item.id, { from: ["up", "degraded", "down", "unknown"][i % 4], to: "up" }])) } };
+  return { wing: "topology", nodes, links, routes: [], status: { nodes: {}, links: Object.fromEntries(links.map((item, i) => [item.id, { from: ["up", "degraded", "down", "unknown"][i % 4], to: "up" }])) } };
 }

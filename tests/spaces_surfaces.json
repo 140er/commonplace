@@ -1070,6 +1070,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -1477,6 +1524,14 @@
                   "integer"
                 ]
               },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
               "priority": {
                 "description": "Owner person only. Omit on a new card for the default (normal).",
                 "enum": [
@@ -1488,11 +1543,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -1780,13 +1835,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -1795,6 +1843,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -1835,6 +1890,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -1984,6 +2086,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",
@@ -2009,6 +2112,8 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_get",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
@@ -2622,6 +2727,14 @@
                   "integer"
                 ]
               },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
               "priority": {
                 "description": "Owner person only. Omit on a new card for the default (normal).",
                 "enum": [
@@ -2633,11 +2746,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -2925,13 +3038,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -2940,6 +3046,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -2980,6 +3093,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         }
       ]
     },
@@ -3018,7 +3178,9 @@
       "task_list",
       "task_show",
       "task_take_next",
-      "task_update"
+      "task_update",
+      "topology_get",
+      "topology_route"
     ]
   },
   "standard": {
@@ -4092,6 +4254,53 @@
           "name": "orch_journal_record"
         },
         {
+          "description": "Take back a step of a role that reports to yours (parent in the config): the step is voided with its history kept so the work can be given out again. Only the role it reports to may do this; runner starts, gates and holds stay with the owner.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "epoch": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "report": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "role": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "step_key": {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              "token": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "board",
+              "role",
+              "epoch",
+              "token",
+              "report",
+              "step_key"
+            ],
+            "type": "object"
+          },
+          "name": "orch_reassign_step"
+        },
+        {
           "description": "Give up your orchestrator lease.",
           "inputSchema": {
             "additionalProperties": false,
@@ -4499,6 +4708,14 @@
                   "integer"
                 ]
               },
+              "paths": {
+                "description": "Path contract: repo globs this card will edit (src/api/**); [] clears. Cards with overlapping contracts are not started together.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
               "priority": {
                 "description": "Owner person only. Omit on a new card for the default (normal).",
                 "enum": [
@@ -4510,11 +4727,11 @@
                 "type": "string"
               },
               "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
                 "type": [
                   "string",
                   "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
+                ]
               },
               "status": {
                 "enum": [
@@ -4802,13 +5019,6 @@
                 ],
                 "type": "string"
               },
-              "reviewer": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews)."
-              },
               "question": {
                 "type": "string"
               },
@@ -4817,6 +5027,13 @@
               },
               "repo": {
                 "type": "string"
+              },
+              "reviewer": {
+                "description": "Owner person only: a workspace member (user:<id>) who reviews this card's completion; null or empty clears. Omit to keep today's behaviour (the workspace owner reviews).",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "status": {
                 "enum": [
@@ -4857,6 +5074,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -4999,6 +5263,7 @@
       "orch_heartbeat",
       "orch_journal_intent",
       "orch_journal_record",
+      "orch_reassign_step",
       "orch_release",
       "orch_restore_ack",
       "orch_restore_status",
@@ -5024,6 +5289,8 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_get",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
