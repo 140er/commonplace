@@ -18,6 +18,7 @@ which keeps the test-impact picture of a change honest.
 
 import hashlib
 import importlib.abc
+import logging
 import math
 import os
 import re
@@ -458,7 +459,7 @@ def _reset_worker_observer(mcp_server):
         try:
             observer.close()
         except Exception:
-            pass
+            logging.getLogger(__name__).warning("worker observer close failed", exc_info=True)
     mcp_server._worker_observer = None
     mcp_server._worker_observer_failed = False
     mcp_server._worker_observation_lost = 0
