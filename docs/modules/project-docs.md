@@ -9,7 +9,7 @@
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
   - `docs/design/RULES.md` places the Rules entry in the account menu rather than the sidebar and phone tabs.
 
-  - The OAuth contract records the displayed callback origin, numeric-host tightening and required pre-deploy registration inventory.
+  - The OAuth contract records the displayed callback origin, numeric-host tightening, the required pre-deploy registration inventory and the one exact native redirect `cmmn://auth/callback`.
 
   - The rules write-check documentation lists the goals writes as checked (`docs/design/RULES.md`).
 
