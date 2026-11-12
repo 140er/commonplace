@@ -22,7 +22,7 @@ app holding ``bots:chat`` (``bots:confirm`` for confirm).
     PATCH  /api/bots/<id>/shares/<user>    {talk?, see_shared?} -> {share} (owner, web session)
     DELETE /api/bots/<id>/shares/<user>    {ok} (owner, web session; idempotent)
     GET    /api/bots/<id>/threads          {threads, own}
-    POST   /api/bots/<id>/threads          {visibility, title?} -> {thread} (private only for now)
+    POST   /api/bots/<id>/threads          {visibility, title?} -> {thread} (private: once; shared: new)
     PATCH  /api/bots/<id>/threads/<tid>    {archived} -> {thread} (the opener)
     GET    /api/bots/settings              {sharing, can_configure}
     PATCH  /api/bots/settings              {sharing} -> {sharing} (workspace owner, web session)
@@ -54,7 +54,6 @@ from commonplace.bots import (
     updates,
 )
 from commonplace.bots.errors import SharingOff, Unsupported
-from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, read_json, send_json
 
@@ -82,12 +81,7 @@ def _asks(gateway, principal):
 
 def _who(gateway, user_id) -> dict:
     """A member as other members may see them: id and name (the email's first part if unnamed)."""
-    try:
-        user = gateway.db.user(user_id)
-        name = user["name"] or user["email"].split("@")[0]
-    except (ControlError, LookupError, KeyError):
-        name = ""
-    return {"id": user_id, "name": name}
+    return {"id": user_id, "name": access.display_name(gateway, user_id)}
 
 
 def _view(gateway, bot, asks, working=()) -> dict:
@@ -247,6 +241,11 @@ def _messages(gateway, h, principal, bot_id, rest):
         turn.recover(gateway, principal.workspace_id, principal.user_id, bot_id, thread)
         page = bots.messages(bot_id, principal.user_id, thread_id=thread, **cursors)
     reader = blocks.Reader(gateway, principal)
+    views = [blocks.message_view(reader, m) for m in page]
+    if thread not in (None, NO_THREAD_YET) and bots.thread_shared(bot_id, thread):
+        for view, stored in zip(views, page):  # who spoke, for a thread several people write in
+            if stored.get("author_id"):
+                view["author"] = _who(gateway, stored["author_id"])
     asks = _asks(gateway, principal)
     bot = bots.roster(principal.user_id, bot_id)[0]
     waiting = [
@@ -260,7 +259,7 @@ def _messages(gateway, h, principal, bot_id, rest):
         200,
         {
             "bot": _view(gateway, bot, asks, _working(gateway, principal, bots)),
-            "messages": [blocks.message_view(reader, m) for m in page],
+            "messages": views,
             "waiting": blocks.hydrate(reader, waiting),
             "running": running,
         },
@@ -382,8 +381,13 @@ def _send(gateway, h, principal, bot_id, rest):
     bots = _bots(gateway, principal)
     bot = bots.viewable(bot_id, principal.user_id)
     thread = _thread(h, bots, principal, bot_id, create=True)
-    if thread is not None and not bots.reach(principal.user_id, bot_id, thread).can_write:
-        raise store.Conflict()  # an archived thread or bot takes no new message
+    if thread is not None:
+        reach = bots.reach(principal.user_id, bot_id, thread)
+        if reach.read_only:  # reads the shared thread but may not talk in it
+            _error(h, 403, "read_only", "You can read this thread but not write in it.")
+            return
+        if not reach.can_write:
+            raise store.Conflict()  # an archived thread or bot takes no new message
     seen = bots.message_for_request(bot_id, principal.user_id, request_id, thread)
     if seen is not None:
         if seen["text"] != text:
@@ -454,7 +458,11 @@ def _stop(gateway, h, principal, bot_id, rest):
         if thread is NO_THREAD_YET
         else limits.REGISTRY.running(principal.workspace_id, bot_id, thread)
     )
-    stopping = running is not None and running.request_id == body.get("request_id")
+    stopping = (
+        running is not None
+        and running.request_id == body.get("request_id")
+        and running.user_id == principal.user_id  # in a shared thread, only the talker's own turn
+    )
     if stopping:
         running.cancel.set()
     send_json(h, 200, {"ok": stopping})
@@ -693,11 +701,15 @@ def _shares_delete(gateway, h, principal, bot_id, rest):
     send_json(h, 200, {"ok": True})
 
 
-# Threads: a member's private thread, and (later) shared ones
+# Threads: a member's private thread, and shared ones
 
 
 def _thread_view(row) -> dict:
-    return {key: row[key] for key in ("id", "visibility", "title", "created_at", "archived")}
+    return {
+        key: row[key]
+        for key in ("id", "visibility", "title", "created_at", "archived", "unread")
+        if key in row
+    }
 
 
 def _threads_get(gateway, h, principal, bot_id, rest):
@@ -715,7 +727,16 @@ def _threads_get(gateway, h, principal, bot_id, rest):
         200,
         {
             "threads": [
-                {**_thread_view(r), "mine": r["user_id"] == principal.user_id} for r in rows
+                {
+                    **_thread_view(r),
+                    "mine": r["user_id"] == principal.user_id,
+                    **(
+                        {"opened_by": _who(gateway, r["user_id"])}
+                        if r["visibility"] == "shared"
+                        else {}
+                    ),
+                }
+                for r in rows
             ],
             "own": own,
         },
@@ -731,11 +752,7 @@ def _threads_post(gateway, h, principal, bot_id, rest):
         return
     bots = _bots(gateway, principal)
     visibility = body.get("visibility")
-    if visibility == "shared":  # shared threads and their audience rule come in a later release
-        bots.viewable(bot_id, principal.user_id)
-        _error(h, 409, "not_available", "Shared threads are not available yet.")
-        return
-    existed = bots.private_thread(bot_id, principal.user_id) is not None
+    existed = visibility == "private" and bots.private_thread(bot_id, principal.user_id) is not None
     thread = bots.thread_open(bot_id, principal.user_id, visibility, body.get("title", ""))
     send_json(h, 200 if existed else 201, {"thread": _thread_view(thread)})
 

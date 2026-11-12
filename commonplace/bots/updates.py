@@ -29,6 +29,11 @@ from commonplace.http_util import log_failure
 logger = logging.getLogger(__name__)
 
 TITLE_CHARS = 120
+# A shared thread is read by people whose rights differ from the filer's: its events carry no
+# titles, notes or reply text (other people's words), only a pointer each reader hydrates for
+# themselves (the ``work`` block) or nothing at all.
+SHARED_WORK_EVENT = "A task filed here changed."
+SHARED_REPLY_EVENT = "A message sent from here was answered."
 ANNOUNCED = {
     "needs_you": ("A question about “{title}” needs you.", "decision"),
     "ready": ("“{title}” is ready for you to look at.", "work"),
@@ -73,6 +78,8 @@ def _card_event(gateway, event, bots, links):
         if word in ANNOUNCED:
             template, kind = ANNOUNCED[word]
             text = template.format(title=_title(card))
+            if bots.thread_shared(link["bot_id"], link["thread_id"]):
+                text, kind = SHARED_WORK_EVENT, "work"
         bots.work_changed(
             link["bot_id"],
             link["user_id"],
@@ -129,6 +136,9 @@ def _reply_event(gateway, event, bots, forwards):
             (forward["bot_id"], forward["user_id"], forward["thread_id"]), (message["text"], [])
         )[1].append(forward["space_message_id"])
     for (bot_id, user_id, thread_id), (text, posts) in answered.items():
+        marks = [{"type": "orchestrator"}]
+        if bots.thread_shared(bot_id, thread_id):
+            text, marks = SHARED_REPLY_EVENT, []  # the reply is read in the project, not copied
         bots.forward_answered(
             bot_id,
             user_id,
@@ -136,7 +146,7 @@ def _reply_event(gateway, event, bots, forwards):
             reply_id,
             posts,
             text,
-            [{"type": "orchestrator"}],
+            marks,
             thread_id=thread_id,
         )
 

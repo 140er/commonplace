@@ -35,7 +35,7 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `POST /api/bots/<id>/shares` | `{user, talk, see_shared}`, `{share}` (201 new, 200 same flags again): owner only, web session only, a current member other than the owner; `409 sharing_off`, `409 limit` |
 | `PATCH` / `DELETE /api/bots/<id>/shares/<user>` | `{talk?, see_shared?}` → `{share}`; `{ok}` (revoking again is a no-op); owner only, web session only |
 | `GET /api/bots/<id>/threads` | `{threads, own}`: the threads the caller reaches and the id of their own private thread (`null` for the owner, whose thread has no id) |
-| `POST /api/bots/<id>/threads` | `{visibility, title?}`, `{thread}`: opens the member's private thread (once); `visibility: shared` is `409 not_available` for now |
+| `POST /api/bots/<id>/threads` | `{visibility, title?}`, `{thread}`: opens the member's private thread (once, `200` when it exists) or a new shared thread (`201`; needs `talk`, a shared bot and fewer than 100 open shared threads, else `409 limit`) |
 | `PATCH /api/bots/<id>/threads/<tid>` | `{archived}`, `{thread}`: the person who opened it |
 | `GET` / `PATCH /api/bots/settings` | `{sharing, can_configure}`; any member reads, a workspace owner changes it (web session only) |
 
@@ -355,7 +355,7 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   listed only within the list, and the runner's own rule still decides who may start an agent.
 - Sharing and members' private threads (slice S3): the owner of a custom bot shares it with
   chosen workspace members (`talk`: open their own private thread and write in it; `see_shared`:
-  read shared threads, which are not available yet) and revokes at any time. Sharing is off
+  read shared threads, see below) and revokes at any time. Sharing is off
   until a workspace owner switches it on (`PATCH /api/bots/settings`); while it is off a share
   is refused and members get 404. A member sees the bot in their roster with its owner and
   talks to it in their own private thread, which no one else reaches: not the bot's owner, not
@@ -365,6 +365,21 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   turn reads them. A task a member's turn filed, or a post it forwarded, reports to that
   member's thread. Each shared bot runs one turn per thread and at most four at once; a turn
   counts against the talker's own daily budget.
+- Shared threads and the audience rule (slice S4): a member with `talk` opens a shared thread
+  (`visibility: shared`); the owner and every member with `see_shared` read it, a member with
+  `talk` alone only the ones they opened. A reader sees a thread from their own `history_from`
+  (the newest message when they were shared in; a new share starts a new one). A turn in a shared
+  thread reaches only what the bot's list, the asker, the owner and every person who reads that
+  thread may reach, computed from fresh rights on every call: a project one reader cannot read is
+  not offered, named, read or written there, and a model that names it gets the fixed sentence
+  "I can't use that in a shared thread." If a reader who cannot read what the turn used joins
+  while it runs, the stored reply is a fixed sentence instead of the model's text. The model reads
+  only the bot-level notes (never a member's own notes or learned items) and only messages every
+  reader may read. Messages carry their author; a task filed from a shared thread reports with
+  the fixed text "A task filed here changed." and a block each reader hydrates with their own
+  rights; a forwarded post's answer is not copied into a shared thread. A request id another
+  member used in the thread is theirs (`409 conflict`); a reader without `talk` gets `403
+  read_only`; only the asker stops their own turn.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 

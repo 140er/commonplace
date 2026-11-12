@@ -29,6 +29,7 @@ SENTENCES = {
     "outside_bot_project": "This bot is not allowed to use that project. Its owner sets that.",
     "outside_bot_other": "This bot is not allowed to use that. Its owner sets that.",
     "bot_read_only": "This bot may only read that project.",
+    "audience_limited": "I can't use that in a shared thread.",
 }
 
 
@@ -45,6 +46,17 @@ class OutsideBot(Exception):
     @property
     def text(self) -> str:
         return SENTENCES["outside_bot_project" if self.what == "project" else "outside_bot_other"]
+
+
+class AudienceLimited(OutsideBot):
+    """A shared thread is read by people who may not read this project, so it is not used there
+    (``audience_limited``). The sentence is fixed and never names the project."""
+
+    code = "audience_limited"
+    text = SENTENCES["audience_limited"]
+
+    def __init__(self):
+        super().__init__("project")
 
 
 class ReadOnly(Exception):
@@ -67,6 +79,11 @@ class Access:
     person's readable projects). ``writable``: the subset it may also write. ``asker``: every
     slug the talker may read: the projects a model may name, and the choice between the two refusals. ``machines`` and
     ``tools``: the bot's own grants (empty for an unshared bot, which is never restricted).
+
+    ``audience``: the turn is in a shared thread, read by more people than the talker; then
+    ``projects`` also excludes what any of them may not read, ``limited`` holds the projects the
+    talker, the owner and the bot's list would allow but the audience does not, and ``readers`` are
+    the other readers' principals (machines are narrowed by them too).
     """
 
     shared: bool
@@ -76,6 +93,9 @@ class Access:
     machines: frozenset = frozenset()
     tools: frozenset = frozenset()
     grants: tuple = ()  # (kind, ref, mode) of the bot's own list, for the prompt and my_access
+    audience: bool = False
+    limited: frozenset = frozenset()
+    readers: tuple = ()
 
     def can_read(self, slug) -> bool:
         return slug in self.projects
@@ -135,11 +155,40 @@ def check_grantable(gateway, owner, wanted, stored, known_tools) -> None:
             raise Invalid("unknown tool")
 
 
-def effective(gateway, bot, grants, talker, owner) -> Access:
+def readers(gateway, member_ids, workspace_id) -> list:
+    """The fresh principals of the people who read a shared thread besides the talker and the owner.
+
+    A person who is no longer in the workspace reads nothing and is not an audience; any other
+    failure to resolve someone propagates, so the caller fails closed (a reader that cannot be
+    checked must never be dropped from the audience).
+    """
+    found = []
+    for user_id in member_ids:
+        try:
+            principal = sessions.person_principal(gateway.db, user_id, workspace_id)
+        except ControlError:
+            continue  # an unknown user
+        if principal is not None:
+            found.append(principal)
+    return found
+
+
+def display_name(gateway, user_id) -> str:
+    """A member's name as other members may see it (the email's first part if unnamed)."""
+    try:
+        user = gateway.db.user(user_id)
+        return user["name"] or user["email"].split("@")[0]
+    except (ControlError, LookupError, KeyError):
+        return ""
+
+
+def effective(gateway, bot, grants, talker, owner, audience=None) -> Access:
     """The reach of a turn of ``bot`` asked by ``talker`` (a principal, or None once gone).
 
     ``grants``: the bot's access entries (``kind``, ``ref``, ``mode``), or None when they could
-    not be read, which fails closed. ``owner``: the bot's owner's fresh principal.
+    not be read, which fails closed. ``owner``: the bot's owner's fresh principal. ``audience``:
+    for a turn in a shared thread, the principals of the other people who read it (the audience
+    rule: a project is used only if every one of them may read it too); None in a private thread.
     """
     asker = _views(gateway, talker)
     if not bot.get("shared"):
@@ -147,11 +196,14 @@ def effective(gateway, bot, grants, talker, owner) -> Access:
             False, tuple(asker), frozenset(s for s, w in asker.items() if w), tuple(asker)
         )
     entries = tuple((e["kind"], e["ref"], e["mode"]) for e in grants or ())
+    shared_thread = audience is not None
     if grants is None or talker is None or owner is None:
-        return Access(True, asker=tuple(asker), grants=entries)
+        return Access(True, asker=tuple(asker), grants=entries, audience=shared_thread)
     holder = asker if owner.user_id == talker.user_id else _views(gateway, owner)
     mode = {ref: m for kind, ref, m in entries if kind == "project"}
-    reads = tuple(slug for slug in asker if slug in mode and slug in holder)
+    allowed = [slug for slug in asker if slug in mode and slug in holder]
+    seen = [_views(gateway, reader) for reader in audience or ()]
+    reads = tuple(slug for slug in allowed if all(slug in views for views in seen))
     writes = frozenset(s for s in reads if mode[s] == "write" and asker[s] and holder[s])
     return Access(
         True,
@@ -161,6 +213,9 @@ def effective(gateway, bot, grants, talker, owner) -> Access:
         frozenset(ref for kind, ref, _m in entries if kind == "machine"),
         frozenset(ref for kind, ref, _m in entries if kind == "tool"),
         entries,
+        shared_thread,
+        frozenset(allowed) - frozenset(reads),
+        tuple(audience or ()),
     )
 
 
@@ -180,6 +235,8 @@ def check_tool(access, tool, project=None) -> None:
     if tool.reach == "machine" and not access.machines:
         raise OutsideBot("other")
     if tool.reach.startswith("project:") or tool.scope == "project":
+        if project is not None and project in access.limited:
+            raise AudienceLimited()
         if project is None or not access.can_read(project):
             raise OutsideBot("project")
         # Starting or stopping an agent changes the project, so it needs a write grant too.

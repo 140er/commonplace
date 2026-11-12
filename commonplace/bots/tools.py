@@ -16,7 +16,7 @@ from typing import Any, Callable
 from commonplace import sessions
 from commonplace.boards.service import BoardService
 from commonplace.bots import access, machines, store
-from commonplace.bots.access import OutsideBot, ReadOnly
+from commonplace.bots.access import AudienceLimited, OutsideBot, ReadOnly
 from commonplace.extensions import ToolContext
 from commonplace.http_util import log_failure
 from commonplace.rules import enforce
@@ -150,6 +150,7 @@ class Turn:
         self.step = step
         self.projects = projects  # readable project slugs offered to a bot without a board
         self.thread_id = thread_id  # the person's thread; None: the owner's original thread
+        self.touched = set()  # projects whose content or name reached the model (audience re-check)
 
     def principal(self):
         principal = sessions.person_principal(self.db, self.user_id, self.workspace_id)
@@ -160,9 +161,22 @@ class Turn:
     def boards(self) -> BoardService:
         return BoardService(ToolContext(principal=self.principal(), gateway=self.gateway))
 
+    def audience(self) -> dict | None:
+        """The readers of this turn's thread (``None`` unless it is a shared thread).
+
+        :class:`Gone` when the person no longer reaches the thread. Fresh on every call.
+        """
+        if self.thread_id is None or not self.bot.get("shared"):
+            return None
+        try:
+            return self.store().audience(self.bot["id"], self.user_id, self.thread_id)
+        except store.Missing:
+            raise Gone() from None
+
     def effective(self) -> access.Access:
         """What this turn may reach right now: the person's own reach for a bot that is not
-        shared, else the bot's list ∩ the talker ∩ the owner, from fresh principals every call."""
+        shared, else the bot's list ∩ the talker ∩ the owner, from fresh principals every call.
+        In a shared thread also ∩ every person who reads it (the audience rule)."""
         talker = access.person(self.gateway, self.user_id, self.workspace_id)
         if talker is None:
             raise Gone()
@@ -174,14 +188,18 @@ class Turn:
             if owner_id == self.user_id
             else access.person(self.gateway, owner_id, self.workspace_id)
         )
+        readers = None
         try:
             grants = self.store().access_get(self.bot["id"], self.user_id)["entries"]
-        except store.Missing:
+            shared = self.audience()
+            if shared is not None:
+                readers = access.readers(self.gateway, shared["members"], self.workspace_id)
+        except (store.Missing, Gone):
             grants = None  # no live share or sharing is off: nothing is reachable
         except Exception as exc:
-            log_failure(logger, "Bot access list unreadable", exc)
-            grants = None
-        return access.effective(self.gateway, self.bot, grants, talker, owner)
+            log_failure(logger, "Bot access list or audience unreadable", exc)
+            grants = None  # an audience that cannot be checked reaches nothing
+        return access.effective(self.gateway, self.bot, grants, talker, owner, readers)
 
     def readable(self) -> list[str]:
         return list(self.effective().projects)
@@ -195,9 +213,12 @@ class Turn:
         board = self.bot.get("board") or args.get("project")
         effective = effective or self.effective()
         if not isinstance(board, str) or not effective.can_read(board):
+            if isinstance(board, str) and board in effective.limited:
+                raise AudienceLimited()  # the asker may use it; someone else in the thread may not
             if isinstance(board, str) and effective.shared and board in effective.asker:
                 raise OutsideBot("project")
             raise Gone()
+        self.touched.add(board)
         return board
 
     def machines(self) -> list[dict]:
@@ -209,7 +230,11 @@ class Turn:
         effective = self.effective()
         owner = access.person(self.gateway, self.bot.get("owner_id"), self.workspace_id)
         owned = {m["id"] for m in machines.list_machines(self.gateway, owner)} if owner else set()
-        return [m for m in listed if m["id"] in owned and effective.machine_granted(m["id"])]
+        usable = [m for m in listed if m["id"] in owned and effective.machine_granted(m["id"])]
+        for reader in effective.readers:  # a shared thread lists only what every reader may use
+            seen = {m["id"] for m in machines.list_machines(self.gateway, reader)}
+            usable = [m for m in usable if m["id"] in seen]
+        return usable
 
     def words(self, text) -> str:
         """``text`` trimmed, when it is a verbatim span (2+ characters) of the stored message."""
@@ -324,6 +349,20 @@ def gate(turn, tool, args) -> None:
     access.check_tool(effective, tool, project)
 
 
+def audience_gate(turn, tool, args) -> None:
+    """Refuse, before the arguments are validated, a project that is outside the audience.
+
+    A shared thread's model is only offered the projects every reader may use, so a call naming
+    another one would fail validation as an invalid request; when the person could use it
+    themselves the answer is the fixed ``audience_limited`` sentence instead.
+    """
+    project = args.get("project") if isinstance(args, dict) else None
+    if tool.scope != "project" or turn.bot.get("board") or not isinstance(project, str):
+        return
+    if project in turn.effective().limited:
+        raise AudienceLimited()
+
+
 def offered(turn: Turn) -> list[Tool]:
     """The tools this turn may call, in registration order."""
     out = []
@@ -410,7 +449,9 @@ def _my_access(turn, args):
             mode = "write" if effective.can_write(asked) else "read"
             return Result(True, {"project": asked, "reach": mode})
         reason = (
-            access.SENTENCES["outside_bot_project"]
+            access.SENTENCES["audience_limited"]
+            if asked in effective.limited
+            else access.SENTENCES["outside_bot_project"]
             if asked in effective.asker
             else "I can't find that."
         )

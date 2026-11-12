@@ -520,8 +520,8 @@ class BotStore(SharesMixin):
                     thread_id=thread,
                     author_id=None if thread is None else user_id,
                 )
-            if row["text"] != text:
-                raise Conflict()
+            if row["text"] != text or (thread is not None and row["author_id"] != user_id):
+                raise Conflict()  # another member's request id is never replayed
             return _message(row)
 
     def add_bot_message(
@@ -597,6 +597,8 @@ class BotStore(SharesMixin):
                 "AND thread_id IS ?",
                 (bot_id, request_id, thread),
             ).fetchone()
+            if row is not None and thread is not None and row["author_id"] != user_id:
+                raise Conflict()  # in a shared thread, an id another member used is theirs
             return _message(row) if row else None
 
     def unanswered(self, bot_id, user_id, thread_id=None) -> list[dict]:
@@ -1049,8 +1051,11 @@ class BotStore(SharesMixin):
                 )
             ]
 
-    def memory_for_turn(self, bot_id, user_id) -> list[dict]:
-        """What one person's turn reads: the bot-level notes and that person's own notes only."""
+    def memory_for_turn(self, bot_id, user_id, shared_thread=False) -> list[dict]:
+        """What one person's turn reads: the bot-level notes and that person's own notes only.
+
+        A turn in a shared thread is read by other people, so it gets the bot-level notes alone.
+        """
         with self._tx(write=False) as conn:
             self._viewer(conn, user_id, bot_id)
             return [
@@ -1058,7 +1063,7 @@ class BotStore(SharesMixin):
                 for r in conn.execute(
                     "SELECT * FROM bot_memory WHERE bot_id=? AND removed_at IS NULL "
                     "AND (owner_id IS NULL OR owner_id=?) ORDER BY id",
-                    (bot_id, user_id),
+                    (bot_id, None if shared_thread else user_id),
                 )
             ]
 
