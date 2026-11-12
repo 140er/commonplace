@@ -208,6 +208,16 @@ script bundles and a default-off confined Python runtime, and
 `compute/target_helper.py` is the only target-side entry. These modules are inert
 until trusted configuration enables them and perform no remote effect on import.
 
+### Credential custody and pinned SSH transport components
+
+`compute/credentials.py` holds encrypted SSH key custody: strict protected wrapping
+keys and binding-authenticated ciphertext, with only public enrollment data
+returned. `compute/transport.py` and `compute/script_transport.py` open the pinned
+two-hop SSH channel for the fixed probe and confined helper command, and
+`compute/fence.py` guards authority writes with a cross-process fence. All of them
+are inert until trusted configuration enables them, deny on host-key mismatch,
+replay or unknown operations, and use no live endpoints in tests.
+
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
 typed collect_passive only when collector, independent protected ceiling and
