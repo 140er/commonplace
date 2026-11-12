@@ -8,12 +8,18 @@
 - **Promises:**
 
   - Hooks fail open and stay within the hook time budget; manifests reference files that exist; no integration enables an external provider by default.
+  - Conversation autosave preserves user and assistant transcript text verbatim. Hook work runs outside the turn handler, serializes per session, and coalesces repeated hooks that are already queued.
 
 - **How it fails:**
 
   - A manifest that points at a moved file breaks installation for that agent only; a slow hook delays the user's session.
+  - Serialization tests must control fake subprocess completion explicitly: elapsed sleeps cannot prove that a hook is still running when the scheduler is busy.
 
 - **Tests:**
+
+  - `tests/test_dsh_plugin.py` runs the plugin Node suite; hook serialization uses explicit fake subprocess completion rather than elapsed sleeps, preserving transcript and deduplication assertions.
+
+  - `tests/test_claude_plugin_hook_config.py`, `tests/test_claude_plugin_hook_wrappers.py`, `tests/test_antigravity_plugin_manifest.py`, `tests/test_claude_marketplace_skills.py`, `tests/test_hooks_cli.py`.
 
   - `tests/test_claude_plugin_hook_config.py`, `tests/test_claude_plugin_hook_wrappers.py`, `tests/test_antigravity_plugin_manifest.py`, `tests/test_claude_marketplace_skills.py`, `tests/test_hooks_cli.py`, `tests/test_untangle_skill.py`.
 

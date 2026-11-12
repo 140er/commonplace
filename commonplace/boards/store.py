@@ -65,6 +65,19 @@ CREATE TABLE IF NOT EXISTS card_splits (
 );
 """
 
+# One row while a card is snoozed (``commonplace.snooze``): until a time (UTC stamp) or until
+# another card is done. Waking deletes the row, so a wake happens once.
+SNOOZE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS card_snoozes (
+ task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+ until TEXT, timezone TEXT,
+ after_card INTEGER REFERENCES tasks(id),
+ by TEXT NOT NULL, at TEXT NOT NULL,
+ CHECK ((until IS NULL) != (after_card IS NULL))
+);
+CREATE INDEX IF NOT EXISTS card_snoozes_due ON card_snoozes(until);
+"""
+
 
 class CardRefused(ToolError):
     def __init__(self, code, message=None, *, status=409, **details):
@@ -432,6 +445,7 @@ class BoardStore:
                 + BLOCKERS_SCHEMA
                 + LIFECYCLE_SCHEMA
                 + GOALS_SCHEMA
+                + SNOOZE_SCHEMA
             )
             conn.execute("BEGIN IMMEDIATE")
             try:

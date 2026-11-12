@@ -38,9 +38,10 @@ when relocating it so Compose manages the existing container and network. Leave
 
 The service publishes only `127.0.0.1:8765`. Caddy terminates TLS and proxies
 requests to that listener. The container runs as `10001:10001`, mounts its
-persistent data at `/data`, and has a 3 GiB memory limit. Use a local
-filesystem with working SQLite/Chroma locks, encrypted storage where
-required, and an off-host backup. Never rebuild or initialize an existing
+persistent data at `/data`, and has a 20 GiB memory limit with 6 GiB swap
+(`memswap_limit: 26g` is memory plus swap). Use a local filesystem with
+working SQLite/Chroma locks, encrypted storage where required, and an
+off-host backup. Never rebuild or initialize an existing
 data directory during an application update.
 
 The image preloads the local MiniLM embedding model as the runtime user.
@@ -183,8 +184,8 @@ Verify health, search, cards and a new backup.
 uv run pytest -q -p no:cacheprovider tests/test_commonplace_deploy.py
 uv run ruff check .
 uv run ruff format --check .
-bash -n backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh
-shellcheck backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh
+bash -n backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh deploy/backup/host-backup-lvm-snapshot.sh
+shellcheck backup-hook.sh nightly-backup.sh deploy/commonplace/deploy.sh deploy/commonplace/backup-live-probe.sh deploy/backup/host-backup-lvm-snapshot.sh
 ```
 
 ## Deploy

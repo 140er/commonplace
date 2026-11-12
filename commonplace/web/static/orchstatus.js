@@ -47,6 +47,14 @@ function stepLabel(step, e) {
   return `${e(what)}${step.detail ? ` — ${e(step.detail)}` : ""}`;
 }
 
+/** The accepted config's merge policy ([factory]) and the board's gate counts; "" without one. */
+export function factoryHTML(factory, e) {
+  if (!factory) return "";
+  const g = factory.gates || {}, n = key => Number(g[key]) || 0;
+  const gates = `Gates on this board: ${n("gate_pass")} passed, ${n("gate_fail")} failed, ${n("gate_error")} with an error, ${n("gate_budget")} out of budget, ${n("open")} open.`;
+  return `<details data-orch-factory><summary>Merge policy</summary><ul>${(factory.summary || []).map(line => `<li>${e(line)}</li>`).join("")}</ul><p class="set-note" data-orch-factory-gates>${e(gates)}</p></details>`;
+}
+
 export function orchStatusHTML(view, e, {canEnd = false, confirming = false, busy = false, status = "", now = Date.now()} = {}) {
   if (!view) return `<p role="status" data-orch-status>${e(status || ORCH_COPY.loadError)}</p>`;
   const {lease, config} = view, counts = orchCounts(view), live = Boolean(lease?.live);
@@ -59,7 +67,7 @@ export function orchStatusHTML(view, e, {canEnd = false, confirming = false, bus
   const end = canEnd && live ? (confirming
     ? `<div class="callout wait" data-orch-confirm role="group" aria-label="End the lease"><p>End ${e(person(lease.holder))}'s lease? ${e(ORCH_COPY.confirm)}</p><button type="button" class="btn sm" data-orch-end-confirm ${busy ? "disabled" : ""}>End lease</button> <button type="button" class="btn ghost sm" data-orch-end-cancel ${busy ? "disabled" : ""}>Keep it</button></div>`
     : `<button type="button" class="btn sm" data-orch-end ${busy ? "disabled" : ""}>End lease…</button>`) : "";
-  return `<h3>Coordinator</h3><p data-orch-lease><span class="tag ${live ? "ok" : ""}">${live ? "Live" : lease ? "Ended" : "None"}</span> ${e(leaseSentence(lease, now))}</p><p class="set-note" data-orch-counts>${e(parts.join(" · "))}. ${configLine}</p>${stays}${unsettled.length ? `<details data-orch-doubt><summary>${e(plural(unsettled.length, "step to settle", "steps to settle"))}</summary><ul>${unsettled.slice(0, 20).map(s => `<li>${stepLabel(s, e)} (${e(String(s.state).replace("_", " "))})</li>`).join("")}</ul></details>` : ""}${end}<button type="button" class="btn ghost sm" data-orch-refresh ${busy ? "disabled" : ""}>Refresh</button><p role="status" data-orch-status>${e(status)}</p>`;
+  return `<h3>Coordinator</h3><p data-orch-lease><span class="tag ${live ? "ok" : ""}">${live ? "Live" : lease ? "Ended" : "None"}</span> ${e(leaseSentence(lease, now))}</p><p class="set-note" data-orch-counts>${e(parts.join(" · "))}. ${configLine}</p>${factoryHTML(view.factory, e)}${stays}${unsettled.length ? `<details data-orch-doubt><summary>${e(plural(unsettled.length, "step to settle", "steps to settle"))}</summary><ul>${unsettled.slice(0, 20).map(s => `<li>${stepLabel(s, e)} (${e(String(s.state).replace("_", " "))})</li>`).join("")}</ul></details>` : ""}${end}<button type="button" class="btn ghost sm" data-orch-refresh ${busy ? "disabled" : ""}>Refresh</button><p role="status" data-orch-status>${e(status)}</p>`;
 }
 
 /** Mounts below `anchor` (a node inside the Orchestrator section). Shows nothing when the

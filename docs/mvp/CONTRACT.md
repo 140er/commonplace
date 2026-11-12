@@ -78,7 +78,7 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
  "position": 1.0, "message_id": null}
 ```
 
-Events (via `events.emit`, subject `#<n>`): `card.created`, `card.updated`, `card.moved`, `card.commented`, `card.claimed`, `card.expired`, `card.handoff`, `card.review_needed` (a card enters review; `data.ask_to`), `card.decided`. `data` = `{"board","number","title","status","from","to","assignee","ask_to","actor"}` as applicable.
+Events (via `events.emit`, subject `#<n>`): `card.created`, `card.updated`, `card.moved`, `card.commented`, `card.claimed`, `card.expired`, `card.snoozed`, `card.woke`, `card.handoff`, `card.review_needed` (a card enters review; `data.ask_to`), `card.decided`. `data` = `{"board","number","title","status","from","to","assignee","ask_to","actor"}` as applicable.
 
 REST (people via cookie, agents via Bearer; same service, same rules):
 
@@ -202,7 +202,9 @@ CSP `form-action` and shows that same escaped origin as the code destination. Lo
 and generic HTML/error pages remain self-only. Strict parsed DNS
 host and numeric-port validation, including refusal of all IPv6 literals, rejects unsafe new or legacy redirect URIs
 through the existing invalid-redirect path (Chromium ignores IPv6 CSP host-sources); HTTPS/loopback HTTP schemes and
-exact registered-URI matching remain unchanged. HTTPS numeric/`0x`-hex final labels
+exact registered-URI matching remain unchanged, with one exception: the exact private-use redirect
+`cmmn://auth/callback` of the native app (RFC 8252 section 7.1; no other scheme, path or query). Its consent
+CSP `form-action` carries the scheme source `cmmn:` and the code destination shows the full redirect. HTTPS numeric/`0x`-hex final labels
 require canonical dotted-quad IPv4. Registered-but-invalid redirects explicitly
 request re-registration; missing registrations keep their separate error. Live
 redirect registrations must be inventoried before deploy; this inventory is not

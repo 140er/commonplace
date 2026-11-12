@@ -109,15 +109,33 @@ def _cli_ranked_hits(
             kwargs["where"] = where
         results = _query_drawers_with_filter_fallback(col, kwargs, query, n_results, wing, room)
     except Exception as e:
-        if _model_error_class(e) is not None:
+        from ..embedding_service import EmbeddingServiceUnavailableError
+
+        if (
+            isinstance(e, EmbeddingServiceUnavailableError)
+            and _resolve_candidate_strategy(None, col, where) == "union"
+        ):
+            # The shared embedding service is down: rank what the lexical
+            # index finds and say so, instead of failing the search.
+            import sys
+
+            print(
+                f"mempalace: {e}\n"
+                "mempalace: showing keyword matches only (no semantic similarity).",
+                file=sys.stderr,
+            )
+            results = {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+            candidate_strategy = "union"
+        elif _model_error_class(e) is not None:
             # The configured embedding function could not be built (C): the
             # message names the fix, so print it plainly.
             import sys
 
             print(f"mempalace: {e}", file=sys.stderr)
             raise SearchError(str(e)) from e
-        print(f"\n  Search error: {e}")
-        raise SearchError(f"Search error: {e}") from e
+        else:
+            print(f"\n  Search error: {e}")
+            raise SearchError(f"Search error: {e}") from e
 
     docs = _first_or_empty(results, "documents")
     metas = _first_or_empty(results, "metadatas")
