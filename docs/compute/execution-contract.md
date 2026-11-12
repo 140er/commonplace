@@ -142,9 +142,8 @@ operator may explicitly allow single-owner script workflows by setting it true;
 no request body can set policy. Fixed read-only operations retain existing
 same-owner approval behavior. The pinned base cannot store taskless scopes: `scopes.task_number` is NOT NULL,
 so `create_scope(task_number=None)` raises IntegrityError before metadata is
-persisted. The reconcile correctly identified `str(None)` construction but its
-claim that the literal is stored was not reproducible. Scope creation is left
-unchanged; a synthetic regression asserts rejection and an empty scope table.
+persisted. Scope creation needs no extra check; a synthetic regression asserts
+rejection and an empty scope table.
 
 Pre-claim security refusals write `execution.admission_denied` in the same
 transaction without granting admission or changing the refusal. Each refusal is
