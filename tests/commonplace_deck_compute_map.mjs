@@ -149,6 +149,10 @@ test('the canvas stylesheet only restyles its own classes, in the Deck tokens', 
   const css = (await read('topology.css')).replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = css.split('}').map(r => r.split('{')[0].trim()).filter(Boolean).filter(s => !s.startsWith('@media'));
   for (const selector of rules.flatMap(r => r.split(','))) assert.match(selector.trim(), /^(?::root\[data-ui="deck"\] )?(?:\.topo[a-z-]*)/, selector);
-  assert.doesNotMatch(css, /border(?!-radius)[^;]*\d+px solid|box-shadow|gradient|#[0-9a-fA-F]{3,8}\b/, 'no borders, shadows, gradients or raw colours');
+  assert.doesNotMatch(css, /border(?!-radius)[^;]*\d+px solid|box-shadow:(?! none)|gradient|#[0-9a-fA-F]{3,8}\b/, 'no borders, shadows, gradients or raw colours');
   assert.doesNotMatch(css, /\.topo-dot\.s-degraded[^}]*var\(--wait/, 'amber means waits on you, not degraded');
+});
+
+test('the Deck phone tab bar has a column per section, so four tabs stay on one row', async () => {
+  assert.match(await read('deck.css'), /\.m-tabs\[data-count="4"\] \{ grid-template-columns: repeat\(4, 1fr\); \}/);
 });

@@ -201,7 +201,7 @@ export function mount(context) {
     const list = value => Array.isArray(value) ? value.length ? value.join(', ') : 'None granted' : 'Not recorded';
     const title = machine?.label || node?.name || found.plain?.name;
     const icon = node ? `<svg class="dc-device" width="30" height="30" viewBox="-20 -20 40 40" aria-hidden="true">${KINDS[node.kind].icon}</svg>` : device(hub ? 'hub' : 'machine', 30);
-    const subtitle = machine ? [STATES[machineState(machine)], node && `${STATUS_TEXT[node.status]} on the map`] : node ? [KINDS[node.kind].label, node.role, `${STATUS_TEXT[node.status]} on the map`] : [found.plain?.role];
+    const subtitle = machine ? [STATES[machineState(machine)], node && `${STATUS_TEXT[node.status]} on the map`] : node ? [KINDS[node.kind].label, `${STATUS_TEXT[node.status]} on the map`] : [found.plain?.role];
     const header = `<header>${icon}<div><h2>${e(title)}</h2><span class="dc-state">${e(subtitle.filter(Boolean).join(' · '))}</span></div></header>`;
     if (!machine && node) { host.innerHTML = `${header}<div class="dc-panel">${storeFacts(node)}</div>`; return; }
     let body;

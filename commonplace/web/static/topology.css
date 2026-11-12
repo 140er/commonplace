@@ -7,7 +7,7 @@
 .topo button, .topo select { font: inherit; }
 .topo-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; }
 .topo-bar label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
-.topo-bar select { min-height: 36px; max-width: 240px; padding: 0 14px; border: 0; border-radius: 18px; background: var(--well); color: var(--text); }
+.topo-bar select { min-height: 36px; max-width: 240px; padding: 0 14px; border: 0; border-radius: 18px; box-shadow: none; background: var(--well); color: var(--text); }
 .topo-bar select:disabled { color: var(--text-3); }
 .topo-spacer { flex: 1; }
 .topo-zoom { display: inline-flex; gap: 6px; }
@@ -72,6 +72,7 @@
   .topo-bar, .topo-path, .topo-foot { padding-left: 12px; padding-right: 12px; }
   .topo-bar .btn, .topo-bar .iconbtn, .topo-bar select { min-height: 44px; }
   .topo-bar .iconbtn { width: 44px; }
+  .topo-spacer { display: none; }
   .topo-bar label { flex: 1 1 100%; }
   .topo-bar select { flex: 1; max-width: none; }
   .topo-hint { display: none; }
