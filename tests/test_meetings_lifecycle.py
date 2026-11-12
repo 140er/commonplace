@@ -521,6 +521,58 @@ def test_the_inviter_can_leave_and_the_owner_can_stop_and_nobody_else(console_hu
     assert hub.request(hub.member, "POST", f"/api/meetings/{stopped}/stop")[0] == 404
 
 
+@pytest.mark.parametrize("how", ["owner_stop", "inviter_leave"])
+def test_a_stop_or_leave_during_the_announcement_is_not_overwritten(console_hub, fake, how):
+    """Consent race: the request lands while the announcement is being posted. Capture must not
+    open, and a stop still discards."""
+    hub = console_hub
+    ready(hub)
+    meeting_id = new_meeting(hub)
+    fake.frames = [adapter.Frame(PCM)]
+    fake.script = [adapter.Event("tick"), adapter.Wait(), adapter.Event("meeting_ended", "e1")]
+
+    def during_post():
+        if how == "owner_stop":
+            assert hub.request(hub.owner, "POST", f"/api/meetings/{meeting_id}/stop")[0] == 200
+        else:
+            assert hub.request(hub.member, "POST", f"/api/meetings/{meeting_id}/leave")[0] == 200
+        fake.on_post = None
+
+    fake.on_post = during_post
+    _, sink = drive(hub, fake)
+    assert sink.frames == [] and fake.audio_opened_after_posts is None
+    if how == "owner_stop":
+        assert state_of(hub, meeting_id) == ("discarded", "stop_requested")
+        assert sink.discarded == 1 and sink.finished == 0
+        assert [t for t, _ in fake.posts][-1] == engine.NOTICES["stopped"]
+    else:
+        assert state_of(hub, meeting_id) == ("done", "inviter_left")
+        assert sink.discarded == 0
+    assert fake.leaves == [f"handle-{meeting_id}"]
+    assert "live" not in store_for(hub).events_for(meeting_id)
+
+
+def test_a_stop_arriving_as_a_meeting_ends_still_discards(console_hub, fake):
+    hub = console_hub
+    ready(hub)
+    meeting_id = new_meeting(hub)
+    fake.frames = [adapter.Frame(PCM)]
+    meetings = store_for(hub)
+    real = meetings.advance
+
+    def stop_then_advance(mid, to, now, **fields):
+        if to == "ending":  # the owner's stop lands just before the natural end is recorded
+            meetings.request_end(mid, "stop_requested", now)
+        return real(mid, to, now, **fields)
+
+    meetings.advance = stop_then_advance
+    fake.script = [adapter.Event("tick"), adapter.Wait(), adapter.Event("meeting_ended", "e1")]
+    _, sink = drive(hub, fake)
+    meetings.advance = real
+    assert state_of(hub, meeting_id) == ("discarded", "stop_requested")
+    assert sink.discarded == 1 and sink.finished == 0
+
+
 def test_max_minutes_ends_a_meeting(console_hub, fake):
     hub = console_hub
     ready(hub)
@@ -692,6 +744,66 @@ def test_a_scheduled_meeting_waits_for_its_time(console_hub, fake):
     clock.advance(3600 - 119)
     fake.script = [adapter.Event("meeting_ended", "e1")]
     assert drive(hub, fake, clock=clock)[0] == [meeting_id]
+    assert state_of(hub, meeting_id) == ("done", "done")
+
+
+# --- worker liveness ---------------------------------------------------------------------------
+
+
+def test_an_invite_arriving_as_the_beat_goes_idle_is_not_stranded(console_hub, fake, monkeypatch):
+    hub = console_hub
+    ready(hub)
+    monkeypatch.setattr(worker, "AUTOSTART", True)
+    monkeypatch.setattr(worker, "BEAT_S", 0.05)
+    run = worker.Worker(hub.hub.gateway)
+    meetings = store_for(hub)
+    started = []
+    monkeypatch.setattr(run, "beat", lambda ws, inline=False: started.append(ws) or [])
+    real_pending = meetings.pending
+    first = {"done": False}
+
+    def pending():  # the loop looks, finds nothing; then an invite commits and kicks
+        answer = real_pending()
+        if not first["done"]:
+            first["done"] = True
+            new_meeting(hub)
+            assert run.kick(hub.hub.workspace) is False  # the loop still counts as running
+        return answer
+
+    monkeypatch.setattr(meetings, "pending", pending)
+    assert run.kick(hub.hub.workspace) is True
+    deadline = time.time() + 5
+    while time.time() < deadline and len(started) < 2:
+        time.sleep(0.02)
+    assert len(started) >= 2  # the loop kept beating for the new meeting
+
+
+def test_capped_meetings_do_not_spawn_a_thread_per_beat(console_hub, fake):
+    hub = console_hub
+    ready(hub)
+    first, second = new_meeting(hub), new_meeting(hub, link=LINK_TWO)
+    assert store_for(hub).claim(first, time.time(), engine.LEASE_S)  # max_concurrent is 1
+    run = worker.Worker(hub.hub.gateway)
+    assert run.beat(hub.hub.workspace) == [] and run._runs == {}
+    assert state_of(hub, second)[0] == "requested"
+
+
+def test_the_lease_is_renewed_while_the_provider_is_slow(console_hub, fake, monkeypatch):
+    hub = console_hub
+    ready(hub)
+    monkeypatch.setattr(engine, "LEASE_S", 0.3)
+    meeting_id = new_meeting(hub)
+    seen = {}
+
+    def slow_join():
+        seen["claimed"] = store_for(hub).run_row(meeting_id)["lease_at"]
+        time.sleep(1.0)
+        seen["after"] = store_for(hub).run_row(meeting_id)["lease_at"]
+
+    fake.join_hook = slow_join
+    fake.script = [adapter.Event("meeting_ended", "e1")]
+    drive(hub, fake)
+    assert seen["after"] - seen["claimed"] > 0.5  # beaten during the call, not only after it
     assert state_of(hub, meeting_id) == ("done", "done")
 
 

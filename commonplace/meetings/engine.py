@@ -153,6 +153,10 @@ class Run:
         if not self.meetings.claim(self.meeting_id, now, LEASE_S):
             return self.meetings.run_row(self.meeting_id)["state"]
         self._t0 = now
+        stop = threading.Event()
+        threading.Thread(
+            target=self._heartbeat, args=(stop,), name="meeting-lease", daemon=True
+        ).start()
         try:
             self._lifecycle()
         except _Finish as end:
@@ -162,7 +166,22 @@ class Run:
         except Exception as exc:  # fail closed: capture off, leave, discard
             logger.warning("meeting worker failed type=%s", type(exc).__name__)
             self._conclude(_Finish("failed:internal", "failed:internal", discard=True))
+        finally:
+            stop.set()
         return self.meetings.run_row(self.meeting_id)["state"]
+
+    def _heartbeat(self, stop):
+        """Keep the lease fresh while a provider call blocks (a join or a post can take longer than
+        the lease). It stops by itself a little after the hard time limit, so a wedged call cannot
+        hold a meeting forever."""
+        while not stop.wait(LEASE_S / 3):
+            if self.clock() - self._t0 > self.meetings.settings()["max_minutes"] * 60 + LEASE_S:
+                return
+            try:
+                if not self.meetings.renew(self.meeting_id, self.clock()):
+                    return
+            except Exception as exc:
+                logger.warning("meeting lease renewal failed type=%s", type(exc).__name__)
 
     # --- the steps ------------------------------------------------------------------------
 
@@ -234,10 +253,7 @@ class Run:
             raise _Finish("failed:no_announcement", "failed:no_announcement", discard=True)
         now = self.clock()
         stamped = store.stamp_ts(now)
-        if not self.meetings.advance(
-            self.meeting_id, "live", now, announced_at=stamped, started_at=stamped
-        ):
-            raise _Gone
+        self._move("live", announced_at=stamped, started_at=stamped)
         self._reminded_at = now
         self._reminded_count = self.meetings.participants_present(self.meeting_id)
         self.capture.allow()
@@ -336,8 +352,11 @@ class Run:
             return False
         return any(m["id"] == self.row["user_id"] for m in members)
 
-    def _move(self, state):
-        if not self.meetings.advance(self.meeting_id, state, self.clock()):
+    def _move(self, state, **fields):
+        """Record the next state. If that is refused, someone asked for the end meanwhile (or it
+        ended): the guard says which, and ends the meeting accordingly."""
+        if not self.meetings.advance(self.meeting_id, state, self.clock(), **fields):
+            self._guard()
             raise _Gone
 
     def _inviter(self) -> str:
@@ -391,23 +410,29 @@ class Run:
 
     def _conclude(self, end: _Finish):
         self.capture.close(discard=end.discard)  # the gate first: nothing more is captured
-        announced = bool(self.meetings.run_row(self.meeting_id).get("announced_at"))
-        if end.notice and announced and self.handle is not None:
+        told = self.meetings.outbox_state(self.meeting_id, "announce", "announce") == "sent"
+        if end.notice and told and self.handle is not None:
             kind = "leave_notice" if end.notice == "leaving" else "notice"
             self._post(kind, end.notice, NOTICES[end.notice])
         self._leave()
         self._join_audio()
         now = self.clock()
-        if end.discard:
-            self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=True)
-        else:
-            # ending wipes the sealed link; processing is where notes will be made
-            self.meetings.advance(
+        if not end.discard:
+            # ending wipes the sealed link; a stop that landed meanwhile still wins and discards
+            if self.meetings.advance(
                 self.meeting_id, "ending", now, wipe_ref=True, end_reason=end.reason
-            )
-            self.sink.finish(self.meeting_id)
-            self.meetings.advance(self.meeting_id, "processing", now)
-            self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
+            ):
+                self.sink.finish(self.meeting_id)
+                self.meetings.advance(self.meeting_id, "processing", now)
+                self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
+                self._audit(end)
+                return
+            row = self.meetings.run_row(self.meeting_id)
+            if store.is_ended(row["state"]):
+                return
+            end = _Finish("discarded", row["end_reason"] or "stop_requested", discard=True)
+            self.sink.discard(self.meeting_id)
+        self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=True)
         self._audit(end)
 
     def _audit(self, end):

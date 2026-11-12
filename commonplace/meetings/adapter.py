@@ -171,6 +171,10 @@ class FakeAdapter(Adapter):
         self.frames: list[Frame] = []
         self.join_result = None
         self.join_errors = 0
+        self.join_hook = None  # called inside join (a slow provider)
+        self.on_post = (
+            None  # called inside post_chat, before it answers (something happens meanwhile)
+        )
         self.post_results: list = []
         self.joins: list[tuple] = []  # (display_name, idempotency_key)
         self.leaves: list[str] = []  # handles
@@ -195,6 +199,8 @@ class FakeAdapter(Adapter):
     def join(self, connection, join_ref, display_name, idempotency_key):
         self.joins.append((display_name, idempotency_key))
         self.log.append("join")
+        if self.join_hook is not None:
+            self.join_hook()
         if self.join_errors > 0:
             self.join_errors -= 1
             raise ConnectionError("provider unavailable")
@@ -227,6 +233,8 @@ class FakeAdapter(Adapter):
             self.audio_done.set()
 
     def post_chat(self, connection, handle, text, idempotency_key):
+        if self.on_post is not None:
+            self.on_post()
         if self.post_results:
             outcome = self.post_results.pop(0)
             if isinstance(outcome, Exception):

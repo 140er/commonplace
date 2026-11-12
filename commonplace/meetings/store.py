@@ -919,6 +919,18 @@ class MeetingStore:
                 ).fetchone()
             )
 
+    def free_slots(self, now: float, lease_s: float) -> int:
+        """How many more meetings may start under ``max_concurrent`` right now."""
+        marks = ",".join("?" * len(RUNNING))
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return 0
+            busy = conn.execute(
+                f"SELECT COUNT(*) AS n FROM meetings WHERE state IN ({marks}) AND lease_at > ?",
+                (*RUNNING, now - lease_s),
+            ).fetchone()["n"]
+        return max(0, self.settings()["max_concurrent"] - busy)
+
     def claim(self, meeting_id, now: float, lease_s: float) -> bool:
         """``requested`` -> ``joining`` with a fresh lease, at most once and only while the
         workspace is under ``max_concurrent``. A second fire of the same meeting finds another
@@ -957,19 +969,26 @@ class MeetingStore:
             )
 
     def advance(self, meeting_id, to, now: float, *, wipe_ref=False, **fields) -> bool:
-        """Move a running meeting to ``to`` (compare-and-set: False if it already ended)."""
+        """Move a running meeting to ``to``: compare-and-set, False if it ended or if someone asked
+        for the end meanwhile. A stop (``removed``) is never overwritten, and neither is a leave
+        (``ending``, ``processing``) by a step that would go back to joining, announcing or live,
+        so a request that lands during the announcement still ends the meeting without capture."""
         if set(fields) - ADVANCE_FIELDS:
             raise ValueError("unknown field")
+        refused = ("removed",)
+        if to not in ("ending", "processing"):
+            refused += ("ending", "processing")
         sets = ["state=?", *(f"{name}=?" for name in fields)]
         values = [to, *fields.values()]
         if wipe_ref:
             sets.append("join_ref=NULL")
-        marks = ",".join("?" * len(ENDED))
+        skipped = (*ENDED, *refused)
+        marks = ",".join("?" * len(skipped))
         with self._tx() as conn:
             changed = conn.execute(
                 f"UPDATE meetings SET {', '.join(sets)} WHERE id=? AND state NOT IN ({marks}) "
                 "AND state NOT LIKE 'failed:%'",
-                (*values, meeting_id, *ENDED),
+                (*values, meeting_id, *skipped),
             ).rowcount
             if changed:
                 self._event(conn, meeting_id, to, stamp_ts(now))

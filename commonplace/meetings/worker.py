@@ -41,7 +41,8 @@ class Worker:
         if not meetings.enabled():
             return []
         started = []
-        for meeting_id in meetings.due(now):
+        # only as many as may start now: a capped meeting waits without a thread per beat
+        for meeting_id in meetings.due(now)[: meetings.free_slots(now, engine.LEASE_S)]:
             run = engine.Run(
                 self.gateway,
                 workspace_id,
@@ -72,19 +73,21 @@ class Worker:
         return True
 
     def _loop(self, workspace_id):
-        try:
-            meetings = store.open_meetings(self.gateway, workspace_id)
-            while True:
-                try:
-                    self.beat(workspace_id)
-                    if not meetings.pending():
-                        return
-                except Exception as exc:  # a failing beat must not end the worker
-                    logger.warning("meeting beat failed type=%s", type(exc).__name__)
-                time.sleep(BEAT_S)
-        finally:
+        meetings = store.open_meetings(self.gateway, workspace_id)
+        while True:
+            try:
+                self.beat(workspace_id)
+                busy = meetings.pending()
+            except Exception as exc:  # a failing beat must not end the worker
+                logger.warning("meeting beat failed type=%s", type(exc).__name__)
+                busy = True
             with self._lock:
-                self._beating.discard(workspace_id)
+                # decided under the lock ``kick`` takes: an invite that committed before this
+                # look keeps the loop alive, one that commits after it starts a new loop
+                if not busy and not meetings.pending():
+                    self._beating.discard(workspace_id)
+                    return
+            time.sleep(BEAT_S)
 
 
 def of(gateway) -> Worker:
