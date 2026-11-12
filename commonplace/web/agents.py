@@ -221,6 +221,7 @@ def connection_view(row, db=None, *, viewer=None, coordinators=None):
     )
     view["bots_chat"] = policy.has_scope(bots_grant.CHAT_SCOPE)
     view["bots_confirm"] = policy.has_scope(bots_grant.CONFIRM_SCOPE)
+    view["bots_learned"] = policy.has_scope(bots_grant.LEARNED_SCOPE)
     # Same rule for the person's bots, but any member's own app qualifies.
     view["bots_grantable"] = bool(
         db is not None
@@ -272,18 +273,19 @@ def _update_decide(gateway, h, principal, row, data):
 
 
 def _update_bots(gateway, h, principal, row, data):
-    keys = {"bots_chat", "bots_confirm"}
+    keys = {"bots_chat", "bots_confirm", "bots_learned"}
     if not data or set(data) - keys or any(type(v) is not bool for v in data.values()):
-        send_json(h, 400, {"error": "Use bots_chat and bots_confirm true or false"})
+        send_json(h, 400, {"error": "Use bots_chat, bots_confirm and bots_learned true or false"})
         return
     policy = Policy.from_json(row["policy"])
     chat = data.get("bots_chat", policy.has_scope(bots_grant.CHAT_SCOPE))
-    if data.get("bots_confirm") and not chat:
+    if (data.get("bots_confirm") or data.get("bots_learned")) and not chat:
         send_json(h, 409, {"error": bots_grant.NEEDS_CHAT_TEXT})
         return
-    # Withdrawing chat withdraws confirm with it.
+    # Withdrawing chat withdraws confirm and learned with it.
     confirm = data.get("bots_confirm", policy.has_scope(bots_grant.CONFIRM_SCOPE)) and chat
-    if chat or confirm:
+    learned = data.get("bots_learned", policy.has_scope(bots_grant.LEARNED_SCOPE)) and chat
+    if chat or confirm or learned:
         # Coordinators live in the board store; control_db cannot see them.
         current = coordinators(gateway, principal)
         if current is None:
@@ -297,13 +299,14 @@ def _update_bots(gateway, h, principal, row, data):
             row["id"],
             chat=chat,
             confirm=confirm,
+            learned=learned,
             actor=principal,
             workspace_ref=principal.workspace_id,
         )
     except ControlError as exc:
         send_json(h, 409, {"error": str(exc)})
         return
-    if chat or confirm:
+    if chat or confirm or learned:
         # Re-read after the write: a coordinator assigned meanwhile loses the grant.
         current = coordinators(gateway, principal)
         if current is None or f"conn:{row['name']}" in current:
@@ -327,7 +330,10 @@ def _may_manage(principal, h, parts):
 
 
 def _own_bots_body(principal, row, data):
-    return not set(data) - {"bots_chat", "bots_confirm"} and row["user_id"] == principal.user_id
+    return (
+        not set(data) - {"bots_chat", "bots_confirm", "bots_learned"}
+        and row["user_id"] == principal.user_id
+    )
 
 
 def _update_read_wings(gateway, h, principal, row, data):
@@ -380,7 +386,7 @@ def _patch(gateway, h, principal, row, data):
         return
     if "decide" in data:
         _update_decide(gateway, h, principal, row, data)
-    elif set(data) & {"bots_chat", "bots_confirm"}:
+    elif set(data) & {"bots_chat", "bots_confirm", "bots_learned"}:
         _update_bots(gateway, h, principal, row, data)
     elif row["auth"] != "pat":
         send_json(h, 409, {"error": "Manage this connection in its sign-in client"})

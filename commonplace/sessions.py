@@ -69,6 +69,7 @@ def person_policy(role: Optional[str] = None) -> Policy:
         "cards:decide",
         "bots:chat",
         "bots:confirm",
+        "bots:learned",
     }
     if role != "owner":
         excluded.add("private:read")

@@ -381,6 +381,10 @@ scopes that you grant yourself:
   useless without `bots:chat` and is granted separately. Without it that route answers 403
   `scope_required` and nothing runs. Buttons on a question use the separate `cards:decide`
   scope described in the connections guide.
+- `bots:learned` additionally lets the app read what your bots learned
+  (`GET /api/learned` and `GET /api/bots/<id>/learned`), and nothing else: every change to a
+  learned item is refused (403 `read_only`). It needs `bots:chat`, is granted separately, and an
+  app without it gets 404 on those routes.
 
 **How to grant.** Any signed-in member can do it for their own app. Owners: Settings → Agents,
 **Allow using my bots** on the app's row (and **Allow confirming** if you want that too), or
