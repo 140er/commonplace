@@ -468,6 +468,9 @@ TOOLS_ADDED_SINCE_BASELINE = {
     "rules_get",
     "rules_changed",
     "session_start",
+    # The Compute map's write tools (not part of handoff).
+    "topology_propose",
+    "topology_discover_site",
     # Compute map read tools (not part of handoff).
     "topology_get",
     "topology_route",

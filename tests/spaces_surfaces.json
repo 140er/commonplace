@@ -2043,6 +2043,128 @@
           "name": "task_update"
         },
         {
+          "description": "Discover how one website is routed, read-only, and propose the route to the workspace owner: a public DNS lookup of the domain, then the reverse proxy config you read on the user's machine and pass in as text, then the container or app it forwards to. Only site names and upstream targets are taken from the config; credentials in it are never stored. A domain or upstream outside the known machines ends in an 'External / unknown' hop. A changed route is a decision for the owner, never a silent rewrite.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "apps": {
+                "description": "Containers or apps you saw running, to name the upstream.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "host": {
+                      "description": "Node key of its machine.",
+                      "type": "string"
+                    },
+                    "names": {
+                      "description": "Names the proxy may use for it (container name).",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 16,
+                      "type": "array"
+                    },
+                    "node": {
+                      "description": "Node key on the map.",
+                      "type": "string"
+                    },
+                    "port": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "host"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "board": {
+                "type": "string"
+              },
+              "machines": {
+                "description": "Where the user's machines answer, to match the DNS answer.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "addresses": {
+                      "description": "Public addresses or hostnames you saw for it.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 16,
+                      "type": "array"
+                    },
+                    "kind": {
+                      "description": "Needed for a node that is not on the map yet; cloud for a proxy or CDN in front.",
+                      "type": "string"
+                    },
+                    "node": {
+                      "description": "Node key on the map.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "addresses"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "proxies": {
+                "description": "The reverse proxy config of each machine the site may pass.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "config": {
+                      "description": "The config text as read, unchanged: a Caddyfile or Caddy JSON config; Nginx Proxy Manager proxy-host rows as JSON or its generated nginx server files.",
+                      "maxLength": 524288,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "caddy",
+                        "nginx_proxy_manager"
+                      ],
+                      "type": "string"
+                    },
+                    "node": {
+                      "description": "Node key on the map.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "kind",
+                    "config"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "site": {
+                "description": "The public domain name, such as example.com.",
+                "type": "string"
+              },
+              "ttl_seconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "site"
+            ],
+            "type": "object"
+          },
+          "name": "topology_discover_site"
+        },
+        {
           "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2063,6 +2185,65 @@
             "type": "object"
           },
           "name": "topology_get"
+        },
+        {
+          "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "type": "string"
+              },
+              "evidence": {
+                "description": "What you saw, verbatim (command output, a config line).",
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "items": {
+                "description": "{\"node\": key, \"fields\": {...}}, {\"link\": [from, to, method], \"fields\": {...}} or {\"route\": site, \"hops\": [link ids]}.",
+                "items": {
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "remove": {
+                "description": "node:<key>, link:<from>><to>:<method> or route:<site>; {subject, field} removes one field.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "subject"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "ttl_seconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "name": "topology_propose"
         },
         {
           "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
@@ -2267,7 +2448,9 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_discover_site",
       "topology_get",
+      "topology_propose",
       "topology_route",
       "webhook_add",
       "webhook_list",
@@ -5438,6 +5621,128 @@
           "name": "task_update"
         },
         {
+          "description": "Discover how one website is routed, read-only, and propose the route to the workspace owner: a public DNS lookup of the domain, then the reverse proxy config you read on the user's machine and pass in as text, then the container or app it forwards to. Only site names and upstream targets are taken from the config; credentials in it are never stored. A domain or upstream outside the known machines ends in an 'External / unknown' hop. A changed route is a decision for the owner, never a silent rewrite.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "apps": {
+                "description": "Containers or apps you saw running, to name the upstream.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "host": {
+                      "description": "Node key of its machine.",
+                      "type": "string"
+                    },
+                    "names": {
+                      "description": "Names the proxy may use for it (container name).",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 16,
+                      "type": "array"
+                    },
+                    "node": {
+                      "description": "Node key on the map.",
+                      "type": "string"
+                    },
+                    "port": {
+                      "maximum": 65535,
+                      "minimum": 1,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "host"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "board": {
+                "type": "string"
+              },
+              "machines": {
+                "description": "Where the user's machines answer, to match the DNS answer.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "addresses": {
+                      "description": "Public addresses or hostnames you saw for it.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 16,
+                      "type": "array"
+                    },
+                    "kind": {
+                      "description": "Needed for a node that is not on the map yet; cloud for a proxy or CDN in front.",
+                      "type": "string"
+                    },
+                    "node": {
+                      "description": "Node key on the map.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "addresses"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "proxies": {
+                "description": "The reverse proxy config of each machine the site may pass.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "config": {
+                      "description": "The config text as read, unchanged: a Caddyfile or Caddy JSON config; Nginx Proxy Manager proxy-host rows as JSON or its generated nginx server files.",
+                      "maxLength": 524288,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "caddy",
+                        "nginx_proxy_manager"
+                      ],
+                      "type": "string"
+                    },
+                    "node": {
+                      "description": "Node key on the map.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "kind",
+                    "config"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 8,
+                "type": "array"
+              },
+              "site": {
+                "description": "The public domain name, such as example.com.",
+                "type": "string"
+              },
+              "ttl_seconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "site"
+            ],
+            "type": "object"
+          },
+          "name": "topology_discover_site"
+        },
+        {
           "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
           "inputSchema": {
             "additionalProperties": false,
@@ -5458,6 +5763,65 @@
             "type": "object"
           },
           "name": "topology_get"
+        },
+        {
+          "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "type": "string"
+              },
+              "evidence": {
+                "description": "What you saw, verbatim (command output, a config line).",
+                "maxLength": 4000,
+                "type": "string"
+              },
+              "items": {
+                "description": "{\"node\": key, \"fields\": {...}}, {\"link\": [from, to, method], \"fields\": {...}} or {\"route\": site, \"hops\": [link ids]}.",
+                "items": {
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "remove": {
+                "description": "node:<key>, link:<from>><to>:<method> or route:<site>; {subject, field} removes one field.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "field": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "subject"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "ttl_seconds": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "name": "topology_propose"
         },
         {
           "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
@@ -5655,7 +6019,9 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_discover_site",
       "topology_get",
+      "topology_propose",
       "topology_route",
       "webhook_add",
       "webhook_list",

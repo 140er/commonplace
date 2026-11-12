@@ -254,6 +254,15 @@ ALLOWED_DYNAMIC = {
         "DROP TABLE IF EXISTS ",
     ): "three literal fact_search tables",
     ("mempalace/fact_index.py", "joined", "DROP TABLE IF EXISTS \x00"): "the same loop, joined",
+    # Account deletion walks the classified control-database tables
+    # (commonplace/account/tables.py) and deletes one account's rows from each. It runs on
+    # the control connection, which holds no thread store; the destructive-statement rule
+    # for thread tables still applies to this file (test_a4_account_purge_allowance_is_narrow).
+    (
+        "commonplace/account/deletion.py",
+        "piece",
+        "DELETE FROM \x00 WHERE \x00",
+    ): "control tables of one account, from the classification",
 }
 # The per-piece rule's own allowlist (path and text only), for the floor test.
 _PIECE_ALLOWED = {
@@ -261,6 +270,7 @@ _PIECE_ALLOWED = {
     ("mempalace/backends/pgvector.py", "DELETE FROM \x00 WHERE \x00"),
     ("mempalace/backends/pgvector.py", "DROP TABLE IF EXISTS \x00"),
     ("mempalace/fact_index.py", "DROP TABLE IF EXISTS "),
+    ("commonplace/account/deletion.py", "DELETE FROM \x00 WHERE \x00"),
 }
 
 
@@ -521,6 +531,21 @@ def test_a4_known_false_positives_are_recorded():
 def test_a4_known_limits_are_still_limits():
     # If a rule change starts catching one of these, move it into CAUGHT.
     assert [s for s in KNOWN_LIMITS if _findings("synthetic.py", s)] == []
+
+
+def test_a4_account_purge_allowance_is_narrow():
+    purge = "commonplace/account/deletion.py"
+    allowed = 'conn.execute(f"DELETE FROM {table} WHERE {clause}", scope)'
+    assert _findings(purge, allowed) == []
+    # The same statement anywhere else, or another dynamic statement in the file, still fires.
+    assert _findings("commonplace/other.py", allowed)
+    assert _findings(purge, 'conn.execute(f"DELETE FROM {table}")')
+    assert _findings(purge, 'conn.execute(f"DELETE FROM {table} WHERE id=?", args)')
+    assert _findings(purge, 'conn.execute(f"DROP TABLE IF EXISTS {table}")')
+    assert _findings(purge, 'conn.execute(f"UPDATE {table} SET x=1")')
+    # Thread-store rules are not exempt in that file.
+    assert _findings(purge, 'conn.execute("DELETE FROM messages WHERE thread_id=?", args)')
+    assert _findings(purge, 'conn.execute("UPDATE threads SET wing=? WHERE id=?", args)')
 
 
 def test_a4_no_statement_rewrites_identity_or_deletes_thread_rows():
