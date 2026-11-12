@@ -25,6 +25,8 @@
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
+  - `/app/join` (workspace invites) counts against the per-address credential rate limit, like `/app/login`.
+
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
   - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.

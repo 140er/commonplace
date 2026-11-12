@@ -19,6 +19,8 @@
 
   - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
 
+  - The web mount installs the invite routes, Admin passes an optional invite block to `createAdmin` beside the runner block, and the palette offers Switch workspace; the logic lives in the `invites` module.
+
   - The Needs me Set up row for a missing model role, and the project settings model picker with its stored id, add-a-model form and role focus.
 
   - The instance-admin sign-up waitlist routes (`GET`/`POST /api/admin/instance/waitlist`, mounted from `commonplace/capacity.py`) and the plain `waitlist` sign-in message in `signin.js`.

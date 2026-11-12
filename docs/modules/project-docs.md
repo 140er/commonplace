@@ -28,6 +28,8 @@
 
   - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
 
+  - `docs/admin.md` describes the Admin invite block; `docs/invites.md` (module `invites`) is the contract it links to.
+
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
   - `docs/chat.md` lists the live delivery states of a chat message, their reasons and timing, and who sees the agent's read time.
