@@ -1,12 +1,14 @@
 """Contract REST routes; all policy and state changes run in BoardService."""
 
 import sqlite3
+from contextlib import nullcontext
 from dataclasses import dataclass
 from urllib.parse import quote
 
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.rules.enforce import RulesRefresh, rest_write
 
+from . import lifecycle
 from ._http import (
     HTTPError,
     path_parts,
@@ -18,6 +20,8 @@ from ._http import (
 )
 from .digest import ssml
 from .display import NEEDS, with_urls
+from .priority import rank
+from .refusals import explained
 from .service import BoardService, ParentError, SpaceError, VersionClash
 from .store import CardRefused
 
@@ -142,7 +146,7 @@ def open_cards(cards, limit=None):
         raise HTTPError(400, "limit must be a number") from None
     if not 1 <= limit <= OPEN_LIMIT_MAX:
         raise HTTPError(400, f"limit must be 1 to {OPEN_LIMIT_MAX}")
-    cards = sorted(cards, key=lambda c: (NEEDS.index(c["need"]), c["number"]))
+    cards = sorted(cards, key=lambda c: (NEEDS.index(c["need"]), rank(c["priority"]), c["number"]))
     return {
         "cards": [{k: v for k, v in c.items() if k != "body"} for c in cards[:limit]],
         "total": len(cards),
@@ -185,6 +189,32 @@ def _space_route(service, h, parts, method):
     return None
 
 
+def _explained(kind, service):
+    """Refusals of a Done move or a handoff carry a reason and a next step; other routes are as is."""
+    return explained(kind, person=service.principal.person) if kind else nullcontext()
+
+
+def _lifecycle_route(service, h, parts, method):
+    """Archive, restore, carry on and Pocket: signed-in people only, refused in the service.
+
+    These are person-only writes (the service refuses connections), so they sit outside the
+    rules-freshness inventory, which covers agent writes."""
+    if len(parts) != 3 or method != "POST" or parts[2] not in lifecycle.ACTIONS:
+        return None
+    task, action = parts[1], parts[2]
+    body = read_json(h)
+    body.pop("task", None)
+    if action == "follow-up":
+        return 201, service.task_follow_up(task, **body)
+    handler = {
+        "archive": service.task_archive,
+        "restore": service.task_restore,
+        "pocket": service.pocket_pin,
+        "unpocket": service.pocket_unpin,
+    }[action]
+    return 200, handler(task, **body)
+
+
 def _card_route(service, h, parts, method):
     task = parts[1]
     if len(parts) == 2:
@@ -192,11 +222,15 @@ def _card_route(service, h, parts, method):
             return 200, service.task_show(task)
         if method == "PATCH":
             body = read_json(h)
-            with rest_write(service.ctx, h, "task_update", body):
-                if "version" not in body or body["version"] is None:
-                    raise HTTPError(400, "version is required")
-                body.pop("task", None)
-                return 200, service.task_update(task, **body)
+            with _explained("done" if body.get("status") == "done" else None, service):
+                with rest_write(service.ctx, h, "task_update", body):
+                    if "version" not in body or body["version"] is None:
+                        raise HTTPError(400, "version is required")
+                    body.pop("task", None)
+                    return 200, service.task_update(task, **body)
+    routed = _lifecycle_route(service, h, parts, method)
+    if routed:
+        return routed
     if len(parts) == 3 and method == "POST":
         handlers = {
             "comments": service.task_comment,
@@ -214,12 +248,13 @@ def _card_route(service, h, parts, method):
                 "heartbeat": "task_heartbeat",
                 "approve": "task_approve",
             }[parts[2]]
-            with rest_write(service.ctx, h, tool, body):
-                # A decision answers the ask the person saw; a newer ask is a 409.
-                if parts[2] == "decide" and body.get("version") is None:
-                    raise HTTPError(400, "version is required")
-                body.pop("task", None)
-                return 200, handlers[parts[2]](task, **body)
+            with _explained("handoff" if parts[2] == "handoff" else None, service):
+                with rest_write(service.ctx, h, tool, body):
+                    # A decision answers the ask the person saw; a newer ask is a 409.
+                    if parts[2] == "decide" and body.get("version") is None:
+                        raise HTTPError(400, "version is required")
+                    body.pop("task", None)
+                    return 200, handlers[parts[2]](task, **body)
     raise HTTPError(404, "not found")
 
 
@@ -331,7 +366,10 @@ def dispatch(service, h, parts, method):
     if len(parts) == 3 and parts[0] == "boards" and parts[2] == "cards":
         if method == "GET":
             cards = service.task_list(
-                board=parts[1], status=query(h).get("status") or None, all_statuses=True
+                board=parts[1],
+                status=query(h).get("status") or None,
+                all_statuses=True,
+                archived=query(h).get("archived") in ("1", "true"),
             )
             return 200, {
                 "cards": [c for c in cards if c["parent"] is None],

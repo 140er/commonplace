@@ -15,6 +15,7 @@ from time import monotonic
 from commonplace import events
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
+from mempalace import deadline as _read_deadline
 from mempalace.sqlite_crypto import connect, driver, encryption_settings, row_factory
 
 from .store import bump, migrate, now
@@ -23,31 +24,16 @@ logger = logging.getLogger(__name__)
 STORE_LOST = "rules_seq store_lost: a rules or boards store was replaced; the owner must confirm it"
 LOST_ERROR = "the rules store was replaced; the owner must confirm it"
 _internal = ContextVar("commonplace_internal_call", default=False)
-_deadline = ContextVar("commonplace_rules_deadline", default=None)
+_deadline = _read_deadline._deadline
 
 
 def remaining(timeout):
-    end = _deadline.get()
-    if end is None:
-        return timeout
-    left = end - monotonic()
-    if left <= 0:
-        raise TimeoutError("rules deadline expired")
-    return min(timeout, left)
+    return _read_deadline.remaining(timeout, monotonic)
 
 
-@contextmanager
 def deadline(timeout):
     """Nested readers may shorten a caller's deadline, never extend it."""
-    end = monotonic() + timeout
-    prior = _deadline.get()
-    token = _deadline.set(min(prior, end) if prior is not None else end)
-    try:
-        remaining(timeout)
-        yield
-        remaining(timeout)
-    finally:
-        _deadline.reset(token)
+    return _read_deadline.deadline(timeout, monotonic)
 
 
 class _DeadlineMixin:
@@ -265,7 +251,7 @@ def migrate_workspace(db, workspace_id, directory, *, accept=False):
     if boards.exists() and bound.get("boards_store_id") is None:
         from commonplace.boards.store import BoardStore
 
-        BoardStore(directory, create=False)
+        BoardStore(directory, create=False, timeout=0.2)  # deploy loop: fail fast and log
     if rules.exists() and bound.get("rules_store_id") is None:
         with connection(rules, write=True, timeout=0.2) as conn:
             # Bound boards need no probe here; effective reconciliation catches

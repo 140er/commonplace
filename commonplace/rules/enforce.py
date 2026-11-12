@@ -18,11 +18,12 @@ CHECKED_WRITES = frozenset(
     "orch_config_propose orch_config_accept orch_config_write orch_config_reject "
     "orch_exp_retire orch_restore_ack orch_resume orch_force_release orch_card_start "
     "orch_journal_intent orch_journal_record orch_gate_open orch_gate_record "
-    "orch_void_step".split()
+    "orch_void_step orch_reassign_step goal_set card_goal".split()
 )
 
 # Explicit names make a newly exposed write fail the public-surface contract.
 EXEMPT_WRITES = {
+    "rules_feedback": "Evidence about a rule is a report, not an instruction; it never changes work or rules.",
     "task_heartbeat": "Mechanical claim renewal does not change the work or its instructions.",
     **dict.fromkeys(
         "orch_heartbeat orch_release".split(),
@@ -67,6 +68,7 @@ REST_ROUTES = (
     RestRoute(
         "projects.routes", "POST", "/api/projects/<slug>/orchestrator/split", "card_split_done"
     ),
+    RestRoute("projects.panel_routes", "PUT", "/api/projects/<slug>/panel", "project_panel_set"),
     RestRoute("boards.rest", "POST", "/api/spaces", "board_add"),
     RestRoute("boards.rest", "POST", "/api/spaces/<slug>/cards", "task_add"),
     RestRoute("boards.rest", "POST", "/api/spaces/<slug>/chat", "space_post"),

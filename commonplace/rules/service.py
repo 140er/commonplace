@@ -12,7 +12,7 @@ from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 from mempalace.sqlite_crypto import connect
 
-from . import checks, render
+from . import checks, evidence, render
 from .store import RuleStore, bump, now, rules_sequence, sequence
 
 KINDS = ("permission", "limit", "instruction", "style")
@@ -74,6 +74,18 @@ def display_summary(summary, text):
         return summary
     first = sentences(text)[0]
     return first if len(first) <= 240 else first[:239].rstrip() + "…"
+
+
+def rule_keys(keys):
+    """Validate a keys= argument: a bounded list of non-empty strings, de-duplicated."""
+    if (
+        not isinstance(keys, list)
+        or not keys
+        or len(keys) > render.MAX_KEYS
+        or not all(isinstance(k, str) and 0 < len(k) <= render.KEY_CHARS for k in keys)
+    ):
+        raise ToolError(f"no: keys must be 1-{render.MAX_KEYS} non-empty rule keys")
+    return list(dict.fromkeys(keys))
 
 
 def rule_text(value):
@@ -448,10 +460,21 @@ class RuleService:
             return {"rules": result, "seq": sequence(conn)}
 
     def rules_get(
-        self, board=_UNSET, repo=_UNSET, format="text", include_retired=_UNSET, effective=False
+        self,
+        board=_UNSET,
+        repo=_UNSET,
+        format="text",
+        include_retired=_UNSET,
+        effective=False,
+        keys=_UNSET,
     ):
         if type(effective) is not bool:
             raise ToolError("no: effective must be a boolean")
+        keys = None if keys is _UNSET else rule_keys(keys)
+        if format == "index" and not effective:
+            raise ToolError("no: format=index needs effective=true")
+        if format == "index" and keys is not None:
+            raise ToolError("no: format=index lists every rule; use keys with text or md")
         if effective:
             if self.principal.person:
                 raise ToolError("no: effective=true is for agent connections")
@@ -459,7 +482,7 @@ class RuleService:
                 raise ToolError(
                     "no: effective=true always returns your full set and takes only format"
                 )
-            if format not in ("text", "md"):
+            if format not in ("text", "md", "index"):
                 raise ToolError("no: invalid format or include_retired")
             try:
                 if not (Path(self.ctx.workspace_dir()) / "rules.sqlite3").exists():
@@ -468,6 +491,13 @@ class RuleService:
                 mode = checks.mode(self.ctx.gateway, self.principal)
                 if mode == "unknown":
                     raise RuntimeError("check settings unavailable")
+                if format == "index" or keys is not None:
+                    # A partial read never counts as having read the full set.
+                    if format == "index":
+                        reply = render.index(result["rules"], result["seq"], mode=mode)
+                    else:
+                        reply = render.keyed(result["rules"], keys, result["seq"])
+                    return dict(result, reply=reply, state="partial")
                 reply, state = render.effective(
                     result["rules"], result["seq"], result["rules_seq"], format=format, mode=mode
                 )
@@ -495,20 +525,22 @@ class RuleService:
             repo = fields("repo", "instruction", "repo", repo)["scope_ref"]
         with self.store.read() as conn:
             rows = conn.execute("SELECT * FROM rules ORDER BY id").fetchall()
-            return {
-                "rules": [
-                    self._agent_view(rule_json(row))
-                    for row in rows
-                    if self._visible(row)
-                    and (
-                        row["scope"] == "global"
-                        or (row["scope"] == "board" and row["scope_ref"] == board)
-                        or (row["scope"] == "repo" and row["scope_ref"] == repo)
-                    )
-                    and (row["status"] != "retired" or (include_retired and format != "md"))
-                ],
-                "seq": sequence(conn),
-            }
+            selected = [
+                self._agent_view(rule_json(row))
+                for row in rows
+                if self._visible(row)
+                and (
+                    row["scope"] == "global"
+                    or (row["scope"] == "board" and row["scope_ref"] == board)
+                    or (row["scope"] == "repo" and row["scope_ref"] == repo)
+                )
+                and (row["status"] != "retired" or (include_retired and format != "md"))
+            ]
+            result = {"rules": selected, "seq": sequence(conn)}
+            if keys is not None:
+                result["rules"] = [r for r in selected if r["key"] in keys]
+                result["unknown"] = render.unknown_keys(selected, keys)
+            return result
 
     def rules_changed(self, since):
         if type(since) is not int or since < 0:
@@ -533,6 +565,83 @@ class RuleService:
                 ],
                 "seq": seq,
             }
+
+    def _feedback_rule(self, conn, rule):
+        """Agents name a rule by key (their own first, then shared) and see only visible ones."""
+        if not isinstance(rule, str) or not rule.strip() or len(rule) > 200:
+            raise ToolError("no: rule must be a rule key")
+        row = conn.execute(
+            "SELECT * FROM rules WHERE key=? AND agent IN (?, '*') ORDER BY agent='*' LIMIT 1",
+            (rule, self.principal.actor),
+        ).fetchone()
+        if row is None or not self._visible(row):
+            raise ToolError("no: rule not found")
+        return row
+
+    def rules_feedback(self, rule=_UNSET, kind=_UNSET, note=None):
+        """With ``kind``: record evidence on one rule. Without: read it back (own events only)."""
+        if self.principal.person:
+            raise ToolError("no: agent connections only; the rules page reads evidence")
+        if kind is _UNSET:
+            if note is not None:
+                raise ToolError("no: note needs a kind")
+            return self._feedback_read(rule)
+        if not self.principal.policy.has_scope("memory:write"):
+            raise ToolError("no: an agent with memory:write is required")
+        if rule is _UNSET:
+            raise ToolError("no: rule is required")
+        evidence.feedback_kind(kind)
+        note = evidence.feedback_note(kind, note)
+        with self.transaction() as conn:
+            row = self._feedback_rule(conn, rule)
+            event = evidence.record(
+                conn, row, kind, source="agent", actor=self.principal.actor, note=note
+            )
+            return self._feedback_view(conn, row, [event])
+
+    def _feedback_read(self, rule):
+        with self.store.read() as conn:
+            if rule is not _UNSET:
+                row = self._feedback_rule(conn, rule)
+                found = evidence.events(conn, row["id"], actor=self.principal.actor)
+                return self._feedback_view(conn, row, found)
+            rows = [
+                row for row in conn.execute("SELECT * FROM rules ORDER BY id") if self._visible(row)
+            ]
+            counters = evidence.stats(conn, [row["id"] for row in rows])
+            return {
+                "rules": [
+                    {"key": row["key"], **counters.get(row["id"], {"total": 0, "kinds": {}})}
+                    for row in rows
+                    if row["id"] in counters
+                ]
+            }
+
+    def _feedback_view(self, conn, row, events):
+        counters = evidence.stats(conn, [row["id"]]).get(row["id"], {"total": 0, "kinds": {}})
+        return {"key": row["key"], "version": row["version"], **counters, "events": events}
+
+    def feedback(self, rule_id, kind=_UNSET, note=None):
+        """Person side: read a rule's evidence, or (owner only) record a person's feedback."""
+        self._person(owner=kind is not _UNSET)
+        if kind is _UNSET:
+            with self.store.read() as conn:
+                row = row_for(conn, rule_id)
+                return self._feedback_view(conn, row, evidence.events(conn, row["id"]))
+        evidence.feedback_kind(kind)
+        note = evidence.feedback_note(kind, note)
+        with self.transaction() as conn:
+            row = row_for(conn, rule_id)
+            event = evidence.record(
+                conn, row, kind, source="person", actor=f"user:{self.principal.user_id}", note=note
+            )
+            return self._feedback_view(conn, row, [event])
+
+    def feedback_stats(self):
+        """Counters for every rule that has evidence, for the rules page and the gardener."""
+        self._person()
+        with self.store.read() as conn:
+            return {"stats": {str(i): v for i, v in evidence.stats(conn).items()}}
 
     def list_rules(self):
         self._person()

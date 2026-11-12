@@ -184,6 +184,28 @@ def test_migration_preserves_compact_threads_boards_rules_graph_and_palace(works
         assert original.execute("PRAGMA quick_check").fetchone() == ("ok",)
 
 
+def test_storage_budget_accepts_sqlcipher_text_page_size(workspace):
+    """SQLCipher reports ``page_size`` as text; a budgeted write must still be checked."""
+    from commonplace.handoff.thread_store import ThreadStorageLimit
+
+    data, _, wid, *_ = workspace
+    root = workspace_root(data, wid)
+    root.mkdir(parents=True)
+    (root / "workspace.json").write_text('{"store":"compact"}')
+    enable(workspace)
+    message = [ThreadMessage(0, "user", "message", "budgeted", "raw")]
+    with closing(open_threads(workspace_path(data, wid))) as store:
+        try:
+            stored = store.store(
+                wid, "budgeted", message, actor="person:x", max_storage_bytes=10**9
+            )
+        except TypeError as exc:
+            pytest.fail(f"a budgeted write in an encrypted store crashed: {exc}")
+        assert stored.message_count == 1
+        with pytest.raises(ThreadStorageLimit):
+            store.store(wid, "tight", message, actor="person:x", max_storage_bytes=1)
+
+
 @pytest.mark.parametrize("failure", ["wrong", "missing", "missing-slots", "missing-driver"])
 def test_key_and_driver_fail_closed(workspace, monkeypatch, failure):
     data, _, wid, server, _, slots = workspace
@@ -199,6 +221,43 @@ def test_key_and_driver_fail_closed(workspace, monkeypatch, failure):
         monkeypatch.setitem(sys.modules, "sqlcipher3", None)
     target = active / "not-created.sqlite3"
     with pytest.raises(crypto.EncryptionError):
+        crypto.connect(target)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize(
+    "failure, match",
+    [
+        ("wrong", "Workspace keyslot could not be unlocked"),
+        ("missing-env", "requires a key store and wrapping key file"),
+        ("missing-credential", "Wrapping key file is unavailable"),
+        ("missing-record", "Workspace keyslot is unavailable"),
+        ("symlinked-record", "Keyslot file cannot be a symlink"),
+        ("unknown-slot", "requires a key store and wrapping key file"),
+    ],
+)
+def test_wrong_or_missing_key_is_refused_with_a_clear_message(
+    workspace, monkeypatch, failure, match
+):
+    data, _, wid, server, _, slots = workspace
+    enable(workspace)
+    record = slots / (wid + ".json")
+    if failure == "wrong":
+        server.write_bytes(os.urandom(32))
+    elif failure == "missing-env":
+        monkeypatch.delenv("COMMONPLACE_WRAPPING_KEY_FILE")
+    elif failure == "missing-credential":
+        server.unlink()
+    elif failure == "missing-record":
+        record.unlink()
+    elif failure == "symlinked-record":
+        moved = data.parent / "moved.json"
+        record.rename(moved)
+        record.symlink_to(moved)
+    else:
+        monkeypatch.setenv("COMMONPLACE_KEY_SLOT", "escrow")
+    target = workspace_path(data, wid) / "not-created.sqlite3"
+    with pytest.raises(crypto.EncryptionError, match=match):
         crypto.connect(target)
     assert not target.exists()
 
