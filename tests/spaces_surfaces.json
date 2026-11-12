@@ -1845,6 +1845,28 @@
           "name": "task_update"
         },
         {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
           "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
           "inputSchema": {
             "additionalProperties": false,
@@ -1902,6 +1924,31 @@
             "type": "object"
           },
           "name": "topology_propose"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -2076,7 +2123,9 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_get",
       "topology_propose",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
@@ -3056,6 +3105,53 @@
             "type": "object"
           },
           "name": "task_update"
+        },
+        {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         }
       ]
     },
@@ -3094,7 +3190,9 @@
       "task_list",
       "task_show",
       "task_take_next",
-      "task_update"
+      "task_update",
+      "topology_get",
+      "topology_route"
     ]
   },
   "standard": {
@@ -4943,6 +5041,28 @@
           "name": "task_update"
         },
         {
+          "description": "Read the compute map: one machine or site by key, or the whole graph of machines, links and site routes. Every value carries its provenance and freshness; stale values are marked, and a key nothing is recorded for answers found=false.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "node": {
+                "description": "Key of a machine or site; omit both for the graph.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "site": {
+                "description": "Key of a website whose route to read.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "topology_get"
+        },
+        {
           "description": "Propose topology facts with evidence: nodes, links and site routes to add or change (items), and subjects to take off the map (remove). A runner's additions about itself apply at once; every other change becomes one decision the workspace owner approves or rejects in the app. Never include keys, tokens or passwords: such a write is refused.",
           "inputSchema": {
             "additionalProperties": false,
@@ -5000,6 +5120,31 @@
             "type": "object"
           },
           "name": "topology_propose"
+        },
+        {
+          "description": "Answer 'how do I connect to X' (ordered hops and the method, alias, jump host or relay per hop, from a machine named in 'from') or 'where is site Y hosted' (the route from DNS provider through proxy and host to the app). Each hop says how fresh it is; an unknown or stale hop is stated, never invented.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "description": "Key of the machine you start from; used for machines only.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              },
+              "target": {
+                "description": "Key of the machine or site to reach.",
+                "maxLength": 63,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          },
+          "name": "topology_route"
         },
         {
           "description": "Add webhooks",
@@ -5167,7 +5312,9 @@
       "thread_chain",
       "thread_get",
       "thread_recall",
+      "topology_get",
       "topology_propose",
+      "topology_route",
       "webhook_add",
       "webhook_list",
       "webhook_remove",
