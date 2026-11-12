@@ -5,6 +5,7 @@
 
   - The separate instance console route, additive capability, explicit metadata DTOs and independent section controller.
 
+  - Owner-only Project settings list orchestrator config versions with their changes and an Accept control, plus Release for cards waiting for release.
   - The card panel offers Release with a required reason on cards awaiting release, the handoff form names the orchestrator and pool recipients, and refused card actions appear inside the open panel.
 
   - Deck Compute (`deck-compute.js`, `deck-topology.js`) draws owner-visible enrolled machines as a pixel-sized hub map with label-safe geometry, enrollment readiness dots, keyboard selection, four detail tabs and General-bot draft handoffs; no liveness or network routes are inferred.
@@ -50,6 +51,7 @@
   - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
 
 - **Promises:**
+  - Project settings show a model field pair for each role (orchestrator, builder, reviewer, gate) and an escalation rule form (failed rounds, labels, stronger model); non-owners see both read-only without a save button.
 
   - The operational Admin owner predicate stays intact; console sections bind target generations and five-second transport/body deadlines with clearing on teardown.
 
@@ -58,6 +60,8 @@
   - The Runs list shows a run's reported tokens, cost, end and log pointer; an unreported value reads "not reported", never zero, and a log pointer is a link only when it is an http(s) address.
 
   - Settings → Agents offers an unticked `cards:decide` consent on create, shows the grant on PAT and OAuth rows with **Stop answering**, and offers **Allow answering Needs-me** only on rows the server marks `decide_grantable` (the viewing owner's own eligible, unexpired PATs; never agents, runners, seats, board coordinators or other members' connections; the grant route refuses coordinators too); the consent copy comes from `decide_consent` in `GET /api/connections`; `PATCH /api/connections/<id>` with `{"decide": bool}` grants (PAT only) or withdraws (PAT or OAuth).
+
+  - Settings → Agents shows `bots:chat` and `bots:confirm` on PAT and OAuth rows with **Allow using my bots**, **Allow confirming** and **Stop using bots** (offered only on the person's own, active, top-level rows), with the consent text from the server; a signed-in member may PATCH only the bots scopes of their own connection.
 
   - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 
