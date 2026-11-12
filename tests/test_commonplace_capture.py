@@ -114,7 +114,8 @@ def test_default_off_owner_only_opt_in_and_opt_out_at_storage_limit(surface, mon
     assert api(s, "GET", "/api/settings/capture", cookie=False)[0] == 401
 
 
-@pytest.mark.parametrize("source", capture.SOURCES)
+# Native raw formats only; agent-log is covered in test_commonplace_agent_log.py.
+@pytest.mark.parametrize("source", ("claude-code", "codex"))
 def test_native_growth_retry_exact_raw_provenance_and_private_scope(surface, monkeypatch, source):
     s = surface
     now = plans._now()
@@ -318,7 +319,8 @@ def test_partial_or_invalid_lines_never_become_saved_prefix(surface, bad):
     assert not store.by_source(surface.workspace, "session-1")
 
 
-@pytest.mark.parametrize("source", capture.SOURCES)
+# Native raw formats only; agent-log is covered in test_commonplace_agent_log.py.
+@pytest.mark.parametrize("source", ("claude-code", "codex"))
 def test_explicit_root_runner_growth_rotation_prefix_edit_and_opt_out(
     surface, monkeypatch, tmp_path, capsys, source
 ):
@@ -365,9 +367,11 @@ def test_explicit_root_runner_growth_rotation_prefix_edit_and_opt_out(
     assert saved(s, grown["stored_thread_id"]) == after
 
 
-def test_hook_explicit_opt_in_detaches_without_source_reads_or_secret_arguments(monkeypatch):
+def test_hook_explicit_opt_in_detaches_without_source_reads_or_secret_arguments(
+    monkeypatch, tmp_path
+):
     stdin = io.StringIO(json.dumps({"transcript_path": "/synthetic/session.jsonl"}))
-    args = ["--event", "capture", "--client", "claude"]
+    args = ["--event", "capture", "--client", "claude", "--home", str(tmp_path)]
     with patch.object(client_hooks.subprocess, "Popen") as spawn:
         assert client_hooks.main(args, stdin=stdin, stdout=io.StringIO()) == 0
         spawn.assert_not_called()
@@ -378,7 +382,7 @@ def test_hook_explicit_opt_in_detaches_without_source_reads_or_secret_arguments(
             assert client_hooks.main(args, stdin=stdin, stdout=io.StringIO()) == 0
         command = spawn.call_args.args[0]
         assert "synthetic-secret" not in " ".join(command)
-        assert "commonplace.capture_client" in command
+        assert "commonplace.hook_spool" in command
 
 
 @pytest.mark.parametrize(
