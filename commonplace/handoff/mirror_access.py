@@ -240,7 +240,7 @@ def reader(gateway, principal):
 
 def private_thread_reference(access, value):
     """A value naming any thread this reader cannot read is not shown to them."""
-    names = provenance_refs.room_references(value)
+    names = provenance_refs.room_references(value, getattr(access, "parse", None))
     if names is None:
         return True
     exact = getattr(access, "exact_source_readable", None)
