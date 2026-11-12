@@ -917,6 +917,39 @@ export function mountWorkspaceOrchestration(host, {api, e, enabled, current = ()
 }
 
 // Owner-only: config versions to accept and cards an agent can no longer release.
+export function mountOrchestratorTrust(host, {project, api, e, current = () => true}) {
+  installOrchestrationStyles();
+  const active = () => current() && host.isConnected;
+  const orchestration = project.orchestration;
+  if (!orchestration || !project.can_configure || !project.main.connected) { host.replaceChildren(); return; }
+  let trusted = orchestration.trusted, busy = false, status = "";
+  const machines = orchestration.machines || [];
+  function render() {
+    if (!active()) return;
+    host.innerHTML = `<details class="orchestration-controls"><summary>Orchestrator start permissions</summary><p>Trust lets this seat request starts on selected machines, read permitted project data and repository rules, release and approve cards, annotate cards and stamp trusted submissions. It can view start status and cancel its own starts. It cannot create boards or launch handoffs.</p>${machines.map(m => `<label><input type="checkbox" data-trust-machine value="${e(m.id)}" ${busy ? "disabled" : ""}> ${e(m.label)}</label>`).join("")}<p><label><input type="checkbox" data-trust-confirm ${busy ? "disabled" : ""}> I approve these permissions</label></p><button type="button" class="btn" data-trust-grant ${busy || !machines.length ? "disabled" : ""}>Trust and allow starts</button>${trusted ? `<button type="button" class="btn ghost" data-trust-remove ${busy ? "disabled" : ""}>Remove trust</button>` : ""}<p role="status">${e(status)}</p></details>`;
+    host.querySelector("[data-trust-grant]").onclick = () => {
+      const selected = [...host.querySelectorAll("[data-trust-machine]:checked")].map(input => input.value);
+      if (!host.querySelector("[data-trust-confirm]").checked || !selected.length) {
+        host.querySelector("[role=status]").textContent = "Select machines and approve the permissions first";
+        return;
+      }
+      return save({confirm: true, machines: selected});
+    };
+    const remove = host.querySelector("[data-trust-remove]");
+    if (remove) remove.onclick = () => save({trusted: false});
+  }
+  async function save(body) {
+    if (busy || !active()) return;
+    busy = true; status = ""; render();
+    try {
+      const result = await api(`/api/projects/${encodeURIComponent(project.board)}/orchestrator/trust`, {method: "POST", body});
+      if (active()) { trusted = result.trusted; orchestration.trusted = trusted; status = "Saved"; }
+    } catch { if (active()) status = "Could not save orchestrator permissions"; }
+    finally { busy = false; render(); }
+  }
+  render();
+}
+
 export async function mountProjectReview(host, {project, api, e, current = () => true}) {
   if (!host) return;
   if (!project.can_configure) { host.replaceChildren(); return; }
@@ -970,38 +1003,5 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
     finally { busy = false; render(); }
   }
   await load();
-  render();
-}
-
-export function mountOrchestratorTrust(host, {project, api, e, current = () => true}) {
-  installOrchestrationStyles();
-  const active = () => current() && host.isConnected;
-  const orchestration = project.orchestration;
-  if (!orchestration || !project.can_configure || !project.main.connected) { host.replaceChildren(); return; }
-  let trusted = orchestration.trusted, busy = false, status = "";
-  const machines = orchestration.machines || [];
-  function render() {
-    if (!active()) return;
-    host.innerHTML = `<details class="orchestration-controls"><summary>Orchestrator start permissions</summary><p>Trust lets this seat request starts on selected machines, read permitted project data and repository rules, release and approve cards, annotate cards and stamp trusted submissions. It can view start status and cancel its own starts. It cannot create boards or launch handoffs.</p>${machines.map(m => `<label><input type="checkbox" data-trust-machine value="${e(m.id)}" ${busy ? "disabled" : ""}> ${e(m.label)}</label>`).join("")}<p><label><input type="checkbox" data-trust-confirm ${busy ? "disabled" : ""}> I approve these permissions</label></p><button type="button" class="btn" data-trust-grant ${busy || !machines.length ? "disabled" : ""}>Trust and allow starts</button>${trusted ? `<button type="button" class="btn ghost" data-trust-remove ${busy ? "disabled" : ""}>Remove trust</button>` : ""}<p role="status">${e(status)}</p></details>`;
-    host.querySelector("[data-trust-grant]").onclick = () => {
-      const selected = [...host.querySelectorAll("[data-trust-machine]:checked")].map(input => input.value);
-      if (!host.querySelector("[data-trust-confirm]").checked || !selected.length) {
-        host.querySelector("[role=status]").textContent = "Select machines and approve the permissions first";
-        return;
-      }
-      return save({confirm: true, machines: selected});
-    };
-    const remove = host.querySelector("[data-trust-remove]");
-    if (remove) remove.onclick = () => save({trusted: false});
-  }
-  async function save(body) {
-    if (busy || !active()) return;
-    busy = true; status = ""; render();
-    try {
-      const result = await api(`/api/projects/${encodeURIComponent(project.board)}/orchestrator/trust`, {method: "POST", body});
-      if (active()) { trusted = result.trusted; orchestration.trusted = trusted; status = "Saved"; }
-    } catch { if (active()) status = "Could not save orchestrator permissions"; }
-    finally { busy = false; render(); }
-  }
   render();
 }
