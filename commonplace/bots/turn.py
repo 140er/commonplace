@@ -39,6 +39,7 @@ SENTENCES = {
     "steps": "That needed too many steps, so I stopped here.",
     "too_long": "That is too much for the chat model to read at once. Send a shorter message.",
     "revoked": "You no longer have access to this bot.",
+    "audience": "Someone joined this shared thread while I worked, so I held this answer back.",
 }
 REFUSALS = {
     "not_your_words": "That text is not in your message. Only your own words can be written.",
@@ -117,6 +118,7 @@ class TurnRun:
         self._learned = []  # ids of learned items the sent request carried
         self._model = None
         self._reader = blocks.Reader(gateway, principal)
+        self._turn_state = None  # the tools.Turn, for the audience re-check before the reply
 
     def _put(self, event, data) -> None:
         self.queue.put((event, data))
@@ -199,15 +201,23 @@ class TurnRun:
             self.request_id,
             thread_id=self.thread_id,
         )
+        self._turn_state = turn
         try:
+            shared_thread = turn.audience()
+            reach = turn.effective()
+            if shared_thread is not None:
+                turn.touched.update(reach.projects)  # in the prompt: the audience re-check
             if not self.bot["board"]:  # the projects a model may name; the gate checks each call
-                turn.projects = list(turn.effective().asker)
+                # In a shared thread only what every reader may use is named to the model.
+                turn.projects = list(reach.projects if shared_thread is not None else reach.asker)
         except tools.Gone:
             return "interrupted"
         history = bots.messages(
             self.bot_id, self.user_id, before=self.message["id"], thread_id=self.thread_id
         )
-        memory = bots.memory_for_turn(self.bot_id, self.user_id)
+        if shared_thread is not None:  # nothing a reader joined too late to see
+            history = [m for m in history if m["id"] > shared_thread["floor"]]
+        memory = bots.memory_for_turn(self.bot_id, self.user_id, shared_thread is not None)
         try:
             ctx = context.build(turn, principal, service, history, memory)
         except tools.Gone:
@@ -340,6 +350,7 @@ class TurnRun:
         bots.action_start(self.bot_id, self.user_id, self.key, step, tool.name, _hash(args))
         label, code = f"Used {tool.name}", None
         try:
+            tools.audience_gate(turn, tool, args)
             args = tools.validate(tools.schema_for(tool, turn), args)
             tools.gate(turn, tool, args)  # the project, and a shared bot's access, on every call
             if not self._live():
@@ -421,14 +432,31 @@ class TurnRun:
             blocks=({"type": "confirm", "pending": pending["id"]},),
         ), None
 
+    def _widened(self) -> bool:
+        """Whether a shared-thread turn used a project that someone who reads the thread now may
+        not read (a member joined, or lost access, while it ran). Fails closed."""
+        state = self._turn_state
+        if state is None or not state.touched:
+            return False
+        try:
+            if state.audience() is None:
+                return False
+            return not state.touched <= set(state.effective().projects)
+        except Exception as exc:
+            if not isinstance(exc, tools.Gone):
+                log_failure(logger, "Bot audience not checked", exc)
+            return True
+
     def _finish(self, outcome) -> None:
         if outcome != "revoked" and not self._live():
             outcome = "revoked"  # re-resolved before the reply is stored
-        if outcome == "revoked":
+        if outcome not in ("revoked", "audience") and self._widened():
+            outcome = "audience"  # re-resolved before the reply is stored
+        if outcome in ("revoked", "audience"):
             self._blocks = []  # nothing but the fixed sentence is stored
         else:
             self._flush(final=True)
-        text = self._redacted() if outcome != "revoked" else ""
+        text = self._redacted() if outcome not in ("revoked", "audience") else ""
         code = outcome
         if outcome and outcome != "stopped":
             text = (text + "\n\n" if text else "") + SENTENCES[outcome]

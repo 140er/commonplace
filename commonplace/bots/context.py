@@ -9,7 +9,7 @@ import logging
 import time
 
 from commonplace import redact
-from commonplace.bots import blocks, learned, limits
+from commonplace.bots import access as access_rules, blocks, learned, limits
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 
@@ -93,12 +93,20 @@ def shared_line(access) -> str:
         "tools": sorted(access.tools),
         "machines": bool(access.machines),
     }
-    return (
+    line = (
         "You are shared with a team. For this person you may reach only what your owner granted "
         "and they may use themselves (quoted): "
         + quote(granted)
         + ". Anything else is out of reach; say so plainly, and use my_access to check."
     )
+    if access.audience:
+        line += (
+            " This is a shared thread: several people read every reply, and each may use less than "
+            "the person asking. Use only what is listed above, never name a project that is not "
+            'listed, and answer "I can\'t use that in a shared thread." when asked for anything '
+            "else."
+        )
+    return line
 
 
 def system_prompt(bot, access=None, learned_items=False) -> str:
@@ -232,6 +240,8 @@ def _id(note):
 
 def _learned(turn, access):
     """The person's learned items for this message, or none (a failure never fails the turn)."""
+    if access.audience:
+        return [], 0  # a person's learned items are theirs: never carried into a shared thread
     try:
         found = learned.open_learned(turn.gateway, turn.workspace_id).recall(
             turn.bot["id"],
@@ -262,16 +272,27 @@ def build(turn, principal, service, history, memory) -> Context:
         pass  # a project the person cannot read any more: no snapshot
     if time.monotonic() - started > BUDGET_S:
         snapshot.pop("open_work", None)
-    earlier = [
-        quote(
-            {
-                "from": {"user": "person", "bot": "you", "event": "update"}[message["role"]],
-                "text": message["text"],
-                "at": message["at"],
-            }
-        )
-        for message in reversed(history[-HISTORY_MESSAGES:])
-    ]
+    names = {}
+    if access.audience:  # who wrote what, as other members may see it (quoted data)
+        for author in {m.get("author_id") for m in history[-HISTORY_MESSAGES:]} - {
+            None,
+            turn.user_id,
+        }:
+            names[author] = access_rules.display_name(turn.gateway, author)
+
+    def line(message) -> str:
+        entry = {
+            "from": {"user": "person", "bot": "you", "event": "update"}[message["role"]],
+            "text": message["text"],
+            "at": message["at"],
+        }
+        author = message.get("author_id")
+        if access.audience and message["role"] == "user" and author != turn.user_id:
+            entry["from"] = "another member"  # their words are context, never the asker's
+            entry["name"] = names.get(author, "")
+        return quote(entry)
+
+    earlier = [line(message) for message in reversed(history[-HISTORY_MESSAGES:])]
     return Context(
         system_prompt(turn.bot, access, bool(items or left_out)),
         list(reversed(memory))[:MEMORY_NOTES],

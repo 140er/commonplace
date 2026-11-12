@@ -18,6 +18,8 @@
 
 - **Promises:**
 
+  - Script self-approval defaults to denied unless trusted workspace configuration explicitly allows it, and is rechecked at claim. Taskless scopes remain rejected by the NOT NULL task column. Pre-claim security denials and terminal, uncertain and exit outcomes are audited durably without output or exception text.
+  - Script execution verifies bytes relative to held upload and job descriptors and binds sealed snapshots of code and inputs, so pathname replacement cannot change approved bytes. A small sealing helper uses Python constants or Linux ABI values, verifies all seals and denies before launch if unavailable.
   - Inventory reports current automatic executor availability without opening transport or custody. Approval explicitly authorizes automatic background execution over SSH; it is not a no-dispatch promise. Discovery cancellation shares the queued/claimed/dispatching/uncertain state predicate and distinguishes intent from confirmed termination.
 
   - Script source remains exact and immutable; target uploads reject path/link/digest substitution and durable claims never replay unknown work. Missing mandatory unprivileged containment fails closed, never falls back to host shell.
