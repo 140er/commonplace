@@ -507,3 +507,53 @@ def test_experiment_disallowed_diff_refused(changes):
     with pytest.raises(ConfigError) as info:
         schema.check_experiment(live, exp)
     assert info.value.code == "experiment_not_allowed"
+
+
+def test_fleet_table_is_optional_and_defaults_are_the_product_defaults():
+    config = schema.validate(data())
+    assert config.fleet is None
+    assert config.fleet_rules == schema.Fleet(3, True, True, 2)
+    assert "fleet" not in config.to_dict()
+
+
+def test_fleet_table_overrides_per_field_and_renders_and_diffs():
+    doc = data()
+    doc["fleet"] = {"repair_attempts": 5, "reuse_agents": False}
+    config = schema.validate(doc)
+    assert config.fleet_rules == schema.Fleet(5, True, False, 2)
+    assert config.to_dict()["fleet"] == {
+        "repair_attempts": 5,
+        "route_findings": True,
+        "reuse_agents": False,
+        "agent_cards": 2,
+    }
+    assert "- fleet: repair_attempts 5, route_findings true, reuse_agents false" in schema.render(
+        config
+    )
+    changes = schema.diff(schema.validate(data()), config)
+    assert {change.path for change in changes} == {"fleet"}
+
+
+@pytest.mark.parametrize(
+    "fleet, code",
+    [
+        ({"repair_attempts": 0}, "invalid_value"),
+        ({"repair_attempts": 11}, "invalid_value"),
+        ({"repair_attempts": True}, "wrong_type"),
+        ({"agent_cards": 21}, "invalid_value"),
+        ({"route_findings": "yes"}, "wrong_type"),
+        ({"reuse_agents": 1}, "wrong_type"),
+        ({"surprise": 1}, "unknown_key"),
+    ],
+)
+def test_fleet_table_values_are_validated(fleet, code):
+    doc = data()
+    doc["fleet"] = fleet
+    refused(doc, code)
+
+
+def test_fleet_table_is_not_an_experiment_field():
+    live = schema.validate(data())
+    doc = data()
+    doc["fleet"] = {"repair_attempts": 9}
+    assert schema.experiment_violations(live, schema.validate(doc)) == ["fleet"]

@@ -36,6 +36,14 @@ def main():
     if mode == "bad-json":
         print("not JSON")
         return 0
+    if mode == "leaky":
+        print(
+            "refused: " + os.environ.get("T3_ACP_MCP_AUTHORIZATION", "") + " " + "x" * 60,
+            file=sys.stderr,
+        )
+        return 1
+    if mode == "is-error":
+        print("runtime_mode_escalation_denied", file=sys.stderr)
     result = {
         "isError": mode == "is-error",
         "structuredContent": {"threadId": "demo-thread", "runId": "demo-run", "status": "running"},
