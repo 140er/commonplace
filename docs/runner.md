@@ -10,6 +10,13 @@ Only a signed-in person owner can enroll, attest, change grants, rotate credenti
 
 Coordinators are CLI-created trusted PATs explicitly listed in the machine's `requesters`; OAuth and ordinary standard or untrusted connections do not qualify. A start checks both the requester's card access and whether the worker could claim the unassigned, released `todo` card on a board whose wing is in the machine's grant. It does not assign or claim the card.
 
+Persistent orchestrator sessions use a separate job and thread binding from
+per-card starts. The existing runner loop watches boards with owner-accepted
+`[runner]` configs, without a `card.todo` trigger or splitting switch. See
+[persistent board sessions](orchestrator.md#persistent-board-session) for owner
+stop/resume, explicit blockers and uncertainty handling. No service is activated
+automatically and the host retains its existing credential scope.
+
 The worker PAT bounds tools and wing access: it reads and writes exactly the wings in its machine grant (the first is its default write wing) and nothing else, through any tool. A start on a board outside the grant is refused with `no: card is not startable: outside_worker_wing: board wing '<wing>' is not in the machine's granted wings '<a>', '<b>'`. Its tools are `task_show`, `task_take_next`, `task_update`, `task_comment`, `task_heartbeat`, `task_handoff` and `ask`; it cannot coordinate starts or perform owner actions. The fixed `SPAWN_MESSAGE` tells the agent to claim only the requested card, stop if refused, and touch no other card. Card scope from the spawn message is guidance only. A worker can claim any startable todo card on a granted wing's boards. Also, a card manually assigned to the worker by an owner remains editable outside its granted wings under the existing assigned-card rule. The runner never assigns cards.
 
 ### Card context in the launch message

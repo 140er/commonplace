@@ -949,7 +949,7 @@ optional `reviewer` argument to `task_add` and `task_update`.
 
   - Without a runner or subscribed `card.created` webhook, a new card waits for the orchestrator's next session.
 
-  - An always-running orchestrator is separate work.
+  - An accepted live `[runner]` with `session = true` enables a persistent session through the existing machine runner loop, without requiring a `card.todo` trigger; configs without the key are unchanged and no service is activated automatically.
 
   - Splitting and inbox behavior are not introduced by this switch.
 
@@ -1344,7 +1344,7 @@ playbooks and the original wider orchestration acceptance remain separate work.
   the selected `launch_role` in an additive runner column, so later switch
   changes cannot change a queued job's launch instructions. Messages include
   inbox context; the agent creates missing stable keys and marks completion.
-- Each runner sweep reconciles eligible roots older than 10 minutes with no
+- Each trigger-enabled runner sweep reconciles eligible roots older than 10 minutes with no
   active/started job. Retry keys are `split-retry:<card>:<n>`; gaps are 10, 30,
   90 minutes and n is bounded to 3. Attempts (including refusals) use the existing
   `orch_misses` log with negative event ids. Eligibility and attempt number are
@@ -1359,8 +1359,8 @@ playbooks and the original wider orchestration acceptance remain separate work.
   return `409 busy` without mutation. No external service is called.
 - Without a runner, card delivery uses a subscribed `card.created` webhook
   plus the inbox at the next session. Without either, a new card waits for that
-  session. Continuous orchestration, done/stuck routing and runner-job events
-  remain separate work. Stable keys are the agent's responsibility; changing
+  session. Runner-owned persistent board sessions are described below; richer
+  done/stuck routing and runner-job events remain separate work. Stable keys are the agent's responsibility; changing
   keys after a crash can create additional children.
 
 - `runner.sqlite3`: runner jobs with pinned launch role; orchestrator configs, cursors, leases, steps, journal, retry attempts, restore flag
