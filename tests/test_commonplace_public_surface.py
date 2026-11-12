@@ -29,6 +29,9 @@ EXACT = {
     ("PUT", "/api/settings/orchestration"): "authenticated",
     ("GET", "/api/holds"): "authenticated",
     ("GET", "/api/topology"): "authenticated",
+    ("GET", "/api/learned"): "authenticated",
+    ("GET", "/api/learning/settings"): "authenticated",
+    ("PATCH", "/api/learning/settings"): "authenticated",
     ("GET", "/api/topology/route"): "authenticated",
     ("POST", "/api/holds"): "authenticated",
     ("GET", "/.well-known/oauth-protected-resource"): "public",
@@ -163,7 +166,8 @@ PREFIX = {
     ("GET", "/app/static/"): "public",
     ("POST", "/api/console/agents/"): "authenticated",
     ("GET", "/api/chat/"): "authenticated",
-    **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT")},
+    **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT", "PATCH")},
+    **{(method, "/api/learned/"): "authenticated" for method in ("GET", "PATCH", "DELETE")},
 }
 BUILTIN = {
     ("GET", "/health"): "public",
