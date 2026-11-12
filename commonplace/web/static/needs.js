@@ -1,6 +1,7 @@
 import { api as request, escape as e } from "./api.js";
 import { detailsAuthor, detailsContext } from "./details.js";
 import { cardId } from "./board.js";
+import { decisionBlocksHTML } from "./decision-blocks.js";
 
 const enc = encodeURIComponent;
 const exact = (text) => e(text).replaceAll("\r", "&#13;");
@@ -204,7 +205,9 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const disabled = busy ? " disabled" : "";
   const confirmTag = phone ? "dialog" : "div";
   const noteBox = canAnswer && (release || proposal || allowed("answer")) ? `<label class="lbl">${release ? "Origin release reason" : "Note to the orchestrator"} <span class="help">${release ? "Required, up to 500 characters." : "Optional. Sent with your answer."}</span><textarea data-needs-note rows="1" placeholder="e.g. Send at 09:00 tomorrow"${release ? ' required maxlength="500"' : proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
-  const decisions = !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
+  // A structured ask shows its options side by side in the body; a plain ask keeps its footer buttons.
+  const blocks = !proposal && kind === "decision" && allowed("answer") && canAnswer ? decisionBlocksHTML(card, { disabled: busy }) : "";
+  const decisions = !blocks && !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
   // The shell's existing handlers carry these: Accept, and recovery for a card whose claim ran out.
   const shellButton = (action, label, tone = "") => allowed(action) ? `<button class="btn${tone}" data-action="need-${action}" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>${label}</button>` : "";
   // A plan is approved directly; only a proposal's approval waits as a hold.
@@ -214,7 +217,7 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const direct = proposal ? shellButton("reject", "Decline", " danger") : originAction + plan + shellButton("accept", "Accept", " primary") + recovery;
   const open = recovery ? `<a class="btn" href="#/card/${e(card.number)}">Answer</a>` : `<a class="btn" href="${kind === "decision" ? `#/decide/${e(card.number)}` : `#/card/${e(card.number)}`}">${kind === "review" ? "Open review" : "Open card"}</a>`;
   const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the orchestrator 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `${direct ? `<div class="acts">${direct}</div>` : ""}<div class="decide-acts">${decisions}${open}${ask}</div>` : ask;
-  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${badge(card, kind)}</span><span>${e(board.name || board.slug)}${asked(card) ? ` · asked ${asked(card)}` : ""}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${githubControls(card, github, busy)}${actions}</footer></section>`;
+  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${badge(card, kind)}</span><span>${e(board.name || board.slug)}${asked(card) ? ` · asked ${asked(card)}` : ""}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${blocks}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${githubControls(card, github, busy)}${actions}</footer></section>`;
 }
 
 // The shell owns routing, sheet modality and chat. All requests use the shared JSON api.
@@ -494,6 +497,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (event.key.toLowerCase() === "r") { event.preventDefault(); event.stopPropagation?.(); ask(); }
     else if (event.key.toLowerCase() === "z" && holdState(currentHold(), now()).canStop) { event.preventDefault(); event.stopPropagation?.(); void stopHold(currentHold().id); }
     else if (["j", "k"].includes(event.key.toLowerCase())) {
+      // An open form holds the panel and the keyboard until it is cancelled or saved.
+      if (detailMount?.querySelector("form.form-tile")) return;
       const rows = items(), index = rows.findIndex((card) => card.number === selected);
       const next = rows[Math.max(0, Math.min(rows.length - 1, index + (event.key.toLowerCase() === "j" ? 1 : -1)))];
       if (next) { event.preventDefault(); event.stopPropagation?.(); paused = false; void select(next.number); }
@@ -504,6 +509,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     rememberNote(); filter = value;
     const rows = items();
     if (!rows.some((card) => card.number === selected)) {
+      // The selection leaves with the filter, so a form held for it no longer belongs on screen.
+      paused = false;
       if (rows.length) return select(rows[0].number);
       revision++; selected = null; current = null; confirming = false;
     }
@@ -541,7 +548,16 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     },
     select, setFilter, approve, approvePlan, confirm, decline, answer, stopHold, ask, refreshHolds,
     setChatOpen(open) { rememberNote(); chatOpen = Boolean(open); drawDetail(); },
-    pause(on) { if (paused === Boolean(on)) return; paused = Boolean(on); if (!paused) drawDetail(); },
+    pause(on) {
+      if (paused === Boolean(on)) return;
+      paused = Boolean(on);
+      if (paused) return;
+      // A closed panel stays closed: the next pick reads the card, and a read must not reopen it.
+      if (detailMount?.hidden) { drawDetail(); return; }
+      // A read that failed while the form held the panel would leave a bare placeholder: read the selection again.
+      if (current == null && selected != null) void select(selected);
+      else { drawDetail(); focus("[data-needs-title]"); }
+    },
     paused: () => paused,
     stop() {
       stopped = true; github = null; revision++; unschedule(timer);

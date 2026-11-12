@@ -1,4 +1,4 @@
-/** Read-first workspace administration, with independently bounded section loads. */
+/** Read-first workspace administration, with independently bounded section loads. The one write is the owner's machine requester list. */
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Agents and connections',
   runtime: 'Orchestrators and runners/machines', limits: 'Agent limits',
@@ -27,9 +27,9 @@ export async function boundedRequest(api, path, { timers = globalThis, signal } 
   }
 }
 
-export function createAdmin({ mount, api, e, current, timers = globalThis }) {
-  let host = null, workspace = null, epoch = 0, live = false, instanceBlocked = false;
-  const sections = new Map(), requests = new Map(), generations = new Map();
+export function createAdmin({ mount, api, e, current, runners = null, timers = globalThis }) {
+  let host = null, body = null, workspace = null, epoch = 0, live = false, instanceBlocked = false;
+  const sections = new Map(), requests = new Map(), generations = new Map(), writing = new Set(), notes = new Map();
   const owner = () => current()?.can_admin === true;
   const eligible = () => live && owner() && current()?.workspace === workspace;
   const operational = key => ['deploy','health','backups','backup-online','backup-offline'].includes(key);
@@ -53,7 +53,55 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     html += '<h3>Registered machines</h3><p>Contact records activity, not runner liveness. Owner attestation is not verified.</p>';
     html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Binding', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.enabled ? 'enabled' : 'disabled', `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, `${r.max_in_flight} in flight; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
     if (machines.state === 'ready' && machines.error) html += sourceError('runtime', 'Machines', machines);
+    if (machines.state === 'ready') html += requesterContent(machines);
     return html;
+  }
+
+  // Owner-only: who may ask a machine to start work. Each change names one agent; the server re-checks the owner and vets an addition.
+  function requesterContent(machines) {
+    const unrevoked = (machines.items || []).filter(r => !r.revoked_at);
+    if (!unrevoked.length) return '';
+    const offered = machines.requester_candidates || [];
+    const button = (action, machine, ref, text, name) => `<button type="button" class="btn" data-admin-section="runtime" data-admin-action="${action}" data-admin-machine="${e(machine)}" data-admin-requester="${e(ref)}" aria-label="${e(text)} ${e(name)}"${writing.has(machine) ? ' disabled' : ''}>${e(text)}</button>`;
+    return '<h3>Machine requesters</h3><p>Requesters are the trusted agents allowed to ask a machine to start work. Only a workspace owner can change them. Each Add or Remove changes that one agent and leaves the rest of the list as stored.</p>' + unrevoked.map(r => {
+      const chosen = r.requesters || [], addable = offered.filter(c => !chosen.some(n => n.id === c.id));
+      const name = n => n.name || n.id;
+      return `<div data-admin-machine="${e(r.id)}"><h4>${value(r.label)}</h4>` +
+        (chosen.length ? `<ul>${chosen.map(n => `<li>${value(name(n))}${n.state === 'active' ? '' : ' (inactive)'} ${button('requester-remove', r.id, n.id, 'Remove', name(n))}</li>`).join('')}</ul>` : '<p>No requesters.</p>') +
+        (r.requesters_total > chosen.length ? `<p>Showing ${e(chosen.length)} of ${e(r.requesters_total)} requesters; the rest stay as stored.</p>` : '') +
+        (addable.length ? `<ul>${addable.map(c => `<li>${value(c.name)} ${button('requester-add', r.id, c.id, 'Add', c.name)}</li>`).join('')}</ul>` : '<p>No other trusted agents to add.</p>') +
+        (machines.requester_candidates_more ? `<p>Showing the first ${e(offered.length)} trusted agents.</p>` : '') +
+        (notes.has(r.id) ? `<p role="status">${e(notes.get(r.id))}</p>` : '') + '</div>';
+    }).join('');
+  }
+
+  async function changeRequesters({ adminAction: action, adminMachine: machine, adminRequester: ref }) {
+    const row = sections.get('runtime')?.data?.machines?.items?.find(r => r.id === machine);
+    if (!eligible() || !row || row.revoked_at || !ref || writing.has(machine)) return;
+    const pageEpoch = epoch;
+    writing.add(machine); notes.delete(machine); render();
+    try {
+      // One agent at a time: the server applies it to the stored list, never to the list this page shows.
+      // If-Match carries the grant version this page read; a newer one means another edit came first.
+      const base = `/api/runners/${encodeURIComponent(machine)}/requesters`, headers = { 'If-Match': String(row.grant_version) };
+      const result = await (action === 'requester-add'
+        ? api(base, { method: 'POST', body: { requester: ref }, headers, timeoutMs: 10000 })
+        : api(`${base}/${encodeURIComponent(ref)}`, { method: 'DELETE', headers, timeoutMs: 10000 }));
+      // The answer carries the machine's new version, so a second edit before the reload is not stale.
+      // A read that landed meanwhile replaced the rows, so look the machine up again and keep the larger version.
+      const stored = sections.get('runtime')?.data?.machines?.items?.find(r => r.id === machine);
+      if (stored && Number.isInteger(result?.grant_version)) stored.grant_version = Math.max(stored.grant_version, result.grant_version);
+      notes.set(machine, result?.changed === false ? (action === 'requester-add' ? 'Already a requester.' : 'Already removed.') : 'Requesters saved.');
+    } catch (error) {
+      notes.set(machine, error.status === 403 ? 'a signed-in workspace owner is required'
+        : error.status === 409 ? 'This machine changed since the page loaded. The list was reloaded; try again.'
+        : 'Could not save requesters. Try again.');
+    } finally { writing.delete(machine); }
+    if (epoch !== pageEpoch || !live) return;
+    render();
+    // A read already in flight predates this edit; drop it so the reload below shows the new list.
+    requests.get('runtime')?.abort(); requests.delete('runtime');
+    void refreshSection('runtime');
   }
 
   function limitsContent(data) {
@@ -114,7 +162,7 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
 
   function render() {
     if (!host || !live) return;
-    host.innerHTML = `<div class="admin settings"><p class="admin-workspace">${e(current().workspace_name || '')}</p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
+    (body || host).innerHTML = `<div class="admin settings"><p class="admin-workspace">${e(current().workspace_name || '')}</p><a href="#/settings">Manage agents and workspace settings</a>${Object.entries(SECTIONS).map(([key, title]) => {
       if (!sections.has(key)) return '';
       if (key === 'deploy') return `<section class="settings-section" data-admin-section="deploy"><h2>${e(title)}</h2>${panel('deploy')}${panel('health')}</section>`;
       return `<section class="settings-section" data-admin-section="${key}" aria-busy="${requests.has(key)}"><h2>${e(title)}</h2>${key === 'stuck' ? '<h3>Needs-me</h3>' + panel('needs') + '<h3>Stuck facts</h3>' : ''}${panel(key)}</section>`;
@@ -124,12 +172,13 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
   function stop() {
     live = false; epoch++;
     for (const request of requests.values()) request.abort();
-    requests.clear(); sections.clear(); generations.clear();
+    requests.clear(); sections.clear(); generations.clear(); writing.clear(); notes.clear();
     host?.removeEventListener('click', click);
     globalThis.document?.removeEventListener('session-expired', stop);
     globalThis.document?.removeEventListener('signout', stop);
+    runners?.stop();
     if (host) host.innerHTML = '';
-    workspace = null;
+    body = null; workspace = null;
   }
 
   function refreshSection(key, { more = false, list = null, cursor: requestedCursor } = {}) {
@@ -221,6 +270,7 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     const button = event.target.closest('[data-admin-action]');
     if (!button) return;
     const { adminSection: key, adminAction: action, adminList: list } = button.dataset;
+    if (action === 'requester-add' || action === 'requester-remove') { void changeRequesters(button.dataset); return; }
     void refreshSection(key, action === 'retry' ? sections.get(key)?.retry ?? {} : { more: action === 'more', list });
   }
 
@@ -229,6 +279,12 @@ export function createAdmin({ mount, api, e, current, timers = globalThis }) {
     if (!host) return;
     if (!owner()) { host.innerHTML = '<p role="status">a signed-in workspace owner is required</p>'; return; }
     workspace = current().workspace; live = true; instanceBlocked = false;
+    // The runner block sits beside the refreshing sections so its form and one-time tokens survive their redraws.
+    if (runners) {
+      host.innerHTML = '<div data-admin-body></div><div data-admin-runners></div>';
+      body = host.querySelector('[data-admin-body]');
+      runners.show(host.querySelector('[data-admin-runners]'));
+    }
     for (const key of ['users', 'connections', 'runtime', 'limits', 'stuck', 'needs']) sections.set(key, { data: null, error: '', restricted: false });
     for (const key of ['deploy','health','backups','backup-online','backup-offline']) sections.set(key, { data:null, error:instanceOwner() ? '' : 'Instance administrator access required', restricted:!instanceOwner() });
     host.addEventListener('click', click);

@@ -24,7 +24,7 @@ function shell({ base = "#/needs", paused = true } = {}) {
   const state = { base, screen: 1, needsUI: { paused: () => paused, pause: (value) => pauses.push(value) },
     workbenchChat: { board: { slug: "atlas" }, dock: { close() {}, backToChat() {} } } };
   const context = {
-    state, e, enc: encodeURIComponent, panel,
+    state, e, enc: encodeURIComponent, panel, onNeeds: () => state.base === "#/needs" || state.base === "#/",
     voice: { stop() {} }, api: async () => ({}), detailsUI: null,
     currentBoard: () => ({ slug: "atlas" }),
     root: { querySelector: (selector) => selector === "#card-panel" ? panel : selector === ".shell" ? layout : null },

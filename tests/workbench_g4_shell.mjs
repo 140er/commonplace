@@ -14,7 +14,10 @@ function slice(start, end) {
 }
 const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const apiUrl = url(await read('api.js'));
-const module = async (name) => import(url((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl))));
+const linksUrl = url(await read('cardlinks.js'));
+// A data: module cannot resolve "./x.js": every other sibling import loads from its file.
+const siblings = (source) => source.replace(/(from\s*)(['"])\.\/([\w-]+\.js)\2/g, (_all, from, _quote, name) => from + JSON.stringify(new URL(`../commonplace/web/static/${name}`, import.meta.url).href));
+const module = async (name) => import(url(siblings((await read(`${name}.js`)).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiUrl)).replace(/(['"])\.\/cardlinks\.js\1/g, JSON.stringify(linksUrl)))));
 const e = (v) => String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const board = { slug: 'alpha', name: 'Alpha' };
 const state = { me: { actor: 'user:one', people: { 'user:one': 'One' } }, boards: [board], needs: {}, base: '#/board/alpha', route: '#/board/alpha',
@@ -25,7 +28,7 @@ const nodes = {};
 for (const selector of ['#content', '#card-panel', '#title', '#head-actions', '.shell']) nodes[selector] = node();
 const root = { querySelector: (s) => nodes[s] || null, querySelectorAll: () => [], addEventListener() {} };
 let titleActions = '';
-const context = { root, state, e, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
+const context = { root, state, e, placeLifecycle: () => {}, mountProjectPanel: async () => {}, enc: encodeURIComponent, document: { activeElement: null }, location: { hash: state.route }, history: { state: null, replaceState(_s, _t, hash) { context.location.hash = hash; } },
   matchMedia: () => ({ matches: false }), remember: () => ({}), restore() {}, markOpenCard() {}, title(_text, actions) { titleActions = actions; }, voice: { stop() {} }, showError() {}, message: (text) => text };
 const run = (s) => runInNewContext(s, context);
 // The shell's board helpers (child cards, phone width); a shell without them only lists state.cards.
@@ -146,7 +149,7 @@ if (which === 'details-button') {
   let paused = null;
   root.addEventListener = (type, fn) => { handlers[type] = fn; };
   state.base = '#/needs'; state.needsUI = { pause: (on) => { paused = on; } };
-  Object.assign(context, { consoleUI: null, api() {}, currentBoard: () => board, settingsOptions: projects.settingsOptions,
+  Object.assign(context, { consoleUI: null, api() {}, onNeeds: () => state.base === '#/needs' || state.base === '#/', currentBoard: () => board, settingsOptions: projects.settingsOptions,
     refresh: async (options) => { refreshes.push(JSON.parse(JSON.stringify(options))); },
     injected: async (host, options) => mounted.push(options) });
   run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));
