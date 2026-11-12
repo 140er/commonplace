@@ -54,10 +54,17 @@
   - `docs/project-panels.md` documents the project panel file format, limits and routes.
 
 - **Promises:**
+  - Project documentation and the project routes table describe the four model roles and the owner-only escalation rule.
+
+  - The handoff guide counts rooms and diary topics naming a thread through a link, mcp: form, embedded or fullwidth ID, or a resolving T3 source ID as that thread's room.
+
+  - The handoff guide uses generic agent, provider and model placeholders and names the T3 home directory rather than a host-specific variable.
 
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
 
   - `docs/mvp/CONTRACT.md` documents the instance index figures contract and its unknown-reason codes.
+
+  - `docs/agent-connections.md` also explains granting and withdrawing `bots:chat` and `bots:confirm` for a member's own app.
 
   - Admin documentation covers all seven sections, bootstrap capability fallback, canonical receipt timestamps and parent/mode refresh ordering.
 
