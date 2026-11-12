@@ -104,7 +104,7 @@ def inject(env, stored_id):
         )
 
 
-# ── B6: every refusal fixture of §3 ──
+# ── every refusal fixture refuses without a filer lookup ──
 def test_b6_every_refusal_fixture_refuses_without_filer_lookup(env, cont, monkeypatch):
     c = cont
     records = [native(word=str(i)) for i in range(3)]
