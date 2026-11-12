@@ -18,7 +18,7 @@ import sys
 import time
 from typing import Iterable, Iterator, Optional
 
-from ..lexical import bm25_scores, tokenize
+from ..lexical import tokenize
 from ..stored_text import (
     FLAG,
     INDEX_SPANS,
@@ -327,7 +327,7 @@ def not_bookkeeping_sql(conn, row_id: str = "e.id") -> str:
     )
 
 
-# Most in-scope full-text matches the candidate pickers below read.
+# Most full-text matches the candidate pickers below read, best-ranked first.
 _FTS_SCAN_CAP = 50_000
 # A metadata filter matching at most this many drawers is evaluated by reading
 # those drawers' text instead of ranking the whole full-text match set.
@@ -391,12 +391,11 @@ def _fts_candidate_rows(
     ``chroma.sqlite3``'s full-text index uses the trigram tokenizer, so a
     query term matches inside other words: ``aven`` hits ``haven't`` and
     ``Avenue``, and a short name can have tens of thousands of such matches.
-    Read at most ``_FTS_SCAN_CAP`` matches in FTS rank order (documents
-    matching more query terms first). With a ``filter_sql`` scope they are the
-    newest in-scope matches, ordered by local BM25, because FTS rank uses the
-    statistics of unreadable rows too; a scope with more matches than the cap
-    drops its oldest ones before that ordering. The pool is picked by
-    :func:`_whole_words_first`. ``filter_sql`` is appended to the
+    Taking the first ``limit`` matches in storage order handed the whole-word
+    BM25 re-rank the oldest substring hits, so the drawers that actually say
+    ``Aven`` never reached it. Matches are read in FTS rank order (documents
+    matching more query terms first), at most ``_FTS_SCAN_CAP`` of them, and
+    picked by :func:`_whole_words_first`. ``filter_sql`` is appended to the
     WHERE clause and may refer to ``embedding_fulltext_search.rowid``.
     ``stop_words`` are left out of the full-text query: they match nearly
     every drawer and would make the ranking score the whole palace.
@@ -415,26 +414,10 @@ def _fts_candidate_rows(
     """
     params = (" OR ".join(tokens), collection_name, *filter_params)
     words = set(tokens)
-    # FTS5's rank weighs terms by whole-index counts, so a search restricted by
-    # ``filter_sql`` must not order or cut its candidates by it: unreadable rows
-    # would shape the order. A restricted search reads the newest in-scope
-    # matches and orders that pool by local BM25. An unrestricted one reads
-    # everything anyway and keeps the index's own rank.
-    restricted = bool(filter_sql.strip())
     ranked = conn.execute(
-        match_sql
-        + (
-            " ORDER BY embedding_fulltext_search.rowid DESC LIMIT ?"
-            if restricted
-            else " ORDER BY embedding_fulltext_search.rank LIMIT ?"
-        ),
+        match_sql + " ORDER BY embedding_fulltext_search.rank LIMIT ?",
         (*params, _FTS_SCAN_CAP),
     ).fetchall()
-    if restricted and limit is not None and len(ranked) > limit:
-        # Everything in scope is picked anyway when it fits the limit, so only
-        # a larger pool needs ordering. The scores read just this pool.
-        scores = bm25_scores(query, [text or "" for _, text in ranked], stop_words=stop_words)
-        ranked = [row for _, row in sorted(zip(scores, ranked), key=lambda item: -item[0])]
     result = CandidateRows(_whole_words_first(ranked, tokens, limit))
     if len(ranked) < _FTS_SCAN_CAP:
         return result
@@ -1420,8 +1403,15 @@ def sqlite_diary_rows(
     agent_name: str,
     wing=(),
     limit: int = 10,
-) -> Optional[tuple[int, list[tuple[str, Optional[str], dict]]]]:
+    exclude_topics=None,
+    topics_limit=None,
+) -> Optional[tuple[int, list]]:
     """Count physical diary rows and hydrate only the newest ``limit`` rows.
+
+    ``exclude_topics`` skips rows whose decoded ``topic`` is listed before
+    counting and windowing. ``topics_limit`` instead returns ``(total,
+    topics)``: the distinct decoded topics, newest first, at most
+    ``topics_limit + 1`` of them so a caller can detect overflow.
 
     All reads share one SQLite snapshot. Rows order by the instant in
     ``filed_at``, newest first; missing timestamps sort last, with storage
@@ -1489,6 +1479,23 @@ def sqlite_diary_rows(
             # Ordered here, not in SQL: text order is not instant order across
             # naive local and UTC timestamps. One agent's diary is small.
             stamped = conn.execute("SELECT e.id, stamp.string_value " + scope, params).fetchall()
+            # An empty exclusion list leaves the page unchanged; skip the decode.
+            if topics_limit is not None or exclude_topics:
+                ids = [row_id for row_id, _ in stamped]
+                metas = _decoded_rows(conn, ids, with_row_ids=True, metadata_only=True)
+                if len(metas) != len(ids):
+                    return None
+                topic = {row_id: (metas[row_id][2] or {}).get("topic", "") for row_id in ids}
+                if topics_limit is not None:
+                    found = []
+                    for row_id, _ in _newest_first(stamped):
+                        if topic[row_id] not in found:
+                            found.append(topic[row_id])
+                            if len(found) > topics_limit:
+                                break
+                    return total, found
+                stamped = [row for row in stamped if topic[row[0]] not in exclude_topics]
+                total = len(stamped)
             selected = [row_id for row_id, _ in _newest_first(stamped)[:limit]]
             rows = _decoded_rows(conn, selected)
             return total, _scalar_rows(rows)
