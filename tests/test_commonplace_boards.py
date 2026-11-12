@@ -21,7 +21,12 @@ from tests._commonplace_helpers import (
 )
 
 CARD_KEYS = set(
-    "task_type escalated_to review_context claim_expired_at claim_expired agent_parent proposal_status proposed_to approved_by can_approve review_kind number parent board title body status assignee claim_until ask ask_options ask_to return_to flags repo branch pr_url pr_number pr_state pr_head pr_reported_at checks status_line heartbeat_at labels links version created_by created_at updated_at position need message_id restricted".split()
+    "task_type priority can_prioritize reviewer can_set_reviewer escalated_to review_context claim_expired_at claim_expired agent_parent proposal_status proposed_to approved_by can_approve review_kind number parent board title body status assignee claim_until ask ask_options ask_blocks ask_to return_to flags repo branch pr_url pr_number pr_state pr_head pr_reported_at checks status_line heartbeat_at labels paths links version created_by created_at updated_at position need message_id restricted".split()
+)
+
+# Added to every card read through the service or REST; the needs-me buckets do not carry them.
+LIFECYCLE_KEYS = set(
+    "final archived archived_at archived_by follow_up_of follow_ups pocket can_archive can_restore can_follow_up can_pocket".split()
 )
 
 
@@ -112,7 +117,7 @@ def test_card_shape_metadata_and_routes(hub, env):
         "/api/boards/work/cards",
         {"title": "Exact\nwords", "body": "  keep all words\n", "labels": ["backend"]},
     )
-    assert status == 201 and set(created) == CARD_KEYS | {"url"}
+    assert status == 201 and set(created) == CARD_KEYS | LIFECYCLE_KEYS | {"url"}
     assert created["created_by"] == agent.actor
     assert created["repo"] == "github.com/140er/mempalace"
     number = created["number"]
@@ -131,7 +136,7 @@ def test_card_shape_metadata_and_routes(hub, env):
             "status_line": "Testing",
         },
     )
-    assert status == 200 and set(updated) == CARD_KEYS | {"url"}
+    assert status == 200 and set(updated) == CARD_KEYS | LIFECYCLE_KEYS | {"url"}
     assert updated["pr_url"] == "https://github.com/140er/mempalace/pull/12"
     assert updated["heartbeat_at"] and updated["claim_until"]
     assert updated["body"] == "  keep all words\n" and updated["labels"] == ["backend"]
@@ -1452,7 +1457,7 @@ def test_link_api_and_seed_all_statuses(hub, env):
             branch="feat/seed",
             pr_url="https://github.com/org/repo/pull/7",
         )
-        assert set(current) == CARD_KEYS and current["status"] == status
+        assert set(current) == CARD_KEYS | LIFECYCLE_KEYS and current["status"] == status
         assert current["labels"] == ["seed"] and current["pr_number"] == 7
         changes = owner.store.changes
         repeat = owner.seed_card(board="new", title=status, status="todo", body="ignore repeat")
@@ -1693,8 +1698,17 @@ def test_expired_version_conflict_returns_committed_card(hub, env):
     )
     assert status == 409 and conflict["current"]["status"] == "doing"
     actual = owner.task_show(created["number"])
-    assert {key: actual[key] for key in CARD_KEYS} == {
-        k: v for k, v in conflict["current"].items() if k != "url"
+    # Flags that depend on who reads the card, not on the card.
+    reader = {
+        "can_prioritize",
+        "can_set_reviewer",
+        "can_pocket",
+        "can_archive",
+        "can_restore",
+        "can_follow_up",
+    }
+    assert {key: actual[key] for key in (CARD_KEYS | LIFECYCLE_KEYS) - reader} == {
+        k: v for k, v in conflict["current"].items() if k not in {"url", *reader}
     }
     assert actual["title"] == "Expired version"
 
@@ -2006,7 +2020,11 @@ def test_other_agents_cannot_move_review(hub, env, surface, needs_review, member
                 {"version": before["version"], "status": status},
             )
             assert code == 403
-        assert "card is waiting on a person" in str(refused)
+        if surface == "rest" and status == "done":  # The REST Done refusal explains itself.
+            assert refused["code"] == "done_refused" and refused["next_step"], refused
+            assert "waiting for a person's decision" in refused["error"], refused
+        else:
+            assert "card is waiting on a person" in str(refused)
         assert owner.task_show(number) == before
         assert number in {card["number"] for card in owner.needs_me()["asks"]}
 
@@ -2277,7 +2295,7 @@ def test_stale_person_decide_after_review_edit_is_a_version_clash(hub, env):
     assert event["kind"] == "card.decided" and event["actor"] == person.actor
 
 
-def test_public_review_creation_is_person_directed_and_agent_handoff_stays_todo(hub, env):
+def test_without_coordinator_reviews_are_person_directed_and_agent_handoff_stays_todo(hub, env):
     _token, agent, person, _cookie, _owner = env
     worker = service(hub, agent)
     hub.owner_token("review-recipient")
@@ -2325,15 +2343,16 @@ def test_trusted_review_return_withdraws_agent_ask(
 ):
     _token, agent, _person, _cookie, owner = env
     token, principal, worker = review_worker(hub, member=True)
+    owner.board_set("work", principal.actor)
     requester = worker if relation == "requester" else service(hub, agent)
     ask_text += " Which approach should we take?"
     waiting = requester.ask(ask_text, board="work", context=REVIEW_CONTEXT, options=REVIEW_OPTIONS)
     number = waiting["number"]
-    recipient = agent.actor if relation == "requester" else principal.actor
+    recipient = principal.actor
     if relation == "assignee-other-agent":
         peer = hub.owner_token("review-recipient")
         recipient = hub.gateway.authenticate(f"Bearer {peer}").actor
-    # Agent-directed reviews have no public creation path yet.
+    # Historical assignees never grant authority to withdraw another requester's ask.
     with owner.store.transaction() as conn:
         conn.execute(
             "UPDATE tasks SET ask_to=?,assignee=? WHERE id=?",
@@ -2347,6 +2366,22 @@ def test_trusted_review_return_withdraws_agent_ask(
     args = {"status": status, "title": "After feedback", "checks": "pending"}
     if reason is not None:
         args["reason"] = reason
+    if relation != "requester":
+        if surface == "mcp":
+            assert not mcp(hub, token, "task_update", task=number, **args)[0]
+        else:
+            assert (
+                api(
+                    hub,
+                    token,
+                    "PATCH",
+                    f"/api/cards/{number}",
+                    {"version": before["version"], **args},
+                )[0]
+                == 403
+            )
+        assert owner.task_show(number) == before
+        return
     if surface == "mcp":
         assert mcp(hub, token, "task_update", task=number, **args)[0]
     else:
@@ -2400,7 +2435,8 @@ def test_trusted_review_return_withdraws_agent_ask(
 
 def test_review_withdrawal_empty_reason_is_null(hub, env):
     _token, agent, _person, _cookie, owner = env
-    _token, _principal, worker = review_worker(hub)
+    _token, principal, worker = review_worker(hub)
+    owner.board_set("work", principal.actor)
     waiting = worker.ask(
         "Future agent review Which approach should we take?",
         board="work",
@@ -2408,8 +2444,6 @@ def test_review_withdrawal_empty_reason_is_null(hub, env):
         options=REVIEW_OPTIONS,
     )
     number = waiting["number"]
-    with owner.store.transaction() as conn:
-        conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (agent.actor, number))
     worker.task_update(number, status="todo", reason="")
     with owner.store.connection() as conn:
         event = conn.execute(
@@ -2526,7 +2560,7 @@ def test_review_assignee_cannot_complete_another_requesters_card(hub, env):
         {"scopes": ["memory:read"]},
     ],
 )
-def test_review_feedback_requires_trusted_board_writer(hub, env, policy):
+def test_review_feedback_preserves_profile_access_without_withdrawal_authority(hub, env, policy):
     _token, agent, _person, _cookie, owner = env
     token, principal, worker = review_worker(hub, **policy)
     waiting = service(hub, agent).ask(
@@ -2547,7 +2581,7 @@ def test_review_feedback_requires_trusted_board_writer(hub, env, policy):
         {"status": "todo"},
         {"status": "doing"},
     ):
-        if not principal.policy.has_scope("memory:write"):
+        if not principal.policy.has_scope("memory:write") or "status" in args:
             with pytest.raises(ToolError):
                 worker.task_update(waiting["number"], **args)
             assert not mcp(hub, token, "task_update", task=waiting["number"], **args)[0]
@@ -2558,7 +2592,7 @@ def test_review_feedback_requires_trusted_board_writer(hub, env, policy):
     if not principal.policy.has_scope("memory:write"):
         assert owner.task_show(waiting["number"]) == before
     else:
-        assert owner.task_show(waiting["number"])["status"] == "doing"
+        assert owner.task_show(waiting["number"])["status"] == "review"
 
 
 @pytest.mark.parametrize(
@@ -2591,15 +2625,14 @@ def test_review_feedback_keeps_other_update_fields_blocked(hub, env, args):
 @pytest.mark.parametrize("reason", [None, 12, [], {"text": "no"}])
 def test_review_withdrawal_validates_reason_before_mutation(hub, env, reason):
     _token, agent, _person, _cookie, owner = env
-    token, _principal, worker = review_worker(hub)
+    token, principal, worker = review_worker(hub)
+    owner.board_set("work", principal.actor)
     waiting = worker.ask(
         "Agent feedback Which approach should we take?",
         board="work",
         context=REVIEW_CONTEXT,
         options=REVIEW_OPTIONS,
     )
-    with owner.store.transaction() as conn:
-        conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (agent.actor, waiting["number"]))
     before = owner.task_show(waiting["number"])
     emitted = events.after(hub.db, hub.workspace)
     assert not mcp(hub, token, "task_update", task=waiting["number"], status="todo", reason=reason)[
@@ -2614,6 +2647,7 @@ def test_review_withdrawal_validates_reason_before_mutation(hub, env, reason):
 def test_withdrawal_reason_migrates_existing_history_and_preserves_invariant(hub, env):
     _token, agent, _person, _cookie, owner = env
     _token, principal, worker = review_worker(hub)
+    owner.board_set("work", principal.actor)
     waiting = worker.ask(
         "  Original ask\n Which approach should we take?",
         board="work",
@@ -2622,7 +2656,6 @@ def test_withdrawal_reason_migrates_existing_history_and_preserves_invariant(hub
     )
     number = waiting["number"]
     with owner.store.transaction() as conn:
-        conn.execute("UPDATE tasks SET ask_to=? WHERE id=?", (agent.actor, number))
         conn.execute("ALTER TABLE task_events DROP COLUMN reason")
         original = [dict(row) for row in conn.execute("SELECT * FROM task_events ORDER BY id")]
     restarted = service(hub, principal)

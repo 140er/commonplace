@@ -15,7 +15,8 @@ import time
 from datetime import datetime, timezone
 
 from .. import urls
-from ..control_db import Principal
+from ..control_db import ControlError, Principal
+from ..decide_grant import DECIDE_SCOPE
 from ..policy import Policy
 from .http import OAuthError
 
@@ -23,7 +24,15 @@ ACCESS_SECONDS = 3600
 REFRESH_SECONDS = 90 * 86400
 CODE_SECONDS = 300
 REQUEST_SECONDS = 600
-SCOPES = ("memory:read", "memory:write", "memory:import", "memory:import:read")
+SCOPES = (
+    "memory:read",
+    "memory:write",
+    "memory:import",
+    "memory:import:read",
+    "cards:decide",
+    "bots:chat",
+    "bots:confirm",
+)
 OAUTH_DEFAULT_SCOPES = ("memory:read", "memory:write")
 
 SCHEMA = """
@@ -120,6 +129,14 @@ def scope(value: str | None) -> str:
     return " ".join(sorted(set(requested)))
 
 
+def conn_role(conn, principal):
+    row = conn.execute(
+        "SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?",
+        (principal.workspace_id, principal.user_id),
+    ).fetchone()
+    return row["role"] if row else None
+
+
 def _live_connection(conn, connection_id):
     row = conn.execute(
         "SELECT c.*, u.email AS user_email, u.disabled_at AS user_disabled, m.role "
@@ -150,7 +167,47 @@ def _revoke(conn, connection_id):
     )
 
 
+def revoke_connection(db, connection_id: str, *, actor_id: str, workspace_id: str) -> None:
+    """An owner cuts off one OAuth-connected client: the connection, its unredeemed
+    codes and every access and refresh token, in one transaction.
+
+    Nothing the client wrote is touched; the connection row stays as history.
+    """
+    with db._lock, db._tx() as conn:
+        row = conn.execute(
+            "SELECT id, workspace_id FROM connections "
+            "WHERE id = ? AND workspace_id = ? AND auth = 'oauth'",
+            (connection_id, workspace_id),
+        ).fetchone()
+        if row is None:
+            raise ControlError("no such OAuth connection")
+        db.require_owner(workspace_id, actor_id)
+        _revoke(conn, connection_id)
+        conn.execute(
+            "UPDATE oauth_codes SET used_at = COALESCE(used_at, ?) WHERE connection_id = ?",
+            (now(), connection_id),
+        )
+        db.audit(
+            action="token.revoke",
+            decision="ok",
+            workspace_id=workspace_id,
+            user_id=actor_id,
+            connection_id=connection_id,
+            auth="oauth",
+        )
+
+
+def _live_scope(conn, grant) -> str:
+    """The granted scopes the connection still holds now (owner role applied)."""
+    row = _live_connection(conn, grant["connection_id"])
+    live = set(Policy.from_json(row["policy"]).for_role(row["role"]).scopes) if row else set()
+    return " ".join(s for s in grant["scope"].split() if s in live)
+
+
 def _issue(conn, grant) -> dict:
+    # Issue and advertise only what is live, so a withdrawn or lost scope never
+    # reappears in a response or in the stored token rows a later refresh copies.
+    grant = dict(grant, scope=_live_scope(conn, grant))
     access = "cmmn_at_" + secrets.token_urlsafe(32)
     refresh = "cmmn_rt_" + secrets.token_urlsafe(48)
     for secret, kind, lifetime in (
@@ -198,6 +255,17 @@ def _guess_client(client_row) -> str:
 
 
 def create_code(conn, client_row, principal, parameters) -> str:
+    granted = set(parameters["scope"].split())
+    if granted & {"bots:chat", "bots:confirm"} and not (
+        principal.person and ("bots:confirm" not in granted or "bots:chat" in granted)
+    ):
+        # Consent already drops an unticked grant; never mint one for anything but a person.
+        raise OAuthError("invalid_scope")
+    if DECIDE_SCOPE in parameters["scope"].split() and not (
+        principal.person and conn_role(conn, principal) == "owner"
+    ):
+        # Consent already drops an unticked or ineligible grant; never mint it otherwise.
+        raise OAuthError("invalid_scope")
     cid = "conn_" + secrets.token_hex(8)
     slug = re.sub(r"[^a-z0-9]+", "-", client_row["client_name"].lower()).strip("-")[:80] or "client"
     while True:
@@ -362,7 +430,7 @@ class OAuthAuthenticator:
             # A narrowed refresh must also narrow what its access token can do.
             policy_data = json.loads(policy.to_json())
             policy_data["scopes"] = [s for s in policy.scopes if s in token["scope"].split()]
-            policy = Policy.from_json(json.dumps(policy_data))
+            policy = Policy.from_json(json.dumps(policy_data)).for_role(row["role"])
             return Principal(
                 user_id=row["user_id"],
                 user_email=row["user_email"],

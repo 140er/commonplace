@@ -57,7 +57,7 @@ def test_admin_owner_cold_reload_retry_and_responsive_navigation(hub, chromium, 
         expect(page.get_by_text("workspace-agent", exact=True)).to_be_visible()
         page.reload(wait_until="domcontentloaded")
         expect(page.get_by_text("workspace-agent", exact=True)).to_be_visible()
-        assert page.locator(".admin section").count() == 7
+        assert page.locator(".admin section").count() == 8
         expect(page.get_by_text("Running commit unknown", exact=True)).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         if width < 700:
@@ -245,7 +245,7 @@ def test_admin_operational_subpanels_retry_independently(hub, chromium, width):
         expect(page.get_by_text("Gateway reachable", exact=True)).to_be_visible()
         assert health_calls == 2
         assert len([url for _, url in reads if url.endswith("/instance/deploy")]) == 1
-        assert page.locator(".admin section").count() == 7
+        assert page.locator(".admin section").count() == 8
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert all(method == "GET" for method, url in reads if "/api/" in url)
         assert not errors
