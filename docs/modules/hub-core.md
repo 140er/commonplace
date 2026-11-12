@@ -54,6 +54,8 @@
 
   - Every launched worker gets `MALLOC_ARENA_MAX=2` unless the operator sets a non-empty value, which caps the number of glibc malloc arenas its request threads use. This limits allocator retention under concurrent calls only; first-load memory of the index and model is unchanged.
 
+  - `MEMPALACE_EAGER_WARMUP` applies only to directly launched workers (stdio or a local server). Gateway-launched workers exclude it from their environment, even when set on the gateway or container. It remains outside `_PASSED_ENV`.
+
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 
   - The private-chat list_rooms branch also uses list_drawers validation and reports list_drawers errors; its own public schema declares only wing, and legacy extra filters remain accepted.

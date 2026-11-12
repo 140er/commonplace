@@ -63,6 +63,26 @@ CREATE TABLE IF NOT EXISTS card_splits (
  state TEXT NOT NULL CHECK(state IN ('split','kept')),
  by TEXT NOT NULL, at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chat_task_origins (
+ actor TEXT NOT NULL,
+ origin_key TEXT NOT NULL,
+ request_digest TEXT NOT NULL,
+ task_id INTEGER NOT NULL REFERENCES tasks(id),
+ PRIMARY KEY(actor, origin_key)
+);
+"""
+
+# One row while a card is snoozed (``commonplace.snooze``): until a time (UTC stamp) or until
+# another card is done. Waking deletes the row, so a wake happens once.
+SNOOZE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS card_snoozes (
+ task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+ until TEXT, timezone TEXT,
+ after_card INTEGER REFERENCES tasks(id),
+ by TEXT NOT NULL, at TEXT NOT NULL,
+ CHECK ((until IS NULL) != (after_card IS NULL))
+);
+CREATE INDEX IF NOT EXISTS card_snoozes_due ON card_snoozes(until);
 """
 
 
@@ -432,6 +452,7 @@ class BoardStore:
                 + BLOCKERS_SCHEMA
                 + LIFECYCLE_SCHEMA
                 + GOALS_SCHEMA
+                + SNOOZE_SCHEMA
             )
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -528,6 +549,16 @@ class BoardStore:
 
     @contextmanager
     def connection(self):
+        from commonplace.compute.fence import _attach_connection, _mutation
+
+        # Acquire before SQLite and before any callback into ControlDB._lock.
+        with _mutation(self.path):
+            with self._connection() as conn:
+                _attach_connection(conn, self.path, "boards")
+                yield conn
+
+    @contextmanager
+    def _connection(self):
         target = self.path if self.create else Path(self.path).resolve().as_uri() + "?mode=rw"
         with GATE.creating(self.path):
             conn = connect(

@@ -48,6 +48,7 @@
   - The card panel's Runs section (`cardruns.js`) lists the card's start jobs with Cancel and the owner's Resolve choice, and offers the owner a Start agent control fed by the options route, with plain words for each refusal.
 
   - The cookie-authenticated web app and the live console, including the owner orchestration switch, project seat-consent controls and default agent-limit display.
+  - The project agent-limit stepper spans 1 to 100.
 
   - The chat pane's live delivery block (`chatlive.js`, mounted by `chat.js`): one line per server state with owner or member wording, shown in place of the timed "Working on it…" guess whenever the chat page carries `live`.
 
@@ -64,6 +65,11 @@
   - Compute execution evidence is escaped and distinguishes observed exit from uncertain cancellation or stored consent; control metadata is escaped and responses are fenced to the exact session/workspace/actor/route; ambiguous mutations require reconciliation and approval never implies dispatch.
   - Coworker controls wait for both conversation and bot-directory reads; text is escaped, input lengths match backend bounds, mutation calls use same-origin JSON, and the original project chat remains reachable.
   - Coworker message authors follow `actor`: a human row's `bot_id` remains its recipient; only the exact matching bot actor receives a bot name, badge and styling.
+  - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
+
+  - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
+
+  - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
   - The Admin runner wing editor loads its picker from `GET /api/runners/wings` under a client deadline; on failure it keeps granted wings ticked and accepts typed wing names. `GET /api/connections` gets its wing names from the same index read (`workspace_wing_names` in `web/agents.py`).
 

@@ -58,8 +58,15 @@ def _page(h, content: str, *, status=200, headers=(), form_origin=None) -> None:
     )
 
 
+# Private-use redirect of the cmmn iOS app (RFC 8252 section 7.1): this exact string only, never a
+# scheme or pattern. Clients here are public and PKCE S256 is required for every authorization.
+NATIVE_REDIRECTS = frozenset({"cmmn://auth/callback"})
+
+
 def _redirect_origin(uri) -> str | None:
     """Serialize parsed URL parts, never untrusted authority text, into CSP."""
+    if uri in NATIVE_REDIRECTS:
+        return urlsplit(uri).scheme + ":"
     try:
         parts = urlsplit(uri)
         host = parts.hostname
@@ -103,7 +110,7 @@ def _valid_redirect(uri) -> bool:
         or any(ord(c) <= 32 or ord(c) >= 127 for c in uri)
     ):
         return False
-    return _redirect_origin(uri) is not None
+    return uri in NATIVE_REDIRECTS or _redirect_origin(uri) is not None
 
 
 def _register(db, data: dict) -> dict:
@@ -116,7 +123,8 @@ def _register(db, data: dict) -> dict:
         raise OAuthError(
             "invalid_redirect_uri",
             "Use HTTPS or loopback HTTP with a valid DNS hostname or canonical IPv4 address "
-            "and optional numeric port; IPv6 and empty ports are not supported",
+            "and optional numeric port; IPv6 and empty ports are not supported. "
+            "The only native redirect is cmmn://auth/callback",
         )
     name = data.get("client_name", "Application")
     if (
@@ -250,6 +258,8 @@ def _show_authorize(gateway, h, *, status=200):
     hidden = f'<input type="hidden" name="request" value="{escape(request, quote=True)}">'
     action = escape(authorize_path, quote=True)
     form_origin = _redirect_origin(parameters["redirect_uri"]) if principal else None
+    native = parameters["redirect_uri"] in NATIVE_REDIRECTS
+    destination = parameters["redirect_uri"] if native else form_origin
     if principal:
         workspace = gateway.db.workspace(principal.workspace_id)["name"]
         consent = ""
@@ -291,7 +301,7 @@ def _show_authorize(gateway, h, *, status=200):
                 )
         content = (
             f"<h1>{escape(client['client_name'])}</h1><p>{escape(workspace)}</p>"
-            f"<p>Code destination: {escape(form_origin, quote=True)}</p>"
+            f"<p>Code destination: {escape(destination, quote=True)}</p>"
             f'<form method="post" action="{action}">{hidden}{consent}'
             '<button name="decision" value="allow">Allow</button>'
             '<button name="decision" value="deny">Deny</button></form>'

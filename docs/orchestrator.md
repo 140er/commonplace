@@ -7,8 +7,10 @@ settings and the `todo` trigger. Commonplace's own runner (see
 prompt, workflow and model and records the config version and model on every
 job. For other harnesses the rendered config is advisory.
 
-Nothing changes for a board until its owner accepts a live config with a
-`[runner]` table. Decisions, numbers and residuals are in `SYSTEM.md`.
+A board has no attached host until its owner accepts a live config with a
+`[runner]` table. Adding `session = true` to that table opts the board into a
+persistent board session, independently of `[[triggers]]` and the workspace
+splitting switch. Without it the board behaves as before: no session, no wake. Decisions, numbers and residuals are in `SYSTEM.md`.
 
 ## The config
 
@@ -23,7 +25,7 @@ with the standard library from Python 3.11 and with `tomli` on 3.10.
 schema = "commonplace.orchestrator/1"
 project = "example-shop"
 [limits]
-max_agents = 3                 # config-driven starts; min with the project limit
+max_agents = 3                 # 1-100; config-driven starts; min with the project limit
 [roles.main]
 kind = "orchestrator"
 harness = "t3"
@@ -59,6 +61,7 @@ role = "builder"
 machine = "mach_0123456789abcdef"
 project = "example"
 runtime_mode = "approval-required"
+session = true                 # optional, default false: opt in to a persistent board session
 [[triggers]]
 on = "card.todo"               # live channel only
 ```
@@ -284,6 +287,9 @@ Inside it, in this order:
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with
    `at_cap` when workspace orchestration is off, or `project_limit` when on.
+   `max_agents` accepts 1 to 100. The effective number of concurrent starts is
+   also bounded by the machines: `max_in_flight`, one agent per project, and
+   the runner's memory guard (see [runner.md](runner.md)).
    Voided steps do not exempt their jobs from capacity accounting.
 5. **Insert** the step row and the runner job, with the existing guards: one
    active start per card, and a non-person start within 24 h is refused
@@ -308,13 +314,19 @@ and recent-start guards still apply. These are existing limits of admission.
 
 ## Triggers
 
-Only boards with an accepted live `[runner]` config are swept, on each wake-up
+Automatic per-card starts require an accepted live `[runner]` config with a `card.todo`
+trigger. Those boards are swept on each wake-up
 and on each runner lease. The sweep reads committed `task_events` after the
 board's cursor and fires when a card moves into `todo` from another status
 (`add`, `move`, `decide`), on the plan-approval row and on an origin release
 (`decide` with choice `release origin`), so a restricted-origin card that waited
 in `todo` starts once it is released. An event emission that failed after
 commit is still found.
+
+Without that trigger, a config that opted into a session (`session = true`)
+skips both the per-card event sweep and bounded split-root reconciliation: no
+automatic per-card starts or split retries are created. A config without
+`session = true` keeps its earlier sweep behaviour unchanged. The persistent board session still watches and continues independently.
 
 - **Cursor.** Accepting a config that adds `[runner]` commits the board's
   cursor as unset with a new generation; arming then sets it to the current
@@ -356,6 +368,73 @@ commit is still found.
   reconciliation (three attempts at 10, 30 and 90 minutes). A card left in
   `exhausted` or `refused` stays in the checkpoint's unstarted list; move it to
   `todo` again to start it.
+
+## Persistent board session
+
+The machine runner owns one session record per board in `runner_sessions`,
+separate from `runner_jobs` and from role leases. Its regular polling pass
+watches board state without a webhook or `card.todo` trigger. It launches the
+sole parentless orchestrator role into the accepted runner's machine/project,
+with that role's topic, prompt, workflow and resolved model. It retains the
+returned thread ID and sends continuations to that same thread.
+
+A card is actionable unless it is done, has an unresolved `task_blockers`
+dependency, or has a person-directed ask. Blocked cards expose their dependency
+names or question in the project response. Backlog, unfinished split children,
+Doing and other Review cards still count; capacity limits are not blockers.
+When a host turn ends, the hub checks the entire board again. Actionable cards
+schedule continuation; otherwise the session becomes idle. A later new card or
+unblocked card wakes an idle session. A clear idle board causes no host calls
+and no model turns. Running threads are inspected without sending model input.
+
+`GET /api/projects/<board>` includes session state, reason and pending command.
+Only workspace owners receive the thread ID, actionable card numbers and
+blocker details; non-owner projections omit those fields. An absent
+accepted `[runner]` is `no_host`, with reason `no host attached`; a `[runner]`
+without `session = true` is `no_host` with reason `sessions not enabled`. No
+machine is chosen implicitly. `unavailable` reports withdrawn grants or changed config,
+binding or model instead of claiming the orchestrator is running.
+
+Signed-in owners can POST `{}` to
+`/api/projects/<board>/orchestrator/stop` or `/resume`. Stop persists across
+polls and new cards until explicit resume. `stopping` means interruption is
+pending; `stopped` is distinct from idle. A stop racing a launch retains the
+in-flight acknowledgement so its thread can be interrupted. Neither an agent
+seat nor a worker token gains owner or requester authority.
+
+The machine-only `POST /api/runner/sessions/lease`, `/starting` and `/result`
+protocol leases one fenced command at a time. Fresh accepted config, its
+accepting owner's current requester identity, machine binding/epoch, grants,
+wing access and model selection are checked before host effects. Restore
+markers and flags refuse commands. Launches, continuations and stops have a
+local replay journal: ambiguous effects become `uncertain`, never automatically
+replayed or cleared by resume. Owner stop preserves the uncertainty marker,
+including for a subsequent resume. Config/binding/model changes also fail closed.
+
+A lease pass filters configs by the requesting machine before reading board
+cards, and skips unavailable boards individually. Archived or missing boards
+cannot starve another board or machine. If a board disappears before a command
+starts, the command closes without a host effect. If it disappears during a
+turn, the result is still acknowledged and the local journal is cleared. An
+observed finished/stopped thread becomes idle/stopped; a possibly running thread
+retains its binding and becomes uncertain. Prior uncertainty and owner stop
+remain durable. Status reports `unavailable` without thread or card details;
+control refuses an already missing board but acknowledges a stop committed
+before its disappearance. Storage failures still fail closed and retain results
+for retry. Invalid local session journals are
+quarantined. Session journal, transport or command failures are isolated from
+per-card leasing in the same runner pass.
+
+A local command refusal sends `sessions/result` with `outcome="refused"` and a
+known `code` while the command is still leased, before any host effect. The
+project session then reports `unavailable` and that reason. Refusals are fenced
+and journaled; they cannot replace an already-starting or uncertain result.
+
+Recovery/rebinding after ambiguity or changed configuration, runner service
+activation, richer owner UI, and coordination beyond the host's existing
+credential scope remain follow-up work. The runner must already be running;
+this feature does not enroll machines, activate a service, change credentials
+or grant access. Session commands do not reserve per-card worker slots.
 
 ## Durable orchestrator
 

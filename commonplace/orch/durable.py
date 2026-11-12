@@ -68,6 +68,7 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
 from commonplace.runner import jobs, registry
 from commonplace.runner.predicate import requester_ok
+from commonplace.snooze import store as snooze
 
 from . import store as orch_store
 
@@ -1316,8 +1317,10 @@ def unstarted_todo(ctx, st, board_row) -> list[dict]:
         cards = conn.execute(
             "SELECT t.id, t.title, t.priority, (SELECT e.created_at FROM task_events e "
             f"WHERE e.task_id=t.id AND {FIRING_EVENT} ORDER BY e.id DESC LIMIT 1) AS boundary "
-            "FROM tasks t WHERE t.board_id=? AND t.status='todo' ORDER BY t.priority, t.id",
-            (board_row["id"],),
+            "FROM tasks t WHERE t.board_id=? AND t.status='todo' AND NOT "
+            + snooze.snoozed_sql("t")
+            + " ORDER BY t.priority, t.id",
+            (board_row["id"], snooze.now_stamp()),
         ).fetchall()
     if not cards:
         return []
