@@ -63,6 +63,14 @@ PIN_JOB_KEYS = {
 }
 
 
+def session_config_text(machine, **kwargs):
+    """A triggerless config that opts into a persistent board session."""
+    text = config_text(machine, **kwargs).split("[[triggers]]")[0]
+    return text.replace(
+        'runtime_mode = "approval-required"', 'runtime_mode = "approval-required"\nsession = true'
+    )
+
+
 def config_text(
     machine,
     *,

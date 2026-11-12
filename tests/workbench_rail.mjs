@@ -20,14 +20,15 @@ switch (process.argv[2]) {
     assert.deepEqual(hrefs(primary), ['#/bots', '#/memory']);
     assert.deepEqual(links(primary).map(text), ['Bots 2', 'Memory']);
     for (const gone of ['#/needs', '#/console', '#/boards', '#/board/', 'rail-h', 'new-project', 'new-board', 'class="proj"']) assert.ok(!primary.includes(gone), gone);
-    // The Workspace group: Projects, Needs me, Console, in that order, then the existing entries.
+    // The Workspace group: Projects, Needs me, Console and, for the owner, Compute map, in that order, then the existing entries.
     const menu = html.match(/<div class="user-links">([\s\S]*?)<\/div><\/details>/)[1];
     const group = menu.match(/<div class="menu-group"[^>]*>([\s\S]*?)<\/div>/)[1];
     assert.match(menu, /<div class="menu-group" role="group" aria-label="Workspace">/);
     assert.match(group, /Workspace</);
-    assert.deepEqual(hrefs(group), ['#/boards', '#/needs', '#/console']);
-    assert.deepEqual(links(group).map(text), ['Projects', 'Needs me 3', 'Console']);
-    assert.deepEqual(hrefs(menu), ['#/boards', '#/needs', '#/console', '#/rules', '#/settings', '#/admin']);
+    assert.deepEqual(hrefs(group), ['#/boards', '#/needs', '#/console', '#/compute-map']);
+    assert.deepEqual(links(group).map(text), ['Projects', 'Needs me 3', 'Console', 'Compute map']);
+    assert.deepEqual(hrefs(menu), ['#/boards', '#/needs', '#/console', '#/compute-map', '#/rules', '#/settings', '#/admin']);
+    assert.ok(!rail.renderRail({ ...options, can_admin: false }).includes('#/compute-map'), 'the map is the owner\'s');
     assert.ok(!/\bBoards?\b/.test(text(html)), 'the new navigation says Projects, not Boards');
     break;
   }
@@ -49,8 +50,8 @@ switch (process.argv[2]) {
     const bar = rail.renderPhoneBar({ ...options, can_admin: true });
     assert.match(bar, /<details class="m-menu"><summary[^>]*aria-label="Menu"/);
     const group = bar.match(/<div class="menu-group"[^>]*>([\s\S]*?)<\/div>/)[1];
-    assert.deepEqual(hrefs(group), ['#/boards', '#/needs', '#/console']);
-    assert.deepEqual(hrefs(bar), ['#/boards', '#/needs', '#/console', '#/rules', '#/settings', '#/admin']);
+    assert.deepEqual(hrefs(group), ['#/boards', '#/needs', '#/console', '#/compute-map']);
+    assert.deepEqual(hrefs(bar), ['#/boards', '#/needs', '#/console', '#/compute-map', '#/rules', '#/settings', '#/admin']);
     assert.match(bar, /data-action="palette"/);
     assert.match(bar, /data-action="logout"/);
     assert.ok(!bar.includes('switch-project') && !bar.includes('m-settings'), 'no project switcher outside project screens');
@@ -58,6 +59,7 @@ switch (process.argv[2]) {
     assert.match(project, /Project: Atlas. Switch project/);
     assert.match(project, /aria-label="Settings"/);
     assert.ok(!rail.renderPhoneBar({ can_admin: false }).includes('#/admin'));
+    assert.ok(!rail.renderPhoneBar({ can_admin: false }).includes('#/compute-map'));
     break;
   }
   case 'counts': {

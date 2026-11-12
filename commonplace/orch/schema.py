@@ -183,6 +183,7 @@ class Runner:
     machine: str
     project: str
     runtime_mode: str
+    session: bool = False  # opt-in persistent board session; off unless the config sets it
 
 
 @dataclass(frozen=True)
@@ -271,6 +272,8 @@ class Config:
             out["mcps"] = {name: _mcp_dict(self.mcps[name]) for name in sorted(self.mcps)}
         if self.runner is not None:
             out["runner"] = dataclasses.asdict(self.runner)
+            if not self.runner.session:
+                del out["runner"]["session"]
         if self.triggers:
             out["triggers"] = [{"on": t.on} for t in self.triggers]
         if self.fleet is not None:
@@ -319,6 +322,7 @@ _ROLE_KEYS = (
 )
 _RUNNER_KEYS = ("role", "machine", "project", "runtime_mode")
 _FLEET_KEYS = ("repair_attempts", "route_findings", "reuse_agents", "agent_cards")
+_RUNNER_OPTIONAL_KEYS = ("session",)
 _SAFE_KEY = re.compile(r"[A-Za-z0-9_-]{1,40}")
 _SECRET_KEY_NAME = re.compile(
     r"(?i)password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
@@ -659,12 +663,16 @@ def _roles(value: object, workflows: Mapping, mcps: Mapping) -> dict[str, Role]:
 
 
 def _runner(value: object, roles: Mapping[str, Role]) -> Runner:
-    body = _table(value, "runner", _RUNNER_KEYS, _RUNNER_KEYS)
+    body = _table(value, "runner", _RUNNER_KEYS + _RUNNER_OPTIONAL_KEYS, _RUNNER_KEYS)
+    session = body.get("session", False)
+    if not isinstance(session, bool):
+        raise ConfigError("wrong_type", "runner.session", "must be true or false")
     runner = Runner(
         role=_str(body["role"], "runner.role", NAME),
         machine=_str(body["machine"], "runner.machine", MACHINE_ID),
         project=_str(body["project"], "runner.project", PROJECT),
         runtime_mode=_str(body["runtime_mode"], "runner.runtime_mode", choices=RUNTIME_MODES),
+        session=session,
     )
     role = roles.get(runner.role)
     if role is None:
