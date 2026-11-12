@@ -380,12 +380,8 @@ HANDLERS = {
 }
 
 
-def _audit(gateway, h, app, tool):
-    """One row per write request made through an app connection: ids and the outcome only.
-
-    The outcome is the status actually sent; a request that dies before answering counts as 500.
-    """
-    status = h._bots_status
+def _audit(gateway, h, app, tool, status):
+    """One row per write request made through an app connection: ids and the outcome only."""
     gateway.db.audit(
         action=bots_grant.AUDIT_WRITE,
         decision="ok" if status < 400 else "refused" if status < 500 else "error",
@@ -402,13 +398,15 @@ def _guarded(gateway, h, run, tool="", scope=None):
     if principal is None:
         return
     app = auth.app(h)
-    write = app is not None and h.command != "GET"
-    if write:
-        h._bots_status = 500  # until a response is actually sent
+    recorded = []
+    if app is not None and h.command != "GET":
         send_response = h.send_response
 
         def remember(code, *args):
-            h._bots_status = code
+            # Recorded when the status is sent, so the row exists before the client sees it.
+            if not recorded:
+                recorded.append(code)
+                _audit(gateway, h, app, tool, code)
             return send_response(code, *args)
 
         h.send_response = remember
@@ -428,8 +426,9 @@ def _guarded(gateway, h, run, tool="", scope=None):
     except TimeoutError:
         _error(h, 429, "busy", "Busy, try again")
     finally:
-        if write:
-            _audit(gateway, h, app, tool)
+        if app is not None and h.command != "GET" and not recorded:
+            recorded.append(500)  # died before answering; the gateway's 500 adds no second row
+            _audit(gateway, h, app, tool, 500)
 
 
 # Tails that need more than bots:chat from an app connection.
