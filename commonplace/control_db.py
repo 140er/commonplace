@@ -243,7 +243,7 @@ _DECIDE_DEMOTE_TRIGGER = f"""
 
 
 class ControlDB:
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, compute_config=None):
         self.path = path
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
@@ -306,6 +306,12 @@ class ControlDB:
             os.chmod(path, 0o600)
         except OSError:
             pass
+        # Explicit service startup configuration only. Ordinary constructors,
+        # requests and imports neither provision keys nor enable execution.
+        if compute_config is not None:
+            from .compute import _configure_control
+
+            _configure_control(self, compute_config)
 
     def add_pre_close_callback(self, callback: Callable[[], None]) -> None:
         """Register an owned resource to stop before SQLite closes."""
@@ -328,20 +334,32 @@ class ControlDB:
             with self._lock:
                 self._conn.close()
                 self._closed = True
+            coordinator = getattr(self, "_compute_coordinator", None)
+            if coordinator is not None and getattr(self, "_compute_shutdown_complete", True):
+                coordinator.close()
             self._pre_close.clear()
             if error is not None:
                 raise error
 
     def _tx(self):
         conn = self._conn
+        lock = self._lock
 
         class _Tx:
             def __enter__(self_inner):
-                conn.execute("BEGIN IMMEDIATE")
+                lock.__enter__()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                except BaseException:
+                    lock.__exit__(None, None, None)
+                    raise
                 return conn
 
             def __exit__(self_inner, exc_type, exc, tb):
-                conn.execute("ROLLBACK" if exc_type else "COMMIT")
+                try:
+                    conn.execute("ROLLBACK" if exc_type else "COMMIT")
+                finally:
+                    lock.__exit__(exc_type, exc, tb)
                 return False
 
         return _Tx()
@@ -1003,6 +1021,7 @@ class ControlDB:
         reason: str = "",
         wing: Optional[str] = None,
         target_ids: Iterable[str] = (),
+        recorded_at=None,
     ) -> int:
         """Append one entry and return its sequence number. Ids and decisions only."""
         ids = [str(t)[:200] for t in target_ids if t][:500]
@@ -1011,7 +1030,7 @@ class ControlDB:
                 "INSERT INTO audit_log(at, workspace_id, user_id, connection_id, auth, action, "
                 "tool, decision, reason, wing, target_ids) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    _iso(_now()),
+                    _iso(recorded_at if recorded_at is not None else _now()),
                     workspace_id,
                     user_id,
                     connection_id,
@@ -1064,6 +1083,27 @@ class ControlDB:
                     row, user_id or row["user_id"], bots_grant.AUDIT_REVOKE, scope, reason
                 )
             return True
+
+    def audit_bounded(self, context, **fields):
+        """Append through the coordinated writer with one remaining request budget."""
+        if not self._lock.acquire(timeout=context.remaining()):
+            raise TimeoutError()
+        try:
+            conn = self._conn
+            previous = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            try:
+                wait = int(context.remaining() * 1000)
+                conn.execute(f"PRAGMA busy_timeout={wait}")
+                conn.set_progress_handler(
+                    lambda: int(context.clock.monotonic() >= context.deadline), 100
+                )
+                self.audit(recorded_at=context.now, **fields)
+                context.remaining()
+            finally:
+                conn.set_progress_handler(None, 0)
+                conn.execute(f"PRAGMA busy_timeout={previous}")
+        finally:
+            self._lock.release()
 
     def audit_entries(self, workspace_ref: Optional[str] = None, limit: int = 100) -> list:
         sql = "SELECT * FROM audit_log"

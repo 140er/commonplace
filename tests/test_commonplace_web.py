@@ -45,6 +45,7 @@ def test_login_cookie_identity_replay_and_logout(hub):
     assert json.loads(body) == {
         "can_admin": True,
         "can_admin_instance": True,
+        "can_manage_instance": True,
         "user": hub.admin,
         "email": "owner@example.com",
         "workspace": hub.workspace,

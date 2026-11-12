@@ -135,21 +135,25 @@ def install(gateway):
     def me(h):
         principal = require_principal(gateway, h)
         if principal is not None:
+            from commonplace.instance_admin import flag
+
             from . import admin
 
             try:
-                can_instance = admin.instance_authorized(
-                    gateway, principal, admin.ReadContext(gateway.admin_clock)
-                )
+                context = admin.ReadContext(gateway.admin_clock)
+                can_instance = admin.instance_authorized(gateway, principal, context)
+                can_manage = flag(gateway, principal, context)
             except Exception as exc:
                 log_failure(LOG, "Admin capability unavailable", exc)
                 can_instance = False
+                can_manage = False
             send_json(
                 h,
                 200,
                 {
                     "can_admin": principal.person and principal.role == "owner",
                     "can_admin_instance": can_instance,
+                    "can_manage_instance": can_manage,
                     "user": principal.user_id,
                     "email": principal.user_email,
                     "workspace": principal.workspace_id,
@@ -267,6 +271,7 @@ def install(gateway):
         )
 
     from .. import capacity
+    from ..topology import node_panel as topology_node
     from . import admin, agents, goals, invites, task_types
 
     admin.install(gateway)
@@ -275,6 +280,7 @@ def install(gateway):
     agents.install(gateway)
     task_types.install(gateway)
     goals.install(gateway)
+    topology_node.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)
     gateway.add_route("POST", "/app/logout", logout)
@@ -282,6 +288,9 @@ def install(gateway):
     gateway.add_route("GET", "/api/plan", plan)
     gateway.add_route("GET", "/api/events", feed)
     gateway.add_route("GET", "/api/connections", connections)
+    from . import instance_admin
+
+    instance_admin.install(gateway)
     gateway.add_prefix_route("GET", "/app/", _static)
 
 

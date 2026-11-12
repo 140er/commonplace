@@ -8,6 +8,7 @@
   - Thread-ID canonicalisation regressions refuse every non-canonical reviewer form at filing and successor registration, accept T3-shaped IDs, hide legacy rows on every read, and bound the store queries of a 500-drawer batch.
 
   - Card path-contract regressions: glob overlap rules, refusal against running cards with mutation-pinned guards, and the Spaces tool-schema snapshot for `task_update(paths)`.
+  - Fourteen metadata-console regression families over genuine HTTP sessions/connections and synthetic isolated stores.
 
   - Compute production-JS tests exercise finite payloads, escaping, approval states, idempotent proposals and session/navigation isolation.
   - Coworker store/API/controller/runtime isolation tests and optional real Chromium journey through the full app and gateway with synthetic blocked providers; no operator data or real provider calls.
@@ -37,6 +38,8 @@
   - `tests/conftest.py` refuses a raw pytest run (exit 4 at configure) on a shared test host that opts in with `~/.config/commonplace/require-test-runner` in the real account home; the marker names the environment variable the host's test runner sets for admitted runs. xdist workers pass; `COMMONPLACE_ALLOW_RAW_PYTEST=1` overrides one run. `tests/test_raw_pytest_guard.py` pins the cases.
 
   - `tests/test_commonplace_agent_log.py` and `tests/test_commonplace_agent_log_sync.py` cover agent-log capture, provenance, idempotent retry and a non-reader of the private chat; the protected-reference producer matrix includes the agent-log source.
+
+  - `tests/test_topology_proposals.py` covers the topology write path through the real gateway (see the topology block); `tests/spaces_surfaces.json` pins `topology_propose` for the standard and full profiles, and the checked REST shapes in `tests/test_commonplace_rules_enforce.py` include its route.
 
   - `tests/test_chat_model_stream.py` runs the streaming model transport against loopback fake Anthropic and OpenAI-compatible servers; `tests/test_bots_turn.py` drives bot turns over real HTTP with a scripted model and one loopback fake provider.
 
@@ -147,6 +150,8 @@
 - **Promises:**
   - Project model and escalation regressions run through `tests/test_projects_escalation.py`, `tests/test_projects_escalation_unit.py`, `tests/projects_view.mjs` and the real-browser `tests/workbench_e2e/test_project_models.py`.
 
+  - New tests begin with a base-safe assertion before importing implementation modules; cursor/privacy/rate/write and lifecycle assertions cover the delivered surface.
+
   - The pinned handoff baseline in `tests/test_handoff_adversarial_off_perf.py` overlays only leaf or board modules the current board code imports (now including `commonplace/decide_grant.py` and `mempalace/deadline.py`); the pinned gateway, policy and handoff sources stay at the baseline commit.
 
   - Browser tests that need Playwright skip at module level when it is missing, so collecting `tests/` never errors; `CP_BROWSER_E2E=1` turns a missing Playwright into a failure (`tests/test_cards_decide_scope_browser.py`, as in `tests/workbench_e2e`).
@@ -165,6 +170,7 @@
 
   - `tests/test_index_stats_readonly.py`, `tests/test_index_stats_r1.py`, `tests/test_index_stats_private_scope.py` and `tests/test_admin_instance_ui.py` cover the instance index figures boundary.
 
+  - Synthetic archive fixtures pin public permission preservation under a private umask and refusal to overwrite private runtime directories.
   - Restricted event regressions cover omitted webhook numbers, keyed opaque ids, authority changes, readable-set resets, cursor recovery and saved-but-unlinked notices. Restricted recovery checks retain exact event identity and internal deduplication without exposing public sequence fields. Authority lookup failures pin one redacted diagnostic and no enqueue. Shared fixtures also retain real member wildcard and literal-wing holders alongside owner-only private readers.
 
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
@@ -340,6 +346,8 @@
 
 - **How it fails:**
 
+  - Authority, content leaks, domain read writes, stalled decoding and stale generations fail concrete assertions.
+
   - Regression assertions compare complete scoped payloads with local outputs, including ranking and result caps.
 
   - Base-only regressions must be AssertionErrors, with identical test bytes and explicit rebase provenance.
@@ -389,6 +397,8 @@
 
 
 - **Tests:**
+
+  - The selected read/UI families, focused Admin/web controls, synthetic browser acceptance and documentation obligations.
 
   - Large signed integers, booleans and Compact numerics cover wing, room and hall; locus-less cases cover siblings, suggestions and the 50-result cap.
 

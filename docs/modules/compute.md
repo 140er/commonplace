@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/compute/`
 - **Owns:**
 
+  - Durable execution attempts (`executor.py`): signed enrollment receipts, exact-stage checks, one-shot approval consumption and bounded redacted evidence, started only by the trusted default-off configuration.
+  - Owner-session management (`control.py`, `routes.py`), the script control path (`script_control.py`) and the trusted, default-off startup configuration (`ExecutionConfig`) that `ControlDB` accepts as an explicit constructor argument; the package `__init__` installs it and nothing else enables execution.
   - Encrypted SSH key custody (`credentials.py`), the pinned two-hop SSH transport and script transfer (`transport.py`, `script_transport.py`) and the cross-process authority fence (`fence.py`).
   - The typed helper wire (`protocol.py`), immutable script bundles (`scripts.py`), the default-off confined script runtime (`script_sandbox.py`) and the target-side entry (`target_helper.py`), plus passive cache collection in `discovery.py`.
   - Pure validation of explicitly approved, finite gateway discovery scopes.

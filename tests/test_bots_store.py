@@ -1,4 +1,4 @@
-"""Bot storage: append-only messages, idempotent sends, one reply, memory tombstones, reopen."""
+"""Bot storage: append-only messages, idempotent sends, one reply, blanked memory notes, reopen."""
 
 import sqlite3
 from types import SimpleNamespace
@@ -265,7 +265,7 @@ def test_forwards_and_filed_work_are_found_by_board_and_number(bots):
         bots.forward_list(first, "u2")
 
 
-def test_memory_removal_is_a_tombstone(bots):
+def test_memory_removal_keeps_the_row_and_blanks_the_text(bots):
     b = bot(bots)
     keep = bots.memory_add(b, "u1", "prefers short answers")
     drop = bots.memory_add(b, "u1", "lives in a boat")
@@ -280,7 +280,7 @@ def test_memory_removal_is_a_tombstone(bots):
         ).fetchone()
     finally:
         conn.close()
-    assert row[0] == "lives in a boat" and row[1]
+    assert row[0] == "" and row[1]  # forget means forget: only the row stays, so ids keep working
     with pytest.raises(sqlite3.DatabaseError):
         raw(bots, "DELETE FROM bot_memory WHERE id=?", keep["id"])
     with pytest.raises(sqlite3.DatabaseError):

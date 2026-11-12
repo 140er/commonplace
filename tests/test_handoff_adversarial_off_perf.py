@@ -471,6 +471,9 @@ TOOLS_ADDED_SINCE_BASELINE = {
     "rules_get",
     "rules_changed",
     "session_start",
+    # The Compute map's write tools (not part of handoff).
+    "topology_propose",
+    "topology_discover_site",
     # Compute map read tools (not part of handoff).
     "topology_get",
     "topology_route",
@@ -483,7 +486,8 @@ TOOLS_ADDED_SINCE_BASELINE = {
     *"""
     orch_card_start orch_checkpoint orch_config_accept orch_config_diff orch_config_get
     orch_config_propose orch_config_reject orch_config_render orch_config_write orch_exp_retire
-    orch_force_release orch_gate_open orch_gate_record orch_heartbeat orch_journal_intent
+    orch_finding orch_finding_ack orch_force_release orch_gate_open orch_gate_record
+    orch_heartbeat orch_journal_intent
     orch_journal_record orch_release orch_restore_ack orch_restore_status orch_resume
     orch_void_step orch_reassign_step
     """.split(),

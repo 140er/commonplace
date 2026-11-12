@@ -64,14 +64,14 @@ const here = () => { try { return globalThis.location?.hash || ''; } catch { ret
 // The home section carries the count of what waits on the person (the bots' count when the shell has one).
 // Same contract as renderRail: pure markup, the shell delegates data-action clicks. The opening
 // tag stays `<nav class="rail"` because the shell gives that element its id.
-export function renderDeckBar({ workspace = 'Commonplace', user = '', needs = 0, botsWaiting = 0, rulesWaiting = 0, can_admin = false, hash = here(), screens = SCREENS } = {}) {
+export function renderDeckBar({ workspace = 'Commonplace', user = '', needs = 0, botsWaiting = 0, rulesWaiting = 0, can_admin = false, can_manage_instance = false, hash = here(), screens = SCREENS } = {}) {
   const waiting = count(botsWaiting) || needs, section = deckSection(hash), sections = deckSections(screens), home = sections[0][0];
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
     <a class="deck-brand" href="#/${home}" aria-label="Commonplace home">${brand}<b>Commonplace</b></a>
     <div class="deck-links">${sections.map(([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${label}${id === home ? badge(waiting, 'waiting on you') : ''}</a>`).join('')}</div>
     <button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button>
     <button class="ws" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">${e(workspace)}</button>
-    <details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(Array.from(user)[0] || '?')}</span>${badge(rulesWaiting, 'rules waiting')}</summary><div class="user-links"><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/boards">Projects</a><a href="#/memory">Memory</a><a href="#/console">Console</a><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button></div></details>
+    <details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(Array.from(user)[0] || '?')}</span>${badge(rulesWaiting, 'rules waiting')}</summary><div class="user-links"><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/boards">Projects</a><a href="#/memory">Memory</a><a href="#/console">Console</a><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button></div></details>
   </nav>`;
 }
 export function renderDeckTop({ hash = here() } = {}) {
