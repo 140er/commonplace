@@ -3,8 +3,6 @@
 - **Paths:** `commonplace/web/`, `commonplace/console/`
 - **Owns:**
 
-  - The card panel shows a card's path contract (`Owns paths`).
-
   - The card panel offers Release with a required reason on cards awaiting release, the handoff form names the orchestrator and pool recipients, and refused card actions appear inside the open panel.
 
   - Deck bots (`deck-bots.css`, `bots.js`): the opt-in roster becomes responsive tiles and an open conversation becomes a bot-chip strip over a centred thread. Project bots offer a read-only work glance using the existing person-scoped project read route. The `cmmn.deck.draft` session key fills the named bot’s composer exactly once in either look, preserving other bots’ drafts. Classic additions stay hidden and every new CSS selector is scoped to Deck.

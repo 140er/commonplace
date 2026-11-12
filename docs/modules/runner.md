@@ -3,8 +3,6 @@
 - **Paths:** `commonplace/runner/`, `docs/runner.md`
 - **Owns:**
 
-  - A `card_start` on a board without an orchestrator config refuses with `path_overlap` inside the runner write transaction when the card's path contract overlaps a running card's; `jobs.create` takes an optional `guard(conn, now)` for such start-time checks.
-
   - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
 
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.

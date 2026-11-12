@@ -3,8 +3,6 @@
 - **Paths:** `commonplace/boards/`, `commonplace/events.py`, `commonplace/webhooks.py`, `commonplace/holds.py`, `commonplace/routines.py`, `commonplace/callstack.py`, `tests/test_boards_store_locking.py`
 - **Owns:**
 
-  - Cards may declare a path contract (`paths`, relative globs; `commonplace/boards/contracts.py`): `task_update(paths=)` validates it and stores it canonical and brace-free (an editing field; while the card has a runner job only the workspace owner may clear or narrow it; any change takes the runner write lock before the board transaction, and a running card that gains globs is checked like a start), the card shows it, and the orchestrator start refuses `path_overlap` against a running card with an overlapping contract.
-
   - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest.
 
   - Canonical Space REST response projection and typed creation refusals.
