@@ -22,7 +22,11 @@ class ClientError(Exception):
     """A client failure whose message is safe to display."""
 
 
-class _RulesChanged(ClientError):
+class ToolRefused(ClientError):
+    """The hub answered with an explicit ``no:`` refusal instead of running the tool."""
+
+
+class _RulesChanged(ToolRefused):
     """An explicit pre-write refusal; the same write may be tried once."""
 
 
@@ -132,14 +136,15 @@ def _tool_text(reply):
     if result.get("isError") or "error" in result:
         # Only the explicit gateway refusal is safe to retry. A timeout, an
         # ordinary error, or a mention of rules_changed in stored data is not.
-        if (
+        refused = (
             result.get("isError") is True
             and "error" not in result
             and len(content) == len(lines) == 1
-            and re.match(r"\Ano: rules_changed(?:\Z|[:\s])", lines[0])
-        ):
+            and lines[0].startswith("no:")
+        )
+        if refused and re.match(r"\Ano: rules_changed(?:\Z|[:\s])", lines[0]):
             raise _RulesChanged("Commonplace rules changed; write refused")
-        raise ClientError("Commonplace tool failed")
+        raise (ToolRefused if refused else ClientError)("Commonplace tool failed")
     return "\n".join(lines)
 
 
