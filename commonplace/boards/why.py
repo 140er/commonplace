@@ -6,6 +6,7 @@ the sentences exist only here."""
 from .display import _waiting_on_person
 
 CODES = (
+    "snoozed",
     "blocked_by",
     "waits_on_person",
     "claim_expired",
@@ -24,11 +25,13 @@ RELEASE_DETAIL = {
 }
 
 # Reasons that stop an explicit claim or start; the others only explain what the board shows.
-REFUSING = ("blocked_by", "waits_on_person", "plan_review", "not_released")
+REFUSING = ("snoozed", "blocked_by", "waits_on_person", "plan_review", "not_released")
 
 
 def text(reason: dict) -> str:
     code = reason["code"]
+    if code == "snoozed":
+        return "Snoozed until " + reason["label"]
     if code == "blocked_by":
         return "Waiting on " + ", ".join(
             f"#{b['number']}: {b['title']}" for b in reason["blockers"]
@@ -58,6 +61,7 @@ def waiting(
     *,
     blockers,
     released: bool,
+    snoozed: dict | None = None,
     usage,
     claim_expired: bool = False,
     plan_review: bool = False,
@@ -72,7 +76,14 @@ def waiting(
     if status == "done":
         return None
     open_work = status in ("todo", "backlog")
-    if blockers:
+    if snoozed and open_work:
+        reason = {
+            "code": "snoozed",
+            "until": snoozed["until"],
+            "after_card": snoozed["after_card"],
+            "label": snoozed["text"].removeprefix("Snoozed until "),
+        }
+    elif blockers:
         reason = {"code": "blocked_by", "blockers": list(blockers)}
     elif _waiting_on_person(row):
         reason = {"code": "waits_on_person"}
@@ -110,7 +121,9 @@ def notes(summary: dict, *, used: int | None = None, cap: int | None = None) -> 
         if not n:
             continue
         cards = _plural(n, "card", "cards")
-        if code == "blocked_by":
+        if code == "snoozed":
+            line = f"{cards} snoozed: they come back by themselves."
+        elif code == "blocked_by":
             line = f"{cards} wait for other cards to be Done."
         elif code == "waits_on_person":
             line = f"{cards} wait for a person to answer."

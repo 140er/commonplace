@@ -176,6 +176,18 @@ export function githubPrUrl(value) {
     return url.href;
   } catch { return null; }
 }
+const mergeReasons = {
+  github_head_moved: "The PR changed after the agent reported it. Use Open PR to review the new commits.",
+  github_not_mergeable: "GitHub does not report this PR as ready to merge (checks, reviews, conflicts or draft). Use Open PR.",
+  github_not_merge_ready: "This card no longer reports a merge-ready PR on GitHub.",
+  github_merge_refused: "GitHub refused the merge for your account, or your account cannot see this repository. Use Open PR.",
+  github_merge_consent: "Connect GitHub with repo access to merge.",
+  github_not_connected: "Your GitHub connection is not available. Connect GitHub again.",
+};
+export const mergeReason = (code) => mergeReasons[code] || "Could not merge this PR. Use Open PR to merge it on GitHub.";
+// The server merges only this exact raw form (no case folding, no port); show Merge only for it.
+const mergeUrl = (value) => githubPrUrl(value) && /^https:\/\/github\.com\/(?!\.+\/)[A-Za-z0-9_.-]+\/(?!\.+\/)[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(value) ? value : null;
+const prLabel = (url) => url.replace(/^https:\/\/github\.com\//, "").replace("/pull/", "#");
 function githubControls(card, github, busy) {
   if (card.need !== "merge") return "";
   const state = github?.state || "loading", disabled = busy || github?.pending || state === "loading" ? " disabled" : "";
@@ -183,14 +195,24 @@ function githubControls(card, github, busy) {
   if (state === "error") return `<p role="alert">GitHub connection unavailable. ${access}</p>`;
   if (state === "other_workspace") return `<p>This GitHub account is connected in another workspace. Disconnect it before connecting here.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
   if (state === "confirm" && github.connect_enabled === false) return `<p>New GitHub connections are disabled.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
+  if (state === "merge_confirm" && github.connect_enabled === false) return `<p>New GitHub permissions are disabled.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
+  if (state === "merge_confirm") return `<p>Allow merging with GitHub account ${e(github.login)}? GitHub will be asked for ${e((github.scopes || []).join(", "))}, which gives Commonplace read and write access to every repository your GitHub account can reach, private and organisation repositories included, not only this one. GitHub offers no narrower scope for merging. This is optional: Commonplace merges only when you press Merge, only with your own permissions and only for you, and Disconnect revokes the access.</p><button class="btn" data-needs-github="confirm"${disabled}>Grant repo access</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>${access}`;
   if (state === "unconfigured") return '<p>GitHub connection setup is required.</p>';
   if (state === "loading") return '<button class="btn" disabled>Loading GitHub…</button>';
   if (state === "confirm") return `<p>Connect GitHub account ${e(github.login)} (${e(github.subject)})?${github.inherited_scopes?.length ? " This includes inherited sign-in permissions: " + e(github.inherited_scopes.join(", ")) : ""}</p><button class="btn" data-needs-github="confirm"${disabled}>Connect this account</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>`;
   if (state === "connected") {
     const url = githubPrUrl(card.pr_url);
-    return `${url ? `<a class="btn" href="${e(url)}" target="_blank" rel="noopener noreferrer">Open PR</a>` : ""}<button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button><p>PR reports are unverified. A connection proves no merge permissions. Disconnect also revokes GitHub login authorization for this app; your current session survives.</p>`;
+    const target = mergeUrl(card.pr_url), head = /^[0-9a-f]{40,64}$/.test(card.pr_head || "") ? card.pr_head : null;
+    let merge = "";
+    // Nothing to merge once it has merged; Connecting with repo access is offered only where Merge would be.
+    if (github.merged || !target || !head) merge = "";
+    else if (github.merge && github.armed) merge = `<p>Merge ${e(prLabel(target))} at ${e(head.slice(0, 7))} with your GitHub permissions? GitHub chooses how it merges: squash if the repository allows it, otherwise a merge commit, otherwise rebase. Commonplace merges only a PR GitHub reports as clean at exactly this commit; GitHub's own rules still apply.</p><button class="btn primary" data-needs-github="merge"${disabled}>Confirm merge</button><button class="btn" data-needs-github="disarm"${disabled}>Cancel</button>`;
+    else if (github.merge) merge = `<button class="btn primary" data-needs-github="arm-merge"${disabled}>Merge</button>`;
+    else merge = `<p>To merge here, Commonplace needs GitHub repo access: read and write to every repository your GitHub account can reach, private ones included. It is optional and off until you grant it.</p><button class="btn" data-needs-github="allow-merge"${disabled}>Connect GitHub with repo access to merge</button>`;
+    const notice = github.merged ? `<p role="status">Merged${github.merged === true ? "" : " at " + e(String(github.merged).slice(0, 7))}.</p>` : github.notice ? `<p role="alert">${e(github.notice)}</p>` : "";
+    return `${notice}${merge}${url ? `<a class="btn" href="${e(url)}" target="_blank" rel="noopener noreferrer">Open PR</a>` : ""}<button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button><p>PR reports are unverified. A connection alone proves no merge permissions: merging needs your separate, optional repo-access grant. Without it, merge on GitHub itself. Disconnect also revokes GitHub authorization for this app, including merging; your current session survives.</p>`;
   }
-  return `<button class="btn" data-needs-github="connect"${disabled}>Connect GitHub</button>${state === "expired" ? `<p>Expired locally. ${access}</p>` : ""}${github.acknowledge_required ? `<label><input type="checkbox" data-needs-github-ack> I reviewed GitHub app access; revocation was unconfirmed.</label>${access}` : ""}`;
+  return `<button class="btn" data-needs-github="connect"${disabled}>Connect GitHub</button><p>Connecting alone gives no merge rights. After connecting you can opt in to GitHub repo access, which merging needs; otherwise merge on GitHub itself.</p>${state === "expired" ? `<p>Expired locally. ${access}</p>` : ""}${github.acknowledge_required ? `<label><input type="checkbox" data-needs-github-ack> I reviewed GitHub app access; revocation was unconfirmed.</label>${access}` : ""}`;
 }
 export function renderNeedDetail(card, { board = { slug: card.board }, hold = null, now = Date.now(), confirm = false, note = "", error = "", busy = false, chatOpen = false, phone = false, kind, github = null } = {}) {
   const origin = originKind(card), release = card.approval_kind === "origin";
@@ -236,6 +258,8 @@ function asked(card) {
 export function createNeeds({ mount, detailMount, api = request, onAction, onAsk = () => {}, onSelect = () => {}, onClose = () => {}, onChange = () => {}, onError = () => {}, onRender = () => {}, singleKeys = () => true,
   isPhone = () => globalThis.matchMedia?.("(max-width:699px)").matches || false, now = Date.now, document: doc = globalThis.document, setInterval: schedule = globalThis.setInterval, clearInterval: unschedule = globalThis.clearInterval } = {}) {
   let data = { needs: {}, boards: [] }, holds = [], selected = null, filter = "all", current = null;
+  // Cards merged this session, keyed by number with the head merged: re-selecting must not offer Merge again.
+  const mergedHeads = new Map();
   let holdsLoaded = false, github = null;
   let stopped = false, paused = false, revision = 0, busy = false, confirming = false, chatOpen = false, error = "", lastPoll = 0, holdRead = null;
   const cards = new Map(), notes = new Map(), tooLate = new Set();
@@ -262,7 +286,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (!detailMount || stopped || paused) return;
     const restoreFocus = savedFocus(detailMount);
     detailMount.innerHTML = current ? renderNeedDetail(current, { board: boardFor(data.boards, current), hold: currentHold(), now: now(), confirm: confirming, note: notes.get(current.number) || "", error, busy: busy || !holdsLoaded, chatOpen, phone: isPhone(),
-      github, kind: needsItems(data.needs).find((item) => item.card.number === current.number)?.kind }) : '<p class="empty">Choose an item to see its exact words.</p>';
+      github: github && mergedHeads.get(current.number) === current.pr_head ? { ...github, merged: current.pr_head } : github, kind: needsItems(data.needs).find((item) => item.card.number === current.number)?.kind }) : '<p class="empty">Choose an item to see its exact words.</p>';
     const dialog = detailMount.querySelector('dialog.confirm');
     if (dialog && !dialog.open) dialog.showModal();
     restoreFocus();
@@ -285,7 +309,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     }
     return visible;
   }
-  async function select(number) {
+  // A refresh re-reads the selection with { background: true }; only a pick by the user may open a closed panel.
+  async function select(number, { background = false } = {}) {
     if (stopped) return;
     rememberNote();
     const token = ++revision;
@@ -306,7 +331,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
         }
         draw();
       }
-      focus("[data-needs-title]"); onSelect(card);
+      focus("[data-needs-title]"); onSelect(card, { background });
     } catch (failure) {
       if (stopped || token !== revision) return;
       if (detailMount && !paused) detailMount.innerHTML = '<p role="alert">Could not load this card. Open it again to retry.</p>';
@@ -454,19 +479,28 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   async function githubAction(action) {
     if (busy || !current || !github || stopped) return;
     const card = current, token = revision;
+    if (action === "arm-merge" || action === "disarm") { github = { ...github, armed: action === "arm-merge", notice: "" }; drawDetail(); return; }
     const acknowledge = detailMount?.querySelector("[data-needs-github-ack]")?.checked === true;
     busy = true;
     try {
       const method = action === "disconnect" ? "DELETE" : "POST";
-      const path = action === "disconnect" ? "/api/github" : action === "connect" ? "/api/github/connect" : "/api/github/confirm";
-      const result = await api(path, { method, body: { csrf: github.csrf, card: card.number, accept: action === "confirm", acknowledge } });
+      const path = { disconnect: "/api/github", connect: "/api/github/connect", "allow-merge": "/api/github/merge-consent", merge: "/api/github/merge" }[action] || "/api/github/confirm";
+      const result = await api(path, { method, body: { csrf: github.csrf, card: card.number, accept: action === "confirm", acknowledge, ...(action === "merge" ? { head: card.pr_head } : {}) } });
+      // Remember the merge before any stale-view check: it happened whichever card is on screen now.
+      if (action === "merge" && !stopped) mergedHeads.set(card.number, card.pr_head);
       if (stopped || token !== revision) return;
       github = null;
       if (result.authorize_url) { globalThis.location.assign(result.authorize_url); return; }
       github = await api("/api/github");
       if (stopped || token !== revision) { github = null; return; }
+      if (action === "merge") github = { ...github, merged: result.sha || true };
       error = result.message || ""; drawDetail();
-    } catch (failure) { failedFor(card.number, "Could not update GitHub connection. Check GitHub app access before trying again.", failure); }
+    } catch (failure) {
+      const code = failure?.payload?.error;
+      if (action === "merge" && failure?.status === 409 && typeof code === "string" && code.startsWith("github_")) {
+        if (!stopped && token === revision) { github = { ...github, armed: false, notice: mergeReason(code) }; drawDetail(); }
+      } else failedFor(card.number, action === "merge" ? "Could not merge. Use Open PR to merge it on GitHub." : "Could not update GitHub connection. Check GitHub app access before trying again.", failure);
+    }
     finally { busy = false; if (!stopped && token === revision) drawDetail(); }
   }
   const click = async (event) => {
@@ -540,10 +574,10 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       for (const { card } of needsItems(data.needs)) cards.set(card.number, card);
       const number = settings.selected ?? selected ?? items()[0]?.number;
       // Start selection before reading holds; neither response may choose an older card.
-      const loading = number != null ? select(number) : Promise.resolve();
+      const loading = number != null ? select(number, { background: true }) : Promise.resolve();
       try { await refreshHolds(); } catch (failure) { showError("Could not load approvals. Check again before answering.", failure); }
       await loading;
-      if (!current && selected == null && items().length) await select(items()[0].number);
+      if (!current && selected == null && items().length) await select(items()[0].number, { background: true });
       draw();
     },
     select, setFilter, approve, approvePlan, confirm, decline, answer, stopHold, ask, refreshHolds,
@@ -560,7 +594,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     },
     paused: () => paused,
     stop() {
-      stopped = true; github = null; revision++; unschedule(timer);
+      stopped = true; github = null; mergedHeads.clear(); revision++; unschedule(timer);
       detailMount?.querySelector("dialog.confirm")?.close(); if (detailMount && current?.need === "merge") detailMount.innerHTML = ""; cards.clear(); notes.clear(); holds = []; current = null;
       for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); }
       doc?.removeEventListener("visibilitychange", visibility);

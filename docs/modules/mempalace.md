@@ -19,6 +19,8 @@
 
   - Drawer retries retain replay status for readable owners while also returning request-derived fresh-write fields, allowing the gateway to hide replay status for unreadable wings.
 
+  - The eager-warmup setting description distinguishes directly launched servers from gateway workers, which do not inherit it.
+
   - Graph snapshots use local SQL locus expressions, including native booleans and integers outside int64; descriptors also bind stored sort values.
 
   - Graph page descriptors carry their source order key; grouped Chroma and exact numeric loci retain SQLite text casts.

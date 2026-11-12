@@ -27,7 +27,7 @@ export async function boundedRequest(api, path, { timers = globalThis, signal } 
   }
 }
 
-export function createAdmin({ mount, api, e, current, runners = null, timers = globalThis }) {
+export function createAdmin({ mount, api, e, current, runners = null, invites = null, timers = globalThis }) {
   let host = null, body = null, workspace = null, epoch = 0, live = false, instanceBlocked = false;
   const sections = new Map(), requests = new Map(), generations = new Map(), writing = new Set(), notes = new Map();
   const owner = () => current()?.can_admin === true;
@@ -177,7 +177,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
     host?.removeEventListener('click', click);
     globalThis.document?.removeEventListener('session-expired', stop);
     globalThis.document?.removeEventListener('signout', stop);
-    runners?.stop();
+    runners?.stop(); invites?.stop();
     if (host) host.innerHTML = '';
     body = null; workspace = null;
   }
@@ -281,10 +281,11 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
     if (!owner()) { host.innerHTML = '<p role="status">a signed-in workspace owner is required</p>'; return; }
     workspace = current().workspace; live = true; instanceBlocked = false;
     // The runner block sits beside the refreshing sections so its form and one-time tokens survive their redraws.
-    if (runners) {
-      host.innerHTML = '<div data-admin-body></div><div data-admin-runners></div>';
+    if (runners || invites) {
+      host.innerHTML = '<div data-admin-body></div><div data-admin-invites></div><div data-admin-runners></div>';
       body = host.querySelector('[data-admin-body]');
-      runners.show(host.querySelector('[data-admin-runners]'));
+      invites?.show(host.querySelector('[data-admin-invites]'));
+      runners?.show(host.querySelector('[data-admin-runners]'));
     }
     for (const key of ['users', 'connections', 'runtime', 'limits', 'stuck', 'needs']) sections.set(key, { data: null, error: '', restricted: false });
     for (const key of ['deploy','health','backups','backup-online','backup-offline','index-stats']) sections.set(key, { data:null, error:instanceOwner() ? '' : 'Instance administrator access required', restricted:!instanceOwner() });
