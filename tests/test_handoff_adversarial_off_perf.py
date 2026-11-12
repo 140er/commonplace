@@ -479,7 +479,7 @@ TOOLS_ADDED_SINCE_BASELINE = {
     orch_config_propose orch_config_reject orch_config_render orch_config_write orch_exp_retire
     orch_force_release orch_gate_open orch_gate_record orch_heartbeat orch_journal_intent
     orch_journal_record orch_release orch_restore_ack orch_restore_status orch_resume
-    orch_void_step
+    orch_void_step orch_reassign_step
     """.split(),
 }
 STARTUP_ADDED_SINCE_BASELINE = (
