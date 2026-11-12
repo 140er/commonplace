@@ -1587,6 +1587,24 @@ def test_fleet_agent_reuse_is_a_board_override(world):
     assert (started["status"], started["step"]["fresh_reason"]) == (201, "reuse_off")
 
 
+def test_fleet_defaults_leave_a_lean_shaped_board_unchanged(world):
+    """A board whose lead and builders never call the orchestrator tools sees none of the fleet
+    rules: a person start next to a context-holding agent is not refused, and no repair, finding
+    or start-reason row appears."""
+    parent = world.card()
+    child = world.child_card(parent)
+    world.configure()
+    lease = world.claim(world.a)
+    _agent(world, lease, parent, "s1", thread="agent-parent")
+    before = len(world.all_jobs())
+    assert world.person_start(child)[0] == 201, "a person start must not be subject to agent reuse"
+    assert len(world.all_jobs()) == before + 1
+    with world.st.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM orch_repairs").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM orch_findings").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM orch_steps").fetchone()[0] == 1  # the agent start
+
+
 # ------------------------------------------------------- runner-start void contract
 
 
