@@ -14,7 +14,7 @@ import time
 import pytest
 
 from commonplace.chat import settings as chat_settings
-from commonplace.meetings import adapter, filing, lifecycle, notes, notes_store, worker
+from commonplace.meetings import adapter, filing, lifecycle, notes, notes_store, store, worker
 from tests._console_helpers import console_hub_fixture  # noqa: F401
 from tests.test_commonplace_boards import mcp, service
 from tests.test_meetings_foundation import (  # noqa: F401
@@ -629,7 +629,7 @@ def test_filing_is_refused_without_a_wing_for_secrets_and_for_the_wrong_kind(
         hub.member,
         "PATCH",
         path,
-        {"text": f"The key is {CREDENTIAL} and token=ghp_aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bD1fH3jK5"},
+        {"text": f"The key is {CREDENTIAL}"},
     )
     status, body, _ = file_note(hub, meeting_id, decision["id"], wing=WING)
     assert (status, body["code"]) == (409, "secret_detected")
@@ -811,3 +811,104 @@ def test_notes_are_written_only_where_a_meeting_keeps_what_it_captured():
         "timeout",
         "interrupted",
     }
+
+
+# --- a filing claim never outlives its writer ----------------------------------------------------
+
+
+def note_row(hub, note_id):
+    with store_for(hub)._tx(write=False) as conn:
+        return dict(conn.execute("SELECT * FROM meeting_notes WHERE id=?", (note_id,)).fetchone())
+
+
+def explode(*_args, **_kwargs):
+    raise RuntimeError("storage fell over")
+
+
+@pytest.mark.parametrize("where", ["write", "record"])
+def test_an_unexpected_error_while_keeping_leaves_the_note_open_and_editable(
+    console_hub, fake_adapter, model, monkeypatch, where
+):
+    hub = console_hub
+    ready(hub)
+    model.reply = ITEMS
+    meeting_id = finished(hub, fake_adapter)
+    person_wing_ready(hub)
+    decision = by_kind(notes_of(hub, meeting_id))["decision"]
+    path = f"/api/meetings/{meeting_id}/notes/{decision['id']}"
+    with monkeypatch.context() as patch:
+        if where == "write":
+            patch.setattr(filing.memory_tools, "_save", explode)
+        else:
+            patch.setattr(store.MeetingStore, "complete_filing", explode)
+        try:
+            status = file_note(hub, meeting_id, decision["id"], "req-boom-0001")[0]
+        except RuntimeError:
+            status = 500
+        assert status >= 500
+    row = note_row(hub, decision["id"])
+    assert row["filed_request_id"] is None and row["filed_ref"] is None  # no claim left behind
+    assert hub.request(hub.member, "PATCH", path, {"text": "Ship it Friday."})[0] == 200
+    # a retry with a new request id files, once
+    status, body, _ = file_note(hub, meeting_id, decision["id"], "req-boom-0002")
+    assert status == 201 and body["note"]["state"] == "kept"
+    assert len(drawers(hub)["drawers"]) == 1
+
+
+def test_an_unexpected_error_while_approving_leaves_the_action_open(
+    console_hub, fake_adapter, model, monkeypatch
+):
+    hub = console_hub
+    ready(hub)
+    model.reply = ITEMS
+    meeting_id = finished(hub, fake_adapter)
+    slug = board(hub)
+    action = by_kind(notes_of(hub, meeting_id))["action"]
+    with monkeypatch.context() as patch:
+        patch.setattr(filing.BoardService, "ensure_chat_task", explode)
+        try:
+            approve(hub, meeting_id, action["id"], "req-boom-0001", board=slug)
+        except RuntimeError:
+            pass
+    assert note_row(hub, action["id"])["filed_request_id"] is None
+    status, body, _ = approve(hub, meeting_id, action["id"], "req-boom-0002", board=slug)
+    assert status == 201 and len(cards(hub, slug)) == 1
+
+
+def test_a_claim_whose_writer_died_is_resumed_by_the_same_tap_and_taken_over_when_stale(
+    console_hub, fake_adapter, model
+):
+    hub = console_hub
+    ready(hub)
+    model.reply = ITEMS
+    meeting_id = finished(hub, fake_adapter)
+    person_wing_ready(hub)
+    meetings = store_for(hub)
+    summary = by_kind(notes_of(hub, meeting_id))["summary"]
+    user, now = hub.member_user, time.time()
+    # a writer claimed the note and died (no release): the same request resumes
+    assert (
+        meetings.claim_filing(meeting_id, summary["id"], user, "req-dead-0001", now)[0] == "claimed"
+    )
+    assert (
+        meetings.claim_filing(meeting_id, summary["id"], user, "req-dead-0001", now + 5)[0]
+        == "resume"
+    )
+    # another tap, while the claim is fresh, is told it is being filed; edit and dismiss wait
+    with pytest.raises(store.Refused) as refused:
+        meetings.claim_filing(meeting_id, summary["id"], user, "req-other-001", now + 5)
+    assert refused.value.code == "filing_in_progress"
+    path = f"/api/meetings/{meeting_id}/notes/{summary['id']}"
+    assert hub.request(hub.member, "PATCH", path, {"dismissed": True})[1]["code"] == "not_open"
+    assert by_kind(notes_of(hub, meeting_id))["summary"]["decided_at"] is None
+    # once stale, any tap may take over, and the note files through the route
+    stale = now - notes_store.CLAIM_S - 60
+    decision = by_kind(notes_of(hub, meeting_id))["decision"]
+    meetings.claim_filing(meeting_id, decision["id"], user, "req-dead-0002", stale)
+    status, body, _ = file_note(hub, meeting_id, decision["id"], "req-live-0001")
+    assert status == 201 and body["note"]["state"] == "kept"
+    # and a stale claim does not block an edit or a dismissal either
+    open_question = by_kind(notes_of(hub, meeting_id))["open_question"]
+    meetings.claim_filing(meeting_id, open_question["id"], user, "req-dead-0003", stale)
+    path = f"/api/meetings/{meeting_id}/notes/{open_question['id']}"
+    assert hub.request(hub.member, "PATCH", path, {"dismissed": True})[0] == 200

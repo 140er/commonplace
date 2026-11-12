@@ -185,7 +185,10 @@ class Run:
         the lease). It stops by itself a little after the hard time limit, so a wedged call cannot
         hold a meeting forever."""
         while not stop.wait(LEASE_S / 3):
-            if self.clock() - self._t0 > self.meetings.settings()["max_minutes"] * 60 + LEASE_S:
+            if (
+                self.clock() - self._t0
+                > self.meetings.settings()["max_minutes"] * 60 + LEASE_S + notes.BUDGET_S
+            ):
                 return
             try:
                 if not self.meetings.renew(self.meeting_id, self.clock()):

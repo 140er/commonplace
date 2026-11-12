@@ -45,6 +45,7 @@ FILED_STATES = {
 }
 SWEEP_S = 24 * 3600  # working segments never outlive this without the inviter's kept transcript
 RETRY_S = 600
+CLAIM_S = 120  # a filing claim older than this is stale: its writer died, and any tap may take over
 TRIES = 3
 
 
@@ -143,7 +144,7 @@ class NotesMixin:
                     ).rowcount
         return removed
 
-    def holds_segments(self, now: float) -> bool:
+    def holds_segments(self) -> bool:
         """Is there a finished meeting whose segments are waiting for notes or the sweep."""
         marks = ",".join("?" * len(NOTES_STATES))
         with self._tx(write=False) as conn:
@@ -326,7 +327,10 @@ class NotesMixin:
             "model": row["model"],
             "evidence": {"ranges": ranges, "speakers": speakers},
             "filed_ref": row["filed_ref"],
-            "decided_at": row["decided_at"],
+            # an open note's ``decided_at`` is only the time of a filing claim
+            "decided_at": row["decided_at"]
+            if row["state"] in FILED_STATES.values() or row["state"] == "dismissed"
+            else None,
             "created_at": row["created_at"],
         }
 
@@ -344,18 +348,23 @@ class NotesMixin:
         """Edit (the text is then the person's own) or dismiss a note nobody filed yet."""
         with self._tx() as conn:
             self._owned(conn, meeting_id, user_id)
-            open_note = "AND state IN ('draft','proposed') AND filed_request_id IS NULL"
+            # open: not filed, not dismissed, and not mid-write (a claim that went stale is not)
+            open_note = (
+                "AND state IN ('draft','proposed') AND filed_ref IS NULL "
+                "AND (filed_request_id IS NULL OR decided_at <= ?)"
+            )
+            stale = _stamp(now - CLAIM_S)
             if dismiss:
                 changed = conn.execute(
                     "UPDATE meeting_notes SET decided_by=?, decided_at=?, state='dismissed' "
                     f"WHERE id=? AND meeting_id=? {open_note}",
-                    (user_id, _stamp(now), note_id, meeting_id),
+                    (user_id, _stamp(now), note_id, meeting_id, stale),
                 ).rowcount
             else:
                 changed = conn.execute(
-                    "UPDATE meeting_notes SET text=?, edited=1 "
-                    f"WHERE id=? AND meeting_id=? {open_note}",
-                    (text, note_id, meeting_id),
+                    "UPDATE meeting_notes SET text=?, edited=1, filed_request_id=NULL, "
+                    f"decided_at=NULL WHERE id=? AND meeting_id=? {open_note}",
+                    (text, note_id, meeting_id, stale),
                 ).rowcount
             row = conn.execute(
                 "SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?", (note_id, meeting_id)
@@ -368,10 +377,12 @@ class NotesMixin:
 
     # --- filing: one claim per note, so a retried tap writes once -------------------------
 
-    def claim_filing(self, meeting_id, note_id, user_id, request_id) -> tuple[str, dict]:
+    def claim_filing(self, meeting_id, note_id, user_id, request_id, now) -> tuple[str, dict]:
         """``claimed`` (this tap writes), ``resume`` (the same tap, retried after a crash),
         ``done`` (already filed: return it), or a refusal for a dismissed note or another tap that
-        is mid-write."""
+        is mid-write. A claim is stamped (``decided_at`` holds when, until the filing completes)
+        and a stale one is taken over: both writes are idempotent, so a writer that died leaves
+        nothing a new tap cannot finish."""
         with self._tx() as conn:
             self._owned(conn, meeting_id, user_id)
             row = conn.execute(
@@ -383,23 +394,23 @@ class NotesMixin:
                 return "done", dict(row)
             if row["state"] not in ("draft", "proposed"):
                 raise _refused("not_open", "That note was dismissed")
-            if row["filed_request_id"] is None:
-                conn.execute(
-                    "UPDATE meeting_notes SET filed_request_id=? WHERE id=? "
-                    "AND filed_request_id IS NULL",
-                    (request_id, note_id),
-                )
-                return "claimed", dict(row)
-            if row["filed_request_id"] == request_id:
-                return "resume", dict(row)
-            raise _refused("filing_in_progress", "That note is being filed")
+            fresh = row["filed_request_id"] is not None and (row["decided_at"] or "") > _stamp(
+                now - CLAIM_S
+            )
+            if fresh and row["filed_request_id"] != request_id:
+                raise _refused("filing_in_progress", "That note is being filed")
+            conn.execute(
+                "UPDATE meeting_notes SET filed_request_id=?, decided_at=? WHERE id=?",
+                (request_id, _stamp(now), note_id),
+            )
+            return ("resume" if fresh else "claimed"), dict(row)
 
     def release_filing(self, note_id, request_id) -> None:
-        """The write was refused for good: the note is open again."""
+        """The write did not complete: the note is open again, whatever the reason."""
         with self._tx() as conn:
             conn.execute(
-                "UPDATE meeting_notes SET filed_request_id=NULL WHERE id=? AND filed_request_id=? "
-                "AND filed_ref IS NULL",
+                "UPDATE meeting_notes SET filed_request_id=NULL, decided_at=NULL WHERE id=? "
+                "AND filed_request_id=? AND filed_ref IS NULL",
                 (note_id, request_id),
             )
 
@@ -411,8 +422,8 @@ class NotesMixin:
             if not row["filed_ref"]:
                 conn.execute(
                     "UPDATE meeting_notes SET filed_ref=?, state=?, decided_by=?, decided_at=? "
-                    "WHERE id=? AND filed_request_id=? AND filed_ref IS NULL",
-                    (ref, FILED_STATES[row["kind"]], user_id, _stamp(now), note_id, request_id),
+                    "WHERE id=? AND filed_ref IS NULL",
+                    (ref, FILED_STATES[row["kind"]], user_id, _stamp(now), note_id),
                 )
             row = conn.execute("SELECT * FROM meeting_notes WHERE id=?", (note_id,)).fetchone()
             return self.note_view(row, self._labels(conn, row["meeting_id"]))

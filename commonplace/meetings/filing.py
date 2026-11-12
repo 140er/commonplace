@@ -83,13 +83,13 @@ def _memory_text(gateway, meeting, note, inviter) -> str:
     )
 
 
-def _claim(meetings, meeting_id, note_id, user_id, request_id, action):
+def _claim(meetings, meeting_id, note_id, user_id, request_id, action, now):
     """The note's filing claim, after checking it is the kind this tap files."""
     if (meetings.note(meeting_id, note_id, user_id)["kind"] == "action") != action:
         raise store.Refused(
             "wrong_kind", "Approve an action as a card; keep any other note in memory", 409
         )
-    return meetings.claim_filing(meeting_id, note_id, user_id, request_id)
+    return meetings.claim_filing(meeting_id, note_id, user_id, request_id, now)
 
 
 def keep_note(gateway, workspace_id, user_id, meeting_id, note_id, body, now) -> dict:
@@ -101,7 +101,7 @@ def keep_note(gateway, workspace_id, user_id, meeting_id, note_id, body, now) ->
     wing = body.get("wing") if "wing" in body else meetings.person(user_id)["notes_wing"]
     if "wing" in body:
         wing = meetings._wing(wing)
-    outcome, note = _claim(meetings, meeting_id, note_id, user_id, request_id, False)
+    outcome, note = _claim(meetings, meeting_id, note_id, user_id, request_id, False, now)
     if outcome == "done":
         return {"note": _view(meetings, meeting_id, user_id, note), "created": False}
     try:
@@ -119,13 +119,12 @@ def keep_note(gateway, workspace_id, user_id, meeting_id, note_id, body, now) ->
         memory_id, _, _ = memory_tools._save(
             ctx, {"text": text, "topic": "meetings", "theme": wing}
         )
-    except (store.Refused, store.Invalid):
-        meetings.release_filing(note_id, request_id)
+        view = meetings.complete_filing(note_id, request_id, memory_id, user_id, now)
+    except BaseException as exc:
+        meetings.release_filing(note_id, request_id)  # never leave a claim behind
+        if isinstance(exc, ToolError):
+            raise store.Refused("cannot_file", "You cannot file into that wing", 409) from None
         raise
-    except ToolError:
-        meetings.release_filing(note_id, request_id)
-        raise store.Refused("cannot_file", "You cannot file into that wing", 409) from None
-    view = meetings.complete_filing(note_id, request_id, memory_id, user_id, now)
     return {"note": view, "created": True}
 
 
@@ -138,7 +137,7 @@ def approve_action(gateway, workspace_id, user_id, meeting_id, note_id, body, no
     board = body.get("board")
     if not isinstance(board, str) or not BOARD.fullmatch(board):
         raise store.Invalid("invalid_board", "Choose the project for this card")
-    outcome, note = _claim(meetings, meeting_id, note_id, user_id, request_id, True)
+    outcome, note = _claim(meetings, meeting_id, note_id, user_id, request_id, True, now)
     if outcome == "done":
         return {"note": _view(meetings, meeting_id, user_id, note), "created": False}
     try:
@@ -154,13 +153,17 @@ def approve_action(gateway, workspace_id, user_id, meeting_id, note_id, body, no
                 "body": f"{text}\n\n{provenance(gateway, meeting, note, user_id)}",
             },
         )
-    except store.Refused:
-        meetings.release_filing(note_id, request_id)
+        ref = f"{board}:{card['number']}"
+        view = meetings.complete_filing(note_id, request_id, ref, user_id, now)
+    except BaseException as exc:
+        meetings.release_filing(note_id, request_id)  # never leave a claim behind
+        if isinstance(exc, (ToolError, LookupError, ValueError)) and not isinstance(
+            exc, (store.Refused, store.Invalid, store.Missing)
+        ):
+            raise store.Refused(
+                "cannot_file", "You cannot add cards to that project", 409
+            ) from None
         raise
-    except (ToolError, LookupError, ValueError):
-        meetings.release_filing(note_id, request_id)
-        raise store.Refused("cannot_file", "You cannot add cards to that project", 409) from None
-    view = meetings.complete_filing(note_id, request_id, f"{board}:{card['number']}", user_id, now)
     return {"note": view, "created": True, "card": {"board": board, "number": card["number"]}}
 
 
