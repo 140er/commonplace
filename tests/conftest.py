@@ -53,6 +53,7 @@ _REAL_EMBEDDING_TEST_MODULES = {
     "test_embeddinggemma2_device",
     "test_embeddinggemma2_integration",
     "test_embedding_model_fallback",
+    "test_embedding_service",
 }
 
 
