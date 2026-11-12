@@ -4,7 +4,8 @@ Nothing runs until a meeting exists: the thread is started by an invite (or, aft
 a workspace that already holds unfinished meetings) and ends by itself when no meeting is
 requested or running, so a workspace that never used meetings has no worker and no file. Each
 meeting runs on its own daemon thread; the beat renews nothing itself (a meeting renews its own
-lease) and a meeting whose lease lapsed is ended ``interrupted``, never resumed.
+lease) and a meeting whose lease lapsed is ended by ``engine.recover`` (``interrupted``, or
+``discarded`` if a stop was requested), never resumed.
 """
 
 from __future__ import annotations

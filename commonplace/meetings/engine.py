@@ -10,12 +10,13 @@ The consent rule is the whole point of this module and is kept in one place:
 * a host removing the bot, anyone typing ``bot stop``, the owner's stop, or any worker error closes
   the gate first, discards what was captured, leaves, and ends the meeting.
 
-A meeting ends through :meth:`Run._conclude` (or :meth:`Run._drop` when it already ended elsewhere,
-or :func:`recover` for an orphan); every state change on the way is a compare-and-set in the store
-that a stop (``removed``) refuses, and ``finish`` will not keep what was captured for a stopped
-meeting. Text from
-the meeting (chat, display names) is data: it is never logged, and only an exact ``bot stop`` has
-any effect. Nothing here names a provider.
+What may happen to a meeting, and in which state, is the transition table in ``lifecycle.py``, and
+the store has one function that writes the state (``MeetingStore._transition``): this module only
+asks for steps and ends, and a step the table refuses (a stop landed, the meeting ended) is the
+worker's cue to stop. The worker's ends go through :meth:`Run._conclude` (a meeting it can no
+longer drive is concluded as failed there too); an orphan, whose worker is gone, ends through
+:func:`recover`. Text from the meeting (chat, display names) is data: it is never logged, and only
+an exact ``bot stop`` has any effect. Nothing here names a provider.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import threading
 import time
 from typing import Optional
 
-from commonplace.meetings import adapter, store
+from commonplace.meetings import adapter, lifecycle, store
 
 logger = logging.getLogger("commonplace.meetings")
 
@@ -99,9 +100,14 @@ class Capture:
         self._lock = threading.Lock()
         self.open = False
 
-    def allow(self) -> None:
+    def allow(self, verify=None) -> bool:
+        """Open the gate, unless ``verify`` (run under the lock) says the meeting is no longer in
+        the state that permits capture: a stop that landed first keeps it closed."""
         with self._lock:
+            if verify is not None and not verify():
+                return False
             self.open = True
+            return True
 
     def feed(self, frame) -> bool:
         with self._lock:
@@ -124,7 +130,8 @@ class _Finish(Exception):
 
 
 class _Gone(Exception):
-    """The meeting ended elsewhere (the kill switch): leave and drop what is held, write nothing."""
+    """The meeting ended elsewhere (the kill switch, a recovery) or cannot be driven any further:
+    leave and drop what is held. If the store still holds it active it is ended as a failure."""
 
 
 class Run:
@@ -164,8 +171,8 @@ class Run:
             self._lifecycle()
         except _Finish as end:
             self._conclude(end)
-        except (_Gone, store.Missing):
-            self._drop()
+        except (_Gone, store.Missing):  # ended elsewhere (a no-op below) or cannot go on
+            self._conclude(_Finish("failed:internal", "failed:internal", discard=True))
         except Exception as exc:  # fail closed: capture off, leave, discard
             logger.warning("meeting worker failed type=%s", type(exc).__name__)
             self._conclude(_Finish("failed:internal", "failed:internal", discard=True))
@@ -259,7 +266,9 @@ class Run:
         self._move("live", announced_at=stamped, started_at=stamped)
         self._reminded_at = now
         self._reminded_count = self.meetings.participants_present(self.meeting_id)
-        self.capture.allow()
+        if not self.capture.allow(self._is_live):
+            self._guard()  # a stop or a leave landed first: it ends the meeting, nothing opens
+            raise _Gone
         self._audio = threading.Thread(target=self._pump_audio, name="meeting-audio", daemon=True)
         self._audio.start()
 
@@ -321,21 +330,21 @@ class Run:
         if not self.meetings.renew(self.meeting_id, now):
             raise _Gone
         row = self.meetings.run_row(self.meeting_id)
-        if store.is_ended(row["state"]):
+        if lifecycle.is_ended(row["state"]):
             raise _Gone
         if self._audio_failed:
             raise _Finish("failed:audio", "failed:audio", discard=True)
-        if row["state"] == "removed":
+        if row["state"] == lifecycle.REMOVED:
             raise _Finish(
                 "discarded", row["end_reason"] or "stop_requested", discard=True, notice="stopped"
             )
-        if row["state"] in ("ending", "processing"):
+        if row["state"] in (lifecycle.ENDING, lifecycle.PROCESSING):
             raise _Finish(
                 "done", row["end_reason"] or "inviter_left", discard=False, notice="leaving"
             )
         if not self._allowed():
             raise _Finish("cancelled", "cancelled", discard=True, notice="stopped")
-        if row["state"] == "lobby" and now > self._lobby_until:
+        if row["state"] == lifecycle.LOBBY and now > self._lobby_until:
             raise _Finish("failed:not_admitted", "failed:not_admitted", discard=True)
         limit = self.meetings.settings()["max_minutes"] * 60
         if now - self._t0 > limit:
@@ -356,11 +365,14 @@ class Run:
         return any(m["id"] == self.row["user_id"] for m in members)
 
     def _move(self, state, **fields):
-        """Record the next state. If that is refused, someone asked for the end meanwhile (or it
-        ended): the guard says which, and ends the meeting accordingly."""
+        """Record the next state. If the table refuses it, someone asked for the end meanwhile (or
+        it ended): the guard says which, and ends the meeting accordingly."""
         if not self.meetings.advance(self.meeting_id, state, self.clock(), **fields):
             self._guard()
             raise _Gone
+
+    def _is_live(self) -> bool:
+        return self.meetings.state_of(self.meeting_id) == lifecycle.LIVE
 
     def _inviter(self) -> str:
         try:
@@ -391,13 +403,7 @@ class Run:
         self.meetings.outbox_mark(outbox_id, "queued")
         return "failed"
 
-    # --- the one way out ------------------------------------------------------------------
-
-    def _drop(self):
-        """Ended elsewhere: close the gate, discard what the sink holds, leave, write nothing."""
-        self.capture.close(discard=True)
-        self._leave()
-        self._join_audio()
+    # --- the way out ----------------------------------------------------------------------
 
     def _leave(self):
         if self.handle is None or self.provider is None:
@@ -412,6 +418,9 @@ class Run:
             self._audio.join(timeout=2)
 
     def _conclude(self, end: _Finish):
+        """Close the gate first, say goodbye if the bot told the meeting it was there, leave, then
+        record the end. The record is the table's: a meeting that already ended stays as it is, and
+        one that was stopped (or whose keep-end the table refuses) ends discarded."""
         self.capture.close(discard=end.discard)  # the gate first: nothing more is captured
         told = self.meetings.outbox_state(self.meeting_id, "announce", "announce") == "sent"
         if end.notice and told and self.handle is not None:
@@ -422,52 +431,60 @@ class Run:
         now = self.clock()
         if not end.discard:
             if self._finish_kept(end, now):
+                self._audit()
                 return
-            # Not finished: it ended elsewhere, or a stop landed at one of the steps. A stop wins
+            state = self.meetings.state_of(self.meeting_id)
+            if lifecycle.is_ended(state):
+                return
+            # Refused while still active: a stop landed at one of the steps, and a stop wins
             # whatever the step, so what was captured is discarded.
-            row = self.meetings.run_row(self.meeting_id)
-            if store.is_ended(row["state"]):
-                return
-            end = _Finish("discarded", row["end_reason"] or "stop_requested", discard=True)
             self.sink.discard(self.meeting_id)
-        self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=True)
-        self._audit(end)
+            end = (
+                _Finish("discarded", "stop_requested", discard=True)
+                if state == lifecycle.REMOVED
+                else _Finish("failed:internal", "failed:internal", discard=True)
+            )
+        try:
+            ended = self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=True)
+        except store.Missing:
+            return
+        if ended:
+            self._audit()
 
     def _finish_kept(self, end, now) -> bool:
         """``ending`` (wipes the sealed link), ``processing``, then the end state, keeping what was
-        captured. Every step is a compare-and-set that a stop (``removed``) refuses; False as soon as
-        one is refused."""
+        captured. Each is an event of the table; False as soon as one is refused."""
         if not self.meetings.advance(
-            self.meeting_id, "ending", now, wipe_ref=True, end_reason=end.reason
+            self.meeting_id, lifecycle.ENDING, now, wipe_ref=True, reason=end.reason
         ):
             return False
         self.sink.finish(self.meeting_id)
-        if not (
-            self.meetings.advance(self.meeting_id, "processing", now)
-            and self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
-        ):
-            return False
-        self._audit(end)
-        return True
+        return self.meetings.advance(self.meeting_id, lifecycle.PROCESSING, now) and (
+            self.meetings.finish(self.meeting_id, end.state, end.reason, now, discard=False)
+        )
 
-    def _audit(self, end):
+    def _audit(self):
+        """One audit row for the end, with the reason the store recorded (the first cause wins)."""
         try:
             self.gateway.db.audit(
                 action="meetings.end",
                 decision="ok",
                 workspace_id=self.workspace_id,
                 user_id=self.row.get("user_id", ""),
-                reason=end.reason,
+                reason=self.meetings.run_row(self.meeting_id)["end_reason"] or "",
                 target_ids=[self.meeting_id],
             )
         except Exception as exc:
             logger.warning("meeting audit failed type=%s", type(exc).__name__)
 
 
-def recover(gateway, workspace_id, meeting_id, *, clock=time.time) -> str:
+def recover(gateway, workspace_id, meeting_id, *, clock=time.time) -> Optional[str]:
     """A running meeting whose worker is gone: the bot leaves, the sealed link is wiped, posts that
-    may or may not have gone out are marked ``unknown`` and the meeting ends ``interrupted``. It
-    never rejoins: listening again would need a new announcement and a person's decision."""
+    may or may not have gone out are marked ``unknown`` and the meeting ends ``interrupted``
+    (what it had stored is kept, as the design note's recovery says; the audio buffer died with the
+    worker), or ``discarded`` if a stop had been requested: a stop always discards. It never
+    rejoins: listening again would need a new announcement and a person's decision. Returns the
+    state it was ended in, or None if the meeting had ended meanwhile."""
     meetings = store.open_meetings(gateway, workspace_id)
     row = meetings.run_row(meeting_id)
     try:
@@ -479,16 +496,19 @@ def recover(gateway, workspace_id, meeting_id, *, clock=time.time) -> str:
     except Exception as exc:
         logger.warning("meeting recovery leave failed type=%s", type(exc).__name__)
     meetings.outbox_unknown(meeting_id)
-    meetings.finish(meeting_id, "interrupted", "interrupted", clock(), discard=False)
+    ended = meetings.recover(meeting_id, clock())
+    if ended is None:
+        return None
+    state, reason = ended
     try:
         gateway.db.audit(
             action="meetings.end",
             decision="ok",
             workspace_id=workspace_id,
             user_id=row["user_id"],
-            reason="interrupted",
+            reason=reason,
             target_ids=[meeting_id],
         )
     except Exception as exc:
         logger.warning("meeting audit failed type=%s", type(exc).__name__)
-    return "interrupted"
+    return state

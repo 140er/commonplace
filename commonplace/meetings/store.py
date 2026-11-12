@@ -12,13 +12,14 @@ import os
 import re
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from commonplace.admission import GATE
-from commonplace.meetings import adapter, seal
+from commonplace.meetings import adapter, lifecycle, seal
 from mempalace.sqlite_crypto import connect, row_factory
 
 LABEL_MAX = 60
@@ -28,10 +29,11 @@ LIMITS = {"max_concurrent": (1, 8), "max_minutes": (5, 480), "daily_meetings": (
 FLAGS = ("enabled", "transcript_ok", "external_model_ok")
 SETTINGS_KEYS = frozenset(FLAGS) | frozenset(LIMITS)
 PERSON_KEYS = frozenset({"enabled", "keep_transcript", "language", "notes_wing"})
-# A meeting in none of these is active: it holds a join link and may hold segments.
-ENDED = ("done", "cancelled", "timeout", "discarded", "interrupted")
-RUNNING = ("joining", "lobby", "announcing", "live", "ending", "processing", "removed")
-ADVANCE_FIELDS = frozenset({"ext_meeting", "announced_at", "started_at", "end_reason"})
+# The states live in ``lifecycle``; these names stay for callers that import them from here.
+ENDED = lifecycle.ENDED
+RUNNING = lifecycle.RUNNING
+ACTIVE = lifecycle.ACTIVE
+ADVANCE_FIELDS = frozenset({"ext_meeting", "announced_at", "started_at"})
 INVITE_KEYS = frozenset(
     {
         "link",
@@ -185,8 +187,7 @@ def parse_stamp(value: str) -> float:
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
 
 
-def is_ended(state: str) -> bool:
-    return state in ENDED or state.startswith("failed:")
+is_ended = lifecycle.is_ended
 
 
 def plain_text(value, limit, code, what) -> str:
@@ -400,24 +401,19 @@ class MeetingStore:
         return merged
 
     def _discard_active(self, conn) -> int:
-        """Active meetings end as cancelled with everything they hold gone: the join link, the
-        working segments and any queued chat post. Notes already generated stay."""
-        marks = ",".join("?" * len(ENDED))
-        where = f"state NOT IN ({marks}) AND state NOT LIKE 'failed:%'"
-        ids = [r["id"] for r in conn.execute(f"SELECT id FROM meetings WHERE {where}", ENDED)]
-        for meeting_id in ids:
-            conn.execute("DELETE FROM meeting_segments WHERE meeting_id=?", (meeting_id,))
-            conn.execute(
-                "UPDATE meeting_outbox SET state='cancelled' "
-                "WHERE meeting_id=? AND state IN ('queued','sending')",
-                (meeting_id,),
-            )
-        conn.execute(
-            f"UPDATE meetings SET join_ref=NULL, state='cancelled', end_reason='cancelled', "
-            f"ended_at=? WHERE {where}",
-            (stamp(), *ENDED),
+        """Every active meeting ends through the ``kill`` event of the lifecycle table: cancelled
+        (a stopped one ``discarded``) with its join link, working segments, participants and
+        queued chat posts gone. Notes already generated stay."""
+        now = time.time()
+        marks = ",".join("?" * len(ACTIVE))
+        ids = [
+            r["id"]
+            for r in conn.execute(f"SELECT id FROM meetings WHERE state IN ({marks})", ACTIVE)
+        ]
+        return sum(
+            self._transition(conn, meeting_id, lifecycle.KILL, now=now) is not None
+            for meeting_id in ids
         )
-        return len(ids)
 
     def disable(self) -> int:
         """The kill switch: the master switch off and every active meeting discarded. A workspace
@@ -775,7 +771,7 @@ class MeetingStore:
                     "INSERT INTO meetings(id, user_id, connection_id, provider, join_ref, "
                     "ext_meeting, title, bot_name, state, keep_transcript, board, disclosure, "
                     "attested_at, start_at, request_id, created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,'requested',?,?,?,?,?,?,?)",
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         meeting_id,
                         user_id,
@@ -785,6 +781,7 @@ class MeetingStore:
                         parsed.ext_meeting,
                         title,
                         bot_name,
+                        lifecycle.INITIAL,
                         int(keep),
                         board,
                         disclosure,
@@ -907,110 +904,89 @@ class MeetingStore:
 
     def pending(self) -> bool:
         """Is anything requested or running (the worker keeps beating while so)."""
+        marks = ",".join("?" * len(ACTIVE))
         with self._tx(write=False) as conn:
             if conn is None:
                 return False
-            marks = ",".join("?" * len(ENDED))
             return bool(
                 conn.execute(
-                    f"SELECT 1 FROM meetings WHERE state NOT IN ({marks}) "
-                    "AND state NOT LIKE 'failed:%' LIMIT 1",
-                    ENDED,
+                    f"SELECT 1 FROM meetings WHERE state IN ({marks}) LIMIT 1", ACTIVE
                 ).fetchone()
             )
 
+    @staticmethod
+    def _busy(conn, now: float, lease_s: float) -> int:
+        marks = ",".join("?" * len(RUNNING))
+        return conn.execute(
+            f"SELECT COUNT(*) AS n FROM meetings WHERE state IN ({marks}) AND lease_at > ?",
+            (*RUNNING, now - lease_s),
+        ).fetchone()["n"]
+
     def free_slots(self, now: float, lease_s: float) -> int:
         """How many more meetings may start under ``max_concurrent`` right now."""
-        marks = ",".join("?" * len(RUNNING))
         with self._tx(write=False) as conn:
             if conn is None:
                 return 0
-            busy = conn.execute(
-                f"SELECT COUNT(*) AS n FROM meetings WHERE state IN ({marks}) AND lease_at > ?",
-                (*RUNNING, now - lease_s),
-            ).fetchone()["n"]
+            busy = self._busy(conn, now, lease_s)
         return max(0, self.settings()["max_concurrent"] - busy)
 
-    def claim(self, meeting_id, now: float, lease_s: float) -> bool:
-        """``requested`` -> ``joining`` with a fresh lease, at most once and only while the
-        workspace is under ``max_concurrent``. A second fire of the same meeting finds another
-        state and gets False."""
-        with self._tx() as conn:
-            row = self._meeting_row(conn, meeting_id)
-            if row["state"] != "requested":
-                return False
-            if row["start_at"] and row["start_at"] > stamp_ts(now + JOIN_LEAD_S):
-                return False
-            limit = self.settings()["max_concurrent"]
-            marks = ",".join("?" * len(RUNNING))
-            busy = conn.execute(
-                f"SELECT COUNT(*) AS n FROM meetings WHERE state IN ({marks}) AND lease_at > ?",
-                (*RUNNING, now - lease_s),
-            ).fetchone()["n"]
-            if busy >= limit:
-                return False
-            conn.execute(
-                "UPDATE meetings SET state='joining', lease_at=? WHERE id=?", (now, meeting_id)
-            )
-            self._event(conn, meeting_id, "joining", stamp_ts(now))
-            return True
-
     def renew(self, meeting_id, now: float) -> bool:
-        """Heartbeat. False once the meeting ended, whoever ended it."""
-        marks = ",".join("?" * len(ENDED))
+        """Heartbeat (the lease only; no state changes). False once the meeting ended, whoever
+        ended it."""
+        marks = ",".join("?" * len(RUNNING))
         with self._tx() as conn:
             return (
                 conn.execute(
-                    f"UPDATE meetings SET lease_at=? WHERE id=? AND state NOT IN ({marks}) "
-                    "AND state NOT LIKE 'failed:%'",
-                    (now, meeting_id, *ENDED),
+                    f"UPDATE meetings SET lease_at=? WHERE id=? AND state IN ({marks})",
+                    (now, meeting_id, *RUNNING),
                 ).rowcount
                 == 1
             )
 
-    def advance(self, meeting_id, to, now: float, *, wipe_ref=False, **fields) -> bool:
-        """Move a running meeting to ``to``: compare-and-set, False if it ended or if someone asked
-        for the end meanwhile. A stop (``removed``) is never overwritten, and neither is a leave
-        (``ending``, ``processing``) by a step that would go back to joining, announcing or live,
-        so a request that lands during the announcement still ends the meeting without capture."""
-        if set(fields) - ADVANCE_FIELDS:
-            raise ValueError("unknown field")
-        refused = ("removed",)
-        if to not in ("ending", "processing"):
-            refused += ("ending", "processing")
-        sets = ["state=?", *(f"{name}=?" for name in fields)]
-        values = [to, *fields.values()]
-        if wipe_ref:
-            sets.append("join_ref=NULL")
-        skipped = (*ENDED, *refused)
-        marks = ",".join("?" * len(skipped))
-        with self._tx() as conn:
-            changed = conn.execute(
-                f"UPDATE meetings SET {', '.join(sets)} WHERE id=? AND state NOT IN ({marks}) "
-                "AND state NOT LIKE 'failed:%'",
-                (*values, meeting_id, *skipped),
-            ).rowcount
-            if changed:
-                self._event(conn, meeting_id, to, stamp_ts(now))
-            return bool(changed)
+    def state_of(self, meeting_id) -> str:
+        with self._tx(write=False) as conn:
+            return self._meeting_row(conn, meeting_id)["state"] if conn else ""
 
-    def finish(self, meeting_id, state, reason, now: float, *, discard: bool) -> bool:
-        """End the meeting for good: the sealed link is wiped, queued chat posts are cancelled and,
-        with ``discard``, everything captured (working segments, participants) is deleted for real.
-        False if it had already ended (a kill switch got there first). A meeting that was stopped
-        (``removed``) cannot be finished while keeping what it captured: that is refused, and the
-        caller must finish it with ``discard=True``."""
-        skipped = ENDED if discard else (*ENDED, "removed")
-        marks = ",".join("?" * len(skipped))
-        with self._tx() as conn:
-            changed = conn.execute(
-                "UPDATE meetings SET state=?, end_reason=?, ended_at=?, join_ref=NULL, "
-                f"lease_at=NULL WHERE id=? AND state NOT IN ({marks}) AND state NOT LIKE 'failed:%'",
-                (state, reason, stamp_ts(now), meeting_id, *skipped),
-            ).rowcount
-            if not changed:
-                return False
-            if discard:
+    # --- lifecycle: the one writer of ``state`` ---------------------------------------------
+
+    def _transition(
+        self, conn, meeting_id, event, *, now: float, to=None, reason=None, wipe_ref=False, **fields
+    ):
+        """The only code that writes ``meetings.state``: every claim, step, leave, stop, end,
+        recovery and kill goes through here and is judged by ``lifecycle.plan`` against the state
+        read in this write transaction, then applied with a compare-and-set on that state. Returns
+        the plan that was applied, or None when the table refuses it (an ended meeting never
+        changes; a stop is never overwritten by a step that was in flight).
+
+        The first end reason wins, except that a stop's and a discarding end's replace it. An end
+        that discards deletes the working segments and participants for real; every end wipes the
+        sealed link and cancels queued chat posts. ``fields`` are the extra columns a step may
+        set."""
+        if set(fields) - ADVANCE_FIELDS - {"lease_at"}:
+            raise ValueError("unknown field")
+        before = self._meeting_row(conn, meeting_id)["state"]
+        step = lifecycle.plan(before, event, to, {k for k, v in fields.items() if v})
+        if step is None:
+            return None
+        stamped = stamp_ts(now)
+        sets = ["state=?", "end_reason=COALESCE(?, end_reason, ?)"]
+        values = [step.state, step.reason or (reason if step.overwrite else None), reason]
+        for name, value in fields.items():
+            sets.append(f"{name}=?")
+            values.append(value)
+        if step.ends:
+            sets += ["ended_at=?", "join_ref=NULL", "lease_at=NULL"]
+            values.append(stamped)
+        elif wipe_ref:
+            sets.append("join_ref=NULL")
+        changed = conn.execute(
+            f"UPDATE meetings SET {', '.join(sets)} WHERE id=? AND state=?",
+            (*values, meeting_id, before),
+        ).rowcount
+        if changed != 1:
+            return None
+        if step.ends:
+            if step.discard:
                 for table in ("meeting_segments", "meeting_participants"):
                     conn.execute(f"DELETE FROM {table} WHERE meeting_id=?", (meeting_id,))
             conn.execute(
@@ -1018,39 +994,74 @@ class MeetingStore:
                 "WHERE meeting_id=? AND state IN ('queued','sending')",
                 (meeting_id,),
             )
-            self._event(conn, meeting_id, state, stamp_ts(now))
-            return True
+        if step.state != before:
+            self._event(conn, meeting_id, step.state, stamped)
+        return step
+
+    def claim(self, meeting_id, now: float, lease_s: float) -> bool:
+        """``requested`` -> ``joining`` with a fresh lease, at most once and only while the
+        workspace is under ``max_concurrent``. A second fire of the same meeting finds another
+        state and gets False."""
+        with self._tx() as conn:
+            row = self._meeting_row(conn, meeting_id)
+            if row["start_at"] and row["start_at"] > stamp_ts(now + JOIN_LEAD_S):
+                return False
+            if self._busy(conn, now, lease_s) >= self.settings()["max_concurrent"]:
+                return False
+            step = self._transition(conn, meeting_id, lifecycle.CLAIM, now=now, lease_at=now)
+            return step is not None
+
+    def advance(self, meeting_id, to, now: float, *, wipe_ref=False, reason=None, **fields) -> bool:
+        """The worker's next step to ``to``. False if the table refuses it: the meeting ended, a
+        stop (``removed``) landed, a leave (``ending``, ``processing``) landed and the step would
+        go back to joining, announcing or live, or ``live`` without the announcement stamped."""
+        with self._tx() as conn:
+            step = self._transition(
+                conn,
+                meeting_id,
+                lifecycle.ADVANCE,
+                now=now,
+                to=to,
+                reason=reason,
+                wipe_ref=wipe_ref,
+                **fields,
+            )
+            return step is not None
+
+    def finish(self, meeting_id, state, reason, now: float, *, discard: bool) -> bool:
+        """End the meeting for good. ``discard`` (a removal, a failure, a cancel) is legal from any
+        running state and deletes what was captured; a ``removed`` meeting always ends
+        ``discarded``, whatever state the caller asked for. Keeping what was captured (``done``,
+        ``timeout``) is only legal from ``processing``, and a stopped meeting can never be finished
+        that way: it is refused and the caller must discard. False if refused or already ended."""
+        event = lifecycle.FINISH_DISCARD if discard else lifecycle.FINISH_KEEP
+        with self._tx() as conn:
+            step = self._transition(conn, meeting_id, event, now=now, to=state, reason=reason)
+            return step is not None
+
+    def recover(self, meeting_id, now: float):
+        """End a meeting whose worker is gone: ``interrupted`` keeping what it captured (the
+        design note's recovery), or ``discarded`` if a stop had been requested. Returns the state
+        it was ended in, or None if the table refuses (it ended meanwhile)."""
+        with self._tx() as conn:
+            step = self._transition(
+                conn, meeting_id, lifecycle.RECOVER, now=now, reason=lifecycle.INTERRUPTED
+            )
+            if step is None:
+                return None
+            return step.state, self._meeting_row(conn, meeting_id)["end_reason"]
 
     def request_end(self, meeting_id, kind, now: float, user_id=None) -> dict:
         """The inviter's leave (``inviter_left``) or the owner's stop (``stop_requested``). A meeting
         that has not joined yet is simply cancelled; a running one is flagged and its worker acts at
-        its next beat (the stop discards, the leave keeps what was captured). An ended meeting is
-        returned unchanged."""
+        its next beat (the stop discards, the leave keeps what was captured). One that already ended,
+        or whose end was already requested, is returned unchanged."""
+        event = lifecycle.STOP if kind == "stop_requested" else lifecycle.LEAVE
         with self._tx() as conn:
             row = self._meeting_row(conn, meeting_id)
             if user_id is not None and row["user_id"] != user_id:
                 raise Missing
-            if is_ended(row["state"]):
-                return meeting_view(row)
-            if row["state"] == "requested":
-                conn.execute(
-                    "UPDATE meetings SET state='cancelled', end_reason='cancelled', ended_at=?, "
-                    "join_ref=NULL WHERE id=?",
-                    (stamp_ts(now), meeting_id),
-                )
-                self._event(conn, meeting_id, "cancelled", stamp_ts(now))
-            elif kind == "stop_requested":
-                conn.execute(
-                    "UPDATE meetings SET state='removed', end_reason='stop_requested' WHERE id=?",
-                    (meeting_id,),
-                )
-                self._event(conn, meeting_id, "removed", stamp_ts(now))
-            elif row["state"] not in ("removed", "ending", "processing"):
-                conn.execute(
-                    "UPDATE meetings SET state='ending', end_reason='inviter_left' WHERE id=?",
-                    (meeting_id,),
-                )
-                self._event(conn, meeting_id, "ending", stamp_ts(now))
+            self._transition(conn, meeting_id, event, now=now, reason=kind)
             return meeting_view(self._meeting_row(conn, meeting_id))
 
     def expired(self, now: float, lease_s: float) -> list[str]:
@@ -1070,14 +1081,19 @@ class MeetingStore:
 
     # --- participants and the chat outbox -------------------------------------------------
 
-    def participant_seen(self, meeting_id, ext, label, host, now: float) -> None:
+    def participant_seen(self, meeting_id, ext, label, host, now: float) -> bool:
+        """Note a participant, only while the meeting is capturing: after a stop, a kill or a
+        recovery has deleted what it held, a late event must not write it back."""
         with self._tx() as conn:
+            if self._meeting_row(conn, meeting_id)["state"] not in lifecycle.CAPTURING:
+                return False
             conn.execute(
                 "INSERT INTO meeting_participants(meeting_id, ext_participant, label, host, "
                 "joined_at) VALUES (?,?,?,?,?) ON CONFLICT(meeting_id, ext_participant) "
                 "DO UPDATE SET left_at=NULL, host=excluded.host, label=excluded.label",
                 (meeting_id, ext, label, int(host), stamp_ts(now)),
             )
+            return True
 
     def participant_left(self, meeting_id, ext, now: float) -> None:
         with self._tx() as conn:

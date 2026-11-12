@@ -757,9 +757,9 @@ def test_a_meeting_that_fires_twice_runs_once_and_concurrency_is_capped(console_
     assert meetings.claim(first, time.time(), engine.LEASE_S) is True
     assert meetings.claim(first, time.time(), engine.LEASE_S) is False  # a second fire does nothing
     assert meetings.claim(second, time.time(), engine.LEASE_S) is False  # max_concurrent is 1
-    meetings.finish(first, "done", "done", time.time(), discard=False)
+    meetings.finish(first, "cancelled", "cancelled", time.time(), discard=True)
     assert meetings.claim(second, time.time(), engine.LEASE_S) is True
-    assert engine.Run(hub.hub.gateway, hub.hub.workspace, first).run() == "done"
+    assert engine.Run(hub.hub.gateway, hub.hub.workspace, first).run() == "cancelled"
     assert fake.joins == []
 
 

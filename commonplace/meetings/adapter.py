@@ -172,9 +172,7 @@ class FakeAdapter(Adapter):
         self.join_result = None
         self.join_errors = 0
         self.join_hook = None  # called inside join (a slow provider)
-        self.on_post = (
-            None  # called inside post_chat, before it answers (something happens meanwhile)
-        )
+        self.on_post = None  # called inside post_chat, before it answers
         self.post_results: list = []
         self.joins: list[tuple] = []  # (display_name, idempotency_key)
         self.leaves: list[str] = []  # handles
