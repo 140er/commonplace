@@ -3,7 +3,7 @@
    the canvas renders, in the Deck tokens of deck.css: no borders or shadows on cards, elevation by
    lightness, no accent colour. A status is a shape first (circle, triangle, square, ring) and a
    colour second; amber is not used here because nothing on the map waits on the person. */
-.topo { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; font-family: var(--font); }
+.topo { --tsize: 12px; flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; font-family: var(--font); }
 .topo button, .topo select { font: inherit; }
 .topo-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; }
 .topo-bar label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
@@ -25,7 +25,7 @@
 .topo-link.sel line:not(.topo-hit) { stroke: var(--text-2); }
 .topo-link.on line:not(.topo-hit), .topo-link:hover line:not(.topo-hit), .topo-link:focus-visible line:not(.topo-hit) { stroke: var(--text); stroke-width: 3; }
 .topo-link.dim, .topo-node.dim { opacity: .28; }
-.topo-method { font: 500 11px/1 var(--font); fill: var(--text-2); stroke: var(--surface); stroke-width: 7px; stroke-linejoin: round; paint-order: stroke; text-anchor: middle; }
+.topo-method { font: 500 11px/1 var(--font); font-size: calc(11px * var(--inv, 1)); fill: var(--text-2); stroke: var(--surface); stroke-width: calc(7px * var(--inv, 1)); stroke-linejoin: round; paint-order: stroke; text-anchor: middle; }
 
 .topo-dot { stroke: var(--surface); stroke-width: 1.5; }
 .topo-dot.s-up { fill: var(--ok); }
@@ -44,14 +44,15 @@
 .topo-node.stale .topo-plate, .topo-node.missing .topo-plate { stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .topo-icon { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .topo-node.stale .topo-icon, .topo-node.missing .topo-icon { opacity: .5; }
-.topo-name, .topo-role { stroke: var(--surface); stroke-width: 8px; stroke-linejoin: round; paint-order: stroke; text-anchor: middle; }
-.topo-name { font: 600 12px/1 var(--font); fill: var(--text); }
-.topo-role { font: 500 11px/1 var(--font); fill: var(--text-2); }
-/* Method names would crowd a whole map: they show for the links of the selected device, along a highlighted
-   route, and for a link that is hovered or focused. */
+/* Names do not scale with the zoom: the canvas sets --inv to 1 / scale, so a name is always --tsize pixels and sits
+   a fixed number of pixels under its plate (topology-layout.js, labelOffsets, is the same arithmetic). */
+.topo-name, .topo-role { stroke: var(--surface); stroke-width: calc(8px * var(--inv, 1)); stroke-linejoin: round; paint-order: stroke; text-anchor: middle; font-family: var(--font); }
+.topo-name { font-weight: 600; font-size: calc(var(--tsize) * var(--inv, 1)); fill: var(--text); transform: translateY(calc(27px + (6px + var(--tsize)) * var(--inv, 1))); }
+.topo-role { font-weight: 500; font-size: calc((var(--tsize) - 1px) * var(--inv, 1)); fill: var(--text-2); transform: translateY(calc(27px + (20px + var(--tsize)) * var(--inv, 1))); }
+/* Method names would crowd a whole map: they show along a highlighted route, for a link that is hovered or focused,
+   and for the links of the selected device once the view is zoomed in far enough (0.8) to have room for them. */
 .topo-method { display: none; }
-.topo-link.sel .topo-method, .topo-link.on .topo-method, .topo-link:hover .topo-method, .topo-link:focus .topo-method { display: inline; }
-.topo-stage.far .topo-role { display: none; }
+.topo-stage.near .topo-link.sel .topo-method, .topo-link.on .topo-method, .topo-link:hover .topo-method, .topo-link:focus .topo-method { display: inline; }
 
 .topo-note { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; pointer-events: none; }
 .topo-note:empty { display: none; }
@@ -76,6 +77,7 @@
   .topo-bar, .topo-path, .topo-foot { padding-left: 12px; padding-right: 12px; }
   .topo-bar .btn, .topo-bar .iconbtn, .topo-bar select { min-height: 44px; }
   .topo-bar .iconbtn { width: 44px; }
+  .topo { --tsize: 11px; }
   .topo-spacer { display: none; }
   .topo-bar label { flex: 1 1 100%; }
   .topo-bar select { flex: 1; max-width: none; }

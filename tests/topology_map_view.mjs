@@ -89,7 +89,7 @@ test("scene: the fixture renders the right icon, label and dot for every device"
     assert.ok(tag.includes(` k-${kind} `));
   }
   const maple = nodeTag(scene, "maple");
-  assert.match(maple, /<text class="topo-name" y="52">Maple<\/text><text class="topo-role" y="66">app host<\/text>/);
+  assert.match(maple, /<text class="topo-name" data-full="Maple">Maple<\/text><text class="topo-role" data-full="app host">app host<\/text>/);
   assert.match(maple, /role="button" aria-pressed="false" aria-label="Maple, Server, app host\. Status: Up\."/);
   assert.match(maple, /<g class="topo-dot s-up" data-state="up" transform="translate\(24 -24\)"><title>Status: Up<\/title><circle r="5.5"\/><\/g>/);
   assert.match(nodeTag(scene, "birch"), /class="topo-dot s-degraded" data-state="degraded"[^>]*><title>Status: Degraded<\/title><path /);
@@ -140,7 +140,7 @@ test("scene: long names are cut for the label and kept whole for assistive text"
   const core = ui.createMapCore();
   core.apply(payload);
   const maple = nodeTag(core.scene(), "maple");
-  assert.ok(maple.includes(`<text class="topo-name" y="52">${"A".repeat(23)}…</text>`));
+  assert.ok(maple.includes(`<text class="topo-name" data-full="${"A".repeat(60)}">${"A".repeat(23)}…</text>`));
   assert.ok(maple.includes(`aria-label="${"A".repeat(60)}, Server`));
 });
 
@@ -228,48 +228,103 @@ test("zoom keeps the point under the pointer still and stays inside its limits",
   assert.equal(layout.zoomAbout(view, 0, 0, 0.0001).k, layout.ZOOM.min);
 });
 
-test("fit: the whole graph fills the box with padding, scaled up as well as down, icons never past 64px", () => {
-  const box = (view, points, w, h) => {
-    const xs = points.map((p) => p.x * view.k + view.x), ys = points.map((p) => p.y * view.k + view.y);
-    return { left: Math.min(...xs) - layout.REACH.x * view.k, right: Math.max(...xs) + layout.REACH.x * view.k, top: Math.min(...ys) - layout.REACH.top * view.k, bottom: Math.max(...ys) + layout.REACH.bottom * view.k, w, h };
-  };
-  // A small graph in a big box is scaled up to fill it, up to the icon cap.
-  const few = [{ x: 0, y: 0 }, { x: 170, y: 0 }, { x: 0, y: 112 }];
-  const up = layout.fitView(few, 1200, 700);
-  assert.ok(up.k > 1, "scaled up");
-  assert.ok(Math.abs(up.k - layout.FIT_MAX) < 1e-9, "capped so a 54 unit icon is 64px");
-  assert.ok(54 * up.k <= 64.0001);
-  // A graph that fits at a readable size is scaled to touch the padding on the limiting side and is centred.
-  const fitting = [{ x: 0, y: 0 }, { x: 340, y: 0 }, { x: 0, y: 336 }, { x: 340, y: 336 }];
-  const view = layout.fitView(fitting, 900, 620);
-  const edge = box(view, fitting);
-  assert.ok(view.k >= 1 && view.k <= layout.FIT_MAX);
-  assert.ok(edge.left >= 24 - 1e-6 && edge.right <= 900 - 24 + 1e-6 && edge.top >= 24 - 1e-6 && edge.bottom <= 620 - 24 + 1e-6, "inside the padding");
-  assert.ok(Math.abs((edge.left + edge.right) / 2 - 450) < 1e-6 && Math.abs((edge.top + edge.bottom) / 2 - 310) < 1e-6, "centred");
-  // Too tall to fit at 12px names: names stay 12px, the view starts at the top and the rest is for panning.
-  const tall = [{ x: 0, y: 0 }, { x: 680, y: 0 }, { x: 0, y: 900 }];
-  const tallView = layout.fitView(tall, 900, 500);
-  assert.equal(tallView.k, 1);
-  assert.equal(tallView.y, 24 + layout.REACH.top, "the top of the graph sits at the padding");
-  // Too wide as well: names still stay readable, centred across, and the person pans.
-  const wide = [{ x: 0, y: 0 }, { x: 2400, y: 0 }, { x: 0, y: 900 }];
-  const wideView = layout.fitView(wide, 900, 500);
-  assert.equal(wideView.k, 1);
-  assert.equal(wideView.x, 450 - 1200, "the middle of the graph is in the middle of the box");
-  // A phone accepts 11px names, so the same graph can be a little smaller there.
-  assert.equal(layout.fitView(tall, 358, 420, { minK: 11 / 12 }).k, 11 / 12);
-  assert.equal(layout.fitView([], 1000, 700).k, 1);
+// What one fit has to keep inside the padded box: every plate, mark, name and role line, at the fixed text size.
+function extents(items, view, size = layout.TEXT.desktop) {
+  let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+  for (const item of items) {
+    const room = layout.slotRoom(item.slot ?? Infinity, view.k);
+    const half = Math.max(27 * view.k, Math.min(layout.textWidth(item.name ?? "", size), room) / 2);
+    left = Math.min(left, item.x * view.k + view.x - half); right = Math.max(right, item.x * view.k + view.x + half);
+    top = Math.min(top, item.y * view.k + view.y - 31 * view.k); bottom = Math.max(bottom, item.y * view.k + view.y + 27 * view.k + 6 + size + 14 + 4);
+  }
+  return { left, right, top, bottom };
+}
+
+test("fit: the whole graph, tall into a wide box and into a narrow box, always inside the padded box", () => {
+  const tall = [{ x: 0, y: 0, name: "Gate" }, { x: 340, y: 0, name: "Nimbus CDN" }, { x: 0, y: 672, name: "Studio Mac" }, { x: 340, y: 672, name: "Tower" }];
+  for (const [w, h, size] of [[1100, 460, 12], [358, 330, 11], [240, 900, 11], [900, 620, 12]]) {
+    const view = layout.fitView(tall, w, h, { size });
+    const at = extents(tall, view, size);
+    assert.ok(at.left >= 24 - 1e-6 && at.right <= w - 24 + 1e-6 && at.top >= 24 - 1e-6 && at.bottom <= h - 24 + 1e-6, `${w}x${h}: ${JSON.stringify(at)}`);
+    assert.ok(Math.abs((at.left + at.right) / 2 - w / 2) < 1e-6 && Math.abs((at.top + at.bottom) / 2 - h / 2) < 1e-6, `${w}x${h} centred`);
+    assert.ok(view.k > 0 && view.k <= layout.FIT_MAX);
+  }
+  // The box a caller passes is the stage without the toolbar and the legend: a smaller box gives a smaller scale.
+  const withBars = layout.fitView(tall, 1100, 460 - 90, {}), without = layout.fitView(tall, 1100, 460, {});
+  assert.ok(withBars.k < without.k);
+  // Scaled up as well as down, never past 64px icons.
+  const few = [{ x: 0, y: 0 }, { x: 170, y: 0 }];
+  assert.equal(layout.fitView(few, 1400, 800).k, layout.FIT_MAX);
+  assert.ok(54 * layout.fitView(few, 1400, 800).k <= 64.0001);
   assert.deepEqual(layout.fitView([], 1000, 700), { x: 500, y: 350, k: 1 });
 });
 
-test("fit keeps names readable, however many devices there are", () => {
+test("fit shows the whole graph however many devices there are", () => {
   const core = ui.createMapCore();
   core.apply(largeFixture(300));
   core.fit(1000, 700);
-  assert.equal(core.view.k, 1, "a big graph keeps readable names and is panned");
+  assert.ok(core.view.k > 0 && core.view.k < 1);
+  for (const at of Object.values(core.positions)) {
+    const x = at.x * core.view.k + core.view.x, y = at.y * core.view.k + core.view.y;
+    assert.ok(x >= 24 && x <= 976 && y >= 24 && y <= 676, `${x},${y}`);
+  }
   core.apply(fixture());
-  core.fit(1000, 700, { minK: 1 });
-  assert.ok(core.view.k >= 1);
+  core.fit(1000, 700, { size: 12 });
+  const items = core.model.nodes.map((node) => ({ ...core.positions[node.key], name: node.name, slot: core.slots()[node.key] }));
+  const at = extents(items, core.view);
+  assert.ok(at.left >= 24 - 1e-6 && at.right <= 976 + 1e-6 && at.top >= 24 - 1e-6 && at.bottom <= 676 + 1e-6, "every device of the fixture is inside");
+});
+
+test("names: cut to the slot with an ellipsis, whole when they fit, the slot is the row gap minus 8px", () => {
+  const size = 12;
+  assert.equal(layout.labelText("Maple", 200, size), "Maple");
+  const cut = layout.labelText("shop.orchard.example", 100, size);
+  assert.ok(cut.endsWith("…") && cut.length < "shop.orchard.example".length);
+  assert.ok(layout.textWidth(cut, size) <= 100 + 1e-9, "the cut name fits its room");
+  assert.equal(layout.labelText("Maple", 2, size), "…");
+  assert.ok(layout.textWidth(layout.labelText("W".repeat(40), 150, size), size) <= 150 + 1e-9);
+  // A slot is the horizontal distance to the nearest neighbour in the row; a device alone in its row has none.
+  const slots = layout.slotWidths({ a: { x: 0, y: 0 }, b: { x: 170, y: 10 }, c: { x: 500, y: 0 }, d: { x: 0, y: 200 } });
+  assert.deepEqual([slots.a, slots.b, slots.c, slots.d], [170, 170, 330, Infinity]);
+  assert.equal(layout.slotRoom(170, 0.5), 77);
+  assert.equal(layout.slotRoom(170, 1), 162);
+  assert.equal(layout.slotRoom(Infinity, 0.1), Infinity);
+});
+
+test("roles: shown only when the scale gives them room", () => {
+  const slot = 170, size = 11;
+  const role = "build runner";
+  const needed = layout.textWidth(role, size);
+  const k = (needed + 8) / slot;
+  assert.equal(layout.roleFits(role, layout.slotRoom(slot, k + 0.01), size), true);
+  assert.equal(layout.roleFits(role, layout.slotRoom(slot, k - 0.01), size), false);
+  assert.equal(layout.roleFits("", 0, size), true, "no role, nothing to hide");
+  assert.equal(layout.roleFits(role, Infinity, size), true);
+});
+
+test("lines under a device show only when the row below leaves room for them", () => {
+  assert.equal(layout.nameShown(1, 12), true);
+  assert.equal(layout.nameShown(0.16, 12), false, "an overview of hundreds of devices names none of them");
+  assert.equal(layout.roleShown(1, 12), true);
+  const k = (6 + 12 + 14 + 4) / (layout.GRID.y - 54);
+  assert.equal(layout.roleShown(k + 0.01, 12), true);
+  assert.equal(layout.roleShown(k - 0.01, 12), false);
+  assert.equal(layout.nameShown(k - 0.01, 12), true, "the name needs less room than the role");
+});
+
+test("text keeps its size: the stylesheet draws names at 1 / scale, the same arithmetic as labelOffsets", async () => {
+  const css = await read("topology.css");
+  assert.match(css, /\.topo-name \{[^}]*font-size: calc\(var\(--tsize\) \* var\(--inv, 1\)\);[^}]*transform: translateY\(calc\(27px \+ \(6px \+ var\(--tsize\)\) \* var\(--inv, 1\)\)\)/);
+  assert.match(css, /\.topo \{ --tsize: 12px;/);
+  assert.match(css, /@media \(max-width: 699px\) \{[\s\S]*\.topo \{ --tsize: 11px; \}/);
+  for (const k of [0.25, 1, 1.18]) {
+    const at = layout.labelOffsets(12, k);
+    assert.ok(Math.abs((at.name - 27) * k - 18) < 1e-9, "the name baseline is 18 screen pixels under the plate edge");
+    assert.ok(Math.abs((at.role - at.name) * k - 14) < 1e-9);
+  }
+  const source = await read("topology-map.js");
+  assert.match(source, /sort\(\(a, b\) => \(a\.key === selected\) - \(b\.key === selected\)\)/, "the selected device is drawn last, on top");
+  assert.match(source, /chosen = el\.classList\?\.contains\("sel"\);\n\s+const room = chosen \? Infinity/, "the selected device keeps its whole name and role");
 });
 
 test("link names show for the links of the selected device only, plus a route, hover and focus", async () => {
@@ -282,9 +337,9 @@ test("link names show for the links of the selected device only, plus a route, h
   assert.deepEqual(sel.sort(), model.links.filter((l) => l.from === "maple" || l.to === "maple").map((l) => l.id).sort());
   assert.match(picked, /data-link="[^"]+" tabindex="0" role="img" aria-label="/, "a link can take keyboard focus and has its text");
   const css = await read("topology.css");
-  assert.match(css, /\.topo-link\.sel \.topo-method, \.topo-link\.on \.topo-method, \.topo-link:hover \.topo-method, \.topo-link:focus \.topo-method \{ display: inline; \}/);
+  assert.match(css, /\.topo-stage\.near \.topo-link\.sel \.topo-method, \.topo-link\.on \.topo-method, \.topo-link:hover \.topo-method, \.topo-link:focus \.topo-method \{ display: inline; \}/);
   assert.match(css, /\.topo-method \{ display: none; \}/);
-  assert.match(css, /\.topo-name, \.topo-role \{ stroke: var\(--surface\); stroke-width: 8px;[^}]*paint-order: stroke;/, "names sit above lines on a ground-coloured backing");
+  assert.match(css, /\.topo-name, \.topo-role \{ stroke: var\(--surface\); stroke-width: calc\(8px \* var\(--inv, 1\)\);[^}]*paint-order: stroke;/, "names sit above lines on a ground-coloured backing");
 });
 
 test("links: each end's status mark sits clear of the label box under its device", () => {
@@ -667,14 +722,19 @@ test("screen: with no interval it never reads on its own, a host read arrives th
   screen.stop();
 });
 
-test("link names avoid devices and each other", () => {
+test("link names avoid devices and each other, at the scale they are drawn", () => {
   const model = ui.mapModel(fixture());
   const positions = layout.autoLayout(model.nodes, model.links);
-  const places = layout.layoutLinks(model.links, positions);
-  const boxes = model.links.map((l) => { const at = places.get(l.id).label, w = l.method.length * 6.4 + 10; return { id: l.id, l: at.x - w / 2, r: at.x + w / 2, t: at.y - 17, b: at.y }; });
   const hits = (a, b) => a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t;
-  let crowded = 0;
-  for (const box of boxes) for (const p of Object.values(positions)) if (hits(box, { l: p.x - 78, r: p.x + 78, t: p.y + 36, b: p.y + 76 }) || hits(box, { l: p.x - 30, r: p.x + 30, t: p.y - 30, b: p.y + 30 })) crowded += 1;
-  assert.ok(crowded <= 2, `${crowded} link names still touch a device`);
-  for (let i = 0; i < boxes.length; i++) for (const other of boxes.slice(i + 1)) assert.ok(!hits(boxes[i], other) || (boxes[i].id.split(":")[0] === other.id.split(":")[0]), `${boxes[i].id} over ${other.id}`);
+  for (const k of [1, 0.8]) {
+    const places = layout.layoutLinks(model.links, positions, k);
+    const boxes = model.links.map((l) => { const at = places.get(l.id).label, w = (l.method.length * 6.4 + 10) / k; return { id: l.id, l: at.x - w / 2, r: at.x + w / 2, t: at.y - 17 / k, b: at.y }; });
+    let crowded = 0;
+    for (const box of boxes) for (const p of Object.values(positions)) {
+      const under = { l: p.x - 70 / k, r: p.x + 70 / k, t: p.y + 27 + 6 / k, b: p.y + 27 + 36 / k };
+      if (hits(box, under) || hits(box, { l: p.x - 30, r: p.x + 30, t: p.y - 30, b: p.y + 30 })) crowded += 1;
+    }
+    assert.ok(crowded <= 5, `${crowded} link names still touch a device at ${k}`);
+    for (let i = 0; i < boxes.length; i++) for (const other of boxes.slice(i + 1)) assert.ok(!hits(boxes[i], other) || (boxes[i].id.split(":")[0] === other.id.split(":")[0]), `${boxes[i].id} over ${other.id} at ${k}`);
+  }
 });
