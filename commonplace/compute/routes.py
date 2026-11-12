@@ -177,6 +177,9 @@ def handle(gateway, handler):
 
 def install(gateway):
     """Register inert REST handlers only; extension-list opt-in is parent-owned."""
+    from . import discovery_routes
+
     for method in ("GET", "POST"):
         gateway.add_route(method, "/api/compute", lambda h: handle(gateway, h))
         gateway.add_prefix_route(method, "/api/compute/", lambda h: handle(gateway, h))
+    discovery_routes.install(gateway)
