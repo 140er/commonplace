@@ -67,6 +67,13 @@
 
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
 
+  - Project settings render and bind the orchestrator card before optional chat,
+    connection, card and chat-status reads settle. Chat and agent sections show
+    loading or local errors; their initial reads use ten-second client deadlines.
+    `GET /api/connections` bounds optional wing enumeration to one second and one
+    outstanding daemon per gateway, returning connections with empty wings on
+    timeout, busy lookup or `ToolError`; late results are discarded.
+
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
   - Project Connect keeps every 409 reason in its status, including shared-memory and replacement guidance after cancelling a dialog. Accepted choices clear that conflict before retrying; the memory-access rules remain unchanged.
@@ -151,6 +158,11 @@
 - **Tests:**
 
   - `tests/test_card_runs_ui.py` (ledger case) covers reported and unreported usage, end words, cost formatting and log pointer escaping.
+
+  - `tests/test_commonplace_web.py` covers wing lookup deadlines, single-flight
+    fallback/recovery and the existing `ToolError` fallback.
+    `tests/test_workbench_project_settings.py` and its Node fixture hold connection,
+    chat and card requests pending while exercising Connect and section errors.
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 

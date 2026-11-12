@@ -70,6 +70,10 @@
 
   - OAuth CSP and destination-display controls cover normal consent, retry, canonical numeric hosts, explicit default ports and actionable validation errors.
 
+  - Project-settings regressions hold connection, chat and card reads pending while
+    exercising Connect; gateway tests cover slow and blocked wing enumeration,
+    transport budgets, bounded concurrency and fallback recovery.
+
   - Legacy report-source tests quiesce hold, chat and phone workers and verify removal of a pre-existing invalid reset trigger before raw status writes.
 
   - Real-browser refresh cases (`workbench_e2e/test_refresh_forms.py`) hold an open hand-off form or comment across background refreshes, including a read in flight and a changed Needs me queue, and check that Cancel closes the form, that J and K leave an open form alone, and that closing the panel after a failed read keeps it closed.

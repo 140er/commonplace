@@ -68,6 +68,8 @@
 
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
 
+  - The project guide describes independently loading settings sections, a usable
+    orchestrator card during pending reads and the bounded connection-wing fallback.
   - `docs/mvp/CONTRACT.md` documents the instance index figures contract and its unknown-reason codes.
 
   - `docs/agent-connections.md` also explains granting and withdrawing `bots:chat` and `bots:confirm` for a member's own app.
