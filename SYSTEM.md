@@ -29,6 +29,43 @@ entry was written.
   inventoried before deploy; that inventory is not performed here. No stored client
   data is migrated.
 
+- **Instance index figures (#284):** Only the existing instance-admin person/owner
+  authority receives additive `mempalace_status.index_stats`; all normal overview
+  fields and diagnostics remain exactly as before. Only the added figures avoid
+  worker/collection operations; the normal overview retains its existing path. Other callers keep the
+  existing overview shape, without feature fields. `/api/admin/instance/index-stats`
+  pages workspace IDs in creation/ID order, 100 per page, and closes the control
+  snapshot before workspace file reads. Each SQLite query has a 500 ms
+  monotonic budget capped by the page deadline, 10 ms busy wait and a progress interrupt; the console request
+  retains its 2 s budget and returns unknown for remaining workspaces. Status reads its one workspace under the same 2 s budget.
+  Figures expose only `{value, reason}` and workspace IDs. Chroma live SQLite
+  embedding rows supply drawers and vector_count (including changes not yet
+  synced into HNSW); collections.dimension supplies dimension. Capacity comes
+  only from the exact 100-byte, little-endian 64-bit version-1 header pinned by
+  Chroma 1.5.9's hnswlib commit 6868102bde454dc761136e1994490133a6a026bb.
+  Oversized, truncated and unsupported headers are refused. Model identity lives
+  outside permitted SQLite sources (`model_not_in_sqlite`); tombstones cannot be
+  proved across unsynchronized SQL/header sources (`unsynchronized_sources`).
+  Never estimate either. The segment catalog is read in primary-key order with
+  a nine-row cap; more than eight segments returns `segment_catalog_limit`.
+  A workspace store override cannot be established from the allowed sources:
+  return `backend_not_established`, including compact stores with old Chroma files.
+  Generation pointers are only stat-ed: `generation_not_established` prevents
+  reading JSON pointers or reporting figures from retired legacy directories.
+  A missing pointer with sibling generation directories returns the same reason.
+  Rollback-journal databases are read directly. WAL header bytes 18–19 must
+  have both existing sidecars, otherwise `wal_unavailable` prevents creation.
+  Paths are lstat-ed and symlinks refused (`symlink`); writer contention returns
+  `busy`, not corruption. Missing/empty HNSW state uses `header_unavailable`.
+  Non-admin index-stats requests receive the exact unknown-section 404.
+  Drawer count, vector count and HNSW capacity sum every wing, private ones
+  included, so they are reported only for a workspace the viewer currently owns
+  (person private reads are owner-only); for any other workspace they are null
+  with reason `private_scope`. Status applies the same rule through the loaded
+  `private:read` scope. Model and dimension describe the index and stay visible.
+  Missing/corrupt/unsupported stores return nulls with stable reasons. No settings,
+  dependencies, admission changes, background jobs or index-content reads added.
+
 - **Workspace Admin foundation:** `/app/#/admin` is discoverable only when
   `/api/me.can_admin` is true (signed-in person and current-workspace owner).
   The additive `can_admin_instance` uses the operational predicate below. New GET-only users/connections/runtime/limits/stuck
@@ -187,6 +224,8 @@ records of another agent or session. No Cursor database reader is claimed.
 - Production enrollment, OAuth schema, capabilities, worker leases, job/cache closure and refresh serialization belong to the runtime slice. Fresh-DEK cutover, user-only recovery, exact-data comparison, crash/restore proofs and activation belong to the final slice. Production remains locked pending those slices, complete encrypted-content inventory acceptance and owner decisions. No cutover, pointer publication, archive deletion or B2 wrap reuse is implemented.
 
 - Raw-key `cipher_connect` is a low-level SQLCipher utility used by B2 migration, not a B3 authority boundary. Future B3 callers must use `connect` or a dedicated guarded entry point that authenticates current control state before content opens.
+
+- B2 keyslots have a lifecycle beside the migration: `workspace keyslot-check` proves a credential against its slot and the workspace databases without writing, and `workspace keyslot-rewrap` wraps the unchanged data key for one slot under a new credential (offline, owner-authorized, atomic; the recovery slot can re-create a lost server slot). Re-wrapping is not revocation because the data key does not change; data-key rotation, the recovery ceremony and online backup of encrypted workspaces are open owner decisions in `docs/workspace-encryption.md`. Both commands refuse B3-marked workspaces through the existing v1 guard. Recovery runbook: `docs/recovery/encrypted-workspace.md`.
 
 - Thread-store storage budgets convert SQLCipher's text `page_size` (and `page_count`) to integers, so budgeted writes in encrypted workspaces are checked rather than failing with a type error.
 
@@ -895,6 +934,12 @@ playbooks and the original wider orchestration acceptance remain separate work.
 ### Routines create cards on a schedule
 
 A routine (name, card template, schedule, owner) creates one card per due time. The worker claims a `routine_runs` row, unique per routine and due time, before it creates the card, and the card carries a marker label, so a restart between the claim and the card finds the existing card instead of making a second. Cards are made by `BoardService.task_add` as the routine's owner (a workspace owner), so priority, origin and authorization rules apply at run time; if the owner has lost ownership or the board is gone, the run is recorded as failed and five failed runs in a row pause the routine. A board is never created by a routine. After downtime at most three due times are made up; earlier ones become a single `skipped` history row. Time spent paused is not made up. Limits: 25 routines per workspace, 60-minute minimum interval, 200 history rows per routine. Only signed-in workspace owners read or change routines (`/api/routines`). Due times come from the shared pure `commonplace/schedule_time.py` (every N minutes or a cron, in an IANA time zone).
+
+### Tool policy: Allowed, Ask first or Off per action
+
+A workspace owner sets every tool action to Allowed, Ask first or Off (`commonplace/tool_policy/`, `/api/tool-policy`, Settings). Allowed is the default and stores nothing, so nothing changes until the owner changes it. The check sits at the gateway's one dispatch point for `tools/call`, after the connection's own policy, so it can only narrow what scopes already allow; a connection's REST form of an action follows the same policy. It covers agent connections, not people in the app, and each action is gated under its own name: the gateway's nested calls inside an allowed action are not gated again.
+
+Off refuses the call with a clear message. Ask first does not run the call: it files a review card to the owner through the existing ask path (Approve and Deny as decision blocks, in Needs me) and records a request bound to the connection id, the action and a SHA-256 digest of the canonical arguments. The same call runs once after a signed-in owner picked Approve. The request is closed before the call runs (single use), the owner has 24 hours to answer and the approval lasts one hour. Whether a request is approved is read from the card's append-only event log: every event after the request, up to the decision, must be stamped by a signed-in person who is an owner now, so an edit or comment by the asking agent, an answer by any connection (including an app holding `cards:decide`) or by someone who lost ownership voids it. Accepting only the signed-in owner is deliberate: an approval that lets an agent act is not delegated to another connection. The card shows a bounded preview of the arguments on the board the asking connection sees first, so anyone who reads that board can read the preview.
 
 ### Webhook dispatcher recovery
 
@@ -1635,7 +1680,7 @@ every wake attempt failed. See `docs/chat.md`.
 
 ### Topology is one store of structured facts
 
-The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Live status of machines and link ends is derived on read from signals runners already send (connection use, chat poll, runner jobs, an optional link `status` report) with configurable thresholds; a silent machine is unknown, never green. Contract: `docs/topology.md`.
+The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Live status of machines and link ends is derived on read from signals runners already send (connection use, chat poll, runner jobs, an optional link `status` report) with configurable thresholds; a silent machine is unknown, never green. Agents read it through two tools, `topology_get` and `topology_route` (REST `GET /api/topology`, `GET /api/topology/route`), under the same scope and wing grant as other memory reads; an answer states how fresh each hop is and says plainly when a hop is unknown or stale. Contract: `docs/topology.md`.
 
 ### Bots keep conversations in the workspace store
 
@@ -1963,9 +2008,9 @@ are unchanged. Passive graph reads use the input projection described below.
 
 Storage-serving MCP entrypoints enable metadata-only allocation observation by default;
 `MEMPALACE_WORKER_MEMORY_OBSERVE=0` opts out. Imports, durable jobs and forwarding-only
-proxies do not activate a storage observer. Activation is deferred until the first
-local storage dispatch on every entrypoint. Startup/preflight work before that
-boundary remains unobserved; later fixed phases reuse the active observer.
+proxies do not activate a storage observer. HTTP startup activates it before
+preflight and optional eager warmup; later capacity probes reuse it. Other
+entrypoints activate it on the first local storage dispatch.
 Each activation has a random generation;
 call ids are local counters, never client request ids. Fixed startup phases and actual
 cache, collection, restricted-pickle and native-session branches report only observed
@@ -1981,7 +2026,12 @@ Token-construction failures drop observation, release the active count and slot,
 and let the request continue. Observer-construction failure is latched for the
 process lifetime and counted in a saturating activation-loss counter, without
 retrying on every request. End RSS source/status describe the same end read.
-Failures drop observations and increase a saturating loss count; shutdown attempts
+Begin and end delivery is asynchronous and best effort, without a producer-side
+acknowledgment wait. A present unmatched begin is usable evidence that a scope
+began; an absent begin proves nothing. A busy delivery lock, full queue or failed
+sink drops observations and increases the saturating loss count without stopping
+storage work. Idle HTTP startup now creates the diagnostics directory and queues
+startup records even before a memory call. Shutdown attempts
 only a bounded 50 ms flush. This adds no network destination, database write, memory
 limit change or restart policy. Whole-process RSS deltas during overlapping calls
 are not uniquely attributable. Rotation, losses and unmatched pairs leave unknown

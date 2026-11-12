@@ -29,6 +29,8 @@
 
   - `tests/test_run_ledger.py`: run ledger acceptance through the public HTTP routes and the runner CLI.
 
+  - The settings harnesses (`tests/test_settings_load.py`, `tests/commonplace_refresh_render.mjs`) stub `mountToolPolicy`, and the route inventory in `tests/test_commonplace_public_surface.py` lists `/api/tool-policy`.
+
   - `tests/commonplace_deck.mjs` also covers the Workspace section that Deck adds to Settings (Deck only, Admin for admins only).
 
   - `tests/test_commonplace_deck.py` (`commonplace_deck.mjs`): the Deck switch, bar, phone tabs, screen registry, Look section and shell wiring.
@@ -36,6 +38,8 @@
   - `tests/bots_harness.html` and `tests/bots_shots.sh` are the screenshot harness for the bots screens: the real `bots.js` and stylesheets with a scripted fake API and stream, captured through headless Chromium.
 
   - `tests/test_rules_index.py` pins the compact rules index (completeness, size bound), keyed `rules_get` with unknown keys, partial reads not counting as served, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
+
+  - `tests/spaces_surfaces.json` and the route inventory and REST tool list in `tests/test_commonplace_public_surface.py` carry the `topology_get` and `topology_route` tools and their routes; `tests/test_topology_tools.py` covers them.
 
   - Model-role regressions: the one-per-role Needs me item and its clearing and owner-only scope, the start refusal naming the role, the API and UI refusal of an unknown model id, and the Needs me row and settings focus.
 
@@ -53,6 +57,7 @@
 
 
 
+  - `tests/test_worker_observation_durable_begin.py` covers default HTTP startup phases, startup survival with counted observation loss, and concurrent record sequence ordering.
   - Chromium project-connect regressions verify visible shared-memory and other conflict statuses, dialog dismissal and unchanged explicit retry bodies.
   - Restricted-search refill regressions cover hidden ranked prefixes, counter suppression, exhaustion, work bounds, unchanged every-wing calls, restricted CLI-compatible search, filters and deadline failures; the same fixture reports information-only latency.
   - `tests/test_runner_start_context.py` is the measurement and the contract of a start prompt's card context; `tests/test_runner_start.py` allows `card_context` beside the identifier keys of a lease.
@@ -137,6 +142,8 @@
   - `tests/test_person_private_scope_r1.py` covers event cursor equality, single/chunked unreadable writes, tunnel side effects and scrubbing, token mint/load role caps and private-save notices. Broad private-read fixtures use owner-held tokens so independent filer guards remain exercised.
 
   - `tests/test_person_private_scope.py` checks authenticated owner/private and member/shared controls across thirty read variants, absent/hidden count parity, materialized hallways, isolated estate counts and unproven roles.
+
+  - `tests/test_index_stats_readonly.py`, `tests/test_index_stats_r1.py`, `tests/test_index_stats_private_scope.py` and `tests/test_admin_instance_ui.py` cover the instance index figures boundary.
 
   - Graph parity fixtures include generated and absent locus schemas, Compact native values and large integers.
 
@@ -253,6 +260,7 @@
   - Reassignment regressions keep doing-card handoffs unclaimed and avoid queued replacement starts until the receiver takes the card.
 
   - Manual-assignment regressions cover the statechart claim replay, configured worker starts, visible blocked-start reasons, project admission, busy agents and restricted-origin release.
+  - Origin auto-release regressions cover the connected orchestrator releasing a new parentless restricted card, unrelated seats and other coordinators staying refused, child proposals staying inactive, and the waiting reason naming who releases.
   - Off-mode capacity regressions preserve legacy refusal text and card state, including a coded admission refusal.
 
   - Card contract tests cover paired RED assertions, off-path guards, atomic key races, bounded retries and route busy responses with unchanged state.
@@ -445,6 +453,7 @@
 
   - `tests/test_chroma_client_lifecycle.py::test_session_evicts_dropped_system_before_opening_missing_database` checks eviction before client construction without depending on SQLite pool scheduling; the external-rebuild probe checks the replacement's exact drawer ids.
   - Thread-search tests pin rank-before-fetch and score/thread/index ordering at the limit boundary, including shuffled rowids and ID batches.
+  - `tests/test_workspace_encryption.py::test_wrong_or_missing_key_is_refused_with_a_clear_message` pins the refusal message of each wrong or missing key at runtime open (base red: the symlinked keyslot record case on `origin/develop`); `tests/test_workspace_keyslots.py` covers the keyslot check and re-wrap.
   - `tests/test_commonplace_owner_403_message.py` and `tests/owner_403_message.mjs` (base red: 6 failures on `origin/develop`) cover the reason and next step of a refused Done move or handoff, and that 404, 409 and other 403 answers keep their status.
 
   - `tests/lifecycle_ui.mjs` (run by `tests/test_card_lifecycle_ui.py`) drives the Done and Pocket card-details module alone; the shell harnesses stub its `placeLifecycle` hook.

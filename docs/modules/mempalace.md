@@ -26,9 +26,9 @@
   - Graph descriptors preserve literal placeholders and backend-specific hall/date values; page source determines readable tie ordering.
 
   - Graph inputs are authorized before traversal, ranking and statistics; explicit totals reuse endpoint and label proof.
-  - Allocation observation activates only on first local dispatch; sampling construction failures release active state, construction failures latch with counted loss, and RSS status/source use the same read.
+  - Allocation observation activates before HTTP startup phases or on first local dispatch; sampling construction failures release active state, construction failures latch with counted loss, and RSS status/source use the same read.
 
-  - Storage-serving processes emit only a closed primitive allocation schema to a private two-file local diagnostic ring; forwarding and daemon jobs do not activate it. Contexts, queue, line size and retained files are bounded; observation failure never changes storage limits or restart behavior.
+  - Storage-serving processes emit only a closed primitive allocation schema to a private two-file local diagnostic ring; forwarding and daemon jobs do not activate it. Begin and end delivery is asynchronous and best effort, with counted losses; a present unmatched begin is usable, while an absent begin proves nothing. Idle HTTP startup now creates the diagnostics directory. Contexts, queue, line size and retained files are bounded; observation failure never changes storage limits or restart behavior.
   - Bookkeeping uses bounded facet round trips per wing, narrows partial results to unsupported capabilities, and never caches transient overview errors.
 
   - Facet-backed overview counts remain available; projected recovery closes/discards and retries once, and fingerprinted refusals retain normal response keys.
@@ -58,6 +58,8 @@
   - Scoped KG writes recheck provenance snapshots in-lock; source/id deletes use authorized rooms and explicit ids, and missing optional closets count as zero.
 
   - Direct B2 providers reject malformed metadata with encryption errors; marked-workspace refusals retain an explicit locked diagnostic.
+
+  - A symlinked keyslot record is refused at runtime open with its own message, not the generic unavailable one.
 
   - Operator-blind token-slot primitives accept strict versioned token/grant envelopes only; opt-in B3 metadata stays locked before any B2 key provider or database open.
 

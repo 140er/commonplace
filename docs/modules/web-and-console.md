@@ -48,6 +48,8 @@
 
   - Settings mounts the owner-only Scheduled prompts section (`agent-schedules.js`) next to Agents; members see nothing there.
 
+  - Settings mounts the owner-only Tool policy section (`tool-policy.js`) after Scheduled prompts; the section removes itself for anyone the route refuses.
+
 - **Promises:**
   - Project settings show a model field pair for each role (orchestrator, builder, reviewer, gate) and an escalation rule form (failed rounds, labels, stronger model); non-owners see both read-only without a save button.
 
@@ -66,6 +68,8 @@
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
   - Project Connect keeps every 409 reason in its status, including shared-memory and replacement guidance after cancelling a dialog. Accepted choices clear that conflict before retrying; the memory-access rules remain unchanged.
+
+  - The Admin console shows the paginated index-stats section only to instance administrators, with unknown reasons and no content or paths.
 
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
