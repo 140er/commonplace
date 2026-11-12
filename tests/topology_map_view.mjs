@@ -89,7 +89,7 @@ test("scene: the fixture renders the right icon, label and dot for every device"
     assert.ok(tag.includes(` k-${kind} `));
   }
   const maple = nodeTag(scene, "maple");
-  assert.match(maple, /<text class="topo-name" y="45">Maple<\/text><text class="topo-role" y="60">app host<\/text>/);
+  assert.match(maple, /<text class="topo-name" y="52">Maple<\/text><text class="topo-role" y="66">app host<\/text>/);
   assert.match(maple, /role="button" aria-pressed="false" aria-label="Maple, Server, app host\. Status: Up\."/);
   assert.match(maple, /<g class="topo-dot s-up" data-state="up" transform="translate\(24 -24\)"><title>Status: Up<\/title><circle r="5.5"\/><\/g>/);
   assert.match(nodeTag(scene, "birch"), /class="topo-dot s-degraded" data-state="degraded"[^>]*><title>Status: Degraded<\/title><path /);
@@ -140,7 +140,7 @@ test("scene: long names are cut for the label and kept whole for assistive text"
   const core = ui.createMapCore();
   core.apply(payload);
   const maple = nodeTag(core.scene(), "maple");
-  assert.ok(maple.includes(`<text class="topo-name" y="45">${"A".repeat(23)}…</text>`));
+  assert.ok(maple.includes(`<text class="topo-name" y="52">${"A".repeat(23)}…</text>`));
   assert.ok(maple.includes(`aria-label="${"A".repeat(60)}, Server`));
 });
 
@@ -228,16 +228,75 @@ test("zoom keeps the point under the pointer still and stays inside its limits",
   assert.equal(layout.zoomAbout(view, 0, 0, 0.0001).k, layout.ZOOM.min);
 });
 
-test("fit shows every device inside the canvas", () => {
+test("fit: the whole graph fills the box with padding, scaled up as well as down, icons never past 64px", () => {
+  const box = (view, points, w, h) => {
+    const xs = points.map((p) => p.x * view.k + view.x), ys = points.map((p) => p.y * view.k + view.y);
+    return { left: Math.min(...xs) - layout.REACH.x * view.k, right: Math.max(...xs) + layout.REACH.x * view.k, top: Math.min(...ys) - layout.REACH.top * view.k, bottom: Math.max(...ys) + layout.REACH.bottom * view.k, w, h };
+  };
+  // A small graph in a big box is scaled up to fill it, up to the icon cap.
+  const few = [{ x: 0, y: 0 }, { x: 170, y: 0 }, { x: 0, y: 112 }];
+  const up = layout.fitView(few, 1200, 700);
+  assert.ok(up.k > 1, "scaled up");
+  assert.ok(Math.abs(up.k - layout.FIT_MAX) < 1e-9, "capped so a 54 unit icon is 64px");
+  assert.ok(54 * up.k <= 64.0001);
+  // A graph that fits at a readable size is scaled to touch the padding on the limiting side and is centred.
+  const fitting = [{ x: 0, y: 0 }, { x: 340, y: 0 }, { x: 0, y: 336 }, { x: 340, y: 336 }];
+  const view = layout.fitView(fitting, 900, 620);
+  const edge = box(view, fitting);
+  assert.ok(view.k >= 1 && view.k <= layout.FIT_MAX);
+  assert.ok(edge.left >= 24 - 1e-6 && edge.right <= 900 - 24 + 1e-6 && edge.top >= 24 - 1e-6 && edge.bottom <= 620 - 24 + 1e-6, "inside the padding");
+  assert.ok(Math.abs((edge.left + edge.right) / 2 - 450) < 1e-6 && Math.abs((edge.top + edge.bottom) / 2 - 310) < 1e-6, "centred");
+  // Too tall to fit at 12px names: names stay 12px, the view starts at the top and the rest is for panning.
+  const tall = [{ x: 0, y: 0 }, { x: 680, y: 0 }, { x: 0, y: 900 }];
+  const tallView = layout.fitView(tall, 900, 500);
+  assert.equal(tallView.k, 1);
+  assert.equal(tallView.y, 24 + layout.REACH.top, "the top of the graph sits at the padding");
+  // Too wide as well: names still stay readable, centred across, and the person pans.
+  const wide = [{ x: 0, y: 0 }, { x: 2400, y: 0 }, { x: 0, y: 900 }];
+  const wideView = layout.fitView(wide, 900, 500);
+  assert.equal(wideView.k, 1);
+  assert.equal(wideView.x, 450 - 1200, "the middle of the graph is in the middle of the box");
+  // A phone accepts 11px names, so the same graph can be a little smaller there.
+  assert.equal(layout.fitView(tall, 358, 420, { minK: 11 / 12 }).k, 11 / 12);
+  assert.equal(layout.fitView([], 1000, 700).k, 1);
+  assert.deepEqual(layout.fitView([], 1000, 700), { x: 500, y: 350, k: 1 });
+});
+
+test("fit keeps names readable, however many devices there are", () => {
   const core = ui.createMapCore();
   core.apply(largeFixture(300));
   core.fit(1000, 700);
-  for (const at of Object.values(core.positions)) {
-    const x = at.x * core.view.k + core.view.x, y = at.y * core.view.k + core.view.y;
-    assert.ok(x >= 0 && x <= 1000 && y >= 0 && y <= 700);
+  assert.equal(core.view.k, 1, "a big graph keeps readable names and is panned");
+  core.apply(fixture());
+  core.fit(1000, 700, { minK: 1 });
+  assert.ok(core.view.k >= 1);
+});
+
+test("link names show for the links of the selected device only, plus a route, hover and focus", async () => {
+  const model = ui.mapModel(fixture());
+  const places = layout.autoLayout(model.nodes, model.links);
+  const none = ui.renderScene(model, places);
+  assert.doesNotMatch(none, /class="topo-link[^"]* sel/);
+  const picked = ui.renderScene(model, places, { selected: "maple" });
+  const sel = [...picked.matchAll(/<g class="topo-link([^"]*)" data-link="([^"]+)"/g)].filter((m) => / sel/.test(m[1])).map((m) => m[2].replace(/&gt;/g, ">"));
+  assert.deepEqual(sel.sort(), model.links.filter((l) => l.from === "maple" || l.to === "maple").map((l) => l.id).sort());
+  assert.match(picked, /data-link="[^"]+" tabindex="0" role="img" aria-label="/, "a link can take keyboard focus and has its text");
+  const css = await read("topology.css");
+  assert.match(css, /\.topo-link\.sel \.topo-method, \.topo-link\.on \.topo-method, \.topo-link:hover \.topo-method, \.topo-link:focus \.topo-method \{ display: inline; \}/);
+  assert.match(css, /\.topo-method \{ display: none; \}/);
+  assert.match(css, /\.topo-name, \.topo-role \{ stroke: var\(--surface\); stroke-width: 8px;[^}]*paint-order: stroke;/, "names sit above lines on a ground-coloured backing");
+});
+
+test("links: each end's status mark sits clear of the label box under its device", () => {
+  const model = ui.mapModel(fixture());
+  const positions = layout.autoLayout(model.nodes, model.links);
+  const places = layout.layoutLinks(model.links, positions);
+  for (const link of model.links) for (const [end, key] of [["from", link.from], ["to", link.to]]) {
+    const dot = places.get(link.id)[end], node = positions[key];
+    // The name starts about 43 units below the centre; a mark (radius up to 6.5) stays above that.
+    assert.ok(Math.hypot(dot.x - node.x, dot.y - node.y) <= 36.0001, `${link.id} ${end}`);
+    assert.ok(dot.y - node.y + 6.5 < 43, `${link.id} ${end} clear of the name`);
   }
-  assert.deepEqual(layout.fitView([], 1000, 700), { x: 500, y: 350, k: 1 });
-  assert.ok(layout.fitView([{ x: 5, y: 5 }], 1000, 700).k <= 1.25);
 });
 
 // ---------- memory ----------
@@ -606,4 +665,16 @@ test("screen: with no interval it never reads on its own, a host read arrives th
   screen.select("maple");
   assert.match(dom.part("world").innerHTML, / sel[^"]*" data-key="maple"/, "selecting the open device again keeps it open");
   screen.stop();
+});
+
+test("link names avoid devices and each other", () => {
+  const model = ui.mapModel(fixture());
+  const positions = layout.autoLayout(model.nodes, model.links);
+  const places = layout.layoutLinks(model.links, positions);
+  const boxes = model.links.map((l) => { const at = places.get(l.id).label, w = l.method.length * 6.4 + 10; return { id: l.id, l: at.x - w / 2, r: at.x + w / 2, t: at.y - 17, b: at.y }; });
+  const hits = (a, b) => a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t;
+  let crowded = 0;
+  for (const box of boxes) for (const p of Object.values(positions)) if (hits(box, { l: p.x - 78, r: p.x + 78, t: p.y + 36, b: p.y + 76 }) || hits(box, { l: p.x - 30, r: p.x + 30, t: p.y - 30, b: p.y + 30 })) crowded += 1;
+  assert.ok(crowded <= 2, `${crowded} link names still touch a device`);
+  for (let i = 0; i < boxes.length; i++) for (const other of boxes.slice(i + 1)) assert.ok(!hits(boxes[i], other) || (boxes[i].id.split(":")[0] === other.id.split(":")[0]), `${boxes[i].id} over ${other.id}`);
 });

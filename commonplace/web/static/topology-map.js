@@ -81,15 +81,15 @@ function nodeMarkup(node, at, { on, dim, sel }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
   const sub = [node.role, node.missing && "not recorded", node.stale && "stale", node.conflicted && "conflict"].filter(Boolean).join(" · ");
   const label = esc(nodeLabel(node));
-  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${label}"><title>${label}</title><rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${STATUS_TEXT[node.status]}`)}<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}</g>`;
+  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${label}"><title>${label}</title><rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${STATUS_TEXT[node.status]}`)}<text class="topo-name" y="52">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="66">${esc(clip(sub, 36))}</text>` : ""}</g>`;
 }
 
-function linkMarkup(link, at, names, { on, dim }) {
-  const classes = ["topo-link", link.stale && "stale", link.missing && "missing", on && "on", dim && "dim"].filter(Boolean).join(" ");
+function linkMarkup(link, at, names, { on, dim, touch }) {
+  const classes = ["topo-link", link.stale && "stale", link.missing && "missing", on && "on", dim && "dim", touch && "sel"].filter(Boolean).join(" ");
   const method = link.method.replace(/_/g, " ");
   const from = names.get(link.from), to = names.get(link.to);
   const label = `${from} to ${to}, ${method}${link.via ? ` via ${link.via}` : ""}. ${from} end: ${STATUS_TEXT[link.status.from]}. ${to} end: ${STATUS_TEXT[link.status.to]}.${link.missing ? " Not recorded." : ""}${link.stale ? " Stale." : ""}`;
-  return `<g class="${classes}" data-link="${esc(link.id)}"><title>${esc(label)}</title><line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/><text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${STATUS_TEXT[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${STATUS_TEXT[link.status.to]}`, "to")}</g>`;
+  return `<g class="${classes}" data-link="${esc(link.id)}" tabindex="0" role="img" aria-label="${esc(label)}"><title>${esc(label)}</title><line class="topo-hit" x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/><line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/><text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${STATUS_TEXT[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${STATUS_TEXT[link.status.to]}`, "to")}</g>`;
 }
 
 /** The whole map as SVG markup. `route` is one of `model.routes`: its links and nodes are
@@ -99,7 +99,7 @@ export function renderScene(model, positions, { route = null, selected = null } 
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
   const places = layoutLinks(model.links, positions);
-  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id), dim: !!route && !onLinks.has(link.id) }));
+  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id), dim: !!route && !onLinks.has(link.id), touch: selected !== null && (link.from === selected || link.to === selected) }));
   const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
@@ -177,7 +177,7 @@ export function createMapCore({ storage = null, workspace = "" } = {}) {
       return true;
     },
     setView(next, { remember = true } = {}) { view = { x: next.x, y: next.y, k: next.k }; if (remember) save(); },
-    fit(width, height, options) { this.setView(fitView(Object.values(positions), width, height), options); },
+    fit(width, height, { minK, ...options } = {}) { this.setView(fitView(Object.values(positions), width, height, minK ? { minK } : {}), options); },
     /** Forget every dragged place: back to the automatic layout. */
     reset() { placed = {}; place(); save(); },
     setRoute(next) { site = model.routes.some((item) => item.site === next) ? next : ""; },
@@ -206,6 +206,8 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
   const pointers = new Map();
   const part = (name) => section.querySelector(`[data-topo="${name}"]`);
   const size = () => [stage.clientWidth, stage.clientHeight];
+  // Names stay at least 12px on a desktop and 11px on a phone when the view is fitted (names are 12px at scale 1).
+  const readable = () => (globalThis.matchMedia?.("(max-width:699px)").matches === true ? 11 / 12 : 1);
 
   function paintView() {
     const { x, y, k } = core.view;
@@ -224,8 +226,8 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
       if (link.from !== key && link.to !== key) continue;
       const el = linkEls.get(link.id), g = places.get(link.id);
       if (!el || !g) continue;
-      const line = el.querySelector("line"), label = el.querySelector("text");
-      for (const name of ["x1", "y1", "x2", "y2"]) line.setAttribute(name, g[name]);
+      const label = el.querySelector("text");
+      for (const line of el.querySelectorAll("line")) for (const name of ["x1", "y1", "x2", "y2"]) line.setAttribute(name, g[name]);
       label.setAttribute("x", g.label.x); label.setAttribute("y", g.label.y);
       for (const end of ["from", "to"]) el.querySelector(`[data-end="${end}"]`).setAttribute("transform", `translate(${g[end].x} ${g[end].y})`);
     }
@@ -237,7 +239,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     nodeEls = new Map([...world.querySelectorAll("[data-key]")].map((el) => [el.dataset.key, el]));
     linkEls = new Map([...world.querySelectorAll("[data-link]")].map((el) => [el.dataset.link, el]));
     // The first fit is automatic, so it is not remembered: only a view the person chose is.
-    if (core.loaded && core.model.nodes.length && !core.view) { core.fit(...size(), { remember: false }); fitted = true; }
+    if (core.loaded && core.model.nodes.length && !core.view) { core.fit(...size(), { remember: false, minK: readable() }); fitted = true; }
     if (core.view) paintView();
     if (focused) nodeEls.get(focused)?.focus({ preventScroll: true });
     const list = core.model.routes.map((route) => route.site);
@@ -288,7 +290,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     fitted = false;
     paintView();
   }
-  function fit(options) { core.fit(...size(), options); fitted = true; paintView(); }
+  function fit(options) { core.fit(...size(), { ...options, minK: readable() }); fitted = true; paintView(); }
   function select(key) {
     const selected = core.select(key);
     draw();

@@ -123,7 +123,8 @@ test('a node without a runner shows only what the store says', async () => {
 
 test('every machine is also in a plain list with its whole name, and the list selects', async () => {
   const long = 'A very long machine name that used to truncate into nothing on a phone';
-  const f = harness({ rows: [machine('build', long), ...machines.slice(1)] }); await flush();
+  const map = topology(); map.graph.nodes.find(n => n.key === 'maple').values.name = long;
+  const f = harness({ map }); await flush();
   const list = f.regions.get('list').innerHTML;
   assert.ok(list.includes(long));
   assert.match(list, /data-compute-pick="node:maple"/);
@@ -155,4 +156,38 @@ test('the canvas stylesheet only restyles its own classes, in the Deck tokens', 
 
 test('the Deck phone tab bar has a column per section, so four tabs stay on one row', async () => {
   assert.match(await read('deck.css'), /\.m-tabs\[data-count="4"\] \{ grid-template-columns: repeat\(4, 1fr\); \}/);
+});
+
+test('one name for one thing: the map\'s name leads, the runner\'s own name is a second line only when it differs', async () => {
+  const f = harness(); await flush();
+  f.select('maple');
+  let detail = f.regions.get('detail').innerHTML;
+  assert.match(detail, /<h2>Maple<\/h2>/);
+  assert.match(detail, /Runner: Build box/);
+  assert.match(f.regions.get('list').innerHTML, /data-compute-pick="node:maple"[^>]*><span class="dc-pick-name">Maple</);
+  assert.doesNotMatch(f.regions.get('list').innerHTML, /dc-pick-name">Build box/);
+  f.ui.stop();
+  // Same name on both sides: no second line.
+  const same = topology(); same.graph.nodes.find(n => n.key === 'maple').values.name = 'Build box';
+  const g = harness({ map: same }); await flush();
+  g.select('maple');
+  detail = g.regions.get('detail').innerHTML;
+  assert.match(detail, /<h2>Build box<\/h2>/); assert.doesNotMatch(detail, /Runner:/);
+  g.ui.stop();
+});
+
+test('a node is selected on load (the first one tied to a runner) and picking it again leaves nothing open', async () => {
+  const f = harness(); await flush();
+  assert.match(f.regions.get('detail').innerHTML, /<h2>Maple<\/h2>/);
+  f.select(null);
+  assert.match(f.regions.get('detail').innerHTML, /Select a machine on the map/);
+  await f.ui.refresh();
+  assert.match(f.regions.get('detail').innerHTML, /Select a machine on the map/, 'a refresh does not reopen it');
+  f.ui.stop();
+});
+
+test('the canvas box is bounded: desktop the height left in the viewport, phone about 60% and at most 520px', async () => {
+  const css = await read('deck-compute.js');
+  assert.match(css, /\.dc-field\.dc-canvas \{ height: clamp\(480px, calc\(100dvh - 196px\), 800px\); \}/);
+  assert.match(css, /\.dc-field\.dc-canvas \{ height: min\(60dvh, 520px\); min-height: 420px; \}/);
 });

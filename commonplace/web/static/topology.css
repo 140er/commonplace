@@ -18,11 +18,14 @@
 .topo-stage:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
 .topo-svg { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; }
 
-.topo-link line { stroke: var(--line-strong); stroke-width: 1.5; }
-.topo-link.stale line, .topo-link.missing line { stroke-dasharray: 5 4; }
-.topo-link.on line { stroke: var(--text); stroke-width: 3; }
+.topo-link line:not(.topo-hit) { stroke: var(--line-strong); stroke-width: 1.5; }
+.topo-link .topo-hit { stroke: transparent; stroke-width: 14px; pointer-events: stroke; }
+.topo-link:focus { outline: none; }
+.topo-link.stale line:not(.topo-hit), .topo-link.missing line:not(.topo-hit) { stroke-dasharray: 5 4; }
+.topo-link.sel line:not(.topo-hit) { stroke: var(--text-2); }
+.topo-link.on line:not(.topo-hit), .topo-link:hover line:not(.topo-hit), .topo-link:focus-visible line:not(.topo-hit) { stroke: var(--text); stroke-width: 3; }
 .topo-link.dim, .topo-node.dim { opacity: .28; }
-.topo-method { font: 500 10px/1 var(--font); fill: var(--text-3); stroke: var(--surface); stroke-width: 4px; paint-order: stroke; text-anchor: middle; }
+.topo-method { font: 500 11px/1 var(--font); fill: var(--text-2); stroke: var(--surface); stroke-width: 7px; stroke-linejoin: round; paint-order: stroke; text-anchor: middle; }
 
 .topo-dot { stroke: var(--surface); stroke-width: 1.5; }
 .topo-dot.s-up { fill: var(--ok); }
@@ -41,13 +44,14 @@
 .topo-node.stale .topo-plate, .topo-node.missing .topo-plate { stroke: var(--line-strong); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .topo-icon { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .topo-node.stale .topo-icon, .topo-node.missing .topo-icon { opacity: .5; }
-.topo-name, .topo-role { stroke: var(--surface); stroke-width: 4px; paint-order: stroke; text-anchor: middle; }
+.topo-name, .topo-role { stroke: var(--surface); stroke-width: 8px; stroke-linejoin: round; paint-order: stroke; text-anchor: middle; }
 .topo-name { font: 600 12px/1 var(--font); fill: var(--text); }
 .topo-role { font: 500 11px/1 var(--font); fill: var(--text-2); }
-/* Method names would crowd a whole map: they show once zoomed in, and along a highlighted route. */
+/* Method names would crowd a whole map: they show for the links of the selected device, along a highlighted
+   route, and for a link that is hovered or focused. */
 .topo-method { display: none; }
-.topo-stage.near .topo-method, .topo-link.on .topo-method { display: inline; }
-.topo-stage.far .topo-role, .topo-stage.far .topo-method { display: none; }
+.topo-link.sel .topo-method, .topo-link.on .topo-method, .topo-link:hover .topo-method, .topo-link:focus .topo-method { display: inline; }
+.topo-stage.far .topo-role { display: none; }
 
 .topo-note { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; pointer-events: none; }
 .topo-note:empty { display: none; }
@@ -76,6 +80,4 @@
   .topo-bar label { flex: 1 1 100%; }
   .topo-bar select { flex: 1; max-width: none; }
   .topo-hint { display: none; }
-  /* The phone shell scrolls as a page, so the canvas takes its own share of the screen. */
-  .topo-stage { flex: none; height: 62vh; min-height: 320px; }
 }

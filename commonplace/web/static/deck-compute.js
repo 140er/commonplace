@@ -28,6 +28,8 @@ function styles(doc) {
 .deck-compute .dc-grid { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) 326px; gap: 14px; align-items: start; }
 .deck-compute .dc-map { min-width: 0; }
 .deck-compute .dc-field { height: max(440px, calc(100dvh - 196px)); overflow: auto; border-radius: 20px; background: var(--surface); }
+/* The canvas box: the height left in the viewport, never under 480px nor over 800px. */
+.deck-compute .dc-field.dc-canvas { height: clamp(480px, calc(100dvh - 196px), 800px); }
 .deck-compute .dc-field.dc-canvas { overflow: hidden; display: flex; flex-direction: column; }
 .deck-compute .dc-canvas .topo { height: 100%; }
 .deck-compute .dc-topology { display: block; max-width: none; }
@@ -63,7 +65,7 @@ function styles(doc) {
 .deck-compute .dc-detail { display: flex; flex-direction: column; gap: 12px; padding: 22px; border-radius: 20px; background: var(--surface); min-width: 0; }
 .deck-compute .dc-detail header { display: flex; align-items: center; gap: 12px; }
 .deck-compute .dc-detail h2 { font-size: 16px; line-height: 22px; font-weight: 600; overflow-wrap: anywhere; }
-.deck-compute .dc-state { font-size: 13px; color: var(--text-2); }
+.deck-compute .dc-state { display: block; font-size: 13px; color: var(--text-2); }
 .deck-compute .dc-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--line); }
 .deck-compute .dc-tab { min-width: 44px; min-height: 44px; padding: 0; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text-3); font-size: 14px; }
 .deck-compute .dc-tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--text); }
@@ -89,7 +91,8 @@ function styles(doc) {
 .deck-compute .dc-action { min-height: 44px; padding: 0 14px; }
 .deck-compute .dc-actions .dc-primary { grid-area: 2 / 2 / 3 / 4; }
 .deck-compute .dc-field { height: 440px; }
-.deck-compute .dc-field.dc-canvas { height: auto; }
+/* Phone: about 60% of the viewport, at most 520px, so the machine list is one short scroll away. */
+.deck-compute .dc-field.dc-canvas { height: min(60dvh, 520px); min-height: 420px; }
 .deck-compute .dc-grid { gap: 18px; }
 .deck-compute .dc-detail { padding: 22px; }
 .deck-compute .dc-legend { padding-left: 4px; padding-right: 4px; }
@@ -154,7 +157,7 @@ export function mount(context) {
   }
   function listed() {
     if (!topo) return rows.map(m => ({ id: m.id, name: m.label, machine: m }));
-    const mine = topo.model.nodes.filter(n => topo.runners.has(n.key) || MACHINE_KINDS.has(n.kind)).map(n => ({ id: `node:${n.key}`, name: rows.find(m => m.id === nodeRunner(n.key))?.label || n.name, node: n, machine: rows.find(m => m.id === nodeRunner(n.key)) || null }));
+    const mine = topo.model.nodes.filter(n => topo.runners.has(n.key) || MACHINE_KINDS.has(n.kind)).map(n => ({ id: `node:${n.key}`, name: n.name, node: n, machine: rows.find(m => m.id === nodeRunner(n.key)) || null }));
     return [...mine, ...rows.filter(m => !linked.has(m.id)).map(m => ({ id: `runner:${m.id}`, name: m.label, machine: m }))];
   }
   function firstSelection() {
@@ -199,10 +202,12 @@ export function mount(context) {
     if (!found) { host.innerHTML = '<p class="dc-panel">Select a machine on the map to see its details.</p>'; return; }
     const { node, machine, hub } = found;
     const list = value => Array.isArray(value) ? value.length ? value.join(', ') : 'None granted' : 'Not recorded';
-    const title = machine?.label || node?.name || found.plain?.name;
+    const title = node?.name || machine?.label || found.plain?.name;
+    // The map's name leads; the runner's own name is a second line when it differs.
+    const runner = machine && node && machine.label !== node.name ? `<span class="dc-state">Runner: ${e(machine.label)}</span>` : '';
     const icon = node ? `<svg class="dc-device" width="30" height="30" viewBox="-20 -20 40 40" aria-hidden="true">${KINDS[node.kind].icon}</svg>` : device(hub ? 'hub' : 'machine', 30);
     const subtitle = machine ? [STATES[machineState(machine)], node && `${STATUS_TEXT[node.status]} on the map`] : node ? [KINDS[node.kind].label, `${STATUS_TEXT[node.status]} on the map`] : [found.plain?.role];
-    const header = `<header>${icon}<div><h2>${e(title)}</h2><span class="dc-state">${e(subtitle.filter(Boolean).join(' · '))}</span></div></header>`;
+    const header = `<header>${icon}<div><h2>${e(title)}</h2><span class="dc-state">${e(subtitle.filter(Boolean).join(' · '))}</span>${runner}</div></header>`;
     if (!machine && node) { host.innerHTML = `${header}<div class="dc-panel">${storeFacts(node)}</div>`; return; }
     let body;
     if (tab === 'Physical') body = node ? storeFacts(node) : topo ? '<p>This machine is not on the map yet.</p>' : '<p>No physical details are recorded yet.</p>';
