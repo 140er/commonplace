@@ -51,6 +51,7 @@ MODULES = (
     "commonplace.chat",
     "commonplace.holds",
     "commonplace.agent_schedules",
+    "commonplace.snooze",
     "commonplace.routines",
     "commonplace.projects",
     "commonplace.tool_policy",
