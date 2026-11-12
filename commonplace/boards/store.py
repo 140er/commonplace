@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from commonplace.admission import GATE
+from commonplace.db_busy import BUSY_TIMEOUT_S, begin_immediate
 from commonplace.extensions import ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
@@ -414,7 +415,7 @@ def expire_claims(conn, board_id):
 # A replaced file or any DDL from elsewhere changes the identity and reruns the migration.
 _MIGRATED: dict[str, tuple] = {}
 
-BUSY_TIMEOUT = 10
+BUSY_TIMEOUT = BUSY_TIMEOUT_S
 PENDING_PR_REPO = "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
 
 
@@ -577,7 +578,7 @@ class BoardStore:
     @contextmanager
     def transaction(self):
         with self.connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
                 yield conn
                 conn.commit()
