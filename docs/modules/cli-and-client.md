@@ -1,6 +1,6 @@
 ## cli-and-client
 
-- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/client_hooks.py`, `commonplace/hook_spool.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
+- **Paths:** `commonplace/cli.py`, `commonplace/client.py`, `commonplace/adapter.py`, `docs/agent-adapter.md`, `commonplace/client_hooks.py`, `commonplace/hook_spool.py`, `commonplace/client_install.py`, `commonplace/review_rules.py`, `commonplace/bridge.py`, `commonplace/onboarding.py`, `commonplace/seed.py`, `commonplace/README.md`, `commonplace/SETUP.md`, `commonplace/agent-skill/`
 - **Owns:**
 
   - The `runner report` argument parser; the command itself lives in `commonplace/runner/report.py`.
@@ -22,6 +22,8 @@
   - `commonplace token add` refuses `cards:decide`; answering Needs-me questions needs the owner's browser consent.
 
   - `commonplace token add` also refuses `bots:chat` and `bots:confirm`; they need the person's own consent.
+
+  - `commonplace workspace keyslot-check` runs under the ordinary shared lock and writes nothing; `commonplace workspace keyslot-rewrap` takes the exclusive data lock itself, needs `--by` the workspace owner, and prints only state, slot names, a database count and the key id.
 
   - Local search-index status and run pass an explicit unscoped principal and retain their printed count keys and capture enrolment behavior.
   - Opt-in backup reporting records only the final selected mode; check/cleanup/restore never report. Receipt failure preserves backup return/exception; test_backup_status.py covers both outcomes and fallback.

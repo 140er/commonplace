@@ -38,6 +38,8 @@ Checkpoint: derived from the journal, the jobs and the board, never stored: open
 ``in_doubt``, ``needs_person``, holds, ``next``, jobs, gates, misses, the read-only card
 classes ``held`` / ``expired`` / ``not_held_by_caller`` and the unstarted todo cards.
 ``resume`` additionally heartbeats the caller's own held cards; it never claims a card.
+A role others report to (``parent`` in the config) also gets ``escalations``: the unsettled
+steps of its direct reports (``commonplace.orch.organigram``).
 
 Clocks: every public function takes ``now`` (``"YYYY-MM-DDTHH:MM:SSZ"``); ``None`` means
 the current UTC time.
@@ -1388,6 +1390,17 @@ def _thread_jobs(ctx, st, board_row, role, steps, now) -> list[dict]:
     ]
 
 
+def _escalations(conn, version, board, role):
+    """Unsettled steps of the roles reporting to ``role`` (``organigram``), else ``None``."""
+    from . import organigram
+
+    try:
+        config = None if version is None else version.config()
+    except ValueError:
+        config = None
+    return None if config is None else organigram.escalations_in(conn, config, board, role)
+
+
 def _checkpoint(ctx, st, board_row, role, now, cards):
     board = board_row["slug"]
     with st.connection() as conn:
@@ -1413,6 +1426,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
             (board, MAX_LIST),
         ).fetchall()
         misses = _misses(conn, board)
+        escalations = _escalations(conn, version, board, role)
     view = {"open": [], "in_doubt": [], "needs_person": [], "holds": [], "finished": []}
     next_note = None
     for row in steps:
@@ -1465,6 +1479,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         else {"version": version.version, "sha256": version.sha256},
         "restore_pending": bool(restore.flagged),
         **view,
+        **({} if escalations is None else {"escalations": escalations}),
         "next": next_note,
         "jobs": [dict(row) for row in job_rows],
         "gates": [_gate_public(row) for row in gates],

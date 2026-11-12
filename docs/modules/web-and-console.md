@@ -73,6 +73,8 @@
 
   - Project Connect keeps every 409 reason in its status, including shared-memory and replacement guidance after cancelling a dialog. Accepted choices clear that conflict before retrying; the memory-access rules remain unchanged.
 
+  - The Admin console shows the paginated index-stats section only to instance administrators, with unknown reasons and no content or paths.
+
   - Sign-out and expiry stop an existing Admin controller; it is null until mounted.
 
   - Background prerequisite failures keep rendered Settings sections and form drafts mounted, surfacing the named error separately; initial and foreground failures still render Retry.

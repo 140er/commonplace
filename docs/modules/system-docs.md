@@ -35,6 +35,8 @@
 
   - Documents owner-only person private reads, retained scoped shared projections and unavailable whole-palace operations for members.
 
+  - `SYSTEM.md` records the instance index figures decision (#284); the reader itself is described in the hub-core module.
+
   - Graph documentation describes SQLite affinity, native Compact values and read-only legacy schema ordering.
 
   - Documents backend graph order, numeric locus text parity and explicit tunnel compatibility residuals.
