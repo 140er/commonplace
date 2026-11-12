@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from commonplace.bots import learning
+from commonplace.bots.learn_recall import RecallMixin
 from commonplace.bots.learn_runs import RunsMixin
 from commonplace.bots.store import BotStore, Conflict, Invalid, Missing, stamp
 
@@ -119,7 +120,7 @@ def _note(row) -> dict:
     }
 
 
-class Learned(RunsMixin):
+class Learned(RunsMixin, RecallMixin):
     def __init__(self, bots: BotStore):
         self._bots = bots
         self._key = None

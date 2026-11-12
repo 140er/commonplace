@@ -467,9 +467,12 @@ class BotStore(SharesMixin):
             return _message(row)
 
     def add_bot_message(
-        self, bot_id, user_id, reply_to, text, blocks=(), model=None, state="ok"
+        self, bot_id, user_id, reply_to, text, blocks=(), model=None, state="ok", learned_used=()
     ) -> dict:
-        """The one reply to user message ``reply_to``; a second reply is a conflict."""
+        """The one reply to user message ``reply_to``; a second reply is a conflict.
+
+        ``learned_used``: ids of the person's learned items this reply's request carried; their
+        use count and last use are updated in the same write as the reply."""
         _text(text, "text", 0, TEXT_MAX * 4)
         if state != "ok" and state not in ("stopped",) and not state.startswith("failed:"):
             raise Invalid("invalid state")
@@ -482,7 +485,7 @@ class BotStore(SharesMixin):
             ).fetchone():
                 raise Invalid("reply_to is not a message of this bot")
             try:
-                return self._add(
+                message = self._add(
                     conn,
                     bot_id,
                     "bot",
@@ -494,6 +497,13 @@ class BotStore(SharesMixin):
                 )
             except sqlite3.IntegrityError:
                 raise Conflict() from None
+            if learned_used:
+                conn.execute(
+                    "UPDATE bot_learned SET use_count=use_count+1, last_used_at=? WHERE user_id=? "
+                    f"AND id IN ({','.join('?' * len(learned_used))})",
+                    (stamp(), user_id, *learned_used),
+                )
+            return message
 
     def add_event_message(self, bot_id, user_id, text, blocks=()) -> dict:
         _text(text, "text", 0, TEXT_MAX)
