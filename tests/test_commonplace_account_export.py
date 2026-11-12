@@ -19,10 +19,12 @@ from tests._commonplace_account_helpers import (  # noqa: F401
     site_fixture,
 )
 
+EXPORT = "/api/account/export?download=1"
+
 
 def test_export_holds_the_account_and_owned_workspaces_verbatim(site):
     session = site.session(site.alice, site.alice_home)
-    status, headers, data = site.request("GET", "/api/account/export", session=session)
+    status, headers, data = site.request("GET", EXPORT, session=session)
     assert status == 200
     assert headers["Content-Disposition"].startswith("attachment;")
     archive = zipfile.ZipFile(io.BytesIO(data))
@@ -107,18 +109,33 @@ def test_export_needs_a_signed_in_person(site):
     assert site.json("GET", "/api/account", token=site.alice_home_token)[0] == 403
 
 
+def test_the_plain_export_path_answers_text_and_reads_nothing(site):
+    """A sweep of every GET route (a crawler, a prefetch, a canary test) gets JSON."""
+    session = site.session(site.alice, site.alice_home)
+    status, headers, data = site.request("GET", "/api/account/export", session=session)
+    assert status == 200 and headers["Content-Type"].startswith("application/json")
+    text = data.decode("utf-8")  # strictly text
+    assert json.loads(text)["download"] == EXPORT
+    for private in (ALICE_NOTE, TEAM_NOTE, BOB_NOTE, "bob@example.test"):
+        assert private not in text
+    # Nothing was read or recorded: no archive, no audit entry, no lock held.
+    assert site.rows("SELECT * FROM audit_log WHERE action = 'account.export'") == []
+    assert account._exporting == set()
+    assert site.request("GET", "/api/account/export?download=0", session=session)[1][
+        "Content-Type"
+    ].startswith("application/json")
+
+
 def test_account_route_describes_the_export_and_the_deletion_switch(site):
     status, body = site.json("GET", "/api/account", session=site.session(site.bob, site.bob_home))
     assert status == 200
-    assert body["email"] == "bob@example.test" and body["export"] == "/api/account/export"
+    assert body["email"] == "bob@example.test" and body["export"] == EXPORT
     assert body["deletion"]["enabled"] is False and body["deletion"]["request"] is None
 
 
 def test_unreadable_workspace_database_refuses_before_sending(site):
     (site.directory(site.alice_home) / "palace" / "compact.sqlite3").write_bytes(b"\x01" * 64)
-    status, body = site.json(
-        "GET", "/api/account/export", session=site.session(site.alice, site.alice_home)
-    )
+    status, body = site.json("GET", EXPORT, session=site.session(site.alice, site.alice_home))
     assert status == 409 and "palace/compact.sqlite3" in body["error"]
     assert site.rows("SELECT decision FROM audit_log WHERE action = 'account.export'") == [
         {"decision": "deny"}
@@ -153,7 +170,7 @@ def test_a_broken_download_is_not_a_valid_archive(site, monkeypatch):
 
     monkeypatch.setattr(export, "_store", fail)
     status, _headers, data = site.request(
-        "GET", "/api/account/export", session=site.session(site.alice, site.alice_home)
+        "GET", EXPORT, session=site.session(site.alice, site.alice_home)
     )
     assert status == 200
     with pytest.raises(zipfile.BadZipFile):
@@ -163,9 +180,7 @@ def test_a_broken_download_is_not_a_valid_archive(site, monkeypatch):
 def test_one_export_per_account_at_a_time(site):
     account._exporting.add(site.alice)
     try:
-        status, _body = site.json(
-            "GET", "/api/account/export", session=site.session(site.alice, site.alice_home)
-        )
+        status, _body = site.json("GET", EXPORT, session=site.session(site.alice, site.alice_home))
     finally:
         account._exporting.discard(site.alice)
     assert status == 429

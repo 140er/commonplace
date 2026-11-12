@@ -1,7 +1,9 @@
 """Account data for the person it is about: export and deletion.
 
 ``GET /api/account`` shows what the server would export and delete.
-``GET /api/account/export`` streams everything as a ZIP (:mod:`.export`).
+``GET /api/account/export`` describes the export; ``?download=1`` streams everything
+as a ZIP (:mod:`.export`). The plain path answers JSON on purpose: a crawler, a link
+preview or a prefetch that merely visits it must not start reading a whole account.
 ``POST`` and ``DELETE /api/account/deletion`` request and withdraw deletion
 (:mod:`.deletion`), which is off unless the operator enables it.
 
@@ -15,10 +17,11 @@ import threading
 import time
 
 from commonplace import sessions
-from commonplace.http_util import read_json, require_principal, send_json
+from commonplace.http_util import query, read_json, require_principal, send_json
 
 from . import deletion, export
 
+EXPORT = "/api/account/export?download=1"
 _exporting: set = set()
 _exporting_lock = threading.Lock()
 
@@ -47,7 +50,7 @@ def install(gateway):
             {
                 "user": principal.user_id,
                 "email": principal.user_email,
-                "export": "/api/account/export",
+                "export": EXPORT,
                 "deletion": deletion.status(gateway, principal.user_id, session),
             },
         )
@@ -55,6 +58,18 @@ def install(gateway):
     def download(h):
         principal = _person(gateway, h)
         if principal is None:
+            return
+        if query(h).get("download") != "1":
+            send_json(
+                h,
+                200,
+                {
+                    "format": export.FORMAT,
+                    "download": EXPORT,
+                    "content_type": "application/zip",
+                    "contents": "your account's rows, and everything in the workspaces you own",
+                },
+            )
             return
         user_id = principal.user_id
         with _exporting_lock:

@@ -9,6 +9,8 @@
 
   - Only a signed-in person reaches these routes. An agent token, also the account's own, gets 403.
 
+  - `GET /api/account/export` alone answers a small JSON description, so a crawler, a link preview or a sweep of every GET route never reads an account; the ZIP comes from `?download=1`.
+
   - Export is one streamed ZIP of NDJSON: the account's control rows, and for each workspace the person owns its control rows, every table of every workspace database and every other file, as stored. Credentials and their digests are replaced in control rows. A workspace the person is only a member of is listed without content. Memory use does not grow with the account, and `manifest.json` plus the ZIP directory come last, so a broken download is not a valid archive.
 
   - Deletion is off unless `COMMONPLACE_ACCOUNT_DELETION=on`. A request needs a session started in the last 10 minutes and the typed account address, and only records a date `COMMONPLACE_ACCOUNT_DELETION_GRACE_DAYS` (default 14, 0 to 90) ahead; until then the account works and the person can withdraw it.

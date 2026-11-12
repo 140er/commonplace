@@ -136,7 +136,7 @@ class Site:
 
     def export(self, user, workspace):
         status, headers, data = self.request(
-            "GET", "/api/account/export", session=self.session(user, workspace)
+            "GET", "/api/account/export?download=1", session=self.session(user, workspace)
         )
         assert status == 200, (status, data[:300])
         assert headers["Content-Type"] == "application/zip"
