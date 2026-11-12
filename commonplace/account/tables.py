@@ -125,6 +125,8 @@ RULES = {
     "webhook_attempts": Rule(parent=("delivery_id", "webhook_deliveries", "id")),
     "webhook_deliveries": Rule(parent=("webhook_id", "webhooks", "id")),
     "webhooks": Rule(workspace=_W, connection=_C),
+    # An invite belongs to whoever made or accepted it and to the address it names.
+    "workspace_invites": Rule(user=("created_by", "accepted_by"), workspace=_W, email=("email",)),
     "workspace_voice": Rule(workspace=_W),
     "workspaces": Rule(user=("personal_of",), workspace=("id",)),
 }
