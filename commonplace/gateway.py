@@ -41,6 +41,7 @@ from mempalace.tool_capabilities import classify_tool
 
 from . import (
     backfill_allowance,
+    db_busy,
     events,
     extensions,
     plans,
@@ -139,6 +140,19 @@ def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> 
     if data is not None:
         error["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": error}
+
+
+# JSON-RPC server-error range: a busy database is retryable, unlike -32603.
+BUSY_RPC_CODE = -32001
+_LABEL = re.compile(r"[A-Za-z0-9_.\-/]{1,64}")
+
+
+def _call_label(request) -> str:
+    """The tool (or method) name for a log line; never arguments or other user content."""
+    params = request.get("params") if isinstance(request, dict) else None
+    method = request.get("method") if isinstance(request, dict) else None
+    name = params.get("name") if isinstance(params, dict) and method == "tools/call" else method
+    return f"call={name}" if isinstance(name, str) and _LABEL.fullmatch(name) else "call=?"
 
 
 def _kg_argument_error(req_id, name, args):
@@ -2443,6 +2457,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         self._response_started = False
         # The stdlib reuses this object for keepalive requests.
         self.__dict__.pop("_commonplace_principal", None)
+        self.__dict__.pop("_instance_context", None)
         try:
             self._handle()
         except (BrokenPipeError, ConnectionResetError):
@@ -2452,6 +2467,59 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             if not self._response_started:
                 self._send_json(500, {"error": "internal error"})
+
+    def _instance_admission(self, path, principal):
+        self._instance_charged = False
+        if not path.startswith("/api/instance-admin/") or principal is None:
+            return False
+        from . import instance_admin
+        from .web.admin import ReadContext
+
+        if self._rate_limit(path, principal):
+            return True
+        context = ReadContext(self.server.gateway.admin_clock)
+        self._instance_context = context
+        try:
+            allowed = instance_admin.flag(self.server.gateway, principal, context)
+        except Exception:
+            self.close_connection = True
+            self._send_json(503, {"error": "source_unavailable"})
+            return True
+        if not allowed:
+            self.close_connection = True
+            try:
+                instance_admin.audit(
+                    self.server.gateway,
+                    principal,
+                    context,
+                    "instance_admin.denied",
+                    decision="deny",
+                    reason="access_required",
+                )
+            except Exception:
+                logger.error("Instance denial audit unavailable")
+            self._send_json(403, {"error": instance_admin.DENIAL})
+            return True
+        self._instance_charged = True
+        return False
+
+    def _account_plan_admission(self, path, principal, request, parse_error):
+        if (
+            principal is None
+            or parse_error
+            or path.startswith("/api/instance-admin/")
+            or not plans.enabled()
+        ):
+            return False
+        account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
+        plan = plans.get_plan(self.server.gateway.db, account) if account else None
+        if self._plan_limit(path, principal, request, plan):
+            return True
+        if path == "/mcp" or path.startswith("/api/"):
+            delay = plans.load_delay(plan)
+            if delay:
+                sleep(delay)
+        return False
 
     def _handle(self):
         path = urlparse(self.path).path
@@ -2477,6 +2545,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
+        if self._instance_admission(path, principal):
+            return
         if (
             principal is not None
             and getattr(principal, "runner", None) == "machine"
@@ -2523,7 +2593,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                     request = json.loads(raw.decode("utf-8"))
                 except (ValueError, UnicodeError, RecursionError):
                     parse_error = (400, _rpc_error(None, -32700, "Parse error"))
-        if self._rate_limit(path, principal, request):
+        if not self._instance_charged and self._rate_limit(path, principal, request):
             return
         refused = _rest_tool_refusal(self.server.gateway, principal, tool, self.command, path)
         if refused is not None:
@@ -2547,15 +2617,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             )
             self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
             return
-        if principal is not None and not parse_error and plans.enabled():
-            account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
-            plan = plans.get_plan(self.server.gateway.db, account) if account else None
-            if self._plan_limit(path, principal, request, plan):
-                return
-            if path == "/mcp" or path.startswith("/api/"):
-                delay = plans.load_delay(plan)
-                if delay:
-                    sleep(delay)
+        if self._account_plan_admission(path, principal, request, parse_error):
+            return
         if path == "/mcp":
             if self.command != "POST":
                 self.close_connection = True
@@ -2616,9 +2679,20 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         try:
             response = self.server.gateway.mediator.handle(principal, request)
         except Exception as exc:
-            log_failure(logger, "gateway MCP request failed", exc)
-            self.close_connection = True
             req_id = request.get("id") if isinstance(request, dict) else None
+            log_failure(logger, f"gateway MCP request failed ({_call_label(request)})", exc)
+            if db_busy.is_busy(exc):
+                self._send_json(
+                    200,
+                    _rpc_error(
+                        req_id,
+                        BUSY_RPC_CODE,
+                        "The workspace database is busy right now; retry shortly",
+                        {"retryable": True, "retry_after_s": db_busy.RETRY_AFTER_S},
+                    ),
+                )
+                return
+            self.close_connection = True
             self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
             return
         if response is None:

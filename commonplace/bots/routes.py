@@ -13,6 +13,10 @@ app holding ``bots:chat`` (``bots:confirm`` for confirm).
     GET    /api/bots/<id>/memory           {memories}
     POST   /api/bots/<id>/memory           {text} -> {memory}
     DELETE /api/bots/<id>/memory/<mid>     {ok}
+    GET    /api/bots/<id>/access           {version, entries}   (owner and members with a share)
+    PUT    /api/bots/<id>/access           {version, entries} -> {version, entries} (owner only,
+                                           web session only, compare-and-set on version)
+    GET    /api/bots/<id>/access/log       ?after=&limit= -> {log}
 
 A bot id that is unknown or belongs to someone else is 404. ``HANDLERS`` maps (method, path
 tail) to a handler, so a later route (sending a message) is one more entry.
@@ -24,7 +28,19 @@ import time
 
 from commonplace import bots_grant, redact
 from commonplace.boards.service import BoardService
-from commonplace.bots import auth, blocks, limits, modelcfg, store, turn, updates
+from commonplace.bots import (
+    access,
+    auth,
+    blocks,
+    limits,
+    modelcfg,
+    shares,
+    store,
+    tools,
+    turn,
+    updates,
+)
+from commonplace.bots.errors import Unsupported
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, read_json, send_json
 
@@ -366,6 +382,86 @@ def _confirm(gateway, h, principal, bot_id, rest):
     send_json(h, 200, {"message": blocks.message_view(reader, message)})
 
 
+# Access: what a shared bot may reach. Set only by its owner; read by the owner and members.
+
+
+def _entry(item) -> dict:
+    return {key: item[key] for key in ("kind", "ref", "mode", "set_at")}
+
+
+def _access_view(listed) -> dict:
+    return {"version": listed["version"], "entries": [_entry(e) for e in listed["entries"]]}
+
+
+def _access_get(gateway, h, principal, bot_id, rest):
+    if rest == ["log"]:
+        _access_log(gateway, h, principal, bot_id, [])
+        return
+    if rest:
+        _error(h, 404, "not_found", "Not found")
+        return
+    send_json(h, 200, _access_view(_bots(gateway, principal).access_get(bot_id, principal.user_id)))
+
+
+def _access_log(gateway, h, principal, bot_id, rest):
+    params = query(h)
+    try:
+        cursors = {key: int(params[key]) for key in ("after", "limit") if key in params}
+    except ValueError:
+        raise store.Invalid("invalid cursor") from None
+    rows = _bots(gateway, principal).access_log(bot_id, principal.user_id, **cursors)
+    send_json(h, 200, {"log": rows})
+
+
+def _audit_access(gateway, principal, bot_id, version, changes) -> None:
+    """One control-database row per real change: ids, kinds, refs and modes, never text."""
+    shown = [
+        f"{c['action']}:{c['kind']}:{c['ref']}:{c['mode_before'] or '-'}>{c['mode_after'] or '-'}"
+        for c in changes[:8]
+    ]
+    more = f" +{len(changes) - 8} more" if len(changes) > 8 else ""
+    gateway.db.audit(
+        action="bot_access:set",
+        decision="ok",
+        workspace_id=principal.workspace_id,
+        user_id=principal.user_id,
+        reason=f"bot={bot_id} version={version} " + ", ".join(shown) + more,
+        target_ids=[bot_id],
+    )
+
+
+def _access_put(gateway, h, principal, bot_id, rest):
+    if rest or auth.app(h) is not None:  # web session only: an app asking gets 404
+        _error(h, 404, "not_found", "Not found")
+        return
+    body = _body(h, {"version", "entries"})
+    if body is None:
+        return
+    bots = _bots(gateway, principal)
+    bot = bots.viewable(bot_id, principal.user_id)
+    if bot["owner_id"] != principal.user_id:
+        _error(h, 403, "owner_only", "Only the bot's owner can change that.")
+        return
+    wanted = shares.check_entries(body.get("entries"))
+    current = bots.access_get(bot_id, principal.user_id)
+    stored = [(e["kind"], e["ref"], e["mode"]) for e in current["entries"]]
+    try:
+        access.check_grantable(gateway, principal, wanted, stored, set(tools.REGISTRY))
+    except access.OutsideScope:
+        _error(h, 403, "outside_your_scope", "You cannot grant what you cannot reach yourself.")
+        return
+    updated = bots.access_set(bot_id, principal.user_id, body.get("version"), body["entries"])
+    if updated["version"] != current["version"]:
+        _audit_access(
+            gateway,
+            principal,
+            bot_id,
+            updated["version"],
+            bots.access_changes(bot_id, principal.user_id, updated["version"]),
+        )
+    send_json(h, 200, _access_view(updated))
+
+
 # (method, first segment after the id) -> handler(gateway, h, principal, bot_id, rest)
 HANDLERS = {
     ("PATCH", None): _patch,
@@ -377,6 +473,8 @@ HANDLERS = {
     ("GET", "memory"): _memory_list,
     ("POST", "memory"): _memory_add,
     ("DELETE", "memory"): _memory_remove,
+    ("GET", "access"): _access_get,
+    ("PUT", "access"): _access_put,
 }
 
 
@@ -417,6 +515,8 @@ def _guarded(gateway, h, run, tool="", scope=None):
         run(principal)
     except store.Missing:
         _error(h, 404, "not_found", "Not found")
+    except Unsupported:
+        _error(h, 400, "unsupported_kind", "That kind of access cannot be granted yet")
     except store.Invalid:
         _error(h, 400, "invalid", "Invalid request")
     except store.Limit:
@@ -463,5 +563,5 @@ def install(gateway) -> None:
         "/api/bots",
         lambda h: _guarded(gateway, h, lambda p: _create(gateway, h, p), tool="POST bots"),
     )
-    for method in ("GET", "POST", "PATCH", "DELETE"):
+    for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         gateway.add_prefix_route(method, PREFIX, dispatch(method))

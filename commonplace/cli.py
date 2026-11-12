@@ -165,6 +165,10 @@ def cmd_workspace_add(args) -> int:
     return 0
 
 
+def _meetings(command, args) -> int:
+    return command(args, _db(args), _data_dir(args))
+
+
 def cmd_workspace_list(args) -> int:
     db = _db(args)
     for w in db.workspaces():
@@ -1258,6 +1262,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dest_dir")
     s.set_defaults(func=cmd_restore)
     orch_cli.add_parsers(sub)
+    from .meetings import cli as meetings_cli
+
+    meetings_cli.add_parsers(sub, _meetings)
     from .runner import owner_cli
 
     owner_cli.add_parsers(sub)

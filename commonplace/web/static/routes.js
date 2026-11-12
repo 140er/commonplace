@@ -10,11 +10,13 @@ export function boardRoute({ boards = [], last } = {}) {
 /** Resolve a hash without changing browser state or reading saved preferences.
  * boards is the readable board list; last is a previously visited board slug.
  * A person who has a project lands on their bots; someone with none sees the first-run screen.
- * Old chat links keep opening the project chat. Return a hash string for the app dispatcher.
+ * Old chat links keep opening the project chat. In the Deck look (`deck`) the Compute map is
+ * the Compute screen, so its older address resolves there. Return a hash string for the app dispatcher.
  */
-export function resolveRoute(hash, { boards = [], last } = {}) {
+export function resolveRoute(hash, { boards = [], last, deck = false } = {}) {
   const route = hash || "#/";
   if (route === "#/") return boards.length ? "#/bots" : "#/start";
+  if (route === "#/compute-map" && deck) return "#/compute";
   const chat = /^#\/chat\/([^/?]+)(\?.*)?$/.exec(route);
   if (chat) return `#/board/${chat[1]}/chat${chat[2] || ""}`;
   return route;

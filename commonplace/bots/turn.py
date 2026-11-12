@@ -19,7 +19,7 @@ import time
 
 from commonplace import redact, sessions
 from commonplace.boards.service import BoardService
-from commonplace.bots import blocks, context, limits, modelcfg, store, tools
+from commonplace.bots import blocks, context, extract, limits, modelcfg, store, tools
 from commonplace.chat import model_stream
 from commonplace.chat.types import ChatDenied, ModelError
 from commonplace.extensions import ToolContext, ToolError
@@ -153,6 +153,8 @@ class TurnRun:
             limits.REGISTRY.release(self)
             self.finished.set()
             self.queue.put(None)
+        if not outcome and self.reply is not None and self.reply["state"] == "ok":
+            extract.after_turn(self)  # a finished new turn only; replays never get here
 
     def _turn(self) -> str:
         bots = store.open_bots(self.gateway, self.workspace_id)
@@ -165,7 +167,6 @@ class TurnRun:
         if principal is None:
             return "interrupted"
         service = BoardService(ToolContext(principal=principal, gateway=self.gateway))
-        projects = None if self.bot["board"] else [b["slug"] for b in service.board_list()]
         turn = tools.Turn(
             self.gateway,
             self.workspace_id,
@@ -173,11 +174,18 @@ class TurnRun:
             self.bot,
             self.message,
             self.request_id,
-            projects=projects,
         )
+        try:
+            if not self.bot["board"]:  # the projects a model may name; the gate checks each call
+                turn.projects = list(turn.effective().asker)
+        except tools.Gone:
+            return "interrupted"
         history = bots.messages(self.bot_id, self.user_id, before=self.message["id"])
         memory = bots.memory_list(self.bot_id, self.user_id)
-        ctx = context.build(turn, principal, service, history, memory)
+        try:
+            ctx = context.build(turn, principal, service, history, memory)
+        except tools.Gone:
+            return "interrupted"
         tail = []  # this turn's tool rounds, fed back on later requests
         offered = {tool.name: tool for tool in tools.offered(turn)}
         specs = [
@@ -300,8 +308,7 @@ class TurnRun:
         label, code = f"Used {tool.name}", None
         try:
             args = tools.validate(tools.schema_for(tool, turn), args)
-            if tool.scope == "project":
-                turn.board(args)
+            tools.gate(turn, tool, args)  # the project, and a shared bot's access, on every call
             if tool.check is not None:
                 tool.check(turn, args)  # before a pending action, a chip or any write
             label = tool.label(turn, args)
@@ -318,6 +325,8 @@ class TurnRun:
             result, code = tools.Result(False, say=REFUSALS["invalid"]), "invalid"
         except tools.Gone:
             result, code = tools.Result(False, say=REFUSALS["gone"]), "gone"
+        except (tools.OutsideBot, tools.ReadOnly) as exc:
+            result, code = tools.Result(False, say=exc.text), exc.code
         except ToolError as exc:
             result, code = tools.Result(False, say=redact.redact(str(exc))[0][:500]), "refused"
         except Exception as exc:
@@ -540,6 +549,13 @@ def confirm(gateway, principal, bot_id, pending_id, accept) -> dict:
     if tool is None:
         bots.pending_resolve(bot_id, principal.user_id, pending_id, "cancelled")
         return refused(tools.Result(False, say=REFUSALS["failed"]), "failed")
+    if bot.get("shared"):
+        try:
+            tools.gate(turn, tool, args)  # the bot's access may have changed since the chip
+        except tools.Gone:
+            return refused(tools.Result(False, say=REFUSALS["gone"]), "gone")
+        except (tools.OutsideBot, tools.ReadOnly) as exc:
+            return refused(tools.Result(False, say=exc.text), exc.code)
     if tool.check is not None:
         try:
             tool.check(turn, args)  # against the message that asked for it
