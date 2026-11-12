@@ -4,6 +4,8 @@ import http.client
 import io
 import json
 import logging
+import threading
+import time
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
@@ -201,6 +203,144 @@ def test_bearer_access_and_connection_secrets(hub):
     _, headers, _ = request(hub, f"/app/login?t={raw}")
     cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
     assert request(hub, "/api/connections", headers=cookie)[0] == 403
+
+
+def test_connections_wings_deadline(hub, monkeypatch):
+    """Connection management must answer while its optional worker read is blocked."""
+    cookie, _, _ = login(hub)
+    hub.owner_token("desktop")
+    started, release, finished, responded = (threading.Event() for _ in range(4))
+    replies, failures, elapsed = [], [], []
+
+    def blocked_wings(principal, name, arguments):
+        assert principal.workspace_id == hub.workspace
+        assert name == "mempalace_list_wings" and arguments == {}
+        started.set()
+        try:
+            release.wait(5)
+            return {"wings": {"late_wing": {}}}
+        finally:
+            finished.set()
+
+    def load():
+        begin = time.monotonic()
+        try:
+            replies.append(request(hub, "/api/connections", headers=cookie))
+        except Exception as exc:
+            failures.append(exc)
+        finally:
+            elapsed.append(time.monotonic() - begin)
+            responded.set()
+
+    monkeypatch.setattr(hub.gateway, "call_memory_tool", blocked_wings)
+    client = threading.Thread(target=load)
+    client.start()
+    try:
+        assert started.wait(2), "The route must attempt its memory lookup"
+        answered_while_blocked = responded.wait(1.5)
+    finally:
+        release.set()
+        client.join(5)
+        assert finished.wait(2)
+    assert not failures
+    print(
+        f"connections response: {elapsed[0]:.3f}s; worker still blocked: {answered_while_blocked}"
+    )
+    assert answered_while_blocked, "Connection management waited for the blocked memory worker"
+    assert elapsed[0] < 1.5
+    status, _, body = replies[0]
+    payload = json.loads(body)
+    assert status == 200 and payload["wings"] == []
+    assert [row["name"] for row in payload["connections"]] == ["desktop"]
+    assert payload["mcp_url"].endswith("/mcp")
+
+
+def test_connections_wings_deadline_slow_worker(hub, monkeypatch):
+    cookie, _, _ = login(hub)
+    workers = []
+    delay = threading.Event()
+
+    def slow_wings(*_args):
+        workers.append(threading.current_thread())
+        delay.wait(2)
+        return {"wings": {"late_wing": {}}}
+
+    monkeypatch.setattr(hub.gateway, "call_memory_tool", slow_wings)
+    begin = time.monotonic()
+    try:
+        status, _, body = request(hub, "/api/connections", headers=cookie)
+        elapsed = time.monotonic() - begin
+    finally:
+        delay.set()
+        for worker in workers:
+            worker.join(3)
+    print(f"connections response with a 2s worker: {elapsed:.3f}s")
+    assert elapsed < 1.5, "Connection management waited for a slow optional memory lookup"
+    assert status == 200 and json.loads(body)["wings"] == []
+
+
+def test_connections_wings_transport_budget(hub, monkeypatch):
+    from commonplace.rules.checks import remaining
+
+    cookie, _, _ = login(hub)
+    budgets = []
+
+    def wings(*_args):
+        budgets.append(remaining(10))
+        return {"wings": {"project_atlas": {}}}
+
+    monkeypatch.setattr(hub.gateway, "call_memory_tool", wings)
+    status, _, body = request(hub, "/api/connections", headers=cookie)
+    assert status == 200 and json.loads(body)["wings"] == ["project_atlas"]
+    assert len(budgets) == 1 and 0 < budgets[0] <= 1, "Worker transport needs the lookup deadline"
+
+
+def test_connections_wings_single_flight(hub, monkeypatch):
+    cookie, _, _ = login(hub)
+    release = threading.Event()
+    workers = []
+
+    def blocked_wings(*_args):
+        workers.append(threading.current_thread())
+        release.wait(5)
+        return {"wings": {}}
+
+    monkeypatch.setattr(hub.gateway, "call_memory_tool", blocked_wings)
+    try:
+        assert request(hub, "/api/connections", headers=cookie)[0] == 200
+        begin = time.monotonic()
+        status, _, body = request(hub, "/api/connections", headers=cookie)
+        elapsed = time.monotonic() - begin
+        started = len(workers)
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(2)
+    assert started == 1, "Repeated requests must not accumulate blocked wing lookups"
+    assert elapsed < 0.5, "A busy optional lookup must fall back immediately"
+    assert status == 200 and json.loads(body)["wings"] == []
+
+    monkeypatch.setattr(
+        hub.gateway, "call_memory_tool", lambda *_: {"wings": {"project_atlas": {}}}
+    )
+    status, _, body = request(hub, "/api/connections", headers=cookie)
+    assert status == 200 and json.loads(body)["wings"] == ["project_atlas"]
+
+
+def test_connections_wings_tool_error_fallback(hub, monkeypatch):
+    from commonplace.extensions import ToolError
+
+    cookie, _, _ = login(hub)
+    hub.owner_token("desktop")
+
+    def unavailable(*_args):
+        raise ToolError("unavailable worker details")
+
+    monkeypatch.setattr(hub.gateway, "call_memory_tool", unavailable)
+    status, _, body = request(hub, "/api/connections", headers=cookie)
+    assert status == 200 and json.loads(body)["wings"] == []
+    assert [row["name"] for row in json.loads(body)["connections"]] == ["desktop"]
+    assert b"unavailable worker details" not in body
 
 
 @pytest.mark.parametrize("path", ["/app/", "/app", "/app/board/demo", "/app/unknown/route"])

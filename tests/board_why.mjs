@@ -13,6 +13,7 @@ const reasons = {
   no_agent: 'No agent is connected to this project yet',
   project_limit: 'Waiting for a free slot: 1 of 1',
   checks_pending: 'Waiting for checks to finish',
+  snoozed: 'Snoozed until 2030-01-07 10:00 Europe/Amsterdam',
 };
 const withReason = (code) => ({ ...base, waiting: { code, text: reasons[code] } });
 const notes = [{ code: 'project_limit', count: 2, text: 'Agent limit reached (1 of 1 working): 2 cards wait for a free slot.' }, { code: 'no_agent', count: 1, text: 'No agent is connected, so 1 card cannot start.' }];
