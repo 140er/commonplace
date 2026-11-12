@@ -468,6 +468,8 @@ TOOLS_ADDED_SINCE_BASELINE = {
     "rules_get",
     "rules_changed",
     "session_start",
+    # Run cost sums (not part of handoff).
+    "costs_summary",
     # Compute map read tools (not part of handoff).
     "topology_get",
     "topology_route",

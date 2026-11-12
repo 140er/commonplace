@@ -13,6 +13,8 @@
 
   - The extension list ends with `commonplace.bots`, which installs the person-only `/api/bots` routes.
 
+  - The runner extension also registers the read tool `costs_summary` with `GET /api/costs`, and the owner-set `GET|PUT /api/settings/costs`; `_rest_tool` maps `/api/costs` to the tool.
+
   - The extension list also loads `commonplace.topology.extension`, which registers the read tools `topology_get` and `topology_route` and their `GET /api/topology` and `GET /api/topology/route` routes; `_rest_tool` maps both routes to their tools.
 
   - `extensions.load_modules` skips a listed module when the module or the package it lives in does not exist, and still raises when an import fails inside a module that does exist.

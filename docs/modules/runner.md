@@ -5,6 +5,8 @@
 
   - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
 
+  - Cost events: `cost_events` in `runner.sqlite3` and the sums over them (`costs.py`), the `costs_summary` tool, `GET /api/costs` and the owner-set window `GET|PUT /api/settings/costs` (`costs_api.py`); design in `docs/system/cost-ledger.md`.
+
   - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
 
 
@@ -18,6 +20,8 @@
   - `GET /api/runners/wings` (owner only) returns the wings grant validation accepts; enroll and wing edits validate against the same fast index read, so neither waits on a drawer-by-drawer listing.
 
   - Every start has one ledger row, written in the job's own transaction and following its state; tokens, cost, log pointer and the run's end are only what the run's own enabled machine reported, and an unreported value stays NULL. The end status is set once; jobs from before the ledger are given a row when the store opens.
+
+  - A cost event mirrors a run's totals and is appended on the report's own transaction; a started run without a known cost is counted and listed as unknown, never as zero, and money is summed per currency. Sums cover the runs of boards the caller can read; a person owner reads all; a machine credential reads nothing; only a signed-in owner sets the window.
 
   - A machine's worker policy reads and writes exactly its granted wings (first is the default write wing); starts on any other board wing are refused with a message naming the board wing and the granted wings, and the worker cannot write to an ungranted wing through any tool.
 
