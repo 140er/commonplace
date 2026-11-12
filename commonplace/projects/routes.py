@@ -311,10 +311,12 @@ def _route(gateway, h):
     if action in ("panel_view", "panel_set"):
         panel_routes.handle(gateway, h, parts, action)
         return
-    if parts[1:] == ["learning"] and h.command in ("GET", "PATCH"):
+    if (parts[1:] == ["learning"] and h.command in ("GET", "PATCH")) or (
+        parts[1:] == ["learned"] and h.command == "GET"
+    ):
         from commonplace.bots import learned_routes
 
-        learned_routes.project_route(gateway, h, parts[0])
+        learned_routes.project_route(gateway, h, parts[0], parts[1:])
         return
     splitting = action in ("inbox", "split")
     principal = require_principal(gateway, h) if splitting else _person(gateway, h)

@@ -1,8 +1,10 @@
 """Retrieval of learned items for one turn: part of ``Learned``
 (``docs/design/bot-learning-memory.md``, section 7).
 
-Candidates are the asking person's own active items, nothing else: the store takes the user id from
-the turn, so another person's items are never read. Ranking is local full-text relevance of the
+Candidates are the asking person's own active items and the shared items of the projects the turn
+names (``shared_boards``), nothing else: the store takes the user id from the turn, so another
+person's private items are never read, and a shared item is read only while both owner switches
+are on and the reader can read that project right now. Ranking is local full-text relevance of the
 new message times a decay weight; pinned items and up to three standing preferences are included
 without lexical overlap. Whole items only, within a small count and size budget. Nothing is
 returned unless the workspace switch is on, the bot's mode is ``ask`` or ``auto`` and the person is
@@ -20,6 +22,7 @@ MAX_ITEMS = 8
 MAX_CHARS = 2400  # the quoted items of one turn, whole items only
 STANDING = 3  # preference / instruction items taken even without a word in common
 STANDING_KINDS = ("preference", "instruction")
+MAX_SHARED = 3  # shared items of one turn; they are taken only on a word in common
 HALF_LIFE_DAYS = 90
 RETIRE_DAYS = 180  # an unpinned item unseen and unused this long is no longer retrieved
 MAX_TERMS = 24
@@ -63,15 +66,19 @@ def _age_days(row, now) -> float:
     return max(0.0, (now - _parse(latest)).total_seconds() / 86400)
 
 
-def shown(row) -> dict:
-    """An item as the model reads it: the person's words, where they sit and when they said it."""
-    return {
+def shown(row, reader=None) -> dict:
+    """An item as the model reads it: the words, where they sit and when they were said. A shared
+    item also says whether the reader or a teammate said it (never a name)."""
+    item = {
         "id": row["id"],
         "scope": row["scope"],
         "kind": row["kind"],
         "said": row["source_at"][:10],
         "text": row["text"],
     }
+    if row["scope"] == "shared":
+        item["by"] = "you" if row["user_id"] == reader else "a teammate"
+    return item
 
 
 def cost(item) -> int:
@@ -79,12 +86,16 @@ def cost(item) -> int:
 
 
 class RecallMixin:
-    def recall(self, bot_id, user_id, query, *, can_read=None, now=None) -> Recall:
+    def recall(
+        self, bot_id, user_id, query, *, can_read=None, shared_boards=(), now=None
+    ) -> Recall:
         """The items to put in this turn's prompt, or nothing.
 
         ``can_read(slug)`` says whether the person may read a project right now: an item tagged
-        with one is only used while they can (without it, no tagged item is used). ``now`` is the
-        injected clock of tests.
+        with one is only used while they can (without it, no tagged item is used).
+        ``shared_boards`` names the projects whose shared items may be used (the bot's own
+        project, or for a bot without one the projects the person reads); none by default.
+        ``now`` is the injected clock of tests.
         """
         now = now or datetime.now(timezone.utc)
         with self._bots._tx(write=False) as conn:
@@ -99,19 +110,37 @@ class RecallMixin:
                 "AND replaced_by IS NULL ORDER BY seq DESC",
                 (user_id,),
             ).fetchall()
+            shared = self._shared_rows(conn, user_id, shared_boards, can_read, rows)
             match = fts_query(query)
             found = {}
-            if rows and match:
+            if (rows or shared) and match:
                 for hit in conn.execute(
                     "SELECT rowid, bm25(bot_learned_fts) AS score FROM bot_learned_fts "
                     "WHERE bot_learned_fts MATCH ?",
                     (match,),
                 ):
                     found[hit["rowid"]] = max(-hit["score"], 1e-6)
-        return self._choose(rows, found, can_read, now)
+        return self._choose(rows, found, can_read, now, shared, user_id)
+
+    def _shared_rows(self, conn, user_id, boards, can_read, own) -> list:
+        """Shared items of the projects in ``boards`` that the reader can read and whose switches
+        (workspace and project) are on. The reader's own shared copy of an item that is already
+        a candidate is left out, so one sentence is not told twice."""
+        if can_read is None or not boards:
+            return []
+        live = [b for b in dict.fromkeys(boards) if can_read(b) and self._shared_on(conn, b)]
+        if not live:
+            return []
+        rows = conn.execute(
+            "SELECT * FROM bot_learned WHERE scope='shared' AND state='active' "
+            f"AND replaced_by IS NULL AND board IN ({','.join('?' * len(live))}) ORDER BY seq DESC",
+            live,
+        ).fetchall()
+        ids = {row["id"] for row in own}
+        return [r for r in rows if not (r["user_id"] == user_id and r["shared_from"] in ids)]
 
     @staticmethod
-    def _choose(rows, found, can_read, now) -> Recall:
+    def _choose(rows, found, can_read, now, shared=(), reader=None) -> Recall:
         pinned, standing, matches = [], [], []
         for row in rows:
             if row["board"] and (can_read is None or not can_read(row["board"])):
@@ -134,28 +163,51 @@ class RecallMixin:
         matches.sort(key=lambda entry: entry[:2], reverse=True)
         ordered = [e[2] for e in pinned] + [e[2] for e in standing[:STANDING]]
         ordered += [e[2] for e in matches]
+        found_shared = RecallMixin._shared_matches(shared, found, can_read, now)
+        teammates = found_shared[:MAX_SHARED]
+        room = MAX_ITEMS - len(teammates)  # a relevant shared item is not starved by the rest
         chosen, used = [], 0
-        for row in ordered:
-            item = shown(row)
+        for row in [*ordered[:room], *teammates, *ordered[room:]]:
+            item = shown(row, reader)
             if len(chosen) < MAX_ITEMS and used + cost(item) <= MAX_CHARS:
                 chosen.append(item)
                 used += cost(item)
-        return Recall(chosen, len(ordered) - len(chosen))
+        return Recall(chosen, len(ordered) + len(found_shared) - len(chosen))
+
+    @staticmethod
+    def _shared_matches(shared, found, can_read, now) -> list:
+        """Shared items with a word in common, best first, decayed like the person's own."""
+        matches = []
+        for row in shared:
+            age = _age_days(row, now)
+            if age >= RETIRE_DAYS or not row["board"] or not can_read(row["board"]):
+                continue
+            score = found.get(row["seq"], 0.0) * 0.5 ** (age / HALF_LIFE_DAYS)
+            if score > 0:
+                matches.append((score, row))
+        matches.sort(key=lambda entry: entry[0], reverse=True)
+        return [row for _, row in matches]
 
     def visible(self, user_id, ids, can_read=None) -> list[dict]:
-        """The items of ``ids`` this person still has (and may still read), for a thread block."""
+        """The items of ``ids`` this person still has (and may still read), for a thread block:
+        their own, and shared ones while both switches are on and they can read the project."""
         ids = [i for i in ids if isinstance(i, str)][:MAX_ITEMS]
         if not ids:
             return []
         with self._bots._tx(write=False) as conn:
             rows = conn.execute(
-                "SELECT * FROM bot_learned WHERE user_id=? AND scope='person' AND state='active' "
+                "SELECT * FROM bot_learned WHERE state='active' "
+                "AND ((user_id=? AND scope='person') OR scope='shared') "
                 f"AND id IN ({','.join('?' * len(ids))})",
                 (user_id, *ids),
             ).fetchall()
-        by_id = {row["id"]: row for row in rows}
+            by_id = {
+                row["id"]: row
+                for row in rows
+                if row["scope"] == "person" or self._shared_on(conn, row["board"])
+            }
         return [
-            shown(by_id[i])
+            shown(by_id[i], user_id)
             for i in ids
             if i in by_id
             and (not by_id[i]["board"] or (can_read is not None and can_read(by_id[i]["board"])))
