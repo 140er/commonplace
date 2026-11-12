@@ -59,7 +59,8 @@ def test_compose_persists_data_limits_memory_and_loads_operator_env():
     assert "- ${COMMONPLACE_ENV_FILE:?" in text
     assert "COMMONPLACE_BASE_URL:-https://hub.example.com" in text
     assert "restart: unless-stopped\n" in text
-    assert "mem_limit: 3g\n" in text
+    assert "mem_limit: 20g\n" in text
+    assert "memswap_limit: 26g\n" in text
     assert "init: true\n" in text
 
 

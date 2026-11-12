@@ -188,6 +188,20 @@ const cases = {
     assert.equal(host.html.includes("<b>x"), false);
     assert.ok(host.html.includes("&lt;img"));
   },
+  async merge_policy_is_listed_with_the_config() {
+    const factory = {policy: {gate: {required: true}}, summary: ["Gate: required. Only a pass verdict counts; fail, error and budget never do.", "Check <b>unit</b> (affected tests): required."], gates: {open: 1, gate_pass: 4, gate_fail: 2, gate_error: 0, gate_budget: 0}};
+    const {host} = await mount({responses: [view({factory})]});
+    assert.ok(has(host, "factory"));
+    assert.match(host.text, /Accepted config: version 3\. Merge policy Gate: required\. Only a pass verdict counts/);
+    assert.match(host.text, /Gates on this board: 4 passed, 2 failed, 0 with an error, 0 out of budget, 1 open\./);
+    assert.equal(host.html.includes("<b>unit"), false);
+  },
+  async no_merge_policy_shows_no_block() {
+    const {host} = await mount();
+    assert.equal(has(host, "factory"), false);
+    assert.equal(host.text.includes("Merge policy"), false);
+    assert.equal(ui.factoryHTML(undefined, e), "");
+  },
   async stale_mount_draws_nothing() {
     const anchor = new Anchor();
     const api = async () => view();

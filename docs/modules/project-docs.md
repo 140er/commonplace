@@ -3,6 +3,8 @@
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - The batch merge rule in `CLAUDE.md` (`AGENTS.md` links to it): affected tests per PR, the full suite per batch on `develop`, bisect and revert on red, merges held only while `develop` is red.
+
   - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; the full suite runs per develop batch, never per PR.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
@@ -27,6 +29,8 @@
   - `docs/admin.md` is the authoritative current Admin API and partial-rollout contract, linked from the existing board API and agent connection guide.
 
   - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
+
+  - `docs/admin.md` describes the Admin invite block; `docs/invites.md` (module `invites`) is the contract it links to.
 
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
@@ -64,6 +68,8 @@
 
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
 
+  - The project guide describes independently loading settings sections, a usable
+    orchestrator card during pending reads and the bounded connection-wing fallback.
   - `docs/mvp/CONTRACT.md` documents the instance index figures contract and its unknown-reason codes.
 
   - `docs/agent-connections.md` also explains granting and withdrawing `bots:chat` and `bots:confirm` for a member's own app.

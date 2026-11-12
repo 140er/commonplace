@@ -24,6 +24,8 @@
 
   - The Admin runner block (`adminrunners.js`): owner-only machine list, enroll, attest and wings edit over `/api/runners`, with one-time token display kept outside the Admin sections' redraws.
 
+  - The web mount installs the invite routes, Admin passes an optional invite block to `createAdmin` beside the runner block, and the palette offers Switch workspace; the logic lives in the `invites` module.
+
   - The Needs me Set up row for a missing model role, and the project settings model picker with its stored id, add-a-model form and role focus.
 
   - The instance-admin sign-up waitlist routes (`GET`/`POST /api/admin/instance/waitlist`, mounted from `commonplace/capacity.py`) and the plain `waitlist` sign-in message in `signin.js`.
@@ -64,6 +66,13 @@
   - Event polling sends the readable-set epoch and refetches the open screen, including card details, before adopting a reset cursor. The owner feed resets non-empty member-era epochs; pre-deploy member tabs require a reload to resume live events.
 
   - Non-owner person event feeds project payloads and cursors into visible events; private-only insertions do not change member responses.
+
+  - Project settings render and bind the orchestrator card before optional chat,
+    connection, card and chat-status reads settle. Chat and agent sections show
+    loading or local errors; their initial reads use ten-second client deadlines.
+    `GET /api/connections` bounds optional wing enumeration to one second and one
+    outstanding daemon per gateway, returning connections with empty wings on
+    timeout, busy lookup or `ToolError`; late results are discarded.
 
   - Admin callback eligibility reconstructs person policies with the queried membership role rather than assuming private read authority.
 
@@ -123,6 +132,8 @@
 
   - **Browser GitHub connection:** Needs shows local GitHub connection state and validated PR links; selection and session teardown discard connection state.
 
+  - **Merge through the person's own connection:** Merge-ready cards offer "Connect GitHub with repo access to merge", then Merge with a second Confirm merge click, only on a safe github.com PR URL and a consented connection; refusals keep Open PR with a plain reason.
+
   - **Connection lifecycle proof:** Versioned fixture cards preserve the loading assertion; stopped Needs controllers clear the detail DOM as well as cached connection state.
 
   - **Connection teardown boundary:** Stopping clears rendered GitHub details while preserving the established teardown contract for other Needs details.
@@ -149,6 +160,11 @@
 - **Tests:**
 
   - `tests/test_card_runs_ui.py` (ledger case) covers reported and unreported usage, end words, cost formatting and log pointer escaping.
+
+  - `tests/test_commonplace_web.py` covers wing lookup deadlines, single-flight
+    fallback/recovery and the existing `ToolError` fallback.
+    `tests/test_workbench_project_settings.py` and its Node fixture hold connection,
+    chat and card requests pending while exercising Connect and section errors.
 
   - tests/test_admin_runtime_api.py, tests/test_admin_runtime_controls.py, tests/test_admin_runtime_ui.py and tests/admin_runtime_ui.mjs cover fixed-time accounting, authority, wildcard subscription eligibility, no-write/lock sentinels, partial failures and GET-only pagination.
 
