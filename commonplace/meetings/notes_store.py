@@ -347,7 +347,7 @@ class NotesMixin:
             open_note = "AND state IN ('draft','proposed') AND filed_request_id IS NULL"
             if dismiss:
                 changed = conn.execute(
-                    "UPDATE meeting_notes SET state='dismissed', decided_by=?, decided_at=? "
+                    "UPDATE meeting_notes SET decided_by=?, decided_at=?, state='dismissed' "
                     f"WHERE id=? AND meeting_id=? {open_note}",
                     (user_id, _stamp(now), note_id, meeting_id),
                 ).rowcount
