@@ -284,15 +284,20 @@ def _batch(gateway, workspace_id, user_id, config, key, batch, aliases):
 
 def retry(gateway, workspace_id, *, now: float, inline=False) -> list[str]:
     """The beat's work for finished meetings: the sweep of working segments that outlived a day,
-    and a spaced, bounded retry for notes that could not be made. Returns the meetings retried."""
-    meetings = store.open_meetings(gateway, workspace_id)
-    meetings.sweep(now)
-    if not meetings.enabled():
+    and a spaced, bounded retry for notes that could not be made. Returns the meetings retried.
+    It never raises: the beat has meetings to start."""
+    try:
+        meetings = store.open_meetings(gateway, workspace_id)
+        meetings.sweep(now)
+        if not meetings.enabled():
+            return []
+        waiting = meetings.awaiting_notes(now)
+    except Exception as exc:
+        logger.warning("meeting notes beat failed type=%s", type(exc).__name__)
         return []
-    started = []
-    for meeting_id in meetings.awaiting_notes(now):
+    for meeting_id in waiting:
         if inline:
-            generate(gateway, workspace_id, meeting_id, now=now)
+            _safe(gateway, workspace_id, meeting_id, now)
         else:
             threading.Thread(
                 target=_safe,
@@ -300,8 +305,7 @@ def retry(gateway, workspace_id, *, now: float, inline=False) -> list[str]:
                 name="meeting-notes",
                 daemon=True,
             ).start()
-        started.append(meeting_id)
-    return started
+    return waiting
 
 
 def _safe(gateway, workspace_id, meeting_id, now):

@@ -904,18 +904,16 @@ class MeetingStore(notes_store.NotesMixin):
             return [r["id"] for r in rows]
 
     def pending(self) -> bool:
-        """Is anything requested or running, or holding segments for notes (the worker keeps beating
-        while so)."""
+        """Is anything requested or running (the worker keeps beating while so)."""
         marks = ",".join("?" * len(ACTIVE))
         with self._tx(write=False) as conn:
             if conn is None:
                 return False
-            if conn.execute(
-                f"SELECT 1 FROM meetings WHERE state IN ({marks}) LIMIT 1", ACTIVE
-            ).fetchone():
-                return True
-        # a finished meeting still holding working segments waits for its notes or the sweep
-        return self.holds_segments(time.time())
+            return bool(
+                conn.execute(
+                    f"SELECT 1 FROM meetings WHERE state IN ({marks}) LIMIT 1", ACTIVE
+                ).fetchone()
+            )
 
     @staticmethod
     def _busy(conn, now: float, lease_s: float) -> int:
