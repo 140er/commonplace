@@ -85,8 +85,11 @@ class LifecycleMixin:
                 (user_id,),
             )
             for bot in conn.execute(
-                "SELECT * FROM bots WHERE user_id=? AND frozen_at IS NULL", (user_id,)
+                "SELECT * FROM bots WHERE user_id=? AND (frozen_at IS NULL OR frozen_reason=?)",
+                (user_id, DISABLED),
             ).fetchall():
+                # A bot a workspace owner disabled stays frozen, but is now ownerless: only an
+                # adoption lifts it, never ``enable``.
                 _freeze(conn, bot, actor_id, OWNER_LEFT, at)
                 frozen += 1
         return {"shares": ended, "frozen": frozen}
@@ -180,12 +183,13 @@ class LifecycleMixin:
                 "UPDATE bot_forwards SET user_id=? WHERE bot_id=? AND user_id IS NULL",
                 (old, bot_id),
             )
-            conn.execute(
+            version = bot["access_version"] + 1
+            if conn.execute(
                 "UPDATE bot_shares SET revoked_at=?, revoked_by=?, revoke_reason='unshared' "
                 "WHERE bot_id=? AND user_id=? AND revoked_at IS NULL",
                 (stamp(), adopter_id, bot_id, adopter_id),
-            )
-            version = bot["access_version"] + 1
+            ).rowcount:
+                _row(conn, bot_id, version, adopter_id, "unshare", member=adopter_id)
             conn.execute(
                 "UPDATE bots SET user_id=?, frozen_at=NULL, frozen_reason=NULL, thread_floor=?, "
                 "read_upto=MAX(read_upto, ?), access_version=? WHERE id=?",

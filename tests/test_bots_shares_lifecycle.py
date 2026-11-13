@@ -594,8 +594,8 @@ def test_the_hook_creates_no_bots_file_and_a_workspace_without_shares_changes_no
     assert lifecycle.member_removed(gateway, "no-such-workspace", stranger, team.avery) is None
     assert not store.exists(gateway, "no-such-workspace")
     assert team.store.member_left(stranger, team.avery) == {"shares": 0, "frozen": 0}
-    assert team.store.access_log is not None  # nothing was written for the stranger
-    assert not rows(team, "SELECT 1 FROM bot_access_log")
+    assert not rows(team, "SELECT 1 FROM bot_access_log WHERE member_id=?", stranger)
+    assert not rows(team, "SELECT 1 FROM bot_access_log")  # nothing was written for the stranger
 
 
 def test_a_removal_that_skipped_the_hook_is_caught_by_the_next_listing(team, fake):
@@ -634,3 +634,36 @@ def test_a_member_removed_mid_turn_ends_the_turn_with_the_fixed_sentence(team, f
     assert len(fake.calls) == 1
     states = rows(team, "SELECT state FROM bot_messages WHERE role='bot'")
     assert states == [{"state": "failed:revoked"}]  # the fixed reply, no model text
+
+
+def test_a_bot_disabled_before_its_owner_left_is_owner_left_and_cannot_be_enabled(team, fake):
+    bot_id = owned_bot(team, fake)
+    assert post(team, team.avery, bot_id, "disable")[0] == 200
+    before = rows(team, "SELECT COUNT(*) AS n FROM bot_messages")[0]["n"]
+    remove(team, team.casey)
+    row = rows(team, "SELECT frozen_reason, frozen_at FROM bots WHERE id=?", bot_id)[0]
+    assert row["frozen_reason"] == "owner_left" and row["frozen_at"]
+    assert post(team, team.avery, bot_id, "enable")[0] == 409  # no live bot without an owner
+    assert post(team, team.avery, bot_id, "adopt")[0] == 200
+    assert rows(team, "SELECT user_id, frozen_at FROM bots WHERE id=?", bot_id) == [
+        {"user_id": team.avery, "frozen_at": None}
+    ]
+    assert rows(team, "SELECT COUNT(*) AS n FROM bot_messages")[0]["n"] == before
+    refs = [
+        (r["ref"], r["mode_after"])
+        for r in team.store.access_log(bot_id, team.avery)
+        if r["action"] == "freeze"
+    ]
+    assert refs == [("disabled", "frozen"), ("owner_left", "frozen")]
+
+
+def test_adopting_logs_the_adopters_own_ended_share(team, fake):
+    bot_id = owned_bot(team, fake)
+    share(team, bot_id, team.casey, team.avery, talk=True)
+    remove(team, team.casey)
+    assert post(team, team.avery, bot_id, "adopt")[0] == 200
+    log = team.store.access_log(bot_id, team.avery)
+    assert [(r["action"], r["member_id"]) for r in log[-2:]] == [
+        ("unshare", team.avery),
+        ("adopt", team.casey),
+    ]
