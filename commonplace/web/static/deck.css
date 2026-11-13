@@ -131,8 +131,7 @@
 
 /* Shared card drawer and personal queue: the classic modules have their own light surfaces. */
 :root[data-ui="deck"] :is(.workbench-details, .needs-me, .needs-detail) { background: var(--surface); color: var(--text); }
-:root[data-ui="deck"] .workbench-details :is(dt, small, .body-text),
-:root[data-ui="deck"] .needs-me :is(.sub, .list-note, .empty) { color: var(--text-2); }
+:root[data-ui="deck"] .workbench-details :is(dt, small, .body-text), :root[data-ui="deck"] .needs-me :is(.sub, .list-note, .empty) { color: var(--text-2); }
 :root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, select, textarea) { min-width: 0; max-width: 100%; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
 :root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, textarea)::placeholder { color: var(--text-2); opacity: 1; }
 :root[data-ui="deck"] .workbench-details .fields dd { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
