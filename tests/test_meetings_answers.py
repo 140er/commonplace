@@ -507,9 +507,12 @@ def test_a_slow_model_does_not_delay_bot_stop(console_hub, fake, model):
         *people("p1", "p2"),
         chat("c1", "a slow question?"),
         chat("c2", "bot stop", "p2", addressed=False),
-        release.set,
     ]
-    drive(hub, fake)
+    drive(hub, fake)  # returns while the model call is still blocked
+    assert not release.is_set() and [
+        t for t in threading.enumerate() if t.name == "meeting-answers"
+    ]
+    release.set()
     assert state_of(hub, meeting_id) == ("discarded", "stop_requested")
     assert count(hub, "meeting_chat", meeting_id) == 0
     assert not any("Heard" in text for text, _ in fake.posts)
