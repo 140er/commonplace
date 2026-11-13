@@ -8,11 +8,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = re.compile(r"\b(?:orchestrators?|orchestration)\b", re.I)
 INTERNAL_DOCS = {
-    "modules": "Implementation ownership and historical verification notes.",
-    "system": "Internal architecture decisions and historical compatibility notes.",
-    "design": "Internal proposals, audits and decision records.",
-    "compute": "Internal execution contracts and build planning.",
-    "mvp/CONTRACT.md": "Historical implementation contract, not current user instructions.",
+    "modules",  # Implementation ownership and historical verification notes.
+    "system",  # Internal architecture decisions and historical compatibility notes.
+    "design",  # Internal proposals, audits and decision records.
+    "compute",  # Internal execution contracts and build planning.
+    "mvp/CONTRACT.md",  # Historical implementation contract, not current user instructions.
 }
 
 
