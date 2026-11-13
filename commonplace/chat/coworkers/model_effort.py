@@ -45,8 +45,16 @@ def options(model=UNSET, reasoning_effort=UNSET):
 def front(authority, board):
     if authority is None:
         return None
-    settings.ensure_schema(authority.gateway.db)
-    return settings.front(authority.gateway.db, authority.workspace_id, board)
+    db = authority.gateway.db
+    with db._lock:
+        if (
+            db._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_model_settings'"
+            ).fetchone()
+            is None
+        ):
+            return None
+        return settings.front(db, authority.workspace_id, board)
 
 
 def resolve(authority, board, requested):
@@ -61,7 +69,7 @@ def resolve(authority, board, requested):
             deny("unknown_model")
         known = (
             models.catalog(authority.gateway.db, authority.workspace_id, board or "*")
-            if authority
+            if authority and config
             else []
         )
         if config is None or (
