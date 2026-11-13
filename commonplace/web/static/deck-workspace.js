@@ -4,11 +4,14 @@ import { workspaceRoute } from './routes.js';
 import { mount as mountMap } from './deck-compute.js';
 import { createCompute } from './compute.js';
 import { createCoworkers } from './coworkers.js';
+import { statusMark } from './topology-map.js';
 
 export const TITLE = 'Compute';
 const enc = encodeURIComponent;
 export const COWORKERS = '#/bots/-/coworkers';
 export const coworkerLink = bot => `#/bots/${enc(bot)}/coworkers`;
+const workerState = state => ({ running: 'up', started: 'up', queued: 'unknown', pending: 'unknown', failed: 'down', in_doubt: 'degraded', needs_person: 'degraded' })[state] || 'unknown';
+const status = (state, word) => `<span class="dw-status">${statusMark(state)}<span>${e(word)}</span></span>`;
 
 function styles(doc) {
   for (const name of ['deck-workspace', 'compute', 'coworkers']) {
@@ -23,7 +26,7 @@ function styles(doc) {
 export function coworkerRow({ bot, board = {}, project, checkpoint, failed = false }) {
   const main = project?.main;
   const children = (checkpoint?.jobs || []).filter(job => job.thread_id || job.assignee);
-  return `<article class="dw-worker"><header><h2>${e(project?.name || board.name || bot.name)} Coworker</h2><span>${failed ? 'Unavailable' : main?.connected ? 'Connected' : 'Not connected'}</span></header><dl><div><dt>Bot</dt><dd><a href="#/bots/${enc(bot.id)}">${e(bot.name)}</a></dd></div><div><dt>Owns</dt><dd>${e(board.name || bot.board)}${board.repo ? `<small>${e(board.repo)}</small>` : ''}</dd></div><div><dt>Subagents</dt><dd>${children.length ? `<ul>${children.map(job => `<li>${e(job.assignee || job.thread_id)} · ${e(job.state || 'State not recorded')}</li>`).join('')}</ul>` : 'No child threads recorded'}</dd></div></dl><p class="dw-source">${failed ? 'The project or worker status could not be read.' : 'From this Bot’s project and its recorded work.'}</p></article>`;
+  return `<article class="dw-worker"><header><h2>${e(project?.name || board.name || bot.name)} Coworker</h2>${status(!failed && main?.connected ? 'up' : 'unknown', failed ? 'Unavailable' : main?.connected ? 'Connected' : 'Not connected')}</header><dl><div><dt>Bot</dt><dd><a href="#/bots/${enc(bot.id)}">${e(bot.name)}</a></dd></div><div><dt>Owns</dt><dd>${e(board.name || bot.board)}${board.repo ? `<small>${e(board.repo)}</small>` : ''}</dd></div><div><dt>Subagents</dt><dd>${children.length ? `<ul>${children.map(job => `<li><span class="dw-agent-name">${e(job.assignee || job.thread_id)}</span>${status(workerState(job.state), (job.state || 'State not recorded').replaceAll('_', ' '))}</li>`).join('')}</ul>` : 'No child threads recorded'}</dd></div></dl><p class="dw-source">${failed ? 'The project or worker status could not be read.' : 'From this Bot’s project and its recorded work.'}</p></article>`;
 }
 
 export function mount(context) {
@@ -41,13 +44,16 @@ export function mount(context) {
   const host = '<div data-workspace="content"></div>';
   if (page.screen === 'compute') {
     const mapLink = doc?.documentElement?.dataset?.ui === 'deck' ? '#/compute' : '#/compute-map';
-    root.innerHTML = `<nav class="dw-tabs" aria-label="Compute views"><a href="${mapLink}"${page.management ? '' : ' aria-current="page"'}>Map</a><a href="#/compute/management"${page.management ? ' aria-current="page"' : ''}>Management</a></nav>${page.management ? '<header class="dw-title"><h1>Compute</h1><p>Management</p></header>' : ''}${host}`;
+    root.innerHTML = `<nav class="dw-tabs" aria-label="Compute views"><a href="${mapLink}"${page.management ? '' : ' aria-current="page"'}>Map</a><a href="#/compute/management"${page.management ? ' aria-current="page"' : ''}>Management</a></nav>${host}`;
     if (page.management) {
-      child = createCompute({ mount: () => region('content'), api: (...args) => ctx.api(...args), current: () => ctx.me, route: () => globalThis.location?.hash || ctx.route, expectedRoute: ctx.route, doc });
+      child = createCompute({ mount: () => region('content'), api: (...args) => ctx.api(...args), current: () => ctx.me, route: () => globalThis.location?.hash || ctx.route, expectedRoute: ctx.route, title: 'Compute', doc });
       child.show();
-    } else child = mountMap({ ...ctx, root: region('content'), shell: root.parentElement });
+    } else {
+      root.classList.add('dw-map');
+      child = mountMap({ ...ctx, root: region('content'), shell: root.parentElement });
+    }
   } else {
-    root.innerHTML = `<nav class="dw-crumbs" aria-label="Breadcrumb"><a href="#/bots">Bots</a><span data-workspace="parent"></span><a href="${page.bot ? coworkerLink(page.bot) : COWORKERS}"${page.conversations ? '' : ' aria-current="page"'}>Coworkers</a>${page.conversations ? '<span>Conversations</span>' : ''}</nav><header class="dw-title"><h1>Coworkers</h1><p>Each Coworker works under a Bot, owns its project’s code and uses subagents.</p></header>${page.conversations ? '' : `<nav class="dw-tabs" aria-label="Coworkers views"><a href="${COWORKERS}"${page.bot ? '' : ' aria-current="page"'}>All Bots</a><a href="${COWORKERS}/conversations">Conversations</a></nav>`}${host}`;
+    root.innerHTML = `<nav class="dw-crumbs" aria-label="Breadcrumb"><a href="#/bots">Bots</a><span data-workspace="parent"></span><a href="${page.bot ? coworkerLink(page.bot) : COWORKERS}"${page.conversations ? '' : ' aria-current="page"'}>Coworkers</a>${page.conversations ? '<span>Conversations</span>' : ''}</nav><header class="dw-title"><div><h1>Coworkers</h1><p>Each Coworker works under a Bot, owns its project’s code and uses subagents.</p></div>${page.conversations ? '' : `<div class="dw-controls"><nav class="dw-switch" aria-label="Coworker scope">${page.bot ? `<a href="${coworkerLink(page.bot)}" aria-current="page">This Bot</a>` : '<span aria-disabled="true">This Bot</span>'}<a href="${COWORKERS}"${page.bot ? '' : ' aria-current="page"'}>All Bots</a></nav><a class="btn" href="${COWORKERS}/conversations">Open conversation</a></div>`}</header>${host}`;
     if (page.conversations) {
       child = createCoworkers({ mount: () => region('content'), api: (...args) => ctx.api(...args), current: () => ctx.me, boards: () => ctx.boards || [], doc });
       child.show(page.conversation, page.message);
@@ -85,7 +91,7 @@ export function mount(context) {
   }
   return { refresh, stop() {
     stopped = true; epoch++; request?.abort(); child?.stop();
-    root.classList.remove('deck-workspace'); root.innerHTML = '';
+    root.classList.remove('deck-workspace'); root.classList.remove('dw-map'); root.innerHTML = '';
     for (const { node, hidden } of headers) node.hidden = hidden;
     if (navStyle) for (const [key, value] of previousNav) navStyle[key] = value;
   } };

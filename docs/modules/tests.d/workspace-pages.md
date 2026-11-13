@@ -1,1 +1,3 @@
 - **Owns:** `tests/deck_workspace_pages.mjs`, through `tests/test_deck_workspace_pages.py`, proves legacy redirects, canonical deep links, Bot parent navigation, four Deck destinations, unchanged classic navigation, worker copy and row provenance, shell dispatch and teardown. `tests/test_compute_browser.py` and `tests/test_coworker_browser.py` restore real-browser journeys through the nested Deck pages with synthetic local data and no remote execution.
+
+  - Presentation regressions exercise sparse inventory rows without dangling separators, the plain Management copy and disclosures, Coworker scope controls and shared map status marks. Capture measurements check title size and spacing, card-row edges, breadcrumb decoration and value alignment at desktop and phone widths.

@@ -20,3 +20,8 @@ this section. Routes are resolved once before dispatch, without reserving an
 existing Bot ID. Departing stops controllers, aborts requests and clears transient
 forms; late reads cannot repaint the next page. The complete contract is in the
 web-and-console module fragment.
+
+Both management and Coworker pages use the Deck title scale and compact spacing.
+Management keeps security details in disclosures and joins only recorded row
+parts. Coworkers offers a parent scope switch and conversation action; its
+connection and subagent states use the map's shared marks alongside words.

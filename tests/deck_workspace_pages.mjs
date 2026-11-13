@@ -33,10 +33,12 @@ test('every canonical nested route parses without stealing Bot threads or accept
   for (const hash of ['#/bots/coworkers', '#/bots/main', '#/compute/management/extra', '#/bots/b/coworkers/conversations', '#/bots/-/coworkers/conversations/%ZZ', '#/bots/-/coworkers/conversations/c?bad=1']) assert.equal(workspaceRoute(hash), null, hash);
 });
 test('Coworker rows show the recorded parent, owned project/repository and child threads, escaping all data', () => {
-  const row = coworkerRow({ bot: { id: 'bot-1', name: 'Shipping', board: 'product' }, board: { name: 'Product', repo: 'example/product' }, project: { name: 'Product', main: { connected: true, name: 'orchestrator:product' } }, checkpoint: { jobs: [{ thread_id: 'child-1', state: 'running' }, { source: 'journal', assignee: 'conn:builder', state: 'started' }] } });
+  const row = coworkerRow({ bot: { id: 'bot-1', name: 'Shipping', board: 'product' }, board: { name: 'Product', repo: 'example/product' }, project: { name: 'Product', main: { connected: true, name: 'orchestrator:product' } }, checkpoint: { jobs: [{ thread_id: 'child-1', state: 'running' }, { source: 'journal', assignee: 'conn:builder', state: 'started' }, { thread_id: 'child-2', state: 'queued' }] } });
   for (const text of ['Coworker', 'Shipping', 'Product', 'example/product', 'child-1', 'running', 'conn:builder', 'started']) assert.ok(row.includes(text), text);
   assert.match(row, /href="#\/bots\/bot-1"/);
   assert.doesNotMatch(row, /orchestrator/i);
+  assert.equal((row.match(/class="topo-dot s-up"/g) || []).length, 3, 'connection and running workers share the map up mark');
+  assert.equal((row.match(/class="topo-dot s-unknown"/g) || []).length, 1, 'queued work has the map unknown ring');
   const missing = coworkerRow({ bot: { id: 'x', name: '<script>', board: 'p' } });
   assert.match(missing, /No child threads recorded/);
   assert.match(missing, /&lt;script&gt;/);
@@ -67,11 +69,28 @@ test('Management uses the existing controller and restores the shell and phone d
     const ui = mount({ root: f.root, route: '#/compute/management', me: { workspace: 'w', actor: 'u' }, api: () => new Promise(() => {}) });
     assert.deepEqual(hrefs(f.root.innerHTML), [deck ? '#/compute' : '#/compute-map', '#/compute/management']);
     assert.match(f.regions.get('content').innerHTML, /Loading Compute inventory/);
+    assert.match(f.regions.get('content').innerHTML, /<h1>Compute<\/h1>/);
+    assert.doesNotMatch(f.root.innerHTML, /<p>Management<\/p>/);
     assert.doesNotMatch(f.root.innerHTML + f.regions.get('content').innerHTML, /orchestrator/i);
     assert.equal(header.hidden, true); assert.equal(phone.hidden, true); assert.equal(tabs.style.position, 'fixed');
     ui.stop();
     assert.equal(header.hidden, false); assert.equal(phone.hidden, false); assert.equal(tabs.style.position, 'relative');
     assert.equal(f.root.innerHTML, '');
+  }
+});
+test('Coworkers puts the parent scope switch and conversation action in its title row', () => {
+  for (const bot of ['bot-1', '-']) {
+    const f = hostFixture();
+    const ui = mount({ root: f.root, route: `#/bots/${bot}/coworkers`, api: () => new Promise(() => {}) });
+    const title = /<header class="dw-title">([\s\S]*?)<\/header>/.exec(f.root.innerHTML)?.[1];
+    assert.ok(title);
+    assert.match(title, /aria-label="Coworker scope"/);
+    assert.match(title, />This Bot</);
+    assert.match(title, />All Bots</);
+    assert.match(title, /href="#\/bots\/-\/coworkers\/conversations">Open conversation</);
+    if (bot === '-') assert.match(title, /aria-disabled="true">This Bot</);
+    else assert.match(title, /href="#\/bots\/bot-1\/coworkers" aria-current="page">This Bot</);
+    ui.stop();
   }
 });
 test('Coworkers mounts from existing reads, refreshes once and ignores late replies after departure', async () => {
