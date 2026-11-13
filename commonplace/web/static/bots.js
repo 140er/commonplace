@@ -4,7 +4,7 @@
 // handler leaves them alone. All server text goes through `e` before it reaches innerHTML.
 import { elapsed, safeLink } from "./api.js";
 import { sendMessage } from "./botstream.js";
-import { permissionText, sharingHTML, threadsHTML, threadPreviewHTML } from "./bot-sharing.js";
+import { permissionText, settingsFrameHTML, sharingHTML, threadsHTML, threadPreviewHTML } from "./bot-sharing.js";
 
 export const BOTS_COPY = Object.freeze({
   title: "Bots",
@@ -187,6 +187,7 @@ export function learnedSheetHTML(sheet, bot, e) {
   const control = (what, label) => `<button type="button" class="bb-opt" data-bots-action="learned-bot" data-do="${what}"${off}>${label}</button>`;
   const controls = `${paused ? control("resume", "Resume learning") : control("pause", "Pause learning for 7 days")}${control("forget-all", sheet.confirmAll ? "Forget everything for good?" : `Forget everything ${e(bot.name ?? "")} learned`)}`;
   const sharing = sheet.shareItem ? `<section class="bot-access-card" data-learning-share><h3>Share these words</h3><p>${marked(items.find(item => item.id === sheet.shareItem)?.text || "", e)}</p>${sheet.sharePending ? `<div class="bot-access-preview"><h4>Who will see this</h4><p>${e(sheet.sharePending.label)}</p></div><div class="sheet-btns"><button class="bb-opt go" data-bots-action="learning-share-confirm"${off}>Share these words</button><button class="bb-opt" data-bots-action="learning-share-cancel"${off}>Cancel</button></div>` : `<form data-bots-form="learning-share"><label>Project audience<select name="project" required><option value="">Choose a project</option>${(sheet.projects || []).filter(project => !bot.board || project.slug === bot.board).map(project => `<option value="${e(project.slug)}">${e(project.name)}</option>`).join("")}</select></label><p>Everyone who can read this project will see these exact words and your name. Review the audience and words before sharing.</p><button class="bb-opt" type="submit"${off}>Preview sharing</button><button type="button" class="bb-opt" data-bots-action="learning-share-cancel">Cancel</button></form>`}</section>` : "";
+  if (sheet.deck) return settingsFrameHTML({ ...sheet, tab: "learning" }, bot, `${sharing}${sheet.loading ? '<p role="status">Loading learning…</p>' : sheet.shareItem ? "" : `<section class="bot-access-card"><h3>What ${e(bot.name)} learned</h3>${sections || '<p>Nothing learned yet.</p>'}<div class="sheet-btns">${controls}</div></section>`}${sheet.error ? `<p role="alert">${e(sheet.error)}</p>` : ""}`, e);
   return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body${sheet.deck ? " bot-access" : ""}"><h2 id="sheet-h">What ${e(bot.name ?? "")} learned</h2>${sharing}
     ${sheet.loading ? `<p class="bots-note">${e(BOTS_COPY.loading)}</p>` : sheet.shareItem ? "" : sections || '<p class="bots-note">Nothing learned yet.</p>'}
     ${sheet.error ? `<p class="bots-notice" role="alert">${e(sheet.error)}</p>` : ""}
@@ -314,8 +315,24 @@ export function sendButtonHTML({ busy, canStop }) {
     : '<button type="submit" class="bots-send">Send</button>';
 }
 
+function detailsHTML(sheet, bot, e) {
+  const off = sheet.busy ? " disabled" : "";
+  const content = `<section class="bot-access-card"><h3>Name & job</h3><form data-bots-form="save">
+    <label>Name<input name="name" maxlength="60" required autocomplete="off" value="${e(bot.name)}"></label>
+    <label>Job<input name="job" maxlength="200" autocomplete="off" value="${e(bot.job ?? "")}"></label>
+    <label>How to work<textarea name="instructions" maxlength="4000" rows="3">${e(bot.instructions ?? "")}</textarea></label>
+    <div class="sheet-btns"><button type="submit" class="bb-opt go"${off}>Save</button></div></form></section>
+    <section class="bot-access-card"><h3>Memory</h3>${sheet.memories === null ? '<p>Loading memory…</p>' : sheet.memories?.length ? `<ul class="memory">${sheet.memories.map(m => `<li><span>${marked(m.text, e)}</span><button type="button" class="bb-opt" data-bots-action="forget" data-id="${e(m.id)}" aria-label="Remove this note"${off}>Remove</button></li>`).join("")}</ul>` : '<p>Nothing remembered yet. Say “remember that…” in the chat, or add a note.</p>'}
+    <form class="memory-add" data-bots-form="memory"><input name="text" maxlength="2000" aria-label="New note" placeholder="Add a note" autocomplete="off" required><button type="submit" class="bb-opt"${off}>Add</button></form></section>
+    ${sheet.error ? `<p role="alert">${e(sheet.error)}</p>` : ""}
+    <div class="sheet-btns"><button type="button" class="bb-opt" data-bots-action="archive"${off}>${sheet.confirmArchive ? "Archive for good?" : "Archive bot"}</button></div>
+    ${sheet.me?.can_admin && bot.shared && !bot.frozen ? `<div class="bot-access-danger"><button type="button" class="bot-danger" data-bots-action="disable"${off}>Disable bot</button>${sheet.confirmDisable ? `<section class="bot-access-preview" role="group" aria-label="Disable bot"><p>Disable this bot for everyone? Conversations and access will be kept. Nobody can talk to it until a workspace owner enables it again.</p><div class="sheet-btns"><button type="button" class="bb-opt" data-bots-action="disable-cancel"${off}>Cancel</button><button type="button" class="bb-opt bot-danger" data-bots-action="disable-confirm"${off}>Disable for everyone</button></div></section>` : ""}</div>` : ""}`;
+  return settingsFrameHTML({ ...sheet, tab: "details" }, bot, content, e);
+}
+
 export function sheetHTML(sheet, bot, e) {
   if (sheet.kind === "sharing") return sharingHTML(sheet, bot, e);
+  if (sheet.kind === "details" && sheet.deck) return detailsHTML(sheet, bot, e);
   if (sheet.kind === "shared-thread") return threadPreviewHTML(sheet, bot, e);
   if (sheet.kind === "project") return projectHTML(sheet, bot, e);
   if (sheet.kind === "learned") return learnedSheetHTML(sheet, bot, e);
@@ -456,6 +473,8 @@ export function createBots({
     const node = region("sheet");
     if (!node) return;
     node.innerHTML = s.sheet ? sheetHTML(s.sheet, s.bot || {}, e) : "";
+    const tabs = node.querySelector?.(".bot-access-tabs"), selected = tabs?.querySelector?.('[aria-pressed="true"]');
+    if (selected) tabs.scrollLeft = Math.max(0, selected.offsetLeft - (tabs.clientWidth - selected.offsetWidth) / 2);
     if (s.sheet && !s.sheet.painted) { s.sheet.painted = true; node.querySelector?.("[data-focus]")?.focus?.(); }
   }
   function paintThread() {
@@ -773,19 +792,22 @@ export function createBots({
     } catch (error) { if (s.sheet === sheet) sheet.error = error.message || "Bot settings are unavailable. Try again."; }
     if (s.sheet === sheet) { sheet.loading = false; paintSheet(); }
   }
-  async function openSharing() {
+  async function openSharing(tab = "people") {
     if (!deck() || !s.bot) return;
-    const sheet = s.sheet = { kind: "sharing", tab: "people", shares: [], log: [], busy: false, loading: true, error: "", painted: false };
+    const sheet = s.sheet = { kind: "sharing", tab, shares: [], log: [], busy: false, loading: true, error: "", painted: false };
     await loadSharing(sheet);
   }
-  async function sharingWrite(action) {
+  async function sharingWrite(action, confirmed = false) {
     const sheet = s.sheet, bot = s.bot;
-    if (!deck() || sheet?.kind !== "sharing" || sheet.busy || sheet.loading || !bot) return;
+    if (!deck() || !["sharing", "details"].includes(sheet?.kind) || sheet.busy || sheet.loading || !bot) return;
     const memberActions = ["grant", "revoke"];
     if (memberActions.includes(action) && (!bot.mine || bot.frozen || !sheet.selected || !sheet.settings?.sharing)) return;
     if (["disable", "enable", "adopt", "sharing-enable"].includes(action) && !sheet.me?.can_admin) return;
     if (action === "revoke" && !sheet.confirmRevoke) { sheet.confirmRevoke = true; paintSheet(); return; }
-    if (action === "disable" && !sheet.confirmDisable) { sheet.confirmDisable = true; paintSheet(); return; }
+    if (action === "disable") {
+      if (sheet.kind !== "details") return;
+      if (!confirmed || !sheet.confirmDisable) { sheet.confirmDisable = true; paintSheet(); return; }
+    }
     const id = s.botId;
     let path = `/api/bots/${enc(id)}/${action}`, method = "POST", body = {};
     if (action === "sharing-enable") { path = "/api/bots/settings"; method = "PATCH"; body = { sharing: true }; }
@@ -799,7 +821,8 @@ export function createBots({
     }
     const result = await sheetCall(sheet, () => api(path, { method, ...(body ? { body } : {}) }));
     if (!result || s.sheet !== sheet || s.botId !== id) return;
-    sheet.selected = null; sheet.picker = false; sheet.confirmRevoke = false; sheet.confirmDisable = false; sheet.saved = true;
+    sheet.selected = null; sheet.picker = false; sheet.confirmRevoke = false; sheet.confirmDisable = false; sheet.saved = memberActions.includes(action);
+    if (["disable", "enable", "adopt"].includes(action)) { sheet.kind = "sharing"; sheet.tab = "people"; }
     await loadRoster(generation);
     if (s.sheet !== sheet || s.botId !== id) return;
     await loadSharing(sheet);
@@ -865,10 +888,11 @@ export function createBots({
       if (alive(token) && s.sheet === sheet) { sheet.loading = false; sheet.painted = false; paintSheet(); }
       return;
     }
-    s.sheet = { kind, busy: false, error: "", confirmArchive: false, memories: ["bot", "details"].includes(kind) ? null : undefined, painted: false };
+    s.sheet = { kind, deck: deck(), tab: kind === "details" ? "details" : undefined, me: s.sheet?.me, busy: false, error: "", confirmArchive: false, memories: ["bot", "details"].includes(kind) ? null : undefined, painted: false };
     paintSheet();
     if (!["bot", "details"].includes(kind)) return;
     const sheet = s.sheet, id = s.botId;
+    if (sheet.deck && kind === "details" && !sheet.me) await loadSharing(sheet);
     try {
       const result = await api(`/api/bots/${enc(id)}/memory`);
       if (s.sheet === sheet) { sheet.memories = result.memories || []; paintSheet(); }
@@ -1021,15 +1045,23 @@ export function createBots({
   // --- events ---
   function click(el) {
     const d = el?.dataset || {};
+    if (s.sheet?.saved) { s.sheet.saved = false; region("sheet")?.querySelector?.("[data-access-saved]")?.remove?.(); }
     switch (d.botsAction) {
       case "new": void openSheet("new"); break;
       case "sheet": void openSheet("bot"); break;
       case "bot-details": if (deck() && s.bot?.mine && !s.bot.frozen) void openSheet("details"); break;
-      case "sharing-tab": if (s.sheet?.kind === "sharing") { s.sheet.tab = d.tab === "log" ? "log" : "people"; paintSheet(); } break;
+      case "sharing-tab":
+        if (!deck() || s.sheet?.busy) break;
+        if (d.tab === "details") { if (s.bot?.mine && !s.bot.frozen) void openSheet("details"); }
+        else if (d.tab === "learning") void openLearned();
+        else if (["people", "log"].includes(d.tab)) void openSharing(d.tab);
+        break;
       case "sharing-picker": if (s.sheet?.kind === "sharing" && s.bot?.mine && !s.bot.frozen) { s.sheet.picker = true; s.sheet.selected = null; s.sheet.painted = false; paintSheet(); region("sheet")?.querySelector?.("[data-people-picker]")?.scrollIntoView?.({ block: "nearest" }); } break;
       case "sharing-select": case "sharing-edit": selectShare(d.user); break;
       case "sharing-cancel": if (s.sheet?.kind === "sharing") { s.sheet.selected = null; paintSheet(); } break;
       case "sharing-revoke": void sharingWrite("revoke"); break;
+      case "disable-cancel": if (s.sheet?.kind === "details") { s.sheet.confirmDisable = false; paintSheet(); } break;
+      case "disable-confirm": if (s.sheet?.confirmDisable) void sharingWrite("disable", true); break;
       case "sharing-enable": case "disable": case "enable": case "adopt": void sharingWrite(d.botsAction); break;
       case "sharing-retry": if (s.sheet?.kind === "sharing") void loadSharing(s.sheet); break;
       case "sharing-more": void moreSharingLog(); break;

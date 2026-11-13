@@ -157,3 +157,62 @@ test('shared human messages name their author without changing private or classi
   assert.doesNotMatch(messageHTML(message, { deck: true, shared: false }, e), /bm-author/);
   assert.doesNotMatch(messageHTML(message, { deck: false, shared: true }, e), /bm-author/);
 });
+
+
+test('settings design has one four-section row and scopes saved feedback to its card', async () => {
+  const h = harness(); await h.ui.show('bot'); await h.click('sheet');
+  let html = h.regions.sheet.innerHTML;
+  assert.equal((html.match(/data-bots-action="sharing-tab"/g) || []).length, 4, 'all four sections belong to one row');
+  assert.equal((html.match(/<nav/g) || []).length, 1);
+  assert.doesNotMatch(html, /data-bots-action="bot-details"|data-bots-action="learned-sheet"|data-bots-action="disable"/);
+  await h.click('sharing-select', { user: 'member' }); h.ui.state.sheet.draft = { talk: true, see_shared: false };
+  await h.ui.submit({ dataset: { botsForm: 'share' } });
+  html = h.regions.sheet.innerHTML;
+  assert.match(html, /data-people-access><div[^>]*><div><h3>People with access<\/h3><p role="status" data-access-saved>Access saved/);
+  assert.match(html, /<b>Workspace member<\/b><p>Can talk privately and start shared conversations\./);
+  await h.click('sharing-edit', { user: 'member' });
+  assert.doesNotMatch(h.regions.sheet.innerHTML, /Access saved/);
+  assert.match(h.regions.sheet.innerHTML, /Workspace member can talk privately/);
+  await h.click('sharing-tab', { tab: 'log' });
+  assert.doesNotMatch(h.regions.sheet.innerHTML, /Access saved|data-bots-action="disable"/);
+  await h.click('sharing-tab', { tab: 'details' });
+  assert.match(h.regions.sheet.innerHTML, /bot-danger.*data-bots-action="disable"/);
+  assert.equal((h.regions.sheet.innerHTML.match(/data-bots-action="sharing-tab"/g) || []).length, 4);
+  const writes = () => h.calls.filter(([, method]) => method !== 'GET').length;
+  const count = writes(); await h.click('disable');
+  assert.equal(writes(), count, 'opening the explanation never disables the bot');
+  assert.match(h.regions.sheet.innerHTML, /Conversations and access will be kept/);
+  assert.match(h.regions.sheet.innerHTML, /disable-confirm/);
+  await h.click('disable');
+  assert.equal(writes(), count, 'repeating the first action still requires the separate confirmation');
+  await h.click('disable-cancel');
+  assert.equal(writes(), count); assert.doesNotMatch(h.regions.sheet.innerHTML, /disable-confirm/);
+  h.ui.stop();
+});
+
+test('local access times use calendar words and keep the exact UTC title', async () => {
+  const { accessLogTime, sharingHTML } = await import('../commonplace/web/static/bot-sharing.js');
+  const timezone = process.env.TZ;
+  process.env.TZ = 'Europe/Amsterdam';
+  try {
+    const now = new Date('2026-11-16T12:00:00Z');
+    assert.equal(accessLogTime('2026-11-16T21:04:25Z', now), 'Today 22:04');
+    assert.equal(accessLogTime('2026-11-15T08:12:00Z', now), 'Yesterday 09:12');
+    assert.equal(accessLogTime('2026-11-13T21:04:25Z', now), '13 Nov 2026, 22:04');
+    assert.equal(accessLogTime('2026-11-15T23:30:00Z', now), 'Today 00:30', 'local midnight decides the calendar day');
+    assert.equal(accessLogTime('2026-10-25T00:30:00Z', new Date('2026-10-26T12:00:00Z')), 'Yesterday 02:30', 'a clock change does not change yesterday');
+    assert.equal(accessLogTime('2025-12-31T08:12:00Z', new Date('2026-01-01T12:00:00Z')), 'Yesterday 09:12');
+    const at = '2026-11-13T21:04:25.123Z';
+    const html = sharingHTML({ tab: 'log', log: [{ action: 'share', at }] }, { mine: true }, e);
+    assert.match(html, new RegExp(`<time datetime="${at}" title="${at}">`));
+  } finally { if (timezone === undefined) delete process.env.TZ; else process.env.TZ = timezone; }
+});
+
+test('person summaries start with the permission while confirmations retain the full name', async () => {
+  const { permissionSummary, permissionText } = await import('../commonplace/web/static/bot-sharing.js');
+  assert.match(permissionSummary({ talk: true }), /^Can talk privately and start shared conversations\./);
+  assert.match(permissionSummary({ talk: true, see_shared: true }), /^Can talk privately,/);
+  assert.match(permissionSummary({ see_shared: true }), /^Can read shared conversations/);
+  assert.equal(permissionSummary({}), 'Has no access to this bot.');
+  assert.match(permissionText({ talk: true }, 'Syntheticlonggivenname Syntheticlongfamilyname'), /^Syntheticlonggivenname Syntheticlongfamilyname can talk/);
+});

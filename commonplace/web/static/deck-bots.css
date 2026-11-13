@@ -137,14 +137,16 @@
 :root[data-ui="deck"] .deck-coworkers-link { display:inline-flex; align-items:center; min-height:44px; padding:0 20px; color:var(--text-2); font-size:13px; }
 
 /* Settings keep the Deck surface and the same 16px phone frame. */
-:root[data-ui="deck"] .bot-access { width: min(880px, 100%); gap: 20px; background: var(--bg); color: var(--text); }
+:root[data-ui="deck"] .bot-settings-sheet { place-items: start center; padding: 0; background: var(--bg); }
+:root[data-ui="deck"] .bot-access { flex-shrink: 0; height: 100%; max-height: 100%; border-radius: 0; width: min(880px, 100%); gap: 20px; background: var(--bg); color: var(--text); }
 :root[data-ui="deck"] .bot-access h2 { margin: 0; font-size: 24px; line-height: 30px; font-weight: 600; }
 :root[data-ui="deck"] .bot-access h3 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; color: var(--text); }
 :root[data-ui="deck"] .bot-access h4 { margin: 0; font-size: 14px; font-weight: 600; }
 :root[data-ui="deck"] .bot-access p { margin: 0; font-size: 14px; line-height: 22px; color: var(--text-2); overflow-wrap: anywhere; }
 :root[data-ui="deck"] .bot-access-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 :root[data-ui="deck"] .bot-access-heading > div { min-width: 0; }
-:root[data-ui="deck"] .bot-access-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+:root[data-ui="deck"] .bot-access-tabs { position: relative; display: flex; flex: none; flex-wrap: nowrap; gap: 8px; overflow-x: auto; min-width: 0; scrollbar-width: thin; padding: 2px; }
+:root[data-ui="deck"] .bot-access-tabs .bb-opt { flex: none; white-space: nowrap; }
 :root[data-ui="deck"] .bot-access-tabs [aria-pressed="true"] { background: var(--text); color: var(--bg); }
 :root[data-ui="deck"] .bot-access-card { display: grid; gap: 14px; padding: 20px; border-radius: 20px; background: var(--surface); min-width: 0; }
 :root[data-ui="deck"] .bot-access-card ul,
@@ -153,18 +155,24 @@
 :root[data-ui="deck"] .bot-access-people li { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; }
 :root[data-ui="deck"] .bot-access-people li[hidden] { display: none; }
 :root[data-ui="deck"] .bot-access-people li > div { min-width: 0; }
-:root[data-ui="deck"] .bot-access-people b { font-size: 15px; font-weight: 500; }
+:root[data-ui="deck"] .bot-access-people b { overflow-wrap: anywhere; font-size: 15px; font-weight: 500; }
+:root[data-ui="deck"] .bot-access-people span { min-width: 0; overflow-wrap: anywhere; }
 :root[data-ui="deck"] .bot-access-people .bb-opt { flex: none; }
 :root[data-ui="deck"] .bot-access label { font-size: 14px; font-weight: 500; gap: 8px; }
 :root[data-ui="deck"] .bot-access input,
+:root[data-ui="deck"] .bot-access textarea,
 :root[data-ui="deck"] .bot-access select { min-width: 0; width: 100%; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); font: inherit; }
 :root[data-ui="deck"] .bot-access .bot-access-check { display: flex; flex-direction: row; align-items: center; min-height: 44px; }
-:root[data-ui="deck"] .bot-access-check input { width: 20px; min-height: 20px; height: 20px; flex: none; accent-color: var(--text); }
+:root[data-ui="deck"] .bot-access-check input { width: 20px; min-height: 20px; height: 20px; flex: none; appearance: none; padding: 0; margin: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--well); }
+:root[data-ui="deck"] .bot-access-check input:checked { background: var(--text); color: var(--bg); border-color: var(--text); }
+:root[data-ui="deck"] .bot-access-check input:checked::after { content: ""; display: block; width: 6px; height: 10px; margin: 2px 0 0 6px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 :root[data-ui="deck"] .bot-access-preview { display: grid; gap: 8px; padding: 16px; border-radius: 12px; background: var(--well); }
-:root[data-ui="deck"] .bot-access [data-access-log] li { display: grid; gap: 4px; padding-block: 12px; }
+:root[data-ui="deck"] .bot-access [data-access-log] ol { display: grid; gap: 20px; }
+:root[data-ui="deck"] .bot-access [data-access-log] li { display: grid; gap: 12px; }
 :root[data-ui="deck"] .bot-access time { font-size: 12px; color: var(--text-3); }
 :root[data-ui="deck"] .bot-access input:focus-visible,
-:root[data-ui="deck"] .bot-access select:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+:root[data-ui="deck"] .bot-access textarea:focus-visible,
+:root[data-ui="deck"] .bot-access select:focus-visible { outline: 2px solid var(--line-strong); outline-offset: 2px; }
 :root[data-ui="deck"] .bot-access button:disabled { opacity: 1; color: var(--text-3); background: var(--well); cursor: default; }
 :root[data-ui="deck"] .bots-head:has(.bot-thread-audience) { flex-wrap: wrap; }
 :root[data-ui="deck"] .bot-thread-audience { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 16px; width: min(760px, 100%); margin-inline: auto; padding-block: 8px; }
@@ -182,3 +190,8 @@
 :root[data-ui="deck"] .bot-access .learned-group .memory > li { display: grid; gap: 8px; padding-block: 12px; }
 :root[data-ui="deck"] .bot-access .learned-src { overflow-wrap: anywhere; }
 :root[data-ui="deck"] .bm-author { margin: 0 0 4px; font-size: 12px; line-height: 18px; color: var(--text-2); }
+
+:root[data-ui="deck"] .bot-access > * { flex-shrink: 0; }
+:root[data-ui="deck"] .bot-access .bot-danger { align-self: start; min-height: 44px; padding: 0; border: 0; background: none; color: var(--block); text-align: left; }
+:root[data-ui="deck"] .bot-access .bb-opt.bot-danger { padding-inline: 18px; }
+:root[data-ui="deck"] .bot-access-danger { display: grid; gap: 12px; }
