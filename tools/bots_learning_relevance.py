@@ -106,7 +106,7 @@ def measure(seed, conversations):
                 rng.shuffle(teaching)
                 expected = None
                 for turn, (_kind, _topic, text) in enumerate(teaching):
-                    message = bots.add_user_message(bot["id"], user, text, f"teach-{turn}")
+                    message = bots.add_user_message(bot["id"], user, text, f"teach-{turn:04d}")
                     item = learned.add_item(
                         user,
                         bot["id"],
@@ -120,7 +120,7 @@ def measure(seed, conversations):
                 # Push teaching beyond the same recent-history window the bot normally uses.
                 for turn in range(context.HISTORY_MESSAGES // 2 + 1):
                     text = f"Thank you for helping with question {turn}."
-                    message = bots.add_user_message(bot["id"], user, text, f"filler-{turn}")
+                    message = bots.add_user_message(bot["id"], user, text, f"filler-{turn:04d}")
                     bots.add_bot_message(bot["id"], user, message["id"], model.reply(text))
                 history = bots.messages(bot["id"], user, limit=context.HISTORY_MESSAGES)
                 baseline = None
