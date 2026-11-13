@@ -40,8 +40,8 @@ def test_pure_precedence_and_text_for_every_code():
     assert tuple(cases) == why.CODES
     for code, reason in cases.items():
         assert reason["code"] == code and reason["text"] == why.text(reason) and reason["text"]
-    assert cases["blocked_by"]["text"] == "Waiting on #7: Dependency"
-    assert cases["project_limit"]["text"] == "Waiting for a free slot: 1 of 1"
+    assert cases["blocked_by"]["text"] == "Waiting for #7: Dependency"
+    assert cases["project_limit"]["text"] == "Waiting for a free slot: 1 of 1 agents busy"
     # The first applicable reason wins, in CODES order.
     assert _wait(blockers=blocked, released=False, agents=False, usage=full)["code"] == "blocked_by"
     assert _wait(released=False, agents=False, usage=full)["code"] == "not_released"
@@ -206,9 +206,9 @@ def _ui():
 def test_app_shows_the_server_sentence_for_every_reason():
     ui = _ui()
     assert len(ui["tags"]) == len(why.CODES)
-    assert ui["tags"][0] == "Waiting on #7: Dependency"
+    assert ui["tags"][0] == "Waiting for #7: Dependency"
     assert ui["tags"][5] == why.text({"code": "no_agent"})
-    assert ui["tags"][6] == "Waiting for a free slot: 1 of 1"
+    assert ui["tags"][6] == "Waiting for a free slot: 1 of 1 agents busy"
     assert ui["details"] == [True] * len(why.CODES)
     assert ui["detailsPlain"] is False
     assert ui["available"] is True and ui["availableWhenWaiting"] is False

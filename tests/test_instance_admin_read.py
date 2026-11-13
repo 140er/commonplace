@@ -19,6 +19,15 @@ DENIED = {"error": "Instance administrator access required"}
 KINDS = ("workspaces", "people", "connections", "spaces", "settings", "workspace_settings", "audit")
 
 
+@pytest.fixture(autouse=True)
+def metadata_reads_without_background_writes(monkeypatch):
+    from commonplace.projects.reports import ReportPump
+
+    # Measure request side effects independently of report recovery, which can
+    # initialize an existing source and checkpoint its WAL concurrently.
+    monkeypatch.setattr(ReportPump, "pass_once", lambda self: None)
+
+
 def route(hub, kind):
     return PREFIX + (
         f"workspaces/{hub.workspace}/{kind.removeprefix('workspace_')}"

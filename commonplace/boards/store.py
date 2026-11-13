@@ -100,6 +100,7 @@ def active_blockers(conn, number):
         dict(row)
         for row in conn.execute(
             "SELECT t.id AS number,t.title FROM task_blockers b JOIN tasks t ON t.id=b.blocker_id "
+            "JOIN tasks source ON source.id=b.task_id AND source.board_id=t.board_id "
             "WHERE b.task_id=? AND t.status!='done' ORDER BY t.id",
             (number,),
         )

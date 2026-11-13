@@ -236,7 +236,7 @@ def cursor_key(raw, workspace_id, section):
 @contextmanager
 def read_store(gateway, workspace_id, name, context):
     """Resolve the current generation and open an existing encrypted store only."""
-    from mempalace.sqlite_crypto import connect, row_factory
+    from mempalace.sqlite_crypto import connect, encryption_settings, row_factory
 
     context.remaining()
     path = Path(gateway.supervisor.workspace_dir(workspace_id)) / name
@@ -244,6 +244,14 @@ def read_store(gateway, workspace_id, name, context):
         yield None
         context.remaining()
         return
+    # A surviving WAL can supply page one even after the main file is damaged.
+    # Validate the existing source before SQLite can create or consult sidecars.
+    with path.open("rb") as source:
+        header = source.read(100)
+    if len(header) < 100 or (
+        encryption_settings(path) is None and header[:16] != b"SQLite format 3\x00"
+    ):
+        raise sqlite3.DatabaseError("Invalid metadata store header")
     conn = connect(
         path.resolve().as_uri() + "?mode=ro",
         uri=True,

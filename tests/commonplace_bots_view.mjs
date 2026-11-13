@@ -607,6 +607,17 @@ test("new bot sheet posts name, job and instructions, then opens the bot", async
   assert.equal(h.d.regions.sheet.innerHTML, "");
 });
 
+test("the Today creation entry opens the same sheet and ignores a stopped screen", async () => {
+  const h = harness({ bots: [] });
+  await h.controller.show(null);
+  await h.controller.newBot();
+  assert.match(h.d.regions.sheet.innerHTML, /New bot[^]*How to work/);
+  h.controller.stop();
+  const before = h.d.regions.sheet.innerHTML;
+  await h.controller.newBot();
+  assert.equal(h.d.regions.sheet.innerHTML, before);
+});
+
 test("memory sheet lists, adds and removes notes; rename and archive live in the same sheet", async () => {
   const h = harness();
   let notes = [{ id: 1, text: "Likes short answers", at: "x" }];
