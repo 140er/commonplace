@@ -62,7 +62,7 @@ function hostFixture() {
 test('Management uses the existing controller and restores the shell and phone destinations on departure', () => {
   for (const deck of [false, true]) {
     const f = hostFixture(), header = { hidden: false }, phone = { hidden: false }, tabs = { style: { position: 'relative' } };
-    f.root.ownerDocument = { documentElement: { dataset: deck ? { ui: 'deck' } : {} } };
+    f.root.ownerDocument = { documentElement: { dataset: deck ? { ui: 'deck' } : {} }, addEventListener() {}, removeEventListener() {} };
     f.root.parentElement = { querySelector: selector => ({ '.head': header, '#phone-bar': phone, '#phone-tabs': tabs })[selector] };
     const ui = mount({ root: f.root, route: '#/compute/management', me: { workspace: 'w', actor: 'u' }, api: () => new Promise(() => {}) });
     assert.deepEqual(hrefs(f.root.innerHTML), [deck ? '#/compute' : '#/compute-map', '#/compute/management']);
