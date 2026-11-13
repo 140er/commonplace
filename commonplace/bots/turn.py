@@ -105,8 +105,10 @@ class TurnRun:
         thread_id=None,
         surface="web",
         disclosure="full",
+        tap=False,
     ):
         self.gateway = gateway
+        self.tap = tap  # a direct message whose person confirms writes by tapping in the chat
         self.surface = surface  # "web", or the bridge's "dm" / "channel" (narrower)
         self.disclosure = disclosure
         self.thread_id = thread_id  # None: the owner's original thread
@@ -218,6 +220,7 @@ class TurnRun:
             thread_id=self.thread_id,
             surface=self.surface,
             disclosure=self.disclosure,
+            tap=self.tap,
         )
         self._turn_state = turn
         try:
@@ -376,6 +379,7 @@ class TurnRun:
         step = turn.step
         bots.action_start(self.bot_id, self.user_id, self.key, step, tool.name, _hash(args))
         label, code = f"Used {tool.name}", None
+        kind = tools.effective_kind(turn, tool)  # a chat direct message confirms routine writes
         try:
             tools.audience_gate(turn, tool, args)
             args = tools.validate(tools.schema_for(tool, turn), args)
@@ -384,11 +388,13 @@ class TurnRun:
                 raise tools.Gone()  # the share ended after the gate: nothing runs
             if tool.check is not None:
                 tool.check(turn, args)  # before a pending action, a chip or any write
-            label = tool.label(turn, args)
+            elif kind != tool.kind:
+                tools.check_words(turn, args)
+            label = tool.chip(turn, args) if kind != tool.kind else tool.label(turn, args)
             self._put(
                 "action", {"step": step, "tool": tool.name, "label": label, "state": "running"}
             )
-            if tool.kind == "confirm":
+            if kind == "confirm":
                 result, code = self._pending(turn, tool, args, label)
             else:
                 result = tool.run(turn, args)
@@ -405,10 +411,10 @@ class TurnRun:
         except Exception as exc:
             log_failure(logger, "Bot tool failed", exc)
             result, code = tools.Result(False, say=REFUSALS["failed"]), "failed"
-        if tool.kind == "routine" or (tool.kind == "confirm" and not result.ok):
+        if kind == "routine" or (kind == "confirm" and not result.ok):
             turn.audit(tool.name, "ok" if result.ok else "deny")
         shown = list(result.blocks)
-        if tool.kind != "confirm" or not result.ok:
+        if kind != "confirm" or not result.ok:
             shown.insert(0, _action(tool.name, label, result.ok, code))
         bots.action_finish(
             self.bot_id,
@@ -677,9 +683,12 @@ def confirm(gateway, principal, bot_id, pending_id, accept, thread_id=None) -> d
             return refused(tools.Result(False, say=REFUSALS["gone"]), "gone")
         except (tools.OutsideBot, tools.ReadOnly) as exc:
             return refused(tools.Result(False, say=exc.text), exc.code)
-    if tool.check is not None:
+    if tool.check is not None or tool.kind == "routine":
         try:
-            tool.check(turn, args)  # against the message that asked for it
+            if tool.check is not None:
+                tool.check(turn, args)  # against the message that asked for it
+            else:
+                tools.check_words(turn, args)  # a routine write a chat tap confirms
         except tools.NotYourWords:
             # Frozen text that is not the person's words never becomes valid: close it.
             bots.pending_resolve(bot_id, principal.user_id, pending_id, "cancelled")

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS bridge_installs (
   enabled      INTEGER NOT NULL DEFAULT 0,
   tested_at    TEXT,
   daily_cap    INTEGER NOT NULL DEFAULT 200,
+  consequential_taps INTEGER NOT NULL DEFAULT 0,
   installed_by TEXT NOT NULL,
   created_at   TEXT NOT NULL, disabled_at TEXT,
   UNIQUE (platform, ext_team)
@@ -93,6 +94,7 @@ _VIEW = (
     "enabled",
     "tested_at",
     "daily_cap",
+    "consequential_taps",
     "installed_by",
     "created_at",
     "disabled_at",
@@ -132,6 +134,7 @@ def _channel(row) -> dict:
 def _view(row) -> dict:
     out = {key: row[key] for key in _VIEW}
     out["enabled"] = bool(out["enabled"])
+    out["consequential_taps"] = bool(out["consequential_taps"])
     return out
 
 
@@ -179,11 +182,21 @@ class BridgeStore:
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.executescript(_SCHEMA)
+                self._migrate(conn)
             except Exception:
                 conn.close()
                 raise
             self._conn, self._path = conn, path
         return self._conn
+
+    @staticmethod
+    def _migrate(conn):
+        """Files made before a column existed get it here, off by default."""
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(bridge_installs)")}
+        if "consequential_taps" not in columns:
+            conn.execute(
+                "ALTER TABLE bridge_installs ADD COLUMN consequential_taps INTEGER NOT NULL DEFAULT 0"
+            )
 
     @contextmanager
     def _tx(self, *, write=True, create=False):
@@ -252,10 +265,17 @@ class BridgeStore:
                 raise Conflict() from None
             return _view(self._row(conn, install_id))
 
-    def update(self, install_id, *, label=None, daily_cap=None, sealed=None, now=None) -> dict:
+    def update(
+        self, install_id, *, label=None, daily_cap=None, sealed=None, taps=None, now=None
+    ) -> dict:
         """Change fields. New credentials switch the install off and clear its test."""
         with self._tx() as conn:
             self._row(conn, install_id)
+            if taps is not None:
+                conn.execute(
+                    "UPDATE bridge_installs SET consequential_taps=? WHERE id=?",
+                    (int(taps), install_id),
+                )
             if label is not None:
                 conn.execute("UPDATE bridge_installs SET label=? WHERE id=?", (label, install_id))
             if daily_cap is not None:
@@ -521,6 +541,44 @@ class BridgeStore:
                 (row["install_id"], row["ext_user"]),
             )
             return row
+
+    def set_confirm_ok(self, link_id, user_id, value: bool):
+        """The person's own opt-in to confirm from the platform. Turning it off also drops the
+        open chips of that platform id. The live link row, or None (not theirs, or ended)."""
+        with self._tx() as conn:
+            row = self._link(conn, link_id)
+            if row is None or row["revoked_at"] is not None or row["user_id"] != user_id:
+                return None
+            conn.execute("UPDATE bridge_links SET confirm_ok=? WHERE id=?", (int(value), link_id))
+            if not value:
+                conn.execute(
+                    "DELETE FROM bridge_prompts WHERE install_id=? AND ext_user=?",
+                    (row["install_id"], row["ext_user"]),
+                )
+            return self._link(conn, link_id)
+
+    # Chips: one row per posted confirm button
+
+    def add_prompt(self, pending, install_id, ext_user, ext_channel) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO bridge_prompts (pending,install_id,ext_user,ext_channel) "
+                "VALUES (?,?,?,?)",
+                (pending, install_id, ext_user, ext_channel),
+            )
+
+    def prompt(self, install_id, pending):
+        """The chip of this install for this pending action, or None."""
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT * FROM bridge_prompts WHERE install_id=? AND pending=?",
+                    (install_id, pending),
+                ).fetchone()
+                if conn is not None and isinstance(pending, str)
+                else None
+            )
+            return dict(row) if row else None
 
     def has_installs(self) -> bool:
         with self._tx(write=False) as conn:

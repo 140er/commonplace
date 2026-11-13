@@ -147,6 +147,25 @@ def person_overview(gateway, principal) -> dict:
     }
 
 
+def set_confirm(gateway, principal, link_id, value) -> dict:
+    """The person's own opt-in to confirm actions by tapping in the platform (off by default).
+    Another person's link, a missing or an ended one is :class:`store.Missing`; turning it off
+    also drops the open chips of that platform id."""
+    if type(value) is not bool:
+        raise service.Refused("invalid")
+    ws = principal.workspace_id
+    bridge = store.open_bridge(gateway, ws)
+    link = bridge.set_confirm_ok(link_id, principal.user_id, value)
+    if link is None:
+        raise store.Missing()
+    service.audit(
+        gateway, principal, ws, "confirm_on" if value else "confirm_off", link["install_id"],
+        link_id=link_id,
+    )  # fmt: skip
+    installs = {i["id"]: i for i in bridge.installs()}
+    return _link_view(link, installs)
+
+
 def unlink(gateway, principal, link_id, install_id=None) -> None:
     """End a link at once. The person ends their own (another person's link is
     :class:`store.Missing`, as is a missing one); the owner route passes the install and ends any

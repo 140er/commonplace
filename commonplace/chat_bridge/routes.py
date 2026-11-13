@@ -4,19 +4,21 @@ owner; the intake routes are public (the platform's signature is the credential)
 
     GET    /api/bridge/installs             {installs, platforms}
     POST   /api/bridge/installs             {platform, ext_team, label, secrets, daily_cap?} -> 201
-    PATCH  /api/bridge/installs/<id>        {enabled?, label?, daily_cap?, secrets?} -> {install}
+    PATCH  /api/bridge/installs/<id>        {enabled?, label?, daily_cap?, secrets?,
+                                            consequential_taps?} -> {install}
     DELETE /api/bridge/installs/<id>        {ok}
     POST   /api/bridge/installs/<id>/test   {ok, code, text}
     GET    /api/bridge/installs/<id>/links  {links}: who is linked (platform id, person), no text
     DELETE /api/bridge/installs/<id>/links/<link>   {ok}: the owner ends any link
     POST   /api/bridge/installs/<id>/link-code      {install_id, code, expires_at, expires_in}
     GET    /api/bridge/links                {links, available}: the signed-in person's own
+    PATCH  /api/bridge/links/<id>           {confirm_ok} -> {link}: confirm by tap in the platform
     DELETE /api/bridge/links/<id>           {ok}: the person ends their own link
     GET    /api/bridge/installs/<id>/channels            {channels}: the owner's channel mapping
     PUT    /api/bridge/installs/<id>/channels/<channel>  {board, disclosure?, enabled?} -> {channel}
     DELETE /api/bridge/installs/<id>/channels/<channel>  {ok}
     POST   /api/bridge/in/<id>/events       intake: verify, filter, journal, identity, turn
-    POST   /api/bridge/in/<id>/interact     intake: verified, then nothing (taps come later)
+    POST   /api/bridge/in/<id>/interact     intake: a verified button tap confirms or cancels
     GET    /api/bridge/in/<id>/oauth        404 until an adapter provides it
 
 Anything else under ``/api/bridge/`` is 404, and so is every owner route for a caller who is not
@@ -35,7 +37,8 @@ PREFIX = "/api/bridge/"
 INSTALLS = "/api/bridge/installs"
 LINKS = "/api/bridge/links"
 CREATE_KEYS = {"platform", "ext_team", "label", "secrets", "daily_cap"}
-PATCH_KEYS = {"enabled", "label", "daily_cap", "secrets"}
+PATCH_KEYS = {"enabled", "label", "daily_cap", "secrets", "consequential_taps"}
+LINK_KEYS = {"confirm_ok"}
 CHANNEL_KEYS = {"board", "disclosure", "enabled"}
 INTAKE_ROUTES = ("events", "interact")
 
@@ -141,6 +144,12 @@ def _own_links(gateway, h, principal, rest, body=None):
     send_json(h, 200, links.person_overview(gateway, principal))
 
 
+def _own_patch(gateway, h, principal, rest, body):
+    if "confirm_ok" not in body:
+        raise service.Refused("invalid")
+    send_json(h, 200, {"link": links.set_confirm(gateway, principal, rest[0], body["confirm_ok"])})
+
+
 def _own_unlink(gateway, h, principal, rest, body=None):
     links.unlink(gateway, principal, rest[0])
     send_json(h, 200, {"ok": True})
@@ -163,6 +172,7 @@ INSTALL_ROUTES = {
 # (method, path parts after /links) -> (who, handler, body keys or None)
 PERSON_ROUTES = {
     ("GET", 0): ("person", _own_links, None),
+    ("PATCH", 1): ("person", _own_patch, LINK_KEYS),
     ("DELETE", 1): ("person", _own_unlink, None),
 }
 

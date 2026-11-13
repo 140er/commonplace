@@ -16,7 +16,7 @@ from datetime import timedelta
 from commonplace import sessions
 from commonplace.boards.service import BoardService
 from commonplace.bots import limits, store as bots_store, turn as bots_turn
-from commonplace.chat_bridge import outbox, store
+from commonplace.chat_bridge import confirm, outbox, store
 from commonplace.extensions import ToolContext
 from commonplace.http_util import log_failure
 
@@ -58,7 +58,9 @@ def bot_for(gateway, workspace_id, user_id, board):
     raise NoBot()
 
 
-def start(gateway, workspace_id, install_id, ext_event, user_id, text, board, disclosure):
+def start(
+    gateway, workspace_id, install_id, ext_event, user_id, text, board, disclosure, tap=False
+):
     """Store the message and start the turn on its own thread. Returns the bot, the stored
     message and the run (None when the Bots store already held this request: nothing starts)."""
     principal, bot = bot_for(gateway, workspace_id, user_id, board)
@@ -68,7 +70,9 @@ def start(gateway, workspace_id, install_id, ext_event, user_id, text, board, di
     if seen is not None:
         return bot, seen, None
     surface = "channel" if board else "dm"
-    run = bots_turn.TurnRun(gateway, principal, bot, rid, surface=surface, disclosure=disclosure)
+    run = bots_turn.TurnRun(
+        gateway, principal, bot, rid, surface=surface, disclosure=disclosure, tap=tap and not board
+    )
     try:
         limits.REGISTRY.admit(run)
     except limits.Busy:
@@ -114,6 +118,7 @@ def finish(gateway, workspace_id, install_id, ext_event, reply) -> None:
     bridge = store.open_bridge(gateway, workspace_id)
     if bridge.set_event(install_id, ext_event, ("running",), state):
         outbox.enqueue_reply(gateway, workspace_id, install_id, ext_event, reply)
+        confirm.offer(gateway, workspace_id, install_id, ext_event, reply)
 
 
 def close_event(gateway, workspace_id, event) -> None:

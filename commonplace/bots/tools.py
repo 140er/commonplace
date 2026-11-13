@@ -13,7 +13,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from commonplace import sessions
+from commonplace import redact, sessions
 from commonplace.boards.service import BoardService
 from commonplace.bots import access, machines, store
 from commonplace.bots.access import AudienceLimited, OutsideBot, ReadOnly
@@ -57,6 +57,9 @@ class Tool:
     # What the tool reaches, one of ``access.REACHES``; required (``register`` refuses without
     # it). A shared bot's access list decides whether the tool is offered and may run.
     reach: str | None = None
+    # A routine tool's line for a chat chip, in the future tense ("Create a task: ..."). A routine
+    # tool without one is never offered on a chat surface that confirms by tap.
+    chip: Callable[["Turn", dict], str] | None = None
 
 
 @dataclass
@@ -142,6 +145,7 @@ class Turn:
         thread_id=None,
         surface="web",
         disclosure="full",
+        tap=False,
     ):
         self.gateway = gateway
         self.db = gateway.db
@@ -156,6 +160,7 @@ class Turn:
         self.touched = set()  # projects whose content or name reached the model (audience re-check)
         self.surface = surface  # "web", or a chat platform's "dm" / "channel" (the bridge)
         self.disclosure = disclosure  # channel turns: "titles" or "full"
+        self.tap = tap  # a direct message whose person may confirm writes by tapping in the chat
 
     def principal(self):
         principal = sessions.person_principal(self.db, self.user_id, self.workspace_id)
@@ -371,18 +376,54 @@ def audience_gate(turn, tool, args) -> None:
 CHANNEL_TITLES = ("project_status", "list_work")  # titles, statuses, counts: no bodies
 
 
+# The writing tools a chat tap may confirm. The three consequential ones (start an agent,
+# approve, create a project) also need the owner's per-install switch; everything else that
+# confirms (running a command, sharing or forgetting what a bot learned) stays web-only.
+CHAT_TAP = frozenset(
+    {
+        "create_work",
+        "comment_work",
+        "tell_orchestrator",
+        "prioritize_work",
+        "answer_decision",
+        "approve_work",
+        "create_project",
+        "start_work",
+        "stop_work",
+        "remember",
+        "forget",
+    }
+)
+CHAT_CONSEQUENTIAL = frozenset({"start_work", "approve_work", "create_project"})
+
+
 def surface_allows(turn, tool) -> bool:
     """Whether the turn's surface may use ``tool``. The web is unrestricted. A chat platform's
-    direct message gets no routine write (writes there become taps in a later slice; confirm
-    tools leave their chip in the person's web thread). A channel turn is read-only and only for
+    direct message gets no routine write unless its person confirms by tap (``turn.tap``): then
+    the routine writes are offered as confirm tools, never run unconfirmed; the other confirm
+    tools leave their chip in the person's web thread. A channel turn is read-only and only for
     the mapped project: with ``titles`` just its status and work titles, never bodies."""
     if turn.surface == "web":
         return True
     if turn.surface == "dm":
-        return tool.kind != "routine"
+        return tool.kind != "routine" or (
+            turn.tap and tool.name in CHAT_TAP and tool.chip is not None
+        )
     if tool.kind != "read" or tool.scope != "project" or not turn.bot.get("board"):
         return False
     return turn.disclosure == "full" or tool.name in CHANNEL_TITLES
+
+
+def effective_kind(turn, tool) -> str:
+    """A chat direct message confirms what the web files as routine: nothing writes with the
+    person's identity there without their tap."""
+    return "confirm" if tool.kind == "routine" and turn.surface == "dm" else tool.kind
+
+
+def check_words(turn, args) -> None:
+    """A text argument of a routine write that became a chip must be the person's own words."""
+    if "text" in args:
+        turn.words(args["text"])
 
 
 def offered(turn: Turn) -> list[Tool]:
@@ -407,6 +448,11 @@ def offered(turn: Turn) -> list[Tool]:
 
 
 # Built-in tools: the bot's own memory
+
+
+def _snippet(text, limit=120) -> str:
+    text = " ".join(redact.redact(text or "")[0].split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def _remember(turn, args):
@@ -441,6 +487,7 @@ register(
         reach="none",
         run=_remember,
         label=lambda turn, args: "Remembered a note",
+        chip=lambda turn, args: f"Remember this note: “{_snippet(turn.words(args['text']))}”",
     )
 )
 register(
@@ -457,6 +504,7 @@ register(
         reach="none",
         run=_forget,
         label=lambda turn, args: "Forgot a note",
+        chip=lambda turn, args: f"Forget memory note #{args['id']}",
     )
 )
 
