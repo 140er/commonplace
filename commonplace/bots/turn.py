@@ -166,12 +166,11 @@ class TurnRun:
             extract.after_turn(self)  # a finished new turn only; replays never get here
 
     def _live(self) -> bool:
-        """Whether this person still reaches their thread: the owner always does; a member only
-        while their share, the workspace switch and the bot allow it. Never cached, fails closed."""
-        if self.bot.get("owner_id") == self.user_id:
-            return True
+        """Whether this person still reaches their thread: a member only while their share, the
+        workspace switch and the bot allow it, and nobody once the bot is frozen (its owner left
+        or a workspace owner disabled it). Never cached, fails closed."""
         try:
-            store.open_bots(self.gateway, self.workspace_id).reach(
+            reach = store.open_bots(self.gateway, self.workspace_id).reach(
                 self.user_id, self.bot_id, self.thread_id
             )
         except store.Missing:
@@ -179,7 +178,7 @@ class TurnRun:
         except Exception as exc:
             log_failure(logger, "Bot share not checked", exc)
             return False
-        return True
+        return not reach.frozen
 
     def _turn(self) -> str:
         bots = store.open_bots(self.gateway, self.workspace_id)

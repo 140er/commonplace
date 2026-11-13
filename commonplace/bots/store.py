@@ -31,6 +31,7 @@ from commonplace.bots.errors import (
     stamp,
 )
 from commonplace.bots.learn_schema import LEARN_SCHEMA, MEMORY_TRIGGER
+from commonplace.bots.lifecycle import LifecycleMixin
 from commonplace.bots.shares import SCHEMA_SHARES, SharesMixin, added_columns, ensure_request_index
 from mempalace.sqlite_crypto import connect, row_factory
 
@@ -162,10 +163,19 @@ def _bot(row) -> dict:
         "owner_id": row["user_id"],
         "shared": bool(row["shared"]),
         "frozen": row["frozen_at"] is not None,
+        "frozen_reason": row["frozen_reason"],
     }
 
 
 _message = message
+
+
+def exists(gateway, workspace_id: str) -> bool:
+    """Whether this workspace has a bots file yet (asking never creates one)."""
+    try:
+        return (Path(gateway.supervisor.workspace_dir(workspace_id)) / "bots.sqlite3").exists()
+    except ValueError:  # not a workspace id
+        return False
 
 
 def open_bots(gateway, workspace_id: str) -> "BotStore":
@@ -179,7 +189,7 @@ def open_bots(gateway, workspace_id: str) -> "BotStore":
     return stores[workspace_id]
 
 
-class BotStore(SharesMixin):
+class BotStore(SharesMixin, LifecycleMixin):
     def __init__(self, supervisor, workspace_id, sharing=None):
         """``sharing``: callable answering the workspace switch for sharing bots (absent: off)."""
         self._sharing = sharing
@@ -392,9 +402,10 @@ class BotStore(SharesMixin):
                 "SELECT b.*, m.id AS last_id, m.role AS last_role, m.text AS last_text, "
                 "m.created_at AS last_at, "
                 "(SELECT COUNT(*) FROM bot_messages u WHERE u.bot_id=b.id AND u.thread_id IS NULL "
-                "AND u.role<>'user' AND u.id>b.read_upto) AS unread "
+                "AND u.role<>'user' AND u.id>b.read_upto AND u.id>b.thread_floor) AS unread "
                 "FROM bots b LEFT JOIN bot_messages m ON m.id="
-                "(SELECT MAX(id) FROM bot_messages WHERE bot_id=b.id AND thread_id IS NULL) "
+                "(SELECT MAX(id) FROM bot_messages WHERE bot_id=b.id AND thread_id IS NULL "
+                "AND id>b.thread_floor) "
                 "WHERE b.user_id=? AND (b.id=? OR (? IS NULL AND b.archived_at IS NULL)) "
                 "ORDER BY (m.id IS NULL), m.id DESC, b.rowid",
                 (user_id, bot_id, bot_id),
@@ -507,19 +518,22 @@ class BotStore(SharesMixin):
             thread, _from = self._scope(conn, bot_id, user_id, thread_id, write=True)
             row = conn.execute(
                 "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user' "
-                "AND thread_id IS ?",
-                (bot_id, request_id, thread),
+                "AND thread_id IS ? AND id>?",
+                (bot_id, request_id, thread, _from if thread is None else 0),
             ).fetchone()
             if row is None:
-                return self._add(
-                    conn,
-                    bot_id,
-                    "user",
-                    text,
-                    request_id=request_id,
-                    thread_id=thread,
-                    author_id=None if thread is None else user_id,
-                )
+                try:
+                    return self._add(
+                        conn,
+                        bot_id,
+                        "user",
+                        text,
+                        request_id=request_id,
+                        thread_id=thread,
+                        author_id=None if thread is None else user_id,
+                    )
+                except sqlite3.IntegrityError:
+                    raise Conflict() from None  # an id a previous owner used (behind the floor)
             if row["text"] != text or (thread is not None and row["author_id"] != user_id):
                 raise Conflict()  # another member's request id is never replayed
             return _message(row)
@@ -594,8 +608,8 @@ class BotStore(SharesMixin):
             thread, _from = self._scope(conn, bot_id, user_id, thread_id)
             row = conn.execute(
                 "SELECT * FROM bot_messages WHERE bot_id=? AND request_id=? AND role='user' "
-                "AND thread_id IS ?",
-                (bot_id, request_id, thread),
+                "AND thread_id IS ? AND id>?",
+                (bot_id, request_id, thread, _from if thread is None else 0),
             ).fetchone()
             if row is not None and thread is not None and row["author_id"] != user_id:
                 raise Conflict()  # in a shared thread, an id another member used is theirs
@@ -609,10 +623,10 @@ class BotStore(SharesMixin):
                 _message(row)
                 for row in conn.execute(
                     "SELECT * FROM bot_messages u WHERE u.bot_id=? AND u.role='user' "
-                    "AND u.thread_id IS ? "
+                    "AND u.thread_id IS ? AND u.id>? "
                     "AND NOT EXISTS (SELECT 1 FROM bot_messages b WHERE b.bot_id=u.bot_id "
                     "AND b.role='bot' AND b.reply_to=u.id) ORDER BY u.id",
-                    (bot_id, thread),
+                    (bot_id, thread, _from if thread is None else 0),
                 )
             ]
 
@@ -623,11 +637,11 @@ class BotStore(SharesMixin):
             try:
                 thread, _from = self._scope(conn, bot_id, user_id, thread_id)
             except Missing:
-                thread = self._opened(conn, bot_id, user_id, thread_id)
+                thread, _from = self._opened(conn, bot_id, user_id, thread_id), 0
             row = conn.execute(
                 "SELECT * FROM bot_messages WHERE bot_id=? AND role='bot' AND reply_to=? "
-                "AND thread_id IS ?",
-                (bot_id, message_id, thread),
+                "AND thread_id IS ? AND reply_to>?",
+                (bot_id, message_id, thread, _from if thread is None else 0),
             ).fetchone()
             return _message(row) if row else None
 
@@ -648,18 +662,18 @@ class BotStore(SharesMixin):
         if after is not None and before is not None:
             raise Invalid("invalid cursor")
         with self._tx(write=False) as conn:
-            self._own(conn, bot_id, user_id)
+            floor = self._own(conn, bot_id, user_id)["thread_floor"]  # a previous owner's part
             if after is not None:
                 rows = conn.execute(
                     "SELECT * FROM bot_messages WHERE bot_id=? AND thread_id IS NULL AND id>? "
                     "ORDER BY id LIMIT ?",
-                    (bot_id, after, limit),
+                    (bot_id, max(after, floor), limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT * FROM bot_messages WHERE bot_id=? AND thread_id IS NULL AND id<? "
-                    "ORDER BY id DESC LIMIT ?",
-                    (bot_id, 2**63 - 1 if before is None else before, limit),
+                    "AND id>? ORDER BY id DESC LIMIT ?",
+                    (bot_id, 2**63 - 1 if before is None else before, floor, limit),
                 ).fetchall()[::-1]
         return [_message(row) for row in rows]
 

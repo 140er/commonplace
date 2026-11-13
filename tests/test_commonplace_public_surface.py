@@ -86,6 +86,7 @@ EXACT = {
     ("POST", "/api/goals/card"): "authenticated",
     ("GET", "/api/bots"): "authenticated",
     ("POST", "/api/bots"): "authenticated",
+    ("GET", "/api/bots/shared"): "authenticated",
     ("GET", "/api/bots/settings"): "authenticated",
     ("PATCH", "/api/bots/settings"): "authenticated",
     ("GET", "/api/meetings"): "authenticated",
