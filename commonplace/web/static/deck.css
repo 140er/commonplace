@@ -138,6 +138,35 @@
 /* Waiting status describes project capacity; amber stays reserved for personal asks. */
 :root[data-ui="deck"] .workbench-board .why-strip { background: none; color: var(--text-2); padding: 0; }
 
+/* Shared card drawer and personal queue: the classic modules have their own light surfaces. */
+:root[data-ui="deck"] :is(.workbench-details, .needs-me, .needs-detail) { background: var(--surface); color: var(--text); }
+:root[data-ui="deck"] .workbench-details :is(dt, small, .body-text), :root[data-ui="deck"] .needs-me :is(.sub, .list-note, .empty) { color: var(--text-2); }
+:root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, select, textarea) { min-width: 0; max-width: 100%; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
+:root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, textarea)::placeholder { color: var(--text-2); opacity: 1; }
+:root[data-ui="deck"] .workbench-details .fields dd { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+:root[data-ui="deck"] .workbench-details .fields small { flex-basis: 100%; }
+:root[data-ui="deck"] .workbench-details .reply input { flex: 1; }
+/* The phone's classic context rule allows visible overflow. Deck keeps every field above the footer. */
+:root[data-ui="deck"] .shell .context .workbench-details .ctx-body { overflow: auto; }
+:root[data-ui="deck"] .workbench-details .ctx-body > * { flex-shrink: 0; }
+:root[data-ui="deck"] .workbench-details :is(.ctx-head, .ctx-foot) { flex-shrink: 0; }
+:root[data-ui="deck"] .workbench-details .ctx-foot { padding: 12px 16px; }
+:root[data-ui="deck"] .workbench-details .ctx-foot textarea { max-height: 120px; }
+:root[data-ui="deck"] .needs-me { height: auto; border-radius: 20px; overflow: hidden; }
+:root[data-ui="deck"] .needs-me .bar { border: 0; }
+/* Reuse the board's seg control, including its selected inversion and type. */
+:root[data-ui="deck"] .needs-me .seg { display: inline-flex; gap: 0; border: 1px solid var(--line-strong); border-radius: var(--r); overflow: hidden; background: var(--surface); }
+:root[data-ui="deck"] .needs-me .seg button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 0; background: none; color: var(--text-2); font-size: 13px; font-weight: 500; }
+:root[data-ui="deck"] .needs-me .seg button + button { border-left: 1px solid var(--line); }
+:root[data-ui="deck"] .needs-me .seg button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell #content:has(> [data-needs-mount]) { padding-inline: 16px; }
+  :root[data-ui="deck"] .needs-me .bar { padding: 12px 16px; }
+  :root[data-ui="deck"] .needs-me .seg { flex-wrap: nowrap; }
+  :root[data-ui="deck"] .needs-me .seg button { min-height: 44px; padding-inline: 8px; }
+  :root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, select, textarea) { min-height: 44px; }
+}
+
 /* Coworker config review keeps its evidence and decisions inside each version. */
 :root[data-ui="deck"] .workbench-project [data-config-versions] { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 12px; min-width: 0; }
 :root[data-ui="deck"] .workbench-project [data-config-version] { min-width: 0; overflow-wrap: anywhere; }
