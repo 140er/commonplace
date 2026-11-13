@@ -338,7 +338,7 @@ def test_live_authority_changes_refuse_actions_and_replays(phone, mutation):
                 "UPDATE oauth_person_grants SET client_id=? WHERE connection_id=?",
                 (other_client, app.connection_id),
             )
-    assert call(phone, pair, card)[0] in (401, 404)
+    assert call(phone, pair, card)[0] in ((403,) if mutation == "grant" else (401, 404))
 
 
 @pytest.mark.parametrize("kind", ["agent", "child", "seat", "coordinator", "machine", "worker"])
