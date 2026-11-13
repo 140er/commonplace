@@ -15,7 +15,7 @@ const { planView } = await import(url((await read("plan.js")).replace('"./api.js
 const which = process.argv[2];
 const consoleCase = which === "console_background_first";
 const base = consoleCase ? "#/console" : "#/settings";
-const state = { me: { actor: "user:maya" }, base, route: base, screen: 1, refreshRequest: 0 };
+const state = { me: { actor: "user:maya", can_admin: true }, base, route: base, screen: 1, refreshRequest: 0 };
 let html = "Loading…", renders = 0, navigationCalls = 0, holdSettings = false;
 const content = {
   children: [{}],
