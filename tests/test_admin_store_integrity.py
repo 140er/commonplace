@@ -8,13 +8,35 @@ import pytest
 
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests.test_admin_api import cookie
-from tests.test_instance_admin_read import read, seed_board
+from tests.test_instance_admin_read import (
+    metadata_reads_without_background_writes,  # noqa: F401
+    read,
+    seed_board,
+)
 
 
 @pytest.fixture
 def foreign(hub):
     user = hub.db.create_user("other@example.test")
     return hub.db.create_workspace("Other workspace", user)
+
+
+def test_valid_live_wal_metadata_read_preserves_main_file(hub, foreign):
+    headers = cookie(hub)
+    hub.workspace = foreign
+    path = seed_board(hub, foreign) / "boards.sqlite3"
+    with closing(sqlite3.connect(path, isolation_level=None)) as writer:
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("UPDATE boards SET name='Current metadata' WHERE id=1")
+        before = path.read_bytes()
+        schema = writer.execute("SELECT name,sql FROM sqlite_master ORDER BY name").fetchall()
+        code, payload, _ = read(hub, "spaces", headers)
+        assert code == 200 and payload["items"][0]["name"] == "Current metadata"
+        assert read(hub, "workspace_settings", headers)[0] == 200
+        assert path.read_bytes() == before
+        assert (
+            writer.execute("SELECT name,sql FROM sqlite_master ORDER BY name").fetchall() == schema
+        )
 
 
 @pytest.mark.parametrize("truncate", [False, True])
