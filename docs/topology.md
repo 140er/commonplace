@@ -604,7 +604,7 @@ A run answers `{"run", "note", "machines": [{machine, label, outcome, reason, ca
 | `unreachable` | the hub has no live signal from the machine (Live status: `down`, or `unknown`) or it is turned off | `never_reported`, `no_heartbeat`, `disabled` |
 | `refused` | the machine cannot take the work | `not_attested`, `no_topology_wing`, `no_project_or_topic`, or the card-start refusal |
 
-A workspace with no runner machine answers `note: "no_runner_machines"`. The project and topic default to the machine's first grants.
+Starts are serialized per workspace, so two presses at once cannot start the same machine twice; a machine whose start fails unexpectedly is `refused` with `start_failed` and the other machines still start. A workspace with no runner machine answers `note: "no_runner_machines"`. The project and topic default to the machine's first grants.
 
 **The run is a normal run.** Each machine gets one card, "Map discovery on <label>", on the board `compute-map` (wing `topology`), whose body is the discovery prompt. The card is started through the ordinary `card_start`, so the machine's node detail panel lists the run with its card and log like any other, and the owner's rules for starts apply (machine grants, requesters, runtime mode `approval-required`). A start the rules refuse leaves its card in the backlog.
 

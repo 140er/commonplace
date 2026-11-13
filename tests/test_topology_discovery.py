@@ -8,6 +8,8 @@ facts) and hands the result to ``topology_propose``. Nothing here is a real host
 import ast
 import json
 import re
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -479,6 +481,57 @@ def test_the_prompt_asks_for_read_only_work_and_names_no_write_or_secret_command
     assert "read-only" in body and "topology_propose" in body
     assert "python3 -m commonplace.topology.collector" in body
     assert "mach_0000000000000001" in body and HUB_URL in body
-    # Nothing about any one setup is built in.
-    for word in ("jeffrey", "simrig", "edge1", "tailscale.net"):
-        assert word not in (body + (PACKAGE / "collector.py").read_text()).lower()
+    # Nothing about any one setup is built in: the only address anywhere is the one handed in.
+    assert re.findall(r"https?://\S+", body) == [HUB_URL]
+    source = (PACKAGE / "collector.py").read_text() + (PACKAGE / "discovery.py").read_text()
+    assert not re.search(r"https?://", source.replace("https?://", ""))
+    assert not re.search(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", source.replace("100.64.0.0", ""))
+
+
+def test_two_presses_at_once_start_each_machine_once(world, monkeypatch):
+    real = discovery.card_start
+
+    def slow(*args, **kwargs):
+        time.sleep(0.3)  # wide enough that an unserialized second press passes the check
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(discovery, "card_start", slow)
+    results, errors = [], []
+    barrier = threading.Barrier(2)
+
+    def press():
+        try:
+            barrier.wait(timeout=10)
+            results.append(world.start())
+        except Exception as exc:  # pragma: no cover - the assertion below reports it
+            errors.append(exc)
+
+    threads = [threading.Thread(target=press) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert not errors, errors
+    with jobs.open_store(world.gw, world.ws).connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM runner_jobs").fetchone()[0] == 2
+    seen = sorted(m["outcome"] for r in results for m in r["machines"])
+    assert seen == ["running", "running", "started", "started"]
+
+
+def test_a_failing_machine_is_recorded_and_the_others_still_start(world, monkeypatch):
+    real = discovery.card_start
+    broken = world.machines["alpha-runner"]
+
+    def start(ctx, card, machine, *args, **kwargs):
+        if machine == broken:
+            raise RuntimeError("the runner store is unavailable")
+        return real(ctx, card, machine, *args, **kwargs)
+
+    monkeypatch.setattr(discovery, "card_start", start)
+    result = world.start()
+    by = {m["label"]: m for m in result["machines"]}
+    assert by["alpha-runner"]["outcome"] == "refused" and by["alpha-runner"]["reason"]
+    assert "unavailable" not in by["alpha-runner"]["reason"]
+    assert by["beta-runner"]["outcome"] == "started" and by["beta-runner"]["job"]
+    rows = {m["label"]: m["outcome"] for m in discovery.latest(world.ctx())["machines"]}
+    assert rows == {"alpha-runner": "refused", "beta-runner": "started"}

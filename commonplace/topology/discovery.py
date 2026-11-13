@@ -15,13 +15,16 @@ gets one row in the run, with an outcome (``started``, ``running``, ``unreachabl
 
 from __future__ import annotations
 
+import logging
 import secrets
+import threading
 from contextlib import contextmanager
 from datetime import timedelta
 
 from commonplace import urls
 from commonplace.boards.service import BoardService, SpaceExists
 from commonplace.extensions import ToolError
+from commonplace.http_util import log_failure
 from commonplace.policy import canonical_wing
 from commonplace.redact import redact
 from commonplace.runner import jobs, registry
@@ -31,6 +34,7 @@ from commonplace.runner.tools import card_start, person_owner
 from . import model, status, store
 from .model import TOPOLOGY_WING
 
+logger = logging.getLogger(__name__)
 BOARD = "compute-map"
 OUTCOMES = ("started", "running", "unreachable", "refused")
 # A started agent that never ends its card stops blocking a rerun after this long.
@@ -131,8 +135,6 @@ def _running(ctx, topo, store_, machine_id):
 
 def _decide(ctx, machine, signal, project, topic, hub_url, service, store_, topo):
     """``(outcome, reason, card, job)`` for one machine."""
-    if machine["revoked_at"]:
-        return None
     if not machine["enabled"]:
         return "unreachable", "disabled", None, None
     if signal["status"] in ("down", "unknown"):
@@ -161,8 +163,11 @@ def _decide(ctx, machine, signal, project, topic, hub_url, service, store_, topo
         _, job = card_start(
             ctx, card, machine["id"], chosen_project, chosen_topic, request_key=None
         )
-    except (ToolError, jobs.Conflict, ValueError) as exc:
+    except Exception as exc:
         service.task_update(card, status="backlog")
+        if not isinstance(exc, (ToolError, jobs.Conflict, ValueError)):
+            log_failure(logger, "map discovery start failed", exc)
+            return "refused", "start_failed", card, None
         return "refused", _reason(exc), card, None
     return "started", None, card, job["job_id"]
 
@@ -189,37 +194,48 @@ def start(ctx, project=None, topic=None, hub_url=None) -> dict:
     store_ = jobs.open_store(gateway, workspace)
     jobs.sweep(store_, ctx.db, workspace)
     topo = store.open_topology(gateway, workspace)
-    for machine in machines:
-        signal = signals.get(machine["id"], {"status": "unknown", "reason": "never_reported"})
-        decided = _decide(ctx, machine, signal, project, topic, hub_url, service, store_, topo)
-        outcome, reason, card, job = decided
-        result["machines"].append(
-            {
-                "machine": machine["id"],
-                "label": redact(machine["label"])[0],
-                "outcome": outcome,
-                "reason": reason,
-                "card": card,
-                "job": job,
-            }
-        )
-    with _writing(topo) as conn:
-        now = _now()
-        for entry in result["machines"]:
-            conn.execute(
-                "INSERT INTO topology_discovery_runs (run,machine_id,label,outcome,reason,card,job,"
-                "created_at) VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    result["run"],
-                    entry["machine"],
-                    entry["label"],
-                    entry["outcome"],
-                    entry["reason"],
-                    entry["card"],
-                    entry["job"],
-                    now,
-                ),
+    # One start at a time per workspace, rows included: a second press then sees the first
+    # one's runs as `running` instead of starting the same machines again.
+    lock = gateway.__dict__.setdefault("_topology_discovery_lock", threading.Lock())
+    with lock:
+        for machine in machines:
+            signal = signals.get(machine["id"], {"status": "unknown", "reason": "never_reported"})
+            try:
+                outcome, reason, card, job = _decide(
+                    ctx, machine, signal, project, topic, hub_url, service, store_, topo
+                )
+            except Exception as exc:
+                # One machine's failure must not hide the machines already started.
+                log_failure(logger, "map discovery could not start a machine", exc)
+                outcome, reason, card, job = "refused", "start_failed", None, None
+            result["machines"].append(
+                {
+                    "machine": machine["id"],
+                    "label": redact(machine["label"])[0],
+                    "outcome": outcome,
+                    "reason": reason,
+                    "card": card,
+                    "job": job,
+                }
             )
+        with _writing(topo) as conn:
+            now = _now()
+            for entry in result["machines"]:
+                conn.execute(
+                    "INSERT INTO topology_discovery_runs "
+                    "(run,machine_id,label,outcome,reason,card,job,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        result["run"],
+                        entry["machine"],
+                        entry["label"],
+                        entry["outcome"],
+                        entry["reason"],
+                        entry["card"],
+                        entry["job"],
+                        now,
+                    ),
+                )
     return result
 
 
