@@ -56,11 +56,11 @@ def _token(shape):
 _PATTERNS = tuple(
     (kind, re.compile(pattern))
     for kind, pattern in (
-        ("cmmn_oauth", _token(r"(?:cmmn_at_[A-Za-z0-9_-]{43}|cmmn_rt_[A-Za-z0-9_-]{64})")),
+        ("cmmn_oauth", _token(r"(?:cmmn_(?:at|dt)_[A-Za-z0-9_-]{43}|cmmn_rt_[A-Za-z0-9_-]{64})")),
         ("cmmn_token", _token(r"cmmn_[A-Za-z0-9_-]{43}")),
         (
             "session_cookie",
-            r'(?i:\b(?:cmmn_session|cmmn_oauth|cmmn_signin)=)(?P<value>[^;\s"\\,]{1,4096})',
+            r'(?i:\b(?:cmmn_session|cmmn_oauth|cmmn_signin|cmmn_delete_check)=)(?P<value>[^;\s"\\,]{1,4096})',
         ),
         ("login_link", r'[?&]t=(?P<value>[^&#\s"\\]{1,4096})'),
         (
