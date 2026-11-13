@@ -15,6 +15,7 @@ import stat
 import struct
 import subprocess
 import sys
+import types
 from dataclasses import asdict
 from pathlib import Path
 
@@ -199,6 +200,8 @@ def test_plan_lists_every_action_and_touches_nothing(root, runtime, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert snapshot(root) == before and host.commands == []
+    assert "read-only python probe" in out and "changes nothing on disk" in out
+    assert "touches nothing" not in out
     for needle in (
         "account commonplace-compute",
         "dir /var/lib/commonplace-compute 0700",
@@ -810,7 +813,8 @@ def test_install_places_the_python_packages_and_a_pth(root, runtime):
 def test_install_verifies_the_import_after_placing_it(root, runtime):
     host = LiveStub()
     installed(root, runtime, host=host)
-    check = ("/usr/bin/python3", "-I", "-B", "-c", "import commonplace.compute.target_helper")
+    check = next(c for c in host.commands if "import commonplace.compute.target_helper" in c[-1])
+    assert check[:4] == ("/usr/bin/python3", "-I", "-B", "-c")
     assert host.commands.count(check) == 1
     assert host.commands.index(check) < host.commands.index(("sshd", "-t"))
     again = len(host.commands)
@@ -1087,3 +1091,87 @@ def test_staged_inventory_can_ignore_bytecode_only_on_request(tmp_path):
     assert install.staged_inventory(tree, ignore_bytecode=True) == plain
     with pytest.raises(install.InstallError):
         install.staged_inventory(tree)
+
+
+# --- follow-up to the target installer gate findings ---
+
+STRAY = "usr/local/libexec/commonplace-compute/operator-note"
+
+
+def test_uninstall_stops_the_account_before_discarding_workspace_data(root, runtime):
+    seen = []
+
+    class Watching(install.StagedHost):
+        def stop_account(self, name):
+            seen.append((root / "var/lib/commonplace-compute/attempts/claim0").exists())
+
+    host = Watching()
+    installed(root, runtime, host=host)
+    (root / "var/lib/commonplace-compute/attempts/claim0").mkdir()
+    assert run(root, "uninstall", runtime, "--discard-workspace-data", host=host) == 0
+    assert seen == [True]  # the evidence was still there when the processes were stopped
+
+
+def test_uninstall_removes_nothing_when_the_account_cannot_be_stopped(root, runtime, capsys):
+    class Stuck(install.StagedHost):
+        def stop_account(self, name):
+            raise install.InstallError(f"processes of {name} are still running")
+
+    host = Stuck()
+    installed(root, runtime, host=host)
+    claim = root / "var/lib/commonplace-compute/attempts/claim0"
+    claim.mkdir()
+    (claim / "claim.json").write_text("{}")
+    before = snapshot(root)
+    assert run(root, "uninstall", runtime, "--discard-workspace-data", host=host) == 1
+    assert "still running" in capsys.readouterr().err
+    assert snapshot(root) == before
+
+
+def test_live_stop_account_refuses_while_processes_remain(monkeypatch):
+    clock = iter(range(0, 1000, 10))
+    monkeypatch.setattr(
+        install,
+        "time",
+        types.SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda seconds: None),
+    )
+    monkeypatch.setattr(install, "_has_processes", lambda uid: True)
+    monkeypatch.setattr(install.pwd, "getpwnam", lambda name: types.SimpleNamespace(pw_uid=4242))
+    host = install.LiveHost()
+    monkeypatch.setattr(host, "run", lambda argv: None)
+    with pytest.raises(install.InstallError, match="still running"):
+        host.stop_account("commonplace-compute")
+
+
+def test_a_failed_import_check_leaves_no_pth_and_runs_before_it_exists(root, runtime):
+    pth = root / SITE_DIR / "commonplace-compute.pth"
+    at_check = []
+
+    class Broken(LiveStub):
+        def run(self, argv):
+            super().run(argv)
+            if "target_helper" in " ".join(argv):
+                at_check.append(pth.exists())
+                raise install.InstallError("import failed")
+
+    host = Broken()
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 1
+    assert at_check == [False]
+    assert not pth.exists()
+    manifest = json.loads((root / "etc/commonplace/compute-install-manifest.json").read_text())
+    assert not any(item.get("path", "").endswith(".pth") for item in manifest["items"])
+
+
+def test_uninstall_reports_a_kept_directory_as_a_partial_result(root, runtime, capsys):
+    host = installed(root, runtime)
+    (root / STRAY).write_text("keep me")
+    assert run(root, "uninstall", runtime, host=host) == 1
+    err = capsys.readouterr()
+    assert "uninstalled" not in err.out and "operator-note" not in err.out
+    assert "not empty" in err.err and "commonplace-compute" in err.err
+    manifest = json.loads((root / "etc/commonplace/compute-install-manifest.json").read_text())
+    assert "/usr/local/libexec/commonplace-compute" in {i.get("path") for i in manifest["items"]}
+    (root / STRAY).unlink()  # the operator resolves it; the next uninstall finishes
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert "uninstalled" in capsys.readouterr().out
+    assert not (root / "usr").exists() and not (root / "opt").exists()

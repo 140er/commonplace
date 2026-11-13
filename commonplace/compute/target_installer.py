@@ -478,6 +478,8 @@ class LiveHost(Host):
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline and _has_processes(uid):
             time.sleep(0.2)
+        if _has_processes(uid):
+            raise InstallError(f"processes of {name} are still running; nothing was removed")
 
     def sshd_service(self):
         for directory in ("/usr/lib/systemd/system", "/lib/systemd/system"):
@@ -873,17 +875,35 @@ class Installer:
 
     def _pth(self):
         logical = self._site_dir() + "/commonplace-compute.pth"
-        changed, item = self._file(logical, (LIB_ROOT + "\n").encode(), 0o644)
-        if not item.get("verified"):
-            # The ForceCommand entry needs exactly this import to work with only the stdlib. -B: as
-            # root this must not write bytecode into the placed tree.
+        recorded = self._item("file", logical)
+        if recorded is not None and recorded.get("verified"):
+            return self._file(logical, (LIB_ROOT + "\n").encode(), 0o644)[0]
+        try:
+            # The ForceCommand entry needs exactly this import to work with only the stdlib. Checked
+            # before the .pth exists, so a failure never leaves a system-wide sys.path entry behind.
+            # -B: as root this must not write bytecode into the placed tree.
             self.host.run(
-                ["/usr/bin/python3", "-I", "-B", "-c", "import commonplace.compute.target_helper"]
+                [
+                    "/usr/bin/python3",
+                    "-I",
+                    "-B",
+                    "-c",
+                    f"import sys; sys.path.insert(0, {LIB_ROOT!r}); "
+                    "import commonplace.compute.target_helper",
+                ]
             )
-            item["verified"] = True
-            self._flush()
-            changed = True
-        return changed
+        except InstallError:
+            if recorded is not None:  # an interrupted earlier run left it behind
+                phys = self._phys(logical)
+                if os.path.lexists(phys) and _sha256(phys.read_bytes()) == recorded["sha256"]:
+                    phys.unlink()
+                self.items.remove(recorded)
+                self._flush()
+            raise
+        item = self._file(logical, (LIB_ROOT + "\n").encode(), 0o644)[1]
+        item["verified"] = True
+        self._flush()
+        return True
 
     def _site_dir(self):
         if self._site is None:
@@ -1155,6 +1175,9 @@ class Installer:
         self._need()
         self.out(f"root: {self.root}")
         self.out(
+            "plan runs one read-only python probe to find the site directory and changes nothing on disk"
+        )
+        self.out(
             "preflight (install only, read-only): euid 0, Linux, root-owned non-setuid /usr/bin/bwrap,"
         )
         self.out(
@@ -1224,7 +1247,7 @@ class Installer:
             elif phys.is_dir() and not any(phys.iterdir()):
                 phys.rmdir()
             elif phys.exists():
-                self.out(f"kept: {path} is not empty")
+                raise InstallError(f"{path} is not empty; kept and still recorded in the manifest")
         elif kind == "tree":
             phys = self._phys(path)
             if phys.is_dir():
@@ -1267,12 +1290,13 @@ class Installer:
                 + "); preserve it, "
                 "confirm termination, then re-run with --discard-workspace-data"
             )
-        for sub in data:
-            self._discard(sub)
         for item in self.items:
             if item["kind"] == "account":
-                # Sessions and the account's systemd user manager hold it in use.
+                # Sessions and the account's systemd user manager hold it in use. Nothing is
+                # removed, workspace data included, until its processes are gone.
                 self.host.stop_account(item["name"])
+        for sub in data:
+            self._discard(sub)
         left, deferred, errors = [], [], []
         reloads = set()
         for item in reversed(self.items):
