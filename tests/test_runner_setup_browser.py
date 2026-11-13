@@ -89,7 +89,9 @@ def open_setup(browser, width, mode):
             ],
         )
     requests = []
-    context = browser.new_context(viewport={"width": width, "height": 1100}, device_scale_factor=2)
+    context = browser.new_context(
+        viewport={"width": width, "height": 1280 if width == 390 else 1100}, device_scale_factor=2
+    )
     page = context.new_page()
     responses = {
         "/api/me": {
@@ -246,6 +248,9 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
         if mode == "manual":
             assert not card.locator("[type=checkbox]").count()
             assert "Waiting for sign-in on the machine" in card.inner_text()
+            assert card.locator(".runner-instruction li").evaluate_all(
+                "els => els.every(e => getComputedStyle(e).listStyleType === 'decimal' && getComputedStyle(e).display === 'list-item')"
+            ), "the shared shell must not hide the instruction numbers"
             assert card.locator(".runner-instruction li").all_text_contents() == [
                 "Run the command below on the machine.",
                 "Open the link it prints, on any device.",

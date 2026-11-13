@@ -25,7 +25,7 @@ export const consentStyle = `
 .runner-consent .runner-confirm { margin-top:20px; }
 .runner-consent output.runner-error { color:#F0708A; }
 .runner-consent .runner-private-note { color:#949494; font-size:13px; }
-.runner-consent .runner-instruction ol { padding-left:22px; margin:0; }
+.runner-consent .runner-instruction ol { padding-left:22px; margin:0; list-style:decimal; }
 .runner-consent .runner-instruction li + li { margin-top:8px; }
 .runner-consent .runner-machine-command { margin-top:24px; }
 .runner-consent .runner-machine-command > p { margin:0 0 8px; }
