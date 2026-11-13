@@ -53,13 +53,15 @@ def signin_recovery(h, state, status, headers=None):
             "If this email can sign in, a link is on its way. Check your inbox and spam folder.",
         ),
     }[state]
+    destination = "/app/" if state == "sent" else f"/app/?signin={state}"
     body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} - Commonplace</title><link rel="stylesheet" href="/app/app.css">
+<link rel="stylesheet" href="/app/ui.css"><link rel="stylesheet" href="/app/workbench.css">
 <link rel="stylesheet" href="/app/signin-recovery.css"></head><body>
 <main class="signin-recovery"><a class="brand-home" href="/app/">Commonplace</a>
 <h1>{title}</h1><p role="status">{message}</p>
-<a class="btn primary" href="/app/?signin={state if state != "sent" else ""}">Retry</a>
+<a class="btn primary" href="{destination}">Retry</a>
 </main></body></html>""".encode()
     _response(h, status, body, "text/html; charset=utf-8", headers)
 
