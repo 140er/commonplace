@@ -53,7 +53,10 @@ def _request_id(body):
 
 
 def _evidence_line(note) -> str:
-    parts = json.loads(note["evidence"]).get("ranges", [])
+    evidence = json.loads(note["evidence"])
+    if evidence.get("chat"):
+        return "a request in the meeting chat"
+    parts = evidence.get("ranges", [])
     spans = ", ".join(
         f"{p['from']}" if p["from"] == p["to"] else f"{p['from']}-{p['to']}" for p in parts
     )
@@ -64,6 +67,12 @@ def provenance(gateway, meeting, note, inviter) -> str:
     """Where a filed note came from and who stands behind it. One text, used for memory and cards."""
     who = engine.display_label(gateway.db.user(inviter)["name"], "the inviter")
     day = (meeting["started_at"] or meeting["created_at"])[:10]
+    asker = json.loads(note["evidence"]).get("asker")
+    if asker:  # typed into the meeting chat: say by whom (the provider's name, untrusted text)
+        return (
+            f"Proposed by the notes bot in the meeting chat on {day} at the request of {asker}, "
+            f"{'edited and ' if note['edited'] else ''}approved by {who}."
+        )
     if note["edited"]:
         return (
             f"Proposed by the notes bot from the meeting on {day}, edited and "

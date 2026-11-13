@@ -87,14 +87,14 @@ def _data(batch, aliases):
     }
 
 
-def _ask(config, key, data, sent) -> str:
+def ask(config, key, data, sent, system=SYSTEM, max_tokens=MAX_TOKENS) -> str:
     events = model_stream.stream(
         config,
         key,
-        SYSTEM,
+        system,
         [{"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
         timeout=TIMEOUT_S,
-        max_tokens=MAX_TOKENS,
+        max_tokens=max_tokens,
         max_input_chars=MAX_INPUT_CHARS,
         max_response_bytes=MAX_RESPONSE_BYTES,
         on_sent=lambda: sent.append(True),
@@ -205,7 +205,7 @@ def _one(item, by_seq, by_alias):
     }
 
 
-def _model(gateway, workspace_id, settings):
+def usable_model(gateway, workspace_id, settings):
     """``(config, key, "")`` or ``(None, None, code)``: the owner's chat model, local unless the
     owner switched a hosted one on for meetings."""
     config, key, code = modelcfg.resolve(gateway.db, workspace_id)
@@ -237,7 +237,7 @@ def _generate(gateway, workspace_id, meetings, meeting_id, now) -> str:
     segments = meetings.segments(meeting_id)
     if not segments:
         return "empty" if meetings.record_run(meeting_id, "done", "empty", now) else "failed"
-    config, key, code = _model(gateway, workspace_id, meetings.settings())
+    config, key, code = usable_model(gateway, workspace_id, meetings.settings())
     if code:
         meetings.record_run(meeting_id, "unavailable", code, now)
         return "unavailable"
@@ -269,7 +269,7 @@ def _batch(gateway, workspace_id, user_id, config, key, batch, aliases):
         return refused
     sent = []
     try:
-        raw = _ask(config, key, _data(batch, aliases), sent)
+        raw = ask(config, key, _data(batch, aliases), sent)
     except ModelError as exc:
         return exc.code
     except ChatDenied:
