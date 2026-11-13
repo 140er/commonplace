@@ -161,8 +161,8 @@ for (const phone of [false, true]) test(`two-link topology: parallel, separate t
   for (const id of ['nimbus-dns>nimbus-cdn:proxy', 'second']) assert.ok(made.core.scene().includes(`data-link="${e(id)}" tabindex="0" role="button" aria-pressed="false"`), 'each stroke has its own focusable target');
 });
 
-test('parallel strokes can each be selected by pointer and keyboard without opening a node', async () => {
-  const payload = { nodes: adjacentNodes.map(node => ({ key: node.key, values: { kind: 'cloud', name: node.key } })), links: pairLinks, routes: [] };
+for (const count of [2, 8]) test(`${count} parallel strokes can each be selected by pointer and keyboard without opening a node`, async () => {
+  const payload = count === 2 ? { nodes: adjacentNodes.map(node => ({ key: node.key, values: { kind: 'cloud', name: node.key } })), links: pairLinks, routes: [] } : bundlePayload(count);
   const host = stageDom(), ui = createTopologyMap({ mount: () => host, storage: null, interval: 0, api: async () => payload, look: { labels: 160, layout: 'layered', route: true } });
   ui.show();
   for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve));
@@ -170,7 +170,7 @@ test('parallel strokes can each be selected by pointer and keyboard without open
   const world = host.querySelector('[data-topology]').querySelector('[data-topo="world"]');
   const target = id => ({ closest: selector => selector === '[data-link]' ? { dataset: { link: id } } : null });
   const selected = id => world.innerHTML.includes(`data-link="${e(id)}" tabindex="0" role="button" aria-pressed="true"`);
-  for (const id of ['first', 'second']) {
+  for (const { id } of payload.links) {
     stage.fire('pointerdown', { pointerId: 1, clientX: 90, clientY: 8, target: target(id) });
     stage.fire('pointerup', { pointerId: 1, target: target(id) });
     assert.ok(selected(id), `${id}: pointer selects its own stroke`);
@@ -179,9 +179,94 @@ test('parallel strokes can each be selected by pointer and keyboard without open
     stage.fire('keydown', { key: ' ', target: target(id) });
     assert.ok(selected(id), 'Space selects it');
   }
-  assert.ok(!selected('first'), 'selecting the other stroke clears the first');
+  assert.ok(!selected(payload.links[0].id), 'selecting the other stroke clears the first');
   assert.doesNotMatch(world.innerHTML, /data-key="[^"]+"[^>]*aria-pressed="true"/, 'link selection leaves node selection alone');
   ui.stop();
+});
+
+// At a 390px viewport the card is 358px wide. A dense lane must not consume
+// more than 32 map units, regardless of the number of links using it.
+const bundlePayload = count => ({
+  nodes: [
+    { key: 'a', values: { kind: 'cloud', name: 'Source', role: 'Upstream' } },
+    { key: 'middle', values: { kind: 'router', name: 'Middle', role: 'Transit' } },
+    { key: 'b', values: { kind: 'server', name: 'Destination', role: 'Downstream' } },
+  ],
+  links: Array.from({ length: count }, (_, i) => ({ id: `bundle-${i}`, from: i % 2 ? 'b' : 'a', to: i % 2 ? 'a' : 'b', method: 'direct' })),
+  routes: [],
+});
+
+for (const count of [2, 4, 6, 8]) for (const phone of [false, true]) test(`bounded bundle: ${count} links, ${phone ? '390px phone' : 'desktop'}`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const payload = bundlePayload(count), made = deckCore(compute, payload, phone, false);
+  assertGeometry(made);
+  const routes = made.core.links(), y = made.core.positions.middle.y;
+  const xs = [...routes.values()].map(route => {
+    const points = route.points;
+    const i = points.findIndex((p, i) => i && Math.min(p.y, points[i - 1].y) < y && Math.max(p.y, points[i - 1].y) > y);
+    assert.ok(i > 0, 'every route crosses the shared lane');
+    const a = points[i - 1], b = points[i];
+    return a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y);
+  });
+  // Two links may use opposite sides of the device, as before. Dense bundles
+  // use a single bounded corridor, with one distinct stroke per link.
+  if (count > 2) assert.ok(Math.max(...xs) - Math.min(...xs) <= 32.1, `bundle width ${Math.max(...xs) - Math.min(...xs)}`);
+  assert.equal(new Set(xs).size, count, 'no coincident strokes');
+  for (const id of routes.keys()) assert.ok(made.core.scene().includes(`data-link="${id}" tabindex="0" role="button"`));
+  assert.deepEqual(made.core.links(), deckCore(compute, { ...payload, links: [...payload.links].reverse() }, phone, false).core.links(), 'input order does not change routes');
+});
+
+for (const phone of [false, true]) test(`bounded bundle: mixed destinations, ${phone ? '390px phone' : 'desktop'}`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC)), payload = bundlePayload(6);
+  payload.nodes.push({ key: 'c', values: { kind: 'pc', name: 'Client', role: 'Workstation' } });
+  for (const [i, link] of payload.links.entries()) { link.from = 'a'; link.to = i < 3 ? 'b' : 'c'; }
+  const made = deckCore(compute, payload, phone, false);
+  // Dragged nodes can leave several destinations on the same side corridor.
+  for (const node of made.core.model.nodes) made.core.dragNode(node.key, 0, made.core.positions[node.key].y);
+  made.view = made.core.fit(made.field.width, made.field.height, { remember: false }, { pad: made.metrics.pad });
+  assertGeometry(made);
+  const lanes = [...made.core.links().values()];
+  assert.ok(lanes.every(lane => lane.parallel), 'different destinations share the side corridor');
+  const xs = lanes.map(lane => lane.points[1].x);
+  assert.ok(Math.max(...xs) - Math.min(...xs) <= 32.1);
+  assert.equal(new Set(xs).size, 6);
+});
+
+test('bounded bundle: congestion elsewhere leaves a separate sparse pair unchanged', () => {
+  const nodes = ['a', 'middle', 'b', 'c', 'other', 'd'].map(key => ({ key, kind: 'server', sub: true }));
+  const positions = Object.fromEntries(nodes.map((node, i) => [node.key, { x: 0, y: i * 150 }]));
+  const links = [
+    ...Array.from({ length: 4 }, (_, i) => ({ id: `dense-${i}`, from: 'a', to: 'b' })),
+    ...Array.from({ length: 2 }, (_, i) => ({ id: `sparse-${i}`, from: 'c', to: 'd' })),
+  ];
+  const routes = routeLinks(links, nodes, positions, 124, K_LEAST);
+  assert.ok(links.slice(0, 4).every(link => routes.get(link.id).parallel));
+  assert.ok(links.slice(4).every(link => !routes.get(link.id).parallel));
+});
+
+test('bounded bundle: blocked side exits keep the grid routes', () => {
+  const nodes = ['a', 'b', 'left', 'right'].map(key => ({ key, kind: 'server', sub: true }));
+  const positions = { a: { x: 0, y: 0 }, b: { x: 0, y: 300 }, left: { x: -90, y: 0 }, right: { x: 90, y: 0 } };
+  const links = bundlePayload(6).links;
+  const routes = routeLinks(links, nodes, positions, 124, K_LEAST);
+  assert.equal(routes.size, 6);
+  assert.ok([...routes.values()].every(route => !route.parallel), 'a blocked exit never replaces a route');
+  for (const route of routes.values()) for (let i = 1; i < route.points.length; i++) for (const node of nodes) {
+    const a = route.points[i - 1], b = route.points[i];
+    assert.ok(!touches({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, plateOf(node, positions[node.key], 124, K_LEAST)));
+  }
+});
+
+for (const count of [2, 4, 6, 8]) for (const phone of [false, true]) test(`bounded bundle: ${count} same-row links, ${phone ? '390px phone' : 'desktop'}`, async () => {
+  const links = Array.from({ length: count }, (_, i) => ({ id: `bundle-${i}`, from: 'a', to: 'b' }));
+  const lanes = [...routeLinks(links, adjacentNodes, adjacentPositions, 160).values()];
+  assert.ok(lanes.every(lane => lane.points.length === 2), 'no detours');
+  const ys = lanes.map(lane => lane.y1);
+  assert.ok(Math.max(...ys) - Math.min(...ys) <= 32);
+  assert.equal(new Set(ys).size, count);
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const payload = { nodes: adjacentNodes.map(node => ({ key: node.key, values: { kind: 'cloud', name: node.key, role: 'Cloud' } })), links: links.map(link => ({ ...link, method: 'direct' })), routes: [] };
+  assertGeometry(deckCore(compute, payload, phone, false));
 });
 
 test('the card holds as many devices in a row as fit its width at the plate width', async () => {
@@ -551,7 +636,7 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
   assert.ok(!files.includes('deck-topology.js'), 'the old hub map is gone');
   assert.deepEqual(files.filter(name => /^(?:deck-)?topology.*\.(?:js|css)$/.test(name)).sort(), ['topology-detail.css', 'topology-detail.js', 'topology-icons.js', 'topology-layout.js', 'topology-map.js', 'topology-route.js', 'topology-text.js', 'topology.css']);
   const users = [];
-  for (const name of files.filter(name => name.endsWith('.js'))) if ((await readFile(new URL(name, STATIC), 'utf8')).includes('topology-map.js')) users.push(name);
+  for (const name of files.filter(name => name.endsWith('.js'))) if (/import\s*\{[^}]*\bcreateTopologyMap\b[^}]*\}\s*from ['"]\.\/topology-map\.js['"]/.test(await readFile(new URL(name, STATIC), 'utf8'))) users.push(name);
   assert.deepEqual(users.sort(), ['app.js', 'deck-compute.js', 'topology-detail.js'].filter(name => name !== 'topology-detail.js'));
   assert.match(await readFile(new URL('deck-compute.js', STATIC), 'utf8'), /createTopologyMap/);
   assert.ok(MAP_PATH && mapModel(EMPTY));

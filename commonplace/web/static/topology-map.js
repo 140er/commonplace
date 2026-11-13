@@ -134,8 +134,13 @@ export function emptyState(canStart) {
   return `<div class="topo-empty"><h2>${esc(MAP_COPY.emptyTitle)}</h2><p>${esc(MAP_COPY.emptyBody)}</p><button type="button" class="btn primary" data-topo="start"${canStart ? "" : " disabled"}>${esc(MAP_COPY.start)}</button>${canStart ? "" : `<p class="topo-off">${esc(MAP_COPY.startOff)}</p>`}</div>`;
 }
 
+export function statusMark(state) {
+  const value = STATES.includes(state) ? state : "unknown";
+  return `<svg viewBox="-8 -8 16 16" aria-hidden="true"><g class="topo-dot s-${value}">${SHAPES[value]}</g></svg>`;
+}
+
 export function renderFrame({ words = STATUS_TEXT, legend: shown = STATES } = {}) {
-  const legend = shown.map((state) => `<li><svg viewBox="-8 -8 16 16" aria-hidden="true"><g class="topo-dot s-${state}">${SHAPES[state]}</g></svg>${esc(words[state])}</li>`).join("");
+  const legend = shown.map((state) => `<li>${statusMark(state)}${esc(words[state])}</li>`).join("");
   return `<section class="topo" data-topology aria-label="Compute map">
     <div class="topo-bar"><label>Route <select data-topo="route" aria-label="Highlight a site route"><option value="">None</option></select></label><span class="topo-spacer"></span><div class="topo-zoom" role="group" aria-label="Zoom"><button type="button" class="iconbtn bordered" data-topo="zoom-out" aria-label="Zoom out">−</button><button type="button" class="iconbtn bordered" data-topo="zoom-in" aria-label="Zoom in">+</button><button type="button" class="btn sm" data-topo="fit">Fit</button></div><button type="button" class="btn sm" data-topo="reset">Reset layout</button></div>
     <div class="topo-stage" data-topo="stage" tabindex="0" role="group" aria-label="${esc(MAP_COPY.stage)}"><svg class="topo-svg" aria-label="Topology"><g data-topo="world"></g></svg><div class="topo-note" data-topo="note"><p class="topo-msg" role="status">${esc(MAP_COPY.loading)}</p></div></div>

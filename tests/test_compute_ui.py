@@ -12,6 +12,7 @@ import pytest
     "case",
     [
         "escaping",
+        "presentation",
         "payloads",
         "enrollment",
         "scopes",

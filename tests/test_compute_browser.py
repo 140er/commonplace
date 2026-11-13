@@ -1,5 +1,6 @@
 """Full app and real owner REST: synthetic pending enrollments, no remote I/O."""
 
+import ipaddress
 import threading
 
 import pytest
@@ -13,7 +14,7 @@ from commonplace.extensions import ToolContext
 from commonplace.gateway import Gateway
 from commonplace.workers import WorkerSupervisor
 from tests.test_compute_admission import admission_state as admission_state
-from tests.test_compute_control import compute_env as compute_env, public_pin
+from tests.test_compute_control import compute_env as compute_env, node_payload, public_pin
 from tests.test_compute_executor import execution_env as execution_env
 from tests.test_compute_fence import local_state as local_state
 from tests.test_compute_script_integration import script_state as script_state
@@ -54,6 +55,14 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(origin + "/app/?ui=deck#/compute/management")
+                heading = page.locator(".compute-title h1")
+                assert heading.inner_text() == "Compute"
+                page.wait_for_function(
+                    """() => {
+                        const heading = document.querySelector('.compute-title h1');
+                        return heading && getComputedStyle(heading).fontSize === '24px';
+                    }"""
+                )
                 page.locator('[data-compute-action="gateway"]').click()
                 page.locator('select[name="board"]').select_option("compute")
                 _enrollment(
@@ -67,7 +76,11 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 )[0]["id"]
                 page.locator('select[name="gateway_id"]').select_option(gateway_id)
                 page.locator('input[name="interface"]').fill("eth0")
-                _enrollment(page, "Fixture target", "10.77.0.9", "target-credential", public_pin(2))
+                # Reuse the synthetic private target; the real server refuses public ranges.
+                target_address = node_payload(gateway_id)["address"]
+                _enrollment(
+                    page, "Fixture target", target_address, "target-credential", public_pin(2)
+                )
                 page.get_by_role("button", name="Save pending target", exact=True).click()
                 page.locator(".compute-row strong").filter(has_text="Fixture target").wait_for()
                 page.locator('[data-compute-action="scope"]').click()
@@ -82,7 +95,9 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                     "expires_minutes": 5,
                 }.items():
                     page.locator(f'input[name="{name}"]').fill(str(value))
-                page.locator('textarea[name="cidrs"]').fill("10.77.0.0/24")
+                page.locator('textarea[name="cidrs"]').fill(
+                    str(ipaddress.ip_network(f"{target_address}/24", strict=False))
+                )
                 page.locator('textarea[name="interfaces"]').fill("eth0")
                 page.locator('input[name="scope_confirmed"]').check()
                 page.get_by_role("button", name="Grant bounded passive scope", exact=True).click()

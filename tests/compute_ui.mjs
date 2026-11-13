@@ -12,12 +12,12 @@ const clock = 1800000000;
 // All endpoints and key bytes here are synthetic. No fixture opens a socket.
 const pin = { algorithm: 'ssh-ed25519', key: Buffer.alloc(32, 1).toString('base64') };
 const gateway = { id: 'g-one', name: 'Fixture gateway', board: 'demo', address: '192.0.2.10', port: 22, account: 'fixture', host_key: pin, credential_id: 'fixture-gateway-key', credential_version: 1, epoch: 1, state: 'pending_verification', created_at: clock };
-const node = { ...gateway, id: 'n-one', name: 'Fixture target', gateway_id: gateway.id, interface: 'fixture0', address: '10.255.255.10', credential_id: 'fixture-target-key' };
-const scope = { id: 's-one', context: { workspace: 'w-one', project: 'demo', gateway: gateway.id, user: 'u-one', agent: 'user:u-one', task: '42' }, cidrs: ['10.255.255.0/28'], interfaces: ['fixture0'], methods: ['passive'], expires_at: clock + 900, limits: { hosts: 16, concurrency: 1, rate_per_second: 1, duration_seconds: 30, results: 16 }, revoked: false };
+const node = { ...gateway, id: 'n-one', name: 'Fixture target', gateway_id: gateway.id, interface: 'fixture0', address: '192.0.2.20', credential_id: 'fixture-target-key' };
+const scope = { id: 's-one', context: { workspace: 'w-one', project: 'demo', gateway: gateway.id, user: 'u-one', agent: 'user:u-one', task: '42' }, cidrs: ['192.0.2.0/28'], interfaces: ['fixture0'], methods: ['passive'], expires_at: clock + 900, limits: { hosts: 16, concurrency: 1, rate_per_second: 1, duration_seconds: 30, results: 16 }, revoked: false };
 const execution = (state = 'awaiting_approval', extra = {}) => ({ id: 'e-one', node_id: node.id, gateway_id: gateway.id, board: 'demo', task_number: 42, operation: 'system.info.v1', arguments: {}, digest: 'a'.repeat(64), state, limits: { runtime_seconds: 30, output_bytes: 65536 }, reason: '', created_at: clock, updated_at: clock, ...extra });
 const inventory = (extra = {}) => ({ gateways: [gateway], nodes: [node], scopes: [scope], executions: [execution()], can_manage: true, capabilities: { transport: false, passive_discovery: false, scripts: false }, ...extra });
 const gatewayValues = () => ({ board: 'demo', name: 'Fixture gateway', address: '192.0.2.10', port: '22', account: 'fixture', host_key_algorithm: pin.algorithm, host_key_key: pin.key, credential_id: 'fixture-gateway-key', credential_version: '1', pin_confirmed: 'on' });
-const scopeValues = () => ({ gateway_id: gateway.id, task_number: '42', cidrs: '10.255.255.0/28,\nfc00::/120', interfaces: 'fixture0\nfixture1', hosts: '16', concurrency: '1', rate_per_second: '1', duration_seconds: '30', results: '16', expires_minutes: '15', scope_confirmed: 'on' });
+const scopeValues = () => ({ gateway_id: gateway.id, task_number: '42', cidrs: '192.0.2.0/28,\n2001:db8::/120', interfaces: 'fixture0\nfixture1', hosts: '16', concurrency: '1', rate_per_second: '1', duration_seconds: '30', results: '16', expires_minutes: '15', scope_confirmed: 'on' });
 const proposalValues = () => ({ node_id: node.id, task_number: '42' });
 const failure = (status, code) => Object.assign(new Error(code), { status, payload: { error: code } });
 
@@ -59,6 +59,20 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
 }
 
 const cases = {
+  async presentation() {
+    const f = fixture();
+    await f.open(inventory({ nodes: [{ ...node, board: undefined, interface: undefined, address: '192.0.2.20' }], scopes: [], executions: [] }));
+    assert.match(f.host.innerHTML, /The machines agents can reach, what they may look at, and tasks waiting for your approval\./);
+    assert.match(f.host.innerHTML, /No scripts saved yet\./);
+    assert.doesNotMatch(f.host.innerHTML, /Set up pinned gateways|No immutable script bundles saved/);
+    assert.match(f.host.innerHTML, /<p>192\.0\.2\.20:22<\/p>/);
+    for (const match of f.host.innerHTML.matchAll(/<p[^>]*>(.*?)<\/p>/g)) {
+      const text = match[1].replace(/<[^>]*>/g, '').trim();
+      assert.ok(!text.startsWith('·') && !text.endsWith('·'), text);
+    }
+    assert.match(f.host.innerHTML, /<details[^>]*>[\s\S]*?full public host key/);
+    f.ui.stop();
+  },
   async escaping() {
     const f = fixture(), attack = '<img src=x onerror="alert(1)"> & <script>bad()</script>';
     await f.open(inventory({ gateways: [{ ...gateway, name: attack, board: attack, address: attack, account: attack, credential_id: attack, host_key: { algorithm: attack, key: attack } }], nodes: [{ ...node, name: attack, interface: attack }], scopes: [{ ...scope, cidrs: [attack], interfaces: [attack], methods: [attack], context: { ...scope.context, agent: attack, project: attack } }], executions: [execution('awaiting_approval', { operation: attack, arguments: { value: attack }, reason: attack })] }), [{ slug: attack, name: attack }]);
@@ -89,7 +103,7 @@ const cases = {
     const targetPayload = computePayload('node', target, env);
     assert.equal(targetPayload.gateway_id, gateway.id); assert.equal(targetPayload.interface, 'fixture0'); assert.ok(!('board' in targetPayload));
     for (const field of ['port', 'credential_version']) for (const invalid of ['', '0', '-1', 'NaN', 'Infinity', '1e3', '1.2', '9007199254740992']) assert.throws(() => computePayload('gateway', { ...gatewayValues(), [field]: invalid }, env), Error);
-    for (const change of [{ pin_confirmed: false }, { host_key_key: 'SHA256:unchecked' }, { host_key_key: '-----BEGIN PRIVATE KEY-----' }, { host_key_algorithm: 'unsupported' }, { address: 'fixture.example' }, { port: '65536' }]) assert.throws(() => computePayload('gateway', { ...gatewayValues(), ...change }, env), Error);
+    for (const change of [{ pin_confirmed: false }, { host_key_key: 'SHA256:unchecked' }, { host_key_key: '-----BEGIN PRIVATE KEY-----' }, { host_key_algorithm: 'unsupported' }, { address: 'example.test' }, { port: '65536' }]) assert.throws(() => computePayload('gateway', { ...gatewayValues(), ...change }, env), Error);
     assert.throws(() => computePayload('scope', { ...scopeValues(), concurrency: '17' }, env), /Concurrency/);
     assert.throws(() => computePayload('scope', { ...scopeValues(), methods: 'active' }, env), /passive/);
     assert.throws(() => computePayload('scope', { ...scopeValues(), hosts: '4097' }, env), Error);
@@ -99,7 +113,7 @@ const cases = {
     assert.throws(() => computePayload('scope', scopeValues(), { now: NaN }), Error);
     const grant = computePayload('scope', { ...scopeValues(), agent_id: 'conn:existing', user: 'foreign' }, env);
     assert.deepEqual(grant.methods, ['passive']); assert.equal(grant.agent_id, 'conn:existing'); assert.equal(grant.expires_at, clock + 900); assert.ok(!('user' in grant));
-    assert.deepEqual(grant.cidrs, ['10.255.255.0/28', 'fc00::/120']); assert.deepEqual(grant.interfaces, ['fixture0', 'fixture1']);
+    assert.deepEqual(grant.cidrs, ['192.0.2.0/28', '2001:db8::/120']); assert.deepEqual(grant.interfaces, ['fixture0', 'fixture1']);
     assert.deepEqual(computePayload('proposal', { ...proposalValues(), arguments: { shell: 'ignored' }, verified: true }, env), { node_id: node.id, task_number: 42, operation: 'system.info.v1', arguments: {}, request_id: 'request-fixed' });
     assert.throws(() => computePayload('proposal', { ...proposalValues(), operation: 'shell' }, env), /system.info/);
     assert.throws(() => computePayload('approve', { expected_digest: 'a'.repeat(63), expires_minutes: '1' }, env), /digest/);
@@ -120,7 +134,7 @@ const cases = {
     assert.match(f.host.innerHTML, /Saving…/); assert.doesNotMatch(f.host.innerHTML, /data-state="pending_verification"/);
     f.submit('gateway', gatewayValues()); assert.equal(f.requests.filter(row => row.options.method === 'POST').length, 1);
     create.resolve({ gateway }); await flush(); assert.match(f.host.innerHTML, /Pending verification/);
-    f.click('node'); f.input('pin_confirmed', true, 'checkbox'); f.input('address', '10.255.255.11');
+    f.click('node'); f.input('pin_confirmed', true, 'checkbox'); f.input('address', '192.0.2.21');
     assert.equal(f.confirmation.checked, false, 'Editing endpoint/key metadata invalidates the public pin acknowledgement');
     const values = { ...gatewayValues(), gateway_id: gateway.id, address: node.address, name: node.name, interface: node.interface, credential_id: node.credential_id };
     f.submit('node', values); const enroll = f.take('/api/compute/nodes', 'POST');

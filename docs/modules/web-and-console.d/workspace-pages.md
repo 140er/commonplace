@@ -8,3 +8,5 @@
   - Follow-up: the current read models have no explicit Coworker-to-Bot ownership field or authoritative subagent roster; the board-list response also omits the stored repository. Project association and recorded child threads are shown as evidence, without inventing either relationship. A durable parent/ownership model is separate work.
 
 - **Owns:** `deck-workspace.js` adapts the existing Compute and conversation controllers to nested workspace pages, and reads existing project/checkpoint data for Coworker rows. The shell reaches it through `state.deck`; leaving a page stops its controllers and aborts pending reads. Styling is scoped to these pages and Deck tokens.
+
+  - Management and Coworkers share the compact title row: 24px/600, one plain sentence and no gap over 24px to the next section. Management inventory rows omit empty separator parts; security details stay in disclosures and paired cards stretch to the same bottom edge. Coworkers has a plain breadcrumb, a This Bot / All Bots switch and an Open conversation action. Its values align with their labels; connection and child-work states reuse the map's status marks and retain state words.

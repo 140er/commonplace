@@ -30,9 +30,9 @@ def test_batch_rule_states_the_per_pr_gate_and_the_batch_lane():
         body = _section(name)
         assert "affected tests" in body
         assert "Do not run, request or wait for a full-suite run per PR" in body
-        assert "full suite runs on the `develop` tip" in body
-        assert "bisected" in body and "revert PR" in body
-        assert "hold **only while `develop` is red**" in body
+        assert "No full test suite, anywhere" in body
+        assert "fixed when found" in body and "bisect only when the culprit is unclear" in body
+        assert "tests/test_eval_guards.py" in body
 
 
 def test_batch_rule_says_waiting_is_a_bug():
