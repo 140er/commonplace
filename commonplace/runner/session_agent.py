@@ -13,7 +13,7 @@ def _effect(config, command, env, secrets):
     if action == "launch":
         tool = "t3_thread_launch"
         args = {
-            "title": f"Orchestrator {command['board_slug']} [commonplace-session:{command['job_id']}]",
+            "title": f"Coworker {command['board_slug']} [commonplace-session:{command['job_id']}]",
             "projectId": config["projects"][command["project"]]["project_id"],
             "topic": command["topic"],
             "runtimeMode": command["runtime_mode"],

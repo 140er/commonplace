@@ -20,7 +20,7 @@ CODES = (
 # Who can release a restricted-origin card, by the board's release authority.
 RELEASE_DETAIL = {
     "coordinator": "the board coordinator releases it",
-    "owner": "no connected orchestrator can release it, so the workspace owner does",
+    "owner": "no connected Coworker can release it, so the workspace owner does",
     "blocked": "the board coordinator cannot release it; the workspace owner must change the coordinator first",
 }
 

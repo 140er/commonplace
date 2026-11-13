@@ -636,7 +636,7 @@ def _snapshot(ctx, st, board, role):
     if config is None or not config.has_runner:
         # No machine grants authority here: only the board's own trusted seat coordinates.
         if seat is None or seat[:2] != (board, role):
-            raise DurableError("not_configured", 409, "board has no orchestrator config")
+            raise DurableError("not_configured", 409, "board has no Coworker config")
         if not seat[2]:
             raise DurableError(
                 "not_allowed",

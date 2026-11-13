@@ -91,7 +91,7 @@ def orchestration_route(gateway, h):
     if principal is None:
         return
     if h.command != "GET" and principal.role != "owner":
-        send_json(h, 403, {"error": "Only workspace owners can configure orchestration"})
+        send_json(h, 403, {"error": "Only workspace owners can configure Coworker management"})
         return
     try:
         if h.command == "GET":
@@ -102,13 +102,13 @@ def orchestration_route(gateway, h):
             except ValueError:
                 return
             if set(body) != {"enabled"}:
-                raise ValueError("Invalid orchestration settings")
+                raise ValueError("Invalid Coworker management settings")
             payload = orchestration.set_enabled(gateway.db, principal, body["enabled"])
     except orchestration.AdmissionRefused as exc:
         send_json(h, exc.status, {"error": exc.code})
         return
     except ValueError:
-        send_json(h, 400, {"error": "Invalid orchestration settings"})
+        send_json(h, 400, {"error": "Invalid Coworker management settings"})
         return
     send_json(h, 200, payload)
 

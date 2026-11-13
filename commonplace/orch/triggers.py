@@ -549,7 +549,7 @@ def failing(gateway, workspace_id: str) -> list[dict]:
             "failures": row["failures"],
             "since": row["first_at"],
             "error": row["error"],
-            "message": f"The orchestrator cannot start work on {row['board']}: its trigger "
+            "message": f"The Coworker cannot start work on {row['board']}: its trigger "
             f"sweep failed {row['failures']} times in a row since {row['first_at']} "
             f"({row['error']}). New and released cards will not start until it is fixed.",
         }

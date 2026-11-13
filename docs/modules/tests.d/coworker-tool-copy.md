@@ -1,0 +1,2 @@
+- **Owns:** `tests/test_coworker_tool_copy.py` and description-only expectations in `tests/spaces_surfaces.json`.
+- **Promises:** The copy guard permits documented schema identifiers and internal comments, while scanning MCP descriptions, prompts and skill instructions.

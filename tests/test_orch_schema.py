@@ -417,7 +417,7 @@ def test_role_instructions_and_render():
     main = schema.role_instructions(config, "main")
     assert schema.template("resume_protocol").strip() in main
     out = schema.render(config)
-    assert "# Orchestrator config `acme-shop`" in out
+    assert "# Coworker config `acme-shop`" in out
     assert f"sha256: `{config.sha256}`" in out
     assert "runner: role `builder` on `mach_0123456789abcdef`" in out
     assert "`hub`: https://hub.example.invalid/mcp (auth: `env:ACME_HUB_TOKEN`)" in out

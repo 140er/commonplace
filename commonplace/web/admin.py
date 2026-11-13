@@ -598,6 +598,11 @@ def list_page(items, workspace_id, section, kind, after, key):
 
 
 def runtime(gateway, workspace_id, context, after):
+    labels = {
+        "orchestration": "Coworker management",
+        "orchestrators": "Coworkers",
+        "machines": "Machines",
+    }
     result = {}
     for source in ("orchestration", "orchestrators", "machines"):
         try:
@@ -633,7 +638,7 @@ def runtime(gateway, workspace_id, context, after):
             result[source] = {"state": "ready", **value}
         except Exception as exc:
             log_failure(LOG, "Admin runtime source unavailable", exc)
-            result[source] = {"state": "error", "error": f"{source.title()} unavailable; try again"}
+            result[source] = {"state": "error", "error": f"{labels[source]} unavailable; try again"}
     return result
 
 
