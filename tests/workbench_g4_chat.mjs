@@ -43,7 +43,7 @@ const item = (html, id) => {
 const unescape = (value) => value?.replace(/&(amp|lt|gt|quot|#39);/g, (_, name) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[name]);
 const srcOf = (html, number) => unescape(html.match(new RegExp(`data-chat-card="${number}"[^>]*data-src="([^"]*)"`))?.[1]);
 
-test("request rows sit under the Coworker's answer and name it", async () => {
+test("request rows sit under the orchestrator's answer and name it", async () => {
   const { chatHTML } = await chatModule();
   const html = chatHTML(page(), ME, e);
   const answer = item(html, 3), request = item(html, 2);

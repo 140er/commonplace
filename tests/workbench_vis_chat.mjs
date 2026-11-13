@@ -109,7 +109,7 @@ test("no answer: local times, the reassurance line, restart as the primary actio
   p.controller.destroy();
 });
 
-test("a connected orchestrator reads 'Coworker connected'", async (t) => {
+test("a connected orchestrator reads 'Orchestrator connected'", async (t) => {
   const ui = await chat();
   quietGlobals(t);
   const page = { board: "atlas", me: { user: "maya" }, messages: [{ id: 1, actor: "conn:atlas", text: "Hello", at: new Date().toISOString() }], replies: [], cursor: 1 };

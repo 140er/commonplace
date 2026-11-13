@@ -19,7 +19,7 @@ test("runner answer labels and escaping", async () => {
   assert.equal(ui.CHAT_COPY.runnerError, "Last error: {code}");
   const html = ui.chatHTML(page("runner:claude/claude-haiku-5-5"), { user: "owner" }, e);
   assert.match(html, /via your claude login · claude-haiku-5-5/);
-  assert.doesNotMatch(html, /Coworker/);
+  assert.doesNotMatch(html, /<b>[^<]*Coworker<\/b>/, "quick replies never use the Coworker author label");
   const escaped = ui.chatHTML(page("runner:claude/<b>"), { user: "owner" }, e);
   assert.match(escaped, /&lt;b&gt;/);
   assert.doesNotMatch(escaped, /login · <b>/);

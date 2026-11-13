@@ -154,12 +154,12 @@ def test_replacement_409_cancel_keeps_conflict_and_next_step(connect_page, entry
     page, state = connect_page
     state["conflicts"] = [{"error": "replaces current orchestrator"}]
     button = start_connect(page, entry)
-    dialog = page.get_by_role("alertdialog", name="Replace the orchestrator?", exact=True)
+    dialog = page.get_by_role("alertdialog", name="Replace the Coworker?", exact=True)
     dialog.get_by_role("button", name="Cancel", exact=True).click()
     expect(button).to_be_enabled()
     status = page.locator("[data-project-connect-status]")
     text = status.inner_text()
-    assert "already has an orchestrator" in text
+    assert "already has a Coworker" in text
     assert "confirm its replacement" in text
     assert status.is_visible()
     assert state["posts"] == [(CONNECT, {})]
@@ -177,7 +177,7 @@ def test_other_connect_409_shows_reason_in_orchestrator_section(connect_page):
     assert "Could not connect the agent." in text
     assert OTHER_CONFLICT["error"] in text, f"missing conflict reason: {text!r}"
     assert status.is_visible(), "the other 409 must be visible without a dialog"
-    assert status.locator("..").get_by_role("heading", name="Orchestrator", exact=True).count()
+    assert status.locator("..").get_by_role("heading", name="Coworker", exact=True).count()
 
 
 @pytest.mark.parametrize("choice", ["own", "shared"])

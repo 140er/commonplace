@@ -121,7 +121,7 @@ def test_handoff_form_names_the_orchestrator_and_the_pool(hub, fresh):
             values = await page.eval_on_selector_all(
                 "#handoff-recipients option", "nodes => nodes.map(n => n.value)"
             )
-        assert {"orchestrator", "anyone"} <= set(values)
+        assert {"coordinator", "anyone"} <= set(values)
         await submit_handoff(page, "orchestrator")
         await page.wait_for_selector(HANDOFF, state="detached", timeout=15000)
 
