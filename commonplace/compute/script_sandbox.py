@@ -19,6 +19,7 @@ private transport data, never safe logs or public output.
 from __future__ import annotations
 
 import ctypes
+import errno
 import hashlib
 import os
 import platform
@@ -26,7 +27,9 @@ import selectors
 import signal
 import stat
 import subprocess
+import sys
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +43,63 @@ _BOOTSTRAP = (
 )
 _TMPFS_MAGIC = 0x01021994
 _CGROUP2_MAGIC = 0x63677270
+
+
+@dataclass(frozen=True)
+class AnchoredPath(os.PathLike):
+    """A path relative to an already held directory, never the uploaded pathname."""
+
+    directory: int
+    name: str = "."
+
+    def __fspath__(self):
+        return f"/proc/self/fd/{self.directory}/{self.name}"
+
+    def __str__(self):
+        return self.__fspath__()
+
+
+def _seal_snapshot(fd):
+    """Apply and verify all seals; Linux ABI constants cover lean Python builds."""
+    import fcntl
+
+    # F_GET_SEALS is required to verify that the kernel applied every seal.
+    abi = {
+        "F_ADD_SEALS": 1033,
+        "F_GET_SEALS": 1034,
+        "F_SEAL_SEAL": 1,
+        "F_SEAL_SHRINK": 2,
+        "F_SEAL_GROW": 4,
+        "F_SEAL_WRITE": 8,
+    }
+    values = {
+        name: getattr(fcntl, name, value if sys.platform == "linux" else None)
+        for name, value in abi.items()
+    }
+    if any(value is None for value in values.values()):
+        raise OSError(errno.ENOTSUP, "sealing_unavailable")
+    seals = (
+        values["F_SEAL_WRITE"]
+        | values["F_SEAL_GROW"]
+        | values["F_SEAL_SHRINK"]
+        | values["F_SEAL_SEAL"]
+    )
+    fcntl.fcntl(fd, values["F_ADD_SEALS"], seals)
+    if fcntl.fcntl(fd, values["F_GET_SEALS"]) & seals != seals:
+        raise OSError(errno.ENOTSUP, "sealing_unavailable")
+
+
+def _sealed_bytes(stack, raw):
+    try:
+        fd = os.memfd_create("compute-approved", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+    except AttributeError:
+        raise OSError(errno.ENOTSUP, "sealing_unavailable") from None
+    stack.callback(os.close, fd)
+    with os.fdopen(os.dup(fd), "wb") as stream:
+        stream.write(raw)
+    os.lseek(fd, 0, os.SEEK_SET)
+    _seal_snapshot(fd)
+    return fd
 
 
 def private_directory(path, *, uid=None, private=True):
@@ -396,10 +456,11 @@ class BubblewrapSandbox:
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ScriptDenied("sandbox_unavailable")
 
-    def argv(self, request, script_path, job_path):
+    def argv(self, request, script_path, job_path, *, script_fd=None, input_fds=None):
         args = [
             "/usr/bin/bwrap",
             "--unshare-all",
+            "--unshare-user",
             "--die-with-parent",
             "--new-session",
             "--disable-userns",
@@ -412,8 +473,8 @@ class BubblewrapSandbox:
             "--bind",
             str(job_path),
             "/job",
-            "--ro-bind",
-            str(script_path),
+            "--ro-bind-data" if script_fd is not None else "--ro-bind",
+            str(script_fd) if script_fd is not None else str(script_path),
             "/job/script.py",
             "--proc",
             "/proc",
@@ -426,7 +487,11 @@ class BubblewrapSandbox:
             "--clearenv",
         ]
         for item in request.manifest.input_paths:
-            args += ["--ro-bind", str(Path(job_path) / item.path), "/job/" + item.path]
+            args += (
+                ["--ro-bind-data", str(input_fds[item.path]), "/job/" + item.path]
+                if input_fds is not None
+                else ["--ro-bind", str(Path(job_path) / item.path), "/job/" + item.path]
+            )
         args += [
             "--setenv",
             "PATH",
@@ -512,18 +577,43 @@ class BubblewrapSandbox:
             if libc.prctl(38, 1, 0, 0, 0) != 0:
                 os._exit(126)
 
-        return subprocess.Popen(
-            self.argv(request, script_path, job_path),
-            shell=False,
-            env={},
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            close_fds=True,
-            pass_fds=(group.procs,),
-            start_new_session=True,
-            preexec_fn=constrain,
-        )
+        # The upload's directory handles remain held by TargetHelper. Read at
+        # the execution barrier, validate exact approved bytes, and bind sealed
+        # snapshots by fd. Neither a rename nor a later write can substitute code
+        # or inputs between validation and bwrap's bind.
+        if not isinstance(script_path, AnchoredPath) or not isinstance(job_path, AnchoredPath):
+            raise ScriptDenied("unsafe_workspace")
+        with ExitStack() as stack:
+            raw = read_regular_at(
+                script_path.directory,
+                script_path.name,
+                request.manifest.script_size,
+                uid=os.geteuid(),
+            )
+            if (
+                len(raw) != request.manifest.script_size
+                or hashlib.sha256(raw).hexdigest() != request.manifest.script_sha256
+            ):
+                raise ScriptDenied("script_digest_mismatch")
+            script_fd = _sealed_bytes(stack, raw)
+            inputs = {}
+            for item in request.manifest.input_paths:
+                raw = read_regular_at(job_path.directory, item.path, item.size, uid=os.geteuid())
+                if len(raw) != item.size or hashlib.sha256(raw).hexdigest() != item.sha256:
+                    raise ScriptDenied("input_digest_mismatch")
+                inputs[item.path] = _sealed_bytes(stack, raw)
+            return subprocess.Popen(
+                self.argv(request, script_path, job_path, script_fd=script_fd, input_fds=inputs),
+                shell=False,
+                env={},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                close_fds=True,
+                pass_fds=(group.procs, job_path.directory, script_fd, *inputs.values()),
+                start_new_session=True,
+                preexec_fn=constrain,
+            )
 
     def _collect(self, request, process, group, cancelled):
         limits = request.manifest.limits

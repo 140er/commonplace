@@ -7,11 +7,14 @@
     GET    /api/learned                          ?bot=&scope=&state=&kind=&limit=&offset= -> {items, counts}
     GET    /api/learned/<id>                     {item}
     PATCH  /api/learned/<id>                     {text?, pinned?} -> {item}
-    DELETE /api/learned/<id>                     {ok}
+    DELETE /api/learned/<id>                     {ok}   (a shared copy: its sharer, or a workspace owner)
     GET    /api/learning/settings                {enabled, shared_enabled, can_configure}
     PATCH  /api/learning/settings                {enabled?, shared_enabled?}      (workspace owner)
     GET    /api/projects/<slug>/learning         {board, shared_enabled, can_configure}
     PATCH  /api/projects/<slug>/learning         {shared_enabled}                 (workspace owner)
+    GET    /api/projects/<slug>/learned          {items}   shared items, for members who read the project
+    POST   /api/learned/<id>/share               {project?} -> {pending, bot, label}  (a confirm chip;
+                                                 the tap is POST /api/bots/<bot>/confirm)
 
 Only a signed-in person reaches these: an app token (even one holding ``bots:chat``), an agent
 token or a machine credential is answered 404, and a cross-origin write is refused by the
@@ -20,8 +23,8 @@ gateway. An item or bot that is not the caller's is 404. Everything off is the d
 
 from commonplace import redact
 from commonplace.boards.service import BoardService
-from commonplace.bots import auth, learned, routes, store
-from commonplace.extensions import ToolContext
+from commonplace.bots import auth, learned, routes, store, tools_learning
+from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, send_json
 
 ITEMS = "/api/learned/"
@@ -130,15 +133,100 @@ def _bot_handler(handler):
     return handle
 
 
+def _readable(gateway, principal):
+    """``can_read(slug)`` for this person, from their projects right now."""
+    slugs = {
+        b["slug"]
+        for b in BoardService(ToolContext(principal=principal, gateway=gateway)).board_list()
+    }
+    return slugs.__contains__
+
+
+def _share(gateway, h, principal, item_id):
+    """The Share button: a confirm chip for one item; nothing is shared until it is tapped."""
+    if h.command != "POST":
+        routes._error(h, 404, "not_found", "Not found")
+        return
+    body = routes._body(h, {"project"})
+    if body is None:
+        return
+    project = body.get("project")
+    if project is not None and (not isinstance(project, str) or not 1 <= len(project) <= 200):
+        raise store.Invalid("invalid project")
+    item = _learned(gateway, principal).get(principal.user_id, item_id)
+    slug = project or item["board"]
+    if not isinstance(slug, str):
+        routes._error(h, 400, "project_required", tools_learning.SENTENCES["project"])
+        return
+    try:
+        pending = tools_learning.build_pending(gateway, principal, item_id, slug)
+    except ToolError as exc:
+        routes._error(h, 409, "not_shareable", str(exc))
+        return
+    send_json(
+        h,
+        200,
+        {
+            "pending": pending["id"],
+            "bot": pending["bot_id"],
+            "label": _view_text(pending["label"]),
+            "expires_at": pending["expires_at"],
+        },
+    )
+
+
+def _view_text(text) -> str:
+    return redact.redact(text)[0]
+
+
+def _project_learned(gateway, h, principal, slug):
+    """Shared items of one project, for members who can read it (the sharer's name included)."""
+    if h.command != "GET":
+        routes._error(h, 404, "not_found", "Not found")
+        return
+    can_read = _readable(gateway, principal)
+    if not can_read(slug):
+        routes._error(h, 404, "not_found", "Not found")
+        return
+    listed = _learned(gateway, principal).shared_list(
+        slug, principal.user_id, can_read, **_paging(h)
+    )
+    for entry in listed:
+        entry["by"] = _member_name(gateway, entry.pop("user_id"))
+        entry["text"] = redact.redact(entry["text"])[0]
+    send_json(h, 200, {"board": slug, "items": listed})
+
+
+def _paging(h) -> dict:
+    params = query(h)
+    try:
+        return {key: int(params[key]) for key in ("limit", "offset") if key in params}
+    except ValueError:
+        raise store.Invalid("invalid cursor") from None
+
+
+def _member_name(gateway, user_id) -> str:
+    try:
+        return gateway.db.user(user_id)["email"]
+    except Exception:
+        return "a former member"
+
+
 # /api/learned/<id>
 
 
 def _item(gateway, h, principal):
     parts = path_parts(h, ITEMS)
-    if len(parts) != 1:
+    if not parts or len(parts) > 2:
         routes._error(h, 404, "not_found", "Not found")
         return
     items = _learned(gateway, principal)
+    if parts[1:] == ["share"]:
+        _share(gateway, h, principal, parts[0])
+        return
+    if len(parts) != 1:
+        routes._error(h, 404, "not_found", "Not found")
+        return
     if h.command == "GET":
         send_json(h, 200, {"item": _view(items.get(principal.user_id, parts[0]))})
     elif h.command == "PATCH":
@@ -147,7 +235,16 @@ def _item(gateway, h, principal):
             return
         send_json(h, 200, {"item": _view(items.update(principal.user_id, parts[0], **body))})
     elif h.command == "DELETE":
-        items.forget(principal.user_id, parts[0])
+        try:
+            items.forget(principal.user_id, parts[0])
+        except store.Missing:
+            # Not the person's own: a workspace owner may still delete a shared copy of a
+            # project they read. Anyone else gets the same 404 as for an unknown id.
+            if principal.role != "owner":
+                raise
+            items.delete_shared(
+                parts[0], user_id=principal.user_id, owner_can_read=_readable(gateway, principal)
+            )
         send_json(h, 200, {"ok": True})
     else:
         routes._error(h, 404, "not_found", "Not found")
@@ -198,10 +295,13 @@ def _settings(gateway, h, principal):
     )
 
 
-def project_route(gateway, h, slug):
-    """``/api/projects/<slug>/learning``; called by the projects router."""
+def project_route(gateway, h, slug, rest=("learning",)):
+    """``/api/projects/<slug>/learning`` and ``.../learned``; called by the projects router."""
 
     def run(principal):
+        if tuple(rest) == ("learned",):
+            _project_learned(gateway, h, principal, slug)
+            return
         service = BoardService(ToolContext(principal=principal, gateway=gateway))
         if slug not in {b["slug"] for b in service.board_list()}:
             routes._error(h, 404, "not_found", "Not found")
@@ -251,7 +351,7 @@ def install(gateway) -> None:
             "/api/learning/settings",
             lambda h: _guarded(gateway, h, lambda p: _settings(gateway, h, p)),
         )
-    for method in ("GET", "PATCH", "DELETE"):
+    for method in ("GET", "PATCH", "DELETE", "POST"):
         gateway.add_prefix_route(
             method, ITEMS, lambda h: _guarded(gateway, h, lambda p: _item(gateway, h, p))
         )

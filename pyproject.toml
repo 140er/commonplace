@@ -86,6 +86,7 @@ commonplace = ["cryptography>=42"]
 compute = ["cryptography>=42", "paramiko>=5.1,<6"]
 dev = [
     "cryptography>=42",
+    "paramiko>=5.1,<6",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-xdist>=3.6",
@@ -181,6 +182,7 @@ extract = [
 [dependency-groups]
 dev = [
     "cryptography>=42",
+    "paramiko>=5.1,<6",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-xdist>=3.6",

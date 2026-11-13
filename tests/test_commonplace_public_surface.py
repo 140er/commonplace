@@ -83,6 +83,8 @@ EXACT = {
     ("POST", "/api/goals/card"): "authenticated",
     ("GET", "/api/bots"): "authenticated",
     ("POST", "/api/bots"): "authenticated",
+    ("GET", "/api/bots/settings"): "authenticated",
+    ("PATCH", "/api/bots/settings"): "authenticated",
     ("GET", "/api/meetings"): "authenticated",
     ("POST", "/api/meetings"): "authenticated",
     ("GET", "/api/admin/instance/waitlist"): "authenticated",
@@ -196,6 +198,7 @@ PREFIX = {
     ("GET", "/api/chat/"): "authenticated",
     **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT", "PATCH")},
     **{(method, "/api/learned/"): "authenticated" for method in ("GET", "PATCH", "DELETE")},
+    ("POST", "/api/learned/"): "authenticated",
 }
 BUILTIN = {
     ("GET", "/health"): "public",

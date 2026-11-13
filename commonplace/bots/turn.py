@@ -38,6 +38,8 @@ SENTENCES = {
     "interrupted": "This reply was interrupted. Check what was done before you ask again.",
     "steps": "That needed too many steps, so I stopped here.",
     "too_long": "That is too much for the chat model to read at once. Send a shorter message.",
+    "revoked": "You no longer have access to this bot.",
+    "audience": "Someone joined this shared thread while I worked, so I held this answer back.",
 }
 REFUSALS = {
     "not_your_words": "That text is not in your message. Only your own words can be written.",
@@ -81,6 +83,11 @@ def _action(tool, label, ok, code=None) -> dict:
     return block
 
 
+def journal_key(thread_id, request_id) -> str:
+    """The key of a turn's lease and action journal: request ids are only unique per thread."""
+    return request_id if thread_id is None else f"{thread_id}.{request_id}"
+
+
 def code_of(state) -> str:
     return state.split(":", 1)[1] if state.startswith("failed:") else state
 
@@ -88,8 +95,10 @@ def code_of(state) -> str:
 class TurnRun:
     """A running turn. Create, :meth:`admit` through the registry, then :meth:`start`."""
 
-    def __init__(self, gateway, principal, bot, request_id, started=None):
+    def __init__(self, gateway, principal, bot, request_id, started=None, thread_id=None):
         self.gateway = gateway
+        self.thread_id = thread_id  # None: the owner's original thread
+        self.key = journal_key(thread_id, request_id)
         self.workspace_id = principal.workspace_id
         self.user_id = principal.user_id
         self.bot = bot
@@ -106,8 +115,10 @@ class TurnRun:
         self._sent = ""  # redacted reply text already streamed
         self._held = False  # the redacted text changed under what was sent; send no more
         self._blocks = []
+        self._learned = []  # ids of learned items the sent request carried
         self._model = None
         self._reader = blocks.Reader(gateway, principal)
+        self._turn_state = None  # the tools.Turn, for the audience re-check before the reply
 
     def _put(self, event, data) -> None:
         self.queue.put((event, data))
@@ -127,7 +138,7 @@ class TurnRun:
         bots = store.open_bots(self.gateway, self.workspace_id)
         while not self.finished.wait(BEAT_S):
             try:
-                bots.lease_beat(self.bot_id, self.request_id)
+                bots.lease_beat(self.bot_id, self.key)
             except Exception as exc:
                 log_failure(logger, "Bot turn lease not renewed", exc)
 
@@ -145,9 +156,7 @@ class TurnRun:
             self._put("error", {"code": "model_error", "text": SENTENCES["model_error"]})
         finally:
             try:
-                store.open_bots(self.gateway, self.workspace_id).lease_end(
-                    self.bot_id, self.request_id
-                )
+                store.open_bots(self.gateway, self.workspace_id).lease_end(self.bot_id, self.key)
             except Exception as exc:
                 log_failure(logger, "Bot turn lease not ended", exc)
             limits.REGISTRY.release(self)
@@ -155,6 +164,22 @@ class TurnRun:
             self.queue.put(None)
         if not outcome and self.reply is not None and self.reply["state"] == "ok":
             extract.after_turn(self)  # a finished new turn only; replays never get here
+
+    def _live(self) -> bool:
+        """Whether this person still reaches their thread: the owner always does; a member only
+        while their share, the workspace switch and the bot allow it. Never cached, fails closed."""
+        if self.bot.get("owner_id") == self.user_id:
+            return True
+        try:
+            store.open_bots(self.gateway, self.workspace_id).reach(
+                self.user_id, self.bot_id, self.thread_id
+            )
+        except store.Missing:
+            return False
+        except Exception as exc:
+            log_failure(logger, "Bot share not checked", exc)
+            return False
+        return True
 
     def _turn(self) -> str:
         bots = store.open_bots(self.gateway, self.workspace_id)
@@ -174,14 +199,25 @@ class TurnRun:
             self.bot,
             self.message,
             self.request_id,
+            thread_id=self.thread_id,
         )
+        self._turn_state = turn
         try:
+            shared_thread = turn.audience()
+            reach = turn.effective()
+            if shared_thread is not None:
+                turn.touched.update(reach.projects)  # in the prompt: the audience re-check
             if not self.bot["board"]:  # the projects a model may name; the gate checks each call
-                turn.projects = list(turn.effective().asker)
+                # In a shared thread only what every reader may use is named to the model.
+                turn.projects = list(reach.projects if shared_thread is not None else reach.asker)
         except tools.Gone:
             return "interrupted"
-        history = bots.messages(self.bot_id, self.user_id, before=self.message["id"])
-        memory = bots.memory_list(self.bot_id, self.user_id)
+        history = bots.messages(
+            self.bot_id, self.user_id, before=self.message["id"], thread_id=self.thread_id
+        )
+        if shared_thread is not None:  # nothing a reader joined too late to see
+            history = [m for m in history if m["id"] > shared_thread["floor"]]
+        memory = bots.memory_for_turn(self.bot_id, self.user_id, shared_thread is not None)
         try:
             ctx = context.build(turn, principal, service, history, memory)
         except tools.Gone:
@@ -197,6 +233,8 @@ class TurnRun:
         while True:
             if self.cancel.is_set():
                 return "stopped"
+            if not self._live():
+                return "revoked"  # re-resolved before every model request
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return "timeout"
@@ -207,6 +245,7 @@ class TurnRun:
             if refused:
                 return refused
             sent = []
+            carried = list(ctx.learned_used)
             try:
                 calls, said = self._model_call(
                     config, key, ctx.system, messages, specs, remaining, sent
@@ -219,13 +258,17 @@ class TurnRun:
             except ValueError:
                 return "model_error"  # input over the bound, or the provider is unusable
             finally:
-                if not sent:  # the unit is for a request sent; this one never was
+                if sent:
+                    self._learned = carried
+                else:  # the unit is for a request sent; this one never was
                     limits.give_back(self.gateway, self.workspace_id, self.user_id, day)
             if not calls:
                 return ""
             tail.append({"role": "assistant", "content": said, "tool_calls": calls})
             over = False
             for call in calls:
+                if not self._live():
+                    return "revoked"  # nothing from a tool runs after the share ended
                 if self.cancel.is_set():
                     result, code = tools.Result(False, say=REFUSALS["stopped"]), "stopped"
                 elif steps >= limits.BOT_MAX_STEPS:
@@ -304,11 +347,14 @@ class TurnRun:
         """Run one tool call: journal, events, audit. ``(Result, refusal code or None)``."""
         bots = turn.store()
         step = turn.step
-        bots.action_start(self.bot_id, self.user_id, self.request_id, step, tool.name, _hash(args))
+        bots.action_start(self.bot_id, self.user_id, self.key, step, tool.name, _hash(args))
         label, code = f"Used {tool.name}", None
         try:
+            tools.audience_gate(turn, tool, args)
             args = tools.validate(tools.schema_for(tool, turn), args)
             tools.gate(turn, tool, args)  # the project, and a shared bot's access, on every call
+            if not self._live():
+                raise tools.Gone()  # the share ended after the gate: nothing runs
             if tool.check is not None:
                 tool.check(turn, args)  # before a pending action, a chip or any write
             label = tool.label(turn, args)
@@ -340,7 +386,7 @@ class TurnRun:
         bots.action_finish(
             self.bot_id,
             self.user_id,
-            self.request_id,
+            self.key,
             step,
             "ok" if result.ok else "refused",
             shown,
@@ -377,35 +423,68 @@ class TurnRun:
             "request_id": self.request_id,
             "step": turn.step,
         }
-        pending = turn.store().pending_create(self.bot_id, self.user_id, tool.name, frozen, label)
+        pending = turn.store().pending_create(
+            self.bot_id, self.user_id, tool.name, frozen, label, thread_id=self.thread_id
+        )
         return tools.Result(
             True,
             {"waiting_for_confirmation": True},
             blocks=({"type": "confirm", "pending": pending["id"]},),
         ), None
 
+    def _widened(self) -> bool:
+        """Whether a shared-thread turn used a project that someone who reads the thread now may
+        not read (a member joined, or lost access, while it ran). Fails closed."""
+        state = self._turn_state
+        if state is None or not state.touched:
+            return False
+        try:
+            if state.audience() is None:
+                return False
+            return not state.touched <= set(state.effective().projects)
+        except Exception as exc:
+            if not isinstance(exc, tools.Gone):
+                log_failure(logger, "Bot audience not checked", exc)
+            return True
+
     def _finish(self, outcome) -> None:
-        self._flush(final=True)
-        text = self._redacted()
+        if outcome != "revoked" and not self._live():
+            outcome = "revoked"  # re-resolved before the reply is stored
+        if outcome not in ("revoked", "audience") and self._widened():
+            outcome = "audience"  # re-resolved before the reply is stored
+        if outcome in ("revoked", "audience"):
+            self._blocks = []  # nothing but the fixed sentence is stored
+        else:
+            self._flush(final=True)
+        text = self._redacted() if outcome not in ("revoked", "audience") else ""
         code = outcome
         if outcome and outcome != "stopped":
             text = (text + "\n\n" if text else "") + SENTENCES[outcome]
         state = "ok" if not outcome else "stopped" if outcome == "stopped" else f"failed:{code}"
         bots = store.open_bots(self.gateway, self.workspace_id)
+        shown = (
+            [*self._blocks, {"type": "learned", "ids": self._learned}]
+            if self._learned
+            else self._blocks
+        )
         try:
             self.reply = bots.add_bot_message(
                 self.bot_id,
                 self.user_id,
                 self.message["id"],
                 text,
-                self._blocks,
+                shown,
                 model=self._model,
                 state=state,
+                thread_id=self.thread_id,
+                learned_used=self._learned,
             )
         except store.Conflict:
             # Another process closed this request (as interrupted) first; report what is stored.
             logger.warning("Bot reply arrived after its request was closed (code=late_reply)")
-            self.reply = bots.reply_to(self.bot_id, self.user_id, self.message["id"])
+            self.reply = bots.reply_to(
+                self.bot_id, self.user_id, self.message["id"], self.thread_id
+            )
             if self.reply is None:
                 raise
             outcome = code = "" if self.reply["state"] == "ok" else code_of(self.reply["state"])
@@ -422,7 +501,7 @@ class TurnRun:
 # Replay and interrupted turns
 
 
-def interrupted(gateway, workspace_id, user_id, bot_id, message) -> dict | None:
+def interrupted(gateway, workspace_id, user_id, bot_id, message, thread_id=None) -> dict | None:
     """Store ``failed:interrupted`` for a request with no reply and no running turn.
 
     A turn is running while this process holds it or its store lease is fresh (another
@@ -433,12 +512,13 @@ def interrupted(gateway, workspace_id, user_id, bot_id, message) -> dict | None:
     while the turn is still running.
     """
     bots = store.open_bots(gateway, workspace_id)
-    if limits.REGISTRY.holding(workspace_id, bot_id, message["request_id"]) or bots.leased(
-        bot_id, message["request_id"], LEASE_S
-    ):
+    key = journal_key(thread_id, message["request_id"])
+    if limits.REGISTRY.holding(
+        workspace_id, bot_id, message["request_id"], thread_id
+    ) or bots.leased(bot_id, key, LEASE_S):
         return None  # running here, or in another process that still renews its lease
     shown = []
-    for action in bots.actions(bot_id, user_id, message["request_id"]):
+    for action in bots.actions(bot_id, user_id, key):
         if action["state"] == "started":
             shown.append(
                 _action(action["tool"], f"Outcome unknown: {action['tool']}", False, "unknown")
@@ -453,26 +533,29 @@ def interrupted(gateway, workspace_id, user_id, bot_id, message) -> dict | None:
             SENTENCES["interrupted"],
             shown,
             state="failed:interrupted",
+            thread_id=thread_id,
         )
     except store.Conflict:
-        return bots.reply_to(bot_id, user_id, message["id"])
+        return bots.reply_to(bot_id, user_id, message["id"], thread_id)
 
 
-def recover(gateway, workspace_id, user_id, bot_id) -> None:
-    """Report every interrupted request of this bot (on reading the thread)."""
+def recover(gateway, workspace_id, user_id, bot_id, thread_id=None) -> None:
+    """Report every interrupted request of this thread (on reading it)."""
     bots = store.open_bots(gateway, workspace_id)
-    for message in bots.unanswered(bot_id, user_id):
-        interrupted(gateway, workspace_id, user_id, bot_id, message)
+    for message in bots.unanswered(bot_id, user_id, thread_id):
+        interrupted(gateway, workspace_id, user_id, bot_id, message, thread_id)
 
 
-def replay(gateway, principal, bot_id, message) -> list[tuple[str, dict]]:
+def replay(gateway, principal, bot_id, message, thread_id=None) -> list[tuple[str, dict]]:
     """The events of a request already seen: ``ack`` then ``done``, ``error`` or ``running``."""
     reader = blocks.Reader(gateway, principal)
     bots = store.open_bots(gateway, principal.workspace_id)
     events = [("ack", {"message": blocks.message_view(reader, message)})]
-    reply = bots.reply_to(bot_id, principal.user_id, message["id"])
+    reply = bots.reply_to(bot_id, principal.user_id, message["id"], thread_id)
     if reply is None:
-        reply = interrupted(gateway, principal.workspace_id, principal.user_id, bot_id, message)
+        reply = interrupted(
+            gateway, principal.workspace_id, principal.user_id, bot_id, message, thread_id
+        )
     if reply is None:
         return [*events, ("running", {})]
     view = blocks.message_view(reader, reply)
@@ -498,7 +581,7 @@ class Refused(Exception):
 OUTCOME_CHARS = 500  # a tool's own outcome sentence on a confirmed action
 
 
-def confirm(gateway, principal, bot_id, pending_id, accept) -> dict:
+def confirm(gateway, principal, bot_id, pending_id, accept, thread_id=None) -> dict:
     """Run exactly the stored action as the person (or cancel it); the stored event message.
 
     The tool's ``check`` runs first, against the message that asked for the action: a refusal
@@ -507,23 +590,31 @@ def confirm(gateway, principal, bot_id, pending_id, accept) -> dict:
     """
     bots = store.open_bots(gateway, principal.workspace_id)
     pending = bots.pending_get(bot_id, principal.user_id, pending_id)
-    if pending is None or pending["user_id"] != principal.user_id:
+    if (
+        pending is None
+        or pending["user_id"] != principal.user_id
+        or pending["thread_id"] != thread_id  # bound to the asking person and their thread
+    ):
         raise store.Missing()
     tool = tools.REGISTRY.get(pending["tool"])
     if not accept:
         if not bots.pending_resolve(bot_id, principal.user_id, pending_id, "cancelled"):
             raise Refused(_closed(bots, bot_id, principal.user_id, pending_id))
         block = _action(pending["tool"], pending["label"], False, "cancelled")
-        return bots.add_event_message(bot_id, principal.user_id, "Cancelled.", [block])
+        return bots.add_event_message(
+            bot_id, principal.user_id, "Cancelled.", [block], thread_id=thread_id
+        )
     if pending["state"] != "open" or pending["expires_at"] <= store.stamp():
         bots.pending_resolve(bot_id, principal.user_id, pending_id, "expired")
         raise Refused(_closed(bots, bot_id, principal.user_id, pending_id))
     frozen = pending["args"]
-    bot = bots.get(bot_id, principal.user_id)
+    bot = bots.viewable(bot_id, principal.user_id)
     message = next(
         (
             m
-            for m in bots.messages(bot_id, principal.user_id, after=frozen["message"] - 1, limit=1)
+            for m in bots.messages(
+                bot_id, principal.user_id, after=frozen["message"] - 1, limit=1, thread_id=thread_id
+            )
             if m["id"] == frozen["message"]
         ),
         None,
@@ -536,6 +627,7 @@ def confirm(gateway, principal, bot_id, pending_id, accept) -> dict:
         message or {"id": frozen["message"], "text": ""},
         frozen["request_id"],
         frozen["step"],
+        thread_id=thread_id,
     )
     args = dict(frozen["args"])
     if frozen.get("version") is not None:
@@ -544,7 +636,9 @@ def confirm(gateway, principal, bot_id, pending_id, accept) -> dict:
     def refused(result, code):
         turn.audit(pending["tool"], "deny")
         shown = [_action(pending["tool"], pending["label"], False, code)]
-        return bots.add_event_message(bot_id, principal.user_id, result.say, shown)
+        return bots.add_event_message(
+            bot_id, principal.user_id, result.say, shown, thread_id=thread_id
+        )
 
     if tool is None:
         bots.pending_resolve(bot_id, principal.user_id, pending_id, "cancelled")
@@ -587,7 +681,7 @@ def confirm(gateway, principal, bot_id, pending_id, accept) -> dict:
         text = redact.redact(result.say)[0][:OUTCOME_CHARS] if result.say else "Done."
     else:
         text = result.say or REFUSALS["failed"]
-    return bots.add_event_message(bot_id, principal.user_id, text, shown)
+    return bots.add_event_message(bot_id, principal.user_id, text, shown, thread_id=thread_id)
 
 
 def _closed(bots, bot_id, user_id, pending_id) -> str:

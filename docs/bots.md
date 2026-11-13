@@ -31,6 +31,17 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `GET /api/bots/<id>/access` | `{version, entries:[{kind,ref,mode,set_at}]}`: what a shared bot may reach (its owner, and members with a live share) |
 | `PUT /api/bots/<id>/access` | `{version, entries}`, `{version, entries}`: the owner replaces the list; web session only; `409 conflict` for a stale `version` |
 | `GET /api/bots/<id>/access/log?after=&limit=` | `{log}`: one row per change, ids and codes only |
+| `GET /api/bots/<id>/shares` | `{shares:[{user:{id,name},talk,see_shared,shared_at}]}`: the owner sees every live share, a member only their own |
+| `POST /api/bots/<id>/shares` | `{user, talk, see_shared}`, `{share}` (201 new, 200 same flags again): owner only, web session only, a current member other than the owner; `409 sharing_off`, `409 limit` |
+| `PATCH` / `DELETE /api/bots/<id>/shares/<user>` | `{talk?, see_shared?}` → `{share}`; `{ok}` (revoking again is a no-op); owner only, web session only |
+| `GET /api/bots/<id>/threads` | `{threads, own}`: the threads the caller reaches and the id of their own private thread (`null` for the owner, whose thread has no id) |
+| `POST /api/bots/<id>/threads` | `{visibility, title?}`, `{thread}`: opens the member's private thread (once, `200` when it exists) or a new shared thread (`201`; needs `talk`, a shared bot and fewer than 100 open shared threads, else `409 limit`) |
+| `PATCH /api/bots/<id>/threads/<tid>` | `{archived}`, `{thread}`: the person who opened it |
+| `GET` / `PATCH /api/bots/settings` | `{sharing, can_configure}`; any member reads, a workspace owner changes it (web session only) |
+
+Messages, stop, confirm, read and memory also take `?thread=<id>` (memory takes `?own=1` for a
+member's own notes). Without it a request acts on the caller's own thread: the owner's original
+thread, or a member's private one.
 
 The learning memory (`docs/design/bot-learning-memory.md`, first slices: the store, the switches,
 forgetting and the extractor) adds person-session routes. They are off by default and
@@ -53,7 +64,10 @@ verbatim span checked against the stored message and the secret guard; anything 
 invents or rewrites is dropped. A repeated sentence is counted, new words for a known topic
 replace the old item, a sentence the person forgot is not learned again, and `ask` mode only
 proposes (proposals expire after 14 days). It uses no new service and no extra model call
-unless every switch allows it. Showing and using the items comes in later slices.
+unless every switch allows it. Each later turn then reads the person's own items that match the
+new message and offers up to 8 of them to the model as quoted, labelled data ("learned"); the
+person's current message always wins over them. Nothing is used when a switch is off or the
+person paused. Showing the items in the thread and sharing come in later slices.
 
 A bot is `{id, name, job, instructions, kind, board, archived, last, unread, waiting, state}`.
 `kind` is `project`, `general` or `custom`. `last` is the newest message (`role`, `text`
@@ -339,6 +353,33 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   one log row per entry and one control-database audit row (kind, ref and mode only). Members
   read the list and the log. A bot that is not shared ignores the list. Machines and tools are
   listed only within the list, and the runner's own rule still decides who may start an agent.
+- Sharing and members' private threads (slice S3): the owner of a custom bot shares it with
+  chosen workspace members (`talk`: open their own private thread and write in it; `see_shared`:
+  read shared threads, see below) and revokes at any time. Sharing is off
+  until a workspace owner switches it on (`PATCH /api/bots/settings`); while it is off a share
+  is refused and members get 404. A member sees the bot in their roster with its owner and
+  talks to it in their own private thread, which no one else reaches: not the bot's owner, not
+  a workspace owner, not another member (404 on every route). Revoking takes effect on the
+  next request and stops a turn in flight: no tool runs after it, and the stored reply is a
+  fixed sentence. A member's memory notes are theirs; the owner's notes are bot-level and every
+  turn reads them. A task a member's turn filed, or a post it forwarded, reports to that
+  member's thread. Each shared bot runs one turn per thread and at most four at once; a turn
+  counts against the talker's own daily budget.
+- Shared threads and the audience rule (slice S4): a member with `talk` opens a shared thread
+  (`visibility: shared`); the owner and every member with `see_shared` read it, a member with
+  `talk` alone only the ones they opened. A reader sees a thread from their own `history_from`
+  (the newest message when they were shared in; a new share starts a new one). A turn in a shared
+  thread reaches only what the bot's list, the asker, the owner and every person who reads that
+  thread may reach, computed from fresh rights on every call: a project one reader cannot read is
+  not offered, named, read or written there, and a model that names it gets the fixed sentence
+  "I can't use that in a shared thread." If a reader who cannot read what the turn used joins
+  while it runs, the stored reply is a fixed sentence instead of the model's text. The model reads
+  only the bot-level notes (never a member's own notes or learned items) and only messages every
+  reader may read. Messages carry their author; a task filed from a shared thread reports with
+  the fixed text "A task filed here changed." and a block each reader hydrates with their own
+  rights; a forwarded post's answer is not copied into a shared thread. A request id another
+  member used in the thread is theirs (`409 conflict`); a reader without `talk` gets `403
+  read_only`; only the asker stops their own turn.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 
