@@ -27,9 +27,12 @@ next page shows the person's name and address, the whole-account effect,
 workspace deletions or hand-overs, the configured grace period, an email typing
 confirmation and visible Cancel. Both forms require the same browser cookie;
 the second additionally requires that exact freshly created session. POSTs
-require an exact same-origin Origin and reject bearer authentication. CSP blocks
-scripts, other form destinations and embedding. Cancel consumes the form and
-mints nothing.
+require an exact same-origin Origin and reject bearer authentication. The pages
+use `strict-origin` so actual browser form POSTs keep that Origin while referring
+only the origin, without a path or query. CSP blocks scripts and embedding and
+permits form navigation only to this origin and the validated native callback
+scheme, matching the existing native authorization policy. Cancel consumes the
+form and mints nothing.
 
 Confirmation must occur less than 300 seconds after the credential check.
 Changes to membership roles, workspace set or grace period require starting

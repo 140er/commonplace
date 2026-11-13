@@ -869,3 +869,97 @@ def test_revoking_a_deletion_proof_never_changes_event_cursor_state(phone, monke
         )
         == before
     )
+
+
+def test_browser_form_policy_preserves_origin_and_exact_native_delivery(phone):
+    _, app = consent(phone)
+    path, request = start(phone, app)
+    status, headers, _ = phone.request("GET", path)
+    assert status == 200
+    assert headers["Referrer-Policy"] == "strict-origin"
+    assert "form-action 'self' cmmn:" in headers["Content-Security-Policy"]
+    status, headers, html = check(phone, path, field(phone.request("GET", path)[2]))
+    assert status == 200, html
+    assert headers["Referrer-Policy"] == "strict-origin"
+    assert "form-action 'self' cmmn:" in headers["Content-Security-Policy"]
+
+
+@pytest.mark.parametrize("decision", ["confirm", "cancel"])
+def test_browser_submits_real_origin_and_allows_native_callback(phone, decision, pytestconfig):
+    browser_api = pytest.importorskip(
+        "playwright.sync_api", reason="optional browser regression dependency"
+    )
+    assert not pytestconfig.getoption("showlocals"), "Use --no-showlocals"
+    pair, app = consent(phone)
+    path = phone.authorize_path(
+        phone.cid,
+        redirect_uri=CALLBACK,
+        scope="memory:read",
+        purpose="account_deletion",
+        connection_id=app.connection_id,
+    )
+    host, port = phone.hub.server.server_address
+    origin = f"http://{host}:{port}"
+    credential = sessions.create_login_link(phone.hub.db, app.user_email, app.workspace_id)
+    violations, navigations = [], []
+    with browser_api.sync_playwright() as manager:
+        try:
+            browser = manager.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
+        except browser_api.Error as exc:
+            if "Executable doesn't exist" in str(exc):
+                pytest.skip("optional browser binary unavailable")
+            raise
+        try:
+            context = browser.new_context()
+            context.add_cookies(
+                [{"name": sessions.COOKIE, "value": phone.cookies[sessions.COOKIE], "url": origin}]
+            )
+            context.expose_function(
+                "recordViolation", lambda directive: violations.append(directive)
+            )
+            context.add_init_script(
+                "document.addEventListener('securitypolicyviolation', e => window.recordViolation(e.effectiveDirective))"
+            )
+            page = context.new_page()
+            devtools = context.new_cdp_session(page)
+            devtools.send("Page.enable")
+            devtools.on(
+                "Page.frameRequestedNavigation", lambda event: navigations.append(event["url"])
+            )
+            page.goto(origin + path)
+            page.get_by_label("Sign-in token").fill(credential)
+            with page.expect_response(
+                lambda response: (
+                    response.request.method == "POST" and "/oauth/authorize" in response.url
+                )
+            ) as checked:
+                page.get_by_role("button", name="Sign in again", exact=True).click()
+            assert checked.value.status == 200
+            assert checked.value.request.headers.get("origin") == origin
+            page.get_by_role("heading", name="Confirm account deletion").wait_for()
+            if decision == "confirm":
+                page.get_by_label("Type your account email to confirm").fill(app.user_email)
+            with page.expect_response(
+                lambda response: (
+                    response.request.method == "POST" and "/oauth/authorize" in response.url
+                )
+            ) as confirmed:
+                page.get_by_role(
+                    "button",
+                    name="Confirm account deletion" if decision == "confirm" else "Cancel",
+                    exact=True,
+                ).click()
+            assert confirmed.value.status == 303
+            location = confirmed.value.headers["location"]
+            values = parse_qs(urlsplit(location).query)
+            page.evaluate("document.readyState")
+            assert not violations
+            assert any(url.startswith(CALLBACK + "?") for url in navigations)
+            if decision == "confirm":
+                token = values["deletion_token"][0]
+                assert use(phone, pair, token)[0] == 200
+            else:
+                assert values["error"] == ["access_denied"]
+                assert rows(phone, "SELECT * FROM account_delete_tokens") == []
+        finally:
+            browser.close()

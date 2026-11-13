@@ -37,7 +37,9 @@ a.provider+form{margin-top:24px}a.provider:focus-visible{outline:2px solid #e8e9
 """
 
 
-def _page(h, content: str, *, status=200, headers=(), form_origin=None) -> None:
+def _page(
+    h, content: str, *, status=200, headers=(), form_origin=None, referrer_policy="no-referrer"
+) -> None:
     style_hash = base64.b64encode(hashlib.sha256(_CSS.encode()).digest()).decode("ascii")
     form_action = "'self'" + (" " + form_origin if form_origin else "")
     csp = (
@@ -54,6 +56,7 @@ def _page(h, content: str, *, status=200, headers=(), form_origin=None) -> None:
         status,
         html.encode("utf-8"),
         media="text/html; charset=utf-8",
+        referrer_policy=referrer_policy,
         headers=(("Content-Security-Policy", csp), ("X-Frame-Options", "DENY"), *headers),
     )
 

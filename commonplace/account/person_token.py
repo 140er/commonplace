@@ -213,7 +213,7 @@ def _parameters(db, values):
 
 def authorize(gateway, h, parameters, client):
     """A link can only open a fresh credential form; it cannot confirm or mint."""
-    from commonplace.oauth import _page
+    from commonplace.oauth import _page, _redirect_origin
 
     db, row = gateway.db, None
     try:
@@ -266,6 +266,8 @@ def authorize(gateway, h, parameters, client):
             f'<form method="post"><input type="hidden" name="request" value="{request}">'
             '<button name="decision" value="cancel">Cancel</button></form>',
             headers=(("Set-Cookie", cookie),),
+            form_origin=_redirect_origin(person_actions.NATIVE_REDIRECT),
+            referrer_policy="strict-origin",
         )
     except OAuthError as exc:
         _audit(db, "mint", "deny", row, exc.error)
@@ -273,7 +275,7 @@ def authorize(gateway, h, parameters, client):
 
 
 def _confirm_page(gateway, h, row, person, request, session):
-    from commonplace.oauth import _page
+    from commonplace.oauth import _page, _redirect_origin
 
     db = gateway.db
     user = db.user(person.user_id)
@@ -306,6 +308,8 @@ def _confirm_page(gateway, h, row, person, request, session):
         f'<form method="post"><input type="hidden" name="request" value="{request}">'
         '<button name="decision" value="cancel">Cancel</button></form>',
         headers=sessions.signin_headers(session, gateway.secure_cookies),
+        form_origin=_redirect_origin(person_actions.NATIVE_REDIRECT),
+        referrer_policy="strict-origin",
     )
 
 
