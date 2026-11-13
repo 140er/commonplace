@@ -140,8 +140,9 @@ def update(gateway, principal, install_id, body: dict) -> dict:
     try:
         label = _text(body["label"], "label", LABEL_MAX) if "label" in body else None
         cap = _cap(body["daily_cap"]) if "daily_cap" in body else None
-        if "enabled" in body and type(body["enabled"]) is not bool:
-            raise Refused("invalid")
+        for flag in ("enabled", "consequential_taps"):
+            if flag in body and type(body[flag]) is not bool:
+                raise Refused("invalid")
         sealed = None
         if "secrets" in body:
             platform_adapter = adapter.get(current["platform"])
@@ -152,11 +153,14 @@ def update(gateway, principal, install_id, body: dict) -> dict:
     except Refused as refused:
         audit(gateway, principal, ws, "update", install_id, "refused", refused.code)
         raise
-    view = bridge.update(install_id, label=label, daily_cap=cap, sealed=sealed)
+    taps = body.get("consequential_taps")
+    view = bridge.update(install_id, label=label, daily_cap=cap, sealed=sealed, taps=taps)
     if sealed is not None:
         audit(gateway, principal, ws, "rotate", install_id)
     if label is not None or cap is not None:
         audit(gateway, principal, ws, "update", install_id)
+    if taps is not None:
+        audit(gateway, principal, ws, "taps_on" if taps else "taps_off", install_id)
     if "enabled" in body:
         try:
             view = bridge.set_enabled(install_id, body["enabled"])
