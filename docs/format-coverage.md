@@ -3,7 +3,7 @@
 **Shipped in mempalace 3.3.6 (PR #1555).**
 **Module:** `mempalace/format_miner.py`
 **CLI entry:** `mempalace/cli.py` — `cmd_mine` dispatcher routes `--mode extract` here.
-**Tests:** `tests/test_format_miner.py` — covers all 14 fringe cases plus orchestrator behavior. See the file for the current test inventory (the count drifts as polish PRs land).
+**Tests:** `tests/test_format_miner.py` — covers all 14 fringe cases plus Coworker behavior. See the file for the current test inventory (the count drifts as polish PRs land).
 
 ---
 

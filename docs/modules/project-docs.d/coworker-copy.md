@@ -1,0 +1,2 @@
+- **Promises:** User guides and agent instruction snippets call the role Coworker while preserving protocol examples, config kinds, command names and existing URL anchors. Internal architecture and historical decision records retain their original terminology.
+- **Tests:** `tests/test_coworker_docs_copy.py` rejects old role wording in user prose and instruction examples with explicit exceptions for protocol identifiers and internal documentation.

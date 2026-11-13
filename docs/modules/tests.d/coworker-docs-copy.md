@@ -1,0 +1,2 @@
+- **Owns:** `tests/test_coworker_docs_copy.py` guards user-facing documentation independently of code and UI guards.
+- **Promises:** Natural-language instruction examples are scanned; stable schema literals and reference destinations remain valid.

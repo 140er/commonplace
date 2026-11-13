@@ -1,6 +1,6 @@
-# Orchestrator setup as code
+# Coworker setup as code
 
-A board can carry one owner-approved orchestrator config: the roles that work
+A board can carry one owner-approved Coworker config: the roles that work
 on it, their prompts, workflows, topics and models, the agent limit, the runner
 settings and the `todo` trigger. Commonplace's own runner (see
 [runner.md](runner.md)) launches the configured runner role with the pinned
@@ -99,7 +99,7 @@ writes refuse every area-bearing config, including experiment channels, with
 versions, cursors, leases, jobs and events. No area seats, tokens, subscriptions
 or runtime are created; activation belongs to a later slice.
 
-Model routing has four slots, `main` (orchestrator), `worker` (builder),
+Model routing has four slots, `main` (Coworker), `worker` (builder),
 `reviewer` and `gate`, set per project by the owner
 (`PUT /api/projects/<board>/models`) from the workspace's model list. A role the
 accepted config uses that has no model raises one owner item in Needs me; a start
@@ -119,10 +119,10 @@ and `model_reason` (`failed_rounds:<n>` or `label:<name>`), and the start
 reply carries `model_reason`. Without a rule nothing changes, and a role with no
 default model stays unmapped (`model_unresolved`) even when a rule exists. Which
 model escalation picked is a decision, not part of the request: a keyed retry
-(`request_key` or an orchestrator `step_key`) replays its stored job whether it ran
+(`request_key` or a Coworker `step_key`) replays its stored job whether it ran
 on the default or the escalation model and whether or not the rule still applies.
 The job records the digest of its request before escalation (default model
-included, `runner_jobs.request_base_hash`; an orchestrator step reaches it through
+included, `runner_jobs.request_base_hash`; a Coworker step reaches it through
 its job), and a retry replays only when its own pre-escalation digest equals it:
 a changed default model, config or other argument is a conflict
 (`request_conflict` / `step_conflict`) for an escalated job as for any other. The rule is
@@ -274,7 +274,7 @@ Inside it, in this order:
    with 4% of the budget used. The measured set is not exhaustive. Beyond the
    budget it
    refuses with `path_contract_too_large` (details `card`, `paths`,
-   `other_paths`, `budget`). `card_start` on a board without an orchestrator
+   `other_paths`, `budget`). `card_start` on a board without a Coworker
    config runs the same check before the job is inserted. Only runner starts
    and edits that add globs to a running card are checked: a card a connection
    takes by hand is not (and one `task_update` that adds globs and claims the
@@ -286,7 +286,7 @@ Inside it, in this order:
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with
-   `at_cap` when workspace orchestration is off, or `project_limit` when on.
+   `at_cap` when workspace Coworker management is off, or `project_limit` when on.
    `max_agents` accepts 1 to 100. The effective number of concurrent starts is
    also bounded by the machines: `max_in_flight`, one agent per project, and
    the runner's memory guard (see [runner.md](runner.md)).
@@ -305,7 +305,7 @@ checks and resolution. One active job per card blocks concurrent starts. After
 24 hours a non-person start may become eligible on a todo, unassigned card even
 if the earlier thread still runs. Capacity counts cards rather than threads;
 started jobs age out after one hour unless the doing/connection slot still
-counts (with orchestration on, the recent-start hold covers todo/doing cards
+counts (with Coworker management on, the recent-start hold covers todo/doing cards
 and ordinary connection slots also count). Neither rule proves completion.
 Triggers use independent `trig:<event>` keys, and owner `card_start` ignores
 step keys and the non-person 24-hour rule. A pending, unswept todo event can
@@ -355,7 +355,7 @@ automatic per-card starts or split retries are created. A config without
   lists the board under `orchestrator_failing` until a sweep succeeds. Only
   the exception type is stored.
 - **Transient refusals are retried.** On a board without workspace
-  orchestration, a todo start refused as `at_cap`, `project_limit`, `busy`,
+  Coworker management, a todo start refused as `at_cap`, `project_limit`, `busy`,
   `settings_unavailable`, `config_changed`, `worker_unavailable` or
   `started_recently` is recorded as a miss, advances the cursor as before, and
   is started again by the sweep after 1, 5, 15, 30 and 60 minutes (same request
@@ -364,7 +364,7 @@ automatic per-card starts or split retries are created. A config without
   with a `retry_exhausted` miss. Any other refusal (a card that left `todo`,
   grants, the actor, an unresolved model, a pending restore) is final and not
   retried. The attempts live in `orch_start_retries` (`pending`, `started`,
-  `refused`, `exhausted`). With orchestration on, root cards keep the split
+  `refused`, `exhausted`). With Coworker management on, root cards keep the split
   reconciliation (three attempts at 10, 30 and 90 minutes). A card left in
   `exhausted` or `refused` stays in the checkpoint's unstarted list; move it to
   `todo` again to start it.
@@ -374,7 +374,7 @@ automatic per-card starts or split retries are created. A config without
 The machine runner owns one session record per board in `runner_sessions`,
 separate from `runner_jobs` and from role leases. Its regular polling pass
 watches board state without a webhook or `card.todo` trigger. It launches the
-sole parentless orchestrator role into the accepted runner's machine/project,
+sole parentless Coworker role into the accepted runner's machine/project,
 with that role's topic, prompt, workflow and resolved model. It retains the
 returned thread ID and sends continuations to that same thread.
 
@@ -393,7 +393,7 @@ blocker details; non-owner projections omit those fields. An absent
 accepted `[runner]` is `no_host`, with reason `no host attached`; a `[runner]`
 without `session = true` is `no_host` with reason `sessions not enabled`. No
 machine is chosen implicitly. `unavailable` reports withdrawn grants or changed config,
-binding or model instead of claiming the orchestrator is running.
+binding or model instead of claiming the Coworker is running.
 
 Signed-in owners can POST `{}` to
 `/api/projects/<board>/orchestrator/stop` or `/resume`. Stop persists across
@@ -436,7 +436,9 @@ credential scope remain follow-up work. The runner must already be running;
 this feature does not enroll machines, activate a service, change credentials
 or grant access. Session commands do not reserve per-card worker slots.
 
-## Durable orchestrator
+<a id="durable-orchestrator"></a>
+
+## Durable Coworker
 
 - **Lease.** One per `(board, role)`. `orch_resume` claims it when none is
   held, after release or expiry, or when the owner forces it. The token is
@@ -589,7 +591,7 @@ different file: the quick commands a repository runs before a push.
 ## Restore
 
 A restore made with `commonplace restore` leaves a marker. The first open of
-the orchestrator store by a surface, the CLI, a lease call or a start turns it
+the Coworker store by a surface, the CLI, a lease call or a start turns it
 into a flag in `runner.sqlite3` with a new incarnation, and every lease is
 dropped. The trigger sweep never converts the marker; it skips the workspace
 while one is pending. While the flag is set, lease claims, config-driven starts and the

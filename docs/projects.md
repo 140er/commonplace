@@ -1,14 +1,17 @@
-# Projects and orchestrators
+# Projects and Coworkers
 
-Owner [Admin overview](admin.md) reads existing project configuration without creating seats. It shows effective caps and actual usage under the current orchestration counting mode.
+Owner [Admin overview](admin.md) reads existing project configuration without creating seats. It shows effective caps and actual usage under the current Coworker management counting mode.
 
-Every project (board) gets one main orchestrator seat automatically, normally
-named `orchestrator:<project>`. Older projects get their seat when first viewed.
-An existing coordinator stays the main orchestrator until an owner replaces it.
+A Coworker works under a Bot, owns its code and uses subagents.
+
+Every project (board) gets one main Coworker seat automatically, normally
+named `Coworker:<project>` for new seats. Existing saved names stay unchanged.
+Older projects without a seat get one when first viewed.
+An existing coordinator stays the main Coworker until an owner replaces it.
 
 ## Connect an agent
 
-Connect creates a token for the project's automatic orchestrator seat; an agent
+Connect creates a token for the project's automatic Coworker seat; an agent
 is attached only once it uses that token. A signed-in workspace owner uses
 **Connect agent** in the chat header or project settings, then follows the
 short checklist: copy the setup for their agent app (Claude Code, Codex, Cursor
@@ -23,7 +26,7 @@ this is a memory-access boundary, not a guarantee of access to only one board.
 For a project using the shared wing, Connect requires explicit confirmation
 that the agent will have read and write access to all shared memory.
 
-Connect conflicts stay visible in the Orchestrator section of project settings.
+Connect conflicts stay visible in the Coworker section of project settings.
 For shared memory, the status names the conflict and asks the owner to retry,
 choosing an own memory section or explicit access to all shared memory. Cancelling
 or dismissing the choice dialog leaves that guidance visible and changes nothing.
@@ -44,22 +47,22 @@ Connect additionally recommends `card.moved` so worker completions and other car
 moves can wake the seat. Connect and reconnect neither register nor modify
 webhooks; existing users must explicitly update their subscriptions for card moves.
 
-The header shows the main orchestrator and its connection state. “Token
+The header shows the main Coworker and its connection state. “Token
 created · no agent has used it yet” means the credentials exist but no agent has
 used them; it reads “connected” only after an agent has. Private status stays private. An unconnected seat leaves release and
 supervision with the existing people; a seat takes those duties only after its
 agent has used the connection within the last 24 hours.
 
-Project settings show the orchestrator and enable **Connect agent** as soon as
+Project settings show the Coworker and enable **Connect agent** as soon as
 the project loads. Chat settings and the agent list load separately with visible
 loading states; if either initial read fails or exceeds ten seconds, its section
-shows an error while the orchestrator card remains usable. The connection list's
+shows an error while the Coworker card remains usable. The connection list's
 optional memory-section lookup waits at most one second, then returns connections
 with an empty section list if memory is slow or unavailable.
 
 ## Model choices
 
-Owners pick the model for the orchestrator, builder, reviewer and gate roles in project
+Owners pick the model for the Coworker, builder, reviewer and gate roles in project
 settings, under Agent models. Each role is a list of the models this workspace
 can use, with "Runner default" to leave it unset. The model already stored for a
 role always stays in the list and is shown as stored. A model that is not in the
@@ -84,7 +87,7 @@ Model resolution uses the project's choice, then the workspace default for
 that role, then the runner's own default. Clearing a project choice restores
 that fallback. No API key is stored with these labels.
 
-When a board's accepted orchestrator config uses a model role that resolves to
+When a board's accepted Coworker config uses a model role that resolves to
 no model, the owner gets one Needs me item per board and role, naming the starts that cannot run. Its button
 opens that role's picker, and the item clears once the role is set. A role in the
 board config with no `model_role` gets an item that says so, without a button. A card start
@@ -130,7 +133,7 @@ whether they are runner-managed. It does not revoke those connections. Operators
 must re-point them. A new seat cannot read old shared card links. Agents may get
 one rules refresh on their next checked write after visibility changes.
 
-A coordinator without access is cleared. Displaced orchestrator-seat tokens are
+A coordinator without access is cleared. Displaced Coworker-seat tokens are
 revoked, rather than rotated; reconnect creates a fresh token, often with a name
 suffix because revoked names stay reserved. Runner-linked seats are reported in
 `runner_linked`: their tokens remain active with their old policy until managed
@@ -144,12 +147,14 @@ wings. A seat minted by Connect lacks access to the target wing and cannot do
 this itself. Restricted connections are refused.
 The operator connects the project's seat afterwards.
 
-## Opt-in agent orchestration
+<a id="opt-in-agent-Coworker management"></a>
+
+## Opt-in Coworker management
 
 Any signed-in workspace person may read `GET /api/settings/orchestration`; only
 owners may change it with PUT.
 
-Workspace owners can enable **Orchestrators manage agent starts** in Settings
+Workspace owners can enable **Coworkers manage agent starts** in Settings
 (`GET`/`PUT /api/settings/orchestration`, body `{"enabled":true}`). It defaults
 to off. With it on, only the board coordinator's active PAT or a signed-in owner
 can request starts on boards without runner config. Configured boards keep their
@@ -173,9 +178,9 @@ starts, inspect status, cancel its own starts, read permitted project data and
 repository rules, release/approve and annotate cards, and stamp trusted submissions.
 It does not allow board creation or handoff launch.
 
-A trusted seat can also hold the orchestrator lease of its own board and role
+A trusted seat can also hold the Coworker lease of its own board and role
 (`orch_resume`, `orch_heartbeat`, the journal and gates) with no further setup:
-no orchestrator config and no server-side step. Starts on such a board still use
+no Coworker config and no server-side step. Starts on such a board still use
 `card_start`; `orch_card_start` needs an accepted config with `[runner]`. Before
 trust the seat is refused `not_allowed` with a pointer to Project settings; it is
 never allowed on another project's board.
@@ -184,7 +189,7 @@ Invalid grants return 400,
 unknown machines 404, and revoked/disabled machines or conflicting authority 409.
 A database lock timeout returns 409 `busy`. The whole change rolls back. Only signed-in workspace owners may use this route.
 
-**Coordinator status.** With orchestration on, Project settings > Orchestrator shows
+**Coordinator status.** With Coworker management on, Project settings > Coworker shows
 who holds the project's coordinator lease (role `main`), when it runs out, the accepted
 config version and how many steps are open, in doubt or still unstarted Todo cards. It
 reads `GET /api/orch/boards/<slug>/roles/main/checkpoint`, which claims and renews
@@ -197,7 +202,7 @@ does not say since when the lease is held or when it was last renewed, so only t
 expiry time is shown.
 
 `{"trusted":false}` demotes the seat and removes only its requester id from
-machines, preserving other entries even when stale. Switching orchestration off
+machines, preserving other entries even when stale. Switching Coworker management off
 atomically demotes all project seats and removes their requester ids. Other
 requesters retain the existing behavior. Card/board and coordinator checks run
 before the start transaction. Requester and current machine authority are then
@@ -206,7 +211,7 @@ control check prevents the start.
 A settings read failure refuses admission with `settings_unavailable`; an absent
 table means off.
 
-With orchestration on, Connect suggests `space_message,card.created` subscriptions.
+With Coworker management on, Connect suggests `space_message,card.created` subscriptions.
 The recommendation also includes `card.moved`; pass the three events as the array
 `["space_message", "card.moved", "card.created"]`.
 With an accepted live `[runner]` that sets `session = true`, the machine runner
@@ -216,7 +221,7 @@ available. See [persistent board sessions](orchestrator.md#persistent-board-sess
 
 ## Opt-in card inbox and splitting
 
-The workspace orchestration switch defaults off. When enabled, the main board
+The workspace Coworker management switch defaults off. When enabled, the main board
 coordinator and signed-in workspace owners can call `orchestrator_inbox(board)`
 or `GET /api/projects/<board>/orchestrator/inbox`. It returns open top-level
 cards without a split marker, excluding coordinator-created roots and children;
@@ -233,7 +238,7 @@ Finish with `card_split_done(task=N, state="split"|"kept")`, or
 `POST /api/projects/<board>/orchestrator/split` with `{"task":N,"state":"kept"}`.
 The first marker wins and is recorded in card history.
 
-On a runner-configured board, enabled orchestration changes root todo triggers
+On a runner-configured board, enabled Coworker management changes root todo triggers
 to role `main` (or to the `[runner]` role when the config has no role named
 `main`), with an inbox snapshot and instructions in the launch message.
 Split children never trigger that start. The existing event deduplication,
