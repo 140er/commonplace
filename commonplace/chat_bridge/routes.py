@@ -1,5 +1,6 @@
 """``/api/bridge``: the chat-platform bridge. Install management is for the signed-in workspace
-owner; the intake routes are public but answer 404 until a later slice gives them an adapter.
+owner; the intake routes are public (the platform's signature is the credential) and live in
+:mod:`intake`.
 
     GET    /api/bridge/installs             {installs, platforms}
     POST   /api/bridge/installs             {platform, ext_team, label, secrets, daily_cap?} -> 201
@@ -11,9 +12,12 @@ owner; the intake routes are public but answer 404 until a later slice gives the
     POST   /api/bridge/installs/<id>/link-code      {install_id, code, expires_at, expires_in}
     GET    /api/bridge/links                {links, available}: the signed-in person's own
     DELETE /api/bridge/links/<id>           {ok}: the person ends their own link
-    POST   /api/bridge/in/<id>/events       intake (404 for now)
-    POST   /api/bridge/in/<id>/interact     intake (404 for now)
-    GET    /api/bridge/in/<id>/oauth        intake (404 for now)
+    GET    /api/bridge/installs/<id>/channels            {channels}: the owner's channel mapping
+    PUT    /api/bridge/installs/<id>/channels/<channel>  {board, disclosure?, enabled?} -> {channel}
+    DELETE /api/bridge/installs/<id>/channels/<channel>  {ok}
+    POST   /api/bridge/in/<id>/events       intake: verify, filter, journal, identity, turn
+    POST   /api/bridge/in/<id>/interact     intake: verified, then nothing (taps come later)
+    GET    /api/bridge/in/<id>/oauth        404 until an adapter provides it
 
 Anything else under ``/api/bridge/`` is 404, and so is every owner route for a caller who is not
 the signed-in owner (agents, tokens, members): the feature does not exist for them. The person
@@ -24,7 +28,7 @@ never creates ``chat_bridge.sqlite3``; only creating an install does. No respons
 install's credentials, which are write-only.
 """
 
-from commonplace.chat_bridge import adapter, links, service, store
+from commonplace.chat_bridge import adapter, intake, links, service, store
 from commonplace.http_util import path_parts, read_json, send_json
 
 PREFIX = "/api/bridge/"
@@ -32,6 +36,8 @@ INSTALLS = "/api/bridge/installs"
 LINKS = "/api/bridge/links"
 CREATE_KEYS = {"platform", "ext_team", "label", "secrets", "daily_cap"}
 PATCH_KEYS = {"enabled", "label", "daily_cap", "secrets"}
+CHANNEL_KEYS = {"board", "disclosure", "enabled"}
+INTAKE_ROUTES = ("events", "interact")
 
 
 def _error(h, status, code, text):
@@ -112,6 +118,21 @@ def _owner_unlink(gateway, h, principal, rest, body=None):
     send_json(h, 200, {"ok": True})
 
 
+def _channels(gateway, h, principal, rest, body=None):
+    bridge = store.open_bridge(gateway, principal.workspace_id)
+    bridge.get(rest[0])  # store.Missing -> 404
+    send_json(h, 200, {"channels": bridge.channels(rest[0])})
+
+
+def _channel_put(gateway, h, principal, rest, body):
+    send_json(h, 200, {"channel": service.put_channel(gateway, principal, rest[0], rest[2], body)})
+
+
+def _channel_delete(gateway, h, principal, rest, body=None):
+    service.delete_channel(gateway, principal, rest[0], rest[2])
+    send_json(h, 200, {"ok": True})
+
+
 def _link_code(gateway, h, principal, rest, body=None):
     send_json(h, 201, links.issue(gateway, principal, rest[0]))
 
@@ -134,6 +155,9 @@ INSTALL_ROUTES = {
     ("POST", 2, "test"): ("owner", _test, None),
     ("GET", 2, "links"): ("owner", _owner_links, None),
     ("DELETE", 3, "links"): ("owner", _owner_unlink, None),
+    ("GET", 2, "channels"): ("owner", _channels, None),
+    ("PUT", 3, "channels"): ("owner", _channel_put, CHANNEL_KEYS),
+    ("DELETE", 3, "channels"): ("owner", _channel_delete, None),
     ("POST", 2, "link-code"): ("person", _link_code, None),
 }
 # (method, path parts after /links) -> (who, handler, body keys or None)
@@ -172,19 +196,25 @@ def _route(gateway, h, method, prefix):
         _error(h, 429, "busy", "Busy, try again")
 
 
-def _intake(h):
-    """Public intake, and every other unknown path: until an adapter can verify a request there
-    is nothing to answer, and nothing that tells an unknown install from a known one."""
+def _intake(gateway, h, method):
+    """Public intake. ``POST /api/bridge/in/<install>/events`` and ``/interact`` go to the
+    pipeline in :mod:`intake`; every other path (the optional install callback included, until
+    an adapter provides one) and every unknown or off install is a plain 404."""
+    parts = path_parts(h, PREFIX)
+    if method == "POST" and len(parts) == 3 and parts[0] == "in" and parts[2] in INTAKE_ROUTES:
+        return intake.handle(gateway, h, parts[1], parts[2])
     h.close_connection = True
     _not_found(h)
 
 
 def install(gateway) -> None:
-    for method in ("GET", "POST", "PATCH", "DELETE"):
+    for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         gateway.add_prefix_route(
             method, INSTALLS + "/", lambda h, m=method: _route(gateway, h, m, INSTALLS)
         )
+        if method == "PUT":  # only channel mapping writes with PUT
+            continue
         gateway.add_prefix_route(
             method, LINKS + "/", lambda h, m=method: _route(gateway, h, m, LINKS)
         )
-        gateway.add_prefix_route(method, PREFIX, lambda h: _intake(h))
+        gateway.add_prefix_route(method, PREFIX, lambda h, m=method: _intake(gateway, h, m))

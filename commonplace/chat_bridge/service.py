@@ -21,6 +21,7 @@ REFUSALS = {
     "not_tested": (409, "Run a successful test before turning this on."),
     "sealing_unavailable": (503, "Secret storage is not set up on this hub."),
     "already_linked": (409, "You already have a link for this install. Remove it first."),
+    "unknown_board": (400, "That project does not exist or you cannot read it."),
     "not_found": (404, "Not found"),
 }
 
@@ -193,6 +194,61 @@ def test(gateway, principal, install_id) -> dict:
         bridge.mark_tested(install_id)
     audit(gateway, principal, ws, "test", install_id, "ok" if result.ok else "refused", result.code)
     return {"ok": result.ok, "code": result.code, "text": adapter.TEST_TEXT[result.code]}
+
+
+DISCLOSURES = ("titles", "full")
+
+
+def put_channel(gateway, principal, install_id, ext_channel, body: dict) -> dict:
+    """Map a channel to one project (the owner's explicit act; ``titles`` unless the owner picks
+    ``full``). A channel's replies are read by everyone in it, so the owner must be able to read
+    the project too."""
+    from commonplace.boards.service import BoardService
+    from commonplace.extensions import ToolContext
+
+    ws = principal.workspace_id
+    bridge = store.open_bridge(gateway, ws)
+    bridge.get(install_id)  # store.Missing -> 404
+    try:
+        if not TEAM.fullmatch(ext_channel):
+            raise Refused("invalid")
+        board = body.get("board")
+        disclosure = body.get("disclosure", "titles")
+        enabled = body.get("enabled", True)
+        if not isinstance(board, str) or disclosure not in DISCLOSURES or type(enabled) is not bool:
+            raise Refused("invalid")
+        boards = BoardService(ToolContext(principal=principal, gateway=gateway)).board_list()
+        if board not in {b["slug"] for b in boards}:
+            raise Refused("unknown_board")
+    except Refused as refused:
+        audit(gateway, principal, ws, "map_channel", install_id, "refused", refused.code)
+        raise
+    view = bridge.put_channel(
+        install_id, ext_channel, board, disclosure, enabled, principal.user_id
+    )
+    audit(gateway, principal, ws, "map_channel", install_id)
+    return view
+
+
+def delete_channel(gateway, principal, install_id, ext_channel) -> None:
+    ws = principal.workspace_id
+    if not store.open_bridge(gateway, ws).delete_channel(install_id, ext_channel):
+        raise store.Missing()
+    audit(gateway, principal, ws, "unmap_channel", install_id)
+
+
+def install_ref(gateway, workspace_id, install_id):
+    """The install with its credentials unsealed in memory, for the adapter; None when the
+    install is gone or no sealing key can be served. Never logged, never returned by a route."""
+    bridge = store.open_bridge(gateway, workspace_id)
+    try:
+        current = bridge.get(install_id)
+        secrets = sealing.open_blob(
+            _key(gateway, workspace_id), install_id, bridge.secrets(install_id)
+        )
+    except (store.Missing, sealing.Unavailable, Refused):
+        return None
+    return adapter.InstallRef(install_id, current["platform"], current["ext_team"], secrets)
 
 
 def kill_switch(db, supervisor, workspace_ids, actor_note="cli") -> list:

@@ -95,8 +95,20 @@ def code_of(state) -> str:
 class TurnRun:
     """A running turn. Create, :meth:`admit` through the registry, then :meth:`start`."""
 
-    def __init__(self, gateway, principal, bot, request_id, started=None, thread_id=None):
+    def __init__(
+        self,
+        gateway,
+        principal,
+        bot,
+        request_id,
+        started=None,
+        thread_id=None,
+        surface="web",
+        disclosure="full",
+    ):
         self.gateway = gateway
+        self.surface = surface  # "web", or the bridge's "dm" / "channel" (narrower)
+        self.disclosure = disclosure
         self.thread_id = thread_id  # None: the owner's original thread
         self.key = journal_key(thread_id, request_id)
         self.workspace_id = principal.workspace_id
@@ -162,7 +174,12 @@ class TurnRun:
             limits.REGISTRY.release(self)
             self.finished.set()
             self.queue.put(None)
-        if not outcome and self.reply is not None and self.reply["state"] == "ok":
+        if (
+            not outcome
+            and self.surface != "channel"
+            and self.reply is not None
+            and self.reply["state"] == "ok"
+        ):
             extract.after_turn(self)  # a finished new turn only; replays never get here
 
     def _live(self) -> bool:
@@ -199,6 +216,8 @@ class TurnRun:
             self.message,
             self.request_id,
             thread_id=self.thread_id,
+            surface=self.surface,
+            disclosure=self.disclosure,
         )
         self._turn_state = turn
         try:
@@ -211,12 +230,21 @@ class TurnRun:
                 turn.projects = list(reach.projects if shared_thread is not None else reach.asker)
         except tools.Gone:
             return "interrupted"
-        history = bots.messages(
-            self.bot_id, self.user_id, before=self.message["id"], thread_id=self.thread_id
+        channel = self.surface == "channel"  # everyone there reads the reply: no private context
+        history = (
+            []
+            if channel
+            else bots.messages(
+                self.bot_id, self.user_id, before=self.message["id"], thread_id=self.thread_id
+            )
         )
         if shared_thread is not None:  # nothing a reader joined too late to see
             history = [m for m in history if m["id"] > shared_thread["floor"]]
-        memory = bots.memory_for_turn(self.bot_id, self.user_id, shared_thread is not None)
+        memory = (
+            []
+            if channel
+            else bots.memory_for_turn(self.bot_id, self.user_id, shared_thread is not None)
+        )
         try:
             ctx = context.build(turn, principal, service, history, memory)
         except tools.Gone:

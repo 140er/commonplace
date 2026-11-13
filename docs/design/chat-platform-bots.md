@@ -1,7 +1,7 @@
 # Chat-platform bots
 
 Card #455 (one card for chat-platform presence; builds on the Bots layer, `docs/bots.md`).
-Status: design note; slices 1 (foundation) and 2 (identity) are built, the rest is not. Slack is the first platform; Teams and Discord follow
+Status: design note; slices 1 (foundation), 2 (identity) and 3 (intake and turns) are built, the rest is not. Slack is the first platform; Teams and Discord follow
 through the same adapter interface.
 
 ## Problem and goal
@@ -357,6 +357,18 @@ finish. Only text that is entirely a code (12 characters, spacing, dashes and ma
 counts as a presentation. The person route `GET /api/bridge/links` also lists the enabled
 installs (id, platform, label) so a member can pick one; `confirm_ok` is stored but its route comes
 with slice 4.
+
+Slice 3 assumptions: the Bots request id is `bridge-` plus 32 hex characters of a hash of install and
+event (the Bots layer allows no colon, so not `"bridge:" + ...`). The `chat` surface of the
+confirmation section is split in two for now: a direct message (`dm`) is the person's web turn
+without routine writes, a mention in a mapped channel (`channel`) is read-only for the mapped
+project, with `titles` meaning `project_status` and `list_work` only; routine writes become taps in
+slice 4. Channel mapping routes (owner) ship here because the channel policy needs them; whether a
+channel is shared is the adapter's call at intake, so the owner is not told at mapping time. An
+outbox row that retries out of attempts (5) ends `failed` (a state the note's list lacks); an
+exception from an adapter's `post` is treated as ambiguous and settled like a crash between send and
+record. The unlinked sentence and the other fixed sentences live in `outbox.FIXED`. `/interact` and
+`/oauth` stay without function until slices 4 and 5.
 
 Six slices, one PR each, in order. The settings screen is designed by the UI owner on top of the
 owner and person routes; no slice touches `app.js`, `rail.js` or shell files, so the node-harness
