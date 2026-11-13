@@ -128,7 +128,37 @@
 :root[data-ui="deck"] .shell[data-view="board"] #content { padding: 0; gap: 0; }
 /* Waiting status describes project capacity; amber stays reserved for personal asks. */
 :root[data-ui="deck"] .workbench-board .why-strip { background: none; color: var(--text-2); padding: 0; }
+
+/* Coworker config review keeps its evidence and decisions inside each version. */
+:root[data-ui="deck"] .workbench-project [data-config-versions] { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 12px; min-width: 0; }
+:root[data-ui="deck"] .workbench-project [data-config-version] { min-width: 0; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workbench-project [data-config-label] { display: block; color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.5; }
+:root[data-ui="deck"] .workbench-project [data-config-state] { color: var(--text-2); }
+:root[data-ui="deck"] .workbench-project [data-config-state="proposed"] { color: var(--wait); }
+:root[data-ui="deck"] .workbench-project [data-config-people] { display: block; color: var(--text-2); font-size: 13px; font-weight: 400; line-height: 1.5; }
+:root[data-ui="deck"] .workbench-project [data-config-diff] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--well);
+  padding: 12px;
+  border-radius: 12px;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+:root[data-ui="deck"] .workbench-project [data-config-accept] { background: var(--text); color: var(--bg); border-radius: 999px; }
+:root[data-ui="deck"] .workbench-project [data-config-version] > .callout { background: var(--well); border: 0; border-radius: 12px; padding: 12px; }
+:root[data-ui="deck"] .workbench-project [data-config-version] > .callout p { margin: 0; }
+:root[data-ui="deck"] .workbench-project [data-config-version] > .callout .acts { margin-top: 12px; }
+:root[data-ui="deck"] .workbench-project [data-config-cancel-reject] { background: var(--accent-weak); border-radius: 999px; }
+:root[data-ui="deck"] .workbench-project [data-project-review-status] { margin: 8px 0 0; font-size: 13px; color: var(--text-2); }
+:root[data-ui="deck"] .workbench-project [data-project-review-status]:empty { display: none; }
+:root[data-ui="deck"] .workbench-project [data-project-review-status] + h3 { margin-top: 24px; }
 @media (max-width: 699px) {
+  :root[data-ui="deck"] .workbench-project .settings { padding-inline: 16px; }
   :root[data-ui="deck"] .workbench-board .why-strip { margin-inline: 16px; }
   :root[data-ui="deck"] .workbench-board :is(.board-tools, .col-jump, .board, .empty-strip) { padding-inline: 16px; }
   :root[data-ui="deck"] .workbench-board .backlog { margin-inline: 16px; }
