@@ -73,13 +73,29 @@ nothing, scans no network and reads no secret: the controller's public ed25519 k
 is passed in. Prerequisites it refuses without: a root-owned non-setuid
 `/usr/bin/bwrap`, cgroup v2 with cpu/memory/pids, systemd, an sshd that Includes
 `/etc/ssh/sshd_config.d/*.conf`, does not `AcceptEnv` `SSH_USER_AUTH` and has an
-effective global `PermitUserEnvironment no` (checked with `sshd -T`; sshd does not
-allow that directive inside a Match block). The installer itself places the python
+effective global `PermitUserEnvironment no` (checked with `sshd -T` after preparing
+the runtime directory; sshd does not allow that directive inside a Match block).
+On socket-activated systems, including stock Ubuntu 24.04 and Debian 13,
+`ssh.socket` can be active while `ssh.service` is inactive and `/run/sshd` is absent.
+The installer creates `/run/sshd` with mode 0755 when needed, recording it in the
+manifest before creation, then runs `sshd -T` before provisioning the account and
+`sshd -t` after writing the drop-in. Existing runtime directories are left in place.
+If effective-config validation fails, the manifest and any newly created runtime
+directories remain available for uninstall; no target account is provisioned.
+Both install and uninstall apply the drop-in change with
+`systemctl try-reload-or-restart`: an inactive service stays inactive, and its next
+socket-activated connection reads the current configuration. Uninstall keeps an
+installer-created runtime directory through that refresh and removes it afterwards;
+an existing directory is retained. The manifest is removed after the refresh and
+all other recorded artifacts have been handled.
+
+The installer itself places the python
 sources the helper imports: it copies the `commonplace` and `mempalace` packages it
 is running from (sources only, stdlib is enough) to `/opt/commonplace-compute/lib` and
-adds a root-owned `commonplace-compute.pth` to the system python's local
-dist-packages, then checks `/usr/bin/python3 -I -B -c "import
-commonplace.compute.target_helper"` before touching sshd (`-B`: as root it must not
+checks `/usr/bin/python3 -I -B -c "import
+commonplace.compute.target_helper"` with the placed sources explicitly on the import
+path before adding a root-owned `commonplace-compute.pth` to the system python's local
+dist-packages or writing the sshd drop-in (`-B`: as root it must not
 write bytecode into the placed tree; later imports that do are tolerated).
 
 Run the installer as root with an explicit, trusted interpreter and `-I`, from a
