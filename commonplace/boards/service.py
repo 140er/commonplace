@@ -992,15 +992,17 @@ class BoardService(lifecycle.LifecycleMixin):
                     blocked_by=[
                         r[0]
                         for r in conn.execute(
-                            "SELECT blocker_id FROM task_blockers WHERE task_id=? ORDER BY blocker_id",
-                            (row["id"],),
+                            "SELECT blocker_id FROM task_blockers JOIN tasks dep ON dep.id=blocker_id "
+                            "WHERE task_id=? AND dep.board_id=? ORDER BY blocker_id",
+                            (row["id"], row["board_id"]),
                         )
                     ],
                     blocks=[
                         r[0]
                         for r in conn.execute(
-                            "SELECT task_id FROM task_blockers WHERE blocker_id=? ORDER BY task_id",
-                            (row["id"],),
+                            "SELECT task_id FROM task_blockers JOIN tasks dep ON dep.id=task_id "
+                            "WHERE blocker_id=? AND dep.board_id=? ORDER BY task_id",
+                            (row["id"], row["board_id"]),
                         )
                     ],
                     waiting=self._waiting(conn, row, usage=usage, runner=runner),
@@ -2073,6 +2075,7 @@ class BoardService(lifecycle.LifecycleMixin):
                         summary = dict.fromkeys(why.CODES, 0)
                         waiting_ids = conn.execute(
                             "SELECT id FROM tasks WHERE board_id=? AND status!='done' "
+                            "AND id NOT IN (SELECT task_id FROM card_archive WHERE archived=1) "
                             + ("AND parent_number IS NULL" if top_level else ""),
                             (board["id"],),
                         ).fetchall()
@@ -2088,6 +2091,9 @@ class BoardService(lifecycle.LifecycleMixin):
                                     summary[reason["code"]] += 1
                         result[-1]["waiting"] = summary
                         result[-1]["waiting_notes"] = why.notes(
+                            summary, used=waiting_usage.used, cap=waiting_usage.cap
+                        )
+                        result[-1]["waiting_summary"] = why.summary_line(
                             summary, used=waiting_usage.used, cap=waiting_usage.cap
                         )
             return result
@@ -3502,11 +3508,6 @@ class BoardService(lifecycle.LifecycleMixin):
                         if self.principal.person
                         else "AND coalesce(ask,'')='' AND (ask_to IS NULL OR ask_to NOT LIKE 'user:%') "
                     )
-                    + (
-                        "AND NOT EXISTS (SELECT 1 FROM task_blockers tb JOIN tasks dep ON dep.id=tb.blocker_id WHERE tb.task_id=tasks.id AND dep.status!='done') "
-                        if self._orchestration_on is True
-                        else ""
-                    )
                     + "AND NOT "
                     + snooze.snoozed_sql()
                     + " ORDER BY assignee IS NULL,priority,position,id",
@@ -3522,6 +3523,10 @@ class BoardService(lifecycle.LifecycleMixin):
                 )
                 for found in candidates:
                     candidate = task_row(conn, found["id"])
+                    if self._orchestration_on is True:
+                        reason = self._waiting(conn, candidate)
+                        if reason and reason["code"] == "blocked_by":
+                            continue
                     if self._claimable_origin(candidate) and task_types.eligible(
                         conn, candidate["task_type"], type_holder, labels=type_labels
                     ):

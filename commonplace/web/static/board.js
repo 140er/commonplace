@@ -72,6 +72,7 @@ const styles = `
 .workbench-board .seg button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
 .workbench-board .why-strip { margin: 12px 14px 0; padding: 8px 12px; border-radius: var(--r); background: var(--wait-bg); color: var(--wait); font-size: 12.5px; line-height: 17px; }
 .workbench-board .why-strip h2 { margin: 0 0 2px; font-size: 12.5px; font-weight: 650; }
+.workbench-board .why-strip p { margin: 0; overflow-wrap: anywhere; }
 .workbench-board .why-strip ul { margin: 0; padding-left: 18px; }
 .workbench-board .col-jump { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
 .workbench-board .col-jump button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: 20px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text-2); font-size: 13px; font-weight: 600; }

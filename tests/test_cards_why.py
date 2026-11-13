@@ -82,6 +82,6 @@ def test_r21_waiting_tags():
     )
     tags = json.loads(run.stdout)["tags"]
     assert (tags[0], tags[6]) == (
-        "Waiting on #7: Dependency",
-        "Waiting for a free slot: 1 of 1",
+        "Waiting for #7: Dependency",
+        "Waiting for a free slot: 1 of 1 agents busy",
     )  # RED

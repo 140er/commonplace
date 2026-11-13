@@ -33,7 +33,7 @@ def text(reason: dict) -> str:
     if code == "snoozed":
         return "Snoozed until " + reason["label"]
     if code == "blocked_by":
-        return "Waiting on " + ", ".join(
+        return "Waiting for " + ", ".join(
             f"#{b['number']}: {b['title']}" for b in reason["blockers"]
         )
     if code == "waits_on_person":
@@ -50,7 +50,7 @@ def text(reason: dict) -> str:
     if code == "no_agent":
         return "No agent is connected to this project yet"
     if code == "project_limit":
-        return f"Waiting for a free slot: {reason['used']} of {reason['cap']}"
+        return f"Waiting for a free slot: {reason['used']} of {reason['cap']} agents busy"
     if code == "checks_pending":
         return "Waiting for checks to finish"
     raise ValueError("unknown waiting reason")
@@ -110,6 +110,30 @@ def waiting(
 
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
+
+
+def summary_line(summary: dict, *, used: int, cap: int | None) -> str:
+    """One compact status line, using the same reason counts as the card views."""
+    busy = _plural(used, "agent", "agents") + " busy"
+    if cap is not None:
+        busy += f" (limit {cap})"
+    phrases = {
+        "project_limit": "for a free slot",
+        "blocked_by": "for another card",
+        "waits_on_person": "for a person",
+        "snoozed": "until its snooze ends",
+        "claim_expired": "for an update",
+        "plan_review": "for plan review",
+        "not_released": "for release",
+        "no_agent": "for an agent to connect",
+        "checks_pending": "for checks",
+    }
+    waits = [
+        f"{_plural(n, 'card waits', 'cards wait')} {phrase}"
+        for code, phrase in phrases.items()
+        if (n := summary.get(code, 0))
+    ]
+    return busy + "." + (" " + ", ".join(waits) + "." if waits else "")
 
 
 def notes(summary: dict, *, used: int | None = None, cap: int | None = None) -> list[dict]:
