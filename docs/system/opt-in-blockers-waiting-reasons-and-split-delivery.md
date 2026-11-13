@@ -19,8 +19,10 @@
 - `boards.sqlite3` adds `task_blockers` and `card_splits`. Keyed children use
   `split:<parent>:<key>` labels; key checks and inserts share the board write
   transaction. Inbox reads include open unsplit roots, excluding children and
-  coordinator-created roots. Only the coordinator PAT or a signed-in owner
-  reads or marks them. The first split/kept marker wins and appends card history.
+  coordinator-created roots. Only the board seat or owner reads or marks them;
+  the owner's authorized top-level PAT or OAuth connection is also accepted.
+  The first split/kept marker wins and appends card history. Recovery authority
+  and persisted seat bindings are detailed in `split-stuck-recovery.md`.
 - Configured todo triggers retain their prior behavior with the switch off.
   Enabled roots launch `main`; children never trigger split starts. Jobs pin
   the selected `launch_role` in an additive runner column, so later switch

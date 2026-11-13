@@ -310,8 +310,8 @@ def add(
         LocalTool(
             name=name,
             description={
-                "orchestrator_inbox": "Read unsplit root cards and their stable keyed children (coordinator or owner, opt-in only).",
-                "card_split_done": "Mark a root split or kept after creating all planned keyed children (coordinator or owner, opt-in only).",
+                "orchestrator_inbox": "Read unsplit root cards and their stable keyed children (board seat or owner, including an authorized owner connection; opt-in only).",
+                "card_split_done": "Mark a root split or kept after creating all planned keyed children and clear its split-stuck wait (board seat or owner, including an authorized owner connection; opt-in only).",
                 "board_list": "List visible boards.",
                 "board_add": "Create a board.",
                 "board_own_wing": "Give a shared board its own memory wing (owner only).",

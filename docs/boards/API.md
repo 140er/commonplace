@@ -717,12 +717,21 @@ a card the caller cannot read gets the same `other_board` answer as a missing nu
 With orchestration off these fields and the `blocked_by` schema properties are absent,
 and `blocked_by` is refused. `not_released` applies only to Todo/Backlog cards.
 
-`orchestrator_inbox(board)` and `card_split_done(task,state)` are coordinator or
-signed-in-owner tools available only with the switch on. Their REST equivalents
+`orchestrator_inbox(board)` and `card_split_done(task,state)` are board-seat or
+owner tools available only with the switch on. The owner may use a signed-in
+session or their own top-level PAT or OAuth connection with the required scope
+and board access. Worker credentials, child connections and other boards' seats
+cannot act for the owner. A persisted seat binding also authorizes its own board
+when the coordinator field is empty; an explicit replacement takes precedence.
+Marking requires board read/write access and clears only the split-stuck wait.
+Their REST equivalents
 are `GET /api/projects/<board>/orchestrator/inbox` and
 `POST /api/projects/<board>/orchestrator/split`. The POST body is exactly
 `{"task":N,"state":"split"}` or `{"task":N,"state":"kept"}`. The first marker
-wins; invalid input or a refused key inserts nothing. Database lock timeout
+wins, including a repeat from another authorized caller: it returns the original
+state, actor and time without another history entry or version change. Markers
+record who marked which root and its state in card history. Invalid input or a
+refused key inserts nothing. Database lock timeout
 returns bounded `409` with `{"error":"busy","code":"busy"}`.
 
 Split child keys remain attached to their original child when labels are edited.
