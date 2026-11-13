@@ -9,6 +9,28 @@ export function permissionText({ talk, see_shared }, name = "This person") {
   return `${name} has no access to this bot.`;
 }
 
+export function permissionSummary(permissions) {
+  return permissionText(permissions, "").trim().replace(/^can/, "Can").replace(/^has/, "Has");
+}
+
+export function accessLogTime(at, now = new Date()) {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at;
+  const day = value => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (day(date) === day(now)) return `Today ${time}`;
+  if (day(date) === day(yesterday)) return `Yesterday ${time}`;
+  return `${date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${time}`;
+}
+
+export function settingsFrameHTML(sheet, bot, content, e) {
+  const tabs = [["people", bot.mine || bot.lifecycle ? "People & permissions" : "Your access"], ["log", "Access log"]];
+  if (bot.mine || bot.lifecycle) tabs.push(["details", "Name, job & memory"], ["learning", "Learning & sharing"]);
+  const nav = `<nav class="bot-access-tabs" aria-label="Bot settings">${tabs.map(([key, label]) => button("sharing-tab", label, sheet.busy || (["details", "learning"].includes(key) && (!bot.mine || bot.frozen)), ` data-tab="${key}" aria-pressed="${(sheet.tab || "people") === key}"`)).join("")}</nav>`;
+  return `<div class="sheet bot-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><header class="bot-access-heading"><div><h2 id="sheet-h">Bot settings</h2><p>${e(bot.name)}</p></div>${button("close", "Close")}</header>${nav}${content}</div></div>`;
+}
+
 export function audienceText(bot, shares, { mine = false } = {}) {
   const owner = bot.owner?.name || "the bot’s owner";
   if (!mine) return `${owner}, you, and everyone allowed to see this bot’s shared conversations can read this conversation. People granted access later can read only new messages.`;
@@ -39,13 +61,11 @@ export function sharingHTML(sheet, bot, e) {
   const activeRows = sheet.settings?.sharing ? rows : [];
   const canManage = sheet.me?.can_admin === true;
   const action = (key, text, extra = "") => button(key, text, off, extra);
-  const tabs = [ ["people", owner || bot.lifecycle ? "People & permissions" : "Your access"], ["log", "Access log"] ];
-  const nav = `<nav class="bot-access-tabs" aria-label="Bot settings">${tabs.map(([key, text]) => button("sharing-tab", text, false, ` data-tab="${key}" aria-pressed="${sheet.tab === key}"`)).join("")}</nav>`;
   let content = "";
-  if (frozen) content += `<section class="bot-access-card" data-frozen><h3>${bot.frozen_reason === "owner_left" ? "This bot needs a new owner" : "This bot is disabled"}</h3><p>${bot.frozen_reason === "owner_left" ? "Its owner left the workspace. Conversations and access are kept, but nobody can talk to it. A workspace owner can adopt it. The former owner’s private conversation stays private." : "Nobody can talk to this bot until a workspace owner enables it again."}</p>${canManage ? action(bot.frozen_reason === "owner_left" ? "adopt" : "enable", bot.frozen_reason === "owner_left" ? "Adopt bot" : "Enable bot") : ""}</section>`;
+  if (frozen) content += `<section class="bot-access-card" data-frozen><h3>${bot.frozen_reason === "owner_left" ? "This bot needs a new owner" : "This bot is disabled"}</h3><p>${bot.frozen_reason === "owner_left" ? "Its owner left the workspace. Conversations and access are kept, but nobody can talk to it. A workspace owner can adopt it. The former owner’s private conversation stays private." : "Nobody can talk to this bot until a workspace owner enables it again."}</p>${canManage ? `<div class="sheet-btns"><button type="button" class="bb-opt go" data-bots-action="${bot.frozen_reason === "owner_left" ? "adopt" : "enable"}"${off ? " disabled" : ""}>${bot.frozen_reason === "owner_left" ? "Adopt bot" : "Enable bot"}</button></div>` : ""}</section>`;
   if (sheet.loading) content += '<p role="status">Loading bot settings…</p>';
   else if (sheet.tab === "log") {
-    content += `<section class="bot-access-card" data-access-log><h3>Access log</h3>${frozen ? '<p>The log is available after the bot is enabled or adopted.</p>' : (sheet.log || []).length ? `<ol>${sheet.log.map(row => `<li><p>${e(accessLogText(row, sheet.me?.people))}</p><time datetime="${e(row.at)}">${e(row.at.replace("T", " ").replace("Z", " UTC"))}</time></li>`).join("")}</ol>${sheet.moreLog ? action("sharing-more", "More changes") : ""}` : '<p>No access changes yet.</p>'}</section>`;
+    content += `<section class="bot-access-card" data-access-log><h3>Access log</h3>${frozen ? '<p>The log is available after the bot is enabled or adopted.</p>' : (sheet.log || []).length ? `<ol>${sheet.log.map(row => `<li><p>${e(accessLogText(row, sheet.me?.people))}</p><time datetime="${e(row.at)}" title="${e(row.at)}">${e(accessLogTime(row.at))}</time></li>`).join("")}</ol>${sheet.moreLog ? action("sharing-more", "More changes") : ""}` : '<p>No access changes yet.</p>'}</section>`;
   } else if (!owner && !bot.lifecycle) {
     content += `<section class="bot-access-card" data-member-access><h3>Your access</h3><p>Shared by ${e(bot.owner?.name || "the bot’s owner")}.</p><p>${e(permissionText(bot.perms || {}, "You").replace("They cannot", "You cannot").replace("They can", "You can").replace("they start", "you start"))}</p><p>Your private conversation is visible only to you. The bot’s owner and workspace owners cannot read it.</p><p>Only the bot’s owner can change your access.</p></section>`;
   } else if (!frozen) {
@@ -53,7 +73,7 @@ export function sharingHTML(sheet, bot, e) {
     if (bot.kind !== "custom" && !bot.lifecycle) content += '<p>Personal and project bots stay private. Create a custom bot to share it.</p>';
     else if (!frozen) {
       if (sheet.settings?.sharing === false) content += `<section class="bot-access-card"><h3>Bot sharing is off</h3><p>${canManage ? "Turn on bot sharing for this workspace before granting access." : "Ask a workspace owner to turn on bot sharing."}</p>${canManage ? action("sharing-enable", "Turn on bot sharing") : ""}</section>`;
-      content += `<section class="bot-access-card"><div class="bot-access-heading"><h3>People with access</h3>${editable ? action("sharing-picker", "Add a person") : ""}</div><ul class="bot-access-people">${rows.map(row => `<li><div><b>${e(row.user.name)}</b><p>${e(permissionText(row, row.user.name))}</p></div>${editable ? action("sharing-edit", "Change access", ` data-user="${e(row.user.id)}"`) : ""}</li>`).join("") || '<li>No one else has access.</li>'}</ul></section>`;
+      content += `<section class="bot-access-card" data-people-access><div class="bot-access-heading"><div><h3>People with access</h3>${sheet.saved ? '<p role="status" data-access-saved>Access saved.</p>' : ""}</div>${editable ? action("sharing-picker", "Add a person") : ""}</div><ul class="bot-access-people">${rows.map(row => `<li><div><b>${e(row.user.name)}</b><p>${e(permissionSummary(row))}</p></div>${editable ? action("sharing-edit", "Change access", ` data-user="${e(row.user.id)}"`) : ""}</li>`).join("") || '<li>No one else has access.</li>'}</ul></section>`;
     }
     if (sheet.picker && editable) {
       const people = Object.entries(sheet.me?.people || {}).filter(([ref]) => ref.startsWith("user:") && ref !== `user:${bot.owner?.id}` && !rows.some(r => ref === `user:${r.user.id}`));
@@ -66,7 +86,7 @@ export function sharingHTML(sheet, bot, e) {
     }
     if (sheet.access?.entries?.length) content += `<section class="bot-access-card"><h3>What this bot may use</h3><ul>${sheet.access.entries.map(entry => `<li>${e(entry.ref)} · ${entry.mode === "write" ? "read and write" : entry.mode === "read" ? "read only" : "use"}</li>`).join("")}</ul><p>Each person’s own permissions still apply.</p></section>`;
   }
-  return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><header class="bot-access-heading"><div><h2 id="sheet-h">Bot settings</h2><p>${e(bot.name)}</p></div>${action("close", "Close")}</header>${nav}${sheet.error ? `<p role="alert">${e(sheet.error)}</p>${action("sharing-retry", "Retry")}` : ""}${sheet.saved ? '<p role="status">Access saved.</p>' : ""}${content}${owner && !frozen ? `<div class="sheet-btns">${action("bot-details", "Name, job & memory")}${action("learned-sheet", "Learning & sharing")}</div>` : ""}${canManage && bot.shared && !frozen ? action("disable", sheet.confirmDisable ? "Disable for everyone?" : "Disable bot") : ""}</div></div>`;
+  return settingsFrameHTML(sheet, bot, `${sheet.error ? `<p role="alert">${e(sheet.error)}</p>${action("sharing-retry", "Retry")}` : ""}${content}`, e);
 }
 
 export function threadsHTML(bot, threads, selected, e) {
@@ -77,5 +97,5 @@ export function threadsHTML(bot, threads, selected, e) {
 }
 
 export function threadPreviewHTML(sheet, bot, e) {
-  return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><h2 id="sheet-h">New shared conversation</h2>${sheet.loading ? '<p role="status">Loading audience…</p>' : `<section class="bot-access-card"><h3>Who can see this conversation</h3><p>${e(audienceText(bot, sheet.shares || [], { mine: bot.mine }))}</p><p>This starts a new conversation. Your private messages are never copied here.</p></section><form data-bots-form="shared-thread"><label>Conversation name<input name="title" maxlength="200" autocomplete="off"></label><div class="sheet-btns"><button type="submit" class="bb-opt go"${sheet.busy || sheet.error ? " disabled" : ""}>Start shared conversation</button>${button("close", "Cancel")}</div></form>`}${sheet.error ? `<p role="alert">${e(sheet.error)}</p>` : ""}</div></div>`;
+  return `<div class="sheet bot-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><h2 id="sheet-h">New shared conversation</h2>${sheet.loading ? '<p role="status">Loading audience…</p>' : `<section class="bot-access-card"><h3>Who can see this conversation</h3><p>${e(audienceText(bot, sheet.shares || [], { mine: bot.mine }))}</p><p>This starts a new conversation. Your private messages are never copied here.</p></section><form data-bots-form="shared-thread"><label>Conversation name<input name="title" maxlength="200" autocomplete="off"></label><div class="sheet-btns"><button type="submit" class="bb-opt go"${sheet.busy || sheet.error ? " disabled" : ""}>Start shared conversation</button>${button("close", "Cancel")}</div></form>`}${sheet.error ? `<p role="alert">${e(sheet.error)}</p>` : ""}</div></div>`;
 }
