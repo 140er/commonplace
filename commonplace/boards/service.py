@@ -2853,7 +2853,7 @@ class BoardService(lifecycle.LifecycleMixin):
         if self._orchestration_on is True:
             from commonplace.projects import split
 
-            split_parent = split.parent_for(conn, board, p, parent, labels)
+            split_parent = split.parent_for(conn, board, p, parent, labels, self.ctx.db)
             if split_parent is not None:
                 existing = split.check_key(conn, split_parent, labels)
                 if existing is not None:
@@ -3979,7 +3979,7 @@ class BoardService(lifecycle.LifecycleMixin):
         if self._orchestration_on is True:
             from commonplace.projects import split
 
-            split.check_label_update(conn, board, self.principal, row, labels)
+            split.check_label_update(conn, board, self.principal, row, labels, self.ctx.db)
 
     def _update_acquisition_actor(self, row, args):
         # Owner status changes start reserved typed work for its assigned holder.
