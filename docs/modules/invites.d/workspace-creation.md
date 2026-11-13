@@ -21,3 +21,5 @@
   - `tests/test_workspace_creation_ui.py` and `tests/workspace_creation.mjs` prove the switcher journey without a browser, including cancel, duplicate click, safe rendering and retry. `tests/test_workspace_creation_browser.py` optionally runs the real shell and session journey in both looks at desktop and phone widths.
 
   - Same-second workspace creation preserves the original sign-in home; personal workspace billing stays associated with its creator.
+
+  - The Deck design round uses a 400px dialog with 24px padding, aligned workspace rows and a quiet creation action. Current membership has a tick without disabled dimming. Confirmation and result each use one short paragraph; a refused create shows its reason and Close only. Known closed-signup and hourly-limit messages have plain Deck wording; other server reasons are preserved. Server routes and Classic behavior are unchanged.

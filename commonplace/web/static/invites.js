@@ -113,26 +113,56 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
   catch (error) { onError(error.message || 'Workspaces unavailable.'); return null; }
   doc.querySelector('dialog.workspace-switch')?.remove();
   const dialog = doc.createElement('dialog');
+  const deck = doc.documentElement?.dataset.ui === 'deck';
   dialog.className = 'sheet menu-sheet workspace-switch';
   dialog.setAttribute('aria-labelledby', 'workspace-switch-h');
-  const items = (result.workspaces || []).map(w => `<li><button type="button" class="btn" data-workspace="${e(w.id)}"${w.current ? ' disabled aria-current="true"' : ''}>${e(w.name)} · ${e(w.role)}${w.current ? ' · current' : ''}</button></li>`).join('');
-  let stage = 'list', name = '', requestId = '', busy = false, created = null;
+  const workspaces = result.workspaces || [];
+  const items = workspaces.map(w => deck
+    ? `<li><button type="button" class="workspace-row" data-workspace="${e(w.id)}"${w.current ? ' aria-current="true" aria-disabled="true"' : ''}><span class="workspace-label">${e(w.name)}</span><span class="workspace-role">${e(w.role)}</span><span class="workspace-current" aria-hidden="true">${w.current ? '✓' : ''}</span></button></li>`
+    : `<li><button type="button" class="btn" data-workspace="${e(w.id)}"${w.current ? ' disabled aria-current="true"' : ''}>${e(w.name)} · ${e(w.role)}${w.current ? ' · current' : ''}</button></li>`).join('');
+  let stage = 'list', name = '', requestId = '', busy = false, created = null, refusal = '';
   const button = (attribute, text, primary = false) => `<button type="button" class="btn${primary ? ' primary' : ''}" ${attribute}>${text}</button>`;
+  function nameIssue(value) {
+    const candidate = value.trim();
+    if (!candidate) return 'Enter a workspace name.';
+    if (candidate.length > 128) return 'Use 128 characters or fewer.';
+    if (workspaces.some(w => w.name.trim().toLocaleLowerCase() === candidate.toLocaleLowerCase())) return 'You already have a workspace with this name. Choose a different name.';
+    return '';
+  }
+  function updateName(form, showEmpty = false) {
+    const field = form.elements.name, issue = nameIssue(field.value);
+    const error = dialog.querySelector('[data-workspace-name-error]');
+    if (error) error.textContent = field.value || showEmpty ? issue : '';
+    field.setAttribute?.('aria-invalid', String(Boolean(issue && (field.value || showEmpty))));
+    const submit = dialog.querySelector('[data-workspace-name] button[type="submit"]');
+    if (submit) submit.disabled = Boolean(issue);
+    return issue;
+  }
   function render() {
     let title, content;
     if (stage === 'name') {
       title = 'Create workspace';
-      content = `<form data-workspace-name><label for="workspace-name">Workspace name</label><input id="workspace-name" name="name" maxlength="128" required autocomplete="off" value="${e(name)}"><div class="workspace-actions"><button class="btn primary" type="submit">Continue</button>${button('data-workspace-cancel', 'Cancel')}</div></form>`;
+      content = `<form data-workspace-name><label for="workspace-name">Workspace name</label><input id="workspace-name" name="name" ${deck ? 'aria-describedby="workspace-name-error"' : 'maxlength="128"'} required autocomplete="off" value="${e(name)}">${deck ? '<p id="workspace-name-error" data-workspace-name-error role="status"></p>' : ''}<div class="workspace-actions"><button class="btn primary" type="submit"${deck && nameIssue(name) ? ' disabled' : ''}>Continue</button>${button('data-workspace-cancel', 'Cancel')}</div></form>`;
     } else if (stage === 'confirm') {
-      title = 'Create this workspace?';
-      content = `<p class="workspace-name">${e(name)}</p><p>This creates an empty isolated workspace owned by you. Your current workspace is unaffected.</p><p>Its data and members stay separate. No one else is added.</p><div class="workspace-actions">${button('data-workspace-confirm', 'Create workspace', true)}${button('data-workspace-cancel', 'Cancel')}</div>`;
+      title = deck ? `Create "${e(name)}"?` : 'Create this workspace?';
+      content = deck
+        ? `<p>This makes a new, empty workspace that only you can see. Your current workspace does not change.</p><div class="workspace-actions">${button('data-workspace-confirm', 'Create workspace', true)}${button('data-workspace-cancel', 'Cancel')}</div>`
+        : `<p class="workspace-name">${e(name)}</p><p>This creates an empty isolated workspace owned by you. Your current workspace is unaffected.</p><p>Its data and members stay separate. No one else is added.</p><div class="workspace-actions">${button('data-workspace-confirm', 'Create workspace', true)}${button('data-workspace-cancel', 'Cancel')}</div>`;
     } else if (stage === 'result') {
       title = 'Workspace created';
-      content = `<p class="workspace-name">${e(created.name)}</p><p>Your new workspace is empty and you are its only member and owner. Your current workspace is unaffected.</p><div class="workspace-actions">${button(`data-workspace="${e(created.id)}"`, 'Open workspace', true)}${button('data-workspace-close', 'Stay here')}</div>`;
+      content = deck
+        ? `<p>"${e(created.name)}" is ready. It is empty and only you are in it.</p><div class="workspace-actions">${button(`data-workspace="${e(created.id)}"`, 'Open workspace', true)}${button('data-workspace-close', 'Stay here')}</div>`
+        : `<p class="workspace-name">${e(created.name)}</p><p>Your new workspace is empty and you are its only member and owner. Your current workspace is unaffected.</p><div class="workspace-actions">${button(`data-workspace="${e(created.id)}"`, 'Open workspace', true)}${button('data-workspace-close', 'Stay here')}</div>`;
+    } else if (stage === 'refused') {
+      title = 'Workspace not created';
+      content = `<p data-workspace-refusal>${e(refusal)}</p><div class="workspace-actions workspace-close-row">${button('data-workspace-close', 'Close')}</div>`;
     } else {
       title = 'Switch workspace';
-      content = `<ul class="workspace-list">${items}</ul>${button('data-workspace-create', 'Create workspace', true)}${button('data-workspace-close', 'Close')}`;
+      content = deck
+        ? `<ul class="workspace-list">${items}</ul>${button('data-workspace-create aria-label="Create workspace"', '+ Create workspace')}<div class="workspace-actions workspace-close-row">${button('data-workspace-close', 'Close')}</div>`
+        : `<ul class="workspace-list">${items}</ul>${button('data-workspace-create', 'Create workspace', true)}${button('data-workspace-close', 'Close')}`;
     }
+    dialog.setAttribute('data-workspace-stage', stage);
     dialog.innerHTML = `<div class="menu-body"><h2 id="workspace-switch-h" tabindex="-1">${title}</h2>${content}<p role="alert" data-workspace-error></p><p role="status" aria-live="polite" data-workspace-status></p></div>`;
     dialog.querySelector(stage === 'name' ? '[name="name"]' : '#workspace-switch-h')?.focus?.();
   }
@@ -147,11 +177,16 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
   render();
   dialog.addEventListener('close', () => dialog.remove());
   dialog.addEventListener('cancel', event => { if (busy) event.preventDefault(); });
+  dialog.addEventListener('input', event => {
+    const form = event.target.closest?.('[data-workspace-name]');
+    if (deck && form) updateName(form);
+  });
   dialog.addEventListener('submit', event => {
     const form = event.target.closest?.('[data-workspace-name]');
     if (!form) return;
     event.preventDefault();
     if (busy || stage !== 'name') return;
+    if (deck && updateName(form, true)) return;
     name = form.elements.name.value.trim();
     if (!name) return;
     requestId = globalThis.crypto.randomUUID();
@@ -166,6 +201,7 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
     const confirm = target.closest?.('[data-workspace-confirm]');
     const selected = target.closest?.('[data-workspace]');
     if (!(confirm && stage === 'confirm') && !selected) return;
+    if (deck && selected && workspaces.some(w => w.id === selected.dataset.workspace && w.current)) return;
     lock(true);
     dialog.querySelector('[data-workspace-error]').textContent = '';
     try {
@@ -178,7 +214,14 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
         reload();
       }
     } catch (error) {
-      dialog.querySelector('[data-workspace-error]').textContent = error.message || (confirm ? 'Could not create workspace. Try again.' : 'Could not switch workspace.');
+      if (deck && confirm && error.status >= 400 && error.status < 500) {
+        const reason = error.payload?.error || error.message || 'Could not create workspace.';
+        refusal = ({
+          'This instance is closed to new workspaces.': 'New workspaces are turned off on this server.',
+          'You have created five workspaces recently. Try again in an hour.': 'Too many new workspaces. Try again in 60 minutes.',
+        })[reason] || reason;
+        stage = 'refused'; render();
+      } else dialog.querySelector('[data-workspace-error]').textContent = error.message || (confirm ? 'Could not create workspace. Try again.' : 'Could not switch workspace.');
     } finally { lock(false); }
   });
   doc.body.append(dialog);
