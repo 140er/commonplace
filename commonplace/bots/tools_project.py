@@ -349,6 +349,23 @@ def _create_work_label(turn, args):
     return f"Filed “{_clip(title, 80)}”"
 
 
+def _create_work_chip(turn, args):
+    title, _ = _filing(turn, args)
+    return f"Create a task: “{_clip(title, 100)}”"
+
+
+def _words_of(turn, args) -> str:
+    return turn.words(args["text"]) if "text" in args else turn.message["text"]
+
+
+def _comment_chip(turn, args):
+    return f"Comment on work #{args['ref']}: “{_clip(_words_of(turn, args), 100)}”"
+
+
+def _tell_chip(turn, args):
+    return f"Pass this to the orchestrator: “{_clip(_words_of(turn, args), 100)}”"
+
+
 @_guarded
 def _create_work(turn, args):
     board = turn.board(args)
@@ -616,6 +633,7 @@ register(
         kind="routine",
         run=_create_work,
         label=_create_work_label,
+        chip=_create_work_chip,
         check=_check_filing,
         scope="project",
     )
@@ -635,6 +653,7 @@ register(
         kind="routine",
         run=_prioritize_work,
         label=lambda turn, args: f"Reordered work #{args['ref']}",
+        chip=lambda turn, args: f"Change the priority or position of work #{args['ref']}",
         scope="project",
     )
 )
@@ -652,6 +671,7 @@ register(
         kind="routine",
         run=_comment_work,
         label=lambda turn, args: f"Commented on work #{args['ref']}",
+        chip=_comment_chip,
         scope="project",
     )
 )
@@ -668,6 +688,7 @@ register(
         kind="routine",
         run=_tell_orchestrator,
         label=_static("Passed your message to the orchestrator"),
+        chip=_tell_chip,
         scope="project",
     )
 )

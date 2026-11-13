@@ -15,6 +15,9 @@
 5. **Store and run.** The person's own bot gets the message and runs the Bots-layer turn on its
    own thread; the intake answers without waiting for it.
 
+``POST /api/bridge/in/<install>/interact`` verifies the same way and hands a button tap to
+:mod:`confirm`, which runs the confirmed action only for the person the chip was shown to.
+
 Every reply is an outbox row posted by the worker. An install that is unknown or off answers a
 plain 404 like a path that does not exist, and does nothing.
 """
@@ -23,7 +26,17 @@ import logging
 
 from commonplace import ratelimit
 from commonplace.bots import store as bots_store
-from commonplace.chat_bridge import adapter, index, links, outbox, service, store, turns, worker
+from commonplace.chat_bridge import (
+    adapter,
+    confirm,
+    index,
+    links,
+    outbox,
+    service,
+    store,
+    turns,
+    worker,
+)
 from commonplace.http_util import log_failure, send_json
 
 logger = logging.getLogger(__name__)
@@ -113,7 +126,16 @@ def handle(gateway, h, install_id, route) -> None:
         except Exception as exc:  # noqa: BLE001
             log_failure(logger, "Chat intake failed", exc)
             return _reply(h, 500, {"error": "Try again", "code": "failed"})
-    _reply(h, 200, {"ok": True})  # interactions (taps) are handled from the confirmation slice on
+    else:
+        try:
+            tap = platform.normalize(ref, verified)
+            if isinstance(tap, adapter.Interaction):
+                confirm.tap(gateway, workspace_id, install, tap)
+                worker.kick(gateway, workspace_id, install["id"])
+        except Exception as exc:  # noqa: BLE001
+            log_failure(logger, "Chat tap failed", exc)
+            return _reply(h, 500, {"error": "Try again", "code": "failed"})
+    _reply(h, 200, {"ok": True})
 
 
 def _filter(bridge, install_id, inbound, text):
@@ -186,6 +208,7 @@ def process(gateway, workspace_id, install, inbound) -> None:
             text,
             board,
             mapping["disclosure"] if mapping else "full",
+            tap=bool(who.link["confirm_ok"]),
         )
     except turns.NoBot:
         code = "channel_denied" if board else "unlinked"

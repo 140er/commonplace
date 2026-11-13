@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from commonplace.bots import store as bots_store, turn as bots_turn
-from commonplace.chat_bridge import adapter, links, service, store
+from commonplace.chat_bridge import adapter, confirm, links, service, store
 from commonplace.http_util import log_failure
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,15 @@ FIXED = {
     "empty": "There is nothing to add.",
     "interrupted": bots_turn.SENTENCES["interrupted"],
     "too_long": bots_turn.SENTENCES["too_long"],
+    "web_confirm": "That needs your confirmation in the Commonplace web app. It is waiting in "
+    "your thread there.",
+    "tap_denied": "That confirmation is not available to you.",
+    "tap_off": "Confirming from chat is switched off for your account. Confirm it in the "
+    "Commonplace web app, or switch it on there.",
+    "tap_web_only": "This kind of action has to be confirmed in the Commonplace web app.",
+    "tap_expired": "That confirmation has expired. Ask again.",
+    "tap_done": "That was already handled.",
+    "tap_failed": "That did not work. Try again in the Commonplace web app.",
     **{f"link_{code}": text for code, text in links.REDEEM_TEXT.items()},
 }
 
@@ -85,14 +94,37 @@ def _text_of(gateway, workspace_id, platform, row, event) -> str | None:
     kind, _, value = row["ref"].partition(":")
     if kind == "text":
         return FIXED.get(value)
-    if kind != "reply" or not event or not value.isdigit():
+    if kind == "answer":  # a fixed sentence for the tapper: ``<code>:<platform user>``
+        return FIXED.get(value.partition(":")[0])
+    if kind == "note":  # the stored outcome of a confirmed action: ``<id>:<platform user>``
+        value = value.partition(":")[0]
+    if kind not in ("reply", "note") or not event or not value.isdigit():
         return None
     bots = bots_store.open_bots(gateway, workspace_id)
+    role = "bot" if kind == "reply" else "event"
     for message in bots.messages(event["bot_id"], event["user_id"], after=int(value) - 1, limit=1):
-        if message["id"] == int(value) and message["role"] == "bot":
+        if message["id"] == int(value) and message["role"] == role:
             parts = split_text(message["text"], platform.caps.max_text)
             return parts[row["part"]] if 0 <= row["part"] < len(parts) else None
     return None
+
+
+def _content(gateway, workspace_id, platform, bridge, row, event):
+    """``(Outbound, platform user, channel)`` of a row; the user and channel are set for a private
+    post only. None when there is nothing (left) to post."""
+    kind, _, value = row["ref"].partition(":")
+    if row["target"] != "private":
+        text = _text_of(gateway, workspace_id, platform, row, event)
+        return None if text is None else (adapter.Outbound(text), None, None)
+    if kind == "prompt":
+        prompt = bridge.prompt(row["install_id"], value)
+        out = confirm.chip(gateway, workspace_id, event["user_id"], value) if prompt else None
+        return None if out is None else (out, prompt["ext_user"], prompt["ext_channel"])
+    text = _text_of(gateway, workspace_id, platform, row, event)
+    ext_user = value.partition(":")[2]
+    if text is None or not ext_user:
+        return None
+    return adapter.Outbound(text[: platform.caps.max_text]), ext_user, event["ext_channel"] or ""
 
 
 def deliver(gateway, workspace_id, install_id, now=None) -> int:
@@ -115,13 +147,21 @@ def _deliver(gateway, workspace_id, install_id, now) -> int:
         if claimed is None:  # another caller has it, or the install was switched off
             continue
         event = bridge.event(install_id, claimed["ext_event"])
-        text = _text_of(gateway, workspace_id, platform, claimed, event)
-        if text is None or event is None:
+        content = (
+            None
+            if event is None
+            else _content(gateway, workspace_id, platform, bridge, claimed, event)
+        )
+        if content is None:
             bridge.settle(claimed["id"], "failed")
             continue
-        target = adapter.Target(event["ext_channel"] or "", event["ext_thread"] or "")
+        outbound, ext_user, ext_channel = content
         try:
-            result = platform.post(ref, target, adapter.Outbound(text), claimed["id"])
+            if claimed["target"] == "private":  # a chip or an answer to a tap: only to that person
+                result = platform.post_private(ref, ext_user, ext_channel, outbound)
+            else:
+                target = adapter.Target(event["ext_channel"] or "", event["ext_thread"] or "")
+                result = platform.post(ref, target, outbound, claimed["id"])
         except Exception as exc:  # noqa: BLE001 - a platform's error text never travels on
             # An error that is not a definite "nothing was posted" may have reached the
             # platform: the row stays ``sending`` and the sweep settles it, never a blind retry.
@@ -161,5 +201,5 @@ def settle_stuck(gateway, workspace_id, install_id, now) -> None:
             bridge.settle(row["id"], "sent", ext_post=found, expect="unknown")
         elif platform.caps.find_posted:
             bridge.settle(row["id"], "queued", expect="unknown")  # it never went out: post it
-        elif row["part"] != NOTICE_PART:
+        elif row["part"] != NOTICE_PART and row["target"] == "thread":
             bridge.enqueue(install_id, row["ext_event"], NOTICE_PART, "thread", "text:unsure")

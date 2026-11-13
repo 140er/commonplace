@@ -1,7 +1,7 @@
 # Chat-platform bots
 
 Card #455 (one card for chat-platform presence; builds on the Bots layer, `docs/bots.md`).
-Status: design note; slices 1 (foundation), 2 (identity) and 3 (intake and turns) are built, the rest is not. Slack is the first platform; Teams and Discord follow
+Status: design note; slices 1 (foundation), 2 (identity), 3 (intake and turns) and 4 (confirmation) are built, the rest is not. Slack is the first platform; Teams and Discord follow
 through the same adapter interface.
 
 ## Problem and goal
@@ -369,6 +369,16 @@ outbox row that retries out of attempts (5) ends `failed` (a state the note's li
 exception from an adapter's `post` is treated as ambiguous and settled like a crash between send and
 record. The unlinked sentence and the other fixed sentences live in `outbox.FIXED`. `/interact` and
 `/oauth` stay without function until slices 4 and 5.
+
+Slice 4 assumptions: a chip is posted through `post_private` to the platform id and channel of the
+direct message that asked; a channel turn is read-only (slice 3), so no chip can exist for a channel.
+`confirm_ok` off follows the note: the routine writes are not offered, a confirm tool leaves its web
+chip and one fixed sentence says so (a refused write leaves no pending action). Open question 2 follows
+its recommendation: `start_work`, `approve_work` and `create_project` are web-only unless the owner
+sets `consequential_taps` on the install (default off, `PATCH /api/bridge/installs/<id>`); the tools
+that run a command or change what a bot learned are never confirmed by tap. The two button payloads are
+`confirm:<pending>` and `cancel:<pending>`, a tap is journaled as `tap:<event id>`, and the answer to a
+tap, a denial included, is a private post to the tapper.
 
 Six slices, one PR each, in order. The settings screen is designed by the UI owner on top of the
 owner and person routes; no slice touches `app.js`, `rail.js` or shell files, so the node-harness

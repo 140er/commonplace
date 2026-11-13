@@ -47,6 +47,8 @@ class FakePlatform(adapter.Adapter):
 
     def normalize(self, install, verified):
         p = verified.payload
+        if p.get("tap"):
+            return adapter.Interaction(p["event"], p["user"], p["channel"], p["tap"])
         if p.get("edited") or p.get("deleted"):
             return None
         return adapter.Inbound(
@@ -71,6 +73,23 @@ class FakePlatform(adapter.Adapter):
                     "thread": target.ext_thread,
                     "text": outbound.text,
                     "key": key,
+                    "private": False,
+                    "buttons": outbound.buttons,
+                }
+            )
+            return adapter.PostResult(True, ext_post=f"p{len(self.posts)}")
+
+    def post_private(self, install, ext_user, ext_channel, outbound):
+        with self.lock:
+            self.posts.append(
+                {
+                    "channel": ext_channel,
+                    "thread": "",
+                    "text": outbound.text,
+                    "key": "",
+                    "private": True,
+                    "user": ext_user,
+                    "buttons": outbound.buttons,
                 }
             )
             return adapter.PostResult(True, ext_post=f"p{len(self.posts)}")
@@ -93,6 +112,11 @@ def event(name, user, channel, text, kind="dm", **extra):
         "kind": kind,
         **extra,
     }
+
+
+def tap(name, user, channel, payload):
+    """An interaction payload: one button tap."""
+    return {"team": "T-ONE", "event": name, "user": user, "channel": channel, "tap": payload}
 
 
 def send(hub, install, payload, route="events", secret=SIGNING, ts=None, sig=None, body=None):
