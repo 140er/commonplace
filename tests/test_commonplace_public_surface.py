@@ -69,6 +69,12 @@ EXACT = {
     ("PATCH", "/api/voice"): "authenticated",
     ("POST", "/api/voice/transcribe"): "authenticated",
     ("POST", "/api/facts"): "authenticated",
+    # Enrollment controls are unavailable until explicit owner opt-in.
+    ("GET", "/api/runners/install-settings"): "unavailable",
+    ("PUT", "/api/runners/install-settings"): "unavailable",
+    ("POST", "/api/runners/enrollments"): "unavailable",
+    ("POST", "/api/runner-enrollment/exchange"): "bootstrap",
+    ("POST", "/api/runner-enrollment/recover"): "bootstrap",
     # Machine runner (commonplace/runner), inert until an owner attests.
     ("GET", "/api/runners"): "authenticated",
     ("POST", "/api/runners"): "authenticated",
@@ -137,6 +143,8 @@ EXACT = {
     ("POST", "/api/tool-policy"): "authenticated",
 }
 PREFIX = {
+    ("GET", "/api/runners/enrollments/"): "unavailable",
+    ("DELETE", "/api/runners/enrollments/"): "unavailable",
     ("GET", "/api/instance-admin/"): "authenticated",
     **{(method, "/api/compute/"): "authenticated" for method in ("GET", "POST")},
     **{(method, "/api/compute/discoveries/"): "authenticated" for method in ("GET", "POST")},
@@ -316,7 +324,9 @@ def test_complete_installed_route_inventory(surface):
         }
         response = request(surface, method, concrete, headers=headers, body=b"{")
         status = hardened(response)
-        if auth == "authenticated":
+        if auth == "unavailable":
+            assert status == 404, (method, concrete, response)
+        elif auth == "authenticated":
             assert status == 401, (method, concrete, response)
         else:
             assert status != 401, (method, concrete, response)

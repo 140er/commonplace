@@ -1954,7 +1954,14 @@ def _public_route(method: str, path: str) -> bool:
         )
     return method == "POST" and (
         path.startswith("/app/auth/")
-        or path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+        or path
+        in (
+            "/oauth/register",
+            "/oauth/token",
+            "/oauth/revoke",
+            "/api/runner-enrollment/exchange",
+            "/api/runner-enrollment/recover",
+        )
     )
 
 
@@ -2553,6 +2560,10 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
         if self._instance_admission(path, principal):
+            return
+        from .runner import enrollment_api
+
+        if enrollment_api.preflight(self.server.gateway, self, path, principal):
             return
         if (
             principal is not None
