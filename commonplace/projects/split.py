@@ -25,20 +25,46 @@ def is_root(row):
     return row["parent_number"] is None and not keys(labels)
 
 
-def authorize(principal, board):
+def authorize(principal, board, db, *, write=False):
     if not principal.policy.has_scope("memory:read") or not principal.policy.can_read_wing(
         board["wing"]
     ):
         raise CardRefused("board_not_found", status=404)
-    if not (
-        (principal.person and principal.role == "owner")
-        or (
-            not principal.person
-            and principal.auth == "pat"
-            and principal.actor == board["coordinator"]
-        )
+    if write and not principal.policy.can_write_wing(board["wing"]):
+        raise CardRefused("not_allowed", status=403)
+    if principal.person:
+        if principal.role == "owner":
+            return
+        raise CardRefused("not_allowed", status=403)
+
+    from commonplace import decide_grant
+    from commonplace.projects import seats
+
+    # Match the live connection, not an actor spelling or inherited owner role.
+    live = db.authenticate_connection(principal.connection_id)
+    if (
+        live is None
+        or live.workspace_id != principal.workspace_id
+        or live.actor != principal.actor
+        or live.auth not in ("pat", "oauth")
+        or live.runner is not None
+        or principal.policy.trust == "untrusted"
+        or live.policy.trust == "untrusted"
+        or not live.policy.can_read_wing(board["wing"])
+        or (write and not live.policy.can_write_wing(board["wing"]))
     ):
         raise CardRefused("not_allowed", status=403)
+    held = seats.held_by(db, live.workspace_id, live.connection_id)
+    if held is not None and held != (board["slug"], "main"):
+        raise CardRefused("not_allowed", status=403)
+    if live.actor == board["coordinator"] or (
+        board["coordinator"] is None and held == (board["slug"], "main")
+    ):
+        return
+    connection = db.connection(live.connection_id, live.workspace_id)
+    if live.role == "owner" and decide_grant.machinery(db, connection) is None:
+        return
+    raise CardRefused("not_allowed", status=403)
 
 
 def require_on(gateway, principal):
@@ -46,7 +72,7 @@ def require_on(gateway, principal):
         raise CardRefused("orchestration_off", status=409)
 
 
-def parent_for(conn, board, principal, parent, labels):
+def parent_for(conn, board, principal, parent, labels, db):
     parsed = keys(labels)
     if (
         any(label.startswith("split:") and KEY.fullmatch(label) is None for label in labels)
@@ -60,7 +86,7 @@ def parent_for(conn, board, principal, parent, labels):
     row = task_row(conn, parent)
     if row["board_id"] != board["id"] or not is_root(row):
         raise CardRefused("invalid_split_parent", status=400)
-    authorize(principal, board)
+    authorize(principal, board, db, write=True)
     return row["id"]
 
 
@@ -75,14 +101,14 @@ def check_key(conn, parent: int, labels) -> int | None:
     return None
 
 
-def check_label_update(conn, board, principal, row, labels):
+def check_label_update(conn, board, principal, row, labels, db):
     previous = [label for label in json.loads(row["labels"] or "[]") if label.startswith("split:")]
     current = [label for label in labels if label.startswith("split:")]
     if previous == current:
         return
     if set(previous) - set(current):
         raise CardRefused("split_key_immutable", status=400)
-    parent = parent_for(conn, board, principal, row["parent_number"], labels)
+    parent = parent_for(conn, board, principal, row["parent_number"], labels, db)
     if parent is not None:
         existing = check_key(conn, parent, labels)
         if existing is not None and existing != row["id"]:
@@ -107,7 +133,7 @@ def inbox(gateway, principal, board) -> list[dict]:
         b = conn.execute("SELECT * FROM boards WHERE slug=? AND archived=0", (board,)).fetchone()
         if b is None:
             raise CardRefused("board_not_found", status=404)
-        authorize(principal, b)
+        authorize(principal, b, gateway.db)
         results = []
         for row in eligible(conn, b, b["coordinator"]):
             children = [
@@ -148,7 +174,7 @@ def mark(gateway, principal, task, state) -> dict:
         ).fetchone()
         if board is None:
             raise CardRefused("board_not_found", status=404)
-        authorize(principal, board)
+        authorize(principal, board, gateway.db, write=True)
         if not is_root(row):
             raise CardRefused("invalid_split_parent", status=400)
         inserted = conn.execute(
@@ -207,7 +233,7 @@ def context(gateway, principal, board=None):
     notes = []
     for b in boards:
         try:
-            authorize(principal, b)
+            authorize(principal, b, gateway.db)
         except CardRefused:
             continue
         cards = inbox(gateway, principal, b["slug"])

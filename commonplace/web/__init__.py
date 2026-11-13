@@ -37,6 +37,35 @@ def _response(h, status, body=b"", content_type="text/plain; charset=utf-8", hea
     h.wfile.write(body)
 
 
+def signin_recovery(h, state, status, headers=None):
+    """A token-free recovery document for navigations that cannot reach the SPA."""
+    title, message = {
+        "expired": (
+            "Get a new link",
+            "This sign-in link is invalid or expired. Links work once and for 15 minutes. Request a new link to continue.",
+        ),
+        "throttled": (
+            "Try again shortly",
+            "Too many sign-in attempts. Wait a moment, then retry. Your email and workspace are safe.",
+        ),
+        "sent": (
+            "Check your email",
+            "If this email can sign in, a link is on its way. Check your inbox and spam folder.",
+        ),
+    }[state]
+    destination = "/app/" if state == "sent" else f"/app/?signin={state}"
+    body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} - Commonplace</title><link rel="stylesheet" href="/app/app.css">
+<link rel="stylesheet" href="/app/ui.css"><link rel="stylesheet" href="/app/workbench.css">
+<link rel="stylesheet" href="/app/signin-recovery.css"></head><body>
+<main class="signin-recovery"><a class="brand-home" href="/app/">Commonplace</a>
+<h1>{title}</h1><p role="status">{message}</p>
+<a class="btn primary" href="{destination}">Retry</a>
+</main></body></html>""".encode()
+    _response(h, status, body, "text/html; charset=utf-8", headers)
+
+
 def _static(h):
     path = unquote(urlsplit(h.path).path)
     relative = path.removeprefix("/app").lstrip("/")

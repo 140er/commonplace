@@ -1086,15 +1086,17 @@ async function refresh({ background = false, events = [] } = {}) {
   const epoch = state.screen, request = ++state.refreshRequest;
   if (!background) state.renderPending = epoch;
   const current = () => epoch === state.screen && request === state.refreshRequest;
-  const read = (path) => api(path, state.base === "#/settings" ? { timeoutMs: 10000 } : {}).catch((error) => {
+  const read = (path, options = {}) => api(path, { ...options, ...(state.base === "#/settings" ? { timeoutMs: 10000 } : {}) }).catch((error) => {
     if (state.base === "#/settings") throw new Error(`Could not load ${path}: ${error.message}`);
     throw error;
   });
   try {
     // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
-    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), read("/api/needs-me"), read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
+    // The owner queue is not a prerequisite for a member's workspace screens.
+    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : null;
+    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
-    state.boards = boards.boards; state.needs = needs;
+    state.boards = boards.boards; state.needs = needs || { count: 0 };
     if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
@@ -1698,10 +1700,19 @@ root.addEventListener("submit", async (event) => {
       location.assign(`/app/login?t=${enc(token)}`);
     } else if (kind === "agent") await createAgent(form);
     else if (kind === "email-login") {
-      const result = await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext } });
       let status = root.querySelector(".signin [role=status]");
       if (!status) { status = document.createElement("div"); status.className = "message"; status.setAttribute("role", "status"); form.after(status); }
-      status.textContent = result.message;
+      status.textContent = "Sending your sign-in link…";
+      form.setAttribute("aria-busy", "true");
+      if (submit) submit.textContent = "Sending…";
+      try {
+        await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext }, timeoutMs: 15000 });
+        status.textContent = "If this email can sign in, a link is on its way.";
+        if (submit) submit.textContent = "Send another link";
+      } catch (error) {
+        status.textContent = error.status === 429 ? signinMessage("throttled") : "Could not send the sign-in link. Check your connection, then retry.";
+        if (submit) submit.textContent = "Retry";
+      } finally { form.removeAttribute("aria-busy"); }
     } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });

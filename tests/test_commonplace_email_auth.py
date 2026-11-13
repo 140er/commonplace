@@ -224,7 +224,9 @@ def refused(response):
     assert "Set-Cookie" not in headers and "Location" not in headers
     assert headers["Cache-Control"] == "no-store"
     assert headers["Referrer-Policy"] == "no-referrer"
-    assert content == b"Sign in link is invalid or expired"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"This sign-in link is invalid or expired" in content
+    assert b'href="/app/?signin=expired">Retry</a>' in content
 
 
 def test_fresh_signup_isolation_logout_and_closed_signup_relogin(fresh, monkeypatch, caplog):
@@ -1126,3 +1128,27 @@ def test_close_with_revocation_sql_failure_reports_error_and_never_uses_late_sql
         with closing(sqlite3.connect(client.db.path)) as conn:
             # Failed cleanup is reported, never described as successful revocation.
             assert conn.execute("SELECT token_hash FROM email_challenges").fetchone()[0] == active
+
+
+def test_browser_email_requests_keep_sent_and_throttled_recovery_in_the_app(fresh):
+    client, _mailbox = fresh()
+    for _ in range(3):
+        status, headers, content = client.request(
+            "/app/auth/email",
+            method="POST",
+            data={"email": "reader@example.test"},
+            headers={"Accept": "text/html"},
+        )
+        assert status == 202
+        assert headers["Content-Type"] == "text/html; charset=utf-8"
+        assert b"Check your email" in content and b'href="/app/">Retry</a>' in content
+    status, headers, content = client.request(
+        "/app/auth/email",
+        method="POST",
+        data={"email": "reader@example.test"},
+        headers={"Accept": "text/html"},
+    )
+    assert status == 429 and headers["Retry-After"] == "300"
+    assert b"Too many sign-in attempts" in content
+    assert b'href="/app/?signin=throttled">Retry</a>' in content
+    assert "Set-Cookie" not in headers

@@ -61,11 +61,11 @@ The hub only stores and wakes. Replies posted with `space_post` do not trigger w
 
 ### Opt-in inbox and splitting
 
-When workspace orchestration is enabled, call `orchestrator_inbox board=<slug>` at session start, on every wake and every 10 minutes while running; reread launch snapshots before acting. Only the coordinator connection or signed-in owner may use it. It includes unsplit roots in Doing/Review and their keyed children.
+When workspace orchestration is enabled, call `orchestrator_inbox board=<slug>` at session start, on every wake and every 10 minutes while running; reread launch snapshots before acting. The board seat or workspace owner may use it. The owner may also use their own top-level PAT or OAuth connection with board access; worker credentials, child connections and other boards' seats cannot act for the owner. It includes unsplit roots in Doing/Review and their keyed children.
 
 Plan stable keys, then create missing children with `task_add parent=<root> labels=["split:<root>:<key>"]` on the same board. Keys use 1–32 lowercase letters, digits or hyphens; never rename them after a crash or title change. On `split_key_exists`, reread the returned child number and continue with missing keys. The hub never plans or creates children.
 
-After all children exist, call `card_split_done task=<root> state=split`; use `state=kept` for an intact root. First marker wins. A `split stuck` wait needs person action. Without runner or active card webhook, delivery waits for the next session; continuous orchestration is separate work.
+After all children exist, call `card_split_done task=<root> state=split`; use `state=kept` for an intact root. The board seat or owner can clear a `split stuck` wait with this same call, with board read/write access. A persisted seat binding also works when the board's coordinator field is empty; an explicit replacement takes precedence. First marker wins: a repeat returns the original marker without another history entry. Other release and review holds remain in place. Without runner or active card webhook, delivery waits for the next session; continuous orchestration is separate work.
 
 `blocked_by=[<number>,…]` on add/update replaces same-board blockers; only Done satisfies them. Follow `waiting.text`; a dependency wait alone does not ask the person to intervene. See [the inbox and splitting guide](../../docs/projects.md#opt-in-card-inbox-and-splitting) for runner roles, retry timing and delivery details.
 

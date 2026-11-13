@@ -119,7 +119,7 @@ def test_owner_confirms_rejection_and_sees_its_actor(hub, fresh, look):
         await page.click(f'[data-config-confirm-reject="{version}"]')
         await page.wait_for_selector(reject, state="detached")
         row = await page.text_content(f'[data-config-version="{version}"]')
-        assert "Rejected by user:" + fresh.user in row
+        assert ("Rejected by you" if look == "deck" else "Rejected by user:" + fresh.user) in row
         assert await page.locator(f'[data-config-accept="{version}"]').count() == 0
 
     run(hub, fresh, check, look)
