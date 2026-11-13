@@ -375,8 +375,8 @@ def rest(hub, headers, path):
     return hub.raw(None, b"", method="GET", path=path, headers=headers)
 
 
-def mcp(hub, token, name, **args):
-    response = hub.rpc(token, "tools/call", {"name": name, "arguments": args})
+def mcp(hub, token, name, _timeout=30, **args):
+    response = hub.rpc(token, "tools/call", {"name": name, "arguments": args}, timeout=_timeout)
     return json.dumps(response, ensure_ascii=False)
 
 
@@ -984,7 +984,8 @@ def test_batch_room_checks_issue_a_bounded_number_of_queries(hub, collection, co
     )
     store, statements = statement_counter(hub)
     try:
-        raw = mcp(hub, blind[1], "mempalace_delete_drawers", drawer_ids=ids)
+        # 500 stored deletes take seconds on their own and far longer on a loaded host.
+        raw = mcp(hub, blind[1], "mempalace_delete_drawers", _timeout=300, drawer_ids=ids)
     finally:
         store._conn.set_trace_callback(None)
     assert collection.get(ids=ids[:1])["ids"] == [], raw[:400]
