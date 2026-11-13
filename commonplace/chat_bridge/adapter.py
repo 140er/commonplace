@@ -1,8 +1,11 @@
 """The one interface a chat platform implements; platform vocabulary stays inside an adapter.
 
-This slice needs only what an install needs: the platform name, the credential fields it
-stores, its capabilities and a credential test. Later slices add verifying, normalising and
-posting to the same class. An adapter never receives or returns text of a conversation here.
+An adapter names its platform and the credential fields an install stores, tests credentials,
+verifies and normalises an inbound request, and posts. Everything a platform says is reduced
+here to the few fields the engine needs (:class:`Inbound`); everything the engine says is plain
+text with optional buttons (:class:`Outbound`) that the adapter renders and escapes for its own
+platform and splits to ``caps.max_text``. No platform name, markup or id format is known outside
+an adapter.
 """
 
 from dataclasses import dataclass, field
@@ -40,6 +43,82 @@ class TestResult:
 
 
 @dataclass(frozen=True)
+class Verified:
+    """A request whose signature and freshness checked out: the team it names and its payload."""
+
+    team: str
+    payload: dict = field(repr=False)
+
+
+@dataclass(frozen=True)
+class Challenge:
+    """A platform handshake the adapter answers itself (no event, no journal row)."""
+
+    body: dict
+    status: int = 200
+
+
+@dataclass(frozen=True)
+class Reject:
+    """A forged, stale or malformed request. The reason is a fixed code for logs, never echoed."""
+
+    reason: str = "rejected"
+
+
+@dataclass(frozen=True)
+class Inbound:
+    """What the engine needs of a message the platform delivered, and nothing else. ``text`` has
+    the app mention already stripped. ``kind`` is ``dm``, ``mention`` or ``other``."""
+
+    ext_event: str
+    ext_user: str
+    ext_channel: str
+    ext_thread: str
+    ext_message: str
+    text: str = field(repr=False)
+    kind: str = "other"
+    from_bot: bool = False
+    shared_channel: bool = False
+
+
+@dataclass(frozen=True)
+class Interaction:
+    """A button tap or command (handled from the confirmation slice on)."""
+
+    ext_event: str
+    ext_user: str
+    ext_channel: str
+    payload: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class Outbound:
+    """Plain text and optional ``(label, payload)`` buttons; the adapter renders both."""
+
+    text: str
+    buttons: tuple = ()
+
+
+@dataclass(frozen=True)
+class Target:
+    """Where a post goes: a channel and, for a reply, the thread of the triggering message."""
+
+    ext_channel: str
+    ext_thread: str = ""
+
+
+@dataclass(frozen=True)
+class PostResult:
+    """``ok`` with the platform's post id; else ``retry`` says the failure was definite and
+    nothing was posted (rate limit, server error), with ``retry_after`` seconds when known."""
+
+    ok: bool
+    ext_post: str = ""
+    retry: bool = False
+    retry_after: int = 0
+
+
+@dataclass(frozen=True)
 class InstallRef:
     """What an adapter is given about an install. Its repr never shows the credentials."""
 
@@ -56,6 +135,29 @@ class Adapter:
 
     def test(self, install: InstallRef) -> TestResult:
         """Check the credentials and that they belong to ``install.ext_team``."""
+        raise NotImplementedError
+
+    def verify(self, install: InstallRef, headers: dict, body: bytes):
+        """:class:`Verified`, :class:`Challenge` or :class:`Reject`. Checks the signature (a
+        constant-time compare against the sealed secrets) and a five-minute freshness window
+        before parsing anything. ``headers`` have lower-case names."""
+        raise NotImplementedError
+
+    def normalize(self, install: InstallRef, verified: Verified):
+        """:class:`Inbound`, :class:`Interaction`, or None for what is not a message to act on
+        (edits, deletions, joins, files)."""
+        raise NotImplementedError
+
+    def post(self, install: InstallRef, target: Target, outbound: Outbound, key: str):
+        """Post into a thread or channel as the app; ``key`` is the idempotency key. Returns a
+        :class:`PostResult`."""
+        raise NotImplementedError
+
+    def post_private(self, install: InstallRef, ext_user: str, ext_channel: str, outbound):
+        raise NotImplementedError
+
+    def find_posted(self, install: InstallRef, ext_channel: str, key: str):
+        """The platform id of an earlier post made with ``key``, or None (``caps.find_posted``)."""
         raise NotImplementedError
 
 

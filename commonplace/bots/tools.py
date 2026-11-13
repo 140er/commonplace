@@ -140,6 +140,8 @@ class Turn:
         step=0,
         projects=None,
         thread_id=None,
+        surface="web",
+        disclosure="full",
     ):
         self.gateway = gateway
         self.db = gateway.db
@@ -152,6 +154,8 @@ class Turn:
         self.projects = projects  # readable project slugs offered to a bot without a board
         self.thread_id = thread_id  # the person's thread; None: the owner's original thread
         self.touched = set()  # projects whose content or name reached the model (audience re-check)
+        self.surface = surface  # "web", or a chat platform's "dm" / "channel" (the bridge)
+        self.disclosure = disclosure  # channel turns: "titles" or "full"
 
     def principal(self):
         principal = sessions.person_principal(self.db, self.user_id, self.workspace_id)
@@ -364,11 +368,30 @@ def audience_gate(turn, tool, args) -> None:
         raise AudienceLimited()
 
 
+CHANNEL_TITLES = ("project_status", "list_work")  # titles, statuses, counts: no bodies
+
+
+def surface_allows(turn, tool) -> bool:
+    """Whether the turn's surface may use ``tool``. The web is unrestricted. A chat platform's
+    direct message gets no routine write (writes there become taps in a later slice; confirm
+    tools leave their chip in the person's web thread). A channel turn is read-only and only for
+    the mapped project: with ``titles`` just its status and work titles, never bodies."""
+    if turn.surface == "web":
+        return True
+    if turn.surface == "dm":
+        return tool.kind != "routine"
+    if tool.kind != "read" or tool.scope != "project" or not turn.bot.get("board"):
+        return False
+    return turn.disclosure == "full" or tool.name in CHANNEL_TITLES
+
+
 def offered(turn: Turn) -> list[Tool]:
     """The tools this turn may call, in registration order."""
     out = []
     effective = turn.effective()
     for tool in list(REGISTRY.values()):
+        if not surface_allows(turn, tool):
+            continue
         if tool.scope == "project" and not turn.bot.get("board") and not turn.projects:
             continue
         if effective.shared and not _covered(turn, tool, effective):

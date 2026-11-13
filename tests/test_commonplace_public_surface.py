@@ -180,6 +180,7 @@ PREFIX = {
         for method in ("GET", "POST", "PATCH", "DELETE")
         for prefix in ("/api/bridge/installs/", "/api/bridge/links/", "/api/bridge/")
     },
+    ("PUT", "/api/bridge/installs/"): "authenticated",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")

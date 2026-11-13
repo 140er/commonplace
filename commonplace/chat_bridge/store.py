@@ -116,10 +116,17 @@ class CodeGone(Exception):
 
 
 _LINK = ("id", "install_id", "ext_user", "user_id", "confirm_ok", "created_at", "revoked_at")
+_CHANNEL = ("install_id", "ext_channel", "board", "disclosure", "enabled", "mapped_by", "mapped_at")
 
 
 def stamp(now=None) -> str:
     return (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _channel(row) -> dict:
+    out = {key: row[key] for key in _CHANNEL}
+    out["enabled"] = bool(out["enabled"])
+    return out
 
 
 def _view(row) -> dict:
@@ -521,6 +528,231 @@ class BridgeStore:
                 conn is not None
                 and conn.execute("SELECT 1 FROM bridge_installs LIMIT 1").fetchone() is not None
             )
+
+    # Channel mappings (a direct message needs none)
+
+    def channel(self, install_id, ext_channel):
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT * FROM bridge_channels WHERE install_id=? AND ext_channel=?",
+                    (install_id, ext_channel),
+                ).fetchone()
+                if conn is not None
+                else None
+            )
+            return _channel(row) if row else None
+
+    def channels(self, install_id) -> list:
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return []
+            return [
+                _channel(r)
+                for r in conn.execute(
+                    "SELECT * FROM bridge_channels WHERE install_id=? ORDER BY ext_channel",
+                    (install_id,),
+                )
+            ]
+
+    def put_channel(
+        self, install_id, ext_channel, board, disclosure, enabled, user_id, now=None
+    ) -> dict:
+        """Map (or change the mapping of) a channel to one project; the owner's act."""
+        with self._tx() as conn:
+            self._row(conn, install_id)
+            conn.execute(
+                "INSERT INTO bridge_channels "
+                "(install_id,ext_channel,board,disclosure,enabled,mapped_by,mapped_at) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT (install_id, ext_channel) DO UPDATE SET "
+                "board=excluded.board, disclosure=excluded.disclosure, enabled=excluded.enabled, "
+                "mapped_by=excluded.mapped_by, mapped_at=excluded.mapped_at",
+                (install_id, ext_channel, board, disclosure, int(enabled), user_id, stamp(now)),
+            )
+            row = conn.execute(
+                "SELECT * FROM bridge_channels WHERE install_id=? AND ext_channel=?",
+                (install_id, ext_channel),
+            ).fetchone()
+            return _channel(row)
+
+    def delete_channel(self, install_id, ext_channel) -> bool:
+        with self._tx() as conn:
+            self._row(conn, install_id)
+            return (
+                conn.execute(
+                    "DELETE FROM bridge_channels WHERE install_id=? AND ext_channel=?",
+                    (install_id, ext_channel),
+                ).rowcount
+                == 1
+            )
+
+    # Intake journal: one row per platform event, the idempotency key of the whole turn
+
+    def journal(self, install_id, ext_event, state, ext_channel, ext_thread, now=None) -> bool:
+        """Record an event once. False when the platform sent this id before (a retry)."""
+        stamped = stamp(now)
+        with self._tx(create=True) as conn:
+            return (
+                conn.execute(
+                    "INSERT OR IGNORE INTO bridge_events "
+                    "(install_id,ext_event,state,ext_channel,ext_thread,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (install_id, ext_event, state, ext_channel, ext_thread, stamped, stamped),
+                ).rowcount
+                == 1
+            )
+
+    def event(self, install_id, ext_event):
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT * FROM bridge_events WHERE install_id=? AND ext_event=?",
+                    (install_id, ext_event),
+                ).fetchone()
+                if conn is not None
+                else None
+            )
+            return dict(row) if row else None
+
+    def set_event(self, install_id, ext_event, expect, state, now=None, **fields) -> bool:
+        """Move an event to ``state`` if it is still in one of (at most three) ``expect`` states:
+        a compare-and-set. ``fields`` may set ``user_id``, ``bot_id`` and ``message_id``."""
+        assert set(fields) <= {"user_id", "bot_id", "message_id"} and 1 <= len(expect) <= 3
+        states = (tuple(expect) + (expect[0],) * 3)[:3]
+        with self._tx() as conn:
+            return (
+                conn.execute(
+                    "UPDATE bridge_events SET state=?, updated_at=?, "
+                    "user_id=COALESCE(?, user_id), bot_id=COALESCE(?, bot_id), "
+                    "message_id=COALESCE(?, message_id) "
+                    "WHERE install_id=? AND ext_event=? AND state IN (?,?,?)",
+                    (
+                        state,
+                        stamp(now),
+                        fields.get("user_id"),
+                        fields.get("bot_id"),
+                        fields.get("message_id"),
+                        install_id,
+                        ext_event,
+                        *states,
+                    ),
+                ).rowcount
+                == 1
+            )
+
+    def turns_today(self, install_id, now=None) -> int:
+        """Events of this install that started a turn today (UTC): the daily cap's count."""
+        day = stamp(now)[:10]
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return 0
+            return conn.execute(
+                "SELECT COUNT(*) FROM bridge_events WHERE install_id=? AND message_id IS NOT NULL "
+                "AND created_at >= ?",
+                (install_id, day),
+            ).fetchone()[0]
+
+    def open_events(self, install_id, state, before) -> list:
+        """Events in ``state`` last touched before the ``before`` stamp, oldest first."""
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return []
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM bridge_events WHERE install_id=? AND state=? "
+                    "AND updated_at < ? ORDER BY created_at",
+                    (install_id, state, before),
+                )
+            ]
+
+    # Outbox: every post the bridge makes has a row; nothing is posted without one
+
+    def enqueue(self, install_id, ext_event, part, target, ref, state="queued", now=None) -> bool:
+        """Queue one part of one reply. False when that (event, part, target) already has a row."""
+        with self._tx() as conn:
+            return (
+                conn.execute(
+                    "INSERT OR IGNORE INTO bridge_outbox "
+                    "(id,install_id,ext_event,part,target,ref,state) VALUES (?,?,?,?,?,?,?)",
+                    (new_install_id(), install_id, ext_event, part, target, ref, state),
+                ).rowcount
+                == 1
+            )
+
+    def outbox(self, install_id, ext_event=None) -> list:
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return []
+            if ext_event is None:
+                cursor = conn.execute(
+                    "SELECT * FROM bridge_outbox WHERE install_id=? ORDER BY ext_event, part",
+                    (install_id,),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM bridge_outbox WHERE install_id=? AND ext_event=? ORDER BY part",
+                    (install_id, ext_event),
+                )
+            return [dict(r) for r in cursor]
+
+    def due(self, install_id, now=None, limit=20) -> list:
+        """Queued rows whose retry time has come, oldest first."""
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return []
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM bridge_outbox WHERE install_id=? AND state='queued' "
+                    "AND (next_at IS NULL OR next_at <= ?) ORDER BY ext_event, part LIMIT ?",
+                    (install_id, stamp(now), limit),
+                )
+            ]
+
+    def claim(self, row_id, now=None):
+        """``queued -> sending`` (counting the attempt) for exactly one caller, or None."""
+        with self._tx() as conn:
+            if (
+                conn.execute(
+                    "UPDATE bridge_outbox SET state='sending', attempts=attempts+1, next_at=? "
+                    "WHERE id=? AND state='queued' AND install_id IN "
+                    "(SELECT id FROM bridge_installs WHERE enabled=1)",
+                    (stamp(now), row_id),
+                ).rowcount
+                != 1
+            ):
+                return None
+            return dict(
+                conn.execute("SELECT * FROM bridge_outbox WHERE id=?", (row_id,)).fetchone()
+            )
+
+    def settle(self, row_id, state, ext_post=None, next_at=None, expect="sending") -> bool:
+        """Close a ``sending`` (or ``expect``) row: ``sent``, ``failed``, ``unknown``, or back
+        to ``queued``."""
+        with self._tx() as conn:
+            return (
+                conn.execute(
+                    "UPDATE bridge_outbox SET state=?, ext_post=COALESCE(?, ext_post), next_at=? "
+                    "WHERE id=? AND state=?",
+                    (state, ext_post, next_at, row_id, expect),
+                ).rowcount
+                == 1
+            )
+
+    def stuck(self, install_id, before) -> list:
+        """Rows left ``sending`` since before the stamp: a crash between the call and its record."""
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return []
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM bridge_outbox WHERE install_id=? AND state='sending' "
+                    "AND next_at < ?",
+                    (install_id, before),
+                )
+            ]
 
     # Read-only status
 
