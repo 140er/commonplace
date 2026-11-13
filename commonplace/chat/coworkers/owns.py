@@ -182,8 +182,8 @@ def _locks(path, source_ids, holders, names, budget):
     matching = []
     for row in holders:
         # Admission treats unreadable contracts as **; never publish their text.
-        globs = contracts.parse(row["paths"])
         budget.take(contracts.CARD_UNITS + contracts.size_units(row["paths"]))
+        globs = contracts.parse(row["paths"])
         if contracts.first_overlap([path], globs if globs is not None else contracts.ANY, budget):
             matching.append(row)
     shared = [r for r in matching if r["id"] not in source_ids]

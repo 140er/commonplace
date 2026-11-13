@@ -166,7 +166,12 @@ def test_unreadable_project_and_archived_project_never_disclose_paths_or_locks(o
 
     def restricted(user_id, **kwargs):
         principal = original(user_id, **kwargs)
-        return replace(principal, policy=Policy.build(read_wings=["elsewhere"]))
+        return replace(
+            principal,
+            policy=Policy.build(
+                profile="full", scopes=["memory:read"], read_wings=["elsewhere"], trust="trusted"
+            ),
+        )
 
     monkeypatch.setattr(authority, "user", restricted)
     for user in (owned.api.owner, owned.api.member):
