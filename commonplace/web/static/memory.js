@@ -140,7 +140,7 @@ export function renderMemory(state) {
   const status = busy ? `Searching…${searched ? ` showing results for “${state.completedQuery}” until done` : ""}` : searched ? `${results.length} results${state.truncated ? " · more matches available; narrow your search" : ""}` : "";
   return `<section class="memory-search" aria-label="Memory">
     <div class="memory-import-entry"><button class="btn" data-memory-action="import">Import</button></div>
-    <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="q" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
+    <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="query" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
     <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} orchestrator`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
     ${error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
     ${state.errors?.length ? '<p class="memory-warning" role="alert">Some sources could not be searched. Try again for all results.</p>' : ""}
@@ -176,7 +176,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       const selector = focused.matches("[data-memory-result]") ? `[data-memory-result="${focused.dataset.memoryResult}"]`
         : focused.matches("[data-memory-action]") ? `[data-memory-action="${focused.dataset.memoryAction}"]`
         : focused.matches("[data-memory-post]") ? `[data-memory-post="${focused.dataset.memoryPost}"]`
-        : focused.name && ["q", "project", "source", "from", "when", "card"].includes(focused.name) ? `[name="${focused.name}"]` : null;
+        : focused.name && ["query", "project", "source", "from", "when", "card"].includes(focused.name) ? `[name="${focused.name}"]` : null;
       if (selector) { const owner = panel?.contains(focused) ? panel : mount; restore = () => owner.querySelector(selector)?.focus(); }
     }
     mount.innerHTML = renderMemory(state);
@@ -293,7 +293,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   }
   function change(event) {
     const form = event.target.closest("[data-memory-search]");
-    if (form && event.target.tagName === "SELECT" && form.elements.q.value.trim()) void search(Object.fromEntries(new FormData(form)));
+    if (form && event.target.tagName === "SELECT" && form.elements.query.value.trim()) void search(Object.fromEntries(new FormData(form)));
   }
   function keydown(event) {
     if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.target.closest("input, textarea, select, [contenteditable]")) return;
