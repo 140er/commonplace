@@ -226,6 +226,7 @@ def test_steer_uses_canonical_controls_and_explicit_chat_stays_chat(env, dispatc
 @pytest.mark.parametrize("mode", ["steer", "chat"])
 def test_existing_authority_matrix_with_new_fields(env, dispatch, progress, mode):
     item = progress.start(group=True)
+    private = progress.start()
     api = API(env.gateway, env.wid, env.uid, env.other, "outsider")
     api.sessions[env.uid] = env.session
     body = {
@@ -241,7 +242,6 @@ def test_existing_authority_matrix_with_new_fields(env, dispatch, progress, mode
     assert status == (404 if mode == "steer" else 201)
     for headers in [{"Authorization": "Bearer synthetic"}, {"Origin": None}]:
         assert api.request("POST", path, body, headers=headers)[0] == 403
-    private = progress.start()
     assert (
         api.request("POST", f"/conversations/{private.cid}/messages", body, user=env.other)[0]
         == 404
