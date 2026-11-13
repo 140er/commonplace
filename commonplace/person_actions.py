@@ -24,7 +24,14 @@ DECIDE_CAPABILITY = "cards:decide:person"
 APPROVE_CAPABILITY = "cards:approve:person"
 CHAT_CAPABILITY = "chat:person"
 EVENTS_CAPABILITY = "events:person"
-CAPABILITIES = (DECIDE_CAPABILITY, APPROVE_CAPABILITY, CHAT_CAPABILITY, EVENTS_CAPABILITY)
+DELETE_CAPABILITY = "account:delete:person"
+CAPABILITIES = (
+    DECIDE_CAPABILITY,
+    APPROVE_CAPABILITY,
+    CHAT_CAPABILITY,
+    EVENTS_CAPABILITY,
+    DELETE_CAPABILITY,
+)
 NATIVE_REDIRECT = "cmmn://auth/callback"
 DECIDE_TEXT = (
     "Allow this app to answer card questions and completion reviews as you in this workspace. "
@@ -41,6 +48,12 @@ CHAT_TEXT = (
     "It can reach only chats you may read and write on the website. Each message records your "
     "identity and this app's name. Disconnect this app to stop access."
 )
+DELETE_TEXT = (
+    "Allow this app to request deletion of your account only after you sign in again on this "
+    "website and confirm account deletion here. The app never receives your sign-in credential. "
+    "The existing waiting period and account protection rules still apply. Each request records "
+    "your identity and this app's name. Disconnect this app to stop access."
+)
 EVENTS_TEXT = (
     "Allow this app to read your notifications and activity feed as you in this workspace. "
     "It can show only what you can see on the website. Nothing can be changed through this. "
@@ -51,6 +64,7 @@ CONSENT = (
     (APPROVE_CAPABILITY, "grant_person_approve", APPROVE_TEXT),
     (CHAT_CAPABILITY, "grant_person_chat", CHAT_TEXT),
     (EVENTS_CAPABILITY, "grant_person_events", EVENTS_TEXT),
+    (DELETE_CAPABILITY, "grant_person_delete", DELETE_TEXT),
 )
 
 # Account export/deletion classifies this control table. No bearer is stored here.
