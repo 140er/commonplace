@@ -1,0 +1,4 @@
+- **Tests:**
+
+  - `tests/test_commonplace_account_person_token.py` is browser-free real-HTTP proof for account deletion consent, forced credential checking, stale/cookie-only refusal, same-browser CSRF, explicit confirmation and Cancel, PKCE and identity bindings, one-time delivery, expiry, replay, concurrent one-winner consumption, revocation, default-off behavior, machinery refusal, per-person/client limits, route-table isolation and credential sentinels.
+  - Actual deletion cases exercise both member and owner accounts through the existing grace period and purge, preserving shared workspaces and owner hand-over. Existing account deletion/export/table, OAuth, phone card/chat, SQL, public-surface, five route guards, rules and documentation checks remain the regression selection. No new browser harness or client JavaScript is introduced.

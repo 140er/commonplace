@@ -102,9 +102,10 @@ def challenge(verifier: str) -> str:
 
 def ensure_schema(db) -> None:
     from commonplace import person_actions
+    from commonplace.account import person_token
 
     with db._lock:
-        db._conn.executescript(SCHEMA + person_actions.SCHEMA)
+        db._conn.executescript(SCHEMA + person_actions.SCHEMA + person_token.SCHEMA)
 
 
 def client(db, client_id: str):
@@ -166,6 +167,12 @@ def _revoke(conn, connection_id):
     )
     conn.execute(
         "UPDATE oauth_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE connection_id = ?",
+        (now(), connection_id),
+    )
+    conn.execute("DELETE FROM account_delete_checks WHERE connection_id = ?", (connection_id,))
+    conn.execute(
+        "UPDATE account_delete_tokens SET revoked_at = COALESCE(revoked_at, ?) "
+        "WHERE connection_id = ?",
         (now(), connection_id),
     )
 
