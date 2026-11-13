@@ -1,33 +1,51 @@
-.deck-workspace { min-width: 0; padding-bottom: 88px; }
-.dw-tabs, .dw-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; margin: 16px 24px; font-size: 13px; }
+.shell #content.deck-workspace { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 16px var(--deck-gutter, 24px) 88px; overflow-y: auto; }
+.deck-workspace > * { flex-shrink: 0; }
+.dw-tabs, .dw-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; margin: 0; min-height: 44px; font-size: 13px; }
 .dw-tabs a, .dw-crumbs a, .dw-parent { color: var(--text-2); padding: 10px 0; text-decoration: none; }
-.dw-tabs a[aria-current], .dw-crumbs a[aria-current] { color: var(--text); border-bottom: 1px solid currentColor; }
-.dw-tabs a:focus-visible, .dw-crumbs a:focus-visible, .dw-parent:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
+.dw-tabs a[aria-current] { color: var(--text); border-bottom: 1px solid currentColor; }
+.dw-crumbs a[aria-current] { color: var(--text); border: 0; text-decoration: none; }
+.dw-tabs a:focus-visible, .dw-crumbs a:focus-visible, .dw-parent:focus-visible, .dw-switch a:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
 .dw-crumbs > span:empty { display: none; }
 .dw-crumbs > * + *::before { content: '›'; color: var(--text-3); margin-right: 16px; }
-.dw-title { margin: 24px; }
-.dw-title h1 { font-size: 28px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 8px; }
-.dw-title p, .dw-source { color: var(--text-2); font-size: 13px; line-height: 1.6; }
-.deck-workspace > [data-workspace="content"] > .compute, .dw-workers, .dw-empty { margin: 24px; }
-.dw-workers { display: grid; gap: 20px; }
+.dw-title { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+.deck-workspace .dw-title h1, .deck-workspace .compute-title h1 { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 8px; }
+.dw-title p, .dw-source, .deck-workspace .compute-title p { color: var(--text-2); font-size: 13px; line-height: 1.6; margin: 0; }
+.dw-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.dw-switch { display: inline-flex; padding: 3px; background: var(--surface); border-radius: 24px; }
+.dw-switch a, .dw-switch span { display: inline-flex; align-items: center; min-height: 38px; padding: 0 12px; color: var(--text-2); font-size: 13px; text-decoration: none; border-radius: 20px; }
+.dw-switch a[aria-current] { background: var(--well); color: var(--text); }
+.dw-switch [aria-disabled] { color: var(--text-3); }
+.dw-controls > .btn { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; }
+.deck-workspace > [data-workspace="content"] > .compute, .dw-workers, .dw-empty { margin: 0; }
+.dw-workers { display: grid; gap: 16px; }
 .dw-parent { display: inline-block; font-size: 13px; }
 .dw-worker { background: var(--surface); border-radius: 20px; padding: 24px; min-width: 0; }
 .dw-worker header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .dw-worker h2 { font-size: 18px; font-weight: 600; margin: 0; }
-.dw-worker header > span { font-size: 12px; color: var(--text-2); }
+.dw-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.dw-status svg { width: 14px; height: 14px; overflow: visible; flex: none; }
 .dw-worker dl { margin: 24px 0; display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 24px; }
 .dw-worker dt { font-size: 11px; color: var(--text-3); margin-bottom: 8px; }
 .dw-worker dd { font-size: 13px; margin: 0; overflow-wrap: anywhere; line-height: 1.6; }
 .dw-worker small { display: block; color: var(--text-2); font-size: 12px; }
-.dw-worker ul { padding-left: 16px; margin: 0; }
+.dw-worker ul { padding: 0; margin: 0; list-style: none; }
+.dw-worker li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 [data-ui="deck"] .deck-workspace .compute-inventory, [data-ui="deck"] .deck-workspace .compute-editor, [data-ui="deck"] .deck-workspace .compute-capabilities { border: 0; border-radius: 20px; }
-[data-ui="deck"] .deck-workspace .compute { --r: 8px; }
+.deck-workspace .compute-inventories { align-items: stretch; }
+.deck-workspace .compute-intro { align-items: flex-start; }
+.deck-workspace .compute-title { flex: 1 1 500px; min-width: 0; }
+.deck-workspace .compute-title p { min-width: 0; }
+.deck-workspace .compute { --r: 8px; }
+.compute-guidance { margin-top: 12px; color: var(--text-2); font-size: 13px; }
+.compute-guidance summary, .compute-capabilities summary { cursor: pointer; min-height: 28px; }
+.compute-guidance p { margin-top: 8px; }
 .deck-workspace .coworkers { min-height: 500px; }
+.shell #content.deck-workspace.dw-map { gap: 0; padding: 0 0 88px; }
+.dw-map > .dw-tabs { margin: 16px var(--deck-gutter, 24px) 0; }
 @media(max-width:699px) {
-  .dw-tabs, .dw-crumbs { margin: 8px 16px; gap: 8px 12px; }
+  .shell #content.deck-workspace { padding: 12px 16px 88px; }
+  .dw-tabs, .dw-crumbs { gap: 8px 12px; }
   .dw-tabs a, .dw-crumbs a { min-height: 44px; display: inline-flex; align-items: center; }
-  .dw-title, .deck-workspace > [data-workspace="content"] > .compute, .dw-workers, .dw-empty { margin: 16px; }
-  .dw-title h1 { font-size: 24px; }
   .dw-worker { padding: 20px; }
   .dw-worker dl { grid-template-columns: 1fr; gap: 16px; }
   .dw-crumbs > * + *::before { margin-right: 10px; }

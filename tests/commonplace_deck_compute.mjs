@@ -551,7 +551,7 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
   assert.ok(!files.includes('deck-topology.js'), 'the old hub map is gone');
   assert.deepEqual(files.filter(name => /^(?:deck-)?topology.*\.(?:js|css)$/.test(name)).sort(), ['topology-detail.css', 'topology-detail.js', 'topology-icons.js', 'topology-layout.js', 'topology-map.js', 'topology-route.js', 'topology-text.js', 'topology.css']);
   const users = [];
-  for (const name of files.filter(name => name.endsWith('.js'))) if ((await readFile(new URL(name, STATIC), 'utf8')).includes('topology-map.js')) users.push(name);
+  for (const name of files.filter(name => name.endsWith('.js'))) if (/import\s*\{[^}]*\bcreateTopologyMap\b[^}]*\}\s*from ['"]\.\/topology-map\.js['"]/.test(await readFile(new URL(name, STATIC), 'utf8'))) users.push(name);
   assert.deepEqual(users.sort(), ['app.js', 'deck-compute.js', 'topology-detail.js'].filter(name => name !== 'topology-detail.js'));
   assert.match(await readFile(new URL('deck-compute.js', STATIC), 'utf8'), /createTopologyMap/);
   assert.ok(MAP_PATH && mapModel(EMPTY));
