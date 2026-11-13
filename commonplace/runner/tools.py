@@ -84,7 +84,7 @@ def _config_defaults(ctx, task, machine, project, topic, config_ref):
         _requester(ctx)
         raise runner_bridge.StartRefused(
             "use_orch_card_start",
-            "use orch_card_start: this board's starts run from its orchestrator config",
+            "use orch_card_start: this board's starts run from its Coworker config",
         )
     config = runner_bridge.resolve_version(
         ctx.gateway, ctx.principal.workspace_id, board["slug"], config_ref
@@ -145,7 +145,7 @@ def card_start(
         if not person_owner(ctx.principal):
             raise runner_bridge.StartRefused(
                 "use_orch_card_start",
-                "use orch_card_start: this board's starts run from its orchestrator config",
+                "use orch_card_start: this board's starts run from its Coworker config",
             )
         return runner_bridge.person_start(
             ctx,
@@ -166,7 +166,7 @@ def card_start(
         if refusal:
             raise orch.AdmissionRefused(refusal)
     if config_ref is not None:
-        raise ToolError("no: config_ref needs a board with an orchestrator config")
+        raise ToolError("no: config_ref needs a board with a Coworker config")
     runtime_mode = "approval-required" if runtime_mode is None else runtime_mode
     startable(ctx.gateway, machine, row, board)
     if project not in grant_values(machine, "projects"):
@@ -262,7 +262,7 @@ OPERATIONS = {
         },
         ("task",),
         "Request an attested machine to start a worker for a claimable card. machine, "
-        "project and topic are required unless the board has an orchestrator config; then "
+        "project and topic are required unless the board has a Coworker config; then "
         "only a signed-in workspace owner may call it, may leave them out (the config "
         "fills them) and config_ref (live or exp:<name>) picks the config version.",
     ),

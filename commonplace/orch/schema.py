@@ -586,7 +586,7 @@ def _role(name: str, value: object, workflows: Mapping, mcps: Mapping) -> Role:
     if "area" in body:
         area = _str(body["area"], f"{path}.area", NAME)
         if kind != "sub-orchestrator":
-            raise ConfigError("area_kind", f"{path}.kind", "an area needs a sub-orchestrator")
+            raise ConfigError("area_kind", f"{path}.kind", "an area needs a subordinate Coworker")
         for required in ("parent", "topic"):
             if required not in body:
                 raise ConfigError("missing_key", f"{path}.{required}", "required for an area")
@@ -643,7 +643,7 @@ def _check_areas(roles: Mapping[str, Role]) -> None:
         raise ConfigError("too_many", "roles", "at most 8 areas")
     mains = [role for role in roles.values() if role.kind == "orchestrator"]
     if len(mains) != 1 or mains[0].parent is not None:
-        raise ConfigError("area_main", "roles", "areas need exactly one parentless orchestrator")
+        raise ConfigError("area_main", "roles", "areas need exactly one parentless Coworker")
     for role in areas:
         if role.parent != mains[0].name:
             raise ConfigError(
@@ -905,7 +905,7 @@ def _role_lines(role: Role) -> list[str]:
 
 def render(config: Config) -> str:
     """Markdown bundle of the whole config for advisory sessions and ``orch render``."""
-    lines = [f"# Orchestrator config `{config.project}`", "", f"- schema: `{config.schema}`"]
+    lines = [f"# Coworker config `{config.project}`", "", f"- schema: `{config.schema}`"]
     if config.sha256:
         lines.append(f"- sha256: `{config.sha256}`")
     if config.max_agents is not None:

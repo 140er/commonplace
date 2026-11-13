@@ -28,7 +28,7 @@ EXEMPT_WRITES = {
     "task_heartbeat": "Mechanical claim renewal does not change the work or its instructions.",
     **dict.fromkeys(
         "orch_heartbeat orch_release".split(),
-        "Mechanical orchestrator lease renewal and release.",
+        "Mechanical Coworker lease renewal and release.",
     ),
     **dict.fromkeys(
         "webhook_add webhook_remove webhook_test".split(),

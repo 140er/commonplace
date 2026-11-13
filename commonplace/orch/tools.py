@@ -418,7 +418,7 @@ OPERATIONS = {
         "read",
         False,
         False,
-        "Read an orchestrator config version (with its TOML), or the accepted version of "
+        "Read a Coworker config version (with its TOML), or the accepted version of "
         "a channel (default live) and the board's version list.",
     ),
     "orch_config_render": (
@@ -452,7 +452,7 @@ OPERATIONS = {
         "write",
         False,
         False,
-        "Propose an orchestrator config (TOML) for a board you can write; channel live or "
+        "Propose a Coworker config (TOML) for a board you can write; channel live or "
         "exp:<name>. The workspace owner accepts it by its sha256.",
     ),
     "orch_config_accept": (
@@ -524,7 +524,7 @@ OPERATIONS = {
         "write",
         True,
         False,
-        "Claim the orchestrator lease of a board role and read its checkpoint. The token "
+        "Claim the Coworker lease of a board role and read its checkpoint. The token "
         "is shown once; force (owner only) takes a held lease.",
     ),
     "orch_heartbeat": (
@@ -534,7 +534,7 @@ OPERATIONS = {
         "write",
         True,
         False,
-        "Renew your orchestrator lease.",
+        "Renew your Coworker lease.",
     ),
     "orch_release": (
         release,
@@ -543,7 +543,7 @@ OPERATIONS = {
         "write",
         True,
         False,
-        "Give up your orchestrator lease.",
+        "Give up your Coworker lease.",
     ),
     "orch_force_release": (
         force_release,

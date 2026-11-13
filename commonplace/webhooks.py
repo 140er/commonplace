@@ -451,7 +451,7 @@ def _payload(db, event):
         "card.claimed": "picked up",
         "card.expired": "claim expired",
         "board.stalled": "no progress",
-        "orch.trigger.failing": "orchestrator triggers failing",
+        "orch.trigger.failing": "Coworker triggers failing",
         "space_message": "new request",
         "handoff.completed": "context handed off",
         "handoff.failed": "handoff failed, compacted instead",

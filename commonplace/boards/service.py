@@ -228,7 +228,7 @@ def review_request(question, options, context):
     help_text = (
         "no: review needs a real question (at least 24 characters), context in body/status_line "
         "or context (at least 20 characters), and at least 2 distinct options. "
-        "Stay in doing while waiting on a gate or ask your orchestrator."
+        "Stay in doing while waiting on a gate or ask your Coworker."
     )
     try:
         question = validate_text(question, "question", limit=5000)
@@ -315,7 +315,7 @@ def _plan_waiting(row):
     return plan_waiting(data)
 
 
-ORCHESTRATOR_RELEASE_REASON = "Released automatically by the project orchestrator"
+ORCHESTRATOR_RELEASE_REASON = "Released automatically by the project Coworker"
 APPROVALS_TRUNCATED = "(list truncated: more approvals may be waiting; call needs_me)"
 
 
@@ -1303,8 +1303,7 @@ class BoardService(lifecycle.LifecycleMixin):
             and self._plan_gate(conn, row["board_id"]) is not None
         ):
             raise ToolError(
-                "no: on a board with an orchestrator config only task_approve "
-                "removes the plan label"
+                "no: on a board with a Coworker config only task_approve removes the plan label"
             )
 
     def _planner_card_check(self, conn, board_id, created_by, status, body):
@@ -1850,7 +1849,7 @@ class BoardService(lifecycle.LifecycleMixin):
             value = value[5:]
         if not re.fullmatch(r"[A-Za-z0-9_.:@-]{1,120}", value):
             raise ToolError(
-                "no: recipient not found; use an agent name, owner, orchestrator, "
+                "no: recipient not found; use an agent name, owner, Coworker, "
                 "or anyone to return the card to the pool"
             )
         return f"conn:{value}"
@@ -2347,7 +2346,7 @@ class BoardService(lifecycle.LifecycleMixin):
                         message = (
                             f"Starts that use the {uses} role on {name} cannot run: the role "
                             "names no model_role. Add one to that role in the board's "
-                            "orchestrator config; there is no setting for it here."
+                            "Coworker config; there is no setting for it here."
                         )
                         action = None
                     else:
@@ -2971,9 +2970,7 @@ class BoardService(lifecycle.LifecycleMixin):
         if restricted_origin:
             # Neither a child nor a restricted creator may escape release at creation.
             if ask is not None:
-                raise ToolError(
-                    "no: create a proposal for your orchestrator before asking the owner"
-                )
+                raise ToolError("no: create a proposal for your Coworker before asking the owner")
             status, assignee = "backlog", p.actor if proposal else assignee
         if status == "doing":
             task_types.require(conn, label, type_holder)

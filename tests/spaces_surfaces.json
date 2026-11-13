@@ -619,7 +619,7 @@
           "name": "orch_config_diff"
         },
         {
-          "description": "Read an orchestrator config version (with its TOML), or the accepted version of a channel (default live) and the board's version list.",
+          "description": "Read a Coworker config version (with its TOML), or the accepted version of a channel (default live) and the board's version list.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -646,7 +646,7 @@
           "name": "orch_config_get"
         },
         {
-          "description": "Propose an orchestrator config (TOML) for a board you can write; channel live or exp:<name>. The workspace owner accepts it by its sha256.",
+          "description": "Propose a Coworker config (TOML) for a board you can write; channel live or exp:<name>. The workspace owner accepts it by its sha256.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1028,7 +1028,7 @@
           "name": "orch_gate_record"
         },
         {
-          "description": "Renew your orchestrator lease.",
+          "description": "Renew your Coworker lease.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1232,7 +1232,7 @@
           "name": "orch_reassign_step"
         },
         {
-          "description": "Give up your orchestrator lease.",
+          "description": "Give up your Coworker lease.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -1295,7 +1295,7 @@
           "name": "orch_restore_status"
         },
         {
-          "description": "Claim the orchestrator lease of a board role and read its checkpoint. The token is shown once; force (owner only) takes a held lease.",
+          "description": "Claim the Coworker lease of a board role and read its checkpoint. The token is shown once; force (owner only) takes a held lease.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4353,7 +4353,7 @@
           "name": "orch_config_diff"
         },
         {
-          "description": "Read an orchestrator config version (with its TOML), or the accepted version of a channel (default live) and the board's version list.",
+          "description": "Read a Coworker config version (with its TOML), or the accepted version of a channel (default live) and the board's version list.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4380,7 +4380,7 @@
           "name": "orch_config_get"
         },
         {
-          "description": "Propose an orchestrator config (TOML) for a board you can write; channel live or exp:<name>. The workspace owner accepts it by its sha256.",
+          "description": "Propose a Coworker config (TOML) for a board you can write; channel live or exp:<name>. The workspace owner accepts it by its sha256.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4762,7 +4762,7 @@
           "name": "orch_gate_record"
         },
         {
-          "description": "Renew your orchestrator lease.",
+          "description": "Renew your Coworker lease.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -4966,7 +4966,7 @@
           "name": "orch_reassign_step"
         },
         {
-          "description": "Give up your orchestrator lease.",
+          "description": "Give up your Coworker lease.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {
@@ -5029,7 +5029,7 @@
           "name": "orch_restore_status"
         },
         {
-          "description": "Claim the orchestrator lease of a board role and read its checkpoint. The token is shown once; force (owner only) takes a held lease.",
+          "description": "Claim the Coworker lease of a board role and read its checkpoint. The token is shown once; force (owner only) takes a held lease.",
           "inputSchema": {
             "additionalProperties": false,
             "properties": {

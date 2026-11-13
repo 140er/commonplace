@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 
 SEAT_CLIENT = "commonplace-orchestrator"
 SEAT_PREFIX = "orchestrator:"
+DEFAULT_SEAT_PREFIX = "Coworker:"
 TOKEN_DAYS = 90
 SEAT_IDLE_S = 86400
 # main = orchestrator, worker = builder; reviewer and gate are their own choices.

@@ -280,7 +280,7 @@ def prepare(
         raise StartRefused("unknown_role", "the config has no role for this start")
     role = config.runner_role
     if config.runner is None or role is None:
-        raise StartRefused("not_configured", "the board has no orchestrator runner config")
+        raise StartRefused("not_configured", "the board has no Coworker runner config")
     machine = registry.get_machine(gateway.db, workspace_id, config.runner.machine)
     try:
         model = models.resolve(gateway.db, workspace_id, board_row["slug"], role.model_role)
@@ -559,7 +559,7 @@ def model_unresolved(plan: Plan) -> StartRefused:
     if role.model_role is None:
         message = (
             f"the {role.name} role of board {plan.board} has no model_role; "
-            "add one to the role in the board's orchestrator config"
+            "add one to the role in the board's Coworker config"
         )
     else:  # config validation accepts only the four slots, so project settings can set it
         message = (

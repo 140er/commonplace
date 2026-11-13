@@ -15,7 +15,7 @@ SHARED_CONFLICT = {
     "explanation": "This project uses shared memory. An agent could read and change all of it.",
     "fix": {"path": "/api/projects/ledger/wing", "label": OWN},
 }
-OTHER_CONFLICT = {"error": "The orchestrator connection changed; try again"}
+OTHER_CONFLICT = {"error": "The Coworker connection changed; try again"}
 
 
 @pytest.fixture(scope="module")
