@@ -13,6 +13,8 @@
 
   - The batch merge rule in `CLAUDE.md` (`AGENTS.md` links to it): affected tests and the repo-wide guard files per PR, no full test suite anywhere (owner decision, 13 Nov), a smoke set for a release, breaks fixed when found.
 
+  - The self-improvement rule in `CLAUDE.md` (`AGENTS.md` links to it): agents note lessons with the outcome that taught them, propose small instruction edits when a lesson repeats (never a silent rewrite or self-merge), and file suggestion cards (problem, proposal, benefit, cost) that go to the coordinator and the owner, with no work before the owner's yes.
+
   - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; no full suite runs per PR, per batch or per release.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
