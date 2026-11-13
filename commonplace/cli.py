@@ -1078,6 +1078,12 @@ def build_parser() -> argparse.ArgumentParser:
     for flag in ("--input-tokens", "--output-tokens", "--cost-micros"):
         s.add_argument(flag, type=int)
     s.add_argument("--currency")
+    s.add_argument(
+        "--cost-unknown",
+        action="store_const",
+        const=True,
+        help="say the run's cost cannot be told (recorded as unknown, never as zero)",
+    )
     s.set_defaults(func=cmd_runner)
 
     s = sub.add_parser("init", help="create the control database and the first admin")
