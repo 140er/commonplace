@@ -224,7 +224,9 @@ def refused(response):
     assert "Set-Cookie" not in headers and "Location" not in headers
     assert headers["Cache-Control"] == "no-store"
     assert headers["Referrer-Policy"] == "no-referrer"
-    assert content == b"Sign in link is invalid or expired"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"This sign-in link is invalid or expired" in content
+    assert b'href="/app/?signin=expired">Retry</a>' in content
 
 
 def test_fresh_signup_isolation_logout_and_closed_signup_relogin(fresh, monkeypatch, caplog):

@@ -1698,10 +1698,19 @@ root.addEventListener("submit", async (event) => {
       location.assign(`/app/login?t=${enc(token)}`);
     } else if (kind === "agent") await createAgent(form);
     else if (kind === "email-login") {
-      const result = await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext } });
       let status = root.querySelector(".signin [role=status]");
       if (!status) { status = document.createElement("div"); status.className = "message"; status.setAttribute("role", "status"); form.after(status); }
-      status.textContent = result.message;
+      status.textContent = "Sending your sign-in link…";
+      form.setAttribute("aria-busy", "true");
+      if (submit) submit.textContent = "Sending…";
+      try {
+        await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext }, timeoutMs: 15000 });
+        status.textContent = "If this email can sign in, a link is on its way.";
+        if (submit) submit.textContent = "Send another link";
+      } catch (error) {
+        status.textContent = error.status === 429 ? signinMessage("throttled") : "Could not send the sign-in link. Check your connection, then retry.";
+        if (submit) submit.textContent = "Retry";
+      } finally { form.removeAttribute("aria-busy"); }
     } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });

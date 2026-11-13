@@ -18,6 +18,7 @@ class Limit:
 
 
 ANONYMOUS = Limit("anonymous", 30, 60)
+APP_SHELL = Limit("app-shell", 600, 60)
 CREDENTIALS = Limit("credentials", 10, 60)
 AUTHENTICATED = Limit("authenticated", 600, 60)
 UNTRUSTED = Limit("untrusted", 60, 60)
