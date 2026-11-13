@@ -2543,8 +2543,6 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
-        if self._instance_admission(path, principal):
-            return
         if (
             principal is not None
             and getattr(principal, "runner", None) == "machine"
@@ -2552,6 +2550,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         ):
             self.close_connection = True
             self._send_json(404, {"error": "not found"})
+            return
+        if self._instance_admission(path, principal):
             return
         from .runner.registry import WORKER_TOOLS
 
