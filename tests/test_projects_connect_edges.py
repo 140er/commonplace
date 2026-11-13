@@ -22,7 +22,7 @@ def test_manual_coordinator_with_seat_name_needs_replace(projects_hub):
         workspace_ref=h.workspace,
         user_ref=h.admin,
         actor=h.admin,
-        name="orchestrator:work",
+        name="Coworker:work",
         client="test",
         policy=Policy.build(
             profile="standard",
@@ -32,17 +32,15 @@ def test_manual_coordinator_with_seat_name_needs_replace(projects_hub):
             trust="standard",
         ),
     )
-    patched = h.request(
-        h.owner, "PATCH", "/api/boards/work", {"coordinator": "conn:orchestrator:work"}
-    )
+    patched = h.request(h.owner, "PATCH", "/api/boards/work", {"coordinator": "conn:Coworker:work"})
     status, body = h.connect(h.owner, "work")
     assert status == 409 and body.get("error") == "replaces current orchestrator"  # RED
     assert patched[0] == 200
-    assert h.coordinator("work") == "conn:orchestrator:work"
+    assert h.coordinator("work") == "conn:Coworker:work"
     replaced = h.connect(h.owner, "work", {"replace": True})
     assert replaced[0] == 201
     assert h.coordinator("work") == "conn:" + replaced[1]["connection"]["name"]
-    assert replaced[1]["connection"]["name"].startswith("orchestrator:work:")
+    assert replaced[1]["connection"]["name"].startswith("Coworker:work:")
 
 
 def test_connect_rejects_non_object_body(projects_hub):

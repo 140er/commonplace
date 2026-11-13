@@ -10,7 +10,7 @@ from commonplace.control_db import ControlError, RunnerLinkedError
 from commonplace.extensions import ToolContext
 from commonplace.http_util import log_failure
 from commonplace.policy import Policy
-from commonplace.projects.types import SEAT_CLIENT, SEAT_PREFIX, MainView, Seat
+from commonplace.projects.types import DEFAULT_SEAT_PREFIX, SEAT_CLIENT, SEAT_PREFIX, MainView, Seat
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def ensure_main(db, workspace_id: str, board: str) -> Seat:
             "INSERT OR IGNORE INTO project_orchestrators "
             "(workspace_id, board, role, name, connection_id, created_at, updated_at) "
             "VALUES (?, ?, 'main', ?, NULL, ?, ?)",
-            (workspace_id, board, SEAT_PREFIX + board, now, now),
+            (workspace_id, board, DEFAULT_SEAT_PREFIX + board, now, now),
         )
         row = db._conn.execute(
             "SELECT * FROM project_orchestrators WHERE workspace_id=? AND board=? AND role='main'",
@@ -131,11 +131,14 @@ def reconcile(db, workspace_id, slug, wing, actor):
     """Revoke mismatched seats, including ones orphaned by an interrupted write."""
     revoked, runner_linked = [], []
     detached = False
-    prefix = SEAT_PREFIX + slug
+    prefixes = (SEAT_PREFIX + slug, DEFAULT_SEAT_PREFIX + slug)
     with db._lock:
         for row in db.connections(workspace_id):
             if row["client"] != SEAT_CLIENT or not (
-                row["name"] == prefix or row["name"].startswith(prefix + ":")
+                any(
+                    row["name"] == prefix or row["name"].startswith(prefix + ":")
+                    for prefix in prefixes
+                )
             ):
                 continue
             if active_connection(db, workspace_id, row["id"]) is not None:

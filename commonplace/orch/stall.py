@@ -265,7 +265,7 @@ def stalled(gateway, workspace_id: str) -> list[dict]:
             "board": r["board"],
             "nudges": r["streak"],
             "since": r["nudged_at"],
-            "message": f"The orchestrator on {r['board']} did not finish a card after "
+            "message": f"The Coworker on {r['board']} did not finish a card after "
             f"{r['streak']} nudges; check it is running.",
         }
         for r in rows

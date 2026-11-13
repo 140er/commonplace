@@ -678,7 +678,7 @@ def cancel(store, job, principal, *, conn=None, now=None, actor=None):
         owner = internal or (principal.person and principal.role == "owner")
         if row["step_key"] is not None and not owner:
             # An orchestrator step's start: only a signed-in workspace owner cancels it.
-            raise ToolError("no: only a workspace owner may cancel an orchestrator start")
+            raise ToolError("no: only a workspace owner may cancel a Coworker start")
         if not owner and row["requested_by"] != requester_ref(principal):
             raise ToolError("no: only the requester or a workspace owner may cancel")
         if row["state"] == "uncertain":

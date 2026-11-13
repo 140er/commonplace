@@ -179,24 +179,24 @@ def _orchestrator(turn, board) -> dict:
         return {
             "state": "none",
             "wakeable": False,
-            "note": "No orchestrator is set for this project.",
+            "note": "No Coworker is set for this project.",
         }
     if view.connection_id is None:
         return {
             "state": "disconnected",
             "wakeable": False,
-            "note": "The orchestrator is not connected right now.",
+            "note": "The Coworker is not connected right now.",
         }
     if view.wakeable:
         return {
             "state": "connected",
             "wakeable": True,
-            "note": "The orchestrator is connected and is woken for new messages.",
+            "note": "The Coworker is connected and is woken for new messages.",
         }
     return {
         "state": "connected",
         "wakeable": False,
-        "note": "The orchestrator is connected but is not woken: it sees this when it next checks.",
+        "note": "The Coworker is connected but is not woken: it sees this when it next checks.",
     }
 
 
@@ -579,7 +579,7 @@ register(
         name="project_status",
         reach="project:read",
         description=(
-            "Task counts, who is working, what waits and why, and whether the orchestrator "
+            "Task counts, who is working, what waits and why, and whether the Coworker "
             "is connected and woken."
         ),
         schema=_schema(),
@@ -680,14 +680,14 @@ register(
         name="tell_orchestrator",
         reach="project:write",
         description=(
-            "Pass the person's own words to the orchestrator to steer the work: `text` copied "
+            "Pass the person's own words to the Coworker to steer the work: `text` copied "
             "verbatim from the message, or the whole message. Not for new work (use "
             "create_work). Say honestly whether it is woken; it is passed on, not done."
         ),
         schema=_schema({"text": {"type": "string", "minLength": 1, "maxLength": 8000}}),
         kind="routine",
         run=_tell_orchestrator,
-        label=_static("Passed your message to the orchestrator"),
+        label=_static("Passed your message to the Coworker"),
         chip=_tell_chip,
         scope="project",
     )

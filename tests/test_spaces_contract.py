@@ -447,6 +447,7 @@ def test_inventory_and_visibility_contract(env, http):
         r.path == "/api/spaces" and r.tool == "board_add" and r.kind == "checked"
         for r in enforce.REST_ROUTES
     )
+    # Display descriptions are deliberately refreshed; tool names and schemas remain pinned.
     expected = json.loads(Path(__file__).with_name("spaces_surfaces.json").read_text())
     assert surfaces(env) == expected
 
