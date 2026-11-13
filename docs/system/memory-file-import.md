@@ -29,4 +29,3 @@ No new database tables or temporary files are needed. Existing account export
 and deletion rules own the imported rows. The default import API, connection
 consent, private-reader rules, storage checks and append-only semantics remain
 in force.
-

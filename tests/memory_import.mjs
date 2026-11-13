@@ -23,7 +23,8 @@ test("all displayed upload metadata is escaped", () => {
   const error = renderImport({ phase: "error", error: "<script>bad</script>" });
   assert.ok(!error.includes("<script>"));
   assert.ok(renderImport({}).includes('type="file"'));
-  assert.ok(!renderImport({}).includes('value="native-memory"'));
+  assert.ok(!renderImport({}).includes("Memory text (.md or .txt)"));
+  assert.ok(renderImport({}, { can_admin: true }).includes("Memory text (.md or .txt)"));
 });
 
 test("preview cancellation submits no confirmation and removes handlers", async () => {
