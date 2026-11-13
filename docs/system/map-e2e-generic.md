@@ -1,0 +1,4 @@
+### Compute map: generic by test, documented for users and agents
+
+- The Compute map is proven generic: an end-to-end test runs the whole path (press "Start agent work on map", approve the proposals, read the map and a device's four tabs, a second agent answering how to connect and where a site is hosted) on a clean workspace with synthetic runners, a synthetic proxy config and fake DNS, and a guard test fails if the topology code, prompt, collector, web files, docs or fixtures carry a real host name, address, account or key shape. The owner's own setup is the first real use of the product in the app, never a fixture.
+- `docs/topology.md` now has the user view (what the map shows, what is stored and what is never stored), the agent view (how to answer from `topology_get` and `topology_route`, and when to propose instead) and the steps to add another reverse proxy adapter.
