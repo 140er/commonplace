@@ -223,3 +223,9 @@
   :root[data-ui="deck"] .center:has(.memory-import) { padding-bottom: calc(57px + max(14px, env(safe-area-inset-bottom))); }
   :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
 }
+
+/* Workspace creation stays on the shared Deck surfaces and controls. */
+:root[data-ui="deck"] .workspace-switch.sheet { background: var(--surface); border: 0; border-radius: 20px; }
+:root[data-ui="deck"] .workspace-switch input { background: var(--well); color: var(--text); border: 0; border-radius: 12px; box-shadow: none; caret-color: var(--text); }
+:root[data-ui="deck"] .workspace-switch .btn { border-radius: 999px; }
+:root[data-ui="deck"] .workspace-switch input:focus-visible, :root[data-ui="deck"] .workspace-switch .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }

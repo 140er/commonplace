@@ -762,3 +762,17 @@ def test_purge_revokes_the_invites_the_account_sent_and_deletes_those_addressed_
     }
     assert any(a == "invite.revoke" and pending["id"] in t for a, t in audit)
     assert any(a == "invite.delete" and to_alice["id"] in t for a, t in audit)
+
+
+def test_purge_removes_workspace_creation_requests(enabled):
+    site = enabled
+    with site.db._lock:
+        site.db._conn.execute(
+            "INSERT INTO workspace_creations(user_id, request_id, workspace_id, created_at) "
+            "VALUES (?,?,?,?)",
+            (site.alice, "creation-request", site.alice_home, "2026-01-01T00:00:00Z"),
+        )
+    assert ask(site, site.alice, site.alice_home, "alice@example.test")[0] == 200
+    site.advance(deletion.DEFAULT_GRACE_DAYS * DAY + 1)
+    assert deletion.purge_due(site.gateway)[0]["state"] == "purged"
+    assert site.rows("SELECT * FROM workspace_creations") == []
