@@ -63,7 +63,7 @@ const cases = {
     assert.ok(result.includes(`<h3>${proposal.title}</h3>`));
     assert.ok(!result.includes('Blocked since'));
     assert.ok(!renderDetails({ ...proposal, events: [] }, opts).includes('— —'));
-    assert.equal(details.detailsAuthor('conn:lead', board), 'Atlas orchestrator');
+    assert.equal(details.detailsAuthor('conn:lead', board), 'Atlas Coworker');
   },
   actions() {
     for (const marker of ['data-action="edit-card"', 'data-action="panel-move"', 'data-action="handoff"', 'data-form="comment"', 'value="review"', 'value="backlog"', 'name="text"', 'data-draft="comment-21"', 'data-version="4"']) assert.ok(html.includes(marker), marker);

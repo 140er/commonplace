@@ -66,10 +66,10 @@ const START_REFUSALS = {
   at_cap: "This project already has as many agents working as it may. Start another when one finishes, or raise the limit in Project settings.",
   plan_pending: "This card carries the plan label. Approve the plan first, then start an agent.",
   model_unresolved: "No model is set for the agent's role. Choose one in Project settings.",
-  config_changed: "The project's orchestrator config changed just now. Try again.",
-  config_mismatch: "This project starts agents from its orchestrator config, so the machine, project and topic cannot be changed here.",
-  use_orch_card_start: "This project starts agents from its orchestrator config. Only a signed-in workspace owner can start one from the card.",
-  not_configured: "This project has no orchestrator config. Choose a machine, project and topic.",
+  config_changed: "The project's Coworker config changed just now. Try again.",
+  config_mismatch: "This project starts agents from its Coworker config, so the machine, project and topic cannot be changed here.",
+  use_orch_card_start: "This project starts agents from its Coworker config. Only a signed-in workspace owner can start one from the card.",
+  not_configured: "This project has no Coworker config. Choose a machine, project and topic.",
 };
 // The card cannot be started whatever the setup: show no Start control and no complaint.
 export const NOT_CLAIMABLE = ["not_todo", "assigned", "proposal_open", "waiting_on_person", "blocked_by"];
@@ -97,7 +97,7 @@ function startHTML(start, jobs) {
   const [first] = start.machines || [];
   if (!first) return "";
   const field = (name, label, list) => `<label class="run-start-field">${label}<select name="${name}">${choices(list)}</select></label>`;
-  return `<form class="run-start" data-run-start><p>This project has no orchestrator config. Choose where the agent runs.</p><div class="run-start-row"><label class="run-start-field">Machine<select name="machine">${start.machines.map((m) => `<option value="${e(m.id)}">${e(m.label)}</option>`).join("")}</select></label>${field("project", "Project", first.projects)}${field("topic", "Topic", first.topics)}</div>${button}</form>`;
+  return `<form class="run-start" data-run-start><p>This project has no Coworker config. Choose where the agent runs.</p><div class="run-start-row"><label class="run-start-field">Machine<select name="machine">${start.machines.map((m) => `<option value="${e(m.id)}">${e(m.label)}</option>`).join("")}</select></label>${field("project", "Project", first.projects)}${field("topic", "Topic", first.topics)}</div>${button}</form>`;
 }
 
 const ago = (at) => {

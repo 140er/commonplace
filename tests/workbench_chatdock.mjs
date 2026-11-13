@@ -135,8 +135,8 @@ switch (which) {
     for (const unread of [-1, NaN, "3", 0.4]) assert.equal(toggleLabel({ unread }), "Chat");
     assert.equal(toggleLabel({ unread: 3, open: true }), "Chat"); break;
   case "label_missing":
-    assert.equal(toggleLabel({ hasOrchestrator: false, unread: 3 }), "Chat · no orchestrator yet");
-    assert.equal(toggleLabel({ hasOrchestrator: false, open: true }), "Chat · no orchestrator yet"); break;
+    assert.equal(toggleLabel({ hasOrchestrator: false, unread: 3 }), "Chat · no Coworker yet");
+    assert.equal(toggleLabel({ hasOrchestrator: false, open: true }), "Chat · no Coworker yet"); break;
   case "label_project":
     assert.equal(toggleLabel({ label: "Atlas chat" }), "Atlas chat");
     assert.equal(toggleLabel({ label: "Harbor chat", unread: 2 }), "Harbor chat 2 new replies"); break;
@@ -277,7 +277,7 @@ switch (which) {
     assert.equal(f.toggle.getAttribute("aria-label"), "Chat 2 new replies");
     await f.dock.open(); assert.equal(line.textContent, ""); assert.equal(f.toggle.getAttribute("aria-label"), "Chat");
     f.dock.close(); f.dock.update({ hasOrchestrator: false }); assert.equal(line.textContent, "");
-    assert.equal(f.toggle.getAttribute("aria-label"), "Chat · no orchestrator yet"); break;
+    assert.equal(f.toggle.getAttribute("aria-label"), "Chat · no Coworker yet"); break;
   }
   case "quote_jump": {
     const f = fixture(); const quote = { text: "Exact\nwords", author: "Leon" };

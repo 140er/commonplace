@@ -49,7 +49,7 @@ test('RED writer labels use people and orchestrator identity', async () => {
   const {setPeople} = await import('../commonplace/web/static/api.js');
   setPeople({'user:leon':'Leon'});
   const html = ui.chatHTML({project:{slug:'work',name:'Work',coordinator:'conn:main'}, messages:[{id:1,actor:'user:leon',text:'First'},{id:2,actor:'conn:main',text:'Second'},{id:3,actor:'conn:Iris',text:'Third'}]}, {user:'me'}, String);
-  assert.match(html, /Work orchestrator/); assert.match(html, /Iris \(agent\)/); assert.match(html, /Leon/);
+  assert.match(html, /Work Coworker/); assert.match(html, /Iris \(agent\)/); assert.match(html, /Leon/);
   assert.doesNotMatch(html, /conn:|user:/); setPeople({});
 });
 

@@ -62,7 +62,7 @@ export function orchStatusHTML(view, e, {canEnd = false, confirming = false, bus
   const parts = [plural(counts.open, "step open", "steps open"), `${counts.inDoubt >= LIST_CAP ? `${LIST_CAP}+` : counts.inDoubt} in doubt`];
   if (counts.needsPerson) parts.push(plural(counts.needsPerson, "needs a person", "need a person"));
   parts.push(plural(counts.unstarted, "Todo card not started", "Todo cards not started"));
-  const configLine = config ? `Accepted config: version ${e(config.version)}.` : "No orchestrator config is accepted yet.";
+  const configLine = config ? `Accepted config: version ${e(config.version)}.` : "No Coworker config is accepted yet.";
   const stays = !live && counts.open ? '<p class="set-note" data-orch-stays>Unfinished work stays listed here until a new coordinator claims the lease and settles it.</p>' : "";
   const end = canEnd && live ? (confirming
     ? `<div class="callout wait" data-orch-confirm role="group" aria-label="End the lease"><p>End ${e(person(lease.holder))}'s lease? ${e(ORCH_COPY.confirm)}</p><button type="button" class="btn sm" data-orch-end-confirm ${busy ? "disabled" : ""}>End lease</button> <button type="button" class="btn ghost sm" data-orch-end-cancel ${busy ? "disabled" : ""}>Keep it</button></div>`
