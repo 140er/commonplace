@@ -196,7 +196,7 @@ const bundlePayload = count => ({
   routes: [],
 });
 
-const bundleMarks = scene => [...scene.matchAll(/<g class="topo-bundle" data-bundle-node="([^"]+)" data-count="(\d+)" data-state="([^"]+)" transform="translate\((-?[\d.]+) (-?[\d.]+)\)">([\s\S]*?)<\/text><\/g>/g)];
+const bundleMarks = scene => [...scene.matchAll(/<g class="topo-bundle" data-bundle-node="([^"]+)" data-count="(\d+)" data-state="([^"]+)" transform="translate\((-?[\d.]+) (-?[\d.]+)\)">([\s\S]*?)<\/text><\/g><\/g>/g)];
 const endMarks = scene => [...scene.matchAll(/class="topo-dot s-([^"]+)" data-state="[^"]+" data-end="(from|to)" transform="translate\((-?[\d.]+) (-?[\d.]+)\)"/g)];
 function markedBundle(count, states = ['up', 'unknown', 'degraded', 'down']) {
   const payload = bundlePayload(count);
@@ -217,7 +217,16 @@ for (const count of [4, 6, 8]) for (const phone of [false, true]) test(`collapse
     assert.match(mark[6], new RegExp(`<text class="topo-bundle-count"[^>]*>${count}$`));
     assert.match(mark[6], /end: (Degraded|Down)/, 'state has words as well as a shape');
     const at = made.core.positions[mark[1]], x = at.x + Number(mark[4]), y = at.y + Number(mark[5]);
-    const badge = { x: x - 7, y: y - 7, width: 14, height: 26 };
+    const side = mark[6].includes('translate(-12 0)') ? -1 : 1, width = String(count).length * 8 / K_LEAST;
+    const badge = { x: x + side * 12 - (side < 0 ? width : 0), y: y - 8 / K_LEAST, width, height: 16 / K_LEAST };
+    for (const at of Object.values(made.core.positions)) {
+      const cx = Math.max(badge.x, Math.min(at.x, badge.x + badge.width)), cy = Math.max(badge.y, Math.min(at.y, badge.y + badge.height));
+      assert.ok(Math.hypot(cx - at.x, cy - at.y) > DISC, 'count box clears every device disc');
+    }
+    for (const route of made.core.links().values()) {
+      const points = route.points || [{ x: route.x1, y: route.y1 }, { x: route.x2, y: route.y2 }];
+      for (let i = 1; i < points.length; i++) assert.ok(!touches({ x1: points[i-1].x, y1: points[i-1].y, x2: points[i].x, y2: points[i].y }, { x: badge.x - 2, y: badge.y - 2, width: badge.width + 4, height: badge.height + 4 }), 'count box clears every link stroke');
+    }
     for (const node of made.core.boxes) assert.ok(!overlaps(badge, plateOf(node, made.core.positions[node.key], made.metrics.labels, K_LEAST)), 'badge and count clear every label');
     assert.ok(x * made.view.k + made.view.x >= 7 && y * made.view.k + made.view.y >= 7, 'badge fits in the canvas');
   }
@@ -232,7 +241,7 @@ for (const count of [4, 6, 8]) for (const phone of [false, true]) test(`collapse
     assert.ok(others.every(m => Number(m[2]) === count - 1));
     for (const mark of others) {
       const at = made.core.positions[mark[1]], x = at.x + Number(mark[4]), y = at.y + Number(mark[5]);
-      for (const dot of own) assert.ok(!overlaps({ x: x - 7, y: y - 7, width: 14, height: 26 }, { x: Number(dot[3]) - 7, y: Number(dot[4]) - 7, width: 14, height: 14 }), 'selected marks clear the badge and its count');
+      for (const dot of own) assert.ok(!overlaps({ x: x - 7, y: y - 7, width: 14, height: 14 }, { x: Number(dot[3]) - 7, y: Number(dot[4]) - 7, width: 14, height: 14 }), 'selected marks clear the badge and its count');
     }
     made.core.selectLink(id);
     assert.equal(made.core.scene(), scene, 'deselect restores the aggregate');
@@ -252,7 +261,7 @@ test('collapsed ends: classic keeps its marks and unclaimed states stay unmarked
   assert.equal(endMarks(unclaimed.scene()).length, 0);
 });
 
-test('collapsed ends: device degree combines incoming and outgoing links to distinct peers', async () => {
+test('collapsed ends: device degree counts incoming and outgoing link ends', async () => {
   const compute = await import(new URL('deck-compute.js', STATIC)), payload = markedBundle(6);
   payload.nodes.push({ key: 'c', values: { kind: 'pc', name: 'Client' } });
   for (const link of payload.links.slice(0, 3)) { if (link.from === 'b') link.from = 'c'; else link.to = 'c'; }

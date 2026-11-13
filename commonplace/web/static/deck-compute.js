@@ -82,7 +82,7 @@ function styles(doc) {
 .deck-compute .topo-link.stale .topo-route, .deck-compute .topo-link.missing .topo-route { stroke-dasharray: 5 4; }
 .deck-compute .topo-link.on line, .deck-compute .topo-link.on .topo-route { stroke: var(--text); stroke-width: 3; }
 .deck-compute .topo-bundle { pointer-events: none; }
-.deck-compute .topo-bundle-count { font: 600 10px/1 var(--font); text-anchor: middle; fill: var(--text-2); stroke: var(--surface); stroke-width: 3; paint-order: stroke; }
+.deck-compute .topo-bundle-count { font: 600 11px/1 var(--font); fill: var(--text-2); transform: scale(var(--inv, 1)); }
 .deck-compute .topo-dot { stroke: var(--surface); }
 .deck-compute .topo-dot.s-up { fill: var(--ok); }
 .deck-compute .topo-dot.s-degraded { fill: var(--text-2); }
