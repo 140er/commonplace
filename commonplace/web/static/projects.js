@@ -1017,12 +1017,11 @@ export function mountOrchestratorTrust(host, {project, api, e, current = () => t
 
 export async function mountProjectReview(host, {project, api, e, current = () => true}) {
   if (!host) return;
-  if (!project.can_configure) { host.replaceChildren(); return; }
   const active = () => current() && host.isConnected;
   const board = encodeURIComponent(project.board), base = `/api/orch/boards/${board}`;
-  let versions = [], waiting = [], changes = new Map(), status = "", busy = false;
+  let versions = [], waiting = [], changes = new Map(), status = "", busy = false, rejecting = null;
   async function compare(version, accepted) {
-    if (!accepted) return (await api(`${base}/configs/${version.version}`)).body || "";
+    if (!accepted) return (await api(`${base}/configs/${version.version}`)).version?.body || "";
     return (await api(`${base}/diff?old=${accepted.version}&new=${version.version}`)).diff || "";
   }
   async function load() {
@@ -1034,7 +1033,7 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
       const shown = await Promise.allSettled(proposed.map(v => compare(v, configs.value.accepted)));
       changes = new Map(proposed.map((v, i) => [v.version, shown[i].status === "fulfilled" ? shown[i].value : null]));
     } else notes.push("Could not load config versions");
-    if (cards.status === "fulfilled") waiting = (cards.value.cards || []).filter(c => c.awaiting_release && c.can_approve);
+    if (cards.status === "fulfilled") waiting = project.can_configure ? (cards.value.cards || []).filter(c => c.awaiting_release && c.can_approve) : [];
     else notes.push("Could not load cards waiting for release");
     status = notes.join(". ");
   }
@@ -1042,13 +1041,35 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
     if (!active()) return;
     const rows = versions.map(v => {
       const change = changes.get(v.version);
-      return `<li data-config-version="${e(v.version)}"><span>${e(v.ref)} · ${e(v.status)} · ${e(String(v.proposed_by || "").replace(/^conn:/, ""))}</span>${v.status === "proposed" ? `<details><summary>Changes</summary><pre data-config-diff>${e(change ?? "Could not load the changes")}</pre></details><button type="button" class="btn sm" data-config-accept="${e(v.version)}"${busy ? " disabled" : ""}>Accept</button>` : ""}</li>`;
+      const result = v.status.charAt(0).toUpperCase() + v.status.slice(1);
+      const actor = value => e(String(value || "").replace(/^conn:/, ""));
+      const locked = busy || rejecting !== null ? " disabled" : "";
+      const confirm = rejecting === v.version ? `<div class="callout" role="group" aria-label="Reject Coworker config ${e(v.ref)}"><p>Reject Coworker config ${e(v.ref)}? The current config will stay in use. This version cannot be accepted after rejection.</p><div class="acts"><button type="button" class="btn sm" data-config-cancel-reject>Cancel</button><button type="button" class="btn sm danger" data-config-confirm-reject="${e(v.version)}">Reject version</button></div></div>` : "";
+      return `<li data-config-version="${e(v.version)}"><span>${e(v.ref)} · ${e(result)} · Proposed by ${actor(v.proposed_by)}${v.decided_by ? ` · ${e(result)} by ${actor(v.decided_by)}` : ""}</span>${v.status === "proposed" ? `<details><summary>Changes</summary><pre data-config-diff>${e(change ?? "Could not load the changes")}</pre></details>${project.can_configure ? `<button type="button" class="btn sm" data-config-accept="${e(v.version)}"${locked}>Accept</button> <button type="button" class="btn ghost sm" data-config-reject="${e(v.version)}"${locked}>Reject</button>${confirm}` : ""}` : ""}</li>`;
     }).join("");
     const cards = waiting.map(c => `<form data-project-release="${e(c.number)}"><span>#${e(c.number)} ${e(c.title)}</span><label>Reason<input name="reason" required maxlength="500"></label><button class="btn sm"${busy ? " disabled" : ""}>Release</button></form>`).join("");
-    host.innerHTML = `<h3>Config versions</h3>${rows ? `<ul data-config-versions>${rows}</ul>` : '<p class="set-note">No config versions yet.</p>'}<h3>Waiting for release</h3>${cards || '<p class="set-note">No cards are waiting for release.</p>'}<p role="status" data-project-review-status>${e(status)}</p>`;
+    host.innerHTML = `<h3>Coworker config versions</h3>${rows ? `<ul data-config-versions>${rows}</ul>` : '<p class="set-note">No config versions yet.</p>'}${project.can_configure ? `<h3>Waiting for release</h3>${cards || '<p class="set-note">No cards are waiting for release.</p>'}` : ""}<p role="status" data-project-review-status>${e(status)}</p>`;
     host.querySelectorAll("[data-config-accept]").forEach(button => {
       const version = versions.find(v => String(v.version) === button.getAttribute("data-config-accept"));
-      button.onclick = () => act(() => api(`${base}/configs/${version.version}/accept`, {method: "POST", body: {sha256: version.sha256}}), `Accepted ${version.ref}`);
+      button.onclick = () => rejecting === null && decide(version, "accept");
+    });
+    host.querySelectorAll("[data-config-reject]").forEach(button => {
+      button.onclick = () => {
+        if (busy || !active() || rejecting !== null) return;
+        rejecting = Number(button.getAttribute("data-config-reject"));
+        render();
+        host.querySelector("[data-config-cancel-reject]")?.focus();
+      };
+    });
+    const cancel = host.querySelector("[data-config-cancel-reject]");
+    if (cancel) cancel.onclick = () => {
+      const version = rejecting;
+      rejecting = null; render();
+      host.querySelector(`[data-config-reject="${version}"]`)?.focus();
+    };
+    host.querySelectorAll("[data-config-confirm-reject]").forEach(button => {
+      const version = versions.find(v => String(v.version) === button.getAttribute("data-config-confirm-reject"));
+      button.onclick = () => rejecting === version.version && decide(version, "reject");
     });
     host.querySelectorAll("[data-project-release]").forEach(form => {
       const card = waiting.find(c => String(c.number) === form.getAttribute("data-project-release"));
@@ -1060,10 +1081,18 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
       };
     });
   }
+  function decide(version, action) {
+    if (!project.can_configure || version.status !== "proposed") return;
+    return act(async () => {
+      const result = await api(`${base}/configs/${version.version}/${action}`, {method: "POST", body: action === "accept" ? {sha256: version.sha256} : {}});
+      // Keep a completed decision visible even if the following refresh fails.
+      Object.assign(version, result.version && typeof result.version === "object" ? result.version : result);
+    }, `${action === "reject" ? "Rejected" : "Accepted"} ${version.ref}`);
+  }
   async function act(action, done) {
     if (busy || !active()) return;
-    busy = true; status = ""; render();
-    try { await action(); await load(); status = status || done; }
+    busy = true; rejecting = null; status = ""; render();
+    try { await action(); if (!active()) return; await load(); status = status || done; }
     catch (error) { status = error.message || "That did not work. Try again."; }
     finally { busy = false; render(); }
   }

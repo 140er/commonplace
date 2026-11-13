@@ -1,0 +1,5 @@
+### Coworker config decisions
+
+- Project settings offer Changes, Accept and Reject beside a proposed version for its owner. Reject opens a separate confirmation naming the version and explaining that the current config remains active. Cancel makes no write.
+- A decision shows its version, result and actor. Rejected versions lose both decision actions and cannot subsequently be accepted through the API. Members can read versions and changes but cannot accept, reject or release work from this section.
+- The existing config rejection route uses the same owner checks and audit boundary as acceptance. No new route or wire name is introduced. Both looks use their existing controls; this change adds no global styling.
