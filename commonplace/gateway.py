@@ -2567,6 +2567,14 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         if (
             principal is not None
+            and not principal.person
+            and path.startswith("/api/card-starts/")
+            and path.endswith("/launch-output")
+        ):
+            self._send_json(404, {"error": "not found"})
+            return
+        if (
+            principal is not None
             and getattr(principal, "runner", None) == "machine"
             and not path.startswith("/api/runner/")
         ):

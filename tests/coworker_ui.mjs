@@ -278,7 +278,7 @@ const cases = {
     assert.match(f.host.innerHTML, /Needs configuration/);
     assert.doesNotMatch(f.host.innerHTML, />Completed</);
     assert.match(f.host.innerHTML, /href="#\/card\/314"/);
-    assert.match(f.host.innerHTML, /href="#\/coworkers\/a\?message=1"/);
+    assert.match(f.host.innerHTML, /href="#\/bots\/-\/coworkers\/conversations\/a\?message=1"/);
     assert.doesNotMatch(coworkerJobHTML(job('bad', 'a', 'failed', { task: 'javascript:alert(1)' })), /javascript:/);
     const admission = coworkerJobHTML(job('created', 'a', 'done', { code: 'task_created', task: { board: 'work', number: 315 } }));
     assert.match(admission, />Task created</);
@@ -453,7 +453,7 @@ const cases = {
       const group = f.take('/api/coworkers/conversations', 'POST');
       assert.deepEqual(group.options.body, { kind: 'group', title: 'Project channel', member_ids: ['u-two', 'u-three'], bot_ids: [bot.id, 'bot-2'], board: 'demo' });
       group.resolve({ conversation: conversation('new', { kind: 'group' }) }); await flush();
-      assert.deepEqual(f.navigation, ['#/coworkers/new']); f.ui.stop();
+      assert.deepEqual(f.navigation, ['#/bots/-/coworkers/conversations/new']); f.ui.stop();
 
       const member = fixture(); await member.open('a', detail('a'), directory({ can_manage_bots: false }));
       assert.doesNotMatch(member.host.innerHTML, /data-cw-action="new-bot"/);

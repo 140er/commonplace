@@ -14,7 +14,7 @@ from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 from mempalace.sqlite_crypto import connect, row_factory
 
-from . import budgets, ledger, registry
+from . import budgets, launch_output as diagnostics, ledger, registry
 
 QUEUE_LIMIT = 8
 STARTED_HOLD_SECONDS = 3600
@@ -66,7 +66,7 @@ CONFIG_COLUMNS = {
     "model_provider": "TEXT",
     "model": "TEXT",
 }
-SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER"}
+SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER", "launch_output": "TEXT"}
 # Conflict messages of create/create_in and the stable refusal code of each.
 CONFLICT_CODES = {
     "request_key reused with different arguments": "request_conflict",
@@ -603,7 +603,7 @@ def starting(store, machine, lease_token, *, validate):
     return updated
 
 
-def result(store, machine, lease_token, outcome, thread_id=None, code=None):
+def result(store, machine, lease_token, outcome, thread_id=None, code=None, launch_output=None):
     _sweep(store)
     if outcome not in ("started", "uncertain", "failed"):
         raise ValueError("invalid outcome")
@@ -622,6 +622,15 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None):
         not isinstance(code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code)
     ):
         raise ValueError("invalid outcome code")
+    if launch_output is not None:
+        if (
+            outcome != "uncertain"
+            or code != "launch_unknown"
+            or not isinstance(launch_output, str)
+            or not 1 <= len(launch_output) <= diagnostics.MAX_CHARS
+        ):
+            raise ValueError("invalid launch output")
+        launch_output = diagnostics.clean(launch_output)
     now = _now()
     with store.transaction() as conn:
         row = _fenced(conn, machine["id"], lease_token)
@@ -637,6 +646,8 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None):
         if not allowed:
             raise Conflict("result conflicts with start state")
         values = dict(state=outcome, thread_id=thread_id, outcome_code=code, updated_at=now)
+        if launch_output is not None:
+            values["launch_output"] = launch_output
         if outcome == "started":
             values["started_at"] = now
         updated = _update(conn, row, values, token=True)
@@ -731,8 +742,13 @@ def status(store, task, principal):
             if row["machine_id"] in machines
             else None,
             **{key: row[key] for key in ("state", "thread_id", "outcome_code", "updated_at")},
+            **({"reason": launch_reason(row)} if principal.person and row["launch_output"] else {}),
         )
         for row in rows
         if (principal.person and principal.role == "owner")
         or row["requested_by"] == requester_ref(principal)
     ]
+
+
+def launch_reason(row):
+    return {"code": "launch_unknown", "detail": row["launch_output"]}

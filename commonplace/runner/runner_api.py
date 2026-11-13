@@ -14,7 +14,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.sessions import person_principal
 
-from . import jobs, predicate, registry, start_context
+from . import jobs, launch_output, predicate, registry, start_context
 
 MAX_BODY_BYTES = 4096
 BODY_KEYS = {
@@ -24,7 +24,7 @@ BODY_KEYS = {
     "lease": set(),
     "renew": {"lease_token"},
     "starting": {"lease_token"},
-    "result": {"lease_token", "outcome", "thread_id", "code"},
+    "result": {"lease_token", "outcome", "thread_id", "code", "launch_output"},
 }
 
 
@@ -36,7 +36,8 @@ def _body(h, action):
         length = int(h.headers.get("Content-Length", "0"))
     except ValueError:
         raise HTTPError(400, "invalid content length") from None
-    if length < 0 or length > MAX_BODY_BYTES:
+    limit = 65_536 if action == "result" else MAX_BODY_BYTES
+    if length < 0 or length > limit:
         raise HTTPError(413, "request too large")
     try:
         value = json.loads(h.rfile.read(length).decode("utf-8"))
@@ -50,7 +51,8 @@ def _body(h, action):
     if required - value.keys():
         raise HTTPError(400, "missing required argument")
     for key, item in value.items():
-        if not isinstance(item, str) or not item or len(item) > 256:
+        limit = launch_output.MAX_CHARS if key == "launch_output" else 256
+        if not isinstance(item, str) or not item or len(item) > limit:
             raise HTTPError(400, "invalid " + key)
     return value
 

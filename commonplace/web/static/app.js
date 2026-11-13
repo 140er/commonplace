@@ -1024,6 +1024,7 @@ function mountWorkbenchChat() {
 // The signed-in user's seen ids live on the device: clear them on sign-out and session expiry
 // even when no board service exists (Settings, Memory, …). Other users' ids stay.
 function clearWorkbenchChat() {
+  state.deck?.leave();
   adminUI?.stop(); instanceAdminUI?.stop();
   botsUI?.stop();
   const user = state.me?.user || state.me?.actor?.replace(/^user:/, "");
@@ -1136,6 +1137,8 @@ async function refresh({ background = false, events = [] } = {}) {
       await memoryView(epoch, background);
     } else if (/^#\/chat(?:\/|$)/.test(state.base)) {
       boardView();
+    } else if (state.deck?.owns(state.base)) {
+      await state.deck.show(state.base, { background, epoch });
     } else if (/^#\/bots(?:\/|$)/.test(state.base)) {
       if (!background) botsScreen();
     } else if (/^#\/console(?:\?|$)/.test(state.base)) {
@@ -1144,8 +1147,6 @@ async function refresh({ background = false, events = [] } = {}) {
       if (!background) topologyScreen();
     } else if (state.base === "#/settings") {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
-    } else if (state.deck?.owns(state.base)) {
-      await state.deck.show(state.base, { background, epoch });
     } else if (state.base === "#/decide") {
       if (state.queue) queueApply(state.queue.ready ? { type: "sync", cards: decideQueue(state.needs) } : { type: "load", cards: decideQueue(state.needs) });
       queueNoteOffline();
@@ -1392,6 +1393,7 @@ async function route() {
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
     state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|compute-map|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|instance-admin|today|compute)$/.test(hash) ? hash : "#/");
+    if (start === undefined && state.deck?.owns(hash)) state.base = hash;
     // Today and Compute exist in the Deck look only; without it they are an unknown address.
     if (/^#\/(?:today|compute)$/.test(state.base) && !state.deck?.owns(state.base)) state.base = "#/";
     state.card = null;
@@ -1402,7 +1404,7 @@ async function route() {
   if (previousBase === "#/admin") adminUI?.stop();
   if (previousBase === "#/instance-admin") instanceAdminUI?.stop();
   if (previousBase.startsWith("#/console") && !state.base.startsWith("#/console")) consoleUI?.stop();
-  if (previousBase.startsWith("#/bots") && !state.base.startsWith("#/bots")) botsUI?.stop();
+  if (previousBase.startsWith("#/bots") && (!state.base.startsWith("#/bots") || state.deck?.owns(state.base))) botsUI?.stop();
   if (state.base !== previousBase) state.deck?.leave();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
