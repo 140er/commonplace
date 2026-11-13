@@ -2096,6 +2096,9 @@ class BoardService(lifecycle.LifecycleMixin):
                         result[-1]["waiting_summary"] = why.summary_line(
                             summary, used=waiting_usage.used, cap=waiting_usage.cap
                         )
+                        result[-1]["waiting_task_summary"] = why.summary_line(
+                            summary, used=waiting_usage.used, cap=waiting_usage.cap, tasks=True
+                        )
             return result
 
     def space_metadata(self, slug):

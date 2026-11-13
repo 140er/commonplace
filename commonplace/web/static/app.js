@@ -1043,7 +1043,14 @@ function setBotsWaiting(total) {
 function botsScreen() {
   // The roster the screen already loads also feeds the rail badge, so the screen adds no second poll.
   botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => setBotsWaiting(waitingTotal(bots)) });
-  botsUI.show(state.base.split("/")[2] || null);
+  const [path, query] = state.base.split("?");
+  const create = new URLSearchParams(query).get("new") === "1";
+  if (create) {
+    state.base = path; state.route = path;
+    history.replaceState(history.state, "", path);
+  }
+  const shown = botsUI.show(path.split("/")[2] || null);
+  if (create) void Promise.resolve(shown).then(() => botsUI.newBot());
   title("Bots");
 }
 // The map keeps itself current and stops itself when another screen replaces it.

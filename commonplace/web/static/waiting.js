@@ -2,7 +2,7 @@ import { escape as e } from './api.js';
 
 // The sentence comes from the server (boards/why.py), so the board, the details and the API agree.
 export const waitingText = (card) => card?.waiting?.text || '';
-export const agentStatus = (board) => board?.waiting_summary || '';
+export const agentStatus = (board, { tasks = false } = {}) => (tasks ? board?.waiting_task_summary : board?.waiting_summary) || '';
 
 export function waitingSection(card) {
   const text = waitingText(card);

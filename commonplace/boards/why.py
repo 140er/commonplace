@@ -112,14 +112,14 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def summary_line(summary: dict, *, used: int, cap: int | None) -> str:
+def summary_line(summary: dict, *, used: int, cap: int | None, tasks: bool = False) -> str:
     """One compact status line, using the same reason counts as the card views."""
     busy = _plural(used, "agent", "agents") + " busy"
     if cap is not None:
         busy += f" (limit {cap})"
     phrases = {
-        "project_limit": "for a free slot",
-        "blocked_by": "for another card",
+        "project_limit": "for a free agent" if tasks else "for a free slot",
+        "blocked_by": "for another task" if tasks else "for another card",
         "waits_on_person": "for a person",
         "snoozed": "until its snooze ends",
         "claim_expired": "for an update",
@@ -128,11 +128,14 @@ def summary_line(summary: dict, *, used: int, cap: int | None) -> str:
         "no_agent": "for an agent to connect",
         "checks_pending": "for checks",
     }
-    waits = [
-        f"{_plural(n, 'card waits', 'cards wait')} {phrase}"
-        for code, phrase in phrases.items()
-        if (n := summary.get(code, 0))
-    ]
+    waits = []
+    for code, phrase in phrases.items():
+        if not (n := summary.get(code, 0)):
+            continue
+        one, many = ("task waits", "tasks wait") if tasks else ("card waits", "cards wait")
+        if tasks and waits:
+            one, many = "waits", "wait"
+        waits.append(f"{_plural(n, one, many)} {phrase}")
     return busy + "." + (" " + ", ".join(waits) + "." if waits else "")
 
 

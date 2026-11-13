@@ -55,6 +55,10 @@ def test_summary_matches_visible_card_reasons_and_omits_archived(hub):
         "1 agent busy (limit 1). 1 card waits for a free slot, "
         "1 card waits for another card, 1 card waits for a person."
     )
+    assert result["waiting_task_summary"] == (
+        "1 agent busy (limit 1). 1 task waits for a free agent, "
+        "1 waits for another task, 1 waits for a person."
+    )
     assert next(c for c in cards if c["number"] == approval)["waiting"]["code"] == "waits_on_person"
     status, refused = claim(w, approval)
     assert status == 409 and refused["code"] == "waits_on_person"
@@ -153,3 +157,6 @@ def test_node_summary_is_the_server_line_in_board_and_agent_header():
     shown = json.loads(result.stdout)
     assert shown["board"] is True and shown["header"] is True
     assert shown["escaped"] is True and shown["absent"] is True
+    assert shown["taskCopy"] is True
+    assert shown["working"] == ["worker (agent) is working on it"]
+    assert shown["workingTimed"] == ["worker (agent) is working on it · 2m ago"]
