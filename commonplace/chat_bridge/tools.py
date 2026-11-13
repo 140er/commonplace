@@ -1,6 +1,7 @@
 """``bridge_status``: the one agent tool of the bridge, read-only and for the workspace owner.
 
-Agents never install, map, link or read credentials; this tool lists installs (platform, label,
+The tool is hidden until the workspace has an install. Agents never install, map, link or
+read credentials; this tool lists installs (platform, label,
 on or off, tested, mapped channel count, last intake time) and nothing else.
 """
 
@@ -13,7 +14,12 @@ _registered = False
 
 
 def _available(principal, gateway) -> bool:
-    return gateway is not None and getattr(principal, "runner", None) is None
+    """Visible only once the workspace has an install, so the tool list of a workspace that
+    never used the bridge is exactly what it was without this module."""
+    if gateway is None or getattr(principal, "runner", None) is not None:
+        return False
+    bridge = store.open_bridge(gateway, principal.workspace_id)
+    return bridge.exists() and bool(bridge.installs())
 
 
 def _status(ctx, args) -> str:

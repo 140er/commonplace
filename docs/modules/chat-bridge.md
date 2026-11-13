@@ -21,7 +21,7 @@
 
   - Credentials are write-only: validated against the adapter's `secret_fields`, sealed before they reach the store, never returned (a test greps responses, tool output, logs, audit rows and the raw files for a sentinel token). Platform ids are opaque text; the label is owner-typed (at most 80 characters) and never trusted.
 
-  - `bridge_status` (owner agent, trusted token, read only) lists installs with the platform, label, on or off, tested time, mapped channel count and last intake time. No tool installs, maps, links or reads credentials. The command line never accepts credentials and `disable` creates nothing on a hub with no installs.
+  - `bridge_status` (owner agent, trusted token, read only) is hidden, like an unknown tool, until the workspace has an install, so a workspace that never used the bridge sees the tool list it always had; once it has one it lists installs with the platform, label, on or off, tested time, mapped channel count and last intake time. No tool installs, maps, links or reads credentials. The command line never accepts credentials and `disable` creates nothing on a hub with no installs.
 
 - **How it fails:**
 

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from commonplace.chat_bridge import adapter, cli as bridge_cli, index, sealing, service, store
+from commonplace.policy import Policy
 from tests._commonplace_helpers import Hub, InProcessLauncher
 from tests._console_helpers import ConsoleHub
 from tests._mcp_server_helpers import _patch_mcp_server
@@ -631,17 +632,44 @@ def test_status_shows_installs_without_credentials(bridge, fake, capsys):
     assert "secrets" not in row
 
 
+def test_bridge_status_is_invisible_until_the_workspace_has_an_install(bridge, fake):
+    owner_agent = bridge.hub.owner_token("agent-owner")
+    # Nothing changes for any token of a workspace that never used the bridge.
+    for token in (owner_agent, bridge.tm, bridge.t1):
+        assert not [t for t in bridge.hub.tool_names(token) if t.startswith("bridge")]
+    ok, _ = mcp(bridge.hub, owner_agent, "bridge_status")
+    assert not ok
+    assert not bridge.file().exists()
+    bridge.create()
+    assert "bridge_status" in bridge.hub.tool_names(owner_agent)
+    # Another workspace without an install still sees nothing.
+    _cid, other_agent = bridge.hub.db.create_token(
+        workspace_ref=bridge.other_workspace,
+        user_ref=bridge.other_user,
+        name="other-agent",
+        client="test",
+        policy=Policy.build(
+            profile="full", scopes=["memory:read"], read_wings=["shared"], trust="trusted"
+        ),
+        actor=bridge.other_user,
+    )
+    assert "bridge_status" not in bridge.hub.tool_names(other_agent)
+
+
 def test_bridge_status_tool_is_read_only_and_owner_only(bridge, fake):
+    install = bridge.create()[1]["install"]["id"]
     owner_agent = bridge.hub.owner_token("agent-owner")
     assert "bridge_status" in bridge.hub.tool_names(owner_agent)
     assert "bridge_status" not in bridge.hub.tool_names(bridge.tm)  # a member's agent
     ok, text = mcp(bridge.hub, owner_agent, "bridge_status")
-    assert ok and json.loads(text) == {"installs": []}
-    assert not bridge.file().exists()
+    assert ok and [i["id"] for i in json.loads(text)["installs"]] == [install]
     ok, text = mcp(bridge.hub, bridge.tm, "bridge_status")
     assert not ok
     names = [t for t in bridge.hub.tool_names(owner_agent) if t.startswith("bridge")]
     assert names == ["bridge_status"]  # nothing that installs, maps, links or reads secrets
+    # Deleting the last install hides it again.
+    bridge.request(bridge.owner, "DELETE", f"/api/bridge/installs/{install}")
+    assert "bridge_status" not in bridge.hub.tool_names(owner_agent)
 
 
 def test_a_workspace_without_the_file_is_never_given_one_by_a_read(bridge, fake):
