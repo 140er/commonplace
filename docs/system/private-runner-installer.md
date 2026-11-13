@@ -1,0 +1,5 @@
+### Private runner installer, slice 2
+
+- **M:** [The installer guide](../runner-installer.md) describes explicit acceptance, preflight, protected-stdin enrollment, 0600 private files, a 0700 installation directory, signed recovery, the owned setup-only user unit and conditional linger restoration. A lost exchange response recovers the original ciphertext with the persisted key. The owned manifest records actions before mutation; uninstall confirms stop before discard.
+- **M:** The standalone launcher verifies a signed runner archive against a separately trusted release key when the package is absent. Tests use isolated files, in-memory enrollment handlers and a recording user manager; no live installation is claimed.
+- **T:** Setup remains off unless enabled by its owner. This slice fetches no acknowledgements, provisions no runtime/login/grant and admits no work. Signed owner receipts, runtime support, a production release channel and disposable logout/restart evidence remain prerequisites before broader availability.

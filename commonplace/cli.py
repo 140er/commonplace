@@ -1050,6 +1050,11 @@ def cmd_restore(args) -> int:
 
 
 def cmd_runner(args) -> int:
+    if args.action in ("install", "status", "uninstall", "_setup-service"):
+        from .runner import installer
+
+        return installer.run(args)
+
     if args.action == "chat":
         from .runner import chat_agent
 
@@ -1075,6 +1080,9 @@ def build_parser() -> argparse.ArgumentParser:
     _client_parsers(sub)
 
     runner = sub.add_parser("runner").add_subparsers(dest="action", required=True)
+    from .runner.install_cli import add_parsers as add_runner_install_parsers
+
+    add_runner_install_parsers(runner, cmd_runner)
     for action in ("check", "run", "chat"):
         s = runner.add_parser(action)
         s.add_argument("--config", required=True)
