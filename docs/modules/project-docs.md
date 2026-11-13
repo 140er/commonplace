@@ -11,9 +11,9 @@
   - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-adviser design decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel component ownership boundaries and isolated local-running instructions in `docs/compute/`.
   - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
 
-  - The batch merge rule in `CLAUDE.md` (`AGENTS.md` links to it): affected tests per PR, the full suite per batch on `develop`, bisect and revert on red, merges held only while `develop` is red.
+  - The batch merge rule in `CLAUDE.md` (`AGENTS.md` links to it): affected tests and the repo-wide guard files per PR, no full test suite anywhere (owner decision, 13 Nov), a smoke set for a release, breaks fixed when found.
 
-  - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; the full suite runs per develop batch, never per PR.
+  - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; no full suite runs per PR, per batch or per release.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
