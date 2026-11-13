@@ -68,10 +68,10 @@ async function refusal(response) {
  * or "dropped" (connection ended after ack without a final event: poll too).
  * Rejects with SendError when nothing was stored: 400 invalid, 404, 409 busy|conflict, 429 busy|rate, no connection.
  * Aborting the signal after ack resolves "dropped"; before ack it rejects with code "aborted". */
-export async function sendMessage({ botId, text, requestId, onEvent = () => {}, signal, fetchImpl = (...args) => fetch(...args) }) {
+export async function sendMessage({ botId, threadId, text, requestId, onEvent = () => {}, signal, fetchImpl = (...args) => fetch(...args) }) {
   let response;
   try {
-    response = await fetchImpl(`/api/bots/${encodeURIComponent(botId)}/messages`, {
+    response = await fetchImpl(`/api/bots/${encodeURIComponent(botId)}/messages${threadId ? `?thread=${encodeURIComponent(threadId)}` : ""}`, {
       method: "POST",
       credentials: "same-origin",
       cache: "no-store",

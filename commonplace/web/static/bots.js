@@ -4,6 +4,7 @@
 // handler leaves them alone. All server text goes through `e` before it reaches innerHTML.
 import { elapsed, safeLink } from "./api.js";
 import { sendMessage } from "./botstream.js";
+import { permissionText, sharingHTML, threadsHTML, threadPreviewHTML } from "./bot-sharing.js";
 
 export const BOTS_COPY = Object.freeze({
   title: "Bots",
@@ -73,7 +74,7 @@ export function rosterHTML({ bots, current = null, loaded = true }, e) {
     return `<li><a class="bot-row" href="#/bots/${enc(bot.id)}" data-bot="${e(bot.id)}"${bot.id === current ? ' aria-current="page"' : ""}>
       <span class="bot-av" aria-hidden="true">${e(initial(bot.name))}</span>
       <span class="bot-main"><span class="bot-top"><b class="bot-name">${e(bot.name)}</b><span class="deck-bot-job" hidden>${e(oneLine(bot.job))}</span>${bot.last?.at ? `<time class="bot-at" datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : ""}</span><span class="bot-line">${marked(line, e)}</span></span>
-      <span class="bot-side">${unread}${dot}<span class="deck-bot-state" data-state="${e(bot.state)}" hidden>${own({ needs_you: "Waiting on you", working: "Working" }, bot.state, "Idle")}</span></span></a></li>`;
+      <span class="bot-side">${unread}${dot}<span class="deck-bot-state" data-state="${e(bot.state)}" hidden>${bot.frozen ? bot.frozen_reason === "owner_left" ? "Needs a new owner" : "Disabled" : own({ needs_you: "Waiting on you", working: "Working" }, bot.state, "Idle")}</span></span></a></li>`;
   }).join("");
 }
 
@@ -163,9 +164,9 @@ function learnedRowHTML(item, group, sheet, e) {
   const off = sheet.busy ? " disabled" : "";
   const src = item.source || {};
   const wording = item.kind === "note" ? ["forget"] : LEARNED_ACTIONS[group];
-  const buttons = wording.map((what) => {
+  const buttons = (sheet.deck && sheet.canShare && group === "person" && item.kind !== "note" ? [...wording, "share"] : wording).map((what) => {
     const real = what === "pin" && item.pinned ? "unpin" : what;
-    return learnedButton(e, real, item.id, LEARNED_LABEL[real], off);
+    return learnedButton(e, real, item.id, (real === "share" ? "Share with a project" : LEARNED_LABEL[real]), off);
   }).join("");
   const line = [item.kind, item.scope, src.bot_name, String(src.at || "").slice(0, 10), item.text_by === "person_edit" ? "edited" : "", item.pinned ? "pinned" : ""].filter(Boolean).map(e).join(" · ");
   const body = sheet.editing === item.id ? learnedEditHTML(item.id, item.text ?? "", e) : `<p class="learned-text">${marked(item.text ?? "", e)}</p>`;
@@ -185,10 +186,11 @@ export function learnedSheetHTML(sheet, bot, e) {
   const paused = sheet.learning?.paused === true;
   const control = (what, label) => `<button type="button" class="bb-opt" data-bots-action="learned-bot" data-do="${what}"${off}>${label}</button>`;
   const controls = `${paused ? control("resume", "Resume learning") : control("pause", "Pause learning for 7 days")}${control("forget-all", sheet.confirmAll ? "Forget everything for good?" : `Forget everything ${e(bot.name ?? "")} learned`)}`;
-  return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body"><h2 id="sheet-h">What ${e(bot.name ?? "")} learned</h2>
-    ${sheet.loading ? `<p class="bots-note">${e(BOTS_COPY.loading)}</p>` : sections || '<p class="bots-note">Nothing learned yet.</p>'}
+  const sharing = sheet.shareItem ? `<section class="bot-access-card" data-learning-share><h3>Share these words</h3><p>${marked(items.find(item => item.id === sheet.shareItem)?.text || "", e)}</p>${sheet.sharePending ? `<div class="bot-access-preview"><h4>Who will see this</h4><p>${e(sheet.sharePending.label)}</p></div><div class="sheet-btns"><button class="bb-opt go" data-bots-action="learning-share-confirm"${off}>Share these words</button><button class="bb-opt" data-bots-action="learning-share-cancel"${off}>Cancel</button></div>` : `<form data-bots-form="learning-share"><label>Project audience<select name="project" required><option value="">Choose a project</option>${(sheet.projects || []).filter(project => !bot.board || project.slug === bot.board).map(project => `<option value="${e(project.slug)}">${e(project.name)}</option>`).join("")}</select></label><p>Everyone who can read this project will see these exact words and your name. Review the audience and words before sharing.</p><button class="bb-opt" type="submit"${off}>Preview sharing</button><button type="button" class="bb-opt" data-bots-action="learning-share-cancel">Cancel</button></form>`}</section>` : "";
+  return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body${sheet.deck ? " bot-access" : ""}"><h2 id="sheet-h">What ${e(bot.name ?? "")} learned</h2>${sharing}
+    ${sheet.loading ? `<p class="bots-note">${e(BOTS_COPY.loading)}</p>` : sheet.shareItem ? "" : sections || '<p class="bots-note">Nothing learned yet.</p>'}
     ${sheet.error ? `<p class="bots-notice" role="alert">${e(sheet.error)}</p>` : ""}
-    <div class="sheet-btns">${sheet.loading ? "" : controls}<button type="button" class="bb-opt" data-bots-action="close" data-focus>Close</button></div>
+    <div class="sheet-btns">${sheet.loading || sheet.shareItem ? "" : controls}<button type="button" class="bb-opt" data-bots-action="close" data-focus>Close</button></div>
   </div></div>`;
 }
 
@@ -238,7 +240,8 @@ function noteHTML(m, e) {
 
 export function messageHTML(m, ctx, e) {
   const kind = m.role === "user" ? "me" : m.role === "event" ? "event" : "bot";
-  const bubble = m.text ? `<div class="bm-bubble"><div class="bm-text">${marked(m.text, e)}</div></div>` : "";
+  const author = ctx.deck && ctx.shared && kind === "me" && m.author?.name ? `<p class="bm-author">${e(m.author.name)}</p>` : "";
+  const bubble = m.text ? `<div class="bm-bubble">${author}<div class="bm-text">${marked(m.text, e)}</div></div>` : "";
   // An event carrying an orchestrator block is the orchestrator's own reply, forwarded word for word.
   const from = kind === "event" && Array.isArray(m.blocks) && m.blocks.some((b) => b?.type === "orchestrator") ? `<p class="bm-from">${ctx.deck ? BOTS_COPY.coworker : BOTS_COPY.orchestrator}</p>` : "";
   return `<li class="bm ${kind}" data-id="${e(m.id)}"${m.at ? ` title="${e(m.at)}"` : ""}>${from}${bubble}${blocksHTML(m.blocks, { ...ctx, mid: m.id }, e)}${kind === "bot" ? noteHTML(m, e) : ""}</li>`;
@@ -312,6 +315,8 @@ export function sendButtonHTML({ busy, canStop }) {
 }
 
 export function sheetHTML(sheet, bot, e) {
+  if (sheet.kind === "sharing") return sharingHTML(sheet, bot, e);
+  if (sheet.kind === "shared-thread") return threadPreviewHTML(sheet, bot, e);
   if (sheet.kind === "project") return projectHTML(sheet, bot, e);
   if (sheet.kind === "learned") return learnedSheetHTML(sheet, bot, e);
   if (sheet.kind === "new") {
@@ -389,7 +394,7 @@ export function createBots({
     bots: [], model: null, canConfigure: false, loaded: false, error: "",
     botId: null, bot: null, messages: [], waiting: [], running: false, more: false, ready: false,
     open: new Set(), busy: new Set(), editing: new Set(), waitingOpen: false, notice: null,
-    turn: null, unsent: null, sheet: null,
+    turn: null, unsent: null, sheet: null, threads: [], threadId: null,
     drafts: new Map(), readSent: new Map(),
   };
   let active = false, generation = 0, ticks = 0, loadingEarlier = false;
@@ -401,9 +406,13 @@ export function createBots({
   const region = (name) => host()?.querySelector(`[data-region="${name}"]`) ?? null;
   const atBottom = (node) => !node || node.scrollHeight - node.scrollTop - node.clientHeight <= 40;
   const busy = () => Boolean(s.turn) || s.running;
-  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing, deck: deck() });
+  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing, deck: deck(), shared: Boolean(s.threadId) });
   const runningRequestId = () => s.turn?.requestId || (s.running ? [...s.messages].reverse().find((m) => m.role === "user")?.request_id : "") || "";
   const deck = () => globalThis.document?.documentElement?.dataset?.ui === "deck";
+  const draftKey = () => deck() && s.threadId ? `${s.botId}:${s.threadId}` : s.botId;
+  const threadQuery = () => deck() && s.threadId ? `&thread=${enc(s.threadId)}` : "";
+  const threadPath = (tail) => `/api/bots/${enc(s.botId)}/${tail}${threadQuery() ? `?thread=${enc(s.threadId)}` : ""}`;
+  const canTalk = () => !deck() || s.bot && !s.bot.frozen && !s.bot.lifecycle && (s.bot.mine !== false || s.bot.perms?.talk);
 
   // --- painting ---
   function paintRoster() {
@@ -454,9 +463,9 @@ export function createBots({
     const composer = region("composer");
     paintHead();
     if (composer) {
-      composer.innerHTML = s.bot ? composerHTML(s.bot, e) : "";
+      composer.innerHTML = s.bot && canTalk() ? composerHTML(s.bot, e) : "";
       const box = composer.querySelector?.('textarea[name="text"]');
-      if (box && s.drafts.get(s.botId)) { box.value = s.drafts.get(s.botId); fit(box); }
+      if (box && s.drafts.get(draftKey())) { box.value = s.drafts.get(draftKey()); fit(box); }
       takeDraft();
     }
     paintMessages({ force: true });
@@ -466,11 +475,11 @@ export function createBots({
   }
   function paintHead() {
     const head = region("head");
-    if (head) head.innerHTML = s.bot ? deck() ? stripHTML(s.bots, s.bot, e) + coworkersNavHTML(s.bot.id) : headHTML(s.bot, e) : "";
+    if (head) head.innerHTML = s.bot ? deck() ? stripHTML(s.bots, s.bot, e) + coworkersNavHTML(s.bot.id) + threadsHTML(s.bot, s.threads, s.threadId, e) : headHTML(s.bot, e) : "";
   }
   function takeDraft() {
     const box = composerBox();
-    if (!s.bot || !s.ready || !box || s.notice?.gone) return;
+    if (!s.bot || !s.ready || !box || s.notice?.gone || deck() && s.threadId) return;
     try {
       const storage = globalThis.sessionStorage, raw = storage?.getItem("cmmn.deck.draft");
       if (raw === null || raw === undefined) return;
@@ -492,7 +501,7 @@ export function createBots({
   function setComposer(text) {
     const box = composerBox();
     if (box) { box.value = text; fit(box); }
-    if (text) s.drafts.set(s.botId, text); else s.drafts.delete(s.botId);
+    if (text) s.drafts.set(draftKey(), text); else s.drafts.delete(draftKey());
   }
   function updateStream() {
     const node = region("messages");
@@ -513,20 +522,28 @@ export function createBots({
   }
   function markRead() {
     const top = lastId(s.messages);
-    if (!s.botId || !s.ready || hidden() || !top || (s.readSent.get(s.botId) || 0) >= top) return;
+    const key = `${s.botId}:${s.threadId || ""}`;
+    if (!s.botId || !s.ready || hidden() || !top || (s.readSent.get(key) || 0) >= top) return;
     const id = s.botId;
-    s.readSent.set(id, top);
+    s.readSent.set(key, top);
     const row = s.bots.find((b) => b.id === id);
     if (row && row.unread) { row.unread = 0; paintRoster(); }
-    api(`/api/bots/${enc(id)}/read`, { method: "POST", body: { upto: top } }).catch(() => { if ((s.readSent.get(id) || 0) === top) s.readSent.delete(id); });
+    api(threadPath("read"), { method: "POST", body: { upto: top } }).catch(() => { if ((s.readSent.get(key) || 0) === top) s.readSent.delete(key); });
   }
   async function loadRoster(token) {
     try {
       const result = await api("/api/bots");
       if (!alive(token)) return;
       s.bots = result.bots || []; s.model = result.model || null; s.canConfigure = result.can_configure === true;
+      if (deck() && s.canConfigure) {
+        try {
+          const all = await api("/api/bots/shared");
+          if (!alive(token)) return;
+          for (const bot of all.bots || []) if (!s.bots.some(row => row.id === bot.id)) s.bots.push({ ...bot, mine: false, lifecycle: true, shared: true, kind: "custom" });
+        } catch { /* The personal roster remains available if workspace management is unavailable. */ }
+      }
       s.loaded = true; s.error = "";
-      if (s.botId && !s.bot) s.bot = s.bots.find((b) => b.id === s.botId) || null;
+      if (s.botId) s.bot = s.bots.find((b) => b.id === s.botId) || null;
       onRoster(s.bots);
     } catch (error) {
       if (!alive(token)) return;
@@ -535,9 +552,24 @@ export function createBots({
     paintRoster();
   }
   async function loadThread(token, id) {
+    const selected = s.threadId;
     try {
-      const page = await api(`/api/bots/${enc(id)}/messages?limit=${PAGE}`);
+      if (deck() && (s.bot?.frozen || s.bot?.lifecycle)) {
+        s.ready = false; paintThread();
+        await openSharing();
+        return;
+      }
+      if (deck() && s.bot?.shared) {
+        const listed = await api(`/api/bots/${enc(id)}/threads`);
+        if (!alive(token) || s.botId !== id || s.threadId !== selected) return;
+        s.threads = listed.threads || [];
+        if (!s.bot.mine && !s.bot.perms?.talk && !s.threadId) s.threadId = s.threads.find(t => t.visibility === "shared" && !t.archived)?.id || null;
+        if (!s.bot.mine && !s.bot.perms?.talk && !s.threadId) { s.ready = true; paintThread(); return; }
+      }
+      const thread = s.threadId;
+      const page = await api(`/api/bots/${enc(id)}/messages?limit=${PAGE}${threadQuery()}`);
       if (!alive(token) || s.botId !== id) return;
+      if (deck() && s.threadId !== thread) return;
       takePage(page, { replace: true });
       s.more = (page.messages || []).length >= PAGE;
       s.ready = true; s.notice = null;
@@ -554,8 +586,9 @@ export function createBots({
     if (!s.botId) return;
     const id = s.botId;
     try {
-      const page = await api(`/api/bots/${enc(id)}/messages?limit=${PAGE}`);
-      if (!alive(token) || s.botId !== id) return;
+      const selected = s.threadId;
+      const page = await api(`/api/bots/${enc(id)}/messages?limit=${PAGE}${threadQuery()}`);
+      if (!alive(token) || s.botId !== id || s.threadId !== selected) return;
       takePage(page);
       repaintAll();
       markRead();
@@ -563,13 +596,14 @@ export function createBots({
   }
   async function pollThread(token) {
     const id = s.botId;
-    if (!id || !s.ready || hidden()) return;
+    if (!id || !s.ready || hidden() || deck() && (s.bot?.frozen || s.bot?.lifecycle || !s.bot?.mine && !s.bot?.perms?.talk && !s.threadId && s.bot?.shared)) return;
     ticks++;
     try {
       // The newest messages by id; every sixth round re-reads the tail so older blocks show their current state.
       const refresh = ticks % 6 === 0;
-      const page = await api(`/api/bots/${enc(id)}/messages?${refresh ? "" : `after=${lastId(s.messages)}&`}limit=${PAGE}`);
-      if (!alive(token) || s.botId !== id) return;
+      const selected = s.threadId;
+      const page = await api(`/api/bots/${enc(id)}/messages?${refresh ? "" : `after=${lastId(s.messages)}&`}limit=${PAGE}${threadQuery()}`);
+      if (!alive(token) || s.botId !== id || s.threadId !== selected) return;
       const before = waitingIds(s.waiting), wasRunning = s.running;
       takePage(page);
       if (s.turn?.state === "polling" && !s.running) { s.turn = null; s.notice = null; }
@@ -612,8 +646,9 @@ export function createBots({
     if (!first || loadingEarlier) return;
     loadingEarlier = true;
     try {
-      const page = await api(`/api/bots/${enc(id)}/messages?before=${first}&limit=${PAGE}`);
-      if (s.botId !== id) return;
+      const selected = s.threadId;
+      const page = await api(`/api/bots/${enc(id)}/messages?before=${first}&limit=${PAGE}${threadQuery()}`);
+      if (s.botId !== id || s.threadId !== selected) return;
       s.messages = merge(s.messages, page.messages || []);
       s.more = (page.messages || []).length >= PAGE;
       const node = region("messages"), height = node?.scrollHeight || 0, top = node?.scrollTop || 0;
@@ -649,7 +684,7 @@ export function createBots({
   }
   async function sendText(raw) {
     const text = String(raw ?? "").trim();
-    if (!text || text.length > MAX_TEXT || busy() || !s.botId || !s.ready) return;
+    if (!text || text.length > MAX_TEXT || busy() || !s.botId || !s.ready || !canTalk()) return;
     const botId = s.botId;
     const retry = s.unsent?.botId === botId && s.unsent.text === text;
     const requestId = retry ? s.unsent.requestId : makeId();
@@ -659,7 +694,7 @@ export function createBots({
     paintNotice(); paintMessages({ force: true }); paintSend();
     scheduleThread(generation);
     try {
-      const result = await send({ botId, text, requestId, signal: turn.controller.signal, fetchImpl, onEvent: (name, data) => onStream(turn, name, data) });
+      const result = await send({ botId, ...(deck() && s.threadId ? { threadId: s.threadId } : {}), text, requestId, signal: turn.controller.signal, fetchImpl, onEvent: (name, data) => onStream(turn, name, data) });
       if (s.turn !== turn) return;
       if (result.state === "dropped" || result.state === "running") {
         // The turn goes on without us: poll until the server says it is no longer running.
@@ -672,6 +707,8 @@ export function createBots({
       s.turn = null;
       repaintAll();
       scheduleThread(generation);
+      // Stream acknowledgements omit author names; the existing thread read supplies them.
+      if (deck() && s.threadId) await reloadTail();
       void pollThread(generation);
       void loadRoster(generation);
     } catch (error) {
@@ -688,7 +725,7 @@ export function createBots({
   async function stop() {
     const requestId = runningRequestId();
     if (!requestId || !s.botId) return;
-    try { await api(`/api/bots/${enc(s.botId)}/stop`, { method: "POST", body: { request_id: requestId } }); }
+    try { await api(threadPath("stop"), { method: "POST", body: { request_id: requestId } }); }
     catch (error) { s.notice = { text: error.message, tone: "error" }; paintNotice(); }
   }
 
@@ -709,9 +746,11 @@ export function createBots({
   async function confirm(pending, accept) {
     const key = `p:${pending}`;
     if (!pending || s.busy.has(key) || !s.botId) return;
+    const id = s.botId, thread = s.threadId;
     s.busy.add(key); repaintAll();
     try {
-      const result = await api(`/api/bots/${enc(s.botId)}/confirm`, { method: "POST", body: { pending, accept } });
+      const result = await api(threadPath("confirm"), { method: "POST", body: { pending, accept } });
+      if (s.botId !== id || s.threadId !== thread) return;
       if (result?.message) s.messages = merge(s.messages, [result.message]);
       s.notice = null; paintNotice();
     } catch (error) { s.notice = { text: error.message, tone: "error" }; paintNotice(); }
@@ -721,7 +760,99 @@ export function createBots({
   }
 
   // --- sheets ---
+  async function loadSharing(sheet) {
+    const id = s.botId, bot = s.bot;
+    sheet.loading = true; sheet.error = ""; paintSheet();
+    try {
+      const [me, settings] = await Promise.all([api("/api/me"), api("/api/bots/settings")]);
+      const [shares, access, log] = bot.frozen || bot.lifecycle
+        ? [{ shares: bot.members || [] }, { entries: bot.access || [] }, { log: [] }]
+        : await Promise.all([api(`/api/bots/${enc(id)}/shares`), api(`/api/bots/${enc(id)}/access`), api(`/api/bots/${enc(id)}/access/log?limit=50`)]);
+      if (s.sheet !== sheet || s.botId !== id) return;
+      Object.assign(sheet, { me, settings, shares: shares.shares, access, log: log.log, moreLog: log.log.length === 50 });
+    } catch (error) { if (s.sheet === sheet) sheet.error = error.message || "Bot settings are unavailable. Try again."; }
+    if (s.sheet === sheet) { sheet.loading = false; paintSheet(); }
+  }
+  async function openSharing() {
+    if (!deck() || !s.bot) return;
+    const sheet = s.sheet = { kind: "sharing", tab: "people", shares: [], log: [], busy: false, loading: true, error: "", painted: false };
+    await loadSharing(sheet);
+  }
+  async function sharingWrite(action) {
+    const sheet = s.sheet, bot = s.bot;
+    if (!deck() || sheet?.kind !== "sharing" || sheet.busy || sheet.loading || !bot) return;
+    const memberActions = ["grant", "revoke"];
+    if (memberActions.includes(action) && (!bot.mine || bot.frozen || !sheet.selected || !sheet.settings?.sharing)) return;
+    if (["disable", "enable", "adopt", "sharing-enable"].includes(action) && !sheet.me?.can_admin) return;
+    if (action === "revoke" && !sheet.confirmRevoke) { sheet.confirmRevoke = true; paintSheet(); return; }
+    if (action === "disable" && !sheet.confirmDisable) { sheet.confirmDisable = true; paintSheet(); return; }
+    const id = s.botId;
+    let path = `/api/bots/${enc(id)}/${action}`, method = "POST", body = {};
+    if (action === "sharing-enable") { path = "/api/bots/settings"; method = "PATCH"; body = { sharing: true }; }
+    if (memberActions.includes(action)) {
+      path = `/api/bots/${enc(id)}/shares`;
+      const exists = sheet.shares.some(row => row.user.id === sheet.selected);
+      if (action === "revoke" || exists) path += `/${enc(sheet.selected)}`;
+      method = action === "revoke" ? "DELETE" : exists ? "PATCH" : "POST";
+      body = action === "revoke" ? undefined : { ...(!exists ? { user: sheet.selected } : {}), talk: sheet.draft.talk === true, see_shared: sheet.draft.see_shared === true };
+      if (action === "grant" && !body.talk && !body.see_shared) return;
+    }
+    const result = await sheetCall(sheet, () => api(path, { method, ...(body ? { body } : {}) }));
+    if (!result || s.sheet !== sheet || s.botId !== id) return;
+    sheet.selected = null; sheet.picker = false; sheet.confirmRevoke = false; sheet.confirmDisable = false; sheet.saved = true;
+    await loadRoster(generation);
+    if (s.sheet !== sheet || s.botId !== id) return;
+    await loadSharing(sheet);
+    if (["disable", "enable", "adopt"].includes(action)) {
+      s.turn?.controller.abort(); s.turn = null; s.unsent = null; s.messages = []; s.waiting = []; s.running = false; s.ready = false;
+      if (action !== "disable") await loadThread(generation, id);
+    }
+    paintThread();
+  }
+  async function moreSharingLog() {
+    const sheet = s.sheet;
+    if (sheet?.kind !== "sharing" || sheet.busy || !sheet.moreLog) return;
+    const result = await sheetCall(sheet, () => api(`/api/bots/${enc(s.botId)}/access/log?after=${sheet.log.at(-1).id}&limit=50`));
+    if (result && s.sheet === sheet) { sheet.log.push(...result.log); sheet.moreLog = result.log.length === 50; paintSheet(); }
+  }
+  function selectShare(user) {
+    const sheet = s.sheet;
+    if (!deck() || sheet?.kind !== "sharing" || !s.bot?.mine || s.bot.frozen || !sheet.me?.people?.[`user:${user}`]) return;
+    const row = sheet.shares.find(row => row.user.id === user);
+    sheet.selected = user; sheet.picker = false; sheet.confirmRevoke = false;
+    sheet.draft = { talk: row?.talk === true, see_shared: row?.see_shared === true };
+    paintSheet();
+    region("sheet")?.querySelector?.("[data-permission-editor]")?.scrollIntoView?.({ block: "nearest" });
+  }
+  async function openSharedThread() {
+    if (!deck() || !s.bot?.shared || !canTalk()) return;
+    const id = s.botId, sheet = s.sheet = { kind: "shared-thread", loading: true, shares: [], error: "" };
+    paintSheet();
+    try {
+      const result = await api(`/api/bots/${enc(id)}/shares`);
+      if (s.sheet === sheet && s.botId === id) sheet.shares = result.shares;
+    } catch (error) { if (s.sheet === sheet) sheet.error = error.message; }
+    if (s.sheet === sheet) { sheet.loading = false; paintSheet(); }
+  }
+  async function switchThread(id) {
+    if (!deck() || !s.bot?.shared || id && !s.threads.some(t => t.id === id)) return;
+    s.turn?.controller.abort(); s.turn = null; s.unsent = null;
+    s.threadId = id || null; s.messages = []; s.waiting = []; s.running = false; s.ready = false; s.more = false; s.notice = null;
+    const token = ++generation;
+    scheduleRoster(token);
+    paintThread();
+    await loadThread(token, s.botId);
+  }
+  async function createSharedThread(form) {
+    const sheet = s.sheet;
+    if (sheet?.kind !== "shared-thread" || sheet.loading || sheet.error || sheet.busy || !canTalk()) return;
+    const result = await sheetCall(sheet, () => api(`/api/bots/${enc(s.botId)}/threads`, { method: "POST", body: { visibility: "shared", title: form.elements.title.value.trim() } }));
+    if (!result?.thread || s.sheet !== sheet) return;
+    s.threads.push(result.thread); closeSheet();
+    await switchThread(result.thread.id);
+  }
   async function openSheet(kind) {
+    if (kind === "bot" && deck()) return openSharing();
     if (kind === "project") {
       if (!deck() || !s.bot?.board) return;
       const sheet = s.sheet = { kind, loading: true, items: [], error: "", painted: false };
@@ -734,9 +865,9 @@ export function createBots({
       if (alive(token) && s.sheet === sheet) { sheet.loading = false; sheet.painted = false; paintSheet(); }
       return;
     }
-    s.sheet = { kind, busy: false, error: "", confirmArchive: false, memories: kind === "bot" ? null : undefined, painted: false };
+    s.sheet = { kind, busy: false, error: "", confirmArchive: false, memories: ["bot", "details"].includes(kind) ? null : undefined, painted: false };
     paintSheet();
-    if (kind !== "bot") return;
+    if (!["bot", "details"].includes(kind)) return;
     const sheet = s.sheet, id = s.botId;
     try {
       const result = await api(`/api/bots/${enc(id)}/memory`);
@@ -747,16 +878,18 @@ export function createBots({
   async function loadLearned(sheet) {
     const id = s.botId;
     try {
-      const [list, learning] = await Promise.all([api("/api/learned?limit=100"), api(`/api/bots/${enc(id)}/learning`)]);
+      const [list, learning] = await Promise.all([api(deck() ? `/api/learned?bot=${enc(id)}&limit=100` : "/api/learned?limit=100"), api(`/api/bots/${enc(id)}/learning`)]);
       if (s.sheet !== sheet) return;
       sheet.items = list.items || [];
       sheet.learning = learning.learning || null;
+      if (sheet.deck && sheet.canShare) { const projects = await api("/api/boards"); if (s.sheet === sheet) sheet.projects = projects.boards || []; }
     } catch (error) { if (s.sheet === sheet) sheet.error = error.message; }
     if (s.sheet === sheet) { sheet.loading = false; paintSheet(); }
   }
   async function openLearned() {
     if (!s.botId) return;
-    const sheet = s.sheet = { kind: "learned", loading: true, items: [], learning: null, busy: false, error: "", confirmAll: false, editing: null, painted: false };
+    if (deck() && (!s.bot?.mine || s.bot.frozen)) return;
+    const sheet = s.sheet = { kind: "learned", deck: deck(), canShare: !s.bot?.shared, loading: true, items: [], learning: null, busy: false, error: "", confirmAll: false, editing: null, painted: false };
     paintSheet();
     await loadLearned(sheet);
   }
@@ -771,6 +904,10 @@ export function createBots({
   async function learnedAct(what, id, extra) {
     if (!id) return;
     const sheet = s.sheet?.kind === "learned" ? s.sheet : null;
+    if (what === "share") {
+      if (sheet?.deck && sheet.canShare && sheet.items.some(item => item.id === id && item.group === "person" && item.kind !== "note")) { sheet.shareItem = id; sheet.sharePending = null; paintSheet(); region("sheet")?.querySelector?.("[data-learning-share]")?.scrollIntoView?.({ block: "nearest" }); }
+      return;
+    }
     if (what === "edit" || what === "cancel") {
       if (sheet) { sheet.editing = what === "edit" ? id : null; paintSheet(); }
       else { if (what === "edit") s.editing.add(id); else s.editing.delete(id); paintMessages(); }
@@ -808,6 +945,22 @@ export function createBots({
     await reloadTail();
   }
   function closeSheet() { const project = s.sheet?.kind === "project"; s.sheet = null; paintSheet(); region("head")?.querySelector?.(deck() ? project ? ".deck-project-link" : ".deck-bot-settings" : ".bots-name")?.focus?.(); }
+  async function previewLearningShare(form) {
+    const sheet = s.sheet;
+    if (sheet?.kind !== "learned" || !sheet.deck || !sheet.canShare || sheet.busy || !sheet.shareItem) return;
+    const result = await sheetCall(sheet, () => api(`/api/learned/${enc(sheet.shareItem)}/share`, { method: "POST", body: { project: form.elements.project.value } }));
+    if (result && s.sheet === sheet) { sheet.sharePending = result; paintSheet(); }
+  }
+  async function confirmLearningShare(accept) {
+    const sheet = s.sheet, pending = sheet?.sharePending;
+    if (sheet?.kind !== "learned" || sheet.busy) return;
+    if (pending) {
+      const result = await sheetCall(sheet, () => api(`/api/bots/${enc(pending.bot)}/confirm`, { method: "POST", body: { pending: pending.pending, accept } }));
+      if (!result || s.sheet !== sheet) return;
+    }
+    sheet.shareItem = null; sheet.sharePending = null;
+    await loadLearned(sheet);
+  }
   async function sheetCall(sheet, work) {
     sheet.busy = true; sheet.error = ""; paintSheet();
     try { return await work(); }
@@ -828,7 +981,7 @@ export function createBots({
   }
   async function save(form) {
     const sheet = s.sheet, id = s.botId;
-    if (!sheet || sheet.busy || !s.bot) return;
+    if (!sheet || sheet.busy || !s.bot || deck() && (!s.bot.mine || s.bot.frozen)) return;
     const body = {};
     for (const key of ["name", "job", "instructions"]) {
       const value = form.elements[key].value.trim();
@@ -856,7 +1009,7 @@ export function createBots({
   }
   async function archive() {
     const sheet = s.sheet, id = s.botId;
-    if (!sheet || sheet.busy) return;
+    if (!sheet || sheet.busy || deck() && (!s.bot?.mine || s.bot.frozen)) return;
     if (!sheet.confirmArchive) { sheet.confirmArchive = true; paintSheet(); return; }
     const result = await sheetCall(sheet, () => api(`/api/bots/${enc(id)}`, { method: "PATCH", body: { archived: true } }));
     if (!result?.bot) return;
@@ -871,6 +1024,16 @@ export function createBots({
     switch (d.botsAction) {
       case "new": void openSheet("new"); break;
       case "sheet": void openSheet("bot"); break;
+      case "bot-details": if (deck() && s.bot?.mine && !s.bot.frozen) void openSheet("details"); break;
+      case "sharing-tab": if (s.sheet?.kind === "sharing") { s.sheet.tab = d.tab === "log" ? "log" : "people"; paintSheet(); } break;
+      case "sharing-picker": if (s.sheet?.kind === "sharing" && s.bot?.mine && !s.bot.frozen) { s.sheet.picker = true; s.sheet.selected = null; s.sheet.painted = false; paintSheet(); region("sheet")?.querySelector?.("[data-people-picker]")?.scrollIntoView?.({ block: "nearest" }); } break;
+      case "sharing-select": case "sharing-edit": selectShare(d.user); break;
+      case "sharing-cancel": if (s.sheet?.kind === "sharing") { s.sheet.selected = null; paintSheet(); } break;
+      case "sharing-revoke": void sharingWrite("revoke"); break;
+      case "sharing-enable": case "disable": case "enable": case "adopt": void sharingWrite(d.botsAction); break;
+      case "sharing-retry": if (s.sheet?.kind === "sharing") void loadSharing(s.sheet); break;
+      case "sharing-more": void moreSharingLog(); break;
+      case "shared-thread": void openSharedThread(); break;
       case "project": void openSheet("project"); break;
       case "close": closeSheet(); break;
       case "retry": { const token = generation; s.error = ""; void loadRoster(token); if (s.botId) void loadThread(token, s.botId); break; }
@@ -884,6 +1047,8 @@ export function createBots({
       case "learned-sheet": void openLearned(); break;
       case "learned": void learnedAct(d.do, d.id); break;
       case "learned-bot": void learnedBot(d.do); break;
+      case "learning-share-confirm": void confirmLearningShare(true); break;
+      case "learning-share-cancel": void confirmLearningShare(false); break;
       case "archive": void archive(); break;
       default: break;
     }
@@ -896,6 +1061,9 @@ export function createBots({
       case "learned-edit": { const text = form.elements.text.value.trim(); return text ? learnedAct("save", d.id, { text }) : undefined; }
       case "create": return create(form);
       case "save": return save(form);
+      case "share": return sharingWrite("grant");
+      case "shared-thread": return createSharedThread(form);
+      case "learning-share": return previewLearningShare(form);
       case "memory": return addMemory(form).then(() => { if (form.elements.text) form.elements.text.value = ""; });
       default: return undefined;
     }
@@ -914,9 +1082,26 @@ export function createBots({
   }
   function onInput(event) {
     const box = event.target;
+    if (deck() && s.sheet?.kind === "sharing") {
+      if (box?.name === "person-search") {
+        s.sheet.search = box.value;
+        let visible = 0;
+        for (const row of region("sheet")?.querySelectorAll?.("[data-person-name]") || []) { row.hidden = !row.dataset.personName.includes(box.value.toLocaleLowerCase()); if (!row.hidden) visible++; }
+        const empty = region("sheet")?.querySelector?.("[data-picker-empty]"); if (empty) empty.hidden = visible > 0;
+        return;
+      }
+      if (["talk", "see_shared"].includes(box?.name) && s.sheet.selected && s.bot?.mine) {
+        s.sheet.draft[box.name] = box.checked;
+        const preview = region("sheet")?.querySelector?.(".bot-access-preview p");
+        if (preview) preview.textContent = permissionText(s.sheet.draft, s.sheet.me.people[`user:${s.sheet.selected}`]);
+        const save = region("sheet")?.querySelector?.('[data-bots-form="share"] [type="submit"]');
+        if (save) save.disabled = !s.sheet.draft.talk && !s.sheet.draft.see_shared;
+        return;
+      }
+    }
     if (box?.name !== "text" || !box.closest?.('[data-region="composer"]')) return;
     fit(box);
-    if (box.value) s.drafts.set(s.botId, box.value); else s.drafts.delete(s.botId);
+    if (box.value) s.drafts.set(draftKey(), box.value); else s.drafts.delete(draftKey());
   }
   function onKeydown(event) {
     if (event.key === "Escape" && s.sheet) { event.preventDefault?.(); closeSheet(); return; }
@@ -932,6 +1117,7 @@ export function createBots({
     if (s.botId) { void pollThread(token); scheduleThread(token); }
     if (!s.botId || !phone()) void loadRoster(token);
   }
+  function onChange(event) { if (event.target?.name === "bot-thread") void switchThread(event.target.value); }
   // The on-screen keyboard shrinks the visual viewport; the screen follows it so the composer stays in view.
   function followViewport() {
     if (!viewport) return;
@@ -965,13 +1151,13 @@ export function createBots({
         // Another thread: a local stream for the old one stops; the server finishes the turn and stores it.
         s.turn?.controller.abort();
         s.turn = null; s.unsent = null; s.sheet = null; s.notice = null;
-        s.botId = id; s.bot = id ? s.bots.find((b) => b.id === id) || null : null;
+        s.botId = id; s.bot = id ? s.bots.find((b) => b.id === id) || null : null; s.threadId = null; s.threads = [];
         s.messages = []; s.waiting = []; s.running = false; s.more = false; s.ready = false; s.waitingOpen = false;
         ticks = 0;
       }
       el.innerHTML = deck() ? shellHTML.replace('<div data-region="model">', `${coworkersNavHTML()}<div data-region="model">`) : shellHTML;
       rootEl = el.querySelector(".bots");
-      for (const [type, handler] of [["click", onClick], ["submit", onSubmit], ["input", onInput], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
+      for (const [type, handler] of [["click", onClick], ["submit", onSubmit], ["input", onInput], ["change", onChange], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
       if (!visibilityBound) { globalThis.document?.addEventListener?.("visibilitychange", onVisible); visibilityBound = true; }
       if (!wasActive && viewport) {
         viewport.addEventListener?.("resize", followViewport);
@@ -982,6 +1168,7 @@ export function createBots({
       paintThread();
       paintSheet();
       scheduleRoster(token);
+      if (deck()) return loadRoster(token).then(() => id && alive(token) ? loadThread(token, id) : undefined);
       const loads = [loadRoster(token)];
       if (id) loads.push(loadThread(token, id));
       return Promise.all(loads).then(() => undefined);
