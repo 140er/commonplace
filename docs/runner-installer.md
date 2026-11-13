@@ -143,3 +143,71 @@ in the owner's Needs me. The reminder opens existing runner settings and grants
 no authority. A fresh owner attestation and settings approval lets the next sync
 replace the cache without editing any machine file. Reminders and metadata stay
 absent while setup is off; existing token tool catalogs remain unchanged.
+
+## Selected runtime installation (slice 4)
+
+The setup-only service and `runner check` can now locate or install an approved
+headless host and selected subscription CLIs. The existing owner attestation
+request accepts an optional `install_settings.runtime` object. Its `components`
+map includes `host` and only the selected `claude`/`codex` entries. Each entry
+requires an exact semantic `version`, `sha256`, HTTPS `url` without credentials,
+query or fragment, and `format` (`native` or `python-zipapp`). `topic_models`
+must map every approved topic to exactly one selected `provider` and `model`.
+There is no local version selector and no latest-version fallback.
+
+The hub signs these choices inside the existing machine-bound, challenged
+receipt. The installer uses the separately pinned approval key, current authority
+versions and expiry before consulting a runtime adapter. It hashes every selected
+artifact before any artifact executes or is published. A signature change, local
+pin edit, failed download or wrong digest leaves no newly installed artifact.
+Release verification covers the signed manifest and its artifact digest together;
+it does not trust a download-provided public key or a detached unsigned pin.
+
+Only selected executable names are looked up. A matching existing artifact is
+reused without modification; an incompatible installation is preserved while a
+verified copy goes into the private runner prefix. Supported release shapes are
+self-contained Linux native executables and Python zipapps, bounded at 128 MiB
+per artifact. Unknown wrappers,
+unsupported platforms, wrong versions or missing headless/status interfaces
+remain incomplete. There is no package-manager invocation, privilege escalation,
+global dependency installation or machine-setting change in this step.
+
+Stored artifacts and generated configuration remain 0600, directories 0700.
+Native capability probes execute verified bytes through sealed anonymous Linux
+descriptors; no stored file gains execute bits. Probe stdin is closed, output is
+captured and discarded, and the environment contains only fixed runtime values
+and a dedicated private home. Checks inspect version, headless commands and
+read-only authentication status. A successful status is recorded as unverified:
+it cannot establish the intended account or scope. Existing credential
+directories are neither copied nor used. No login flow starts and no host-grant
+secret is received, stored or printed.
+
+`runtime-config.json` is a derived runner configuration cache, not authority. It
+contains the approved provider instance and worker ids, topic/model mapping,
+project ids, deterministic private checkout directories, release digests and
+bounded presence/login states. Checkout directories are empty reservations: this
+slice does not clone a repository or register a host project. Each project keeps
+its approved checkout choice; a local directory does not invent checkout consent.
+The signed receipt remains the source of approval. Cache edits fail verification
+and a fresh sync re-derives the mapping. Repeated unchanged syncs reuse files and
+mappings; expired receipts are refreshed. Owned artifacts are journaled before
+publication, and interrupted publication converges on retry. Uninstall confirms
+that the setup service stopped, then removes only unchanged owned files and empty
+owned directories. Unrelated installations and checkout files remain in place.
+
+The enrolled machine may POST fixed component facts to
+`/api/runner/install-status` only while setup is enabled and its approved binding,
+settings revision and runtime digest remain current. The hub projects an owner-only
+Needs me item, **Sign-in needed**, or a fixed missing/unsupported message. Reports
+contain no paths, provider output, credentials or new grants. Old tokens gain no
+route or tool visibility; disabling setup or changing the binding invalidates the
+report. Installation records follow workspace account export and deletion.
+
+The release and approval keys remain trusted provisioning inputs. Real release
+packaging and provider/host interface compatibility need release-specific proof;
+the offline fixtures demonstrate the adapter contract with synthetic releases.
+Linux descriptor sealing is required; unavailable support fails closed. Existing
+single-accept service/linger rules and five-/ten-minute enrollment/recovery
+lifetimes are unchanged. Browser login, scoped host grants, final readiness,
+authorization leases and live stop guarantees remain later slices. Execution
+stays disabled throughout this slice.

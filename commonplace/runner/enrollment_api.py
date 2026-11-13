@@ -23,7 +23,7 @@ def _owner_path(path):
 
 def preflight(gateway, h, path, principal):
     """Hide off/foreign/token routes before the gateway's generic token gates."""
-    if path == "/api/runner/install-manifest":
+    if path in ("/api/runner/install-manifest", "/api/runner/install-status"):
         # The existing private prefix supplies authentication for anonymous calls.
         # Existing tokens gain neither discovery nor a machine-self capability.
         if principal is None:
