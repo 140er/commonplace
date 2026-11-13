@@ -101,8 +101,10 @@ def challenge(verifier: str) -> str:
 
 
 def ensure_schema(db) -> None:
+    from commonplace import person_actions
+
     with db._lock:
-        db._conn.executescript(SCHEMA)
+        db._conn.executescript(SCHEMA + person_actions.SCHEMA)
 
 
 def client(db, client_id: str):
@@ -125,9 +127,15 @@ def resource(parameters: dict) -> str:
 
 def scope(value: str | None) -> str:
     requested = OAUTH_DEFAULT_SCOPES if value is None else value.split()
-    if not requested or set(requested) - set(SCOPES):
+    if not requested or set(requested) - set(supported_scopes()):
         raise OAuthError("invalid_scope")
     return " ".join(sorted(set(requested)))
+
+
+def supported_scopes() -> tuple:
+    from commonplace import person_actions
+
+    return SCOPES + (person_actions.SCOPES if person_actions.enabled() else ())
 
 
 def conn_role(conn, principal):
@@ -298,6 +306,9 @@ def create_code(conn, client_row, principal, parameters) -> str:
             iso(),
         ),
     )
+    from commonplace import person_actions
+
+    person_actions.record_grants(conn, client_row, principal, cid, granted, now())
     code = secrets.token_urlsafe(32)
     conn.execute(
         "INSERT INTO oauth_codes(code_hash, client_id, connection_id, redirect_uri, resource, "

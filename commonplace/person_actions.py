@@ -1,0 +1,327 @@
+"""Explicit OAuth consent for a person's card actions; disabled unless enabled.
+
+These scopes grant only the two routes here. They never turn an OAuth bearer
+into a session, and never authorize other person-only routes or MCP tools.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+from contextlib import contextmanager
+
+from commonplace import decide_grant, sessions
+from commonplace.boards import rest
+from commonplace.boards._http import HTTPError, path_parts, read_json, send_json
+from commonplace.boards.service import BoardService
+from commonplace.control_db import ControlError
+from commonplace.extensions import ToolContext
+
+DECIDE_SCOPE = "cards:decide:person"
+APPROVE_SCOPE = "cards:approve:person"
+SCOPES = (DECIDE_SCOPE, APPROVE_SCOPE)
+DECIDE_TEXT = (
+    "Allow this app to answer card questions and completion reviews as you in this workspace. "
+    "It can answer only items you may answer on the website. Each answer records your identity "
+    "and this app's name. Disconnect this app to stop access."
+)
+APPROVE_TEXT = (
+    "Allow this app to approve or reject card proposals and plans as you in this workspace. "
+    "It can act only on items you may review on the website. Each action records your identity "
+    "and this app's name. Disconnect this app to stop access."
+)
+CONSENT = (
+    (DECIDE_SCOPE, "grant_person_decide", DECIDE_TEXT),
+    (APPROVE_SCOPE, "grant_person_approve", APPROVE_TEXT),
+)
+
+# Account export/deletion classifies this control table. No bearer is stored here.
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS oauth_person_grants (
+    connection_id TEXT NOT NULL REFERENCES connections(id),
+    scope TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
+    created_at INTEGER NOT NULL,
+    revoked_at INTEGER,
+    PRIMARY KEY(connection_id, scope)
+);
+"""
+
+# This receipt lives with the card, so a crash commits both or neither. Account
+# export includes workspace databases, as it does for the existing card history.
+RECEIPTS = """
+CREATE TABLE IF NOT EXISTS person_card_receipts (
+    connection_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    response TEXT NOT NULL,
+    PRIMARY KEY(connection_id, request_hash)
+)
+"""
+
+
+def enabled() -> bool:
+    """Instance opt-in; checked at consent, mint and every action."""
+    return os.environ.get("COMMONPLACE_PHONE_ACTIONS") == "on"
+
+
+def eligible(db, principal) -> bool:
+    return bool(
+        enabled()
+        and principal.person
+        and principal.auth == "session"
+        and not principal.connection_id
+        and db.role(principal.workspace_id, principal.user_id) is not None
+    )
+
+
+def record_grants(conn, client, principal, connection_id, granted, at):
+    """Called only by authorization-code creation in its control transaction."""
+    from commonplace.oauth.http import OAuthError
+
+    requested = set(granted) & set(SCOPES)
+    if not requested:
+        return
+    member = conn.execute(
+        "SELECT 1 FROM memberships WHERE workspace_id=? AND user_id=?",
+        (principal.workspace_id, principal.user_id),
+    ).fetchone()
+    if not (
+        enabled()
+        and member
+        and principal.person
+        and principal.auth == "session"
+        and not principal.connection_id
+    ):
+        raise OAuthError("invalid_scope")
+    for scope in sorted(requested):
+        conn.execute(
+            "INSERT INTO oauth_person_grants "
+            "(connection_id,scope,user_id,workspace_id,client_id,created_at) VALUES (?,?,?,?,?,?)",
+            (
+                connection_id,
+                scope,
+                principal.user_id,
+                principal.workspace_id,
+                client["client_id"],
+                at,
+            ),
+        )
+        # Same transaction as the grant and code. No token or user content.
+        conn.execute(
+            "INSERT INTO audit_log(at,workspace_id,user_id,connection_id,auth,action,decision,reason,target_ids) "
+            "VALUES (strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,?,?,'oauth','person_action.grant','ok',?,'[]')",
+            (
+                principal.workspace_id,
+                principal.user_id,
+                connection_id,
+                json.dumps(
+                    {
+                        "scope": scope,
+                        "client": client["client_name"],
+                        "client_id": client["client_id"],
+                    }
+                ),
+            ),
+        )
+
+
+def authority(gateway, h, scope, board_conn=None):
+    """A live consented OAuth app and its own current person; no other bearer kind."""
+    from commonplace.oauth import store
+
+    header = h.headers.get("Authorization", "")
+    app = gateway.authenticate(header)
+    if not (
+        enabled()
+        and app
+        and not app.person
+        and app.auth == "oauth"
+        and app.runner is None
+        and app.parent_connection_id is None
+        and app.policy.has_scope(scope)
+    ):
+        raise HTTPError(404, "not found")
+    try:
+        row = gateway.db.connection(app.connection_id, app.workspace_id)
+        if row["user_id"] != app.user_id or decide_grant.machinery(gateway.db, row):
+            raise HTTPError(404, "not found")
+        if board_conn is None:
+            service = BoardService(ToolContext(principal=app, gateway=gateway))
+            coordinator = app.actor in service.coordinator_actors()
+        else:
+            coordinator = board_conn.execute(
+                "SELECT 1 FROM boards WHERE coordinator=? LIMIT 1", (app.actor,)
+            ).fetchone()
+        if coordinator:
+            raise HTTPError(404, "not found")
+        with gateway.db._lock:
+            grant = gateway.db._conn.execute(
+                "SELECT g.client_id,c.client_name FROM oauth_person_grants g "
+                "JOIN oauth_clients c ON c.client_id=g.client_id "
+                "JOIN oauth_tokens t ON t.connection_id=g.connection_id AND t.client_id=g.client_id "
+                "WHERE g.connection_id=? AND g.scope=? AND g.user_id=? AND g.workspace_id=? "
+                "AND g.revoked_at IS NULL AND t.token_hash=? AND t.kind='access' "
+                "AND t.revoked_at IS NULL AND t.expires_at>?",
+                (
+                    app.connection_id,
+                    scope,
+                    app.user_id,
+                    app.workspace_id,
+                    store.digest(header.removeprefix("Bearer ")),
+                    store.now(),
+                ),
+            ).fetchone()
+        person = sessions.person_principal(gateway.db, app.user_id, app.workspace_id)
+        if grant is None or person is None:
+            raise HTTPError(404, "not found")
+        return app, person, dict(grant)
+    except (ControlError, LookupError):
+        raise HTTPError(404, "not found") from None
+
+
+class PersonCardService(BoardService):
+    """Run the existing web operation with a receipt in its own board transaction."""
+
+    _action_conn = None
+
+    @contextmanager
+    def transaction(self, **kwargs):
+        if self._action_conn is not None:
+            yield self._action_conn
+        else:
+            with super().transaction(**kwargs) as conn:
+                yield conn
+
+    def _log(self, conn, number, kind, **fields):
+        fields["context"] = json.dumps(
+            {
+                "client": self.origin["client_name"],
+                "client_id": self.origin["client_id"],
+                "connection_id": self.app.connection_id,
+                "context": fields.get("context"),
+            }
+        )
+        super()._log(conn, number, kind, **fields)
+
+    def perform(self, h, scope, task, action, body, key):
+        gateway = self.ctx.gateway
+        payload_hash = hashlib.sha256(
+            json.dumps([task, action, body], sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        request_hash = hashlib.sha256(key.encode()).hexdigest()
+        audit_seq = None
+        try:
+            with super().transaction() as conn:
+                # Revalidate after waiting for the board write lock; never cache authority.
+                self.app, self.principal, self.origin = authority(gateway, h, scope, conn)
+                self.ctx = ToolContext(principal=self.principal, gateway=gateway)
+                self._get(conn, task)  # Visibility checked again, including on a retry.
+                conn.execute(RECEIPTS)
+                saved = conn.execute(
+                    "SELECT * FROM person_card_receipts WHERE connection_id=? AND request_hash=?",
+                    (self.app.connection_id, request_hash),
+                ).fetchone()
+                if saved:
+                    if (
+                        saved["payload_hash"] != payload_hash
+                        or saved["user_id"] != self.principal.user_id
+                        or saved["client_id"] != self.origin["client_id"]
+                    ):
+                        raise HTTPError(409, "idempotency key already used")
+                    return json.loads(saved["response"])
+                self._action_conn = conn
+                try:
+                    result = (
+                        self.decide(task, **body)
+                        if action == "decide"
+                        else self.task_approve(task, **body)
+                    )
+                finally:
+                    self._action_conn = None
+                conn.execute(
+                    "INSERT INTO person_card_receipts "
+                    "(connection_id,user_id,client_id,request_hash,payload_hash,task_id,response) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (
+                        self.app.connection_id,
+                        self.principal.user_id,
+                        self.origin["client_id"],
+                        request_hash,
+                        payload_hash,
+                        task,
+                        json.dumps(result),
+                    ),
+                )
+                audit_seq = gateway.db.audit(
+                    action="person_action." + action,
+                    decision="ok",
+                    workspace_id=self.principal.workspace_id,
+                    user_id=self.principal.user_id,
+                    connection_id=self.app.connection_id,
+                    auth="oauth",
+                    tool=action,
+                    target_ids=[str(task)],
+                    reason=json.dumps(self.origin),
+                )
+            return result
+        except BaseException:
+            if audit_seq is not None:
+                gateway.db.audit(
+                    action="person_action.rolled_back",
+                    decision="rolled_back",
+                    workspace_id=self.principal.workspace_id,
+                    user_id=self.principal.user_id,
+                    connection_id=self.app.connection_id,
+                    auth="oauth",
+                    tool=action,
+                    target_ids=[str(task)],
+                    reason=f"audit_seq={audit_seq}",
+                )
+            raise
+
+
+def install(gateway):
+    if not enabled() or getattr(gateway, "_person_actions_installed", False):
+        return
+    gateway._person_actions_installed = True
+
+    def route(h):
+        service = None
+        try:
+            parts = path_parts(h, "/api/person/")
+            if len(parts) != 3 or parts[0] != "cards" or parts[2] not in ("decide", "approve"):
+                raise HTTPError(404, "not found")
+            action = parts[2]
+            scope = DECIDE_SCOPE if action == "decide" else APPROVE_SCOPE
+            app, person, origin = authority(gateway, h, scope)
+            service = PersonCardService(ToolContext(principal=person, gateway=gateway))
+            if not re.fullmatch(r"[1-9][0-9]{0,17}", parts[1]):
+                raise HTTPError(404, "not found")
+            keys = h.headers.get_all("Idempotency-Key", [])
+            if len(keys) != 1 or not re.fullmatch(r"[A-Za-z0-9._~-]{1,128}", keys[0]):
+                raise HTTPError(400, "one Idempotency-Key is required")
+            body = read_json(h)
+            allowed = (
+                {"version", "choice", "reply", "then"}
+                if action == "decide"
+                else {"version", "approve", "reason"}
+            )
+            if set(body) - allowed or type(body.get("version")) is not int or body["version"] < 1:
+                raise HTTPError(400, "valid version and action arguments required")
+            if action == "approve" and type(body.get("approve")) is not bool:
+                raise HTTPError(400, "approve must be true or false")
+            result = service.perform(h, scope, int(parts[1]), action, body, keys[0])
+        except rest.LEGACY_REFUSALS as exc:
+            rest._send_refusal(h, service, exc)
+            return
+        send_json(h, 200, result)
+
+    gateway.add_prefix_route("POST", "/api/person/cards/", route)
