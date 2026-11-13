@@ -116,10 +116,12 @@ button for a signed-in owner. What it offers comes from `GET /api/card-starts/op
   gets no button and no message. Refusals of the start itself (an active start, the 24-hour rule,
   the hourly limit, the agent cap) show in words too, using the `code` of the response.
 
+<a id="boards-with-an-orchestrator-config"></a>
+
 ## Boards with a Coworker config
 
 A board whose owner accepted a live Coworker config with a `[runner]`
-table ([Coworker.md](orchestrator.md)) changes how starts reach this
+table ([orchestrator.md](orchestrator.md)) changes how starts reach this
 runner. Boards without one behave exactly as described above.
 
 - **Requests.** `card_start` (MCP and `POST /api/card-starts`) is accepted only
@@ -127,12 +129,12 @@ runner. Boards without one behave exactly as described above.
   uses the Coworker lease instead. The owner may send the card alone
   (`{"task": <n>}`): machine, project and topic then come from the config, and
   values that are sent must still equal it (`config_mismatch`). A refused start
-  answers `{"error", "code"}` where the refusal has a stable code. Cancelling a job that belongs to an
+  answers `{"error", "code"}` where the refusal has a stable code. Cancelling a job that belongs to a
   Coworker step through `card_start_cancel` is person-owner only.
   Separately, an owner or the local CLI can void the step: this atomically
   cancels a queued or leased job and permanently retires the old step key.
   Starting, uncertain and started jobs are left untouched; a fresh attempt
-  needs a new key and ordinary admission ([Coworker.md](orchestrator.md)).
+  needs a new key and ordinary admission ([orchestrator.md](orchestrator.md)).
 - **Triggers.** A card that enters `todo` on the board is started without a
   request, by the event's actor if it passes the same requester check. A
   refusal is recorded as a coded miss, not retried.

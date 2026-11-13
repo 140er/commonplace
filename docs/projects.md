@@ -1,3 +1,5 @@
+<a id="projects-and-orchestrators"></a>
+
 # Projects and Coworkers
 
 Owner [Admin overview](admin.md) reads existing project configuration without creating seats. It shows effective caps and actual usage under the current Coworker management counting mode.
@@ -147,7 +149,7 @@ wings. A seat minted by Connect lacks access to the target wing and cannot do
 this itself. Restricted connections are refused.
 The operator connects the project's seat afterwards.
 
-<a id="opt-in-agent-Coworker management"></a>
+<a id="opt-in-agent-orchestration"></a>
 
 ## Opt-in Coworker management
 

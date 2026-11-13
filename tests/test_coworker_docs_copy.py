@@ -8,6 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = re.compile(r"\b(?:orchestrators?|orchestration)\b", re.I)
 INTERNAL_DOCS = {
+    "format-coverage.md",  # Unrelated miner/test implementation coverage, not the product role.
     "modules",  # Implementation ownership and historical verification notes.
     "system",  # Internal architecture decisions and historical compatibility notes.
     "design",  # Internal proposals, audits and decision records.
@@ -25,6 +26,16 @@ def visible_matches(text):
     )
     # Link destinations are stable paths; their human-readable labels are still scanned.
     text = re.sub(r"\]\([^)]*\)", lambda m: " " * len(m[0]), text)
+    # Only the literal role kind in a fenced TOML example is a protocol value.
+    text = re.sub(
+        r"(?ms)^```toml\s*\n.*?^```",
+        lambda block: re.sub(
+            r'(?m)^(\s*kind\s*=\s*")(?:orchestrator|sub-orchestrator)("\s*)$',
+            lambda line: " " * len(line[0]),
+            block[0],
+        ),
+        text,
+    )
     found = []
     for match in ROLE.finditer(text):
         a, b = match.span()
@@ -34,10 +45,6 @@ def visible_matches(text):
             or text[b : b + 1] in ("/", "_", "-", ":")
             or re.match(r"\.\w", text[b:])
         ):
-            continue
-        line = text[text.rfind("\n", 0, a) + 1 : a]
-        # The TOML examples use the existing wire kind and schema, never a renamed value.
-        if re.match(r"\s*(?:kind|schema|topic)\s*=", line):
             continue
         found.append(match)
     return found
@@ -60,6 +67,9 @@ def test_user_docs_role_copy():
 @pytest.mark.parametrize(
     "text",
     [
+        'kind = "orchestrator"',
+        '```text\nkind = "orchestrator"\n```',
+        '```toml\ntopic = "ask an orchestrator"\n```',
         "Ask the Orchestrator.",
         "ORCHESTRATORS use subagents.",
         "Enable orchestration.",
@@ -73,5 +83,5 @@ def test_guard_catches_prose_including_instruction_examples(text):
 
 def test_guard_keeps_protocol_examples():
     assert not visible_matches(
-        '`orchestrator_inbox(board)` `orchestrator` `/api/settings/orchestration`\nkind = "orchestrator"\n[setup](orchestrator.md)'
+        '`orchestrator_inbox(board)` `orchestrator` `/api/settings/orchestration`\n```toml\nkind = "orchestrator"\n```\n[setup](orchestrator.md)'
     )

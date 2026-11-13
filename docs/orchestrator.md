@@ -1,3 +1,5 @@
+<a id="orchestrator-setup-as-code"></a>
+
 # Coworker setup as code
 
 A board can carry one owner-approved Coworker config: the roles that work

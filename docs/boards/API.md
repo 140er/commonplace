@@ -642,7 +642,7 @@ MCP error text. This is a checked write; REST person sessions skip rules freshne
 
 The shared-wing Connect 409 keeps `message` unchanged and adds `explanation`,
 `fix: {label, method: "POST", path: "/api/projects/<slug>/wing", effect}`, and
-`alternative: {label, method: "POST", path: "/api/projects/<slug>/Coworker/connect",
+`alternative: {label, method: "POST", path: "/api/projects/<slug>/orchestrator/connect",
 body: {allow_shared: true}}`. The effect explains visibility loss, possible
 coordinator clearing, and the absence of an undo action here. See
 [project memory effects](../projects.md#give-a-project-its-own-memory-section).

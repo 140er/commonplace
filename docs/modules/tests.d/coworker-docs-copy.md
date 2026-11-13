@@ -1,2 +1,3 @@
 - **Owns:** `tests/test_coworker_docs_copy.py` guards user-facing documentation independently of code and UI guards.
 - **Promises:** Natural-language instruction examples are scanned; stable schema literals and reference destinations remain valid.
+- **Tests:** `tests/test_docs_reference_compat.py` checks all documentation fragment links for new breakage, preserves every existing guide anchor, and compares route, URL, filename, tool/config, CLI and environment tokens with the development branch. The reviewed broken route and anchors fail these checks.
