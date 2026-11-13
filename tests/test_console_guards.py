@@ -22,6 +22,10 @@ PIN_PUBLIC = {
     ("GET", "/oauth/authorize"),
     ("GET", "/s/"),
     ("GET", "/skills/decks/"),
+    # Bootstrap authenticates with a single-use enrollment code before credentials exist.
+    ("POST", "/api/runner-enrollment/exchange"),
+    # Lost-response recovery authenticates a single-use challenge with the bound key.
+    ("POST", "/api/runner-enrollment/recover"),
     ("POST", "/app/auth/"),
     ("POST", "/app/auth/email"),
     ("POST", "/app/auth/email/verify"),

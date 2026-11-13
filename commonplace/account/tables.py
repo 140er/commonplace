@@ -108,6 +108,12 @@ RULES = {
     "rule_stores": Rule(workspace=_W),
     "runner_connections": Rule(connection=_C),
     "runner_machines": Rule(workspace=_W),
+    "runner_install_settings": Rule(workspace=_W),
+    "runner_enrollments": Rule(workspace=_W),
+    "runner_secret_deliveries": Rule(
+        workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
+    ),
+    "runner_enrollment_attempts": Rule(workspace=_W),
     "sessions": Rule(user=_U),
     "short_links": Rule(workspace=_W),
     "signin_flows": Rule(),
@@ -149,7 +155,9 @@ KEPT = frozenset(
 # ``tests/test_commonplace_account_tables.py`` lists every control column
 # whose name suggests a credential and fails on one that is neither matched
 # here nor reviewed there.
-_SECRET = re.compile(r"hash|secret|wrapped|verifier|nonce|auth_header|lease_token|event_id_key")
+_SECRET = re.compile(
+    r"hash|secret|wrapped|verifier|nonce|auth_header|lease_token|event_id_key|machine_key_digest|public_key|ciphertext"
+)
 REDACTED = "[redacted]"
 
 
