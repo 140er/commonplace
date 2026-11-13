@@ -1,9 +1,9 @@
 ### Person-consented phone actions
 
 S1 of card #497 covers capability consent, card decide/approve, project chat and
-phone chat-list summaries. The per-person event feed and fresh web sign-in
-account-deletion token remain later slices. Existing account safeguards remain
-unchanged.
+phone chat-list summaries. S2 adds the separately consented event feed documented
+in [person-events.md](person-events.md). The fresh web sign-in account-deletion
+token remains a later slice. Existing account safeguards remain unchanged.
 
 `COMMONPLACE_PHONE_ACTIONS=on` is an instance opt-in. Enable it before service
 startup to install the private card prefix. Consent, mint and use check the live
@@ -53,8 +53,9 @@ The chat contract is:
 
 The phone capability never makes the authenticated OAuth principal a person
 globally. Only these route-local operations resolve the current person. Settings,
-model probes, status/search subroutes, other aliases, account data and the events
-feed gain no authority. Existing gateway rate limits apply before dispatch.
+model probes, status/search subroutes, other aliases and account data gain no
+authority. S1 capabilities cannot read the events feed; that requires S2's
+separate consent. Existing gateway rate limits apply before dispatch.
 
 For phone-capability callers only, every `projects` item keeps `slug`, `name` and
 nullable `orchestrator: {name}`, and gains:

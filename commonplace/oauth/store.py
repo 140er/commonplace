@@ -106,6 +106,9 @@ def ensure_schema(db) -> None:
 
     with db._lock:
         db._conn.executescript(SCHEMA + person_actions.SCHEMA + person_token.SCHEMA)
+        columns = {r[1] for r in db._conn.execute("PRAGMA table_info(oauth_person_grants)")}
+        if "cursor_secret" not in columns:
+            db._conn.execute("ALTER TABLE oauth_person_grants ADD COLUMN cursor_secret TEXT")
 
 
 def client(db, client_id: str):

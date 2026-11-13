@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 from contextlib import contextmanager
 
 from commonplace import decide_grant, sessions
@@ -22,8 +23,15 @@ from commonplace.extensions import ToolContext
 DECIDE_CAPABILITY = "cards:decide:person"
 APPROVE_CAPABILITY = "cards:approve:person"
 CHAT_CAPABILITY = "chat:person"
+EVENTS_CAPABILITY = "events:person"
 DELETE_CAPABILITY = "account:delete:person"
-CAPABILITIES = (DECIDE_CAPABILITY, APPROVE_CAPABILITY, CHAT_CAPABILITY, DELETE_CAPABILITY)
+CAPABILITIES = (
+    DECIDE_CAPABILITY,
+    APPROVE_CAPABILITY,
+    CHAT_CAPABILITY,
+    EVENTS_CAPABILITY,
+    DELETE_CAPABILITY,
+)
 NATIVE_REDIRECT = "cmmn://auth/callback"
 DECIDE_TEXT = (
     "Allow this app to answer card questions and completion reviews as you in this workspace. "
@@ -46,10 +54,16 @@ DELETE_TEXT = (
     "The existing waiting period and account protection rules still apply. Each request records "
     "your identity and this app's name. Disconnect this app to stop access."
 )
+EVENTS_TEXT = (
+    "Allow this app to read your notifications and activity feed as you in this workspace. "
+    "It can show only what you can see on the website. Nothing can be changed through this. "
+    "Disconnect this app to stop access."
+)
 CONSENT = (
     (DECIDE_CAPABILITY, "grant_person_decide", DECIDE_TEXT),
     (APPROVE_CAPABILITY, "grant_person_approve", APPROVE_TEXT),
     (CHAT_CAPABILITY, "grant_person_chat", CHAT_TEXT),
+    (EVENTS_CAPABILITY, "grant_person_events", EVENTS_TEXT),
     (DELETE_CAPABILITY, "grant_person_delete", DELETE_TEXT),
 )
 
@@ -63,6 +77,7 @@ CREATE TABLE IF NOT EXISTS oauth_person_grants (
     client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
     created_at INTEGER NOT NULL,
     revoked_at INTEGER,
+    cursor_secret TEXT,
     PRIMARY KEY(connection_id, capability)
 );
 """
@@ -124,7 +139,8 @@ def record_grants(conn, client, principal, connection_id, capabilities, at, redi
     for capability in sorted(requested):
         conn.execute(
             "INSERT INTO oauth_person_grants "
-            "(connection_id,capability,user_id,workspace_id,client_id,created_at) VALUES (?,?,?,?,?,?)",
+            "(connection_id,capability,user_id,workspace_id,client_id,created_at,cursor_secret) "
+            "VALUES (?,?,?,?,?,?,?)",
             (
                 connection_id,
                 capability,
@@ -132,6 +148,7 @@ def record_grants(conn, client, principal, connection_id, capabilities, at, redi
                 principal.workspace_id,
                 client["client_id"],
                 at,
+                secrets.token_hex(32) if capability == EVENTS_CAPABILITY else None,
             ),
         )
         # Same transaction as the grant and code. No token or user content.
