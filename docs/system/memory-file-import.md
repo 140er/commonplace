@@ -29,3 +29,8 @@ No new database tables or temporary files are needed. Existing account export
 and deletion rules own the imported rows. The default import API, connection
 consent, private-reader rules, storage checks and append-only semantics remain
 in force.
+
+Deck uses the same import session and authority. Its preview keeps the selected
+export label; reports show file, source and destination once, followed by added
+and already imported counts. Errors appear only when present. Private reports
+keep their accepted-only counts. Classic output remains unchanged.
