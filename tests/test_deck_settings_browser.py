@@ -209,6 +209,9 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
             assert page.get_by_text(label, exact=True).count() == 1
         for wire in ["webhook_add", "webhook_list", "webhook_remove", "webhook_test"]:
             meta = page.locator(f'[data-tool-policy-row="{wire}"] .deck-permission-meta')
+            assert meta.locator("summary").evaluate(
+                "el=>[getComputedStyle(el).paddingTop,getComputedStyle(el).paddingBottom]"
+            ) == ["0px", "0px"]
             assert meta.locator("small").bounding_box()["y"] == pytest.approx(
                 meta.locator("summary").bounding_box()["y"], abs=2
             )

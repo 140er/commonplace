@@ -236,7 +236,7 @@
 :root[data-ui="deck"] .deck-permission-group .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 16px; padding-block: 14px; }
 :root[data-ui="deck"] .deck-permission-label { display: contents; }
 :root[data-ui="deck"] .deck-permission-label small { display: block; color: var(--text-3); }
-:root[data-ui="deck"] .deck-permission-label summary { min-height: 0; line-height: 18px; color: var(--text-2); cursor: pointer; font-size: 12px; }
+:root[data-ui="deck"] .deck-permission-label summary { padding: 0; min-height: 0; line-height: 18px; color: var(--text-2); cursor: pointer; font-size: 12px; }
 :root[data-ui="deck"] .deck-permission-label code { display: block; color: var(--text-2); white-space: normal; overflow-wrap: anywhere; }
 :root[data-ui="deck"] .settings .setting-row select { flex: 0 0 auto; max-width: 130px; min-height: 44px; }
 :root[data-ui="deck"] .settings :is(.agent-form, .webhook-form) { min-width: 0; }
