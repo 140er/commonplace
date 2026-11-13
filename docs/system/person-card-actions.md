@@ -1,56 +1,74 @@
-### Person-consented card actions
+### Person-consented phone actions
 
-Phone card actions are an instance opt-in (`COMMONPLACE_PHONE_ACTIONS=on`). Enable
-the setting before starting the service to install the protected prefix. The
-switch is also checked at consent, code creation and use. With it off, the scopes
-are absent from discovery, no new form can request them, and installed handlers
-refuse existing grants. Re-enabling resumes unrevoked grants; disconnecting the
-OAuth connection revokes its access and refresh tokens.
+S1 of card #497 covers capability consent, card decide/approve, project chat and
+phone chat-list summaries. The per-person event feed and fresh web sign-in
+account-deletion token remain later slices. Existing account safeguards remain
+unchanged.
 
-`cards:decide:person` means answer card questions and completion reviews using
-the signed-in person's existing web rights. `cards:approve:person` means approve
-or reject proposals and plans using those same rights. The legacy owner-delegated
-`cards:decide` scope keeps its existing meaning. Neither new scope is a default
-and neither expands another scope. Both require a fresh OAuth consent grant;
-older tokens remain unchanged, including after a refresh.
+`COMMONPLACE_PHONE_ACTIONS=on` is an instance opt-in. Enable it before service
+startup to install the private card prefix. Consent, mint and use check the live
+switch. Every other value is off. Existing clients and tokens gain no authority;
+a new consent creates a new connection and capability association. Disconnecting
+revokes the OAuth tokens. Machinery conversion withdraws phone capabilities.
 
-The exact unticked consent strings are:
+The phone requests and receives exactly `memory:read`. OAuth metadata, policy
+scopes, default scopes and web session policies remain unchanged. The following
+are separate consented capabilities, never OAuth scopes:
 
-- "Allow this app to answer card questions and completion reviews as you in this workspace. It can answer only items you may answer on the website. Each answer records your identity and this app's name. Disconnect this app to stop access."
-- "Allow this app to approve or reject card proposals and plans as you in this workspace. It can act only on items you may review on the website. Each action records your identity and this app's name. Disconnect this app to stop access."
+- `cards:decide:person`: answer card questions and completion reviews using the person's existing web rights.
+- `cards:approve:person`: approve or reject proposals and plans using those same rights.
+- `chat:person`: read project chats and post the person's own messages where their web account may do so.
 
-The owner must approve the final scope names and consent strings before merge.
+Only the exact native callback may obtain these capabilities through the existing
+PKCE consent. Each has its own initially unticked checkbox. The exact strings are:
 
-The only new HTTP surface is the authenticated `POST /api/person/cards/` prefix:
-`<number>/decide` answers a question or completion review, and `<number>/approve`
-reviews a proposal or plan. **New public routes: none.** The private prefix is
-needed to keep person-consented actions separate from ordinary app and web
-routes. Existing public-route pins are unchanged.
+- `cards:decide:person`: "Allow this app to answer card questions and completion reviews as you in this workspace. It can answer only items you may answer on the website. Each answer records your identity and this app's name. Disconnect this app to stop access."
+- `cards:approve:person`: "Allow this app to approve or reject card proposals and plans as you in this workspace. It can act only on items you may review on the website. Each action records your identity and this app's name. Disconnect this app to stop access."
+- `chat:person`: "Allow this app to read your project chats and send your own messages as you in this workspace. It can reach only chats you may read and write on the website. Each message records your identity and this app's name. Disconnect this app to stop access."
 
-Both actions require `Idempotency-Key` (1–128 ASCII letters, digits or
-`._~-`) and a positive integer `version`. Decide accepts the existing `choice`,
-`reply` and `then` fields; approve requires boolean `approve` and accepts
-`reason`. Other fields are refused, including identity or workspace selectors.
-Card numbers resolve only within the token's consented workspace. Errors use
-the existing board refusal forms. An exact retry returns the original result;
-a reused key with different arguments returns 409. Live token, consent and
-visibility checks still apply to retries.
+The owner must approve the final capability names and consent strings before merge.
 
-Every action uses the person's current web principal for the existing operation.
-Chosen completion reviewers keep their existing authority; members cannot answer
-owner-only asks or approve owner-only proposals. Agent-started, child, machine,
-worker, project-seat, coordinator, PAT and unconsented OAuth connections have no
-authority here. These scopes do not authorize account data, events, settings or
-other person-only routes. The existing authenticated request budget also covers
-these routes.
+Card actions use protected `POST /api/person/cards/<number>/decide` and
+`.../approve`, require a positive `version` and `Idempotency-Key` (1–128 ASCII
+letters, digits or `._~-`), and use the existing board operations. Exact retries
+return their original receipt; changed arguments with the same key return 409.
+Receipts and card changes commit together. Current bearer, capability binding and
+card visibility checks apply to retries.
 
-The control database stores consent associations in `oauth_person_grants`,
-classified for account export and deletion. Receipts live in
-`person_card_receipts` in the board database so they commit atomically with card
-changes. History records the person and client name; control audit rows record
-each granted scope and successful action. No access or refresh bearer is written
-to either table or included in an audit reason.
+The chat contract is:
 
-This is slice S1 of card #497. The per-person event feed and the fresh web
-re-authentication deletion token belong to later slices. Neither authority is
-introduced here, and the existing account deletion safeguards stay unchanged.
+| Route | Consented phone | Ordinary OAuth | Web session |
+| --- | --- | --- | --- |
+| `GET /api/chat` | Person's readable projects plus phone-only summaries | 403 | Existing response |
+| `GET /api/chat/<slug>?last=50` | Same person-readable feed as the web | 403 | Existing feed |
+| `POST /api/boards/<slug>/chat` with `{text}` | Person's own message; 201; no `memory:write` on the bearer | Existing policy refusal or connection reply | Existing person post |
+
+The phone capability never makes the authenticated OAuth principal a person
+globally. Only these route-local operations resolve the current person. Settings,
+model probes, status/search subroutes, other aliases, account data and the events
+feed gain no authority. Existing gateway rate limits apply before dispatch.
+
+For phone-capability callers only, every `projects` item keeps `slug`, `name` and
+nullable `orchestrator: {name}`, and gains:
+
+- `status`: `"unused" | "working" | "idle" | "quiet" | null`. This is exactly the recorded connection-activity classifier used by web chat, subject to the same person's console visibility. Missing, invisible or invalid recorded activity is null.
+- `last_message`: `{text: string, at: string, author_kind: "person" | "bot"} | null`. It selects the latest readable shared board message or the current person's private front reply, including visible front notices. Private bot threads are not project chat inputs. `text` is redacted with the feed's redactor, stripped of HTML tags and truncated to 240 Unicode characters; `at` is UTC ISO 8601 ending in `Z`.
+
+Example (recorded values, not default activity):
+
+```json
+{"projects":[{"slug":"work","name":"Work","orchestrator":{"name":"project-helper"},"status":"working","last_message":{"text":"The change is ready for review.","at":"2026-11-13T19:00:00Z","author_kind":"bot"}}]}
+```
+
+Unreadable boards are removed before any summary lookup. The summary projection
+batches its source reads across the visible list, with no query in the per-project
+loop; a 50-project query-count regression pins this bound. Other people's private
+front replies and private bot conversations cannot influence content, count or
+ordering. Ordinary web callers retain their exact previous list shape.
+
+New public routes: none. The private card prefix separates capability authority
+from general session authority. The three chat routes already exist. Public-route
+pins and disabled baselines are unchanged. The control grant table is classified
+by person/workspace/connection for account export and deletion. Literal SQL table
+names are used throughout. History and audit retain the person and client name;
+no bearer is persisted or logged.

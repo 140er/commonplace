@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - `oauth_person_grants` is classified by person, workspace and connection as a consent credential association. Account export includes its non-secret fields and deletion removes the leaving account's grant rows, including where a shared workspace stays. Card receipts live with existing card history in the workspace database.
+  - `oauth_person_grants` classifies each consented capability by person, workspace and connection for account export/deletion. No bearer is stored. Card receipts live with the existing card history in the workspace database, which workspace exports include.
 - **Promises:**
 
-  - Phone card scopes give no account export or deletion authority. Account deletion continues to require the existing web sign-in and safeguards. No deletion token is introduced in this slice.
+  - Phone card/chat capabilities grant no account export or deletion authority. Existing deletion safeguards remain unchanged. No deletion token is introduced in this slice.

@@ -19,7 +19,8 @@ from tests.test_commonplace_oauth import Client
 
 DECIDE = "cards:decide:person"
 APPROVE = "cards:approve:person"
-SCOPES = (DECIDE, APPROVE)
+CHAT = "chat:person"
+SCOPES = (DECIDE, APPROVE, CHAT)
 
 
 @pytest.fixture
@@ -39,17 +40,23 @@ def phone(hub, monkeypatch):
     return client
 
 
-def grant(client, scopes=SCOPES, *, checked=None):
-    checked = scopes if checked is None else checked
+def grant(client, capabilities=SCOPES, *, checked=None, oauth_scopes=("memory:read",)):
+    checked = capabilities if checked is None else checked
     path = client.authorize_path(
-        client.cid, redirect_uri="cmmn://auth/callback", scope=" ".join(scopes)
+        client.cid, redirect_uri="cmmn://auth/callback", scope=" ".join(oauth_scopes)
     )
     status, _, html = client.request("GET", path)
     assert status == 200, html
     request = re.search(r'name="request" value="([^"]+)"', html)[1]
     data = {"request": request, "decision": "allow"}
     for scope in checked:
-        data["grant_person_decide" if scope == DECIDE else "grant_person_approve"] = "1"
+        data[
+            {
+                DECIDE: "grant_person_decide",
+                APPROVE: "grant_person_approve",
+                CHAT: "grant_person_chat",
+            }[scope]
+        ] = "1"
     status, headers, text = client.request("POST", path, data)
     assert status == 303, text
     query = parse_qs(urlsplit(headers["Location"]).query)
@@ -93,31 +100,27 @@ def test_off_has_no_routes_scopes_or_consent(hub, monkeypatch):
     assert set(SCOPES).isdisjoint(sessions.person_policy("owner").scopes)
 
 
-def test_requested_person_scopes_require_instance_opt_in(monkeypatch):
+def test_phone_capabilities_never_widen_oauth_scopes(monkeypatch):
     monkeypatch.setenv("COMMONPLACE_PHONE_ACTIONS", "on")
-    assert set(SCOPES) <= set(oauth._server_metadata()["scopes_supported"])
-    assert set(store.scope(" ".join(SCOPES)).split()) == set(SCOPES)
+    assert set(SCOPES).isdisjoint(oauth._server_metadata()["scopes_supported"])
+    assert store.scope("memory:read") == "memory:read"
 
 
 def test_consent_is_explicit_separate_and_audited(phone):
     from commonplace import person_actions
 
-    path = phone.authorize_path(
-        phone.cid, redirect_uri="cmmn://auth/callback", scope=" ".join(SCOPES)
-    )
+    path = phone.authorize_path(phone.cid, redirect_uri="cmmn://auth/callback", scope="memory:read")
     status, _, html = phone.request("GET", path)
     assert status == 200
     for _scope, field, text in person_actions.CONSENT:
         assert unescape(text) in unescape(html)
         tag = re.search(r'<input[^>]*name="' + field + r'"[^>]*>', html)[0]
         assert 'type="checkbox"' in tag and "checked" not in tag
-    assert grant(phone, checked=[]) == {
-        "error": ["invalid_scope"],
-        "state": ["opaque + state & = / ✨"],
-        "iss": [oauth.urls.AGENT_URL],
-    }
+    unchecked = grant(phone, checked=[])
+    assert unchecked["scope"] == "memory:read"
+    assert call(phone, unchecked, ask(phone))[0] == 404
     pair = grant(phone, checked=[DECIDE])
-    assert pair["scope"] == DECIDE
+    assert pair["scope"] == "memory:read"
     principal = phone.hub.gateway.authenticate("Bearer " + pair["access_token"])
     rows = phone.hub.db.audit_entries(phone.hub.workspace)
     grants = [r for r in rows if r["action"] == "person_action.grant"]
@@ -159,12 +162,12 @@ def test_live_kill_switch_refuses_grant_and_use(phone, monkeypatch):
 
 
 def test_old_client_and_token_never_gain_person_authority(phone):
-    old = grant(phone, scopes=["memory:read", "memory:write"], checked=[])
+    old = grant(phone, capabilities=[], oauth_scopes=("memory:read", "memory:write"))
     card = ask(phone)
     assert call(phone, old, card)[0] == 404
     status, _, text = phone.refresh(phone.cid, old["refresh_token"], scope=DECIDE)
     assert status == 400 and json.loads(text)["error"] == "invalid_scope"
-    fresh = grant(phone, scopes=[DECIDE])
+    fresh = grant(phone, capabilities=[DECIDE])
     assert call(phone, fresh, card)[0] == 200
     assert call(phone, old, card)[0] == 404
 
@@ -206,7 +209,7 @@ def make_proposal(phone):
 
 @pytest.mark.parametrize("approve", [True, False])
 def test_approve_matches_web_and_is_idempotent(phone, approve):
-    pair = grant(phone, scopes=[APPROVE])
+    pair = grant(phone, capabilities=[APPROVE])
     card = make_proposal(phone)
     assert card["proposal_status"] == "pending"
     body = {"version": card["version"], "approve": approve, "reason": "Reviewed"}
@@ -245,7 +248,7 @@ def test_member_can_answer_only_their_chosen_completion_review(phone):
     worker.task_take_next(task=card["number"])
     card = worker.task_update(card["number"], status="done")
     assert card["status"] == "review" and card["review_kind"] == "completion"
-    pair = grant(phone, scopes=[DECIDE])
+    pair = grant(phone, capabilities=[DECIDE])
     answer = call(
         phone, pair, card, body={"version": card["version"], "reply": "Accepted", "then": "done"}
     )
@@ -354,7 +357,7 @@ def test_oauth_machinery_refused_even_with_consented_scopes(phone, kind):
                 parent=parent.connection_id,
                 policy=Policy.build(scopes=["memory:read"], trust="trusted"),
             )
-            policy = Policy.build(scopes=SCOPES, trust="trusted").to_json()
+            policy = Policy.build(scopes=["memory:read"], trust="trusted").to_json()
             db._conn.execute(
                 "UPDATE connections SET policy=? WHERE id=?",
                 (policy, cid),
@@ -380,11 +383,10 @@ def test_oauth_machinery_refused_even_with_consented_scopes(phone, kind):
 
 
 def test_pat_session_and_unconsented_app_refused(phone):
-    from commonplace.control_db import ControlError
-    from commonplace.policy import Policy
+    from commonplace.policy import Policy, PolicyError
 
     card = ask(phone)
-    with pytest.raises(ControlError, match="OAuth consent"):
+    with pytest.raises(PolicyError, match="unknown scopes"):
         phone.hub.token("ordinary", scopes=[DECIDE], trust="trusted")
     token = phone.hub.owner_token("ordinary")
     assert call(phone, {"access_token": token}, card)[0] == 404
@@ -433,10 +435,10 @@ def test_new_scopes_cannot_access_other_person_routes(phone):
 
 
 def test_missing_key_version_conflict_scope_separation_and_revocation(phone):
-    pair = grant(phone, scopes=[APPROVE])
+    pair = grant(phone, capabilities=[APPROVE])
     card = ask(phone)
     assert call(phone, pair, card)[0] == 404
-    pair = grant(phone, scopes=[DECIDE])
+    pair = grant(phone, capabilities=[DECIDE])
     assert (
         call(phone, pair, card, body={"version": card["version"] + 1, "reply": "Proceed"})[0] == 409
     )
@@ -473,7 +475,7 @@ def test_bearer_sentinel_is_not_logged(phone, caplog):
 
 
 def test_consent_form_cannot_grant_after_kill_switch(phone, monkeypatch):
-    path = phone.authorize_path(phone.cid, redirect_uri="cmmn://auth/callback", scope=DECIDE)
+    path = phone.authorize_path(phone.cid, redirect_uri="cmmn://auth/callback", scope="memory:read")
     status, _, html = phone.request("GET", path)
     assert status == 200
     request = re.search(r'name="request" value="([^"]+)"', html)[1]
@@ -482,7 +484,7 @@ def test_consent_form_cannot_grant_after_kill_switch(phone, monkeypatch):
         "POST", path, {"request": request, "decision": "allow", "grant_person_decide": "1"}
     )
     assert status == 303
-    assert parse_qs(urlsplit(headers["Location"]).query)["error"] == ["invalid_scope"]
+    assert "code" in parse_qs(urlsplit(headers["Location"]).query)
     with phone.hub.db._lock:
         assert (
             phone.hub.db._conn.execute("SELECT count(*) FROM oauth_person_grants").fetchone()[0]
@@ -539,7 +541,7 @@ def test_person_grants_export_without_bearers_and_are_classified(phone):
             if n.startswith("account/") and n.endswith("oauth_person_grants.ndjson")
         )
         grants = [json.loads(line) for line in archive.read(name).splitlines()]
-        assert {row["scope"] for row in grants} == set(SCOPES)
+        assert {row["capability"] for row in grants} == set(SCOPES)
         assert all(row["user_id"] == app.user_id for row in grants)
         content = b"".join(archive.read(n) for n in archive.namelist())
         assert pair["access_token"].encode() not in content
@@ -559,7 +561,7 @@ def test_cross_workspace_target_and_private_board_refused(phone):
     )
     assert call(phone, pair, card)[0] == 404  # The token's own workspace contains no such card.
     chosen = member_client(phone)
-    pair = grant(phone, scopes=[DECIDE])
+    pair = grant(phone, capabilities=[DECIDE])
     phone.owner.board_add(slug="private-work", wing="private")
     card = phone.owner.task_add(
         board="private-work", title="Private review", reviewer="user:" + chosen
@@ -586,11 +588,12 @@ def test_code_creation_cannot_mint_person_grants_for_non_session_authority(phone
             store.client(db, phone.cid),
             principal,
             {
-                "scope": DECIDE,
+                "scope": "memory:read",
                 "redirect_uri": "cmmn://auth/callback",
                 "resource": oauth.urls.mcp_url(),
                 "code_challenge": "unused",
             },
+            person_capabilities=[DECIDE],
         )
     with db._lock:
         assert db._conn.execute("SELECT count(*) FROM connections").fetchone()[0] == before
@@ -598,13 +601,13 @@ def test_code_creation_cannot_mint_person_grants_for_non_session_authority(phone
 
 
 def test_refresh_can_narrow_but_never_restore_person_scope(phone):
-    pair = grant(phone)
-    status, _, text = phone.refresh(phone.cid, pair["refresh_token"], scope=DECIDE)
+    pair = grant(phone, capabilities=[DECIDE])
+    status, _, text = phone.refresh(phone.cid, pair["refresh_token"], scope="memory:read")
     assert status == 200
     narrowed = json.loads(text)
-    assert narrowed["scope"] == DECIDE
+    assert narrowed["scope"] == "memory:read"
     card = ask(phone)
     assert call(phone, narrowed, card, "approve")[0] == 404
     assert call(phone, narrowed, card)[0] == 200
-    status, _, text = phone.refresh(phone.cid, narrowed["refresh_token"], scope=" ".join(SCOPES))
+    status, _, text = phone.refresh(phone.cid, narrowed["refresh_token"], scope=APPROVE)
     assert status == 400 and json.loads(text)["error"] == "invalid_scope"

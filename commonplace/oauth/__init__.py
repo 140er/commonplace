@@ -289,13 +289,12 @@ def _show_authorize(gateway, h, *, status=200):
             else:
                 consent += f"<p>{escape(decide_grant.OWNER_ONLY_TEXT)}</p>"
         requested = parameters["scope"].split()
-        if person_actions.eligible(gateway.db, principal):
-            for scope, field, text in person_actions.CONSENT:
-                if scope in requested:
-                    consent += (
-                        f'<label><input type="checkbox" name="{field}" value="1"> '
-                        f"{escape(text)}</label>"
-                    )
+        if native and "memory:read" in requested and person_actions.eligible(gateway.db, principal):
+            for _, field, text in person_actions.CONSENT:
+                consent += (
+                    f'<label><input type="checkbox" name="{field}" value="1"> '
+                    f"{escape(text)}</label>"
+                )
         if bots_grant.CHAT_SCOPE in requested:
             consent += (
                 '<label><input type="checkbox" name="grant_bots_chat" value="1"> '
@@ -447,16 +446,23 @@ def _submit_authorize(gateway, h):
                 ):
                     granted.remove(decide_grant.DECIDE_SCOPE)
                 _keep_bots_grants(db, principal, data, granted)
-                for scope, field, _ in person_actions.CONSENT:
-                    if scope in granted and not (
-                        data.get(field) == "1" and person_actions.eligible(db, principal)
-                    ):
-                        granted.remove(scope)
+                person_capabilities = [
+                    capability
+                    for capability, field, _ in person_actions.CONSENT
+                    if data.get(field) == "1"
+                    and parameters["redirect_uri"] in NATIVE_REDIRECTS
+                    and "memory:read" in granted
+                    and person_actions.eligible(db, principal)
+                ]
                 if not granted:
                     location = _response(parameters, error="invalid_scope")
                 else:
                     code = store.create_code(
-                        conn, client, principal, dict(parameters, scope=" ".join(granted))
+                        conn,
+                        client,
+                        principal,
+                        dict(parameters, scope=" ".join(granted)),
+                        person_capabilities=person_capabilities,
                     )
                     location = _response(parameters, code=code)
             login = False
@@ -500,7 +506,7 @@ def _server_metadata():
         "token_endpoint_auth_methods_supported": ["none"],
         "revocation_endpoint_auth_methods_supported": ["none"],
         "code_challenge_methods_supported": ["S256"],
-        "scopes_supported": list(store.supported_scopes()),
+        "scopes_supported": list(store.SCOPES),
         "authorization_response_iss_parameter_supported": True,
     }
 

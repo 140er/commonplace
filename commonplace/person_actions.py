@@ -1,6 +1,6 @@
-"""Explicit OAuth consent for a person's card actions; disabled unless enabled.
+"""Explicit phone consent for a person's card actions; disabled unless enabled.
 
-These scopes grant only the two routes here. They never turn an OAuth bearer
+These capabilities grant only their dedicated routes. They never turn an OAuth bearer
 into a session, and never authorize other person-only routes or MCP tools.
 """
 
@@ -19,9 +19,11 @@ from commonplace.boards.service import BoardService
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext
 
-DECIDE_SCOPE = "cards:decide:person"
-APPROVE_SCOPE = "cards:approve:person"
-SCOPES = (DECIDE_SCOPE, APPROVE_SCOPE)
+DECIDE_CAPABILITY = "cards:decide:person"
+APPROVE_CAPABILITY = "cards:approve:person"
+CHAT_CAPABILITY = "chat:person"
+CAPABILITIES = (DECIDE_CAPABILITY, APPROVE_CAPABILITY, CHAT_CAPABILITY)
+NATIVE_REDIRECT = "cmmn://auth/callback"
 DECIDE_TEXT = (
     "Allow this app to answer card questions and completion reviews as you in this workspace. "
     "It can answer only items you may answer on the website. Each answer records your identity "
@@ -32,22 +34,28 @@ APPROVE_TEXT = (
     "It can act only on items you may review on the website. Each action records your identity "
     "and this app's name. Disconnect this app to stop access."
 )
+CHAT_TEXT = (
+    "Allow this app to read your project chats and send your own messages as you in this workspace. "
+    "It can reach only chats you may read and write on the website. Each message records your "
+    "identity and this app's name. Disconnect this app to stop access."
+)
 CONSENT = (
-    (DECIDE_SCOPE, "grant_person_decide", DECIDE_TEXT),
-    (APPROVE_SCOPE, "grant_person_approve", APPROVE_TEXT),
+    (DECIDE_CAPABILITY, "grant_person_decide", DECIDE_TEXT),
+    (APPROVE_CAPABILITY, "grant_person_approve", APPROVE_TEXT),
+    (CHAT_CAPABILITY, "grant_person_chat", CHAT_TEXT),
 )
 
 # Account export/deletion classifies this control table. No bearer is stored here.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS oauth_person_grants (
     connection_id TEXT NOT NULL REFERENCES connections(id),
-    scope TEXT NOT NULL,
+    capability TEXT NOT NULL,
     user_id TEXT NOT NULL REFERENCES users(id),
     workspace_id TEXT NOT NULL REFERENCES workspaces(id),
     client_id TEXT NOT NULL REFERENCES oauth_clients(client_id),
     created_at INTEGER NOT NULL,
     revoked_at INTEGER,
-    PRIMARY KEY(connection_id, scope)
+    PRIMARY KEY(connection_id, capability)
 );
 """
 
@@ -82,11 +90,13 @@ def eligible(db, principal) -> bool:
     )
 
 
-def record_grants(conn, client, principal, connection_id, granted, at):
+def record_grants(conn, client, principal, connection_id, capabilities, at, redirect_uri):
     """Called only by authorization-code creation in its control transaction."""
     from commonplace.oauth.http import OAuthError
 
-    requested = set(granted) & set(SCOPES)
+    requested = set(capabilities)
+    if requested - set(CAPABILITIES):
+        raise OAuthError("invalid_scope")
     if not requested:
         return
     member = conn.execute(
@@ -99,15 +109,17 @@ def record_grants(conn, client, principal, connection_id, granted, at):
         and principal.person
         and principal.auth == "session"
         and not principal.connection_id
+        and redirect_uri == NATIVE_REDIRECT
+        and redirect_uri in json.loads(client["redirect_uris"])
     ):
         raise OAuthError("invalid_scope")
-    for scope in sorted(requested):
+    for capability in sorted(requested):
         conn.execute(
             "INSERT INTO oauth_person_grants "
-            "(connection_id,scope,user_id,workspace_id,client_id,created_at) VALUES (?,?,?,?,?,?)",
+            "(connection_id,capability,user_id,workspace_id,client_id,created_at) VALUES (?,?,?,?,?,?)",
             (
                 connection_id,
-                scope,
+                capability,
                 principal.user_id,
                 principal.workspace_id,
                 client["client_id"],
@@ -124,7 +136,7 @@ def record_grants(conn, client, principal, connection_id, granted, at):
                 connection_id,
                 json.dumps(
                     {
-                        "scope": scope,
+                        "capability": capability,
                         "client": client["client_name"],
                         "client_id": client["client_id"],
                     }
@@ -133,7 +145,7 @@ def record_grants(conn, client, principal, connection_id, granted, at):
         )
 
 
-def authority(gateway, h, scope, board_conn=None):
+def authority(gateway, h, capability, board_conn=None):
     """A live consented OAuth app and its own current person; no other bearer kind."""
     from commonplace.oauth import store
 
@@ -146,7 +158,8 @@ def authority(gateway, h, scope, board_conn=None):
         and app.auth == "oauth"
         and app.runner is None
         and app.parent_connection_id is None
-        and app.policy.has_scope(scope)
+        and capability in CAPABILITIES
+        and app.policy.has_scope("memory:read")
     ):
         raise HTTPError(404, "not found")
     try:
@@ -167,12 +180,12 @@ def authority(gateway, h, scope, board_conn=None):
                 "SELECT g.client_id,c.client_name FROM oauth_person_grants g "
                 "JOIN oauth_clients c ON c.client_id=g.client_id "
                 "JOIN oauth_tokens t ON t.connection_id=g.connection_id AND t.client_id=g.client_id "
-                "WHERE g.connection_id=? AND g.scope=? AND g.user_id=? AND g.workspace_id=? "
+                "WHERE g.connection_id=? AND g.capability=? AND g.user_id=? AND g.workspace_id=? "
                 "AND g.revoked_at IS NULL AND t.token_hash=? AND t.kind='access' "
                 "AND t.revoked_at IS NULL AND t.expires_at>?",
                 (
                     app.connection_id,
-                    scope,
+                    capability,
                     app.user_id,
                     app.workspace_id,
                     store.digest(header.removeprefix("Bearer ")),
@@ -185,6 +198,98 @@ def authority(gateway, h, scope, board_conn=None):
         return app, person, dict(grant)
     except (ControlError, LookupError):
         raise HTTPError(404, "not found") from None
+
+
+def revoke(db, row, *, user_id=None):
+    """Machinery conversion permanently withdraws the separate phone capabilities."""
+    if not db._conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='oauth_person_grants'"
+    ).fetchone():
+        return False
+    grants = db._conn.execute(
+        "SELECT capability FROM oauth_person_grants WHERE connection_id=? AND revoked_at IS NULL",
+        (row["id"],),
+    ).fetchall()
+    db._conn.execute(
+        "UPDATE oauth_person_grants SET revoked_at=strftime('%s','now') "
+        "WHERE connection_id=? AND revoked_at IS NULL",
+        (row["id"],),
+    )
+    for grant in grants:
+        db.audit(
+            action="person_action.revoke",
+            decision="ok",
+            workspace_id=row["workspace_id"],
+            user_id=user_id or row["user_id"],
+            connection_id=row["id"],
+            auth=row["auth"],
+            reason=grant["capability"],
+        )
+    return bool(grants)
+
+
+def chat_post_path(method, path):
+    """Only the existing board chat POST alias; no settings, tools or other aliases."""
+    return (
+        method == "POST" and re.fullmatch(r"/api/boards/[a-z0-9][a-z0-9_-]*/chat", path) is not None
+    )
+
+
+def chat_person(gateway, h):
+    """Optional phone capability for an existing chat route, never a global principal change."""
+    if not enabled():
+        return None
+    try:
+        return authority(gateway, h, CHAT_CAPABILITY)[1]
+    except HTTPError:
+        return None
+
+
+def post_chat(gateway, h, board, body):
+    """The exact person's normal post, with its client audit before the board commit."""
+    if set(body) != {"text"}:
+        raise HTTPError(400, "only text is accepted")
+    person = chat_person(gateway, h)
+    if person is None:
+        raise HTTPError(403, "Sign in to send chat")
+    service = PersonCardService(ToolContext(principal=person, gateway=gateway))
+    audit_seq = None
+    try:
+        with BoardService.transaction(service) as conn:
+            service.app, service.principal, service.origin = authority(
+                gateway, h, CHAT_CAPABILITY, conn
+            )
+            service.ctx = ToolContext(principal=service.principal, gateway=gateway)
+            service._action_conn = conn
+            try:
+                result = service.space_post(board, body["text"])
+            finally:
+                service._action_conn = None
+            audit_seq = gateway.db.audit(
+                action="person_action.chat.post",
+                decision="ok",
+                workspace_id=person.workspace_id,
+                user_id=person.user_id,
+                connection_id=service.app.connection_id,
+                auth="oauth",
+                tool="space_post",
+                reason=json.dumps(service.origin),
+                target_ids=[str(result["id"])],
+            )
+        return result
+    except BaseException:
+        if audit_seq is not None:
+            gateway.db.audit(
+                action="person_action.rolled_back",
+                decision="rolled_back",
+                workspace_id=person.workspace_id,
+                user_id=person.user_id,
+                connection_id=service.app.connection_id,
+                auth="oauth",
+                tool="space_post",
+                reason=f"audit_seq={audit_seq}",
+            )
+        raise
 
 
 class PersonCardService(BoardService):
@@ -211,7 +316,7 @@ class PersonCardService(BoardService):
         )
         super()._log(conn, number, kind, **fields)
 
-    def perform(self, h, scope, task, action, body, key):
+    def perform(self, h, capability, task, action, body, key):
         gateway = self.ctx.gateway
         payload_hash = hashlib.sha256(
             json.dumps([task, action, body], sort_keys=True, ensure_ascii=False).encode()
@@ -221,7 +326,7 @@ class PersonCardService(BoardService):
         try:
             with super().transaction() as conn:
                 # Revalidate after waiting for the board write lock; never cache authority.
-                self.app, self.principal, self.origin = authority(gateway, h, scope, conn)
+                self.app, self.principal, self.origin = authority(gateway, h, capability, conn)
                 self.ctx = ToolContext(principal=self.principal, gateway=gateway)
                 self._get(conn, task)  # Visibility checked again, including on a retry.
                 conn.execute(RECEIPTS)
@@ -300,8 +405,8 @@ def install(gateway):
             if len(parts) != 3 or parts[0] != "cards" or parts[2] not in ("decide", "approve"):
                 raise HTTPError(404, "not found")
             action = parts[2]
-            scope = DECIDE_SCOPE if action == "decide" else APPROVE_SCOPE
-            app, person, origin = authority(gateway, h, scope)
+            capability = DECIDE_CAPABILITY if action == "decide" else APPROVE_CAPABILITY
+            app, person, origin = authority(gateway, h, capability)
             service = PersonCardService(ToolContext(principal=person, gateway=gateway))
             if not re.fullmatch(r"[1-9][0-9]{0,17}", parts[1]):
                 raise HTTPError(404, "not found")
@@ -318,7 +423,7 @@ def install(gateway):
                 raise HTTPError(400, "valid version and action arguments required")
             if action == "approve" and type(body.get("approve")) is not bool:
                 raise HTTPError(400, "approve must be true or false")
-            result = service.perform(h, scope, int(parts[1]), action, body, keys[0])
+            result = service.perform(h, capability, int(parts[1]), action, body, keys[0])
         except rest.LEGACY_REFUSALS as exc:
             rest._send_refusal(h, service, exc)
             return

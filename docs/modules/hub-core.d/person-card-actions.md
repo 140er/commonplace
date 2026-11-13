@@ -1,10 +1,10 @@
 - **Owns:**
 
-  - `person_actions.py` installs the protected card action prefix only when the instance enables phone actions. Every request verifies the OAuth access token, its recorded person/workspace/client consent, current membership, and absence of machinery or board coordination authority. Each operation resolves the person's current web rights and uses the existing board service.
+  - `person_actions.py` verifies separate native-phone consent records, the live OAuth bearer, current person/workspace/client binding and absence of machinery or board coordination authority. The same authority serves card actions and the three chat routes; OAuth principals remain non-person globally.
 - **Promises:**
 
-  - `cards:decide:person` and `cards:approve:person` are separate from legacy `cards:decide`. Existing clients and tokens acquire neither automatically. PAT creation refuses these scopes. The instance switch is `COMMONPLACE_PHONE_ACTIONS=on`; any other value disables new consent and actions. No new public route or MCP tool is added.
-  - Each action requires a positive card version and an `Idempotency-Key`. Receipts and card changes commit in one board transaction; mismatched retries return 409. Card history retains the person's actor and records the OAuth client name. The control audit records each grant and successful action; a board commit failure after an audit appends a cancellation row.
+  - The phone keeps exactly its requested `memory:read` OAuth scope; no policy or OAuth scope is added. Separate unticked capabilities are `cards:decide:person`, `cards:approve:person` and `chat:person`. Only a new native PKCE consent records them. The default-off switch is `COMMONPLACE_PHONE_ACTIONS=on`.
+  - Card actions require a positive version and an `Idempotency-Key`; receipts commit with the card. Chat posts use the person's ordinary board operation without granting the bearer `memory:write`. Grants and successful writes record the person, connection and client name; audit failure rolls back the action.
 - **Tests:**
 
-  - `tests/test_commonplace_person_actions.py` proves consent, defaults, scope isolation, current member rights, machinery refusal, revocation, concurrent retries, conflict refusal, audit failure rollback and credential log exclusion.
+  - `tests/test_commonplace_person_actions.py` and `tests/test_commonplace_person_chat.py` cover consent, unchanged scopes, current rights, machinery and workspace isolation, revocation, concurrent retries, audit rollback, chat authorship and bounded private list projections.

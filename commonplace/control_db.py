@@ -521,10 +521,6 @@ class ControlDB:
             raise ControlError("only an owner's connection can hold the admin scope")
         if "private:read" in policy.scopes and role != "owner":
             raise ControlError("only an owner's connection can hold the private:read scope")
-        from commonplace import person_actions
-
-        if set(person_actions.SCOPES) & set(policy.scopes):
-            raise ControlError("person card scopes require a new OAuth consent grant")
         if DECIDE_SCOPE in policy.scopes:
             # Only the signed-in owner's browser grants it, for their own top-level app.
             try:
@@ -1077,29 +1073,15 @@ class ControlDB:
                 return False
             from commonplace import person_actions
 
-            gone = {DECIDE_SCOPE, *bots_grant.SCOPES, *person_actions.SCOPES} & set(scopes)
+            revoked = person_actions.revoke(self, row, user_id=user_id)
+            gone = {DECIDE_SCOPE, *bots_grant.SCOPES} & set(scopes)
             if not gone:
-                return False
+                return revoked
             policy["scopes"] = sorted(set(scopes) - gone)
             self._conn.execute(
                 "UPDATE connections SET policy=? WHERE id=?",
                 (json.dumps(policy, sort_keys=True), row["id"]),
             )
-            for scope in sorted(gone & set(person_actions.SCOPES)):
-                self._conn.execute(
-                    "UPDATE oauth_person_grants SET revoked_at=COALESCE(revoked_at, strftime('%s','now')) "
-                    "WHERE connection_id=? AND scope=?",
-                    (row["id"], scope),
-                )
-                self.audit(
-                    action="person_action.revoke",
-                    decision="ok",
-                    workspace_id=row["workspace_id"],
-                    user_id=user_id or row["user_id"],
-                    connection_id=row["id"],
-                    auth=row["auth"],
-                    reason=scope,
-                )
             if DECIDE_SCOPE in gone:
                 self.audit(
                     action="connection.decide.revoke",

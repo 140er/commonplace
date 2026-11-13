@@ -127,15 +127,9 @@ def resource(parameters: dict) -> str:
 
 def scope(value: str | None) -> str:
     requested = OAUTH_DEFAULT_SCOPES if value is None else value.split()
-    if not requested or set(requested) - set(supported_scopes()):
+    if not requested or set(requested) - set(SCOPES):
         raise OAuthError("invalid_scope")
     return " ".join(sorted(set(requested)))
-
-
-def supported_scopes() -> tuple:
-    from commonplace import person_actions
-
-    return SCOPES + (person_actions.SCOPES if person_actions.enabled() else ())
 
 
 def conn_role(conn, principal):
@@ -263,7 +257,7 @@ def _guess_client(client_row) -> str:
     return "other"
 
 
-def create_code(conn, client_row, principal, parameters) -> str:
+def create_code(conn, client_row, principal, parameters, *, person_capabilities=()) -> str:
     granted = set(parameters["scope"].split())
     if granted & {"bots:chat", "bots:confirm", "bots:learned"} and not (
         principal.person
@@ -308,7 +302,11 @@ def create_code(conn, client_row, principal, parameters) -> str:
     )
     from commonplace import person_actions
 
-    person_actions.record_grants(conn, client_row, principal, cid, granted, now())
+    if person_capabilities and "memory:read" not in granted:
+        raise OAuthError("invalid_scope")
+    person_actions.record_grants(
+        conn, client_row, principal, cid, person_capabilities, now(), parameters["redirect_uri"]
+    )
     code = secrets.token_urlsafe(32)
     conn.execute(
         "INSERT INTO oauth_codes(code_hash, client_id, connection_id, redirect_uri, resource, "
