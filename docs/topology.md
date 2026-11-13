@@ -4,6 +4,80 @@ The single source of truth for the Compute map: machines, how they reach each ot
 
 Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`. How agents write and the owner approves is under Proposals below; how an agent finds a website's route is under Site route discovery; how one button maps the user's machines is under Map discovery.
 
+The next three sections are the short version for the people who use the map and the agents that read it; the rest of the document is the contract.
+
+## The Compute map: what you see and what you do
+
+The Compute map draws every machine you use, how they reach each other, and how your websites get from a domain name to the app that serves them. It starts empty and is never typed in by hand: agents find the facts, and you approve them.
+
+**What it shows**
+
+- **Devices:** computers, phones, virtual machines, servers, routers, cloud and CDN providers, websites and containers or apps, each with its name and role.
+- **Links:** how one device reaches another (direct, through a jump host, over Tailscale, through a relay, by DNS, through a proxy or reverse proxy, or hosting an app), with a status mark at each end. A mark you have no signal for is "unknown", never green.
+- **Site routes:** for a website, the chain from its DNS provider through the proxy or CDN and the reverse proxy to the machine and the app. A hop nobody has recorded is shown as unknown instead of being filled in.
+- **A device's four tabs** (select a device): **Physical** (hardware, OS, CPU, memory, storage), **Config** (hostname, Tailscale name, ssh alias, runner id, the ways in, and the same answer an agent gets to "how do I connect to this"), **Agents** (the runner on it, its connections, the runs and coordinators working there) and **Sites** (which websites it hosts or passes, and a button that highlights that route). Every value says who saw it and how long ago.
+
+**What you do**
+
+1. Press **Start agent work on map** on the empty map. Each runner machine of the workspace gets one read-only discovery run (a normal card start, visible in the machine's Agents tab). The button names every machine it could not start and why.
+2. Answer the questions that show up in "needs you". Each says what would change on the map, with the map before and after. Approve to apply, Reject to keep the old map; a rejected change is not asked again for seven days. A machine's facts about itself, and the live status of its own links, are applied without a question.
+3. Ask an agent how to reach a machine or where a site is hosted: it reads the map instead of guessing. To add a website, hand an agent the domain and let it run site discovery; the route comes back as one more question.
+4. Undo an applied change from its history (the owner only). Nothing is deleted: undone and replaced values stay in the history.
+
+Facts expire (30 days, 15 minutes for a link's status) and then show as stale instead of being trusted. Run the discovery again to refresh them; a rerun that finds nothing new only renews the times and asks nothing.
+
+### What is stored, and what is never stored
+
+| Stored | Never stored |
+| --- | --- |
+| Device names, kinds and roles; hostnames, addresses and the Tailscale name you chose to record | Passwords, API keys, tokens, session cookies |
+| Connection aliases (an ssh alias, a jump host's key) and ports | Private key material, key file contents, certificates and their keys |
+| Hardware, OS, CPU, memory and storage as text and numbers | Basic-auth users and password hashes from a proxy config |
+| The runner machine id and the wings a machine works in | Credentials inside an upstream address, headers, environment variables |
+| Site names, upstream targets and the hops of a route | Anything else a proxy or ssh config contains |
+| For each value: who observed it, the evidence line they saw, when, and when it expires | The contents of files an agent read, beyond the evidence line it quotes |
+
+Naming a key file by path or alias (`IdentityFile ~/.ssh/id_ed25519`) is allowed in evidence; its contents are not. Three rules enforce this on every write, whoever writes (see The secret filter): only allow-listed fields exist, short fields have strict shapes, and every text value is scanned for secrets. A write that fails any of them is refused whole and stores nothing. The discovery collector adds its own limits: it reads a short fixed list of files, runs a short fixed list of commands, writes nothing and never reads a key file (see Map discovery). All of it lives in the workspace's own `topology.sqlite3`, encrypted with the workspace when workspace encryption is on, and never leaves the workspace.
+
+## For agents: answering from the map
+
+Read before you guess. With the `memory:read` scope and a read grant on the `topology` wing you have two tools, and they are enough to answer the two questions people ask:
+
+- **How do I connect to X?** `topology_route(target="X", from="<the machine you start from>")`. Read `answer` and then each hop: its `method`, `alias`, `via` (the jump host or relay), `port` and `status`. Use the alias and port as given. Without `from` you get the recorded ways in to X and `status: "partial"`; ask for the start or say so.
+- **Where is site Y hosted?** `topology_route(target="Y")`. The `route` lists the hops from the DNS provider through the proxy to the host and the app; `hosted_on` is where it ends. `status` is `complete` only when every hop is known and fresh.
+- **What do you know about X?** `topology_get(node="X")` for a machine's fields with their provenance and `topology_get(site="Y")` for a site's route; with neither you get the whole map.
+
+Rules for answers:
+
+1. An answer that starts `unknown:`, a hop with `known: false`, `stale: true` or `status: "unknown"` is the truth: say it, with its age, and do not fill the gap from memory or from this chat.
+2. Never invent a hop, an address or an alias. If the map is empty, tell the owner to press **Start agent work on map**.
+3. If you learn something the map should hold, do not write the store. Hand it in with `topology_propose` (facts and the verbatim evidence you saw) or `topology_discover_site` (a domain plus the proxy config you read, as text); the owner approves it. Put nothing secret in either: evidence may name a key file, never quote one, and a proxy config is passed in as read, because only site names and upstream targets are taken from it.
+4. Read-only means read-only on the user's machines too: run the discovery collector as the prompt says and nothing else.
+
+### Adding another reverse proxy adapter
+
+An adapter teaches site discovery to read one more proxy's configuration (Traefik, HAProxy, Apache, a hosted dashboard's export). It is one class and one test fixture:
+
+1. **Write the class** in `commonplace/topology/proxy_adapters.py`: subclass `ProxyAdapter`, set `kind` (a short lowercase name, such as the one the tool takes) and `label`, and implement `read(text, found)`. For each site entry call `found.site(names, evidence)` and, for each target it forwards to, `found.upstream(handle, target, evidence)` (a `path` and a `scheme` are optional). The evidence is the config line the fact came from. Those two calls are the only way anything leaves an adapter, and they apply the guarantees below, so an adapter cannot store a credential even by mistake.
+2. **Register it** with `register(MyAdapter())` at the bottom of that module, next to the others. The tool's `kind` choices are read from the registry when the tool is defined, so an adapter registered later, from another module, does not appear in the tool's schema.
+3. **Read only the text.** Do not open a file, follow an `include`, read the environment, run a command or connect anywhere; a config that does not parse yields no sites, not an error.
+4. **Add the fixtures** to `tests/test_topology_site_adapters.py`: an invented config in each form the adapter reads (documentation addresses and `example.com` style names only), the sites and upstreams it must return with their evidence, a config with credentials in it (they must not appear in anything returned, and a secret-looking line is counted under `withheld`), a broken config (no sites, no exception), and the no-file, no-process, no-network check the other adapters have. The refusal message that lists the known kinds also lists yours, so update that test.
+5. **Document it:** one row in the adapter table under Site route discovery, and the `kind` in the tool's example.
+6. Run `tests/test_topology_site_adapters.py`, `tests/test_topology_site_routes.py` and `tests/test_topology_generic_guard.py`. The last fails if the adapter, its fixtures or its docs carry a real host name, address or account.
+
+The route logic (DNS, nodes, links, the `External / unknown` hop) lives in `site_routes.py` and needs no change for a new proxy.
+
+## Proof that the map is generic
+
+Nothing in the repository belongs to one person's setup, and a test keeps it so:
+
+- `tests/test_topology_end_to_end.py` runs the whole path on a clean workspace with two synthetic runner machines, a synthetic proxy config and a fake DNS resolver: the owner presses "Start agent work on map", the started agents report, the owner approves what they proposed, the map and a device's four tabs are read through the same routes the screens call, and a second agent connection that wrote nothing answers "how do I connect to X" and "where is site Y hosted" from `topology_get` and `topology_route` alone. Further tests take a step away (the owner rejects or never answers) and show that the second agent is then told `unknown:` instead of being given a guess.
+- `tests/test_topology_generic_guard.py` scans the topology code, the discovery prompt and collector, the map's web files, these docs and every topology test and fixture. It fails on an address outside the documentation (RFC 5737, RFC 3849) and private (RFC 1918) ranges, a public-looking host name or e-mail domain outside the reserved example names, a home-directory path, an ssh user name that is not an invented one, a hardware address, a public key, a private key body of real length or anything the secret detectors recognise. Its patterns come from structure, not from names, so it holds no real setup detail itself, and its self-test plants one violation of each kind to show it fires.
+
+New fixtures use `192.0.2.0/24`, `198.51.100.0/24` or `203.0.113.0/24`, `2001:db8::/32`, `example.com`, `.net`, `.org` or `.test` names, and invented machine names. If a fixture needs another invented name that the guard cannot tell from a real one, add it to the guard's short allow-list of synthetic names; never add a real one.
+
+The first run on a real setup is the owner's own step in the app. It is a use of the product, not a fixture.
+
 ## Facts
 
 One fact is `(subject, predicate, object)` in one workspace, wing `topology`:
