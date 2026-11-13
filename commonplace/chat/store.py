@@ -168,6 +168,21 @@ class ReplyStore:
                 ).fetchall()
             ]
 
+    def latest_for_boards(self, boards, for_user):
+        """Latest readable private front reply per already-authorized board, in one query."""
+        with self._lock:
+            conn = self._connection()
+            if conn is None:
+                return []
+            return conn.execute(
+                "WITH ranked AS (SELECT board,text,created_at, "
+                "row_number() OVER (PARTITION BY board ORDER BY id DESC) AS n "
+                "FROM chat_replies WHERE for_user=? "
+                "AND board IN (SELECT value FROM json_each(?))) "
+                "SELECT board,text,created_at FROM ranked WHERE n=1",
+                (for_user, json.dumps(boards)),
+            ).fetchall()
+
     def search(self, *, board, for_user, words, actor=None, since=None):
         """Return at most 21 private answers (the extra row signals truncation)."""
         from commonplace.chat.search import predicates

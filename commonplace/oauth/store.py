@@ -101,8 +101,10 @@ def challenge(verifier: str) -> str:
 
 
 def ensure_schema(db) -> None:
+    from commonplace import person_actions
+
     with db._lock:
-        db._conn.executescript(SCHEMA)
+        db._conn.executescript(SCHEMA + person_actions.SCHEMA)
 
 
 def client(db, client_id: str):
@@ -255,7 +257,7 @@ def _guess_client(client_row) -> str:
     return "other"
 
 
-def create_code(conn, client_row, principal, parameters) -> str:
+def create_code(conn, client_row, principal, parameters, *, person_capabilities=()) -> str:
     granted = set(parameters["scope"].split())
     if granted & {"bots:chat", "bots:confirm", "bots:learned"} and not (
         principal.person
@@ -297,6 +299,13 @@ def create_code(conn, client_row, principal, parameters) -> str:
             principal.user_id,
             iso(),
         ),
+    )
+    from commonplace import person_actions
+
+    if person_capabilities and "memory:read" not in granted:
+        raise OAuthError("invalid_scope")
+    person_actions.record_grants(
+        conn, client_row, principal, cid, person_capabilities, now(), parameters["redirect_uri"]
     )
     code = secrets.token_urlsafe(32)
     conn.execute(
