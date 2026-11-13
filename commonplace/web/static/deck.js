@@ -5,7 +5,7 @@
 // only for what waits on you). Screens that exist only in Deck register in SCREENS.
 import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
-import { arrangeSettings, policyPresentation } from './deck-settings.js';
+import { arrangeSettings, policyPresentation, selectSettings } from './deck-settings.js';
 
 export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
@@ -136,7 +136,11 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     if (jump && deckOn(storage)) {
       const target = root.querySelector(`#${jump.dataset.deckSetting}`);
       const scroller = target?.closest?.('.settings');
-      if (scroller) scroller.scrollBy({ top: target.getBoundingClientRect().top - scroller.getBoundingClientRect().top });
+      if (scroller) {
+        const nav = scroller.querySelector('#deck-settings-nav');
+        scroller.scrollBy({ top: target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - (nav?.offsetHeight || 0) - 12 });
+        selectSettings(scroller, jump.dataset.deckSetting);
+      }
       target?.setAttribute?.('tabindex', '-1');
       target?.focus?.({ preventScroll: true });
     }

@@ -860,6 +860,9 @@ async function settingsView(epoch) {
   mountToolPolicy(content.querySelector("[data-tool-policy]"), {api, e, presentation: state.deck?.policyPresentation(), current: () => epoch === state.screen});
   state.deck?.settings(content);
   restore(saved);
+  void state.voiceReady?.then(() => {
+    if (epoch === state.screen && state.base === "#/settings" && state.deck?.on()) state.deck?.settings(content);
+  });
 }
 
 async function memoryView(epoch, refresh = false) {
@@ -1932,7 +1935,7 @@ async function boot() {
   try { state.me = await boundedRequest(api, "/api/me"); setPeople(state.me.people); }
   catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
   if (!state.me) return;
-  shell(); void Promise.resolve(voice.load()).then(() => { if (state.deck?.on()) state.deck?.settings(root.querySelector("#content")); });
+  shell(); state.voiceReady = Promise.resolve(voice.load());
   if (!state.me) return;
   let moved = false;
   const params = new URLSearchParams(location.search);

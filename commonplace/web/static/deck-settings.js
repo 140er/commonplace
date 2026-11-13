@@ -15,8 +15,8 @@ const WORDS = { task:'card', board:'project', space:'project chat', kg:'knowledg
   void:'cancel', force:'forced', intent:'plan', artifact:'file', peers:'connections' };
 const SPECIAL = { ask:'Ask a question', decide:'Answer a decision', needs_me:'Read what needs you',
   orchestrator_inbox:'Read Coworker inbox', session_start:'Start a session',
-  webhook_add:'Connect event delivery', webhook_list:'List event connections',
-  webhook_remove:'Remove an event connection', webhook_test:'Test event delivery',
+  webhook_add:'Send notifications to another app', webhook_list:'See where notifications are sent',
+  webhook_remove:'Stop sending to an app', webhook_test:'Send a test notification',
   card_start:'Start a card', card_start_status:'Read card start status',
   card_start_resolve:'Resolve a card start', card_start_cancel:'Cancel a card start',
   task_take_next:'Take the next card', task_heartbeat:'Keep card ownership active',
@@ -34,11 +34,11 @@ const VERBS = { add:'Create', create:'Create', list:'List', get:'Read', show:'Re
   invalidate:'Invalidate', supersede:'Replace', find:'Find', follow:'Follow', put:'Store', submit:'Submit',
   publish:'Publish', test:'Test', select:'Select', discover:'Discover' };
 export function permissionLabel(action) {
-  if (SPECIAL[action.name]) return SPECIAL[action.name];
+  if (Object.hasOwn(SPECIAL, action.name)) return SPECIAL[action.name];
   const words = action.name.replace(/^mempalace_/, 'memory_').split(/[_:.\s-]+/).filter(Boolean);
-  const verbAt = words.findIndex(word => VERBS[word]);
+  const verbAt = words.findIndex(word => Object.hasOwn(VERBS, word));
   const verb = verbAt < 0 ? '' : VERBS[words.splice(verbAt, 1)[0]];
-  const text = words.map(word => WORDS[word] || word).join(' ');
+  const text = words.map(word => Object.hasOwn(WORDS, word) ? WORDS[word] : word).join(' ');
   return verb ? `${verb} ${text}` : text.charAt(0).toUpperCase() + text.slice(1);
 }
 export function permissionGroup(action) {
@@ -56,7 +56,7 @@ export function permissionRows(actions, modes, filter, e) {
     `<section class="deck-permission-group"><h3>${e(group)}</h3>${rows.map(action => {
       const label = permissionLabel(action);
       const kind = {read:'Reads',write:'Changes things',unknown:'No longer served'}[action.kind] || action.kind;
-      return `<div class="setting-row" data-tool-policy-row="${e(action.name)}"><div class="deck-permission-label"><span>${e(label)}</span><small>${e(kind)}</small><details><summary>Technical name</summary><code>${e(action.name)}</code></details></div><select data-tool-policy-mode="${e(action.name)}" aria-label="Permission for ${e(label)}">${modes.map(mode => `<option value="${e(mode)}"${mode === action.mode ? ' selected' : ''}>${e(labels[mode] || mode)}</option>`).join('')}</select></div>`;
+      return `<div class="setting-row" data-tool-policy-row="${e(action.name)}"><div class="deck-permission-label"><span>${e(label)}</span><div class="deck-permission-meta"><small>${e(kind)}</small><details><summary>Technical name</summary><code>${e(action.name)}</code></details></div></div><select data-tool-policy-mode="${e(action.name)}" aria-label="Permission for ${e(label)}">${modes.map(mode => `<option value="${e(mode)}"${mode === action.mode ? ' selected' : ''}>${e(labels[mode] || mode)}</option>`).join('')}</select></div>`;
     }).join('')}</section>`).join('') || '<p class="message">No action matches</p>';
 }
 export const policyPresentation = {
@@ -64,12 +64,13 @@ export const policyPresentation = {
   filterChanged(host) {
     const frame = host.closest?.('.settings'), field = host.querySelector('[data-tool-policy-filter]');
     if (!frame || !field) return;
-    const top = field.getBoundingClientRect().top, edge = frame.getBoundingClientRect().top;
+    selectSettings(frame, 'tool-policy');
+    const top = field.getBoundingClientRect().top, edge = frame.querySelector('#deck-settings-nav')?.getBoundingClientRect().bottom ?? frame.getBoundingClientRect().top;
     // Shorter results can clamp the scroll position. Keep the search and its results in view.
     if (top < edge || top > edge + frame.clientHeight / 2) frame.scrollBy({ top: top - edge - 12 });
   },
   filterLabel:'Search permissions', placeholder:'Search, e.g. notifications or cards',
-  introduction: minutes => `Choose what Bots may do. Allowed uses their existing access. Ask first holds the action in Needs me; approval covers that Bot and that exact call once, for ${minutes} minutes. Off refuses the action. These permissions do not apply to you in the app.`,
+  introduction: () => 'Choose what Bots may do without asking. Ask first puts the action in Needs me. Off refuses it. This does not limit what you do yourself.',
 };
 
 export function arrangeSettings(box, { owner = false } = {}) {
@@ -79,16 +80,42 @@ export function arrangeSettings(box, { owner = false } = {}) {
     .find(section => section.querySelector('h2')?.textContent === 'Agents');
   if (connections) {
     connections.id = 'deck-connections';
-    connections.querySelector('h2').textContent = 'Connections';
+    const heading = connections.querySelector('h2');
+    if (heading) heading.textContent = 'Connections';
   }
   const policy = box.querySelector('#tool-policy h2');
   if (policy) policy.textContent = 'Action permissions';
   const unavailable = phone?.querySelector('p');
   if (unavailable?.textContent === 'Not set up on this server.')
-    unavailable.textContent = 'Ask the workspace owner to connect a notification service and enable phone notifications on the server. Then return here to turn them on for your phone.';
+    unavailable.textContent = `${owner ? 'Connect' : 'Ask the workspace owner to connect'} a notification service and enable phone notifications on the server. Then return here to turn them on for your phone.`;
   const nav = box.querySelector('#deck-settings-nav');
   if (connections) box.prepend?.(connections);
   if (phone) box.prepend?.(phone);
   if (nav) { box.prepend?.(nav); return; }
-  box.insertAdjacentHTML('afterbegin', `<nav id="deck-settings-nav" aria-label="Settings sections"><button type="button" data-deck-setting="phone-push">Notifications</button><button type="button" data-deck-setting="deck-connections">Connections</button><button type="button" data-deck-setting="deck-tools">Workspace</button>${owner ? '<button type="button" data-deck-setting="tool-policy">Action permissions</button>' : ''}</nav>`);
+  box.insertAdjacentHTML('afterbegin', `<nav id="deck-settings-nav" aria-label="Settings sections"><button type="button" data-deck-setting="phone-push" aria-current="location">Notifications</button><button type="button" data-deck-setting="deck-connections">Connections</button><button type="button" data-deck-setting="deck-tools">Workspace</button>${owner ? '<button type="button" data-deck-setting="tool-policy">Action permissions</button>' : ''}</nav>`);
+  box.addEventListener?.('scroll', () => {
+    const nav = box.querySelector('#deck-settings-nav');
+    if (!nav) return;
+    let current = 'phone-push';
+    for (const button of nav.querySelectorAll('button')) {
+      const target = box.querySelector(`#${button.dataset.deckSetting}`);
+      if (target && target.getBoundingClientRect().top <= nav.getBoundingClientRect().bottom + 13) current = button.dataset.deckSetting;
+    }
+    selectSettings(box, current);
+  }, { passive: true });
+}
+
+export function selectSettings(box, id) {
+  for (const button of box.querySelectorAll?.('#deck-settings-nav button') || []) {
+    if (button.dataset.deckSetting === id) {
+      button.setAttribute('aria-current', 'location');
+      const nav = button.parentElement;
+      if (nav?.scrollBy) {
+        const item = button.getBoundingClientRect(), frame = nav.getBoundingClientRect();
+        if (item.left < frame.left) nav.scrollBy({ left: item.left - frame.left });
+        else if (item.right > frame.right) nav.scrollBy({ left: item.right - frame.right });
+      }
+    }
+    else button.removeAttribute('aria-current');
+  }
 }

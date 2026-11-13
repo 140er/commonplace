@@ -4,6 +4,8 @@
 
 - **Promises:**
 
+  - Settings navigation stays visible while scrolling, with one horizontally scrolling phone row and an inverted current destination. Notification labels describe outcomes; permission details share the secondary line. Delayed Voice completion only refreshes the active Settings epoch.
+
   - Classic markup stays unchanged without the Deck presentation. Deck searches human labels and purpose groups, keeps technical identities in disclosures, and retains retired actions. Filtering keeps its first result visible in the Settings scroller.
 
 - **Tests:**

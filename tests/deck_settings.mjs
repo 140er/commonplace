@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { arrangeSettings, permissionLabel } from '../commonplace/web/static/deck-settings.js';
 import { createDeck } from '../commonplace/web/static/deck.js';
 import { mountToolPolicy, policyRow } from '../commonplace/web/static/tool-policy.js';
 import { escape as e } from '../commonplace/web/static/api.js';
@@ -58,4 +61,45 @@ test('Classic policy markup remains byte-identical', async () => {
   assert.equal(ui(false).policyPresentation?.() ?? null, null);
   assert.ok(host.innerHTML.includes(policyRow(actions[0],modes,e)));
   assert.doesNotMatch(host.innerHTML, /Technical name|Search permissions/);
+});
+
+test('permission labels ignore prototype members and use notification outcomes', () => {
+  assert.equal(permissionLabel({name:'constructor'}), 'Constructor');
+  assert.equal(permissionLabel({name:'toString'}), 'ToString');
+  const expected = {webhook_add:'Send notifications to another app', webhook_list:'See where notifications are sent', webhook_remove:'Stop sending to an app', webhook_test:'Send a test notification'};
+  for (const [name,label] of Object.entries(expected)) assert.equal(permissionLabel({name}),label);
+  assert.equal(ui(true).policyPresentation().introduction(10), 'Choose what Bots may do without asking. Ask first puts the action in Needs me. Off refuses it. This does not limit what you do yourself.');
+});
+test('notification guidance distinguishes the owner and tolerates a missing connection heading', () => {
+  for (const owner of [false,true]) {
+    const notice = {textContent:'Not set up on this server.'};
+    const connection = {querySelector:()=>null};
+    const box = {querySelector:q=>q==='#phone-push'?{querySelector:()=>notice}:q==='.agents-settings'?connection:null,
+      querySelectorAll:()=>[],prepend(){},insertAdjacentHTML(){}};
+    assert.doesNotThrow(()=>arrangeSettings(box,{owner}));
+    assert.equal(notice.textContent.startsWith('Ask the workspace owner'),!owner);
+  }
+});
+for (const initial of ['#/boards','#/needs','#/settings']) test(`late Voice after boot on ${initial} respects the active Settings epoch`, async () => {
+  const app=readFileSync(new URL('../commonplace/web/static/app.js',import.meta.url),'utf8');
+  const boot=app.slice(app.indexOf('async function boot()'),app.lastIndexOf('boot();'));
+  const settings=app.slice(app.indexOf('async function settingsView('),app.indexOf('async function memoryView('));
+  for (const navigate of [false,true]) {
+    let resolveVoice, injected=0;
+    const ready=new Promise(resolve=>{resolveVoice=resolve;});
+    const content={innerHTML:'existing screen',querySelector:q=>q==='.settings'?{}:null};
+    const state={base:initial,screen:0,deck:{on:()=>true,policyPresentation:()=>null,settings:()=>{injected++;}},pending:new Set()};
+    const context={state,root:{querySelector:()=>content},voice:{load:()=>ready,settings:()=>''},
+      boundedRequest:async()=>({people:{}}),api:async path=>path==='/api/chat-settings'?{front:{enabled:false},usage:{}}:{},
+      setPeople(){},shell(){},schedule(){},signin(){},title(){},remember:()=>({}),restore(){},message:()=>'',e:String,
+      phonePushView:()=>'',planView:()=>'',agentsView:()=>'',mountWorkspaceOrchestration(){},mountAgentSchedules(){},mountToolPolicy(){},
+      location:{hash:initial,search:'',pathname:'/app/'},URLSearchParams,
+      route:async()=>{state.screen++; if(initial==='#/settings') await context.settingsView(state.screen);}};
+    runInNewContext(settings+'\n'+boot,context);
+    await context.boot();
+    const before=injected;
+    if(navigate){state.base='#/boards';state.screen++;}
+    resolveVoice(); await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(injected-before,initial==='#/settings'&&!navigate?1:0,'late Voice must not inject Settings chrome into another screen');
+  }
 });

@@ -4,6 +4,8 @@
 
 - **Promises:**
 
+  - Settings navigation stays visible while scrolling, with one horizontally scrolling phone row and an inverted current destination. Notification labels describe outcomes; permission details share the secondary line. Delayed Voice completion only refreshes the active Settings epoch.
+
   - Notifications, Connections and Workspace remain one shortcut away from Settings. Every existing section and action remains reachable. Permission search understands purpose labels such as notifications, and technical names stay inside disclosures. Classic presentation and all permission semantics remain unchanged.
 
 - **Tests:**
