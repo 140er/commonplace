@@ -1,5 +1,31 @@
 # One-time memory import
 
+## Choose a file in Memory
+
+Open **Memory → Import**, choose the export format, destination and file, then
+select **Preview file**. Review the source, destination, message or fact count
+and byte count before selecting **Confirm import**. Cancel saves nothing.
+Progress stays visible until a report shows the result; **Retry import** safely
+sends the same file after an interrupted response. No connection or credential
+setup is required for this signed-in flow.
+
+The chooser accepts one UTF-8 conversation, fact or memory-text export of up to
+4 MiB using the formats in the table below. Private memory text also accepts
+`.md` and `.txt` through the existing memory-file parser. For a
+multi-conversation web export, select a single complete conversation object; the
+chooser does not unpack ZIPs or fetch attachments. Workspace conversations
+require the same read/write permissions as the existing import route. Private
+imported history requires ownership of your personal workspace. Exact repeat
+imports to the same source and destination add nothing, even if the file has
+been renamed. Words and original archive bytes are preserved. Preview and
+confirmation create no temporary upload files.
+
+Parsing happens on this instance without models or external services. To keep
+the file on your machine, use your local instance; selecting a remote instance
+uploads the file there.
+
+## Existing import API
+
 `POST /api/import` imports conversations verbatim through the normal gateway.
 An explicitly consented import-only connection files history privately for the
 importing account. The existing signed-in session/full-ACL route remains

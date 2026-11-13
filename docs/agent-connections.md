@@ -101,7 +101,7 @@ signed-in member grants them, for their own top-level app connection only. The c
   tick each box on the authorization form. Granting later needs a fresh consent; withdrawing is
   the same PATCH.
 
-Child agents, runner connections, orchestrator seats, board coordinators and other people's
+Child agents, runner connections, Coworker seats, board coordinators and other people's
 connections are refused when granting and on every request. Assigning a coordinator removes the
 grants, and the command line refuses them.
 
@@ -125,7 +125,7 @@ it the separate `cards:decide` scope. The consent text says:
 
 Only a workspace owner can grant it, only to their own top-level app
 connection. Agent machinery never holds it: child agents, runner connections and
-project orchestrator seats and board coordinators are refused when granting
+project Coworker seats and board coordinators are refused when granting
 (the button is not offered on their rows), and refused again when answering.
 Assigning a connection as a board coordinator removes its grant; unassigning it
 does not bring the grant back, even when the grant and the assignment happen at

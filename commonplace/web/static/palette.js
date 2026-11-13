@@ -21,7 +21,7 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   }
   if (board) {
     add('new-card', `New card in ${board.name || board.slug}`, 'Actions', { action: 'new-card', board: board.slug, key: 'C' });
-    add('new-request', 'New request to the orchestrator', 'Actions', { action: 'open-chat', board: board.slug, key: '/' });
+    add('new-request', 'New request to the Coworker', 'Actions', { action: 'open-chat', board: board.slug, key: '/' });
   }
   add('new-project', 'New project', 'Actions', { action: 'new-board' });
   for (const project of boards) add(`board-${project.slug}`, project.name || project.slug, 'Projects', { href: `#/board/${encode(project.slug)}`, board: project.slug });

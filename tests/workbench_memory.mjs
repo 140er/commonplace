@@ -73,7 +73,7 @@ const cases = {
   authors() {
     assert.equal(memory.memoryAuthor(row, board), 'Leon');
     assert.equal(memory.memoryAuthor({ actor: 'conn:otto' }, board), 'otto (agent)');
-    assert.equal(memory.memoryAuthor({ actor: 'conn:lead' }, board), 'Atlas orchestrator');
+    assert.equal(memory.memoryAuthor({ actor: 'conn:lead' }, board), 'Atlas Coworker');
     assert.equal(memory.memoryAuthor({ actor: 'user:maya' }, board), 'Maya');
     assert.equal(memory.memoryAuthor({ kind: 'reply', model: 'local:openai_compatible/small', actor: 'conn:lead' }, board), 'Quick reply · local model');
     for (const model of ['anthropic/model', 'openai_compatible/model', 'runner:chat']) {
@@ -81,7 +81,7 @@ const cases = {
     }
     assert.equal(memory.memoryAuthor({}, board), '');
     assert.equal(memory.memoryAuthor({ kind: 'note', author: 'otto' }, board), 'otto (agent)');
-    assert.equal(memory.memoryAuthor({ kind: 'note', author: 'lead' }, board), 'Atlas orchestrator');
+    assert.equal(memory.memoryAuthor({ kind: 'note', author: 'lead' }, board), 'Atlas Coworker');
   },
   async fanout() {
     const boards = Array.from({ length: 11 }, (_, i) => ({ slug: `project-${i}`, wing: `wing-${i}` }));
@@ -276,7 +276,7 @@ const cases = {
     // After the header switches to another same-wing project, neighbours keep their own board's names.
     const harbor = { ...other, wing: board.wing, coordinator: 'conn:harbor-lead' };
     const html = memory.renderMemoryPanel({ result: { ...row, hit: true }, destination: harbor, source: board, cards: [], me, neighbours: [{ kind: 'chat', id: 16, board: 'atlas', actor: 'conn:lead', text: 'Earlier words', at: row.at }] });
-    assert.ok(html.includes('Atlas orchestrator')); assert.ok(!html.includes('Harbor orchestrator'));
+    assert.ok(html.includes('Atlas Coworker')); assert.ok(!html.includes('Harbor Coworker'));
   },
 };
 assert.equal(typeof cases[process.argv[2]], 'function', 'Unknown contract case');

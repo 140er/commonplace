@@ -40,6 +40,6 @@ authority.
 
 ## Not yet
 
-Renaming and archiving a space, versions and retries, settings and orchestrator
+Renaming and archiving a space, versions and retries, settings and Coworker
 routes under `/api/spaces`, the `space` argument on card tools, the app's wording
 and desktop synchronization are planned later steps.

@@ -10,7 +10,7 @@ Only a signed-in person owner can enroll, attest, change grants, rotate credenti
 
 Coordinators are CLI-created trusted PATs explicitly listed in the machine's `requesters`; OAuth and ordinary standard or untrusted connections do not qualify. A start checks both the requester's card access and whether the worker could claim the unassigned, released `todo` card on a board whose wing is in the machine's grant. It does not assign or claim the card.
 
-Persistent orchestrator sessions use a separate job and thread binding from
+Persistent Coworker sessions use a separate job and thread binding from
 per-card starts. The existing runner loop watches boards with owner-accepted
 `[runner]` configs, without a `card.todo` trigger or splitting switch. See
 [persistent board sessions](orchestrator.md#persistent-board-session) for owner
@@ -64,7 +64,7 @@ The fixed workspace strategy is `{"type":"root"}`, **unverified until D2**. Its 
 
 **Memory guard.** Before it reports `starting`, the runner reads the machine's available memory (`MemAvailable` on Linux). Under the optional config key `min_free_memory_mb` (default 256, `0` disables, up to 1048576) it reports `failed` with code `low_memory` and launches nothing. This is a point-in-time check of card starts only: it reads memory once per start, reserves nothing for an agent that has just started (several starts can pass together) and does not cover chat answers, so it lowers the risk of overloading a machine but does not rule out the OOM killer. The refusal is the job's `outcome_code`, visible through `card_start_status`; the card stays in Todo. An unreadable probe (non-Linux hosts) never blocks a start. Existing configs without the key use the default.
 
-An ambiguous launch becomes `uncertain`, never automatically queued again. The runner keeps what the launch bridge printed (exit code, stdout and stderr, credentials and long token-like strings redacted, 4,000 characters at most) in `<journal_dir>/<job_id>.launch.log`, mode 0600, so the reason (for example `runtime_mode_escalation_denied`: the T3 grant's ceiling is below the job's runtime mode) can be read afterwards; the journal ignores the file. Starting and its retries serialize fresh binding checks through the guarded write and commit in both orchestration modes. A reset committed first refuses the start (409); one committed after the write makes that already-starting job uncertain on the next sweep, without cancellation or relaunch. NULL legacy job epochs are also refused. It keeps its machine/project slot and blocks another start on the card. An owner sees it with `card_start_status(task)` (or `GET /api/card-starts?task=<n>`), and inspects the machine's grant and binding through `GET /api/runners`. A person owner must investigate and use `card_start_resolve(job, outcome, thread_id?)`: `started` requires a thread id; `failed` releases the slot. A late `started` result from the same machine with its stored lease token can also resolve uncertainty.
+An ambiguous launch becomes `uncertain`, never automatically queued again. The runner keeps what the launch bridge printed (exit code, stdout and stderr, credentials and long token-like strings redacted, 4,000 characters at most) in `<journal_dir>/<job_id>.launch.log`, mode 0600, so the reason (for example `runtime_mode_escalation_denied`: the T3 grant's ceiling is below the job's runtime mode) can be read afterwards; the journal ignores the file. Starting and its retries serialize fresh binding checks through the guarded write and commit in both Coworker management modes. A reset committed first refuses the start (409); one committed after the write makes that already-starting job uncertain on the next sweep, without cancellation or relaunch. NULL legacy job epochs are also refused. It keeps its machine/project slot and blocks another start on the card. An owner sees it with `card_start_status(task)` (or `GET /api/card-starts?task=<n>`), and inspects the machine's grant and binding through `GET /api/runners`. A person owner must investigate and use `card_start_resolve(job, outcome, thread_id?)`: `started` requires a thread id; `failed` releases the slot. A late `started` result from the same machine with its stored lease token can also resolve uncertainty.
 
 `card_start_cancel` on `uncertain` returns 409 for everyone, including the owner: `start outcome is uncertain; a workspace owner must resolve it`. Cancelling a `starting` job only records the request; it does not stop a remote thread or free the slot. Resolve spans the control and workspace databases: the control audit commits before the runner resolution, so a crash between commits can leave an audit entry without the resolution. A completed resolution retains `resolved_by` and `resolved_at`.
 
@@ -116,19 +116,21 @@ button for a signed-in owner. What it offers comes from `GET /api/card-starts/op
   gets no button and no message. Refusals of the start itself (an active start, the 24-hour rule,
   the hourly limit, the agent cap) show in words too, using the `code` of the response.
 
-## Boards with an orchestrator config
+<a id="boards-with-an-orchestrator-config"></a>
 
-A board whose owner accepted a live orchestrator config with a `[runner]`
+## Boards with a Coworker config
+
+A board whose owner accepted a live Coworker config with a `[runner]`
 table ([orchestrator.md](orchestrator.md)) changes how starts reach this
 runner. Boards without one behave exactly as described above.
 
 - **Requests.** `card_start` (MCP and `POST /api/card-starts`) is accepted only
   from the person owner; a coordinator PAT gets `no: use orch_card_start` and
-  uses the orchestrator lease instead. The owner may send the card alone
+  uses the Coworker lease instead. The owner may send the card alone
   (`{"task": <n>}`): machine, project and topic then come from the config, and
   values that are sent must still equal it (`config_mismatch`). A refused start
-  answers `{"error", "code"}` where the refusal has a stable code. Cancelling a job that belongs to an
-  orchestrator step through `card_start_cancel` is person-owner only.
+  answers `{"error", "code"}` where the refusal has a stable code. Cancelling a job that belongs to a
+  Coworker step through `card_start_cancel` is person-owner only.
   Separately, an owner or the local CLI can void the step: this atomically
   cancels a queued or leased job and permanently retires the old step key.
   Starting, uncertain and started jobs are left untouched; a fresh attempt
@@ -312,9 +314,9 @@ guarantee that every sensitive detail is detected.
 Chat answers require front answers enabled with `provider: "none"`. An
 explicit server provider takes precedence, with no fallback in either direction;
 server-key mode stays off by default. The relay steps aside while the project's
-main orchestrator is connected, wakeable through a space webhook and used within
+main Coworker is connected, wakeable through a space webhook and used within
 the last 600 seconds. Local `"relay_always": true` overrides that precedence;
-its default is false. A later public orchestrator reply can coexist with the
+its default is false. A later public Coworker reply can coexist with the
 private runner answer.
 
 | Limit | Value |
@@ -344,9 +346,9 @@ config and 5 for a hub failure in `--once` mode.
 ## Owner checklists (open; no agent performs any item)
 
 **D1–D3 (decisions).**
-- [ ] **D1 worker identity.** The owner decides whether "attested, not verified" is acceptable. The setup would be a dedicated T3 provider instance whose Commonplace MCP entry uses the worker token, mapped to the granted topics, recorded through attest. Anything stronger needs a future T3 per-thread credential field. The card goal is not done until D1 is decided. Until then every runner child shares the machine's worker PAT, so orchestrator evidence and project limits cannot tell children apart.
+- [ ] **D1 worker identity.** The owner decides whether "attested, not verified" is acceptable. The setup would be a dedicated T3 provider instance whose Commonplace MCP entry uses the worker token, mapped to the granted topics, recorded through attest. Anything stronger needs a future T3 per-thread credential field. The card goal is not done until D1 is decided. Until then every runner child shares the machine's worker PAT, so Coworker evidence and project limits cannot tell children apart.
 - [ ] **D2 launch shape.** One owner-approved real `t3_thread_launch` capture on an owner machine. It settles `structuredContent.threadId/runId/status`, `workspaceStrategy` `root` vs. `existing_worktree`, `modelSelection`, and what "modes cannot exceed yours" means for the T3 grant. Record the artifact path. An optional later detective read-back (the `t3.py:115–148` pattern) is design only.
-- [ ] **D3 recovery.** Capture the `thread list --json` keys before any reconcile. Until then, `uncertain` goes to a person resolve, and an orchestrator that finds no thread titled `[commonplace-job:<id>]` treats that as no proof: the step goes to `needs_person`.
+- [ ] **D3 recovery.** Capture the `thread list --json` keys before any reconcile. Until then, `uncertain` goes to a person resolve, and a Coworker that finds no thread titled `[commonplace-job:<id>]` treats that as no proof: the step goes to `needs_person`.
 
 **Activation (F10; strict order, each a separate owner act).**
 1. [ ] D1 decision recorded.
@@ -357,7 +359,7 @@ config and 5 for a hub failure in `--once` mode.
 
 ### Optional workspace admission
 
-When agent orchestration is enabled, claims, start creation and configured starts
+When agent Coworker management is enabled, claims, start creation and configured starts
 share a runner `BEGIN IMMEDIATE` lock and a deduplicated project count. Claims hold
 that lock until their card transaction commits or rolls back, including before any
 machine is enrolled. Admission reads control settings and worker identities before
@@ -390,7 +392,7 @@ snapshot precedes the sweep and runner-lock wait. Card/label, requester write-po
 coordinator or switch changes in that gap can therefore allow a launch that the
 worker later refuses when it tries to claim the card. A switch from off to on in
 the gap also uses the earlier snapshot for the coordinator check.
-See [project orchestration](projects.md#opt-in-agent-orchestration) for owner consent.
+See [project Coworker management](projects.md#opt-in-agent-orchestration) for owner consent.
 
 ## Cost events and sums
 

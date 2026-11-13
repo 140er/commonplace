@@ -26,12 +26,12 @@ Every path below is relative to `/api/instance-admin/` and accepts GET only:
 
 | Path | Management metadata and optional filters |
 | --- | --- |
-| `workspaces` | Workspace identity, account association, plan limits and orchestration state |
+| `workspaces` | Workspace identity, account association, plan limits and Coworker management state |
 | `people` | One account/membership per row, including accounts without memberships; `user_id`, `role`, `disabled` |
 | `connections` | Credential-free connection metadata; `user_id`, `state` |
 | `workspaces/{workspace_id}/spaces` | Existing active and archived boards, coordinator, safe settings and project caps |
 | `settings` | Effective operator settings, explicitly read-only |
-| `workspaces/{workspace_id}/settings` | Account-plan association, effective limits, orchestration and paginated project caps |
+| `workspaces/{workspace_id}/settings` | Account-plan association, effective limits, Coworker management and paginated project caps |
 | `audit` | `actor_user_id`, `actor_connection_id`, `action`, `decision`, `from`, `to` |
 
 `workspaces`, `people`, `connections` and `audit` accept an exact `workspace_id`

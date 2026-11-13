@@ -1,0 +1,2 @@
+- **Promises:** The user guide calls the role Coworker while preserving command names, configuration values, routes and reference links.
+- **Tests:** `tests/test_coworker_docs_copy.py` scans current user instructions and permits only documented protocol and internal-document exceptions.

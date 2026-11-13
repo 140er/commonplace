@@ -193,3 +193,33 @@
   :root[data-ui="deck"] .shell[data-view="board"] .head .right { flex: none; }
   :root[data-ui="deck"] .shell[data-view="board"] .head .right > :not([data-action="new-card"]) { display: none; }
 }
+
+/* Memory import follows the same controls and spacing as the other forms. */
+:root[data-ui="deck"] .center:has(.memory-import) > #content { overflow-y: auto; }
+:root[data-ui="deck"] .memory-import { flex: 0 0 auto; width: 100%; }
+:root[data-ui="deck"] .memory-import form { display: block; }
+:root[data-ui="deck"] .memory-import .memory-import-intro { margin: 0 0 24px; }
+:root[data-ui="deck"] .memory-import-group { display: grid; gap: 8px; }
+:root[data-ui="deck"] .memory-import-group + .memory-import-group { margin-top: 24px; }
+:root[data-ui="deck"] .memory-import-group p { margin: 0; }
+:root[data-ui="deck"] .memory-import select { height: 44px; border: 0; border-radius: var(--r); background: var(--well); color: var(--text); box-shadow: none; }
+:root[data-ui="deck"] .memory-import select:focus-visible { outline: 2px solid var(--line-strong); outline-offset: 2px; }
+:root[data-ui="deck"] .memory-import-file { display: flex; align-items: center; gap: 12px; min-width: 0; }
+:root[data-ui="deck"] .memory-import-picker { position: relative; flex: none; border-radius: 22px; }
+:root[data-ui="deck"] .memory-import-picker .btn { height: 44px; border-radius: 22px; }
+:root[data-ui="deck"] .memory-import-picker input { position: absolute; inset: 0; width: 100%; height: 44px; padding: 0; opacity: 0; cursor: pointer; }
+:root[data-ui="deck"] .memory-import-picker:focus-within { outline: 2px solid var(--line-strong); outline-offset: 2px; }
+:root[data-ui="deck"] [data-import-filename] { min-width: 0; color: var(--text-3); overflow-wrap: anywhere; }
+:root[data-ui="deck"] .memory-import-actions { margin-top: 32px; }
+:root[data-ui="deck"] .memory-import-actions .ghost { padding-inline: 0; }
+:root[data-ui="deck"] .memory-import-progress { position: relative; }
+:root[data-ui="deck"] .memory-import-progress::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: 2px; background: var(--text); pointer-events: none; }
+:root[data-ui="deck"] .memory-import progress { display: block; height: 4px; border: 0; border-radius: 2px; outline: none; overflow: hidden; appearance: none; background: var(--well); color: var(--text); }
+:root[data-ui="deck"] .memory-import progress::-webkit-progress-bar { background: var(--well); border-radius: 2px; }
+:root[data-ui="deck"] .memory-import progress::-webkit-progress-value { background: var(--text); border-radius: 2px; }
+:root[data-ui="deck"] .memory-import progress::-moz-progress-bar { background: var(--text); border-radius: 2px; }
+:root[data-ui="deck"] .memory-import progress:indeterminate::-moz-progress-bar { background: transparent; }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .center:has(.memory-import) { padding-bottom: calc(57px + max(14px, env(safe-area-inset-bottom))); }
+  :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
+}

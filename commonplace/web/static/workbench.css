@@ -277,3 +277,28 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 .workbench-details .pocket { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .workbench-details .pocket li { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
 .workbench-details .pocket-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+
+/* File import stays within the Memory screen and the existing surface tokens. */
+.memory-import-entry { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.memory-import { max-width: 680px; margin: 0 auto; padding: 24px; background: var(--surface); border-radius: var(--r); }
+.center:has(.memory-import) > .head { display: none; }
+.memory-import h1 { font-size: 24px; line-height: 1.25; margin: 0 0 24px; }
+.memory-import h1:focus { outline: none; }
+.memory-import p { line-height: 1.5; margin: 16px 0; }
+.memory-import form, .memory-import label { display: grid; gap: 12px; }
+.memory-import form { gap: 20px; }
+.memory-import select, .memory-import input { width: 100%; min-width: 0; min-height: 44px; }
+.memory-import input[type=file] { white-space: normal; }
+.memory-import-hint { color: var(--text-2); font-size: 14px; }
+.memory-import-summary { margin: 24px 0; }
+.memory-import-summary > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 16px; padding: 10px 0; }
+.memory-import-summary dt { color: var(--text-2); }
+.memory-import-summary dd { margin: 0; overflow-wrap: anywhere; }
+.memory-import-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.memory-import-actions .btn { min-height: 44px; }
+.memory-import progress { width: 100%; accent-color: var(--text); }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
+  .memory-import { padding: 0; background: none; }
+  .memory-import-summary > div { grid-template-columns: 1fr; gap: 4px; }
+}
