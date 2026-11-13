@@ -1,0 +1,204 @@
+{
+  "base": "3702f1f926daeb7889b3193224f084cbfb0d55b7",
+  "base_sha256": "8ed59eb150db1b6c8c052fc90103a4cbb43a419722edb30e3328012ff539d22b",
+  "part": 1,
+  "of": 4,
+  "sections": [
+    {
+      "title": "Coworker UI lifecycle",
+      "slug": "coworker-ui-lifecycle",
+      "occurrences": 1,
+      "bytes": 1245,
+      "sha256": "80b2800a7f3b4011abe68147f021eacee2af69c5644acddf0a01250a6a08c847"
+    },
+    {
+      "title": "Coworker background runtime",
+      "slug": "coworker-background-runtime",
+      "occurrences": 1,
+      "bytes": 2852,
+      "sha256": "d95380637bb92e89921009740d5ab20996228edfa2e79d05c631499e9a0b864e"
+    },
+    {
+      "title": "Coworker conversation storage and REST boundary",
+      "slug": "coworker-conversation-storage-and-rest-boundary",
+      "occurrences": 1,
+      "bytes": 1513,
+      "sha256": "690d2bcaaf91ae38e390a9c1d92129c79732b3db553280e9f99590743996f7c4"
+    },
+    {
+      "title": "Coworker task intake idempotency",
+      "slug": "coworker-task-intake-idempotency",
+      "occurrences": 1,
+      "bytes": 657,
+      "sha256": "20d2ba50b358a4fef6703ee26124a61727cb7638cf3e6eeea69db98ad92a6f4a"
+    },
+    {
+      "title": "Canonical work progress in coworker conversations",
+      "slug": "canonical-work-progress-in-coworker-conversations",
+      "occurrences": 1,
+      "bytes": 1157,
+      "sha256": "8b43213af722d3094cacca8e9fad3c23d1c2aa858132c98ba4ba37f306f2ff16"
+    },
+    {
+      "title": "Targeted coworker controls",
+      "slug": "targeted-coworker-controls",
+      "occurrences": 1,
+      "bytes": 1229,
+      "sha256": "02311143e36a14d860fef93841a69e034fd32d051d3d1a71dc4818902285b727"
+    },
+    {
+      "title": "Compute management REST and durable authority",
+      "slug": "compute-management-rest-and-durable-authority",
+      "occurrences": 1,
+      "bytes": 2876,
+      "sha256": "6118dd01ea9bcad367e203b596d3f913271d67d88fdd12825af33ec8495ad974"
+    },
+    {
+      "title": "Compute management interface",
+      "slug": "compute-management-interface",
+      "occurrences": 1,
+      "bytes": 1516,
+      "sha256": "ea056178f5b0ebd7936b7a22f62a970345dd9bdb9d18eb3dcef9ec4aa22dcbc2"
+    },
+    {
+      "title": "Passive gateway cache discovery component",
+      "slug": "passive-gateway-cache-discovery-component",
+      "occurrences": 1,
+      "bytes": 696,
+      "sha256": "661c2b43e3d23f2e1cd779cc6be4551594acc4f0606a9e98adce5390800371ee"
+    },
+    {
+      "title": "Typed helper protocol and script runtime components",
+      "slug": "typed-helper-protocol-and-script-runtime-components",
+      "occurrences": 1,
+      "bytes": 523,
+      "sha256": "a8f5eadf962128bb3033f8bf5cd0de5c15776130e84da36c03a453bf4edfd5ce"
+    },
+    {
+      "title": "Credential custody and pinned SSH transport components",
+      "slug": "credential-custody-and-pinned-ssh-transport-components",
+      "occurrences": 1,
+      "bytes": 604,
+      "sha256": "25c57bf28efb261d1f959b663eb8c704ed138e07d5e0950c472aa8e3333231a3"
+    },
+    {
+      "title": "Coworker task dispatch component",
+      "slug": "coworker-task-dispatch-component",
+      "occurrences": 1,
+      "bytes": 508,
+      "sha256": "d9652cb4347c16f6531a221a91e9e035189b546fad7195f30b673fe3d59c4582"
+    },
+    {
+      "title": "Compute control startup configuration",
+      "slug": "compute-control-startup-configuration",
+      "occurrences": 1,
+      "bytes": 697,
+      "sha256": "26b3c3169887b881100ce04dc72912f11e11c2d177965b5b8363bab8782ddda1"
+    },
+    {
+      "title": "Compute execution component",
+      "slug": "compute-execution-component",
+      "occurrences": 1,
+      "bytes": 552,
+      "sha256": "333062ffdc8dd15ca70bd64b88938330760af28354d2fa2f45fb4b17446a6ad9"
+    },
+    {
+      "title": "Compute discovery service component",
+      "slug": "compute-discovery-service-component",
+      "occurrences": 1,
+      "bytes": 518,
+      "sha256": "73a6211f0d98e630065a94d3e87c8111f5e6996c7d7b4e95f506897d2cfa478d"
+    },
+    {
+      "title": "Compute operator recovery component",
+      "slug": "compute-operator-recovery-component",
+      "occurrences": 1,
+      "bytes": 399,
+      "sha256": "7dfda188dfba20dc2436faf1c60b3088ce037886340f0e274fa53e2fe4ef1247"
+    },
+    {
+      "title": "Workspace page controllers for Compute and Coworkers",
+      "slug": "workspace-page-controllers-for-compute-and-coworkers",
+      "occurrences": 1,
+      "bytes": 1020,
+      "sha256": "c71d31526db6f002f8492322d22ab1c20444886225001a02ac77716367c448c9"
+    },
+    {
+      "title": "Durable Compute execution component",
+      "slug": "durable-compute-execution-component",
+      "occurrences": 1,
+      "bytes": 4788,
+      "sha256": "e8d08998c580d56a041a8397b766c21d56b9b1b2037031e502f50b5a50d0b78a"
+    },
+    {
+      "title": "Durable passive discovery",
+      "slug": "durable-passive-discovery",
+      "occurrences": 1,
+      "bytes": 2363,
+      "sha256": "1cc443d946e36fad837f2ab9d649f529eacc7a70fba51911f8500ac4b0dabce4"
+    },
+    {
+      "title": "Immutable script bundles and confined target helper",
+      "slug": "immutable-script-bundles-and-confined-target-helper",
+      "occurrences": 1,
+      "bytes": 3897,
+      "sha256": "91858d9fed27b781e9880bdbdac5ad45b4467287024020f8320b21bf47638d36"
+    },
+    {
+      "title": "Isolated Compute custody and SSH transport",
+      "slug": "isolated-compute-custody-and-ssh-transport",
+      "occurrences": 1,
+      "bytes": 2792,
+      "sha256": "015857b1dd82592277487e4321400f9b0901677dec860d4798ebc99828132bfb"
+    },
+    {
+      "title": "Compute discovery domain boundary",
+      "slug": "compute-discovery-domain-boundary",
+      "occurrences": 1,
+      "bytes": 9283,
+      "sha256": "b85d9caf77d84a75a25b3736c1b5153bbb324cdca0579f4a8e44e775b3754393"
+    },
+    {
+      "title": "Inert area configuration preview",
+      "slug": "inert-area-configuration-preview",
+      "occurrences": 1,
+      "bytes": 744,
+      "sha256": "b0eb42bbc23cbb54a9e84b14e94589e94429ded74b951d9a860b4510c1198155"
+    },
+    {
+      "title": "Legacy client memory safety stop",
+      "slug": "legacy-client-memory-safety-stop",
+      "occurrences": 1,
+      "bytes": 1934,
+      "sha256": "fc82e7c6d4caea517e1380745512efe2d1e07936877029b2b1be19d8c15731ea"
+    },
+    {
+      "title": "Runner-start void semantics and limits",
+      "slug": "runner-start-void-semantics-and-limits",
+      "occurrences": 1,
+      "bytes": 9722,
+      "sha256": "24ac21ef03fd871a12b046c5e4f5fb076ec5b5d1df74027907abe1afe620bafe"
+    },
+    {
+      "title": "Rules initialization deadline",
+      "slug": "rules-initialization-deadline",
+      "occurrences": 1,
+      "bytes": 1602,
+      "sha256": "98fc404ad0ce3bec66ec432a0c92903f7fbb1daa95108f5b34eafc57986774f9"
+    },
+    {
+      "title": "Rules for reviewers and at session start",
+      "slug": "rules-for-reviewers-and-at-session-start",
+      "occurrences": 1,
+      "bytes": 619,
+      "sha256": "234a9214594f43d53736cc24c5fcfd2567b45845ff3b154245057578fd7e0bec"
+    },
+    {
+      "title": "Operator-blind token slots: primitives with production locked",
+      "slug": "operator-blind-token-slots-primitives-with-production",
+      "occurrences": 1,
+      "bytes": 3161,
+      "sha256": "4a8e90f7469cf779abcc5218b99837266f9610f6e470087e15f3863671d79528"
+    }
+  ]
+}
