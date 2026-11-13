@@ -12,13 +12,14 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from commonplace.admission import GATE
 from mempalace.sqlite_crypto import connect, row_factory
 
 DAILY_CAP_DEFAULT, DAILY_CAP_MAX = 200, 10_000
+CODE_TRIES = 5  # wrong tries per sender (and bad presentations per code) before it stops working
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS bridge_installs (
@@ -55,6 +56,11 @@ CREATE TABLE IF NOT EXISTS bridge_links (
 CREATE TABLE IF NOT EXISTS bridge_link_codes (
   code_hash TEXT PRIMARY KEY, install_id TEXT NOT NULL, user_id TEXT NOT NULL,
   expires_at TEXT NOT NULL, used_at TEXT, tries INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS bridge_link_tries (
+  install_id TEXT NOT NULL, ext_user TEXT NOT NULL,
+  tries INTEGER NOT NULL DEFAULT 0, last_at TEXT NOT NULL, locked_until TEXT,
+  PRIMARY KEY (install_id, ext_user)
 );
 CREATE TABLE IF NOT EXISTS bridge_events (
   install_id TEXT NOT NULL, ext_event TEXT NOT NULL,
@@ -103,6 +109,13 @@ class Conflict(Exception):
 
 class NotTested(Exception):
     """Enabling needs a successful test first."""
+
+
+class CodeGone(Exception):
+    """The link code was used, expired or spent meanwhile."""
+
+
+_LINK = ("id", "install_id", "ext_user", "user_id", "confirm_ok", "created_at", "revoked_at")
 
 
 def stamp(now=None) -> str:
@@ -309,10 +322,205 @@ class BridgeStore:
             conn.execute("DELETE FROM bridge_channels WHERE install_id=?", (install_id,))
             conn.execute("DELETE FROM bridge_links WHERE install_id=?", (install_id,))
             conn.execute("DELETE FROM bridge_link_codes WHERE install_id=?", (install_id,))
+            conn.execute("DELETE FROM bridge_link_tries WHERE install_id=?", (install_id,))
             conn.execute("DELETE FROM bridge_events WHERE install_id=?", (install_id,))
             conn.execute("DELETE FROM bridge_outbox WHERE install_id=?", (install_id,))
             conn.execute("DELETE FROM bridge_prompts WHERE install_id=?", (install_id,))
             conn.execute("DELETE FROM bridge_installs WHERE id=?", (install_id,))
+
+    # Link codes and links
+
+    def issue_code(self, install_id, user_id, code_hash, expires_at, now=None) -> None:
+        """Store the hash of a new code; the person's earlier unused codes for this install end."""
+        with self._tx() as conn:
+            self._row(conn, install_id)
+            conn.execute(
+                "DELETE FROM bridge_link_codes WHERE install_id=? AND user_id=? AND used_at IS NULL",
+                (install_id, user_id),
+            )
+            conn.execute(
+                "DELETE FROM bridge_link_codes WHERE expires_at < ?",
+                (stamp((now or datetime.now(timezone.utc)) - timedelta(days=1)),),
+            )
+            conn.execute(
+                "INSERT INTO bridge_link_codes (code_hash,install_id,user_id,expires_at) "
+                "VALUES (?,?,?,?)",
+                (code_hash, install_id, user_id, expires_at),
+            )
+
+    def code(self, install_id, code_hash):
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT * FROM bridge_link_codes WHERE install_id=? AND code_hash=?",
+                    (install_id, code_hash),
+                ).fetchone()
+                if conn is not None
+                else None
+            )
+            return dict(row) if row else None
+
+    def burn_code(self, install_id, code_hash, now=None) -> bool:
+        with self._tx() as conn:
+            return (
+                conn.execute(
+                    "UPDATE bridge_link_codes SET used_at=? WHERE install_id=? AND code_hash=? "
+                    "AND used_at IS NULL",
+                    (stamp(now), install_id, code_hash),
+                ).rowcount
+                == 1
+            )
+
+    def bump_code(self, install_id, code_hash) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE bridge_link_codes SET tries=tries+1 WHERE install_id=? AND code_hash=?",
+                (install_id, code_hash),
+            )
+
+    def locked(self, install_id, ext_user, now=None) -> bool:
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT locked_until FROM bridge_link_tries WHERE install_id=? AND ext_user=?",
+                    (install_id, ext_user),
+                ).fetchone()
+                if conn is not None
+                else None
+            )
+            return bool(row and row["locked_until"] and row["locked_until"] > stamp(now))
+
+    def wrong_try(self, install_id, ext_user, limit, lock_seconds, now=None) -> bool:
+        """Count one wrong code from this sender; True when this try locked them out. Tries
+        older than the lock period are forgotten."""
+        now = now or datetime.now(timezone.utc)
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT tries, last_at FROM bridge_link_tries WHERE install_id=? AND ext_user=?",
+                (install_id, ext_user),
+            ).fetchone()
+            fresh = stamp(now - timedelta(seconds=lock_seconds))
+            tries = 1 if row is None or row["last_at"] < fresh else row["tries"] + 1
+            locked = stamp(now + timedelta(seconds=lock_seconds)) if tries >= limit else None
+            conn.execute(
+                "INSERT INTO bridge_link_tries (install_id,ext_user,tries,last_at,locked_until) "
+                "VALUES (?,?,?,?,?) ON CONFLICT (install_id, ext_user) DO UPDATE SET "
+                "tries=excluded.tries, last_at=excluded.last_at, locked_until=excluded.locked_until",
+                (install_id, ext_user, tries, stamp(now), locked),
+            )
+            conn.execute(
+                "DELETE FROM bridge_link_tries WHERE last_at < ?",
+                (stamp(now - timedelta(days=1)),),
+            )
+            return locked is not None
+
+    def link_rows(self, install_id, ext_user, user_id) -> list:
+        """Every row (live or revoked) that holds this platform id or this person here."""
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return []
+            return [
+                {k: r[k] for k in _LINK}
+                for r in conn.execute(
+                    "SELECT * FROM bridge_links WHERE install_id=? AND (ext_user=? OR user_id=?)",
+                    (install_id, ext_user, user_id),
+                )
+            ]
+
+    def create_link(
+        self, link_id, install_id, ext_user, user_id, code_hash, drop=(), now=None
+    ) -> dict:
+        """Spend the code and bind the platform id in one step. ``drop`` are stale rows (revoked,
+        or of people who left) that held the id or the person. A code that is no longer valid
+        raises :class:`CodeGone` and changes nothing."""
+        stamped = stamp(now)
+        with self._tx() as conn:
+            spent = conn.execute(
+                "UPDATE bridge_link_codes SET used_at=? WHERE install_id=? AND code_hash=? "
+                "AND user_id=? AND used_at IS NULL AND expires_at > ? AND tries < ?",
+                (stamped, install_id, code_hash, user_id, stamped, CODE_TRIES),
+            ).rowcount
+            if spent != 1:
+                raise CodeGone()
+            for old in drop:
+                conn.execute("DELETE FROM bridge_links WHERE id=?", (old,))
+            conn.execute(
+                "INSERT INTO bridge_links (id,install_id,ext_user,user_id,created_at) "
+                "VALUES (?,?,?,?,?)",
+                (link_id, install_id, ext_user, user_id, stamped),
+            )
+            conn.execute(
+                "DELETE FROM bridge_link_tries WHERE install_id=? AND ext_user=?",
+                (install_id, ext_user),
+            )
+            return self._link(conn, link_id)
+
+    @staticmethod
+    def _link(conn, link_id):
+        row = (
+            conn.execute("SELECT * FROM bridge_links WHERE id=?", (link_id,)).fetchone()
+            if conn is not None and isinstance(link_id, str)
+            else None
+        )
+        return {k: row[k] for k in _LINK} if row else None
+
+    def link(self, link_id):
+        with self._tx(write=False) as conn:
+            return self._link(conn, link_id)
+
+    def link_of(self, install_id, ext_user):
+        """The live link of a platform id on an install, or None."""
+        with self._tx(write=False) as conn:
+            row = (
+                conn.execute(
+                    "SELECT id FROM bridge_links WHERE install_id=? AND ext_user=? "
+                    "AND revoked_at IS NULL",
+                    (install_id, ext_user),
+                ).fetchone()
+                if conn is not None
+                else None
+            )
+            return self._link(conn, row["id"]) if row else None
+
+    def links(self, *, install_id=None, user_id=None) -> list:
+        """Live links, of one install or of one person (across installs)."""
+        with self._tx(write=False) as conn:
+            if conn is None:
+                return []
+            if install_id is not None:
+                cursor = conn.execute(
+                    "SELECT * FROM bridge_links WHERE install_id=? AND revoked_at IS NULL "
+                    "ORDER BY created_at, id",
+                    (install_id,),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM bridge_links WHERE user_id=? AND revoked_at IS NULL "
+                    "ORDER BY created_at, id",
+                    (user_id,),
+                )
+            return [{k: r[k] for k in _LINK} for r in cursor]
+
+    def revoke_link(self, link_id, now=None):
+        """End a link at once and cancel the open confirmations of its platform id. Returns the
+        row as it was, or None when there is no live link."""
+        with self._tx() as conn:
+            row = self._link(conn, link_id)
+            if row is None or row["revoked_at"] is not None:
+                return None
+            conn.execute("UPDATE bridge_links SET revoked_at=? WHERE id=?", (stamp(now), link_id))
+            conn.execute(
+                "DELETE FROM bridge_prompts WHERE install_id=? AND ext_user=?",
+                (row["install_id"], row["ext_user"]),
+            )
+            return row
+
+    def has_installs(self) -> bool:
+        with self._tx(write=False) as conn:
+            return (
+                conn is not None
+                and conn.execute("SELECT 1 FROM bridge_installs LIMIT 1").fetchone() is not None
+            )
 
     # Read-only status
 

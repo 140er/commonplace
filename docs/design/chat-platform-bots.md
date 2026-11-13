@@ -1,7 +1,7 @@
 # Chat-platform bots
 
 Card #455 (one card for chat-platform presence; builds on the Bots layer, `docs/bots.md`).
-Status: design note; slice 1 (foundation) is built, the rest is not. Slack is the first platform; Teams and Discord follow
+Status: design note; slices 1 (foundation) and 2 (identity) are built, the rest is not. Slack is the first platform; Teams and Discord follow
 through the same adapter interface.
 
 ## Problem and goal
@@ -349,6 +349,14 @@ without their explicit confirmation**, and read tools run freely.
   response disables the install and audits it.
 
 ## Slice plan
+
+Built-slice notes (assumptions the note left open): a wrong code has no row to count against, so
+wrong tries are counted per platform sender and install (`bridge_link_tries`, five tries, then a
+15-minute lock); the five-try cap also kills a code that was presented five times and could not
+finish. Only text that is entirely a code (12 characters, spacing, dashes and markup ignored)
+counts as a presentation. The person route `GET /api/bridge/links` also lists the enabled
+installs (id, platform, label) so a member can pick one; `confirm_ok` is stored but its route comes
+with slice 4.
 
 Six slices, one PR each, in order. The settings screen is designed by the UI owner on top of the
 owner and person routes; no slice touches `app.js`, `rail.js` or shell files, so the node-harness

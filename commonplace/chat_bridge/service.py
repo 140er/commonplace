@@ -20,6 +20,7 @@ REFUSALS = {
     "team_taken": (409, "That team is already installed on this hub."),
     "not_tested": (409, "Run a successful test before turning this on."),
     "sealing_unavailable": (503, "Secret storage is not set up on this hub."),
+    "already_linked": (409, "You already have a link for this install. Remove it first."),
     "not_found": (404, "Not found"),
 }
 
@@ -35,7 +36,16 @@ def _data_root(gateway):
     return Path(gateway.db.path).resolve().parent
 
 
-def audit(gateway, principal_or_none, workspace_id, action, install_id, decision="ok", reason=""):
+def audit(
+    gateway,
+    principal_or_none,
+    workspace_id,
+    action,
+    install_id,
+    decision="ok",
+    reason="",
+    link_id=None,
+):
     user = getattr(principal_or_none, "user_id", None)
     gateway.db.audit(
         action=AUDIT,
@@ -44,7 +54,7 @@ def audit(gateway, principal_or_none, workspace_id, action, install_id, decision
         user_id=user,
         tool=action,
         reason=reason,
-        target_ids=[install_id] if install_id else (),
+        target_ids=[i for i in (install_id, link_id) if i],
     )
 
 

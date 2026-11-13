@@ -405,7 +405,8 @@ def test_only_the_signed_in_owner_reaches_the_install_routes(bridge, fake):
 def test_unknown_bridge_paths_are_404_for_the_owner(bridge, fake):
     install = bridge.create()[1]["install"]["id"]
     for method, target in (
-        ("GET", "/api/bridge/links"),
+        ("PUT", "/api/bridge/links"),
+        ("GET", "/api/bridge/links/one/two"),
         ("GET", f"/api/bridge/installs/{install}"),
         ("PUT", "/api/bridge/installs"),
         ("POST", f"/api/bridge/installs/{install}/test/extra"),

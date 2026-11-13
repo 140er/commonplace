@@ -294,7 +294,12 @@ def _store(archive, prefix, path) -> None:
         ]
         for name in names:
             cursor = conn.execute(f"SELECT * FROM {tables.quote(name)}")
-            # The sealed credentials of a chat-platform install are write-only, also here.
-            archive.rows(f"{prefix}/{name}.ndjson", cursor, redact=name == "bridge_installs")
+            # Sealed credentials of a chat-platform install and the hashes of its link codes are
+            # write-only, also here.
+            archive.rows(
+                f"{prefix}/{name}.ndjson",
+                cursor,
+                redact=name in ("bridge_installs", "bridge_link_codes"),
+            )
     finally:
         conn.close()
