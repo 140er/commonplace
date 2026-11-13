@@ -98,6 +98,10 @@ def give_alice_a_footprint(site):
     sessions.create_login_link(db, "alice@example.test")
 
 
+# Cursors the background dispatchers advance on their own clock while a test runs.
+BACKGROUND_CURSORS = {"webhook_dispatch_seq", "phone_push_seq"}
+
+
 def others_snapshot(site):
     """Everything that is not Alice's: control rows and the other workspaces' files."""
     mine = {site.alice, site.alice_home, "alice@example.test", "Alice@Example.Test"}
@@ -108,7 +112,24 @@ def others_snapshot(site):
     marks = {repr(value) for value in mine}
     dump = site.control_dump(skip=("audit_log", "account_deletions"))
     control = {table: [row for row in rows if not marks & set(row)] for table, rows in dump.items()}
+    control["meta"] = [
+        row for row in control["meta"] if row[0].strip("'") not in BACKGROUND_CURSORS
+    ]
     return control, site.tree(site.bob_home), site.tree(site.team)
+
+
+def test_snapshot_of_the_others_ignores_dispatcher_cursors(enabled):
+    """A dispatcher may consume an event between two snapshots; that is not a purge side effect."""
+    site = enabled
+    before = others_snapshot(site)
+    with site.db._lock:
+        site.db._conn.execute(
+            "UPDATE meta SET value = '99' WHERE key IN ('webhook_dispatch_seq', 'phone_push_seq')"
+        )
+    assert others_snapshot(site) == before
+    with site.db._lock:
+        site.db._conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+    assert others_snapshot(site) != before
 
 
 # ── the switch and the request ──
