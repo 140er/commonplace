@@ -952,6 +952,7 @@ export function createBots({
   }
 
   return {
+    newBot() { if (active) return openSheet("new"); },
     show(id = null) {
       const wasActive = active, previous = s.botId;
       const el = host();

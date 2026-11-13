@@ -124,3 +124,16 @@
   /* A phone has no account menu, so Settings carries the workspace tools. */
   :root[data-ui="deck"] .deck-tools { display: block; }
 }
+
+:root[data-ui="deck"] .shell[data-view="board"] #content { padding: 0; gap: 0; }
+/* Waiting status describes project capacity; amber stays reserved for personal asks. */
+:root[data-ui="deck"] .workbench-board .why-strip { background: none; color: var(--text-2); padding: 0; }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .workbench-board .why-strip { margin-inline: 16px; }
+  :root[data-ui="deck"] .workbench-board :is(.board-tools, .col-jump, .board, .empty-strip) { padding-inline: 16px; }
+  :root[data-ui="deck"] .workbench-board .backlog { margin-inline: 16px; }
+  :root[data-ui="deck"] .shell[data-view="board"] .head { display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; }
+  :root[data-ui="deck"] .shell[data-view="board"] #title { position: static; width: auto; height: auto; clip: auto; white-space: nowrap; }
+  :root[data-ui="deck"] .shell[data-view="board"] .head .right { flex: none; }
+  :root[data-ui="deck"] .shell[data-view="board"] .head .right > :not([data-action="new-card"]) { display: none; }
+}
