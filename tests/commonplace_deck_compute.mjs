@@ -10,7 +10,7 @@ const layout = await import(new URL('topology-layout.js', STATIC));
 // ---------- links and labels: the fallback graphs and the topology case, desktop and phone ----------
 
 const { createTopologyMap, K_LEAST } = await import(new URL('topology-map.js', STATIC));
-const { DISC, plateOf } = await import(new URL('topology-route.js', STATIC));
+const { DISC, plateOf, routeLinks } = await import(new URL('topology-route.js', STATIC));
 const { largeFixture } = await import('./topology_fixture.mjs');
 const FIELD = { desktop: { width: 860, height: 600 }, phone: { width: 358, height: 494 } };
 const WORDS = { up: 'Ready', degraded: 'Waiting for attestation', down: 'Down', unknown: 'Off' };
@@ -108,6 +108,80 @@ for (const phone of [false, true]) test(`topology links and labels: ${phone ? 'p
     assert.deepEqual(tspans(scene, 'topo-name').find(lines => lines.join('').startsWith('shop.orchard')), ['shop.orchard.', 'example']);
     assert.ok(tspans(scene, 'topo-role').some(lines => lines.join(' ').startsWith('edge proxy') && lines.length === 2));
   }
+});
+
+// The router is also used independently of the canvas's clear-centreline shortcut.
+const adjacentNodes = [{ key: 'a', kind: 'cloud', sub: true }, { key: 'b', kind: 'cloud', sub: true }];
+const adjacentPositions = { a: { x: 0, y: 0 }, b: { x: 186, y: 0 } };
+const pairLinks = [{ id: 'first', from: 'a', to: 'b' }, { id: 'second', from: 'b', to: 'a' }];
+
+for (const reverse of [false, true]) for (const k of [0.85, 1]) test(`adjacent duplicate links use short parallel lanes at scale ${k}, reverse ${reverse}`, () => {
+  const links = reverse ? pairLinks : pairLinks.map(link => ({ ...link, from: 'a', to: 'b' }));
+  const routes = routeLinks(links, adjacentNodes, adjacentPositions, 160, k);
+  const lanes = links.map(link => routes.get(link.id));
+  for (const i of [1, 0]) {
+    const lane = lanes[i];
+    assert.equal(lane.points.length, 2, 'a free adjacent lane has no detour');
+    const [a, b] = lane.points;
+    assert.equal(a.y, b.y, 'constant offset along the entire stroke');
+    assert.ok(Math.hypot(b.x - a.x, b.y - a.y) <= 186, 'no longer than the straight distance');
+    const link = links[i];
+    for (const [point, key] of [[a, link.from], [b, link.to]]) assert.ok(Math.abs(Math.hypot(point.x - adjacentPositions[key].x, point.y) - DISC) < 0.1, 'ends meet the disc');
+    for (const node of adjacentNodes) {
+      const plate = plateOf(node, adjacentPositions[node.key], 160, k);
+      assert.ok(!touches({ x1: a.x, y1: a.y, x2: b.x, y2: b.y }, plate), 'stroke clears labels');
+      for (const dot of [lane.from, lane.to]) assert.ok(!overlaps({ x: dot.x - 7, y: dot.y - 7, width: 14, height: 14 }, plate), 'status marks clear labels');
+    }
+  }
+  assert.equal(Math.abs(lanes[1].points[0].y - lanes[0].points[0].y), 16, 'fixed separation, including reverse-direction links');
+  assert.deepEqual(routeLinks(links, adjacentNodes, adjacentPositions, 160, k), routes, 'deterministic');
+});
+
+test('single links and non-adjacent duplicate routes retain their geometry', () => {
+  const single = routeLinks(pairLinks.slice(0, 1), adjacentNodes, adjacentPositions, 160);
+  assert.deepEqual(single.get('first').points, [{ x: 27, y: -1.4 }, { x: 38, y: -2 }, { x: 142, y: -2 }, { x: 159, y: -1.2 }]);
+  const nodes = [...adjacentNodes, { key: 'middle', kind: 'cloud', sub: true }];
+  const positions = { ...adjacentPositions, b: { x: 400, y: 0 }, middle: { x: 200, y: 0 } };
+  const routes = routeLinks(pairLinks, nodes, positions, 160);
+  assert.deepEqual([...routes].map(([id, route]) => [id, route.points]), [
+    ['first', [{ x: 18.1, y: -20 }, { x: 38, y: -42 }, { x: 358, y: -42 }, { x: 380.9, y: -19.1 }]],
+    ['second', [{ x: 380.9, y: -19.1 }, { x: 358, y: -42 }, { x: 342, y: -58 }, { x: 30, y: -58 }, { x: 14, y: -42 }, { x: 8.5, y: -25.6 }]],
+  ]);
+});
+
+for (const phone of [false, true]) test(`two-link topology: parallel, separate targets with readable labels, ${phone ? 'phone' : 'desktop'}`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC)), payload = fixture();
+  payload.links.push({ id: 'second', from: 'nimbus-cdn', to: 'nimbus-dns', method: 'direct', stale: true });
+  const made = deckCore(compute, payload, phone, false);
+  assertGeometry(made);
+  const links = made.core.links(), first = links.get('nimbus-dns>nimbus-cdn:proxy'), second = links.get('second');
+  assert.equal(first.points?.length, 2);
+  assert.equal(second.points?.length, 2);
+  assert.equal(Math.abs(first.y1 - second.y1), 16);
+  for (const id of ['nimbus-dns>nimbus-cdn:proxy', 'second']) assert.ok(made.core.scene().includes(`data-link="${e(id)}" tabindex="0" role="button" aria-pressed="false"`), 'each stroke has its own focusable target');
+});
+
+test('parallel strokes can each be selected by pointer and keyboard without opening a node', async () => {
+  const payload = { nodes: adjacentNodes.map(node => ({ key: node.key, values: { kind: 'cloud', name: node.key } })), links: pairLinks, routes: [] };
+  const host = stageDom(), ui = createTopologyMap({ mount: () => host, storage: null, interval: 0, api: async () => payload, look: { labels: 160, layout: 'layered', route: true } });
+  ui.show();
+  for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve));
+  const stage = host.querySelector('[data-topology]').querySelector('[data-topo="stage"]');
+  const world = host.querySelector('[data-topology]').querySelector('[data-topo="world"]');
+  const target = id => ({ closest: selector => selector === '[data-link]' ? { dataset: { link: id } } : null });
+  const selected = id => world.innerHTML.includes(`data-link="${e(id)}" tabindex="0" role="button" aria-pressed="true"`);
+  for (const id of ['first', 'second']) {
+    stage.fire('pointerdown', { pointerId: 1, clientX: 90, clientY: 8, target: target(id) });
+    stage.fire('pointerup', { pointerId: 1, target: target(id) });
+    assert.ok(selected(id), `${id}: pointer selects its own stroke`);
+    stage.fire('keydown', { key: 'Enter', target: target(id) });
+    assert.ok(!selected(id), 'Enter toggles it off');
+    stage.fire('keydown', { key: ' ', target: target(id) });
+    assert.ok(selected(id), 'Space selects it');
+  }
+  assert.ok(!selected('first'), 'selecting the other stroke clears the first');
+  assert.doesNotMatch(world.innerHTML, /data-key="[^"]+"[^>]*aria-pressed="true"/, 'link selection leaves node selection alone');
+  ui.stop();
 });
 
 test('the card holds as many devices in a row as fit its width at the plate width', async () => {

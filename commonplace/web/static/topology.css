@@ -18,6 +18,10 @@
 .topo-stage:focus-visible { outline-offset: -3px; }
 .topo-svg { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; }
 
+.topo-link[role="button"] { cursor: pointer; }
+.topo-link[role="button"]:focus-visible { outline: none; }
+.topo-link[role="button"]:focus-visible :is(line, path) { stroke-width: 3; }
+
 .topo-link line { stroke: var(--line-strong); stroke-width: 1.5; }
 .topo-link.stale line, .topo-link.missing line { stroke-dasharray: 5 4; }
 .topo-link.on line { stroke: var(--accent); stroke-width: 3; }

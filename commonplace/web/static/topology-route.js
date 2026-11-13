@@ -31,8 +31,7 @@ const toSegment = (p, a, b) => {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 };
 /** True when the straight line between two devices touches no other device and no label. */
-export function straightClear(a, b, nodes, positions, labels, k = 1) {
-  const from = positions[a], to = positions[b];
+const segmentClear = (from, to, a, b, nodes, positions, labels, k) => {
   for (const node of nodes) {
     const at = positions[node.key];
     if (!at) continue;
@@ -41,6 +40,9 @@ export function straightClear(a, b, nodes, positions, labels, k = 1) {
     if (touchesRect(from, to, { x: plate.x - 2, y: plate.y - 2, width: plate.width + 4, height: plate.height + 4 })) return false;
   }
   return true;
+};
+export function straightClear(a, b, nodes, positions, labels, k = 1) {
+  return segmentClear(positions[a], positions[b], a, b, nodes, positions, labels, k);
 }
 
 class Heap {
@@ -78,6 +80,17 @@ export function pointAlong(points, at) {
   }
   return points[0];
 }
+
+// Keep the status marks on the stroke, just outside each device.
+const routePlace = (points) => {
+  const total = length(points), inset = Math.min(18, total * 0.3);
+  let widest = 0, label = points[0];
+  for (let i = 1; i < points.length; i++) {
+    const span = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    if (span > widest) { widest = span; label = { x: round((points[i].x + points[i - 1].x) / 2), y: round((points[i].y + points[i - 1].y) / 2) }; }
+  }
+  return { points, from: pointAlong(points, inset), to: pointAlong(points, total - inset), label, x1: points[0].x, y1: points[0].y, x2: points.at(-1).x, y2: points.at(-1).y };
+};
 
 /** Routes for `links` between `nodes` (`{ key, kind, sub }`) placed at `positions`, with label
  * plates `labels` wide. Returns a Map of link id to `{ points, from, to, label, x1, y1, x2, y2 }`
@@ -160,14 +173,32 @@ export function routeLinks(links, nodes, positions, labels, k = 1) {
     points = points.filter((p, i) => i === 0 || i === points.length - 1 || (p.x - points[i - 1].x) * (points[i + 1].y - p.y) !== (p.y - points[i - 1].y) * (points[i + 1].x - p.x));
     const edge = (at, to) => { const d = Math.hypot(to.x - at.x, to.y - at.y) || 1; return { x: round(at.x + (to.x - at.x) / d * DISC), y: round(at.y + (to.y - at.y) / d * DISC) }; };
     points = [edge(a, points[0]), ...points, edge(b, points.at(-1))];
-    // The dot of each end sits on the line just outside its device.
-    const total = length(points), inset = Math.min(18, total * 0.3);
-    let widest = 0, label = points[0];
-    for (let i = 1; i < points.length; i++) {
-      const span = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
-      if (span > widest) { widest = span; label = { x: round((points[i].x + points[i - 1].x) / 2), y: round((points[i].y + points[i - 1].y) / 2) }; }
-    }
-    out.set(link.id, { points, from: pointAlong(points, inset), to: pointAlong(points, total - inset), label, x1: points[0].x, y1: points[0].y, x2: points.at(-1).x, y2: points.at(-1).y });
+    out.set(link.id, routePlace(points));
+  }
+  // A second link beside an unobstructed same-row neighbour needs a parallel stroke, not
+  // another grid search around both devices. Do this after routing so all other routes keep
+  // their existing grid geometry and lane penalties, regardless of this pair's input order.
+  const pairs = new Map();
+  for (const link of order) {
+    const key = JSON.stringify([link.from, link.to].sort());
+    if (!pairs.has(key)) pairs.set(key, []);
+    pairs.get(key).push(link);
+  }
+  for (const pair of pairs.values()) {
+    if (pair.length !== 2) continue;
+    const [left, right] = [pair[0].from, pair[0].to].sort();
+    const a = positions[left], b = positions[right];
+    if (a.y !== b.y || Math.abs(b.x - a.x) <= 2 * DISC) continue;
+    const inset = Math.sqrt(DISC * DISC - 8 * 8), direction = Math.sign(b.x - a.x);
+    const lanes = pair.map((link, index) => {
+      const y = round(a.y + (index ? 8 : -8));
+      const points = [{ x: round(a.x + direction * inset), y }, { x: round(b.x - direction * inset), y }];
+      if (link.from !== left) points.reverse();
+      return routePlace(points);
+    });
+    if (!lanes.every((lane) => segmentClear(lane.points[0], lane.points[1], left, right, placed, positions, labels, k)
+      && plates.every((plate) => [lane.from, lane.to].every((dot) => !touchesRect(dot, dot, { x: plate.x - 7, y: plate.y - 7, width: plate.width + 14, height: plate.height + 14 }))))) continue;
+    pair.forEach((link, index) => out.set(link.id, { ...lanes[index], parallel: true }));
   }
   return out;
 }
