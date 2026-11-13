@@ -51,7 +51,7 @@ only seq numbers that appear in the data.
 - speaker is only an id from "speakers", only when the cited segments carry it, and only for an \
 action or decision someone took on. Never name a person; never guess who said or owns anything.
 - Write what was said, plainly. Do not add facts, dates or owners that the segments do not state. \
-A gap marker means words are missing: do not fill it in.
+A segment whose text is "(gap)" is a gap marker: words are missing, do not fill it in.
 - At most 12 items. An empty list is a good answer."""
 
 _LIVE: set[str] = set()  # meetings being generated in this process

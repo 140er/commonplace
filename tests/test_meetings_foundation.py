@@ -7,6 +7,7 @@ platform is named and nothing touches the network.
 import logging
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
@@ -75,7 +76,39 @@ def add_connection(hub, label="main", secrets=None):
     return body["connection"]["id"], raw
 
 
+class LocalEngine:
+    """The hub's local transcription engine, stubbed: available, scripted, and it records its
+    calls. ``text`` may be a string or a function of the call number; ``gate`` holds a call until
+    it is set; ``fail`` is raised instead of answering."""
+
+    available = staticmethod(lambda: True)
+
+    def __init__(self, text=None):
+        self.calls, self.text, self.gate, self.fail = [], text, None, None
+        self.active = self.peak = 0
+        self._lock = threading.Lock()
+
+    def transcribe(self, language, pcm):
+        with self._lock:
+            self.calls.append((language, len(pcm)))
+            number = len(self.calls)
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        try:
+            if self.gate is not None:
+                self.gate.wait(10)
+            if self.fail is not None:
+                raise self.fail
+            if callable(self.text):
+                return self.text(number)
+            return self.text if self.text is not None else f"window {number} said hello"
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
 def go_live(hub):
+    hub.hub.gateway.voice_engine = LocalEngine()  # a hub with the local engine installed
     enable(hub)
     connection_id, _ = add_connection(hub)
     assert (

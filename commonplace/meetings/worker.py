@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 
-from commonplace.meetings import engine, notes, store
+from commonplace.meetings import capture, engine, notes, store
 
 logger = logging.getLogger("commonplace.meetings")
 
@@ -25,7 +25,11 @@ AUTOSTART = True  # tests turn it off and call ``beat`` themselves
 class Worker:
     def __init__(self, gateway, *, clock=time.time, sink_factory=None):
         self.gateway, self.clock = gateway, clock
-        self.sink_factory = sink_factory or (lambda workspace_id, meeting_id: engine.Sink())
+        self.sink_factory = sink_factory or (
+            lambda workspace_id, meeting_id: capture.CaptureSink(
+                gateway, workspace_id, meeting_id, clock=clock
+            )
+        )
         self._lock = threading.Lock()
         self._beating: set[str] = set()
         self._runs: dict[str, threading.Thread] = {}

@@ -23,7 +23,7 @@
 
 - **How it fails:**
 
-  - Refusals carry a code: `invalid_field`, `invalid_value`, `invalid_limit`, `invalid_label`, `invalid_secrets`, `invalid_language`, `invalid_wing`, `unknown_provider` (400); `not_opted_in` (403); `meetings_disabled`, `not_tested`, `label_in_use`, `in_use`, `no_connection`, `transcript_not_allowed` (409); `key_store_unavailable` (503); `attestation_required`, `invalid_link`, `invalid_title`, `invalid_board`, `invalid_disclosure`, `invalid_request_id`, `invalid_start`, `unknown_connection`, `connection_required` (400); `no_chat_send` (409); `daily_limit` (429).
+  - Refusals carry a code: `invalid_field`, `invalid_value`, `invalid_limit`, `invalid_label`, `invalid_secrets`, `invalid_language`, `invalid_wing`, `unknown_provider` (400); `not_opted_in` (403); `meetings_disabled`, `not_tested`, `label_in_use`, `in_use`, `no_connection`, `transcript_not_allowed` (409); `key_store_unavailable` (503); `attestation_required`, `invalid_link`, `invalid_title`, `invalid_board`, `invalid_disclosure`, `invalid_request_id`, `invalid_start`, `unknown_connection`, `connection_required` (400); `no_chat_send`, `needs_local_transcription` (409); `daily_limit` (429).
 
   - Not built yet (later slices): transcription and capture, notes and filing, deleting a meeting, in-meeting answers, the provider-event intake route and the first real provider adapter (so a real hub has no provider yet and an invite waits for one). The inviter is not yet told who typed `bot stop` (the meeting journal carries no text).
 
