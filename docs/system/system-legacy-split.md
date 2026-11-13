@@ -1,0 +1,9 @@
+### Legacy decisions live one per file
+
+- The `###` decisions that `SYSTEM.md` held before the per-section layout moved, byte for byte, into one file each, `docs/system/<slug>.md`; `SYSTEM.md` keeps the same `###` heading at the same place with a one-line pointer, so its anchors and its order as an index do not change. An edit of an old decision is now an edit of its own file, and two changes to two old decisions touch different files and merge without a conflict (card #461). The files are ordinary section files: they start with the `### <title>` heading and count as a change to `SYSTEM.md` for `docs-check`; there is no second counting rule and no new directory.
+
+- The move is mechanical and lossless. `scripts/system_legacy_split.py extract` writes the files and a manifest (`tests/fixtures/system_legacy_part<N>.json`: title, slug, size, SHA-256 of each moved section and the SHA-256 of the `SYSTEM.md` it came from); `verify` rebuilds the original from the pointers and the files and compares it byte for byte with the file at the base revision. A section dropped, altered or duplicated fails it. The move was cut into parts of about equal size, one pull request each, to stay under the review size cap.
+
+- After the move the manifest is a one-to-one list, not a text lock: each listed section has exactly one pointer in `SYSTEM.md` and exactly one file that still opens with its heading and has text under it, no moved title is back in `SYSTEM.md` in full, no second file carries the heading and no two files in `docs/system/` are equal. The text of a moved decision may then be edited freely in its file.
+
+- Residual: the `##` sections of `SYSTEM.md` that are not `###` decisions (numbers, stores, the restore runbook, the keeping-current rules, waivers) and the prose that opens its larger `##` sections stay in the file; two changes at the same position there still conflict. New decisions go in new `docs/system/<slug>.md` files, as before.
