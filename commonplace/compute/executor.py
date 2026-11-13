@@ -364,6 +364,7 @@ class ExecutionService:
         origin = self._person(row["user_id"], row["session_hash"])
         approver = self._person(row["approved_by"], row["approval_session_hash"])
         stored = json.loads(row["binding"])
+        self.store._check_script_approver(row, approver.user_id, stored["operation"])
         self.store._execution_task(origin, stored["task_number"])
         fresh = self.store._binding(
             conn,
@@ -421,20 +422,24 @@ class ExecutionService:
         return row, fresh, outer, inner, origin
 
     def _recover(self, conn):
-        # A durable stage below 4 precedes every exec channel, including after
-        # authentication. Recovery can prove these attempts never ran.
-        conn.execute(
-            "UPDATE execution_runs SET phase='terminal',reason='interrupted_before_start',"
-            "certainty='known',reserved=0,updated_at=? "
-            "WHERE phase IN ('admitted','dispatching') AND stage<4 AND run_until<=?",
-            (self.store._now(), self.store._now()),
-        )
-        # Once an exec channel could have opened, elapsed time proves no death.
-        conn.execute(
-            "UPDATE execution_runs SET phase='uncertain',reason='interrupted',updated_at=? "
-            "WHERE phase IN ('admitted','dispatching','running') AND run_until<=?",
-            (self.store._now(), self.store._now()),
-        )
+        # A durable stage below 4 proves non-run; elapsed time after that
+        # boundary cannot prove death. Audit transitions in the same commit.
+        for predicate, phase, reason, extra in (
+            (
+                "phase IN ('admitted','dispatching') AND stage<4",
+                "terminal",
+                "interrupted_before_start",
+                ",certainty='known',reserved=0",
+            ),
+            ("phase IN ('admitted','dispatching','running')", "uncertain", "interrupted", ""),
+        ):
+            rows = conn.execute(
+                f"UPDATE execution_runs SET phase=?,reason=?,updated_at=?{extra} "
+                f"WHERE {predicate} AND run_until<=? RETURNING execution_id",
+                (phase, reason, self.store._now(), self.store._now()),
+            ).fetchall()
+            for row in rows:
+                self._audit_outcome(conn, row["execution_id"], f"execution.{phase}.{reason}")
 
     @staticmethod
     def _consent_digest(row):
@@ -453,6 +458,15 @@ class ExecutionService:
                 }
             )
         ).hexdigest()
+
+    def _audit_outcome(self, conn, execution_id, action):
+        # Audit must survive lost/revoked sessions; the immutable requester is
+        # attribution, not authorization. Never include exception/output text.
+        conn.execute(
+            "INSERT INTO audit(object_id,action,user_id,created_at) "
+            "SELECT id,?,user_id,? FROM executions WHERE id=?",
+            (action, self.store._now(), execution_id),
+        )
 
     def _claim(self):
         with self._guard() as lease:
@@ -473,12 +487,14 @@ class ExecutionService:
                     try:
                         row, binding, gateway, route, origin = self._fresh(conn, candidate["id"])
                     except (StoreError, ControlError, ProtocolDenied):
+                        self._audit_outcome(conn, candidate["id"], "execution.admission_denied")
                         conn.execute(
                             "UPDATE executions SET reason='admission_denied' WHERE id=?",
                             (candidate["id"],),
                         )
                         continue
                     if binding.get("admission_mode") != self.admission_mode:
+                        self._audit_outcome(conn, candidate["id"], "execution.admission_denied")
                         continue
                     limits = Limits.from_dict(binding["limits"])
                     count = conn.execute(
@@ -543,6 +559,7 @@ class ExecutionService:
                             self._admission_credentials(request, gateway, route)
                             self._unchanged(lease)
                         except CredentialError:
+                            self._audit_outcome(conn, row["id"], "execution.admission_denied")
                             conn.execute(
                                 "UPDATE executions SET reason='admission_denied' WHERE id=?",
                                 (row["id"],),
@@ -1003,6 +1020,10 @@ class ExecutionService:
                 request.execution,
             ),
         )
+        phase = "terminal" if known else "uncertain"
+        self._audit_outcome(conn, request.execution, f"execution.{phase}.{reason}")
+        if known_exit:
+            self._audit_outcome(conn, request.execution, f"execution.exit.{result.exit_code}")
 
     def settle_uncertain(self, execution_id, note):
         """Trusted operator reconciliation; deliberately absent from HTTP routes.

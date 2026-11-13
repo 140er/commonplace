@@ -3,6 +3,8 @@
 - **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/instance_admin.py`, `commonplace/index_stats.py`, `commonplace/control_db.py`, `commonplace/db_busy.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
 
+  - The extension list installs `commonplace.compute`, which provides the Compute management and discovery routes.
+
   - Dedicated session-admin management metadata services, namespace admission and bounded coordinated read audit appends.
   - `ControlDB(path, compute_config=...)` accepts trusted Compute startup configuration; its transaction wrapper holds the compute coordinator lock across the whole transaction, and without configuration behavior is unchanged.
 
@@ -38,6 +40,8 @@
   - Diary reads probe entry topics through the worker and exclude topics naming unreadable threads before the worker counts or windows entries, pinned to the probe's store. A client `thread_scope` never reaches the worker. A probe validation error is returned as the answer, an over-limit probe answers that the agent has too many diary topics to check, paused or unavailable memory propagates as on other routes, and other probe faults are logged by class and answered with an explicit error; no read falls back to an unscoped count.
 
   - The write-side room check shares the handoff thread-reference check, including diary and checkpoint diary topics, so a room or topic naming an unreadable thread in any form is refused as not found.
+
+  - The same `mcp:` source-ID rule covers provenance fields that name a thread (fact sources, drawer metadata, `source_kept.thread`) and tunnel labels: a reader who cannot read every matching thread loses the field, or the tunnel for a label.
 
   - Write-side room checks (`_check_thread_room`, `_drawer_wings` and the checkpoint loop) share one reader per gateway call, and a checkpoint takes at most 500 items.
 

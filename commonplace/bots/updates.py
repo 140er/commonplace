@@ -3,8 +3,9 @@
 One listener on the hub event log. For a card a bot filed, it posts one ``event`` message when
 the item needs the person, is ready for review or is done; for an orchestrator reply to a post a
 bot forwarded, it posts that reply as it was written. Only the bot that filed or forwarded the
-item gets anything, and only while its owner can still see the item (the owner's person
-principal is resolved fresh and checked the way project chat checks it).
+item gets anything, in the thread of the person whose turn filed it, and only while that person
+can still see the item (their person principal is resolved fresh and checked the way project chat
+checks it) and still reaches the thread (a member whose share ended gets nothing).
 
 The listener is cheap on the emitting thread: one indexed lookup in ``bots.sqlite3`` (skipped
 when the workspace has no such file) filters out every event no bot cares about, and it never
@@ -28,6 +29,11 @@ from commonplace.http_util import log_failure
 logger = logging.getLogger(__name__)
 
 TITLE_CHARS = 120
+# A shared thread is read by people whose rights differ from the filer's: its events carry no
+# titles, notes or reply text (other people's words), only a pointer each reader hydrates for
+# themselves (the ``work`` block) or nothing at all.
+SHARED_WORK_EVENT = "A task filed here changed."
+SHARED_REPLY_EVENT = "A message sent from here was answered."
 ANNOUNCED = {
     "needs_you": ("A question about “{title}” needs you.", "decision"),
     "ready": ("“{title}” is ready for you to look at.", "work"),
@@ -44,7 +50,7 @@ def _existing(gateway, workspace_id):
 
 
 def _person(gateway, user_id, event):
-    """The owner's fresh principal when they may still receive this event, else None."""
+    """The person's fresh principal when they may still receive this event, else None."""
     principal = sessions.person_principal(gateway.db, user_id, event["workspace_id"])
     if principal is None or not webhooks.can_receive_event(gateway.db, gateway, principal, event):
         return None
@@ -66,12 +72,14 @@ def _card_event(gateway, event, bots, links):
         try:
             card = BoardService(ToolContext(principal=principal, gateway=gateway)).task_show(number)
         except ToolError:
-            continue  # the owner cannot see this item (any more)
+            continue  # the person cannot see this item (any more)
         word = blocks.work_status(card)[0]
         text = kind = None
         if word in ANNOUNCED:
             template, kind = ANNOUNCED[word]
             text = template.format(title=_title(card))
+            if bots.thread_shared(link["bot_id"], link["thread_id"]):
+                text, kind = SHARED_WORK_EVENT, "work"
         bots.work_changed(
             link["bot_id"],
             link["user_id"],
@@ -81,6 +89,7 @@ def _card_event(gateway, event, bots, links):
             word,
             text,
             [{"type": kind, "card": number}] if kind else (),
+            thread_id=link["thread_id"],
         )
 
 
@@ -101,7 +110,7 @@ def _first_reply(service, board, post, coordinator, upto):
 def _reply_event(gateway, event, bots, forwards):
     data = event["data"]
     board, reply_id = data["board"], data["message_id"]
-    answered = {}  # bot -> (user, the reply, the posts it answers)
+    answered = {}  # (bot, person, thread) -> (the reply, the posts it answers)
     for forward in forwards:
         principal = _person(gateway, forward["user_id"], event)
         if principal is None:
@@ -123,12 +132,22 @@ def _reply_event(gateway, event, bots, forwards):
                 continue
         except ToolError:
             continue
-        answered.setdefault(forward["bot_id"], (forward["user_id"], message["text"], []))[2].append(
-            forward["space_message_id"]
-        )
-    for bot_id, (user_id, text, posts) in answered.items():
+        answered.setdefault(
+            (forward["bot_id"], forward["user_id"], forward["thread_id"]), (message["text"], [])
+        )[1].append(forward["space_message_id"])
+    for (bot_id, user_id, thread_id), (text, posts) in answered.items():
+        marks = [{"type": "orchestrator"}]
+        if bots.thread_shared(bot_id, thread_id):
+            text, marks = SHARED_REPLY_EVENT, []  # the reply is read in the project, not copied
         bots.forward_answered(
-            bot_id, user_id, board, reply_id, posts, text, [{"type": "orchestrator"}]
+            bot_id,
+            user_id,
+            board,
+            reply_id,
+            posts,
+            text,
+            marks,
+            thread_id=thread_id,
         )
 
 

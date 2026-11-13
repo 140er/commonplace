@@ -3,6 +3,7 @@
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
+  - `docs/compute/execution-contract.md` documents default-denied script self-approval, task-required scope storage, durable denial and outcome auditing and held-handle sealed execution snapshots.
   - The read-only instance console operator and API guide in `docs/instance-admin.md`.
 
   - The instance console guide distinguishes workspace filters, path-bound targets, list pagination and the query-free operator settings endpoint.

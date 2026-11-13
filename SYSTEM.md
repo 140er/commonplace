@@ -144,6 +144,24 @@ acknowledgements and reconciles receipts on reload while keeping the composer us
 
 ### Compute management REST and durable authority
 
+Script requester self-approval is denied by default, including a second session
+for the same user. Only trusted workspace startup configuration
+`allow_script_self_approval=True` permits it; dispatch rechecks that policy.
+Fixed read-only operations keep their existing same-owner approval policy.
+Taskless discovery scopes remain unsupported: the NOT NULL task column rejects
+them before any metadata can persist, including the literal "None". Development
+installs include the Compute crypto/SSH dependencies so transport tests collect.
+Pre-claim denials and terminal/uncertain outcomes (including recovery
+and observed exit codes) enter the private audit journal in the same transaction;
+no output or exception text is included. Target execution reads uploads and
+staged inputs relative to held directory handles, verifies their approved digests
+and gives bwrap sealed memfd snapshots via `--ro-bind-data`. The writable job bind
+also uses its held directory descriptor. Sealing uses Python constants when present
+and Linux kernel ABI constants otherwise; all four seals must be read back before
+launch. Unsupported or unverifiable sealing returns a confirmed denied
+`sandbox_unavailable` outcome without spawning a process. Synthetic barrier tests prove substitution
+refusal or approved-byte use; they do not prove real-host confinement.
+
 `/api/compute` is installed with the gateway and admits only cookie-person current
 workspace owners, including reads. Mutations reuse the mandatory exact Origin and
 bounded JSON boundary. Every store operation rechecks the exact session, current
@@ -248,6 +266,32 @@ uncertain outcome reserved rather than assuming termination. Published evidence 
 bounded and redacted. The owner UI shows the observed exit, or an uncertain
 cancellation, and never implies dispatch from approval alone. The executor is
 inert until trusted configuration enables it.
+
+### Compute discovery service component
+
+The discovery service stores one durable reservation per collection and charges the
+reserved scope ceilings permanently, so a restart never re-collects automatically
+and unknown concurrency slots stay reserved. Collection reaches a target only through
+the pinned outer SSH adapter and only when trusted configuration enables discovery;
+owner-session routes expose scopes, proposals and cancellation. Cancellation records
+intent and distinguishes it from confirmed termination.
+
+### Compute operator recovery component
+
+`compute/operator.py` gives a trusted operator fenced recovery for controller
+execution and discovery, and for helper tunnels and passive reservations that stayed
+uncertain. It requires the existing persisted guards before attaching, writes a
+private audit note for each action and has no HTTP route. Recovery never implies that
+a remote process terminated.
+
+### Workspace page controllers for Compute and Coworkers
+
+`web/static/coworkers.js` and `compute.js` are self-contained page controllers: they
+abort stale requests when the session, workspace or route changes and render only
+escaped text from server-authoritative state. They are deliberately not wired into
+the shell, rail, phone navigation or palette: the Deck look owns Compute navigation,
+and a classic-look entry needs a separate design decision. Neither controller enables
+remote execution; that stays a trusted server-side configuration.
 
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,
 subprocess, DNS or probe; IPv6 needs an explicitly trusted supplier. Helpers expose
@@ -2788,10 +2832,18 @@ a canonical `mcp:x` thread but not that legacy twin; no new such twin can be
 filed. The diary probe and the read are two worker calls: a hidden
 entry filed between them with a `filed_at` older than the newest `last_n`
 entries is neither excluded nor in the window, so `total` can count it once.
-Its words and topic are never returned. `mcp:` source IDs in knowledge-graph
-fact sources, tunnel labels and drawer provenance (`source_thread`,
-`source_kept.thread`) are checked only for thread IDs and capture references,
-not resolved as T3 sources; those paths predate this room check.
+Its words and topic are never returned.
+
+`mcp:` source IDs outside rooms. The room rule (whole value, prefix-matched,
+every matching thread readable) also covers the other places a thread can be
+named: provenance fields that name a thread (`source_thread`, `source_url`,
+`source_link`, `origin_id`, `origin_link`, `approval_link`) on knowledge-graph
+facts and their sources and on drawer metadata, `source_kept.thread` and the
+`source` bundle of an add-drawer replay, and tunnel labels. A reader who cannot
+read every matching thread loses that field (the fact, drawer or tunnel stays;
+a tunnel whose label names such a thread is hidden, as for `thr_` references);
+a value naming no stored thread is unchanged. `source_file`, `source_path`,
+`source_drawer_id` and `source_closet` keep their existing checks.
 
 CLI rendering rule (replaces the earlier rule that
 every-wing policies keep worker-rendered CLI output and search diagnostics):

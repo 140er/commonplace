@@ -13,7 +13,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from commonplace.bots import learning
+from commonplace.bots.learn_recall import RecallMixin
 from commonplace.bots.learn_runs import RunsMixin
+from commonplace.bots.learn_share import ShareMixin
 from commonplace.bots.store import BotStore, Conflict, Invalid, Missing, stamp
 
 KINDS = ("preference", "instruction", "fact", "correction")
@@ -119,7 +121,7 @@ def _note(row) -> dict:
     }
 
 
-class Learned(RunsMixin):
+class Learned(RunsMixin, RecallMixin, ShareMixin):
     def __init__(self, bots: BotStore):
         self._bots = bots
         self._key = None
@@ -326,8 +328,9 @@ class Learned(RunsMixin):
             BotStore._own(conn, bot_id, user_id)
             self._gate(conn, bot_id, user_id, source_message_id, now)
             message = conn.execute(
-                "SELECT role,text,created_at FROM bot_messages WHERE id=? AND bot_id=?",
-                (source_message_id, bot_id),
+                "SELECT role,text,created_at FROM bot_messages WHERE id=? AND bot_id=? "
+                "AND thread_id IS NULL AND (author_id IS NULL OR author_id=?)",
+                (source_message_id, bot_id, user_id),
             ).fetchone()
             if message is None or message["role"] != "user" or text not in message["text"]:
                 raise Invalid("not the person's words")
@@ -573,7 +576,14 @@ class Learned(RunsMixin):
                 )
                 self._log(conn, user_id, note["bot_id"], item_id, "forget")
             else:
-                self._delete(conn, user_id, [self._row(conn, user_id, item_id)])
+                row = self._row(conn, user_id, item_id)
+                if row["scope"] == "shared":
+                    # Only this copy goes: the person's own item stays, and its sentence is not
+                    # blocked from being learned again.
+                    conn.execute("DELETE FROM bot_learned WHERE id=?", (item_id,))
+                    self._log(conn, user_id, row["bot_id"], item_id, "forget")
+                else:
+                    self._delete(conn, user_id, [row])
         self._scrub()
 
     def forget_all(self, bot_id, user_id) -> dict:
