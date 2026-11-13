@@ -671,3 +671,21 @@ def test_download_adapter_is_bounded_private_and_does_not_reflect_errors(ready, 
     monkeypatch.setattr(runtime_host, "MAX_ARTIFACT", 1)
     with pytest.raises(InstallError, match="download unavailable"):
         host.download(release)
+
+
+def test_large_pinned_artifact_uses_release_budget_and_remains_idempotent(ready):
+    s = ready
+    raw = b"synthetic" * (4 * 1024 * 1024)
+    release = s.runtime["components"]["host"]
+    release["sha256"] = digest(raw)
+    s.runtime_host.artifacts[release["sha256"]] = raw
+    assert approve(s, s.runtime)
+    s.local.sync_receipts()
+    config = runtime_cache(s)
+    path = config["components"]["host"]["path"]
+    assert s.local.fs.read(path) == raw
+    before = (s.home / path).stat().st_mtime_ns
+    s.local.sync_receipts()
+    assert (s.home / path).stat().st_mtime_ns == before
+    s.local.uninstall()
+    assert not (s.home / path).exists()

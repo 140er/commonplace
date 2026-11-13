@@ -133,6 +133,7 @@ class LiveRuntimeHost:
                     capture_output=True,
                     timeout=10,
                     pass_fds=(fd,),
+                    umask=0o077,
                     cwd=home,
                     env={"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": str(home), "NO_COLOR": "1"},
                 )

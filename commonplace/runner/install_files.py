@@ -69,9 +69,16 @@ class Files:
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
             try:
                 self._check(os.fstat(fd))
+                # Runtime artifacts have a separate bounded release budget;
+                # credentials and journals retain their smaller existing limit.
+                limit = 32 * 1024 * 1024
+                if path.startswith(STATE + "/runtime/") and path.endswith(".artifact"):
+                    from .runtime_manifest import MAX_ARTIFACT
+
+                    limit = MAX_ARTIFACT
                 with os.fdopen(fd, "rb", closefd=False) as stream:
-                    data = stream.read(32 * 1024 * 1024 + 1)
-                if len(data) > 32 * 1024 * 1024:
+                    data = stream.read(limit + 1)
+                if len(data) > limit:
                     raise InstallError("installation file is too large")
                 return data
             finally:

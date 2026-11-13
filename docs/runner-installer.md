@@ -166,7 +166,8 @@ it does not trust a download-provided public key or a detached unsigned pin.
 Only selected executable names are looked up. A matching existing artifact is
 reused without modification; an incompatible installation is preserved while a
 verified copy goes into the private runner prefix. Supported release shapes are
-self-contained Linux native executables and Python zipapps. Unknown wrappers,
+self-contained Linux native executables and Python zipapps, bounded at 128 MiB
+per artifact. Unknown wrappers,
 unsupported platforms, wrong versions or missing headless/status interfaces
 remain incomplete. There is no package-manager invocation, privilege escalation,
 global dependency installation or machine-setting change in this step.
