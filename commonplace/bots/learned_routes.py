@@ -13,17 +13,24 @@
     GET    /api/projects/<slug>/learning         {board, shared_enabled, can_configure}
     PATCH  /api/projects/<slug>/learning         {shared_enabled}                 (workspace owner)
     GET    /api/projects/<slug>/learned          {items}   shared items, for members who read the project
+    POST   /api/learned/<id>/accept              {} -> {item}   (a proposal becomes active)
+    POST   /api/learned/<id>/reject              {} -> {ok}     (a proposal is deleted for good)
     POST   /api/learned/<id>/share               {project?} -> {pending, bot, label}  (a confirm chip;
                                                  the tap is POST /api/bots/<bot>/confirm)
 
-Only a signed-in person reaches these: an app token (even one holding ``bots:chat``), an agent
-token or a machine credential is answered 404, and a cross-origin write is refused by the
-gateway. An item or bot that is not the caller's is 404. Everything off is the default.
+Only a signed-in person reaches these. The one exception is the person's own app holding
+``bots:chat`` and ``bots:learned``: it may read the two lists (``GET /api/learned`` and
+``GET /api/bots/<id>/learned``) and can change nothing (403 ``read_only`` on any write, 404 on
+everything else). An app without ``bots:learned``, an agent token or a machine credential is
+answered 404, and a cross-origin write is refused by the gateway. An item or bot that is not the
+caller's is 404. Everything off is the default. Each item carries a ``group`` (person, shared,
+proposed, earlier, old) and its ``source`` (bot, message and date) for the review list.
 """
 
-from commonplace import redact
+from commonplace import bots_grant, redact
 from commonplace.boards.service import BoardService
 from commonplace.bots import auth, learned, routes, store, tools_learning
+from commonplace.bots.learn_review import group
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, send_json
 
@@ -34,19 +41,34 @@ def _learned(gateway, principal) -> learned.Learned:
     return learned.open_learned(gateway, principal.workspace_id)
 
 
-def _view(item) -> dict:
+def _view(item, names=None) -> dict:
     return {
         **item,
         "text": redact.redact(item["text"])[0],
         "note": None if item["note"] is None else redact.redact(item["note"])[0],
+        "group": group(item),
+        "source": {
+            "bot_id": item["bot_id"],
+            "bot_name": (names or {}).get(item["bot_id"], ""),
+            "message_id": item["source_message_id"],
+            "at": item["source_at"],
+        },
     }
 
 
-def _person_only(h) -> bool:
-    """Learned items are the person's: an app acting for them (before the read scope of a later
-    slice) is not enough, so it gets the answer an unknown route gets."""
-    if auth.app(h) is None:
+def _person_only(h, read=False) -> bool:
+    """Learned items are the person's. Their own app may only read the lists, and only with
+    ``bots:learned``; it can change nothing. Anything else an app does gets the answer an
+    unknown route gets."""
+    app = auth.app(h)
+    if app is None:
         return True
+    if app.policy.has_scope(bots_grant.LEARNED_SCOPE):
+        if read:
+            return True
+        if h.command != "GET":
+            routes._error(h, 403, "read_only", "This permission can only read learned items.")
+            return False
     routes._error(h, 404, "not_found", "Not found")
     return False
 
@@ -55,9 +77,9 @@ def _refused(h, refused):
     send_json(h, 400, {"error": "That cannot be kept", "code": "refused", "reason": refused.kind})
 
 
-def _guarded(gateway, h, run):
+def _guarded(gateway, h, run, read=False):
     def checked(principal):
-        if not _person_only(h):
+        if not _person_only(h, read):
             return
         try:
             run(principal)
@@ -84,7 +106,8 @@ def _listing(gateway, principal, h, bot_id=None):
         **paging,
     )
     counts = items.counts(principal.user_id, bot_id)
-    send_json(h, 200, {"items": [_view(i) for i in page], "counts": counts})
+    names = items.bot_names(principal.user_id)
+    send_json(h, 200, {"items": [_view(i, names) for i in page], "counts": counts})
 
 
 # /api/bots/<id>/...
@@ -122,9 +145,9 @@ def _bot_learned(gateway, h, principal, bot_id, rest):
         routes._error(h, 404, "not_found", "Not found")
 
 
-def _bot_handler(handler):
+def _bot_handler(handler, read=False):
     def handle(gateway, h, principal, bot_id, rest):
-        if _person_only(h):
+        if _person_only(h, read):
             try:
                 handler(gateway, h, principal, bot_id, rest)
             except learned.Refused as refused:
@@ -215,6 +238,27 @@ def _member_name(gateway, user_id) -> str:
 # /api/learned/<id>
 
 
+def _review(gateway, h, principal, item_id, action):
+    """Accept or reject a proposal (ask mode): the same two taps the thread shows."""
+    if h.command != "POST":
+        routes._error(h, 404, "not_found", "Not found")
+        return
+    if routes._body(h, set()) is None:
+        return
+    items = _learned(gateway, principal)
+    try:
+        if action == "accept":
+            item = items.accept(principal.user_id, item_id)
+            send_json(h, 200, {"item": _view(item, items.bot_names(principal.user_id))})
+        else:
+            items.reject(principal.user_id, item_id)
+            send_json(h, 200, {"ok": True})
+    except store.Conflict:
+        routes._error(h, 409, "not_proposed", "That is not waiting for an answer.")
+    except learned.Disabled:
+        routes._error(h, 409, "learning_off", "Learning is switched off for this workspace.")
+
+
 def _item(gateway, h, principal):
     parts = path_parts(h, ITEMS)
     if not parts or len(parts) > 2:
@@ -224,16 +268,21 @@ def _item(gateway, h, principal):
     if parts[1:] == ["share"]:
         _share(gateway, h, principal, parts[0])
         return
+    if parts[1:] in (["accept"], ["reject"]):
+        _review(gateway, h, principal, parts[0], parts[1])
+        return
     if len(parts) != 1:
         routes._error(h, 404, "not_found", "Not found")
         return
     if h.command == "GET":
-        send_json(h, 200, {"item": _view(items.get(principal.user_id, parts[0]))})
+        item = items.get(principal.user_id, parts[0])
+        send_json(h, 200, {"item": _view(item, items.bot_names(principal.user_id))})
     elif h.command == "PATCH":
         body = routes._body(h, {"text", "pinned"})
         if body is None:
             return
-        send_json(h, 200, {"item": _view(items.update(principal.user_id, parts[0], **body))})
+        item = items.update(principal.user_id, parts[0], **body)
+        send_json(h, 200, {"item": _view(item, items.bot_names(principal.user_id))})
     elif h.command == "DELETE":
         try:
             items.forget(principal.user_id, parts[0])
@@ -335,7 +384,7 @@ def project_route(gateway, h, slug, rest=("learning",)):
 BOT_HANDLERS = {
     ("GET", "learning"): _bot_handler(_bot_learning),
     ("PATCH", "learning"): _bot_handler(_bot_learning),
-    ("GET", "learned"): _bot_handler(_bot_learned),
+    ("GET", "learned"): _bot_handler(_bot_learned, read=True),
     ("POST", "learned"): _bot_handler(_bot_learned),
 }
 
@@ -343,7 +392,9 @@ BOT_HANDLERS = {
 def install(gateway) -> None:
     routes.HANDLERS.update(BOT_HANDLERS)
     gateway.add_route(
-        "GET", "/api/learned", lambda h: _guarded(gateway, h, lambda p: _listing(gateway, p, h))
+        "GET",
+        "/api/learned",
+        lambda h: _guarded(gateway, h, lambda p: _listing(gateway, p, h), read=True),
     )
     for method in ("GET", "PATCH"):
         gateway.add_route(

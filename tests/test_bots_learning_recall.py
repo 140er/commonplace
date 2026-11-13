@@ -95,7 +95,8 @@ def test_relevant_items_are_found_by_the_new_message_and_unrelated_ones_are_not(
     (item,) = found.items
     assert set(item) == {"id", "scope", "kind", "said", "text"}
     assert (item["scope"], item["kind"]) == ("person", "correction")
-    assert item["said"] == T0.strftime("%Y-%m-%d")
+    # The date the message was stored (not the clock at import, which can be a day earlier).
+    assert item["said"] == env.learned.get("avery", item["id"])["source_at"][:10]
     assert texts(recall(env, bot, "Plan a team meeting across zones"))[0].startswith("My team")
     assert recall(env, bot, "Order lunch").items == []  # nothing in common, no standing item
 
@@ -361,7 +362,7 @@ def test_learned_items_are_labelled_and_the_current_message_wins(rig):
         "id": item,
         "scope": "person",
         "kind": "preference",
-        "said": T0.strftime("%Y-%m-%d"),
+        "said": rig.store_learned().get(rig.avery, item)["source_at"][:10],
         "text": KEEP,
     }
     # The person's current message is the last part, after the learned block.

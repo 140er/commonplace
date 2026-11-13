@@ -150,6 +150,7 @@ def test_person_scopes_and_oauth_defaults_are_exact():
         "cards:decide",
         "bots:chat",
         "bots:confirm",
+        "bots:learned",
     )
     assert recall._GRANT_PREFIX == import_grant.GRANT_PREFIX + ":"
 

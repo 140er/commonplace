@@ -32,6 +32,7 @@ SCOPES = (
     "cards:decide",
     "bots:chat",
     "bots:confirm",
+    "bots:learned",
 )
 OAUTH_DEFAULT_SCOPES = ("memory:read", "memory:write")
 
@@ -256,8 +257,9 @@ def _guess_client(client_row) -> str:
 
 def create_code(conn, client_row, principal, parameters) -> str:
     granted = set(parameters["scope"].split())
-    if granted & {"bots:chat", "bots:confirm"} and not (
-        principal.person and ("bots:confirm" not in granted or "bots:chat" in granted)
+    if granted & {"bots:chat", "bots:confirm", "bots:learned"} and not (
+        principal.person
+        and ("bots:chat" in granted or not granted & {"bots:confirm", "bots:learned"})
     ):
         # Consent already drops an unticked grant; never mint one for anything but a person.
         raise OAuthError("invalid_scope")
