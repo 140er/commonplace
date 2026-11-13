@@ -19,6 +19,7 @@ export const BOTS_COPY = Object.freeze({
   unavailable: "This bot is no longer available.",
   stopped: "Stopped.",
   orchestrator: "Orchestrator",
+  coworker: "Coworker",
   learnedGone: "That item is gone.",
 });
 
@@ -239,7 +240,7 @@ export function messageHTML(m, ctx, e) {
   const kind = m.role === "user" ? "me" : m.role === "event" ? "event" : "bot";
   const bubble = m.text ? `<div class="bm-bubble"><div class="bm-text">${marked(m.text, e)}</div></div>` : "";
   // An event carrying an orchestrator block is the orchestrator's own reply, forwarded word for word.
-  const from = kind === "event" && Array.isArray(m.blocks) && m.blocks.some((b) => b?.type === "orchestrator") ? `<p class="bm-from">${BOTS_COPY.orchestrator}</p>` : "";
+  const from = kind === "event" && Array.isArray(m.blocks) && m.blocks.some((b) => b?.type === "orchestrator") ? `<p class="bm-from">${ctx.deck ? BOTS_COPY.coworker : BOTS_COPY.orchestrator}</p>` : "";
   return `<li class="bm ${kind}" data-id="${e(m.id)}"${m.at ? ` title="${e(m.at)}"` : ""}>${from}${bubble}${blocksHTML(m.blocks, { ...ctx, mid: m.id }, e)}${kind === "bot" ? noteHTML(m, e) : ""}</li>`;
 }
 
@@ -255,6 +256,10 @@ export function waitingHTML(waiting, open, ctx, e) {
 
 export function headHTML(bot, e) {
   return `<a class="bots-back" href="#/bots">${back}<span>${e(BOTS_COPY.title)}</span></a><button type="button" class="bots-name" data-bots-action="sheet" aria-haspopup="dialog"><span class="bot-av" aria-hidden="true">${e(initial(bot.name))}</span><span class="bots-title"><b>${e(bot.name)}</b>${bot.job ? `<small>${e(oneLine(bot.job))}</small>` : ""}</span></button>`;
+}
+
+export function coworkersNavHTML(bot = '-') {
+  return `<a class="deck-coworkers-link" href="#/bots/${enc(bot)}/coworkers">Coworkers</a>`;
 }
 
 export function stripHTML(bots, bot, e) {
@@ -396,7 +401,7 @@ export function createBots({
   const region = (name) => host()?.querySelector(`[data-region="${name}"]`) ?? null;
   const atBottom = (node) => !node || node.scrollHeight - node.scrollTop - node.clientHeight <= 40;
   const busy = () => Boolean(s.turn) || s.running;
-  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing });
+  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing, deck: deck() });
   const runningRequestId = () => s.turn?.requestId || (s.running ? [...s.messages].reverse().find((m) => m.role === "user")?.request_id : "") || "";
   const deck = () => globalThis.document?.documentElement?.dataset?.ui === "deck";
 
@@ -461,7 +466,7 @@ export function createBots({
   }
   function paintHead() {
     const head = region("head");
-    if (head) head.innerHTML = s.bot ? deck() ? stripHTML(s.bots, s.bot, e) : headHTML(s.bot, e) : "";
+    if (head) head.innerHTML = s.bot ? deck() ? stripHTML(s.bots, s.bot, e) + coworkersNavHTML(s.bot.id) : headHTML(s.bot, e) : "";
   }
   function takeDraft() {
     const box = composerBox();
@@ -963,7 +968,7 @@ export function createBots({
         s.messages = []; s.waiting = []; s.running = false; s.more = false; s.ready = false; s.waitingOpen = false;
         ticks = 0;
       }
-      el.innerHTML = shellHTML;
+      el.innerHTML = deck() ? shellHTML.replace('<div data-region="model">', `${coworkersNavHTML()}<div data-region="model">`) : shellHTML;
       rootEl = el.querySelector(".bots");
       for (const [type, handler] of [["click", onClick], ["submit", onSubmit], ["input", onInput], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
       if (!visibilityBound) { globalThis.document?.addEventListener?.("visibilitychange", onVisible); visibilityBound = true; }

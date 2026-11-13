@@ -17,7 +17,21 @@ export function resolveRoute(hash, { boards = [], last, deck = false } = {}) {
   const route = hash || "#/";
   if (route === "#/") return boards.length ? "#/bots" : "#/start";
   if (route === "#/compute-map" && deck) return "#/compute";
+  if (route === "#/compute" && !deck) return "#/compute/management";
+  if (route === "#/coworkers") return "#/bots/-/coworkers";
+  const coworkers = /^#\/coworkers\/([^/?]+)(\?message=[^&#]+)?$/.exec(route);
+  if (coworkers) return `#/bots/-/coworkers/conversations/${coworkers[1]}${coworkers[2] || ""}`;
   const chat = /^#\/chat\/([^/?]+)(\?.*)?$/.exec(route);
   if (chat) return `#/board/${chat[1]}/chat${chat[2] || ""}`;
   return route;
+}
+
+/** Nested workspace pages, separate from the existing single-segment bot IDs. */
+export function workspaceRoute(hash = "") {
+  if (hash === "#/compute" || hash === "#/compute/management") return { screen: "compute", management: hash.endsWith("/management") };
+  const match = /^#\/bots\/([A-Za-z0-9_-]+)\/coworkers(?:\/(conversations)(?:\/([^/?]+)(?:\?message=([^&#]+))?)?)?$/.exec(hash);
+  if (!match || (match[2] && match[1] !== "-")) return null;
+  try {
+    return { screen: "coworkers", bot: match[1] === "-" ? null : match[1], conversations: !!match[2], conversation: match[3] ? decodeURIComponent(match[3]) : null, message: match[4] ? decodeURIComponent(match[4]) : null };
+  } catch { return null; }
 }
