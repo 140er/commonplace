@@ -146,6 +146,20 @@ def redact(text) -> tuple[str, list[str]]:
     if len(text) > MAX_CHARS:
         return "[omitted:too_long]", ["too_long"]
 
+    return _redact(text)
+
+
+def redact_tail(text: str, limit: int) -> str:
+    """Redact before truncation so a cut cannot expose part of a credential.
+
+    For diagnostic output already captured by a subprocess, preserve the final
+    cause even when it follows more than MAX_CHARS of progress messages.
+    Ordinary storage/display calls retain redact's input bound.
+    """
+    return _redact(text)[0][-limit:] if limit > 0 else ""
+
+
+def _redact(text):
     text, private = _private_keys(text)
     kinds = ["private_key"] if private else []
     for kind, pattern in _PATTERNS:
