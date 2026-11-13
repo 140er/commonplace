@@ -513,3 +513,4 @@ def test_a_slow_model_does_not_delay_bot_stop(console_hub, fake, model):
     assert state_of(hub, meeting_id) == ("discarded", "stop_requested")
     assert count(hub, "meeting_chat", meeting_id) == 0
     assert not any("Heard" in text for text, _ in fake.posts)
+    assert answer_threads_gone()  # the late reply was dropped and the thread ended

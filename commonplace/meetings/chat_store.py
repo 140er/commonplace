@@ -87,10 +87,10 @@ class ChatMixin:
         with self._tx() as conn:
             return (
                 conn.execute(
-                    "UPDATE meeting_chat SET state=?, answer=?, updated_at=?, "
+                    "UPDATE meeting_chat SET answer=?, updated_at=?, state=?, "
                     "question=CASE WHEN ? THEN question END "
                     "WHERE meeting_id=? AND ext_event=? AND state='received'",
-                    (state, answer, _stamp(now), int(keep), meeting_id, ext_event),
+                    (answer, _stamp(now), state, int(keep), meeting_id, ext_event),
                 ).rowcount
                 == 1
             )
