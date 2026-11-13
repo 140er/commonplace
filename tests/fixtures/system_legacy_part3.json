@@ -1,0 +1,176 @@
+{
+  "base": "ef25c47f05bfc44275c483880bddc40a75a560d3",
+  "base_sha256": "8ed59eb150db1b6c8c052fc90103a4cbb43a419722edb30e3328012ff539d22b",
+  "part": 3,
+  "of": 4,
+  "sections": [
+    {
+      "title": "Triggers",
+      "slug": "triggers",
+      "occurrences": 1,
+      "bytes": 1165,
+      "sha256": "d597ffed7392d5a3a4dee6e77e99ff311d7569ba3fdc0ae44549836fd0d7f332"
+    },
+    {
+      "title": "Durable orchestrator",
+      "slug": "durable-orchestrator",
+      "occurrences": 1,
+      "bytes": 1536,
+      "sha256": "a969e7c4e1956251f75fc7e9e3a0bbf0491f2f678cf0ec42b62d48b618992a01"
+    },
+    {
+      "title": "Thread-search ranking",
+      "slug": "thread-search-ranking",
+      "occurrences": 1,
+      "bytes": 723,
+      "sha256": "02a8db4005870b4ebd86756f4bcd2133654e957ad06ecc78fd7bbc12a3442ffc"
+    },
+    {
+      "title": "Owner-configured task types on cards (slice 1)",
+      "slug": "owner-configured-task-types-on-cards-slice-1",
+      "occurrences": 1,
+      "bytes": 3612,
+      "sha256": "2e8604fb0592feeaf9c523647b648ac26d873e624d54b1c1e42f6a6e37d490cd"
+    },
+    {
+      "title": "Goals tree in card context",
+      "slug": "goals-tree-in-card-context",
+      "occurrences": 1,
+      "bytes": 1010,
+      "sha256": "2ba2076d1c265a98bb62ae770b4c458dc453b4feaa263b3bf15df984cd3f890c"
+    },
+    {
+      "title": "Opt-in blockers, waiting reasons and split delivery",
+      "slug": "opt-in-blockers-waiting-reasons-and-split-delivery",
+      "occurrences": 1,
+      "bytes": 4966,
+      "sha256": "0d1543b5f853f7cb27207b840747105aa90ad57efa94736e94018e762f0bdffc"
+    },
+    {
+      "title": "Foreground refresh rendering",
+      "slug": "foreground-refresh-rendering-2",
+      "occurrences": 2,
+      "bytes": 409,
+      "sha256": "69806e6dbdc2bbe1922e322e74631037ec2301d9a047468bd8f9d63aada39caa"
+    },
+    {
+      "title": "Routines create cards on a schedule",
+      "slug": "routines-create-cards-on-a-schedule",
+      "occurrences": 1,
+      "bytes": 1100,
+      "sha256": "a97980a6720675a0721864ed5e5079f48e87ea3cc0c32237fca1f8f20e6af30d"
+    },
+    {
+      "title": "Tool policy: Allowed, Ask first or Off per action",
+      "slug": "tool-policy-allowed-ask-first-or-off-per-action",
+      "occurrences": 1,
+      "bytes": 1770,
+      "sha256": "df96cd68e453723fed9cb2c22da63e889535140c80742636864a70a7133e5bc6"
+    },
+    {
+      "title": "Webhook dispatcher recovery",
+      "slug": "webhook-dispatcher-recovery",
+      "occurrences": 1,
+      "bytes": 660,
+      "sha256": "4e8df4b523d28d4c08b68de724da9402bf5317905439feaf017199975a861b0b"
+    },
+    {
+      "title": "Revoked-token socket guard",
+      "slug": "revoked-token-socket-guard",
+      "occurrences": 1,
+      "bytes": 399,
+      "sha256": "0894c3c8334d519e001db3d6332b30c005f53d970dbb35db060212c07ecb8710"
+    },
+    {
+      "title": "Design before code",
+      "slug": "design-before-code",
+      "occurrences": 1,
+      "bytes": 1076,
+      "sha256": "8a7b99b438cadbeb7ed2a708035cdc46d8d85f97435b0de562f7d6c9840db8b3"
+    },
+    {
+      "title": "Defaults chosen for slice 1",
+      "slug": "defaults-chosen-for-slice-1",
+      "occurrences": 1,
+      "bytes": 1397,
+      "sha256": "e9f0b279880483cdca0ab170532c2ea190d7ccf8780b3c2d5b43b5d84b62fd50"
+    },
+    {
+      "title": "Live chat delivery state",
+      "slug": "live-chat-delivery-state",
+      "occurrences": 1,
+      "bytes": 1141,
+      "sha256": "1d06e12eac4f8c61187ec77d7e50ffac74a0fe16fab3d575088890e65e8b4bac"
+    },
+    {
+      "title": "Board coordinator settings",
+      "slug": "board-coordinator-settings",
+      "occurrences": 1,
+      "bytes": 9236,
+      "sha256": "d57d524fb27425ff9d8064bdcda0734069b5452229d499c1ef0379457f0bfb65"
+    },
+    {
+      "title": "Thread-derived mutations and citations",
+      "slug": "thread-derived-mutations-and-citations",
+      "occurrences": 1,
+      "bytes": 6775,
+      "sha256": "3e23045250b492e54d466f52aee59acf47222c3b2095ebf1395269c8a957c30e"
+    },
+    {
+      "title": "Coordinator release authority",
+      "slug": "coordinator-release-authority",
+      "occurrences": 1,
+      "bytes": 2380,
+      "sha256": "79af16f66a1a52824eb6c6731d112846d031e0533e659b393738f8dd19ed0204"
+    },
+    {
+      "title": "Eval archives (slice 1)",
+      "slug": "eval-archives-slice-1",
+      "occurrences": 1,
+      "bytes": 1852,
+      "sha256": "24e6ddc0cb577d32e511447651e4f0008e47ffd02cb5dd157f68687abe2aa83d"
+    },
+    {
+      "title": "Authenticated owner progress scope, State lifetime and quota causality",
+      "slug": "authenticated-owner-progress-scope-state-lifetime-and",
+      "occurrences": 1,
+      "bytes": 2474,
+      "sha256": "07f883f2fea7f9a198190d0c824aa2fab1f9638e7623c6422562cc49e9876c24"
+    },
+    {
+      "title": "Scoped wing counts and search fan-out",
+      "slug": "scoped-wing-counts-and-search-fan-out",
+      "occurrences": 1,
+      "bytes": 3985,
+      "sha256": "92b0d757f807e234b23e7765908bc25e485bb217346191487995e3c0598850d4"
+    },
+    {
+      "title": "Visible logical drawer pagination",
+      "slug": "visible-logical-drawer-pagination",
+      "occurrences": 1,
+      "bytes": 3166,
+      "sha256": "6960c707f380bdc29ade75d3a0812d1c1cd2366b75f05e2efaec5981ce16d1ac"
+    },
+    {
+      "title": "Hallway read eligibility and visible pagination",
+      "slug": "hallway-read-eligibility-and-visible-pagination",
+      "occurrences": 1,
+      "bytes": 2564,
+      "sha256": "b25c2ef4265b42bac183b74bfa429fab12bc0573c5af51b38ff0cf164934dfa7"
+    },
+    {
+      "title": "Authenticated room and status counts",
+      "slug": "authenticated-room-and-status-counts",
+      "occurrences": 1,
+      "bytes": 2470,
+      "sha256": "1dc6fcb8d3dadc651b7807c116a415d236aa6aee1e875a64b490fa2876f177c6"
+    },
+    {
+      "title": "Thread-boundary residuals",
+      "slug": "thread-boundary-residuals",
+      "occurrences": 1,
+      "bytes": 6812,
+      "sha256": "33653ea16f9fab8c2925999abe374277903b96e3b25b305d76c073b4500f1bf9"
+    }
+  ]
+}
