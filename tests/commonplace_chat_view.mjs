@@ -41,6 +41,14 @@ test("messages, receipts, answers and handoff links stay interleaved and escaped
   assert.match(html, /href="[^\"]*(?:#\/card\/42|#\/board\/work[^\"]*42)[^\"]*"/);
 });
 
+test("markup and entity fragments stay literal without reassembly after redaction", () => {
+  const text = "SYNTHETIC<i></i>DISPLAY SYNTHETIC&#95;DISPLAY";
+  const html = ui.chatHTML({ ...page, messages: [{ ...page.messages[0], text }], replies: [] }, { user: "me", role: "owner" }, e);
+  assert.ok(html.includes("SYNTHETIC&lt;i&gt;&lt;/i&gt;DISPLAY SYNTHETIC&amp;#95;DISPLAY"));
+  assert.ok(!html.includes("SYNTHETICDISPLAY"));
+  assert.ok(!html.includes("SYNTHETIC_DISPLAY"));
+});
+
 test("status uses console authority and Decisions link", () => {
   const html = ui.statusHTML(status, e);
   assert.match(html, /href="#\/console"/);

@@ -86,6 +86,7 @@ RULES = {
     "meta": Rule(),
     "oauth_clients": Rule(),
     "oauth_codes": Rule(connection=_C, credential=True),
+    "oauth_person_grants": Rule(user=_U, workspace=_W, connection=_C, credential=True),
     "oauth_requests": Rule(user=_U, workspace=_W),
     "oauth_tokens": Rule(connection=_C, credential=True),
     "orchestration_settings": Rule(workspace=_W),

@@ -166,6 +166,11 @@ def _space_route(service, h, parts, method):
     elif len(parts) == 3 and parts[2] == "chat":
         tool = {"GET": "space_read", "POST": "space_post"}.get(method)
     if tool:
+        if tool == "space_post" and parts[0] == "boards":
+            from commonplace import person_actions
+
+            if person_actions.chat_person(service.ctx.gateway, h) is not None:
+                return 201, person_actions.post_chat(service.ctx.gateway, h, parts[1], read_json(h))
         # These new aliases enforce MCP visibility here, keeping gateway/handoff untouched.
         p = service.principal
         if not p.person and not p.policy.tool_visible(tool):

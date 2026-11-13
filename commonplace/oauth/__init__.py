@@ -17,7 +17,7 @@ from html import escape
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import urlsplit
 
-from .. import bots_grant, decide_grant, import_grant, sessions, urls
+from .. import bots_grant, decide_grant, import_grant, person_actions, sessions, urls
 from . import store
 from .http import OAuthError, body, callback, query, redirect, send, send_error, send_json
 from .store import OAuthAuthenticator
@@ -289,6 +289,12 @@ def _show_authorize(gateway, h, *, status=200):
             else:
                 consent += f"<p>{escape(decide_grant.OWNER_ONLY_TEXT)}</p>"
         requested = parameters["scope"].split()
+        if native and "memory:read" in requested and person_actions.eligible(gateway.db, principal):
+            for _, field, text in person_actions.CONSENT:
+                consent += (
+                    f'<label><input type="checkbox" name="{field}" value="1"> '
+                    f"{escape(text)}</label>"
+                )
         if bots_grant.CHAT_SCOPE in requested:
             consent += (
                 '<label><input type="checkbox" name="grant_bots_chat" value="1"> '
@@ -440,11 +446,23 @@ def _submit_authorize(gateway, h):
                 ):
                     granted.remove(decide_grant.DECIDE_SCOPE)
                 _keep_bots_grants(db, principal, data, granted)
+                person_capabilities = [
+                    capability
+                    for capability, field, _ in person_actions.CONSENT
+                    if data.get(field) == "1"
+                    and parameters["redirect_uri"] in NATIVE_REDIRECTS
+                    and "memory:read" in granted
+                    and person_actions.eligible(db, principal)
+                ]
                 if not granted:
                     location = _response(parameters, error="invalid_scope")
                 else:
                     code = store.create_code(
-                        conn, client, principal, dict(parameters, scope=" ".join(granted))
+                        conn,
+                        client,
+                        principal,
+                        dict(parameters, scope=" ".join(granted)),
+                        person_capabilities=person_capabilities,
                     )
                     location = _response(parameters, code=code)
             login = False
