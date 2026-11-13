@@ -101,23 +101,23 @@ function nodeMarkup(node, at, { on, dim, sel, words, labels }) {
   return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${aria}"><title>${aria}</title>${tag}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}${texts}</g>`;
 }
 
-function linkMarkup(link, at, names, { on, dim, words }) {
+function linkMarkup(link, at, names, { on, dim, words, interactive, sel }) {
   const classes = ["topo-link", link.stale && "stale", link.missing && "missing", on && "on", dim && "dim"].filter(Boolean).join(" ");
   const method = link.method.replace(/_/g, " ");
   const from = names.get(link.from), to = names.get(link.to);
   const ends = [["from", from], ["to", to]].filter(([end]) => link.status[end] !== "none").map(([end, name]) => ` ${name} end: ${words[link.status[end]]}.`).join("");
   const label = `${from} to ${to}, ${method}${link.via ? ` via ${link.via}` : ""}.${ends}${link.missing ? " Not recorded." : ""}${link.stale ? " Stale." : ""}`;
-  return `<g class="${classes}" data-link="${esc(link.id)}"><title>${esc(label)}</title>${at.points ? `<path class="topo-route" d="M${at.points.map((p) => `${p.x} ${p.y}`).join("L")}"/>` : `<line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/>`}<text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
+  return `<g class="${classes}" data-link="${esc(link.id)}"${interactive ? ` tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${esc(label)}"` : ""}><title>${esc(label)}</title>${at.points ? `<path class="topo-route" d="M${at.points.map((p) => `${p.x} ${p.y}`).join("L")}"/>` : `<line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/>`}<text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
 }
 
 /** The whole map as SVG markup. `route` is one of `model.routes`: its links and nodes are
  * marked `on` and everything else `dim`. `selected` is a node key. */
-export function renderScene(model, positions, { route = null, selected = null, words = STATUS_TEXT, labels = 0, places: given = null } = {}) {
+export function renderScene(model, positions, { route = null, selected = null, selectedLink = null, interactiveLinks = false, words = STATUS_TEXT, labels = 0, places: given = null } = {}) {
   const onLinks = new Set(route?.hops.map((hop) => hop.link));
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
   const places = given || layoutLinks(model.links, positions);
-  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id), dim: !!route && !onLinks.has(link.id), words }));
+  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id }));
   const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
@@ -168,7 +168,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
   let { placed, view } = memory.load();
   // A host that sizes the card to the graph (labels) always opens at the fitted view; only dragged places are kept.
   if (labels) view = null;
-  let model = mapModel(null), raw = null, positions = {}, site = "", selected = null;
+  let model = mapModel(null), raw = null, positions = {}, site = "", selected = null, selectedLink = null;
   const save = () => memory.save({ placed, view });
   let routes = null;
   const place = () => {
@@ -187,7 +187,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     if (!routed) return straight;
     routes ??= routeLinks(model.links, nodeInfo(), positions, labels || 160, K_LEAST) || new Map();
     const info = nodeInfo();
-    return new Map(model.links.filter((link) => straight.has(link.id)).map((link) => [link.id, routes.has(link.id) && !straightClear(link.from, link.to, info, positions, labels || 160, K_LEAST) ? routes.get(link.id) : straight.get(link.id)]));
+    return new Map(model.links.filter((link) => straight.has(link.id)).map((link) => [link.id, routes.has(link.id) && (routes.get(link.id).parallel || !straightClear(link.from, link.to, info, positions, labels || 160, K_LEAST)) ? routes.get(link.id) : straight.get(link.id)]));
   };
   const route = () => model.routes.find((item) => item.site === site) || null;
   return {
@@ -204,6 +204,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
       raw = next; model = mapModel(payload, { none }); place();
       if (!route()) site = "";
       if (selected !== null && !positions[selected]) selected = null;
+      if (!model.links.some((link) => link.id === selectedLink)) selectedLink = null;
       return true;
     },
     /** Move a node while it is being dragged; `moveNode` is what remembers the place. */
@@ -228,11 +229,12 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     /** Forget every dragged place: back to the automatic layout. */
     reset() { placed = {}; place(); save(); },
     setRoute(next) { site = model.routes.some((item) => item.site === next) ? next : ""; },
+    selectLink(id) { selectedLink = model.links.some((link) => link.id === id) && selectedLink !== id ? id : null; },
     select(key) { selected = positions[key] && key !== selected ? key : null; return selected; },
     /** Make `key` the selected node (not a toggle); false when the map has no such node. */
     choose(key) { if (!positions[key]) return false; selected = key; return true; },
     clear() { selected = null; },
-    scene() { return renderScene(model, positions, { route: route(), selected, words, labels, places: routed ? linkPlaces() : null }); },
+    scene() { return renderScene(model, positions, { route: route(), selected, selectedLink, interactiveLinks: routed, words, labels, places: routed ? linkPlaces() : null }); },
     links() { return linkPlaces(); },
     get routed() { return routed; },
     /** What each device's label needs, for a host or a test that reasons about plates. */
@@ -312,6 +314,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
   function draw() {
     redraw = false;
     const focused = section.ownerDocument.activeElement?.closest?.("[data-key]")?.dataset.key;
+    const focusedLink = section.ownerDocument.activeElement?.closest?.("[data-link]")?.dataset.link;
     world.innerHTML = core.scene();
     nodeEls = new Map([...world.querySelectorAll("[data-key]")].map((el) => [el.dataset.key, el]));
     linkEls = new Map([...world.querySelectorAll("[data-link]")].map((el) => [el.dataset.link, el]));
@@ -319,6 +322,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     if (core.loaded && core.model.nodes.length && !core.view) { grow(core.fit(...size(), { remember: false }, { pad: fitPad, reach })); fitted = true; }
     if (core.view) paintView();
     if (focused) nodeEls.get(focused)?.focus({ preventScroll: true });
+    if (focusedLink) linkEls.get(focusedLink)?.focus({ preventScroll: true });
     const list = core.model.routes.map((route) => route.site);
     if (JSON.stringify(list) !== sites) {
       sites = JSON.stringify(list);
@@ -384,6 +388,11 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     nodeEls.get(key)?.focus({ preventScroll: true });
     announce(selected);
   }
+  function selectLink(id) {
+    core.selectLink(id);
+    draw();
+    linkEls.get(id)?.focus({ preventScroll: true });
+  }
   /** Select `key` from outside (not a toggle, no focus move); false when the map has no such node. */
   function choose(key) {
     if (!section || !core.choose(key)) return false;
@@ -404,9 +413,10 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     if (pointers.size === 2) { gesture = { kind: "pinch", last: pinch() }; return; }
     if (pointers.size > 2) return;
     const key = event.target.closest?.("[data-key]")?.dataset.key;
+    const link = routed && event.target.closest?.("[data-link]")?.dataset.link;
     gesture = key && core.positions[key]
       ? { kind: "node", key, x: event.clientX, y: event.clientY, origin: { ...core.positions[key] }, moved: false }
-      : { kind: "pan", moved: false };
+      : link ? { kind: "link", id: link, moved: false } : { kind: "pan", moved: false };
   }
   function move(event) {
     const point = pointers.get(event.pointerId);
@@ -444,7 +454,8 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
       else { const at = core.positions[done.key]; core.moveNode(done.key, at.x, at.y); }
     } else if (done.kind === "node") {
       if (event.type !== "pointercancel") select(done.key);
-    } else core.setView(core.view);
+    } else if (done.kind === "link" && !done.moved && event.type !== "pointercancel") selectLink(done.id);
+    else core.setView(core.view);
     if (redraw) draw();
   }
   function wheel(event) {
@@ -457,6 +468,8 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     if (event.ctrlKey || event.metaKey || event.altKey || !core.view) return;
     const key = event.target.closest?.("[data-key]")?.dataset.key;
     if (key && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); select(key); return; }
+    const link = routed && event.target.closest?.("[data-link]")?.dataset.link;
+    if (link && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); selectLink(link); return; }
     const arrow = ARROWS[event.key];
     if (arrow && key && event.shiftKey) {
       event.preventDefault();
