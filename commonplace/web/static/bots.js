@@ -797,7 +797,7 @@ export function createBots({
     const sheet = s.sheet = { kind: "sharing", tab, shares: [], log: [], busy: false, loading: true, error: "", painted: false };
     await loadSharing(sheet);
   }
-  async function sharingWrite(action) {
+  async function sharingWrite(action, confirmed = false) {
     const sheet = s.sheet, bot = s.bot;
     if (!deck() || !["sharing", "details"].includes(sheet?.kind) || sheet.busy || sheet.loading || !bot) return;
     const memberActions = ["grant", "revoke"];
@@ -806,7 +806,7 @@ export function createBots({
     if (action === "revoke" && !sheet.confirmRevoke) { sheet.confirmRevoke = true; paintSheet(); return; }
     if (action === "disable") {
       if (sheet.kind !== "details") return;
-      if (!sheet.confirmDisable) { sheet.confirmDisable = true; paintSheet(); return; }
+      if (!confirmed || !sheet.confirmDisable) { sheet.confirmDisable = true; paintSheet(); return; }
     }
     const id = s.botId;
     let path = `/api/bots/${enc(id)}/${action}`, method = "POST", body = {};
@@ -1061,7 +1061,7 @@ export function createBots({
       case "sharing-cancel": if (s.sheet?.kind === "sharing") { s.sheet.selected = null; paintSheet(); } break;
       case "sharing-revoke": void sharingWrite("revoke"); break;
       case "disable-cancel": if (s.sheet?.kind === "details") { s.sheet.confirmDisable = false; paintSheet(); } break;
-      case "disable-confirm": if (s.sheet?.confirmDisable) void sharingWrite("disable"); break;
+      case "disable-confirm": if (s.sheet?.confirmDisable) void sharingWrite("disable", true); break;
       case "sharing-enable": case "disable": case "enable": case "adopt": void sharingWrite(d.botsAction); break;
       case "sharing-retry": if (s.sheet?.kind === "sharing") void loadSharing(s.sheet); break;
       case "sharing-more": void moreSharingLog(); break;

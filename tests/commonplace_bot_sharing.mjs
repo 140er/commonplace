@@ -183,6 +183,8 @@ test('settings design has one four-section row and scopes saved feedback to its 
   assert.equal(writes(), count, 'opening the explanation never disables the bot');
   assert.match(h.regions.sheet.innerHTML, /Conversations and access will be kept/);
   assert.match(h.regions.sheet.innerHTML, /disable-confirm/);
+  await h.click('disable');
+  assert.equal(writes(), count, 'repeating the first action still requires the separate confirmation');
   await h.click('disable-cancel');
   assert.equal(writes(), count); assert.doesNotMatch(h.regions.sheet.innerHTML, /disable-confirm/);
   h.ui.stop();
