@@ -78,6 +78,16 @@ def _enabled(db):
 
 
 def _audit(db, action, decision, row=None, reason=""):
+    if row:
+        client = db._conn.execute(
+            "SELECT client_name FROM oauth_clients WHERE client_id=?", (row["client_id"],)
+        ).fetchone()
+        detail = {"client_id": row["client_id"], "client": client["client_name"] if client else ""}
+        if "checked_at" in row.keys() and row["checked_at"] is not None:
+            detail["checked_at"] = row["checked_at"]
+        if reason:
+            detail["reason"] = reason
+        reason = json.dumps(detail)
     db.audit(
         action="account.delete." + action,
         decision=decision,
@@ -379,7 +389,7 @@ def submit(gateway, h):
                         row["request_hash"],
                     ),
                 )
-                _audit(db, "check", "ok", row, "client_id=" + row["client_id"])
+                _audit(db, "check", "ok", row)
                 location = None
             else:
                 if (
@@ -415,13 +425,7 @@ def submit(gateway, h):
                 conn.execute(
                     "DELETE FROM account_delete_checks WHERE request_hash=?", (row["request_hash"],)
                 )
-                _audit(
-                    db,
-                    "mint",
-                    "ok",
-                    row,
-                    json.dumps({"client_id": row["client_id"], "checked_at": row["checked_at"]}),
-                )
+                _audit(db, "mint", "ok", row)
                 location = _response(parameters, deletion_token=token, expires_in=SECONDS)
                 session = None
         if location:
@@ -489,7 +493,7 @@ def delete(gateway, h):
                 ).rowcount
                 if used != 1:
                     _refuse()
-                _audit(db, "use", "ok", row, "client_id=" + row["client_id"])
+                _audit(db, "use", "ok", row)
             # Still holding the control lock: signout/disconnect cannot race the request.
             result = deletion._record_request(
                 gateway, person, deletion._now(gateway), data["confirm"]

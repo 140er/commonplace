@@ -607,6 +607,9 @@ def test_token_sentinel_is_absent_from_storage_audit_logs_errors_and_export(
     assert minted[0]["user_id"] == app.user_id
     assert json.loads(minted[0]["reason"])["client_id"] == phone.cid
     assert isinstance(json.loads(minted[0]["reason"])["checked_at"], int)
+    assert all(
+        json.loads(r["reason"])["client"] == "Mobile client" for r in audit if r["decision"] == "ok"
+    )
     assert {r["decision"] for r in audit if r["action"] == "account.delete.use"} == {"ok", "deny"}
 
 
