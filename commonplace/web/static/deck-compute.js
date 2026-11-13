@@ -171,10 +171,11 @@ export function mount(context) {
   styles(doc);
   root.classList.add('deck-compute');
   // The screen owns its title row; restore the shared header on departure.
-  const shellHeaders = ['.head', '#phone-bar'].map(selector => root.parentElement?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
+  const shell = context.shell || root.parentElement;
+  const shellHeaders = ['.head', '#phone-bar'].map(selector => shell?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
   for (const { node } of shellHeaders) node.hidden = true;
   // Keep the shell's phone destinations reachable while the long map/details page scrolls.
-  const phoneTabs = root.parentElement?.querySelector('#phone-tabs');
+  const phoneTabs = shell?.querySelector('#phone-tabs');
   const navStyle = phoneTabs?.style;
   const previousNav = navStyle && ['position', 'bottom', 'left', 'right', 'zIndex'].map(key => [key, navStyle[key]]);
   if (navStyle) Object.assign(navStyle, { position: 'fixed', bottom: '0', left: '0', right: '0', zIndex: '10' });

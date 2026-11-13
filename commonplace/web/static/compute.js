@@ -105,14 +105,14 @@ export function computeExecutionHTML(row, { busy = false } = {}) {
 
 // One visit owns its DOM, session object and all requests. Even transports that
 // ignore abort cannot publish after a different route/session has taken over.
-export function createCompute({ mount, api, current, route = () => globalThis.location?.hash, onBoards = () => {}, doc = globalThis.document, events = globalThis.window, now = () => Date.now() / 1000, requestId = () => globalThis.crypto.randomUUID() }) {
+export function createCompute({ mount, api, current, route = () => globalThis.location?.hash, expectedRoute = "#/compute", onBoards = () => {}, doc = globalThis.document, events = globalThis.window, now = () => Date.now() / 1000, requestId = () => globalThis.crypto.randomUUID() }) {
   let host = null, session = null, workspace = null, identity = null, live = false, epoch = 0, revision = 0;
   let inventory = null, projects = [], reading = false, busy = false, uncertain = false, error = "", notice = "", boardError = "";
   let discoveries = [], discoveryAvailable = false, discoveryError = "";
   let scripts = [], scriptDetail = null, scriptsError = "";
   let editor = "", values = {}, selected = null, approvalDigest = "", attempt = null;
   const requests = new Set();
-  const eligible = () => live && current() === session && current()?.workspace === workspace && current()?.actor === identity && route() === "#/compute";
+  const eligible = () => live && current() === session && current()?.workspace === workspace && current()?.actor === identity && route() === expectedRoute;
   function valid(page) {
     if (live && !eligible()) stop();
     return eligible() && epoch === page;
@@ -376,7 +376,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   function show() {
     stop();
     session = current();
-    if (!session?.workspace || !session?.actor || route() !== "#/compute") return;
+    if (!session?.workspace || !session?.actor || route() !== expectedRoute) return;
     workspace = session.workspace; identity = session.actor; host = mount();
     if (!host) return;
     live = true; epoch++;

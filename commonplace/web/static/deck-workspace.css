@@ -1,0 +1,34 @@
+.deck-workspace { min-width: 0; padding-bottom: 88px; }
+.dw-tabs, .dw-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; margin: 16px 24px; font-size: 13px; }
+.dw-tabs a, .dw-crumbs a, .dw-parent { color: var(--text-2); padding: 10px 0; text-decoration: none; }
+.dw-tabs a[aria-current], .dw-crumbs a[aria-current] { color: var(--text); border-bottom: 1px solid currentColor; }
+.dw-tabs a:focus-visible, .dw-crumbs a:focus-visible, .dw-parent:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
+.dw-crumbs > span:empty { display: none; }
+.dw-crumbs > * + *::before { content: '›'; color: var(--text-3); margin-right: 16px; }
+.dw-title { margin: 24px; }
+.dw-title h1 { font-size: 28px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 8px; }
+.dw-title p, .dw-source { color: var(--text-2); font-size: 13px; line-height: 1.6; }
+.deck-workspace > [data-workspace="content"] > .compute, .dw-workers, .dw-empty { margin: 24px; }
+.dw-workers { display: grid; gap: 20px; }
+.dw-parent { display: inline-block; font-size: 13px; }
+.dw-worker { background: var(--surface); border-radius: 20px; padding: 24px; min-width: 0; }
+.dw-worker header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.dw-worker h2 { font-size: 18px; font-weight: 600; margin: 0; }
+.dw-worker header > span { font-size: 12px; color: var(--text-2); }
+.dw-worker dl { margin: 24px 0; display: grid; grid-template-columns: 1fr 2fr 2fr; gap: 24px; }
+.dw-worker dt { font-size: 11px; color: var(--text-3); margin-bottom: 8px; }
+.dw-worker dd { font-size: 13px; margin: 0; overflow-wrap: anywhere; line-height: 1.6; }
+.dw-worker small { display: block; color: var(--text-2); font-size: 12px; }
+.dw-worker ul { padding-left: 16px; margin: 0; }
+[data-ui="deck"] .deck-workspace .compute-inventory, [data-ui="deck"] .deck-workspace .compute-editor, [data-ui="deck"] .deck-workspace .compute-capabilities { border: 0; border-radius: 20px; }
+[data-ui="deck"] .deck-workspace .compute { --r: 8px; }
+.deck-workspace .coworkers { min-height: 500px; }
+@media(max-width:699px) {
+  .dw-tabs, .dw-crumbs { margin: 8px 16px; gap: 8px 12px; }
+  .dw-tabs a, .dw-crumbs a { min-height: 44px; display: inline-flex; align-items: center; }
+  .dw-title, .deck-workspace > [data-workspace="content"] > .compute, .dw-workers, .dw-empty { margin: 16px; }
+  .dw-title h1 { font-size: 24px; }
+  .dw-worker { padding: 20px; }
+  .dw-worker dl { grid-template-columns: 1fr; gap: 16px; }
+  .dw-crumbs > * + *::before { margin-right: 10px; }
+}

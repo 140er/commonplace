@@ -2,9 +2,9 @@
 
 `web/static/coworkers.js` and `compute.js` are self-contained page controllers: they
 abort stale requests when the session, workspace or route changes and render only
-escaped text from server-authoritative state. They are deliberately not wired into
-the shell, rail, phone navigation or palette: the Deck look owns Compute navigation,
-and a classic-look entry needs a separate design decision. Neither controller enables
+escaped text from server-authoritative state. The Deck workspace adapter mounts
+Compute under its Management tab and conversations under Bots > Coworkers,
+with redirects for earlier workspace links and no new classic navigation. Neither controller enables
 remote execution; that stays a trusted server-side configuration.
 
 OSCacheSupplier supports only the fixed /proc/net/arp cache, no caller path,

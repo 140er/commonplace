@@ -4,13 +4,15 @@
 // four tabs, and deck.css re-tokens every screen (true black, lightness for elevation, amber
 // only for what waits on you). Screens that exist only in Deck register in SCREENS.
 import { escape as e } from './api.js';
+import { workspaceRoute } from './routes.js';
 
 export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
 // mount returns { refresh?(context), stop?() }. A name without a loader is not offered in the bar.
 export const SCREENS = {
   today: () => import('./deck-today.js'),
-  compute: () => import('./deck-compute.js'),
+  compute: () => import('./deck-workspace.js'),
+  coworkers: () => import('./deck-workspace.js'),
 };
 const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
 
@@ -98,18 +100,18 @@ export function toolsHTML({ needs = 0, rulesWaiting = 0, can_admin = false } = {
  *  context() returns what a screen may read: { me, boards, needs, go(hash) }. */
 export function createDeck({ root, api, context, title, screen = () => 0, reload = () => {}, screens = SCREENS, storage = store(), doc = globalThis.document } = {}) {
   let active = null;
-  const name = (base) => /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
-  const owns = (base) => deckOn(storage) && typeof screens[name(base)] === 'function';
+  const name = (base) => workspaceRoute(base)?.screen || /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
+  const owns = (base) => typeof screens[name(base)] === 'function' && (deckOn(storage) || (!!workspaceRoute(base) && base !== '#/compute'));
   function leave() { active?.ui?.stop?.(); active = null; }
   async function show(base, { background = false, epoch = 0 } = {}) {
     const id = name(base);
-    if (active?.id === id) { active.ui?.refresh?.(context()); return; }
+    if (active?.base === base) { active.ui?.refresh?.({ ...context(), route: base }); return; }
     if (background) return;
     const module = await screens[id]();
     if (epoch !== screen()) return;
     leave();
-    active = { id, ui: module.mount({ root: root.querySelector('#content'), api, e, ...context() }) };
-    title(module.TITLE || 'Commonplace');
+    active = { base, ui: module.mount({ root: root.querySelector('#content'), api, e, ...context(), route: base }) };
+    title(id === 'coworkers' ? 'Coworkers' : module.TITLE || 'Commonplace');
   }
   function settings(content) {
     const box = content?.querySelector?.('.settings');

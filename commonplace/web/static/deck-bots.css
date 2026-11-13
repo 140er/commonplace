@@ -133,3 +133,5 @@
   :root[data-ui="deck"] .deck-project-group li { align-items: flex-start; flex-direction: column; gap: 6px; padding-block: 12px; }
   :root[data-ui="deck"] .deck-project-group .chip { min-width: 0; }
 }
+
+:root[data-ui="deck"] .deck-coworkers-link { display:inline-flex; align-items:center; min-height:44px; padding:0 20px; color:var(--text-2); font-size:13px; }
