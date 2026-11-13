@@ -37,7 +37,9 @@ a.provider+form{margin-top:24px}a.provider:focus-visible{outline:2px solid #e8e9
 """
 
 
-def _page(h, content: str, *, status=200, headers=(), form_origin=None) -> None:
+def _page(
+    h, content: str, *, status=200, headers=(), form_origin=None, referrer_policy="no-referrer"
+) -> None:
     style_hash = base64.b64encode(hashlib.sha256(_CSS.encode()).digest()).decode("ascii")
     form_action = "'self'" + (" " + form_origin if form_origin else "")
     csp = (
@@ -54,6 +56,7 @@ def _page(h, content: str, *, status=200, headers=(), form_origin=None) -> None:
         status,
         html.encode("utf-8"),
         media="text/html; charset=utf-8",
+        referrer_policy=referrer_policy,
         headers=(("Content-Security-Policy", csp), ("X-Frame-Options", "DENY"), *headers),
     )
 
@@ -231,6 +234,11 @@ def _show_authorize(gateway, h, *, status=200):
     if error_url:
         redirect(h, error_url)
         return
+    if "purpose" in parameters:
+        from commonplace.account import person_token
+
+        person_token.authorize(gateway, h, parameters, client)
+        return
     principal = _person(gateway, h)
     session = sessions.cookie_value(h.headers.get("Cookie")) or ""
     browser = _browser_cookie(h) or secrets.token_urlsafe(32)
@@ -362,6 +370,11 @@ def _keep_bots_grants(db, principal, data, granted) -> None:
 
 
 def _submit_authorize(gateway, h):
+    if "purpose" in query(h.path):
+        from commonplace.account import person_token
+
+        person_token.submit(gateway, h)
+        return
     principal = _person(gateway, h)
     if principal is None and not _browser_cookie(h):
         raise OAuthError("invalid_request", "Sign in required", 401)
