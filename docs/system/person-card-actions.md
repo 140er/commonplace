@@ -26,7 +26,7 @@ PKCE consent. Each has its own initially unticked checkbox. The exact strings ar
 - `cards:approve:person`: "Allow this app to approve or reject card proposals and plans as you in this workspace. It can act only on items you may review on the website. Each action records your identity and this app's name. Disconnect this app to stop access."
 - `chat:person`: "Allow this app to read your project chats and send your own messages as you in this workspace. It can reach only chats you may read and write on the website. Each message records your identity and this app's name. Disconnect this app to stop access."
 
-The owner must approve the final capability names and consent strings before merge.
+Approval of the final capability names and consent strings is recorded in the project tracker.
 
 Card actions use protected `POST /api/person/cards/<number>/decide` and
 `.../approve`, require a positive `version` and `Idempotency-Key` (1–128 ASCII
@@ -60,7 +60,12 @@ For phone-capability callers only, every `projects` item keeps `slug`, `name` an
 nullable `orchestrator: {name}`, and gains:
 
 - `status`: `"unused" | "working" | "idle" | "quiet" | null`. This is exactly the recorded connection-activity classifier used by web chat, subject to the same person's console visibility. Missing, invisible or invalid recorded activity is null.
-- `last_message`: `{text: string, at: string, author_kind: "person" | "bot"} | null`. It selects the latest readable shared board message or the current person's private front reply, including visible front notices. Private bot threads are not project chat inputs. `text` is redacted with the feed's redactor, stripped of HTML tags and truncated to 240 Unicode characters; `at` is UTC ISO 8601 ending in `Z`.
+- `last_message`: `{text: string, at: string, author_kind: "person" | "bot"} | null`. It selects the latest readable shared board message or the current person's private front reply, including visible front notices. Private bot threads are not project chat inputs. `text` has HTML tags stripped and character references decoded before the feed's redactor runs; only then is it truncated to at most 240 Unicode characters. A redaction marker crossing the cut is omitted whole. `at` is UTC ISO 8601 ending in `Z`.
+
+The web feed redacts its original text, then the renderer escapes tags and character
+references for literal display. It never strips or decodes them after redaction,
+so it does not reassemble markup-split credentials. Phone previews normalize to
+plain text first and apply the same redactor to that normalized text.
 
 Example (recorded values, not default activity):
 

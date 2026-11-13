@@ -4,3 +4,4 @@
 - **Promises:**
 
   - New codes create new connections and recorded capabilities. Existing clients/tokens gain nothing automatically. Refresh never grants a capability; disconnecting or converting a connection to machinery cuts off the grant. Web session policies and ordinary OAuth principal types remain unchanged.
+  - Machinery conversion revokes stored phone capabilities before parsing the connection policy. Malformed JSON or scope data cannot leave active phone grant rows behind; revocation remains audited and repeatable.

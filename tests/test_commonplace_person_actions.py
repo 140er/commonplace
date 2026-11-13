@@ -532,6 +532,31 @@ def test_bearer_sentinel_is_not_logged(phone, caplog):
     assert pair["refresh_token"] not in caplog.text
 
 
+@pytest.mark.parametrize("policy", ["not-json", "[]", '{"scopes": null}'])
+def test_malformed_policy_still_revokes_stored_phone_grants(phone, policy):
+    pair = grant(phone)
+    app = phone.hub.gateway.authenticate("Bearer " + pair["access_token"])
+    with phone.hub.db._lock:
+        phone.hub.db._conn.execute(
+            "UPDATE connections SET policy=? WHERE id=?", (policy, app.connection_id)
+        )
+    assert phone.hub.db.clear_decide(app.connection_id, reason="machinery conversion") is True
+    with phone.hub.db._lock:
+        rows = phone.hub.db._conn.execute(
+            "SELECT capability,revoked_at FROM oauth_person_grants WHERE connection_id=?",
+            (app.connection_id,),
+        ).fetchall()
+    assert {r["capability"] for r in rows} == set(SCOPES)
+    assert all(r["revoked_at"] is not None for r in rows)
+    audits = [
+        r
+        for r in phone.hub.db.audit_entries()
+        if r["action"] == "person_action.revoke" and r["connection_id"] == app.connection_id
+    ]
+    assert len(audits) == len(SCOPES)
+    assert phone.hub.db.clear_decide(app.connection_id, reason="repeated conversion") is False
+
+
 def test_consent_form_cannot_grant_after_kill_switch(phone, monkeypatch):
     path = phone.authorize_path(phone.cid, redirect_uri="cmmn://auth/callback", scope="memory:read")
     status, _, html = phone.request("GET", path)

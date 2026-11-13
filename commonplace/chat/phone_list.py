@@ -1,7 +1,9 @@
 """Batched, person-filtered chat list metadata, only for consented phone clients."""
 
 import json
+import re
 from datetime import datetime, timezone
+from html import unescape
 from html.parser import HTMLParser
 
 from commonplace import redact
@@ -14,20 +16,32 @@ ACTIVITY_STATES = ("unused", "working", "idle", "quiet")
 
 class _Plain(HTMLParser):
     def __init__(self):
-        super().__init__(convert_charrefs=True)
+        super().__init__(convert_charrefs=False)
         self.parts = []
 
     def handle_data(self, data):
         self.parts.append(data)
 
+    def handle_entityref(self, name):
+        self.parts.append(f"&{name};")
+
+    def handle_charref(self, name):
+        self.parts.append(f"&#{name};")
+
 
 def preview(text):
-    # Apply the feed's exact redactor before truncation, so a split credential
-    # cannot evade redaction. The JSON string contains text, never rendered HTML.
+    # Normalize markup and entities before the feed's redactor can match secrets.
+    # Truncate only the redacted text, keeping a marker whole or omitting it.
     plain = _Plain()
-    plain.feed(redact.redact(text)[0])
+    plain.feed(text)
     plain.close()
-    return "".join(plain.parts)[:PREVIEW_CHARS]
+    clean = redact.redact(unescape("".join(plain.parts)))[0]
+    stop = PREVIEW_CHARS
+    for marker in re.finditer(r"\[(?:redacted|omitted):[a-z_]+\]", clean):
+        if marker.start() < stop < marker.end():
+            stop = marker.start()
+            break
+    return clean[:stop]
 
 
 def _instant(at):

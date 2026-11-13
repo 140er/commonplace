@@ -18,6 +18,9 @@ from tests.test_commonplace_person_actions import (
     phone as phone,
 )
 
+# Deliberately low-entropy synthetic input; matches the display redactor's key shape.
+SYNTHETIC_KEY = "sk-" + "TEST_ONLY_NOT_A_REAL_KEY"
+
 
 def test_mobile_oauth_sign_in_receives_person_chat(hub, monkeypatch):
     """Also runs against the development base, where the GET returns 403."""
@@ -239,7 +242,6 @@ def test_activity_uses_web_chat_classifier(phone, age, expected):
 
 
 def test_previews_are_redacted_plain_bounded_and_use_visible_latest_message(phone, monkeypatch):
-    from commonplace import redact
     from commonplace.chat import store
     from commonplace.chat.phone_list import PREVIEW_CHARS
 
@@ -248,16 +250,13 @@ def test_previews_are_redacted_plain_bounded_and_use_visible_latest_message(phon
     app = phone.hub.db.authenticate_token(phone.hub.owner_token("speaker"))
     monkeypatch.setattr("commonplace.boards.service.now", lambda: "2026-01-01T00:00:00Z")
     message = service(phone.hub, app).space_post(
-        "work", "<b>Latest</b> sk-" + "x" * 48 + " plain " + "z" * 300
+        "work", "<b>Latest</b> " + SYNTHETIC_KEY + " plain " + "z" * 300
     )
     preview = listing(phone, pair)[0]["last_message"]
     assert preview["author_kind"] == "bot" and preview["at"] == "2026-01-01T00:00:00Z"
     assert "<b>" not in preview["text"] and len(preview["text"]) == PREVIEW_CHARS
-    assert "sk-" + "x" * 48 not in preview["text"]
-    assert (
-        redact.redact(message["text"])[0].replace("<b>", "").replace("</b>", "")[:PREVIEW_CHARS]
-        == preview["text"]
-    )
+    assert SYNTHETIC_KEY not in preview["text"]
+    assert preview["text"] == ("Latest [redacted:openai_key] plain " + "z" * 300)[:PREVIEW_CHARS]
     replies = store.open_replies(phone.hub.gateway, phone.hub.workspace)
     monkeypatch.setattr(store, "_stamp", lambda: "2026-01-01T00:00:00.500000+00:00")
     replies.add(
@@ -273,6 +272,45 @@ def test_previews_are_redacted_plain_bounded_and_use_visible_latest_message(phon
     assert listing(phone, pair)[0]["last_message"]["text"] == "My private answer"
     # Fractional times compare as instants, not as mixed UTC string formats.
     assert listing(phone, pair)[0]["last_message"]["at"] == "2026-01-01T00:00:00.500000Z"
+
+
+@pytest.mark.parametrize("source", ["board", "reply"])
+@pytest.mark.parametrize("shape", ["tag", "entity", "cut"])
+def test_preview_normalizes_before_redaction_and_keeps_cut_marker_whole(phone, source, shape):
+    from commonplace import redact
+    from commonplace.chat import store
+    from commonplace.chat.phone_list import PREVIEW_CHARS
+
+    marker = "[redacted:openai_key]"
+    assert redact.redact(SYNTHETIC_KEY) == (marker, ["openai_key"])
+    if shape == "tag":
+        text, expected = SYNTHETIC_KEY[:3] + "<i></i>" + SYNTHETIC_KEY[3:], marker
+    elif shape == "entity":
+        text, expected = "s&#107;" + SYNTHETIC_KEY[2:], marker
+    else:
+        prefix = "p" * (PREVIEW_CHARS - 10) + " "
+        text, expected = prefix + SYNTHETIC_KEY, prefix
+        assert len(prefix) < PREVIEW_CHARS < len(text)
+        assert len(prefix) < PREVIEW_CHARS < len(prefix + marker)
+
+    pair = grant(phone, capabilities=[CHAT])
+    app = phone.hub.db.authenticate_token(phone.hub.owner_token("speaker"))
+    message = service(phone.hub, app).space_post("work", text if source == "board" else "Seed")
+    if source == "reply":
+        store.open_replies(phone.hub.gateway, phone.hub.workspace).add(
+            board="work",
+            message_id=message["id"],
+            for_user=phone.hub.admin,
+            kind="answer",
+            code="ok",
+            text=text,
+            redacted=(),
+            model=None,
+        )
+    preview = listing(phone, pair)[0]["last_message"]["text"]
+    assert preview == expected
+    assert SYNTHETIC_KEY not in preview and "TEST_ONLY_NOT_A_REAL_KEY" not in preview
+    assert len(preview) <= PREVIEW_CHARS
 
 
 def test_hidden_project_other_person_reply_and_private_thread_do_not_change_list(phone):
