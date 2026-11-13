@@ -377,7 +377,7 @@ test("RED dialog: project creation is a labelled dialog and sign-in uses the app
   assert.match(html, /aria-labelledby="create-project-heading"/);
   assert.match(html, /id="create-project-heading">Create your first project/);
   const signin = signinView({});
-  for (const selector of ['class="auth-l"', 'class="auth-r"', 'What happens next', 'Agent', 'Orchestrator']) assert.ok(signin.includes(selector));
+  for (const selector of ['class="auth-l"', 'class="auth-r"', 'What happens next', 'Agent', 'Coworker']) assert.ok(signin.includes(selector));
   assert.doesNotMatch(signin, /Create your workspace|Your name/);
   const expired = signinView({ error: signinMessage("expired") });
   assert.match(expired, /<h1>Get a new link<\/h1>/);

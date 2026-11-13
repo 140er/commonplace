@@ -14,7 +14,7 @@ const label = (value) => value ? value[0].toUpperCase() + value.slice(1) : "—"
 
 export function detailsAuthor(ref, board = {}) {
   if (!ref) return "";
-  if (ref === board.coordinator) return `${board.name || board.slug} orchestrator`;
+  if (ref === board.coordinator) return `${board.name || board.slug} Coworker`;
   return String(ref).startsWith("conn:") ? `${actor(ref)} (agent)` : actor(ref);
 }
 

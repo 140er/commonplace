@@ -72,7 +72,7 @@ test("model fields cover the four roles and the escalation rule picks from the w
   const owner = { ...project, can_configure: true, escalation: rule, model_catalog: [other, strong] };
   const html = ui.modelsHTML(owner, e);
   for (const role of ["main", "worker", "reviewer", "gate"]) assert.match(html, new RegExp(`<select name="${role}_model"`));
-  for (const label of ["Orchestrator", "Builder", "Reviewer", "Gate"]) assert.match(html, new RegExp(label));
+  for (const label of ["Coworker", "Builder", "Reviewer", "Gate"]) assert.match(html, new RegExp(label));
   // One picker for the rule, built from the same list; no free-text provider or model field for it.
   assert.match(html, /<select name="escalation_model"/);
   assert.doesNotMatch(html, /name="escalation_provider"/);

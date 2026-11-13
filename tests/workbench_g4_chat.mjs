@@ -43,7 +43,7 @@ const item = (html, id) => {
 const unescape = (value) => value?.replace(/&(amp|lt|gt|quot|#39);/g, (_, name) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[name]);
 const srcOf = (html, number) => unescape(html.match(new RegExp(`data-chat-card="${number}"[^>]*data-src="([^"]*)"`))?.[1]);
 
-test("request rows sit under the orchestrator's answer and name it", async () => {
+test("request rows sit under the Coworker's answer and name it", async () => {
   const { chatHTML } = await chatModule();
   const html = chatHTML(page(), ME, e);
   const answer = item(html, 3), request = item(html, 2);
@@ -51,8 +51,8 @@ test("request rows sit under the orchestrator's answer and name it", async () =>
   assert.match(answer, /data-chat-card="134"/);
   assert.match(answer, /data-chat-card="135"/);
   assert.doesNotMatch(request, /data-chat-card="13[45]"/, "the request item no longer repeats them");
-  assert.equal(srcOf(html, 134), `the orchestrator's ${local(ANSWER_AT)} answer`);
-  assert.equal(srcOf(html, 135), `the orchestrator's ${local(ANSWER_AT)} answer`);
+  assert.equal(srcOf(html, 134), `the Coworker's ${local(ANSWER_AT)} answer`);
+  assert.equal(srcOf(html, 135), `the Coworker's ${local(ANSWER_AT)} answer`);
 });
 
 test("an unanswered request keeps its rows and names the person's message", async () => {
@@ -247,8 +247,8 @@ test("the dock shows the chat's status line under its heading", async () => {
   assert.ok(line, "a status line under the heading");
   assert.equal(typeof f.chat.header, "function", "the dock listens for the chat's status");
   assert.equal(line.hidden, true, "empty until the chat knows");
-  f.chat.header("Orchestrator connected");
-  assert.equal(line.textContent, "Orchestrator connected");
+  f.chat.header("Coworker connected");
+  assert.equal(line.textContent, "Coworker connected");
   assert.equal(line.hidden, false);
   assert.equal(f.shell.querySelector("#chat-h").textContent, "Atlas chat", "the heading keeps only the name");
 });
