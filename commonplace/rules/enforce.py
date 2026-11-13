@@ -13,7 +13,7 @@ from .store import rules_sequence
 
 CHECKED_WRITES = frozenset(
     "task_add task_update task_comment task_take_next task_handoff ask space_post "
-    "board_own_wing board_add memory_save memory_link fact_save handoff_start decide board_set rules_publish "
+    "board_own_wing board_add space_add space_set space_own_wing memory_save memory_link fact_save handoff_start decide board_set rules_publish "
     "task_approve task_snooze task_unsnooze card_split_done facts_import card_start card_start_cancel card_start_resolve "
     "orch_config_propose orch_config_accept orch_config_write orch_config_reject "
     "orch_exp_retire orch_restore_ack orch_resume orch_force_release orch_card_start "
@@ -71,6 +71,8 @@ REST_ROUTES = (
     ),
     RestRoute("projects.panel_routes", "PUT", "/api/projects/<slug>/panel", "project_panel_set"),
     RestRoute("boards.rest", "POST", "/api/spaces", "board_add"),
+    RestRoute("boards.rest", "POST", "/api/spaces/<slug>/cards", "task_add"),
+    RestRoute("boards.rest", "POST", "/api/spaces/<slug>/chat", "space_post"),
     RestRoute("boards.rest", "PATCH", "/api/cards/<n>", "task_update"),
     RestRoute("boards.rest", "POST", "/api/cards/<n>/comments", "task_comment"),
     RestRoute("boards.rest", "POST", "/api/cards/<n>/handoff", "task_handoff"),

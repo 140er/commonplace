@@ -52,6 +52,7 @@
 
   - Live-sync and capture instructions document the generic `agent-log` source for agents without a native transcript.
   - Public Space endpoint and error documentation alongside legacy board routes.
+  - `docs/spaces.md` and the API and contract tables document the Space routes, space-named tools and what is deferred.
   - `docs/design/RULES.md` documents the `rules_feedback` tool, its limits and its evidence routes.
 
   - `docs/boards/API.md` describes structured decision blocks: the `{label, detail, preview}` option shape, its bounds, and the `ask_blocks` card field; `docs/boards/schema.sql` lists the column.

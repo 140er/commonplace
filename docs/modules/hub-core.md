@@ -9,6 +9,8 @@
   - `ControlDB(path, compute_config=...)` accepts trusted Compute startup configuration; its transaction wrapper holds the compute coordinator lock across the whole transaction, and without configuration behavior is unchanged.
 
   - Canonical Space REST aliases mapped to existing board tool authority.
+  - Space tool names (`space_list`, `space_add`, `space_set`, `space_own_wing`) resolve to the board tools through `policy.TOOL_ALIASES`; a connection that lists either name of a pair holds both, so an alias never widens authority.
+  - Space cards and chat routes (`/api/spaces/<slug>/cards` and `/chat`) map to the existing task and chat tool gates.
 
   - `extensions.MODULES` mounts `commonplace.topology` (its `install` is the proposal surface's), and `_rest_tool` maps `POST /api/topology/proposals` to `topology_propose`, so the route shares the tool's visibility gate.
 
@@ -90,6 +92,7 @@
   - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
   - Supported Space routes pass the existing non-person tool visibility gate.
+  - The space-named tools keep each board tool's scope, trust, owner and profile rules; Space cards and chat routes pass the matching tool gate before any handler runs.
   - Gateway installation registers project reports without resolving workspace directories; the webhook worker recovers existing sources on its first scan and drives independent monotonic deadlines without adding authority or holding database locks during report HTTP.
 
   - Authenticated wing lists and search fan-out share the complete authorized pair projection. Hidden-only wings affect neither wings_searched nor the fan-out denial count; internal consumers inherit the same listing.
