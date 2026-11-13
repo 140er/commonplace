@@ -35,6 +35,14 @@ return their original receipt; changed arguments with the same key return 409.
 Receipts and card changes commit together. Current bearer, capability binding and
 card visibility checks apply to retries.
 
+Chat, decide and approve enter the shared checked REST write wrapper with the
+current person's context before the board operation. Its existing person rule
+policy remains unchanged. The wrapper emits one `tool.call` row with OAuth
+connection and client attribution before the board commit; audit failure rolls
+back the write. The existing checked `space_post` inventory entry covers both
+chat implementations through one method dispatch. Inventory count and
+unique-route assertions remain unchanged.
+
 The chat contract is:
 
 | Route | Consented phone | Ordinary OAuth | Web session |

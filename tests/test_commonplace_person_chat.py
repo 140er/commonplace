@@ -380,6 +380,57 @@ def test_chat_audit_failure_rolls_back_person_message(phone, monkeypatch):
     assert phone.owner.space_read("work")["messages"] == []
 
 
+@pytest.mark.parametrize("denied", [False, True])
+def test_phone_chat_uses_checked_rest_write_before_mutation(phone, monkeypatch, denied):
+    from commonplace.person_actions import PersonCardService
+    from commonplace.rules import enforce
+
+    pair = grant(phone, capabilities=[CHAT])
+    checked = []
+    posted = []
+    original = enforce.check
+    original_post = PersonCardService.space_post
+
+    def check(ctx, tool, supplied):
+        checked.append((ctx.principal.person, ctx.principal.user_id, tool, supplied))
+        return (
+            enforce.Check("test refusal", "Refresh required", True)
+            if denied
+            else original(ctx, tool, supplied)
+        )
+
+    def post(service, *args, **kwargs):
+        assert checked
+        posted.append(True)
+        return original_post(service, *args, **kwargs)
+
+    monkeypatch.setattr(enforce, "check", check)
+    monkeypatch.setattr(PersonCardService, "space_post", post)
+    status, result = api(
+        phone.hub,
+        {"Authorization": "Bearer " + pair["access_token"], "Commonplace-Rules-Seq": "7"},
+        "POST",
+        "/api/boards/work/chat",
+        {"text": "Checked message"},
+    )
+    assert status == (428 if denied else 201), result
+    assert checked == [(True, phone.hub.admin, "space_post", "7")]
+    assert len(posted) == (0 if denied else 1)
+    messages = phone.owner.space_read("work")["messages"]
+    assert len(messages) == (0 if denied else 1)
+    rows = [
+        r
+        for r in phone.hub.db.audit_entries()
+        if r["action"] == "tool.call" and r["tool"] == "space_post"
+    ]
+    app = phone.hub.gateway.authenticate("Bearer " + pair["access_token"])
+    assert len(rows) == 1
+    assert rows[0]["decision"] == ("deny" if denied else "ok")
+    assert rows[0]["user_id"] == phone.hub.admin
+    assert rows[0]["connection_id"] == app.connection_id and rows[0]["auth"] == "oauth"
+    assert "Mobile client" in rows[0]["reason"] and "transport=rest" in rows[0]["reason"]
+
+
 def test_chat_post_cannot_choose_another_author(phone):
     pair = grant(phone, capabilities=[CHAT])
     status, _ = api(

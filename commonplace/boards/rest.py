@@ -166,7 +166,7 @@ def _space_route(service, h, parts, method):
     elif len(parts) == 3 and parts[2] == "chat":
         tool = {"GET": "space_read", "POST": "space_post"}.get(method)
     if tool:
-        if parts[0] == "boards" and parts[2:] == ["chat"] and method == "POST":
+        if tool == "space_post" and parts[0] == "boards":
             from commonplace import person_actions
 
             if person_actions.chat_person(service.ctx.gateway, h) is not None:

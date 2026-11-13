@@ -260,22 +260,23 @@ def post_chat(gateway, h, board, body):
                 gateway, h, CHAT_CAPABILITY, conn
             )
             service.ctx = ToolContext(principal=service.principal, gateway=gateway)
-            service._action_conn = conn
-            try:
-                result = service.space_post(board, body["text"])
-            finally:
-                service._action_conn = None
-            audit_seq = gateway.db.audit(
-                action="tool.call",
-                decision="ok",
-                workspace_id=person.workspace_id,
-                user_id=person.user_id,
-                connection_id=service.app.connection_id,
-                auth="oauth",
-                tool="space_post",
-                reason=json.dumps(service.origin),
-                target_ids=[str(result["id"])],
-            )
+            targets = []
+            with rest.rest_write(
+                service.ctx,
+                h,
+                "space_post",
+                body,
+                audit_principal=service.app,
+                audit_reason=json.dumps(service.origin),
+                target_ids=targets,
+            ) as logged:
+                service._action_conn = conn
+                try:
+                    result = service.space_post(board, body["text"])
+                    targets.append(str(result["id"]))
+                finally:
+                    service._action_conn = None
+            audit_seq = logged.seq
         return result
     except BaseException:
         if audit_seq is not None:
@@ -342,40 +343,39 @@ class PersonCardService(BoardService):
                     ):
                         raise HTTPError(409, "idempotency key already used")
                     return json.loads(saved["response"])
-                self._action_conn = conn
-                try:
-                    result = (
-                        self.decide(task, **body)
-                        if action == "decide"
-                        else self.task_approve(task, **body)
-                    )
-                finally:
-                    self._action_conn = None
-                conn.execute(
-                    "INSERT INTO person_card_receipts "
-                    "(connection_id,user_id,client_id,request_hash,payload_hash,task_id,response) "
-                    "VALUES (?,?,?,?,?,?,?)",
-                    (
-                        self.app.connection_id,
-                        self.principal.user_id,
-                        self.origin["client_id"],
-                        request_hash,
-                        payload_hash,
-                        task,
-                        json.dumps(result),
-                    ),
-                )
-                audit_seq = gateway.db.audit(
-                    action="tool.call",
-                    decision="ok",
-                    workspace_id=self.principal.workspace_id,
-                    user_id=self.principal.user_id,
-                    connection_id=self.app.connection_id,
-                    auth="oauth",
-                    tool="task_approve" if action == "approve" else action,
+                with rest.rest_write(
+                    self.ctx,
+                    h,
+                    "task_approve" if action == "approve" else action,
+                    body,
+                    audit_principal=self.app,
+                    audit_reason=json.dumps(self.origin),
                     target_ids=[str(task)],
-                    reason=json.dumps(self.origin),
-                )
+                ) as logged:
+                    self._action_conn = conn
+                    try:
+                        result = (
+                            self.decide(task, **body)
+                            if action == "decide"
+                            else self.task_approve(task, **body)
+                        )
+                    finally:
+                        self._action_conn = None
+                    conn.execute(
+                        "INSERT INTO person_card_receipts "
+                        "(connection_id,user_id,client_id,request_hash,payload_hash,task_id,response) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        (
+                            self.app.connection_id,
+                            self.principal.user_id,
+                            self.origin["client_id"],
+                            request_hash,
+                            payload_hash,
+                            task,
+                            json.dumps(result),
+                        ),
+                    )
+                audit_seq = logged.seq
             return result
         except BaseException:
             if audit_seq is not None:

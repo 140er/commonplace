@@ -475,6 +475,56 @@ def test_audit_failure_rolls_back_decision_and_receipt(phone, monkeypatch):
     assert call(phone, pair, card)[0] == 200
 
 
+@pytest.mark.parametrize("action", ["decide", "approve"])
+@pytest.mark.parametrize("denied", [False, True])
+def test_phone_card_uses_checked_rest_write_before_mutation(phone, monkeypatch, action, denied):
+    from commonplace.person_actions import PersonCardService
+    from commonplace.rules import enforce
+
+    pair = grant(phone)
+    card = ask(phone) if action == "decide" else make_proposal(phone)
+    body = {
+        "version": card["version"],
+        **({"reply": "Proceed"} if action == "decide" else {"approve": True}),
+    }
+    checked = []
+    changed = []
+    original = enforce.check
+    tool = "decide" if action == "decide" else "task_approve"
+    original_action = getattr(PersonCardService, tool)
+
+    def check(ctx, tool, supplied):
+        checked.append((ctx.principal.person, ctx.principal.user_id, tool, supplied))
+        return (
+            enforce.Check("test refusal", "Refresh required", True)
+            if denied
+            else original(ctx, tool, supplied)
+        )
+
+    def perform(service, *args, **kwargs):
+        assert checked
+        changed.append(True)
+        return original_action(service, *args, **kwargs)
+
+    monkeypatch.setattr(enforce, "check", check)
+    monkeypatch.setattr(PersonCardService, tool, perform)
+    status, result = call(phone, pair, card, action, body, **{"Commonplace-Rules-Seq": "7"})
+    assert status == (428 if denied else 200), result
+    assert checked == [(True, phone.hub.admin, tool, "7")]
+    assert len(changed) == (0 if denied else 1)
+    if denied:
+        assert phone.owner.task_show(card["number"])["version"] == card["version"]
+    rows = [
+        r for r in phone.hub.db.audit_entries() if r["action"] == "tool.call" and r["tool"] == tool
+    ]
+    app = phone.hub.gateway.authenticate("Bearer " + pair["access_token"])
+    assert len(rows) == 1
+    assert rows[0]["decision"] == ("deny" if denied else "ok")
+    assert rows[0]["user_id"] == phone.hub.admin
+    assert rows[0]["connection_id"] == app.connection_id and rows[0]["auth"] == "oauth"
+    assert "Mobile client" in rows[0]["reason"] and "transport=rest" in rows[0]["reason"]
+
+
 def test_bearer_sentinel_is_not_logged(phone, caplog):
     pair = grant(phone)
     assert call(phone, pair, ask(phone))[0] == 200

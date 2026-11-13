@@ -89,7 +89,14 @@ REST_ROUTES = (
     RestRoute("boards.rest", "POST", "/api/boards/<slug>/cards", "task_add"),
     RestRoute("boards.rest", "POST", "/api/boards", "board_add"),
     RestRoute("boards.rest", "PATCH", "/api/boards/<slug>", "board_set"),
-    RestRoute("boards.rest", "POST", "/api/boards/<slug>/chat", "space_post"),
+    RestRoute(
+        "boards.rest",
+        "POST",
+        "/api/boards/<slug>/chat",
+        "space_post",
+        "checked",
+        "Both connection replies and consented person messages use the checked write path.",
+    ),
     RestRoute("topology.proposal_api", "POST", "/api/topology/proposals", "topology_propose"),
     RestRoute("memory_tools", "POST", "/api/memory", "memory_save"),
     RestRoute("memory_tools", "POST", "/api/facts", "fact_save"),
@@ -248,7 +255,7 @@ def audit(db, principal, tool, decision, reason="", *, transport="mcp", **kwargs
     if reason.startswith("rules_seq ") or transport == "rest":
         reason += ("; " if reason else "") + "transport=" + transport
     with db._lock:
-        db.audit(
+        seq = db.audit(
             action="tool.call",
             decision=decision,
             workspace_id=principal.workspace_id,
@@ -260,7 +267,7 @@ def audit(db, principal, tool, decision, reason="", *, transport="mcp", **kwargs
             **kwargs,
         )
         if not reason.startswith("rules_seq unchecked"):
-            return
+            return seq
         since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         count = db._conn.execute(
             "SELECT count(*) FROM audit_log WHERE workspace_id=? AND connection_id=? "
@@ -285,6 +292,7 @@ def audit(db, principal, tool, decision, reason="", *, transport="mcp", **kwargs
             event = None
     if event is not None:
         events.notify(event)
+    return seq
 
 
 class RulesRefresh(Exception):
@@ -293,26 +301,47 @@ class RulesRefresh(Exception):
         super().__init__(text)
 
 
+@dataclass
+class RestWriteAudit:
+    seq: int | None = None
+
+
 @contextmanager
-def rest_write(ctx, handler, tool, body):
+def rest_write(ctx, handler, tool, body, *, audit_principal=None, audit_reason="", target_ids=None):
+    """Check the operation's principal; optional attribution never changes its authority."""
     body.pop("rules_seq", None)
     exempt = tool in EXEMPT_WRITES or (
         tool == "task_update" and body.keys() == {"version", "callstack"}
     )
     outcome = Check() if exempt else check(ctx, tool, handler.headers.get("Commonplace-Rules-Seq"))
+    principal = ctx.principal if audit_principal is None else audit_principal
+    reason = "; ".join(part for part in (outcome.reason, audit_reason) if part)
+
+    def record(decision):
+        return audit(
+            ctx.db,
+            principal,
+            tool,
+            decision,
+            reason,
+            transport="rest",
+            **({"target_ids": target_ids} if target_ids is not None else {}),
+        )
+
     if outcome.denied:
-        audit(ctx.db, ctx.principal, tool, "deny", outcome.reason, transport="rest")
+        record("deny")
         raise RulesRefresh(outcome.notice)
     if outcome.notice:
         handler._rules_notice = outcome.notice
     completed = False
+    logged = RestWriteAudit()
     try:
-        yield
+        yield logged
     except Exception:
-        audit(ctx.db, ctx.principal, tool, "deny", outcome.reason, transport="rest")
+        record("deny")
         raise
     else:
-        audit(ctx.db, ctx.principal, tool, "ok", outcome.reason, transport="rest")
+        logged.seq = record("ok")
         completed = True
     finally:
         if not completed:
