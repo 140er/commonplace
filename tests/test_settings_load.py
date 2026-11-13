@@ -94,7 +94,7 @@ const context = {
     assert.notEqual(value, undefined, `Unexpected request: ${url}`);
     return Promise.resolve({ status: 200, ok: true, json: async () => value });
   },
-  state: { me: { actor: 'user:reader' }, base: '#/settings', route: '#/settings', screen: 1, refreshRequest: 0 },
+  state: { me: { actor: 'user:reader', can_admin: true }, base: '#/settings', route: '#/settings', screen: 1, refreshRequest: 0 },
   root: { querySelector: selector => selector === '#content' ? content : null },
   remember: () => ({}), restore() {}, capture: () => () => {}, navigation() {}, title() {},
   showError(value) { screenError = value; },

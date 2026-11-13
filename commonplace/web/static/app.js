@@ -1091,15 +1091,17 @@ async function refresh({ background = false, events = [] } = {}) {
   const epoch = state.screen, request = ++state.refreshRequest;
   if (!background) state.renderPending = epoch;
   const current = () => epoch === state.screen && request === state.refreshRequest;
-  const read = (path) => api(path, state.base === "#/settings" ? { timeoutMs: 10000 } : {}).catch((error) => {
+  const read = (path, options = {}) => api(path, { ...options, ...(state.base === "#/settings" ? { timeoutMs: 10000 } : {}) }).catch((error) => {
     if (state.base === "#/settings") throw new Error(`Could not load ${path}: ${error.message}`);
     throw error;
   });
   try {
     // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
-    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), read("/api/needs-me"), read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
+    // The owner queue is not a prerequisite for a member's workspace screens.
+    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : null;
+    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
-    state.boards = boards.boards; state.needs = needs;
+    state.boards = boards.boards; state.needs = needs || { count: 0 };
     if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
