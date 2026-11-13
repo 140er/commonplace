@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const { DISCOVERY_PATH, discoveryAction, discoveryLines, startDiscovery } = await import("../commonplace/web/static/topology-discovery.js");
+const { DISCOVERY_PATH, discoveryAction, discoveryLines, startDiscovery } = await import("../commonplace/web/static/map-discovery.js");
 const read = (name) => readFile(new URL(`../commonplace/web/static/${name}`, import.meta.url), "utf8");
 
 const RESULT = {

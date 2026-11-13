@@ -1,6 +1,6 @@
 import { escape as e } from './api.js';
 import { MAP_PATH, createTopologyMap, mapModel } from './topology-map.js';
-import { discoveryAction } from './topology-discovery.js';
+import { discoveryAction } from './map-discovery.js';
 
 export const TITLE = 'Compute';
 const HUB = 'commonplace-hub';

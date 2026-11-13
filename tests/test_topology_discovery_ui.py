@@ -8,7 +8,7 @@ STATIC = Path(__file__).resolve().parents[1] / "commonplace/web/static"
 
 
 def test_topology_discovery_ui():
-    assert (STATIC / "topology-discovery.js").exists()
+    assert (STATIC / "map-discovery.js").exists()
     node = shutil.which("node")
     assert node, "Node is required for the Compute map checks"
     result = subprocess.run(
