@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - `tests/test_runner_enrollment.py` and the explicit unavailable/code-only entries in the installed public HTTP route inventory.
+  - `tests/test_runner_enrollment.py` and the explicit unavailable/code-only entries in the installed public HTTP route inventory. The shared `PIN_PUBLIC` in `tests/test_console_guards.py`, also used by the chat, relay, project and project-wing guards, names exactly the two bootstrap POST routes: single-use code exchange and bound-key challenge recovery; set equality stays strict.
 
 - **Promises:**
 

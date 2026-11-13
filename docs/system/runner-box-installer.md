@@ -23,6 +23,13 @@
   requires an RSA-PSS-SHA256 signature over `<action>:<challenge>`; recovery returns
   the original RSA-OAEP-SHA256/AES-256-GCM ciphertext within ten minutes, without
   issuing another machine or credential. Acknowledgement and expiry erase it.
+- **M:** Only the exact exchange and recovery POST paths permit requests without
+  a session or bearer credential: exchange authenticates the single-use code, and
+  recovery authenticates the bound key through a single-use server challenge.
+  Machine credentials cannot be required before their first delivery or after
+  that response is lost. Both paths return 404 for disabled setup. The shared
+  public-route set used by five boundary guards explicitly names both paths,
+  with no wildcard or prefix exception and strict set equality retained.
 - **M:** Enabled-workspace bootstrap attempts have durable per-operation counters
   and a ten-attempt/minute ceiling. Invalid, expired and replayed codes share a
   refusal body; audit records ids and fixed outcomes. Disabling setup invalidates

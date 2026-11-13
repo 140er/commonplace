@@ -73,6 +73,7 @@ EXACT = {
     ("GET", "/api/runners/install-settings"): "unavailable",
     ("PUT", "/api/runners/install-settings"): "unavailable",
     ("POST", "/api/runners/enrollments"): "unavailable",
+    # Code-authenticated, single-use bootstrap; recovery requires a bound-key challenge.
     ("POST", "/api/runner-enrollment/exchange"): "bootstrap",
     ("POST", "/api/runner-enrollment/recover"): "bootstrap",
     # Machine runner (commonplace/runner), inert until an owner attests.

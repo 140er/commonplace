@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - The system note distinguishes enrollment and private credential recovery from later installation, approval and execution slices; opt-in never means agent-ready.
+  - The system note distinguishes enrollment and private credential recovery from later installation, approval and execution slices; opt-in never means agent-ready. Its transport boundary names exactly the code-authenticated exchange and key-authenticated recovery POST routes, unavailable to off workspaces.
 
 - **Tests:**
 
