@@ -707,6 +707,8 @@ export function createBots({
       s.turn = null;
       repaintAll();
       scheduleThread(generation);
+      // Stream acknowledgements omit author names; the existing thread read supplies them.
+      if (deck() && s.threadId) await reloadTail();
       void pollThread(generation);
       void loadRoster(generation);
     } catch (error) {
