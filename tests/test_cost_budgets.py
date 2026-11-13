@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from commonplace.runner import budgets, costs
 from mempalace.sqlite_crypto import connect, row_factory
 from tests.runner_harness import (
     card,
@@ -213,6 +212,8 @@ def test_unknown_cost_and_other_currency_runs_do_not_count(two_projects):
 
 
 def test_the_window_rolling_over_resets_spend_and_warns_again(two_projects):
+    from commonplace.runner import budgets, costs
+
     hub, owner, machine = two_projects
     _put(hub, owner, "project", "demo", 1000)
     _, job = _started(hub, owner, machine)
@@ -423,6 +424,8 @@ def test_a_workspace_that_never_ran_anything_is_not_given_a_store(signup_hub, ow
 
 
 def test_budget_tables_are_plain_and_reopen_cleanly(two_projects):
+    from commonplace.runner import budgets
+
     hub, owner, machine = two_projects
     _put(hub, owner, "workspace", None, 1000)
     conn = connect(
