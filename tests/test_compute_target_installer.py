@@ -128,6 +128,8 @@ def expected_paths():
         "etc/systemd/system",
         "etc/systemd/system/" + SCRATCH_UNIT,
         "etc/systemd/system/" + RUNTIME_UNIT,
+        "run",
+        "run/sshd",
         "opt",
         "opt/commonplace-compute",
         "opt/commonplace-compute/runtime",
@@ -309,7 +311,7 @@ def test_live_host_commands_and_unit_content(root, runtime):
     assert ("systemctl", "enable", "--now", SCRATCH_UNIT) in names
     assert ("systemctl", "enable", "--now", RUNTIME_UNIT) in names
     assert ("sshd", "-t") in host.commands
-    assert ("systemctl", "reload", "ssh.service") in names
+    assert ("systemctl", "try-reload-or-restart", "ssh.service") in names
     scratch = (root / "etc/systemd/system" / SCRATCH_UNIT).read_text()
     assert "Type=tmpfs" in scratch
     assert "Options=mode=0700,uid=1234,gid=1234,size=32M,nr_inodes=4096,nosuid,nodev" in scratch
@@ -345,6 +347,108 @@ class LiveStub(install.StagedHost):
     def chown(self, path, uid, gid):
         self.chowns.append((str(path), uid, gid))
         self.owned.add(str(path))
+
+
+class SocketActivatedHost(LiveStub):
+    """A socket listener without a running daemon; every command stays in this fake."""
+
+    sshd_effective_config = install.LiveHost.sshd_effective_config
+
+    def __init__(self, root, monkeypatch, *, service_active=False):
+        super().__init__()
+        self.root = root
+        self.socket_active = True
+        self.service_active = service_active
+        self.validations = []
+        self.reloads = []
+        monkeypatch.setattr(install, "_host_run", self.execute)
+
+    def run(self, argv):
+        self.execute(argv)
+
+    def execute(self, argv, timeout=30):
+        argv = tuple(argv)
+        self.commands.append(argv)
+        if argv[:1] == ("sshd",):
+            directory = self.root / "run/sshd"
+            if not directory.is_dir():
+                raise install.InstallError("Missing privilege separation directory: /run/sshd")
+            assert stat.S_IMODE(directory.stat().st_mode) == 0o755
+            self.validations.append(argv)
+            return "permituserenvironment no\n"
+        if (
+            argv[:2]
+            in (
+                ("systemctl", "reload"),
+                ("systemctl", "try-reload-or-restart"),
+            )
+            and argv[-1] == "ssh.service"
+        ):
+            # Removal of the drop-in must be applied before the manifest goes away.
+            assert (self.root / install.MANIFEST_PATH.lstrip("/")).is_file()
+            if self.service_active:
+                assert (self.root / "run/sshd").is_dir()
+            self.reloads.append(self.service_active)
+            if argv[1] == "reload" and not self.service_active:
+                raise install.InstallError("ssh.service is not active, cannot reload")
+        return ""
+
+
+def test_socket_activated_plan_lists_runtime_validation_and_reload(
+    root, runtime, monkeypatch, capsys
+):
+    host = SocketActivatedHost(root, monkeypatch)
+    before = snapshot(root)
+    assert run(root, "plan", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 0
+    text = capsys.readouterr().out
+    assert "/run/sshd" in text
+    assert text.index("/run/sshd") < text.index("sshd -T")
+    assert "sshd -t" in text and "try-reload-or-restart" in text
+    assert snapshot(root) == before and host.commands == []
+
+
+@pytest.mark.parametrize("existing_directory", [False, True])
+@pytest.mark.parametrize("service_active", [False, True])
+def test_socket_activated_install_converges_and_uninstall_restores(
+    root, runtime, monkeypatch, capsys, existing_directory, service_active
+):
+    directory = root / "run/sshd"
+    if existing_directory:
+        directory.mkdir(parents=True, mode=0o755)
+    initial = snapshot(root, mtimes=False)
+    host = SocketActivatedHost(root, monkeypatch, service_active=service_active)
+    installed(root, runtime, host=host)
+    assert host.socket_active and host.service_active == service_active
+    assert host.validations == [("sshd", "-T"), ("sshd", "-t")]
+    assert host.reloads == [service_active]
+    assert ("systemctl", "reload", "ssh.service") not in host.commands
+    manifest_path = root / install.MANIFEST_PATH.lstrip("/")
+    items = json.loads(manifest_path.read_text())["items"]
+    assert any(i.get("path") == "/run/sshd" for i in items) is not existing_directory
+
+    before, commands = snapshot(root), list(host.commands)
+    capsys.readouterr()
+    assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 0
+    assert "already installed; nothing to do" in capsys.readouterr().out
+    assert snapshot(root) == before
+    # Read-only effective-config validation is allowed; no mutating command is repeated.
+    assert host.commands[len(commands) :] == [("sshd", "-T")]
+
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert snapshot(root, mtimes=False) == initial
+    assert not manifest_path.exists()
+    assert host.reloads == [service_active, service_active]
+    assert host.socket_active and host.service_active == service_active
+    assert ("systemctl", "reload", "ssh.service") not in host.commands
+
+
+def test_socket_activated_uninstall_handles_an_existing_install(root, runtime, monkeypatch):
+    # An earlier install may have succeeded while ssh.service was running.
+    installed(root, runtime)
+    host = SocketActivatedHost(root, monkeypatch)
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert host.reloads == [False]
+    assert not (root / install.MANIFEST_PATH.lstrip("/")).exists()
 
 
 def test_second_install_is_a_noop(root, runtime, capsys):
@@ -395,7 +499,7 @@ def test_uninstall_stops_units_and_reloads_sshd(root, runtime):
     assert run(root, "uninstall", runtime, host=host) == 0
     assert ("systemctl", "disable", "--now", RUNTIME_UNIT) in host.commands
     assert ("systemctl", "disable", "--now", SCRATCH_UNIT) in host.commands
-    assert ("systemctl", "reload", "ssh.service") in host.commands
+    assert ("systemctl", "try-reload-or-restart", "ssh.service") in host.commands
     assert host.commands.index(
         ("systemctl", "disable", "--now", RUNTIME_UNIT)
     ) < host.commands.index(("userdel", "commonplace-compute"))
@@ -613,7 +717,7 @@ def test_failed_sshd_validation_rolls_back_the_dropin(root, runtime, capsys):
     code = run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host)
     assert code == 1
     assert not (root / "etc/ssh/sshd_config.d/60-commonplace-compute.conf").exists()
-    assert ("systemctl", "reload", "ssh.service") not in host.commands
+    assert ("systemctl", "try-reload-or-restart", "ssh.service") not in host.commands
     assert not (root / "etc/commonplace/compute-script-target-v1.json").exists()
 
 
@@ -780,10 +884,16 @@ def test_global_permit_user_environment_must_be_no(root, runtime, capsys, effect
             return effective
 
     host = Effective()
-    before = snapshot(root)
+    before = snapshot(root, mtimes=False)
     assert run(root, "install", runtime, *IDENTITY, "--controller-key", KEY, host=host) == 1
     assert "PermitUserEnvironment" in capsys.readouterr().err
-    assert snapshot(root) == before and host.commands == []
+    # Runtime preparation must precede sshd -T, but an unsafe config still stops
+    # before creating an account or provisioning the target. Preparation is reversible.
+    assert host.commands == []
+    assert not (root / "var").exists() and not (root / "opt").exists()
+    assert not (root / TARGET_CONFIG_PATH.lstrip("/")).exists()
+    assert run(root, "uninstall", runtime, host=host) == 0
+    assert snapshot(root, mtimes=False) == before
 
 
 def test_global_permit_user_environment_no_is_accepted(root, runtime):
