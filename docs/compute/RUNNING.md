@@ -102,7 +102,8 @@ variables and the user site directory, and an absolute interpreter path avoids a
 location the helper imports, so that package must be the trusted one, not an editable
 checkout a user can change.
 
-`plan` prints the exact actions and touches nothing. `install` creates the dedicated
+`plan` prints the exact actions. On a live host it runs one read-only python probe to find the
+site directory and changes nothing on disk. `install` creates the dedicated
 `commonplace-compute` account; the private workspace (`attempts/`, `inputs/`) and a
 32 MB / 4096-inode tmpfs scratch through an owned systemd mount unit; the root-owned
 runtime tree (python3, its shared libraries, zipped stdlib, lib-dynload) bind-mounted
@@ -120,8 +121,10 @@ Each created item is recorded in the root-owned manifest
 settings changes nothing; different settings, or any pre-existing path that is not in
 the manifest, are refused. `uninstall` removes exactly what the manifest lists, leaves
 files that changed after install, needs no install arguments, stops the account's
-sessions and systemd user manager (disabling linger if set) before removing it, and
-refuses while `attempts/`, `inputs/` or
+sessions and systemd user manager (disabling linger if set) before it discards workspace
+data or removes anything else (if the account's processes cannot be stopped it removes nothing
+and says so), reports a recorded directory that is not empty as a partial result (non-zero exit,
+the directory stays in the manifest), and refuses while `attempts/`, `inputs/` or
 `scratch/` hold data (preserve claim evidence first; `--discard-workspace-data`
 overrides). `--root PREFIX` stages everything under a directory without root and runs
 no system command. To run the optional confinement fixture against a provisioned
