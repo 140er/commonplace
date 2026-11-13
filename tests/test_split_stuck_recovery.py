@@ -8,6 +8,7 @@ import pytest
 from commonplace import sessions
 from commonplace.boards.service import BoardService
 from commonplace.orch import runner_bridge
+from commonplace.projects import orchestration
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._split_helpers import invoke, tool
 from tests.runner_harness import http
@@ -260,6 +261,9 @@ def test_foreign_owner_cannot_address_the_root_over_rest(settings):
     w = settings.w
     root = stalled(w)
     ws = w.db.create_workspace("foreign-workspace", w.owner.user_id)
+    foreign = sessions.person_principal(w.db, w.owner.user_id, ws)
+    BoardService(w.ctx(foreign)).board_add(slug="elsewhere", wing="shared")
+    orchestration.set_enabled(w.db, foreign, True)
     token = w.hub.token(
         "foreign-owner",
         workspace=ws,
