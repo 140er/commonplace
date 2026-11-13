@@ -24,11 +24,16 @@ export function questionsFrom(pages) {
   return [...questions.values()];
 }
 
-export function summary(questions, bots, boards) {
-  const waiting = questions.length;
+function reportedWorking(bots, boards) {
   const projects = boards.filter((b) => Number.isSafeInteger(b.agents_working));
   const working = projects.length ? projects.reduce((n, b) => n + count(b.agents_working), 0) : bots.filter((b) => b.state === 'working').length;
   const noun = projects.length ? 'agent' : 'bot';
+  return { working, noun };
+}
+
+export function summary(questions, bots, boards) {
+  const waiting = questions.length;
+  const { working, noun } = reportedWorking(bots, boards);
   return `${waiting} thing${waiting === 1 ? '' : 's'} ${waiting === 1 ? 'waits' : 'wait'} on you. ${working} ${noun}${working === 1 ? ' is' : 's are'} working.`;
 }
 
@@ -45,8 +50,9 @@ export function questionHTML(q, { busy = new Set(), settled = new Map(), errors 
 
 export function workingHTML(bots, boards, e) {
   const working = bots.filter((b) => b.state === 'working');
+  const { working: total } = reportedWorking(bots, boards);
   const projects = boards.filter((b) => count(b.agents_working) || agentStatus(b));
-  return `<h2>Working now <span>${working.length}</span></h2>${working.length || projects.length ? `<ul class="today-working">${working.map((bot) => `<li><a href="${e(thread(bot))}">${avatar(bot, e)}<span class="today-work-text"><b>${e(bot.name)}</b><span>${e(bot.last?.text || bot.job || '')}</span></span>${bot.last?.at ? `<time datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : ''}</a></li>`).join('')}</ul>${projects.length ? `<ul class="today-projects">${projects.map((b) => `<li><a href="#/board/${e(enc(b.slug))}"><b>${e(b.name || b.slug)}</b><span>${e(agentStatus(b) || `${count(b.agents_working)} agent${b.agents_working === 1 ? '' : 's'} working`)}</span></a></li>`).join('')}</ul>` : ''}` : '<p class="today-empty">No agents are working right now.</p>'}`;
+  return `<h2>Working now <span>${total}</span></h2>${working.length || projects.length ? `<ul class="today-working">${working.map((bot) => `<li><a href="${e(thread(bot))}">${avatar(bot, e)}<span class="today-work-text"><b>${e(bot.name)}</b><span>${e(bot.last?.text || bot.job || '')}</span></span>${bot.last?.at ? `<time datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : ''}</a></li>`).join('')}</ul>${projects.length ? `<ul class="today-projects">${projects.map((b) => `<li><a href="#/board/${e(enc(b.slug))}"><b>${e(b.name || b.slug)}</b><span>${e(agentStatus(b) || `${count(b.agents_working)} agent${b.agents_working === 1 ? '' : 's'} working`)}</span></a></li>`).join('')}</ul>` : ''}` : '<p class="today-empty">No agents are working right now.</p>'}`;
 }
 
 const styles = `
