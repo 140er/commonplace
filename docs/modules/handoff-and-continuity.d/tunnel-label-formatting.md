@@ -1,0 +1,1 @@
+- **Tunnel labels:** `commonplace/handoff/tunnels.py` removes control and format characters from a tunnel label before the `mcp:` source-ID check, so a label with an emoji joiner is no longer refused while an ID split by a joiner is still hidden.
