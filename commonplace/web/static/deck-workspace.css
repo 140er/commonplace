@@ -44,6 +44,9 @@
 .dw-map > .dw-tabs { margin: 16px var(--deck-gutter, 24px) 0; }
 @media(max-width:699px) {
   .shell #content.deck-workspace { padding: 12px 16px 88px; }
+  :root[data-ui="deck"] .shell #content.deck-workspace.dw-map { padding: 12px 16px 88px; }
+  :root[data-ui="deck"] .dw-map > .dw-tabs { margin: 0; }
+  :root[data-ui="deck"] .dw-map > [data-workspace="content"] { min-width: 0; padding-top: 18px; }
   .dw-tabs, .dw-crumbs { gap: 8px 12px; }
   .dw-tabs a, .dw-crumbs a { min-height: 44px; display: inline-flex; align-items: center; }
   .dw-worker { padding: 20px; }
