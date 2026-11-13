@@ -2429,7 +2429,16 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         if self.command == "GET" and path.startswith("/s/"):
             policies.append((ratelimit.SHORT_LINKS, ip))
         elif principal is None:
-            policies.append((ratelimit.ANONYMOUS, ip))
+            # Only shell reads use this budget. Credential routes keep BOTH
+            # their original anonymous and sensitive limits, including GETs.
+            shell = self.command == "GET" and (
+                path == "/app/auth/providers"
+                or path in ("/app", "/app/")
+                or path.startswith("/app/")
+                and not path.startswith("/app/auth/")
+                and path not in ("/app/login", "/app/join")
+            )
+            policies.append((ratelimit.APP_SHELL if shell else ratelimit.ANONYMOUS, ip))
         gateway = self.server.gateway
         retry = gateway.limiter.check(policies)
         if not retry:
@@ -2441,7 +2450,16 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 return False
             retry = wait if wait > 0 else retry
         self.close_connection = True
-        self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
+        if (
+            path.startswith("/app/")
+            and (ratelimit.CREDENTIALS, ip) in policies
+            and "text/html" in self.headers.get("Accept", "")
+        ):
+            from .web import signin_recovery
+
+            signin_recovery(self, "throttled", 429, {"Retry-After": str(retry)})
+        else:
+            self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
         return True
 
     def _backfill_allowance(self, principal, policies):

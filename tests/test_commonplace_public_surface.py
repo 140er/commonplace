@@ -403,6 +403,9 @@ def test_sessions_have_separate_600_request_budgets(surface):
     [
         ("GET", "/app/login"),
         ("GET", "/app/join"),
+        ("POST", "/app/auth/email"),
+        ("GET", "/app/auth/email/verify"),
+        ("POST", "/app/auth/email/verify"),
         ("POST", "/oauth/register"),
         ("POST", "/oauth/token"),
         ("POST", "/oauth/authorize"),
@@ -419,6 +422,23 @@ def test_sensitive_endpoint_ip_limit(surface, method, path):
     for _ in range(20):
         assert request(surface)[0] == 401
     assert request(surface)[0] == 429
+
+
+def test_cold_assets_cannot_exhaust_email_signin(surface):
+    # A cold module graph has more reads than the default anonymous allowance.
+    assets = sorted(web.STATIC.glob("*.js"))[: ratelimit.ANONYMOUS.capacity]
+    assert len(assets) == ratelimit.ANONYMOUS.capacity
+    for asset in assets:
+        assert request(surface, "GET", "/app/" + asset.name)[0] == 200
+    response = request(
+        surface,
+        "POST",
+        "/app/auth/email",
+        headers={"Content-Type": "application/json"},
+        body=json.dumps({"email": "reader@example.test", "next": "/app/"}),
+    )
+    assert response[0] == 202, response
+    assert json.loads(response[2])["message"] == "If this email can sign in, a link is on its way."
 
 
 def test_authenticated_requests_still_obey_sensitive_ip_limit(surface):
@@ -1254,3 +1274,40 @@ def test_limits_default_and_come_from_environment(monkeypatch, make_surface):
     surface = make_surface()
     assert surface.gateway.write_limit == ratelimit.Limit("untrusted-writes", 10, 60)
     assert surface.gateway.backfill == ratelimit.Backfill(7, 9, 11, 13)
+
+
+def test_shell_reads_are_bounded_and_do_not_change_public_access(surface):
+    for _ in range(ratelimit.APP_SHELL.capacity):
+        assert request(surface, "GET", "/app/auth/providers")[0] == 200
+    assert request(surface, "GET", "/app/auth/providers")[0] == 429
+    assert request(surface, "GET", "/app/login")[0] == 302
+    assert request(surface, "GET", "/api/me")[0] == 401
+    assert request(surface, "GET", "/api/workspaces")[0] == 401
+    assert request(surface, "POST", "/app/app.js")[0] == 404
+
+
+def test_sensitive_paths_share_the_same_ip_budget_after_cold_reads(surface):
+    for _ in range(ratelimit.ANONYMOUS.capacity):
+        assert request(surface, "GET", "/app/app.js")[0] == 200
+    for _ in range(ratelimit.CREDENTIALS.capacity):
+        assert request(surface, "GET", "/app/login")[0] == 302
+    for method, path in [
+        ("GET", "/app/join"),
+        ("GET", "/app/auth/email/verify"),
+        ("POST", "/app/auth/email"),
+        ("POST", "/oauth/token"),
+    ]:
+        assert request(surface, method, path)[0] == 429
+
+
+@pytest.mark.parametrize("path", ["/app/login", "/app/join", "/app/auth/email/verify"])
+def test_throttled_browser_navigation_is_a_recovery_screen(surface, path):
+    for _ in range(ratelimit.CREDENTIALS.capacity):
+        request(surface, "GET", path)
+    status, headers, content = request(surface, "GET", path, headers={"Accept": "text/html"})
+    assert status == 429 and headers["Retry-After"] == "6"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"Too many sign-in attempts" in content
+    assert b'href="/app/?signin=throttled">Retry</a>' in content
+    assert b"Set-Cookie" not in content
+    assert "Set-Cookie" not in headers

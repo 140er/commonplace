@@ -13,6 +13,7 @@ from . import capacity, mailer, ratelimit, sessions, urls
 from .oauth.http import OAuthError, body, query, redirect, send, send_json
 from .social import _next, accounts
 from .social.providers import Profile, SignInError
+from .web import signin_recovery
 
 logger = logging.getLogger(__name__)
 MESSAGE = "If this email can sign in, a link is on its way."
@@ -115,12 +116,15 @@ class EmailAuth:
         if self.gateway.rate_limits:
             retry = self.gateway.limiter.check([(EMAIL_LIMIT, sessions._hash(email))])
             if retry:
-                send(
-                    h,
-                    429,
-                    b'{"error":"slow down"}',
-                    headers=(("Retry-After", str(retry)),),
-                )
+                if "text/html" in h.headers.get("Accept", ""):
+                    signin_recovery(h, "throttled", 429, {"Retry-After": str(retry)})
+                else:
+                    send(
+                        h,
+                        429,
+                        b'{"error":"slow down"}',
+                        headers=(("Retry-After", str(retry)),),
+                    )
                 return
         with self._admission_lock:
             if not self._stopped.is_set():
@@ -128,7 +132,10 @@ class EmailAuth:
                     self._pending.put_nowait((email, next_path, accounts.signup_enabled()))
                 except Full:
                     pass
-        send_json(h, 202, {"message": MESSAGE})
+        if "text/html" in h.headers.get("Accept", ""):
+            signin_recovery(h, "sent", 202)
+        else:
+            send_json(h, 202, {"message": MESSAGE})
 
     def _run(self):
         while True:
@@ -253,7 +260,7 @@ class EmailAuth:
             if row is None or row["expires_at"] <= sessions._now().isoformat():
                 raise SignInError("expired")
         except (OAuthError, SignInError):
-            send(h, 400, b"Sign in link is invalid or expired", media="text/plain; charset=utf-8")
+            signin_recovery(h, "expired", 400)
             return
         send(
             h,
@@ -316,11 +323,9 @@ class EmailAuth:
             if exc.code == "waitlist":
                 send(h, 200, capacity.MESSAGE.encode(), media="text/plain; charset=utf-8")
             else:
-                send(
-                    h, 400, b"Sign in link is invalid or expired", media="text/plain; charset=utf-8"
-                )
+                signin_recovery(h, "expired", 400)
         except OAuthError:
-            send(h, 400, b"Sign in link is invalid or expired", media="text/plain; charset=utf-8")
+            signin_recovery(h, "expired", 400)
 
 
 def install(gateway):

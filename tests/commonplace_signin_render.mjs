@@ -110,7 +110,7 @@ function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProv
         listeners.get("session-expired")();
         throw Object.assign(new Error("Unauthorized"), { status: 401 });
       }
-      if (Object.hasOwn(answers, path)) return answers[path];
+      if (Object.hasOwn(answers, path)) return typeof answers[path] === "function" ? answers[path]() : answers[path];
       assert.equal(path, "/app/auth/providers");
       return loadProviders();
     },
@@ -127,7 +127,7 @@ test("email request inserts a visible account-neutral confirmation after the for
   const inserted = [];
   await page.submit({
     dataset: { form: "email-login" }, payload: { email: "reader@example.test", next: "" },
-    querySelector: () => null, after: (element) => inserted.push(element),
+    querySelector: () => null, after: (element) => inserted.push(element), setAttribute() {}, removeAttribute() {},
   });
   assert.equal(page.calls.at(-1), "/app/auth/email");
   assert.equal(inserted.length, 1);
@@ -467,3 +467,59 @@ function dialogDOM() {
     return handlers.get(kind)({ preventDefault() {}, stopPropagation() {}, ...props });
   } };
 }
+
+
+test("email sign-in shows loading, prevents duplicates and offers resend after sent", async () => {
+  let resolve;
+  const page = app({ answers: { "/app/auth/email": () => new Promise((done) => { resolve = done; }) } });
+  await settle();
+  const status = { textContent: "" }, button = { disabled: false, isConnected: true, textContent: "Email a sign-in link" };
+  const form = { dataset: { form: "email-login" }, payload: { email: "reader@example.test", next: "/app/#/card/7" }, querySelector: () => button, after() {}, setAttribute() {}, removeAttribute() {} };
+  // The screen status exists while the request is pending.
+  page.context.document.querySelector = () => page.root;
+  page.root.querySelector = () => status;
+  const pending = page.submit(form);
+  assert.equal(button.disabled, true);
+  assert.equal(button.textContent, "Sending…");
+  assert.match(status.textContent, /Sending/);
+  await page.submit(form);
+  assert.equal(page.calls.filter((call) => call === "/app/auth/email").length, 1);
+  resolve({ message: "If this email can sign in, a link is on its way." });
+  await pending;
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, "Send another link");
+  assert.match(status.textContent, /If this email can sign in/);
+});
+
+test("throttled and failed requests keep the email form with a working Retry", async () => {
+  for (const code of [429, 503]) {
+    let attempts = 0;
+    const page = app({ answers: { "/app/auth/email": () => {
+      if (++attempts === 1) throw Object.assign(new Error('{"error":"private detail"}'), { status: code });
+      return { message: "If this email can sign in, a link is on its way." };
+    } } });
+    await settle();
+    const status = { textContent: "" }, button = { disabled: false, isConnected: true };
+    page.root.querySelector = () => status;
+    const form = { dataset: { form: "email-login" }, payload: { email: "reader@example.test", next: "" }, querySelector: () => button, setAttribute() {}, removeAttribute() {} };
+    await page.submit(form);
+    assert.equal(button.textContent, "Retry");
+    assert.equal(button.disabled, false);
+    assert.match(status.textContent, code === 429 ? /Too many sign-in attempts/ : /Could not send/);
+    assert.doesNotMatch(status.textContent, /private detail|\{"error"/);
+    await page.submit(form);
+    assert.equal(attempts, 2);
+    assert.equal(button.textContent, "Send another link");
+  }
+});
+
+test("expired and throttled callback screens provide Retry without reflecting the link", async () => {
+  for (const code of ["expired", "throttled"]) {
+    const page = app({ search: `?signin=${code}` });
+    await settle();
+    assert.match(page.root.innerHTML, /Retry/);
+    assert.match(page.root.innerHTML, emailForm);
+    assert.match(page.root.innerHTML, code === "expired" ? /Get a new link/ : /Too many sign-in attempts/);
+    assert.doesNotMatch(page.root.innerHTML, /\{"error"/);
+  }
+});
