@@ -164,7 +164,7 @@ test("the shell is wired through state.deck and the stylesheet is inert without 
   assert.match(app, /^applyDeck\(\);$/m);
   assert.match(app, /^state\.deck = createDeck\(\{$/m);
   const allow = app.split("\n").find((line) => line.includes("state.base = start"));
-  const pattern = new RegExp(/\/(\^.+\$)\/\.test\(hash\)/.exec(allow)[1]);
+  const pattern = new RegExp(/\(\/(\^.+\$)\/\.test\(hash\)/.exec(allow)[1]);
   for (const hash of ["#/today", "#/compute", "#/bots", "#/settings"]) assert.match(hash, pattern);
   for (const hash of ["#/today/x", "#/computer"]) assert.doesNotMatch(hash, pattern);
   // Sliced shell functions run in other tests without deck.js: they may reach it only through state.
