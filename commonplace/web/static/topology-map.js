@@ -86,10 +86,12 @@ export const nodeLabel = (node, words = STATUS_TEXT) => `${node.name}, ${KINDS[n
 
 const subOf = (node) => [node.role, node.missing && "not recorded", node.stale && "stale", node.conflicted && "conflict"].filter(Boolean).join(" · ");
 
-function nodeMarkup(node, at, { on, dim, sel, words, labels }) {
+function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
   const sub = subOf(node);
-  const aria = esc(nodeLabel(node, words));
+  const bundleTitle = bundle ? `${bundle.count} links, worst ${node.name} end: ${words[bundle.state]}.` : "";
+  const aria = esc(nodeLabel(node, words) + (bundleTitle ? ` ${bundleTitle}` : ""));
+  const badge = bundle ? `<g class="topo-bundle" data-bundle-node="${esc(node.key)}" data-count="${bundle.count}" data-state="${bundle.state}" transform="translate(-24 -24)">${statusDot(bundle.state, { x: 0, y: 0 }, bundleTitle)}<text class="topo-bundle-count" x="0" y="17">${bundle.count}</text></g>` : "";
   // A label is drawn at a constant size on the screen: its group is scaled by the inverse of the view's scale
   // (the stage's --inv), so the type is the same size at every zoom. The plate hides a line that passes under it.
   // The hub's label sits above it: every line leaves the hub downwards.
@@ -98,16 +100,16 @@ function nodeMarkup(node, at, { on, dim, sel, words, labels }) {
   const lines = (list, y, name) => (list.length ? `<text class="${name}" y="${y}">${list.map((line, i) => `<tspan x="0"${i ? ' dy="15"' : ""}>${esc(line)}</tspan>`).join("")}</text>` : "");
   const tag = box ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${box.height}" rx="8"/>${lines(box.nameLines, top + 15, "topo-name")}${lines(box.roleLines, top + 15 + 15 * box.nameLines.length, "topo-role")}</g>` : "";
   const texts = box ? "" : `<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}`;
-  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${aria}"><title>${aria}</title>${tag}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}${texts}</g>`;
+  return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${aria}"><title>${aria}</title>${tag}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}${texts}${badge}</g>`;
 }
 
-function linkMarkup(link, at, names, { on, dim, words, interactive, sel }) {
+function linkMarkup(link, at, names, { on, dim, words, interactive, sel, bundles }) {
   const classes = ["topo-link", link.stale && "stale", link.missing && "missing", on && "on", dim && "dim"].filter(Boolean).join(" ");
   const method = link.method.replace(/_/g, " ");
   const from = names.get(link.from), to = names.get(link.to);
   const ends = [["from", from], ["to", to]].filter(([end]) => link.status[end] !== "none").map(([end, name]) => ` ${name} end: ${words[link.status[end]]}.`).join("");
   const label = `${from} to ${to}, ${method}${link.via ? ` via ${link.via}` : ""}.${ends}${link.missing ? " Not recorded." : ""}${link.stale ? " Stale." : ""}`;
-  return `<g class="${classes}" data-link="${esc(link.id)}"${interactive ? ` tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${esc(label)}"` : ""}><title>${esc(label)}</title>${at.points ? `<path class="topo-route" d="M${at.points.map((p) => `${p.x} ${p.y}`).join("L")}"/>` : `<line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/>`}<text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
+  return `<g class="${classes}" data-link="${esc(link.id)}"${interactive ? ` tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${esc(label)}"` : ""}><title>${esc(label)}</title>${at.points ? `<path class="topo-route" d="M${at.points.map((p) => `${p.x} ${p.y}`).join("L")}"/>` : `<line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/>`}<text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${!sel && bundles.has(link.from) ? "" : statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${!sel && bundles.has(link.to) ? "" : statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
 }
 
 /** The whole map as SVG markup. `route` is one of `model.routes`: its links and nodes are
@@ -117,8 +119,25 @@ export function renderScene(model, positions, { route = null, selected = null, s
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
   const places = given || layoutLinks(model.links, positions);
-  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id }));
-  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels }));
+  // Count incident ends before removing the selected link: a four-link bundle stays
+  // collapsed while its selected link shows its own two marks. Classic keeps every mark.
+  const bundles = new Map();
+  if (interactiveLinks) {
+    for (const link of model.links) if (places.has(link.id)) for (const end of ["from", "to"]) {
+      const key = link[end];
+      if (!bundles.has(key)) bundles.set(key, []);
+      bundles.get(key).push({ id: link.id, state: link.status[end] });
+    }
+    for (const [key, ends] of bundles) {
+      if (ends.length <= 3) { bundles.delete(key); continue; }
+      const remaining = ends.filter(end => end.id !== selectedLink);
+      // Match the status reader: worst known state; unknown only with no known state.
+      const state = ["down", "degraded", "up", "unknown"].find(state => remaining.some(end => end.state === state)) || "none";
+      bundles.set(key, { count: remaining.length, state });
+    }
+  }
+  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id, bundles }));
+  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
 
