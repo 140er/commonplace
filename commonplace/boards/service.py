@@ -4821,6 +4821,13 @@ class BoardService(lifecycle.LifecycleMixin):
             if self.principal.person:
                 groups["model_roles"] = self._missing_model_roles()
                 groups["count"] += len(groups["model_roles"])
+                if getattr(self.ctx.gateway, "runner_installed", False):
+                    from commonplace.runner import install_receipts
+
+                    setup = install_receipts.attention(self.ctx.db, self.principal)
+                    if setup:
+                        groups["runner_setup"] = setup
+                        groups["count"] += len(setup)
                 spent = self._budget_warnings()
                 if (
                     spent

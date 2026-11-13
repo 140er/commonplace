@@ -23,6 +23,16 @@ def _owner_path(path):
 
 def preflight(gateway, h, path, principal):
     """Hide off/foreign/token routes before the gateway's generic token gates."""
+    if path == "/api/runner/install-manifest":
+        # The existing private prefix supplies authentication for anonymous calls.
+        # Existing tokens gain neither discovery nor a machine-self capability.
+        if principal is None:
+            return False
+        if principal.runner == "machine" and enrollment.enabled(gateway.db, principal.workspace_id):
+            return False
+        h.close_connection = True
+        send_json(h, 404, {"error": "not found"})
+        return True
     if path not in BOOTSTRAP and not _owner_path(path):
         return False
     if path in BOOTSTRAP:

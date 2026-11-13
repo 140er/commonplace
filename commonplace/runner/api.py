@@ -6,6 +6,7 @@ from . import (
     chat_routes,
     costs_api,
     enrollment_api,
+    install_receipts,
     ledger_api,
     owner_api,
     registry,
@@ -19,6 +20,7 @@ def install(gateway):
         return
     registry.ensure(gateway.db)
     enrollment_api.install(gateway)
+    install_receipts.ensure(gateway.db)
     chat_relay.ensure_schema(gateway.db)
     owner_api.register(gateway)
     runner_api.register(gateway)

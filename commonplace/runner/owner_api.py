@@ -14,7 +14,7 @@ from commonplace.http_util import (
 )
 from commonplace.web.agents import _read_wings, grantable_wings
 
-from . import jobs, registry
+from . import install_receipts, jobs, registry
 
 LOG = logging.getLogger(__name__)
 
@@ -90,7 +90,8 @@ def register(gateway):
                 200,
                 {
                     "machines": [
-                        _view(row) for row in registry.machines(gateway.db, owner.workspace_id)
+                        {**_view(row), **install_receipts.owner_view(gateway.db, row)}
+                        for row in registry.machines(gateway.db, owner.workspace_id)
                     ]
                 },
             )
