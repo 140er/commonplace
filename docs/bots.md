@@ -37,6 +37,9 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `GET /api/bots/<id>/threads` | `{threads, own}`: the threads the caller reaches and the id of their own private thread (`null` for the owner, whose thread has no id) |
 | `POST /api/bots/<id>/threads` | `{visibility, title?}`, `{thread}`: opens the member's private thread (once, `200` when it exists) or a new shared thread (`201`; needs `talk`, a shared bot and fewer than 100 open shared threads, else `409 limit`) |
 | `PATCH /api/bots/<id>/threads/<tid>` | `{archived}`, `{thread}`: the person who opened it |
+| `GET /api/bots/shared` | `{bots:[{id,name,job,archived,frozen,frozen_reason,owner,members,access}]}`: every shared bot of the workspace for a workspace owner (web session); never a thread, message or note; anyone else gets 404 |
+| `POST /api/bots/<id>/disable` / `enable` | `{ok, frozen}`: a workspace owner freezes a shared bot for everyone and lifts it again (idempotent); `enable` on a bot whose owner left is `409 conflict` |
+| `POST /api/bots/<id>/adopt` | `{ok, owner}`: a workspace owner takes over a frozen shared custom bot whose owner left; any other bot, caller or session is 404 (`409 conflict` for a disabled one) |
 | `GET` / `PATCH /api/bots/settings` | `{sharing, can_configure}`; any member reads, a workspace owner changes it (web session only) |
 
 Messages, stop, confirm, read and memory also take `?thread=<id>` (memory takes `?own=1` for a
@@ -380,6 +383,20 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   rights; a forwarded post's answer is not copied into a shared thread. A request id another
   member used in the thread is theirs (`409 conflict`); a reader without `talk` gets `403
   read_only`; only the asker stops their own turn.
+- Members and owners leaving (slice S5): when a member is removed from the workspace the hook
+  `lifecycle.member_removed` ends their live shares (`member_removed`) and freezes the bots they
+  own; a sweep on the bot roster and the workspace list does the same for a removal that skipped
+  the hook. Their messages, their private threads and the bot stay in the file, unreachable to
+  everyone, and re-adding them restores no share: the owner shares again, from a new
+  `history_from`. A frozen bot takes no turn and has no readers: members and apps get 404, a turn
+  in flight ends with the fixed `failed:revoked` sentence, and its owner (if re-added) cannot
+  talk, share or change its access list. A workspace owner lists every shared bot (name, owner,
+  members, access; no threads), may disable one (the same freeze, lifted with `enable`) and may
+  adopt one whose owner left: the adopter becomes the owner, the access list and the shares are
+  kept, the list is evaluated against the adopter's rights from then on (so it can only shrink),
+  and the old owner's original thread stays behind a floor, so the adopter never reads it
+  (messages are append-only). Nothing is deleted. An archived shared bot keeps its shares and
+  stays readable but takes no new turn, for its owner too.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 

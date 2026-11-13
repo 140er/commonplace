@@ -110,6 +110,8 @@ _ADDED = (
     ("bots", "shared", "INTEGER NOT NULL DEFAULT 0 CHECK (shared IN (0,1))"),
     ("bots", "access_version", "INTEGER NOT NULL DEFAULT 0"),
     ("bots", "frozen_at", "TEXT"),
+    ("bots", "frozen_reason", "TEXT CHECK (frozen_reason IN ('owner_left','disabled'))"),
+    ("bots", "thread_floor", "INTEGER NOT NULL DEFAULT 0"),
     ("bot_messages", "thread_id", "TEXT"),
     ("bot_messages", "author_id", "TEXT"),
     ("bot_memory", "owner_id", "TEXT"),
@@ -251,7 +253,7 @@ class SharesMixin:
         frozen = bot["frozen_at"] is not None
         live = bot["archived_at"] is None and not frozen
         if thread_id is None and owner:
-            return Reach("owner", bot_id, None, True, 0, live, frozen)
+            return Reach("owner", bot_id, None, True, bot["thread_floor"], live, frozen)
         if thread_id is None:
             row = conn.execute(
                 "SELECT * FROM bot_threads WHERE bot_id=? AND user_id=? AND visibility='private'",
@@ -318,10 +320,11 @@ class SharesMixin:
         that is off all look like an unknown id. ``write`` also needs an open thread.
         """
         if thread_id is None and isinstance(bot_id, str) and isinstance(user_id, str):
-            if conn.execute(
-                "SELECT 1 FROM bots WHERE id=? AND user_id=?", (bot_id, user_id)
-            ).fetchone():
-                return None, 0
+            row = conn.execute(
+                "SELECT thread_floor FROM bots WHERE id=? AND user_id=?", (bot_id, user_id)
+            ).fetchone()
+            if row:
+                return None, row["thread_floor"]
         reach = self._reach(conn, user_id, bot_id, thread_id)
         if write and not reach.can_write:
             raise Missing()
@@ -461,6 +464,8 @@ class SharesMixin:
             bot = self._own(conn, bot_id, owner_id)
             if bot["kind"] != "custom":
                 raise Invalid("only custom bots can be shared")
+            if bot["frozen_at"] is not None:
+                raise Conflict()  # a frozen bot is changed by nobody until it is enabled or adopted
             row = self._live_share(conn, bot_id, member_id)
             if row is not None and (bool(row["talk"]), bool(row["see_shared"])) == (
                 talk,
@@ -605,6 +610,8 @@ class SharesMixin:
             bot = self._own(conn, bot_id, owner_id)
             if not bot["shared"]:
                 raise Invalid("bot is not shared")
+            if bot["frozen_at"] is not None:
+                raise Conflict()
             if bot["access_version"] != version:
                 raise Conflict()
             stored = {

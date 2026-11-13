@@ -24,6 +24,10 @@ app holding ``bots:chat`` (``bots:confirm`` for confirm).
     GET    /api/bots/<id>/threads          {threads, own}
     POST   /api/bots/<id>/threads          {visibility, title?} -> {thread} (private: once; shared: new)
     PATCH  /api/bots/<id>/threads/<tid>    {archived} -> {thread} (the opener)
+    GET    /api/bots/shared                {bots} (workspace owner: every shared bot, no threads)
+    POST   /api/bots/<id>/disable          {ok, frozen} (workspace owner; reversible)
+    POST   /api/bots/<id>/enable           {ok, frozen} (workspace owner; lifts a disable)
+    POST   /api/bots/<id>/adopt            {ok, owner} (workspace owner; a frozen, ownerless bot)
     GET    /api/bots/settings              {sharing, can_configure}
     PATCH  /api/bots/settings              {sharing} -> {sharing} (workspace owner, web session)
 
@@ -44,6 +48,8 @@ from commonplace.bots import (
     access,
     auth,
     blocks,
+    lifecycle,
+    lifecycle_routes,
     limits,
     modelcfg,
     shares,
@@ -95,6 +101,7 @@ def _view(gateway, bot, asks, working=()) -> dict:
         "owner": _who(gateway, bot["owner_id"]),
         "perms": bot["perms"],
         "frozen": bot["frozen"],
+        "frozen_reason": bot["frozen_reason"],
         "last": None
         if last is None
         else {
@@ -140,6 +147,7 @@ def _model(gateway, principal) -> dict:
 
 def _listing(gateway, h, principal):
     boards = BoardService(ToolContext(principal=principal, gateway=gateway)).board_list()
+    lifecycle.sweep(gateway, principal.workspace_id)
     bots = _bots(gateway, principal)
     bots.ensure_defaults(principal.user_id, [(b["slug"], b["name"]) for b in boards])
     asks = _asks(gateway, principal)
@@ -381,7 +389,7 @@ def _send(gateway, h, principal, bot_id, rest):
     bots = _bots(gateway, principal)
     bot = bots.viewable(bot_id, principal.user_id)
     thread = _thread(h, bots, principal, bot_id, create=True)
-    if thread is not None:
+    if thread is not None or bot["shared"] or bot["frozen"]:
         reach = bots.reach(principal.user_id, bot_id, thread)
         if reach.read_only:  # reads the shared thread but may not talk in it
             _error(h, 403, "read_only", "You can read this thread but not write in it.")
@@ -820,6 +828,9 @@ HANDLERS = {
     ("GET", "threads"): _threads_get,
     ("POST", "threads"): _threads_post,
     ("PATCH", "threads"): _threads_patch,
+    ("POST", "disable"): lifecycle_routes.disable,
+    ("POST", "enable"): lifecycle_routes.enable,
+    ("POST", "adopt"): lifecycle_routes.adopt,
 }
 
 
@@ -909,6 +920,11 @@ def install(gateway) -> None:
         "POST",
         "/api/bots",
         lambda h: _guarded(gateway, h, lambda p: _create(gateway, h, p), tool="POST bots"),
+    )
+    gateway.add_route(
+        "GET",
+        "/api/bots/shared",
+        lambda h: _guarded(gateway, h, lambda p: lifecycle_routes.shared_list(gateway, h, p)),
     )
     gateway.add_route(
         "GET",
