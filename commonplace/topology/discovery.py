@@ -18,7 +18,9 @@ from __future__ import annotations
 import logging
 import secrets
 import threading
+from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import timedelta
 
 from commonplace import urls
@@ -61,11 +63,32 @@ _SCHEMA = (
         machine_id TEXT NOT NULL, label TEXT NOT NULL,
         outcome TEXT NOT NULL CHECK(outcome IN ('started','running','unreachable','refused')),
         reason TEXT, card INTEGER, job TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'map', subject TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS topology_discovery_run ON topology_discovery_runs(run)",
 )
+
+
+def _title(label) -> str:
+    return f"Map discovery on {label}"
+
+
+@dataclass(frozen=True)
+class Work:
+    """What a start asks of a machine: the card's title and body, and which machines may take it.
+
+    ``kind`` and ``subject`` tell runs apart (a second press for the same kind and subject
+    while one is underway starts nothing). ``first_only`` stops after the first machine that
+    started or already runs it: one agent is enough for one site."""
+
+    kind: str = "map"
+    title: Callable = _title
+    body: Callable | None = None
+    subject: str | None = None
+    only: Callable = lambda machine: True
+    first_only: bool = False
 
 
 def card_body(runner_id, hub_url=None) -> str:
@@ -81,7 +104,19 @@ def _writing(topo):
     with topo._write() as conn:
         for statement in _SCHEMA:
             conn.execute(statement)
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(topology_discovery_runs)")
+        }
+        if "kind" not in columns:  # a table made before add machine / add site
+            conn.execute(
+                "ALTER TABLE topology_discovery_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'map'"
+            )
+            conn.execute("ALTER TABLE topology_discovery_runs ADD COLUMN subject TEXT")
         yield conn
+
+
+def _of(row, name, default=None):
+    return row[name] if name in row.keys() else default
 
 
 def _now() -> str:
@@ -109,7 +144,7 @@ def _active(ctx, store_, card):
     return None
 
 
-def _running(ctx, topo, store_, machine_id):
+def _running(ctx, topo, store_, machine_id, work):
     with topo._read() as conn:
         known = (
             conn is not None
@@ -119,21 +154,23 @@ def _running(ctx, topo, store_, machine_id):
         )
         rows = (
             conn.execute(
-                "SELECT card, job FROM topology_discovery_runs WHERE machine_id=? AND card IS NOT NULL "
-                "AND outcome IN ('started','running') ORDER BY id DESC LIMIT 3",
+                "SELECT * FROM topology_discovery_runs WHERE machine_id=? AND card IS NOT NULL "
+                "AND outcome IN ('started','running') ORDER BY id DESC LIMIT 24",
                 (machine_id,),
             ).fetchall()
             if known
             else []
         )
     for row in rows:
+        if (_of(row, "kind", "map"), _of(row, "subject")) != (work.kind, work.subject):
+            continue
         run = _active(ctx, store_, row["card"])
         if run is not None:
             return row["card"], run["job"]
     return None
 
 
-def _decide(ctx, machine, signal, project, topic, hub_url, service, store_, topo):
+def _decide(ctx, machine, signal, project, topic, hub_url, service, store_, topo, work):
     """``(outcome, reason, card, job)`` for one machine."""
     if not machine["enabled"]:
         return "unreachable", "disabled", None, None
@@ -149,13 +186,13 @@ def _decide(ctx, machine, signal, project, topic, hub_url, service, store_, topo
     chosen_topic = topic or (topics[0] if topics else None)
     if chosen_project not in projects or chosen_topic not in topics:
         return "refused", "no_project_or_topic", None, None
-    active = _running(ctx, topo, store_, machine["id"])
+    active = _running(ctx, topo, store_, machine["id"], work)
     if active:
         return "running", None, *active
     label = redact(machine["label"])[0]
     card = service.task_add(
-        title=f"Map discovery on {label}",
-        body=card_body(machine["id"], hub_url),
+        title=work.title(label),
+        body=(work.body or card_body)(machine["id"], hub_url),
         board=BOARD,
         status="todo",
     )["number"]
@@ -172,18 +209,21 @@ def _decide(ctx, machine, signal, project, topic, hub_url, service, store_, topo
     return "started", None, card, job["job_id"]
 
 
-def start(ctx, project=None, topic=None, hub_url=None) -> dict:
-    """Start discovery on every runner machine; the owner's button.
+def start(ctx, project=None, topic=None, hub_url=None, work=None) -> dict:
+    """Start the work on every runner machine ``work`` allows; the owner's button.
 
     Returns ``{"run", "machines": [{machine, label, outcome, reason, card, job}], "note"}``."""
     if not person_owner(ctx.principal):
         raise ToolError("no: a signed-in workspace owner is required")
+    work = work or Work()
     for name, value in (("project", project), ("topic", topic)):
         if value is not None and (not isinstance(value, str) or not value):
             raise ToolError(f"no: invalid {name}")
     gateway, workspace = ctx.gateway, ctx.principal.workspace_id
     hub_url = hub_url if hub_url is not None else urls.AGENT_URL
-    machines = [m for m in registry.machines(ctx.db, workspace) if not m["revoked_at"]]
+    machines = [
+        m for m in registry.machines(ctx.db, workspace) if not m["revoked_at"] and work.only(m)
+    ]
     result = {"run": secrets.token_hex(6), "machines": [], "note": None}
     if not machines:
         result["note"] = "no_runner_machines"
@@ -202,7 +242,7 @@ def start(ctx, project=None, topic=None, hub_url=None) -> dict:
             signal = signals.get(machine["id"], {"status": "unknown", "reason": "never_reported"})
             try:
                 outcome, reason, card, job = _decide(
-                    ctx, machine, signal, project, topic, hub_url, service, store_, topo
+                    ctx, machine, signal, project, topic, hub_url, service, store_, topo, work
                 )
             except Exception as exc:
                 # One machine's failure must not hide the machines already started.
@@ -218,13 +258,15 @@ def start(ctx, project=None, topic=None, hub_url=None) -> dict:
                     "job": job,
                 }
             )
+            if work.first_only and outcome in ("started", "running"):
+                break
         with _writing(topo) as conn:
             now = _now()
             for entry in result["machines"]:
                 conn.execute(
                     "INSERT INTO topology_discovery_runs "
-                    "(run,machine_id,label,outcome,reason,card,job,created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
+                    "(run,machine_id,label,outcome,reason,card,job,created_at,kind,subject) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         result["run"],
                         entry["machine"],
@@ -234,6 +276,8 @@ def start(ctx, project=None, topic=None, hub_url=None) -> dict:
                         entry["card"],
                         entry["job"],
                         now,
+                        work.kind,
+                        work.subject,
                     ),
                 )
     return result
@@ -252,12 +296,15 @@ def latest(ctx) -> dict:
                 "SELECT 1 FROM sqlite_master WHERE name='topology_discovery_runs'"
             ).fetchone()
         )
-        last = (
-            known
-            and conn.execute(
-                "SELECT run FROM topology_discovery_runs ORDER BY id DESC LIMIT 1"
-            ).fetchone()
+        # Only the map button's own runs: add machine and add site keep theirs apart.
+        newest = (
+            conn.execute(
+                "SELECT * FROM topology_discovery_runs ORDER BY id DESC LIMIT 200"
+            ).fetchall()
+            if known
+            else []
         )
+        last = next((row for row in newest if _of(row, "kind", "map") == "map"), None)
         rows = (
             conn.execute(
                 "SELECT * FROM topology_discovery_runs WHERE run=? ORDER BY id", (last["run"],)

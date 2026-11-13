@@ -81,6 +81,8 @@ EXACT = {
     ("GET", "/api/topology/node"): "authenticated",
     ("GET", "/api/topology/discovery"): "authenticated",
     ("POST", "/api/topology/discovery"): "authenticated",
+    ("POST", "/api/topology/add-machine"): "authenticated",
+    ("POST", "/api/topology/add-site"): "authenticated",
     ("GET", "/api/routines"): "authenticated",
     ("POST", "/api/routines"): "authenticated",
     ("GET", "/api/goals"): "authenticated",

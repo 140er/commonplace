@@ -379,14 +379,15 @@ test('a refusal is a plain owner-only sentence with no map or raw error, and no 
   g.ui.stop();
 });
 
-test('empty workspace keeps just the hub, and unavailable general bot hides both handoffs', async () => {
+test('empty workspace keeps just the hub, and an unavailable general bot hides only the bot handoff', async () => {
   const f = harness({ rows: [], bots: [] }); await flush();
   assert.deepEqual(f.nodes(), ['commonplace-hub']);
   assert.match(f.root.html, /No machines yet/);
   assert.equal(f.regions.get('empty').hidden, false);
   assert.equal(f.regions.get('summary').textContent, '0 of 0 machines ready.');
-  assert.match(f.regions.get('actions').innerHTML, /href="#\/admin">Add machine/);
-  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Add site|Let a bot/);
+  assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-machine">Add machine/);
+  assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-site">Add site/);
+  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot|href=/);
   f.ui.stop();
 });
 
@@ -395,9 +396,9 @@ test('one-click handoffs store the draft and navigate; never send a message', as
   globalThis.sessionStorage = { setItem: (key, value) => saved.push([key, JSON.parse(value)]) };
   try {
     const f = harness(); await flush();
-    f.click({ computeAction: 'site' }); f.click({ computeAction: 'map' });
-    assert.deepEqual(saved, [['cmmn.deck.draft', { bot: 'general', text: 'Add a site to my map.' }], ['cmmn.deck.draft', { bot: 'general', text: 'Map my machines and sites.' }]]);
-    assert.deepEqual(f.nav, ['#/bots/general', '#/bots/general']);
+    f.click({ computeAction: 'map' });
+    assert.deepEqual(saved, [['cmmn.deck.draft', { bot: 'general', text: 'Map my machines and sites.' }]]);
+    assert.deepEqual(f.nav, ['#/bots/general']);
     assert.deepEqual(f.calls.map(c => c[0]), ['/api/topology', '/api/runners', '/api/bots']);
     f.ui.stop();
   } finally { globalThis.sessionStorage = previous; }
@@ -460,8 +461,8 @@ test('failed bot discovery leaves the real map and Add machine available', async
   const f = fakeRoot();
   const ui = compute.mount({ root: f.root, e, api: async path => { if (path === '/api/bots') throw new Error('network'); if (path === '/api/topology') return EMPTY; return { machines }; } });
   await flush(); assert.match(f.regions.get('map').querySelector('[data-topology]').querySelector('[data-topo="world"]').innerHTML, /Build box/);
-  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Add site|Let a bot/);
-  assert.match(f.regions.get('actions').innerHTML, /Add machine/); ui.stop();
+  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot/);
+  assert.match(f.regions.get('actions').innerHTML, /Add machine/); assert.match(f.regions.get('actions').innerHTML, /Add site/); ui.stop();
 });
 
 test('one map: Deck resolves the old map address to Compute, the account menu has one entry, no duplicate files', async () => {
@@ -480,4 +481,32 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
   assert.deepEqual(users.sort(), ['app.js', 'deck-compute.js', 'topology-detail.js'].filter(name => name !== 'topology-detail.js'));
   assert.match(await readFile(new URL('deck-compute.js', STATIC), 'utf8'), /createTopologyMap/);
   assert.ok(MAP_PATH && mapModel(EMPTY));
+});
+
+test('Add machine and Add site are one button each: one request, the answer in the notice, no form', async () => {
+  const f = fakeRoot(), seen = [];
+  const answer = { kind: 'machine', mode: 'started', machines: [{ machine: 'mach_1', label: 'Build box', outcome: 'started', card: 7 }] };
+  const api = async (path, options) => {
+    if (path === '/api/bots') return { bots: [] };
+    if (path === '/api/topology') return EMPTY;
+    if (path === '/api/runners') return { machines };
+    seen.push([path, options]); return answer;
+  };
+  const ui = compute.mount({ root: f.root, api, e });
+  await flush();
+  assert.doesNotMatch(f.root.html + f.regions.get('actions').innerHTML, /<form|<input/);
+  const button = { disabled: false, dataset: { computeAction: 'add-machine' } };
+  f.handlers.get('click')({ target: { closest: () => button } });
+  await flush();
+  assert.deepEqual(seen, [['/api/topology/add-machine', { method: 'POST', body: {} }]]);
+  assert.match(f.regions.get('notice').textContent, /Started on Build box \(card #7\)/);
+  assert.equal(button.disabled, false);
+  ui.stop();
+});
+
+test('a member without rights is shown no add buttons at all', async () => {
+  const f = harness({ error: Object.assign(new Error('forbidden'), { status: 403 }) }); await flush();
+  assert.match(f.root.html, /Only workspace owners/);
+  assert.doesNotMatch(f.root.html + (f.regions.get('actions')?.innerHTML || ''), /add-machine|add-site|Add machine|Add site/);
+  f.ui.stop();
 });
