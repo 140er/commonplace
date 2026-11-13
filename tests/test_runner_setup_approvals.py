@@ -103,6 +103,7 @@ def final_body(s, row):
 def test_fresh_owner_browser_grant_login_and_final_attestation(consented, monkeypatch):
     s = consented
     final = finish(s, monkeypatch)
+    assert final["setup_steps"] == ["check", "codex", "grant", "attest"]
     assert SECRET in json.loads(s.local.fs.read(GRANT))["secret"]
     assert stat.S_IMODE((s.home / GRANT).stat().st_mode) == 0o600
     grant = s.db._conn.execute("SELECT * FROM runner_host_grants").fetchone()
@@ -646,6 +647,7 @@ def test_terminal_login_instructions_and_signed_probe_resolve_without_owner_chec
     s = manual
     card = next(r for r in approvals.attention(s.db, s.owner) if r["approval_kind"] == "login")
     assert card.get("manual_login") is True
+    assert card["setup_steps"] == ["claude", "grant", "attest"]
     assert card["sign_in_command"] == 'sh "$HOME/.commonplace-runner/sign-in" claude'
     # No browser claim or ordinary runtime report is accepted as completed login.
     with pytest.raises(registry.Conflict):
@@ -659,6 +661,10 @@ def test_terminal_login_instructions_and_signed_probe_resolve_without_owner_chec
     from commonplace.runner import runtime_status
 
     assert runtime_status.attention(s.db, s.owner) == [], "no generic sign-in card remains"
+    assert all(
+        r["setup_steps"] == ["claude", "grant", "attest"]
+        for r in approvals.attention(s.db, s.owner)
+    ), "completed provider steps keep the machine sequence stable"
     with pytest.raises(registry.Conflict):
         approvals.report(
             s.gateway, s.principal, s.client._proof(s.requests["login"], "login_succeeded")

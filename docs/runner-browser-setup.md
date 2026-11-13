@@ -12,18 +12,23 @@ real host issuer, direct scope enforcement, supervised stop and offline deadline
 2. On the intended machine, run the generated command and accept its installation
    scope once. Keep the printed fingerprint available for comparison.
 3. For Codex, compare every fingerprint group in **Needs me**, tick the comparison
-   and choose **Confirm matching machine**. On the next refresh, compare again
-   and choose **Show sign-in link and code**. Open the provider website on any
+   and choose **Check this machine**. On the next refresh, compare again
+   and choose **Sign in to Codex**. Open the provider website on any
    device, sign in to the intended subscription account and enter the displayed
    short code there. It is shown once; lost or expired presentations require a
    fresh request. The machine completes the device exchange itself.
-4. For Claude, on that machine run `sh "$HOME/.commonplace-runner/sign-in" claude`.
-   This invokes the verified CLI's `claude auth login --claudeai` using the installation's
-   private credential directory, without inherited API keys. Open the link it
-   prints on any device, then type the code the sign-in page shows into the
-   machine when asked. The hub never sees this code. The card says
-   **waiting for sign-in on the machine** until the next CLI status probe and
-   signed machine report; there is no completion checkbox to tick.
+4. For Claude, the **Sign in to Claude** card gives these instructions:
+   1. Run the command below on the machine.
+   2. Open the link it prints, on any device.
+   3. Type the code from that page into the machine.
+
+   Commonplace never sees this code.
+
+   **Run on the machine:** `sh "$HOME/.commonplace-runner/sign-in" claude`.
+   This invokes the verified CLI's `claude auth login --claudeai` in the private
+   credential directory. **Waiting for sign-in on the machine** resolves after
+   the next CLI status probe and signed machine report; there is no completion
+   checkbox to tick.
 5. In **Needs me**, compare the fingerprint, review **Projects**, **Topics** and
    **Access limit**, tick the comparison and choose **Approve access**. Delivery
    is automatic; no host access secret is copied, typed or displayed.
@@ -83,3 +88,10 @@ checks authority. Offline process termination is a slice 6 proof, not claimed
 here. Re-enabling revives no approval. Account export redacts secret fields and
 account deletion removes the dependent rows. The UI lives within the real Deck
 shell, with a selectable fingerprint grouped exactly like installer output.
+
+The screen titles are **Check this machine**, **Sign in to Codex** (or Claude),
+**Approve machine access** and **Confirm this machine**. Step numbering includes
+only that machine's steps: four with Codex, three with the Claude terminal path,
+two without provider sign-in, or five with both. Completed provider steps retain
+their position while access and confirmation finish. Phone cards keep a 16px
+inner inset within the page gutter; the fingerprint well has its own 16px padding.

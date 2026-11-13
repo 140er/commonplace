@@ -245,6 +245,16 @@ def owner_view(db, machine):
     }
 
 
+def _setup_steps(requests):
+    providers = {row["provider"] for row in requests if row["kind"] == "login"}
+    return [
+        *(["check", "codex"] if "codex" in providers else []),
+        *(["claude"] if "claude" in providers else []),
+        "grant",
+        "attest",
+    ]
+
+
 def attention(db, owner):
     if not owner.person or owner.role != "owner" or not enrollment.enabled(db, owner.workspace_id):
         return []
@@ -254,6 +264,7 @@ def attention(db, owner):
             view = owner_view(db, machine).get("setup_approval")
             if view is None:
                 continue
+            steps = _setup_steps(view["requests"])
             for row in view["requests"]:
                 if row["state"] != "pending" and not (
                     row["kind"] == "login" and row["state"] == "approved"
@@ -264,6 +275,7 @@ def attention(db, owner):
                         **row,
                         "kind": "runner_consent",
                         "approval_kind": row["kind"],
+                        "setup_steps": steps,
                         "label": machine["label"],
                         "fingerprint": view["fingerprint"],
                         "message": "Approve provider sign-in"
@@ -286,6 +298,7 @@ def attention(db, owner):
                             **_view(final),
                             "kind": "runner_consent",
                             "approval_kind": "attest",
+                            "setup_steps": steps,
                             "label": machine["label"],
                             "fingerprint": view["fingerprint"],
                             "message": "Confirm this machine",

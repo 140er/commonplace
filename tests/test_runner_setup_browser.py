@@ -24,6 +24,7 @@ ITEM = {
     "projects": ["Website"],
     "topics": ["Development"],
     "runtime": "approval-required",
+    "setup_steps": ["check", "codex", "grant", "attest"],
 }
 
 
@@ -63,6 +64,10 @@ def open_setup(browser, width, mode):
             state="approved" if mode == "device" else "pending",
             manual_login=mode == "manual",
         )
+    if mode == "manual":
+        item["setup_steps"] = ["claude", "grant", "attest"]
+    elif mode == "short":
+        item["setup_steps"] = ["grant", "attest"]
     elif mode == "attest":
         item.update(
             approval_kind="attest",
@@ -150,7 +155,8 @@ MEASURE = """() => {
   const style=e=>{const s=getComputedStyle(e);return {background:s.backgroundColor,color:s.color,
     fontSize:s.fontSize,fontWeight:s.fontWeight,radius:s.borderRadius,padding:s.padding};};
   const button=card.querySelector('.runner-primary'), check=card.querySelector('[type=checkbox]');
-  return {scale:devicePixelRatio,card:rect(card),pageTitle:rect(document.querySelector('#title')),
+  return {scale:devicePixelRatio,card:rect(card),surface:rect(document.querySelector('.needs-me')),
+    count:rect(document.querySelector('.needs-me > .bar > .sub')),pageTitle:rect(document.querySelector('#title')),
     grid:{...rect(grid),...style(grid),columns:getComputedStyle(grid).gridTemplateColumns.split(' ').length,
       gap:getComputedStyle(grid).gap,userSelect:getComputedStyle(grid).userSelect,
       groups:[...grid.children].map(e=>({text:e.textContent,...rect(e)}))},
@@ -162,7 +168,8 @@ MEASURE = """() => {
     refuse:card.querySelector('.runner-refuse')?style(card.querySelector('.runner-refuse')):null,
     name:style(card.querySelector('.runner-name')),
     labels:[...card.querySelectorAll('dt')].map(style),values:[...card.querySelectorAll('dd')].map(style),
-    instruction:style(card.querySelector('.runner-instruction')),
+    instruction:{...rect(card.querySelector('.runner-instruction')),...style(card.querySelector('.runner-instruction'))},
+    commandLabel:card.querySelector('.runner-machine-command > p')?rect(card.querySelector('.runner-machine-command > p')):null,
     shell:{top:rect(document.querySelector('#board-nav')),tabs:rect(document.querySelector('#phone-tabs'))}};
 }"""
 
@@ -183,6 +190,7 @@ MEASURE = """() => {
         "failed",
         "long",
         "manual",
+        "short",
     ],
 )
 def test_deck_setup_states_and_measurements(browser, width, mode):
@@ -196,8 +204,16 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
         assert before["stepLine"]["color"] == "rgb(148, 148, 148)"
         assert before["stepLine"]["y"] + before["stepLine"]["height"] <= before["title"]["y"]
         assert before["refuse"]["color"] == "rgb(240, 112, 138)"
-        assert before["card"]["width"] == (720 if width == 1280 else 358)
-        assert before["card"]["x"] == before["pageTitle"]["x"]
+        assert before["card"]["width"] == (720 if width == 1280 else 326)
+        if width == 1280:
+            assert before["card"]["x"] == before["pageTitle"]["x"]
+        else:
+            assert before["surface"]["x"] == 16
+            assert before["card"]["x"] - before["surface"]["x"] == 16
+            assert before["count"]["x"] == before["card"]["x"]
+            assert before["grid"]["x"] == before["card"]["x"]
+            assert before["instruction"]["x"] == before["card"]["x"]
+            assert before["instruction"]["width"] == before["card"]["width"]
         assert before["grid"]["columns"] == (4 if width == 1280 else 2)
         assert before["grid"]["gap"] == "12px"
         assert before["grid"]["radius"] == "12px" and before["grid"]["padding"] == "16px"
@@ -215,9 +231,12 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
             r["fontSize"] == "15px" and r["color"] == "rgb(255, 255, 255)" for r in before["values"]
         )
         assert before["instruction"]["color"] == "rgb(180, 180, 180)"
-        assert (
-            before["step"]
-            == f"Step {4 if screen == 'attest' else 2 if screen == 'device' else 1 if screen in ('login', 'manual') else 3} of 4"
+        assert before["step"] == (
+            "Step 1 of 3"
+            if mode == "manual"
+            else "Step 1 of 2"
+            if mode == "short"
+            else f"Step {4 if screen == 'attest' else 2 if screen == 'device' else 1 if screen == 'login' else 3} of 4"
         )
         assert "opaque-" not in card.inner_text()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -226,7 +245,24 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
         states = {"before": before}
         if mode == "manual":
             assert not card.locator("[type=checkbox]").count()
-            assert "waiting for sign-in on the machine" in card.inner_text()
+            assert "Waiting for sign-in on the machine" in card.inner_text()
+            assert card.locator(".runner-instruction li").all_text_contents() == [
+                "Run the command below on the machine.",
+                "Open the link it prints, on any device.",
+                "Type the code from that page into the machine.",
+            ]
+            assert (
+                card.locator(".runner-private-note").inner_text()
+                == "Commonplace never sees this code."
+            )
+            assert (
+                card.locator(".runner-private-note").evaluate("e => getComputedStyle(e).color")
+                == "rgb(148, 148, 148)"
+            )
+            assert card.locator(".runner-machine-command > p").inner_text() == "Run on the machine"
+            assert (
+                before["commandLabel"]["y"] - (before["grid"]["y"] + before["grid"]["height"]) == 24
+            )
             assert 'sh "$HOME/.commonplace-runner/sign-in" claude' in card.inner_text()
         else:
             primary = card.locator(".runner-primary")
@@ -250,11 +286,18 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
                     assert card.locator("button,input").count() == 0
                     assert (
                         card.locator("output").inner_text()
-                        == "Confirmed. The machine continues setup by itself."
+                        == (
+                            "Confirmed." if screen in ("login", "device", "attest") else "Approved."
+                        )
+                        + " The machine continues setup by itself."
                     )
                     assert "cannot run work yet" not in card.inner_text()
                 else:
                     assert "Could not save" in card.inner_text()
+                    assert (
+                        card.locator("output").evaluate("e => getComputedStyle(e).color")
+                        == "rgb(240, 112, 138)"
+                    )
                     assert "Confirmed." not in card.inner_text()
             elif mode == "refuse":
                 card.get_by_role("button", name="This is not my machine", exact=True).click()
@@ -287,3 +330,28 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
             assert card.locator("button,input").count() == 0
     finally:
         context.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_machine_step_titles_are_distinct_and_count_only_its_steps(browser, width):
+    titles = []
+    for number, mode in enumerate(("login", "device", "grant", "attest"), 1):
+        context, page, _, _ = open_setup(browser, width, mode)
+        try:
+            titles.append(page.locator(".runner-consent h2").inner_text())
+            assert page.locator(".runner-step").inner_text() == f"Step {number} of 4"
+        finally:
+            context.close()
+    assert titles == [
+        "Check this machine",
+        "Sign in to Codex",
+        "Approve machine access",
+        "Confirm this machine",
+    ]
+    assert len(set(titles)) == 4
+    for mode, expected in (("manual", "Step 1 of 3"), ("short", "Step 1 of 2")):
+        context, page, _, _ = open_setup(browser, width, mode)
+        try:
+            assert page.locator(".runner-step").inner_text() == expected
+        finally:
+            context.close()

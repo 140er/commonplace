@@ -8,16 +8,20 @@
   2. On the intended machine, run the generated command and accept once. Keep
      its printed fingerprint available.
   3. For Codex, compare every fingerprint group in **Needs me**, tick the
-     comparison and choose **Confirm matching machine**. On the next refresh,
-     compare again and choose **Show sign-in link and code**. Open the provider
+     comparison and choose **Check this machine**. On the next refresh,
+     compare again and choose **Sign in to Codex**. Open the provider
      website on any device, sign in to the intended subscription account and
      enter the displayed short code there.
-  4. For Claude, on that machine run `sh "$HOME/.commonplace-runner/sign-in" claude`.
-     It runs the verified CLI's `claude auth login --claudeai` in its private directory.
-     Open the link it prints on any device, then type the code the sign-in page
-     shows into the machine when asked. The hub never sees this code. No browser
-     completion checkbox is provided: a fresh CLI status probe and signed machine
-     report resolve the waiting card automatically.
+  4. For Claude, the **Sign in to Claude** card gives these instructions:
+     1. Run the command below on the machine.
+     2. Open the link it prints, on any device.
+     3. Type the code from that page into the machine.
+
+     Commonplace never sees this code.
+
+     **Run on the machine:** `sh "$HOME/.commonplace-runner/sign-in" claude`.
+     **Waiting for sign-in on the machine** resolves automatically after a fresh
+     CLI status probe and signed machine report; there is no completion checkbox.
   5. In **Needs me**, compare the fingerprint, review Projects, Topics and Access
      limit, tick the comparison and choose **Approve access**. Delivery is
      automatic; never copy or type a host access secret.
@@ -26,6 +30,10 @@
      may finish while provider sign-in is still needed; that provider cannot run.
   If any fingerprint differs, choose **This is not my machine**, then confirm
   refusal. This ends enrollment and revokes its credentials, status and grants.
+- **M:** Setup titles describe each action: Check this machine, Sign in to Codex
+  (or Claude), Approve machine access and Confirm this machine. Step counts include
+  only that machine's steps; completed provider steps retain their positions.
+  Phone cards have 16px inner padding inside the 16px page gutter.
 - **M:** Browser requests last five minutes; device codes are hashed at rest and
   displayed once from volatile memory. Host access lasts ten minutes; renewal
   needs fresh browser consent. Refusal, Revoke and Disable runner setup invalidate

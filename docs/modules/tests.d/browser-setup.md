@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - All identities, issuer material and credentials are synthetic. Tests prove scope, replay, expiry, revocation, secret isolation and final fingerprint prerequisites without a real provider login or host execution claim. Browser absence skips only the browser cases.
+  - All identities, issuer material and credentials are synthetic. Tests prove scope, replay, expiry, revocation, secret isolation and final fingerprint prerequisites without a real provider login or host execution claim. Browser absence skips only the browser cases. Both modes check distinct action titles and actual step counts; captures measure phone inner padding, command spacing, count alignment and failed-save colour.
 
 - **Tests:**
 
