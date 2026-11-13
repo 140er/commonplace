@@ -650,3 +650,32 @@ def test_a_workspace_without_the_file_is_never_given_one_by_a_read(bridge, fake)
     with pytest.raises(store.Missing):
         store.open_bridge(bridge.hub.gateway, bridge.hub.workspace).get("nope")
     assert not bridge.file().exists()
+
+
+# --- account export ----------------------------------------------------------------------------
+
+
+def test_the_account_export_keeps_sealed_credentials_out(bridge, fake):
+    import io
+    import zipfile
+
+    from commonplace.account import export
+
+    install = bridge.create()[1]["install"]["id"]
+    sealed = store.open_bridge(bridge.hub.gateway, bridge.hub.workspace).secrets(install)
+    planned = export.plan(bridge.hub.gateway, bridge.hub.admin)
+    out = io.BytesIO()
+    manifest = export.write(bridge.hub.gateway, planned, out)
+    assert "bridge_install_index" not in manifest["unclassified_tables"]
+    archive = zipfile.ZipFile(io.BytesIO(out.getvalue()))
+    prefix = f"workspaces/{bridge.hub.workspace}"
+    (row,) = [
+        json.loads(line)
+        for line in archive.read(
+            f"{prefix}/stores/chat_bridge.sqlite3/bridge_installs.ndjson"
+        ).splitlines()
+    ]
+    assert row["id"] == install and row["secrets"] == "[redacted]"
+    assert f"{prefix}/control/bridge_install_index.ndjson" in archive.namelist()
+    blob = b"".join(archive.read(name) for name in archive.namelist())
+    assert sealed not in blob and SENTINEL.encode() not in blob

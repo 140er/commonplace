@@ -79,15 +79,6 @@ CREATE TABLE IF NOT EXISTS bridge_prompts (
 );
 """
 
-# Tables that hold rows of one install, emptied when the install is deleted.
-_PER_INSTALL = (
-    "bridge_channels",
-    "bridge_links",
-    "bridge_link_codes",
-    "bridge_events",
-    "bridge_outbox",
-    "bridge_prompts",
-)
 _VIEW = (
     "id",
     "platform",
@@ -315,8 +306,12 @@ class BridgeStore:
     def delete(self, install_id) -> None:
         with self._tx() as conn:
             self._row(conn, install_id)
-            for table in _PER_INSTALL:
-                conn.execute(f"DELETE FROM {table} WHERE install_id=?", (install_id,))
+            conn.execute("DELETE FROM bridge_channels WHERE install_id=?", (install_id,))
+            conn.execute("DELETE FROM bridge_links WHERE install_id=?", (install_id,))
+            conn.execute("DELETE FROM bridge_link_codes WHERE install_id=?", (install_id,))
+            conn.execute("DELETE FROM bridge_events WHERE install_id=?", (install_id,))
+            conn.execute("DELETE FROM bridge_outbox WHERE install_id=?", (install_id,))
+            conn.execute("DELETE FROM bridge_prompts WHERE install_id=?", (install_id,))
             conn.execute("DELETE FROM bridge_installs WHERE id=?", (install_id,))
 
     # Read-only status

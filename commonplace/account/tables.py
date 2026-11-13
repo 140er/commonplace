@@ -53,6 +53,7 @@ RULES = {
     "backfill_allowance": Rule(workspace=("scope_id",), connection=("scope_id",)),
     # actor_id is the user id for a person and the connection id for an agent.
     "bot_model_calls": Rule(user=_U, workspace=_W),
+    "bridge_install_index": Rule(workspace=_W),
     "capture_ops": Rule(user=("actor_id",), workspace=_W, connection=("actor_id",)),
     "capture_settings": Rule(workspace=_W),
     "chat_front_jobs": Rule(user=_U, workspace=_W),
