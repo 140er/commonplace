@@ -161,7 +161,7 @@ for (const phone of [false, true]) test(`two-link topology: parallel, separate t
   for (const id of ['nimbus-dns>nimbus-cdn:proxy', 'second']) assert.ok(made.core.scene().includes(`data-link="${e(id)}" tabindex="0" role="button" aria-pressed="false"`), 'each stroke has its own focusable target');
 });
 
-for (const count of [2, 8]) test(`${count} parallel strokes can each be selected by pointer and keyboard without opening a node`, async () => {
+for (const count of [2, 4, 6, 8]) test(`${count} parallel strokes can each be selected by pointer and keyboard without opening a node`, async () => {
   const payload = count === 2 ? { nodes: adjacentNodes.map(node => ({ key: node.key, values: { kind: 'cloud', name: node.key } })), links: pairLinks, routes: [] } : bundlePayload(count);
   const host = stageDom(), ui = createTopologyMap({ mount: () => host, storage: null, interval: 0, api: async () => payload, look: { labels: 160, layout: 'layered', route: true } });
   ui.show();
@@ -194,6 +194,101 @@ const bundlePayload = count => ({
   ],
   links: Array.from({ length: count }, (_, i) => ({ id: `bundle-${i}`, from: i % 2 ? 'b' : 'a', to: i % 2 ? 'a' : 'b', method: 'direct' })),
   routes: [],
+});
+
+const bundleMarks = scene => [...scene.matchAll(/<g class="topo-bundle" data-bundle-node="([^"]+)" data-count="(\d+)" data-state="([^"]+)" transform="translate\((-?[\d.]+) (-?[\d.]+)\)">([\s\S]*?)<\/text><\/g>/g)];
+const endMarks = scene => [...scene.matchAll(/class="topo-dot s-([^"]+)" data-state="[^"]+" data-end="(from|to)" transform="translate\((-?[\d.]+) (-?[\d.]+)\)"/g)];
+function markedBundle(count, states = ['up', 'unknown', 'degraded', 'down']) {
+  const payload = bundlePayload(count);
+  payload.status = { links: Object.fromEntries(payload.links.map((link, i) => [link.id, { from: states[i % states.length], to: 'unknown' }])) };
+  return payload;
+}
+
+for (const count of [4, 6, 8]) for (const phone of [false, true]) test(`collapsed ends: ${count} links, ${phone ? 'phone' : 'desktop'}`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const made = deckCore(compute, markedBundle(count), phone, false), scene = made.core.scene();
+  const marks = bundleMarks(scene);
+  assert.equal(marks.length, 2, 'one aggregate at each device');
+  assert.deepEqual(marks.map(m => m[1]).sort(), ['a', 'b']);
+  for (const mark of marks) {
+    assert.equal(Number(mark[2]), count);
+    assert.equal(mark[3], mark[1] === 'a' ? 'degraded' : 'down', 'direction-aware worst known end state');
+    assert.match(mark[6], new RegExp(`class="topo-dot s-${mark[3]}"`));
+    assert.match(mark[6], new RegExp(`<text class="topo-bundle-count"[^>]*>${count}$`));
+    assert.match(mark[6], /end: (Degraded|Down)/, 'state has words as well as a shape');
+    const at = made.core.positions[mark[1]], x = at.x + Number(mark[4]), y = at.y + Number(mark[5]);
+    const badge = { x: x - 7, y: y - 7, width: 14, height: 26 };
+    for (const node of made.core.boxes) assert.ok(!overlaps(badge, plateOf(node, made.core.positions[node.key], made.metrics.labels, K_LEAST)), 'badge and count clear every label');
+    assert.ok(x * made.view.k + made.view.x >= 7 && y * made.view.k + made.view.y >= 7, 'badge fits in the canvas');
+  }
+  assert.equal(endMarks(scene).length, 0, 'no individual marks remain to overlap');
+  assertGeometry(made);
+  for (const { id } of made.core.model.links) {
+    made.core.selectLink(id);
+    const selected = made.core.scene(), own = endMarks(selected), others = bundleMarks(selected);
+    assert.equal(own.length, 2, 'only the selected link has individual end marks');
+    assert.deepEqual(own.map(m => m[1]), Object.values(made.core.model.links.find(l => l.id === id).status));
+    assert.equal(others.length, 2, 'remaining links stay collapsed even when only three remain');
+    assert.ok(others.every(m => Number(m[2]) === count - 1));
+    for (const mark of others) {
+      const at = made.core.positions[mark[1]], x = at.x + Number(mark[4]), y = at.y + Number(mark[5]);
+      for (const dot of own) assert.ok(!overlaps({ x: x - 7, y: y - 7, width: 14, height: 26 }, { x: Number(dot[3]) - 7, y: Number(dot[4]) - 7, width: 14, height: 14 }), 'selected marks clear the badge and its count');
+    }
+    made.core.selectLink(id);
+    assert.equal(made.core.scene(), scene, 'deselect restores the aggregate');
+  }
+});
+
+test('collapsed ends: classic keeps its marks and unclaimed states stay unmarked', async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const classic = createMapCore();
+  classic.apply(markedBundle(6));
+  assert.equal(bundleMarks(classic.scene()).length, 0);
+  assert.equal(endMarks(classic.scene()).length, 12);
+  const payload = markedBundle(6, ['none']);
+  for (const ends of Object.values(payload.status.links)) ends.to = 'none';
+  const unclaimed = deckCore(compute, payload, false, true).core;
+  assert.equal(bundleMarks(unclaimed.scene()).length, 0);
+  assert.equal(endMarks(unclaimed.scene()).length, 0);
+});
+
+test('collapsed ends: device degree combines incoming and outgoing links to distinct peers', async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC)), payload = markedBundle(6);
+  payload.nodes.push({ key: 'c', values: { kind: 'pc', name: 'Client' } });
+  for (const link of payload.links.slice(0, 3)) { if (link.from === 'b') link.from = 'c'; else link.to = 'c'; }
+  const made = deckCore(compute, payload, false, false);
+  const marks = bundleMarks(made.core.scene());
+  assert.deepEqual(marks.map(m => [m[1], Number(m[2])]), [['a', 6]]);
+  made.core.selectLink('bundle-2');
+  const badge = bundleMarks(made.core.scene())[0];
+  assert.equal(badge[3], 'up', 'selected worst end is excluded from the remaining aggregate');
+});
+
+for (const count of [1, 2, 3]) test(`sparse ends: ${count} links retain every original mark and position`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const made = deckCore(compute, markedBundle(count), false, false), scene = made.core.scene();
+  assert.equal(bundleMarks(scene).length, 0);
+  assert.equal(endMarks(scene).length, count * 2);
+  for (const link of made.core.model.links) for (const end of ['from', 'to']) {
+    const at = made.core.links().get(link.id)[end];
+    assert.ok(scene.includes(`data-end="${end}" transform="translate(${at.x} ${at.y})"`));
+  }
+});
+
+for (const [states, worst, shape] of [
+  [['unknown'], 'unknown', '<circle r="4.5"/>'],
+  [['unknown', 'up'], 'up', '<circle r="5.5"/>'],
+  [['up', 'degraded'], 'degraded', '<path d="M0 -6.5 6.6 5h-13.2z"/>'],
+  [['degraded', 'down'], 'down', '<rect x="-5" y="-5" width="10" height="10" rx="1"/>'],
+]) test(`collapsed ends: ${worst} retains its status shape`, async () => {
+  const compute = await import(new URL('deck-compute.js', STATIC));
+  const payload = markedBundle(6, states);
+  payload.links.forEach(link => { link.from = 'a'; link.to = 'b'; });
+  const marks = bundleMarks(deckCore(compute, payload, false, false).core.scene());
+  const mark = marks.find(m => m[1] === 'a');
+  assert.ok(mark, 'one aggregate at the source');
+  assert.equal(mark[3], worst);
+  assert.ok(mark[6].includes(shape));
 });
 
 for (const count of [2, 4, 6, 8]) for (const phone of [false, true]) test(`bounded bundle: ${count} links, ${phone ? '390px phone' : 'desktop'}`, async () => {
