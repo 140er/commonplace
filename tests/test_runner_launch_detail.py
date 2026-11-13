@@ -195,4 +195,6 @@ def test_diagnostics_follow_workspace_export_and_deletion(site, monkeypatch):
     assert ask(site, site.alice, site.alice_home, "alice@example.test")[0] == 200
     site.advance(deletion.DEFAULT_GRACE_DAYS * DAY + 1)
     assert deletion.purge_due(site.gateway)[0]["state"] == "purged"
-    assert not site.directory(site.alice_home).joinpath("runner.sqlite3").exists()
+    from pathlib import Path
+
+    assert not Path(store.path).exists()
