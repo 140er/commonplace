@@ -1323,327 +1323,76 @@ playbooks and the original wider orchestration acceptance remain separate work.
 
 ### Triggers
 
-- Only boards with an accepted live `[runner]` config are swept.
-
-- The sweep reads committed `task_events` after a per-board cursor; it fires on a move into `todo` from another status (add, move, decide) and on the plan-approval row.
-
-- The cursor is armed in two steps because board events and the cursor live in different files: a configuring accept commits the cursor as NULL with a new generation, then arming sets it to `COALESCE(MAX(task_events.id), 0)` only if the generation is unchanged.
-
-- A NULL cursor is never swept.
-
-- Events before arming are skipped (never replayed).
-
-- Every candidate is re-checked against the recorded `(cursor, gen)` as the first statement inside its fenced transaction; the job or the coded miss and the cursor advance commit together.
-
-- Only infrastructure errors leave the cursor where it was.
-
-- Before the fenced transaction the sweep's only `runner.sqlite3` write is the arming update of an unset cursor: it opens the orchestrator store without creating tables or converting a restore marker.
-
-- The actor is rebuilt from the event stamps and must pass `requester_ok`; a member's move does not start work.
+Moved to [`docs/system/triggers.md`](docs/system/triggers.md); edit it there.
 
 ### Durable orchestrator
 
-- Card tool discovery defaults to the off schema when no control database is available or a settings read fails.
-
-- One lease per `(board, role)`; the token is returned once and stored as `sha256(token + incarnation)`.
-
-- Expiry only fences; it never moves cards.
-
-- The journal records `intent → started → waiting → done | failed | in_doubt`.
-
-- External effects (merge, gate, thread launch, card move) are never re-issued by the hub; a successor checks the truth source first, and an unproven effect becomes `needs_person`.
-
-- One gate per `(board, repo, PR, head)` across roles unless the owner voids it.
-
-- `orch_resume` returns a checkpoint (open steps, `in_doubt`, `needs_person`, holds, next, jobs, misses) plus the unstarted `todo` cards of each configured board: no active job and no job started strictly after the card's latest firing event (a start in the same second as the event does not count).
-
-- Checkpoint `jobs` covers runner jobs (`source=runner`) and builders started outside the runner (`source=journal`). A journal entry is listed only while two facts hold: the lease holder recorded the start of an unvoided, unfinished `thread` step for a card (`started` or `waiting`; it stays listed when a later epoch marks the step `in_doubt`), and that card is in `doing` on the same board under a live claim. Each entry carries the card, step key, assignee, claim end and the step's evidence. Nothing is stored and no card or step is changed; the hub does not verify that the thread exists.
+Moved to [`docs/system/durable-orchestrator.md`](docs/system/durable-orchestrator.md); edit it there.
 
 ### Thread-search ranking
 
-- For a verified thread index, search finds the scoped BM25 cutoff using the FTS rank iterator, then includes every hit at or above that cutoff before ordering by BM25, thread ID and chunk index.
-
-- The top rowids are materialized before fetching canonical chunk fields.
-
-- Each ID batch keeps the same limit and the final merge uses the same ordering.
-
-- Snapshot verification, external-change repair and the read-only logical query remain unchanged; a selected missing or mismatched canonical identity reruns the complete logical query.
-
-- The synthetic thread-search benchmark reports p50/p95 and exports full result lists for revision comparisons.
-
-- Timings are informational, never a gate.
+Moved to [`docs/system/thread-search-ranking.md`](docs/system/thread-search-ranking.md); edit it there.
 
 ### Owner-configured task types on cards (slice 1)
 
-- Owner assignments that claim todo cards, including handoffs, validate the target connection’s type grant before committing a claim or requesting its configured start. Existing holders can repeat an explicit take after grant removal without renewing the lease. Automatic selection applies both task-type eligibility and enabled blocker filtering.
-
-- Cards default to an empty task type and retain existing selection, authority, reservations, capacity and text rendering; JSON includes `task_type: ''`. Only a signed-in workspace owner may supply, replace or clear the field; omission preserves it, null is invalid. Nonempty types are single lowercase slugs of at most 48 characters.
-- Each workspace’s boards store keeps exact stable connection IDs and their allowed labels, with at most 128 distinct labels per connection. GET/POST `/api/task-types/connections/<id>` require a person owner and an exact live workspace connection ID. POST accepts only `{allowed_types: [...]}`, atomically replaces the sorted unique list, and uses last-commit-wins semantics. A stale client can re-grant a removed label; there is no concurrency token. GET does not create a database. Non-object POST JSON is rejected with 400. Owner status changes to doing preserve a typed card’s assigned holder and check that holder’s grant; only person self-acquisition is exempt.
-- New typed doing entries require the final holding connection’s exact grant, with orchestration on or off; automatic take skips ineligible cards in the existing order. People acquiring for themselves bypass only type eligibility. Person-assigned connection work receives no person exemption. Missing mappings, malformed types and unreadable mappings refuse. Runner queue, configured owner starts and starting validation use the worker’s grant; starting retains `card_not_startable` translation.
-- Claim, retype and grant replacement serialize in the board transaction. Explicit denial rolls back expiry marks, versions and events; an automatic no-result commits ordinary expiry. Connection resolution precedes board transactions; control locks are never held while waiting for a board store. Runner admission is advisory; authoritative claiming can refuse after a concurrent removal. There is no cross-database atomicity or snapshot guarantee.
-- Existing doing holders retain reporting, renewal, edits, finishing, escalation and release after label removal or retyping, preserving assignee and expiry. Revocation still denies authentication. Same-ID token rotation preserves grants; new IDs inherit none. Todo reservation is not acquisition; owner recovery remains todo → backlog → todo.
-- The app sets a card’s task type from the card details and each agent’s allowed types from Settings > Agents, both person-owner writes through the routes above. A refused typed pickup names the type and points the owner to Settings > Agents; automatic take still skips ineligible cards without an error.
-- Interim choices pending owner: untyped cards behave as today, member people may acquire for themselves, labels are free slugs, missing eligibility adds no notification, and stale full replacements may re-grant labels. Deferred groups remain catalog/multiple types/agent attachments; mapping versions/audit/grant API; runner fences/replay/terminalization; handoff/ask/approval routing and recovery/notifications; platform grants/browser settings; send/pay confirmation and secret protection. The full task-types release still requires those requirements or explicit owner-approved exclusions.
+Moved to [`docs/system/owner-configured-task-types-on-cards-slice-1.md`](docs/system/owner-configured-task-types-on-cards-slice-1.md); edit it there.
 
 ### Goals tree in card context
 
-- The workspace has one small goals tree (6 levels, 200 goals, plain single-line text) that only a signed-in workspace owner writes, through the REST routes or the MCP tools `goal_set` and `card_goal`; every connection can read it with `goal_list`. A card points at at most one goal, and a goal that is archived stays in the context of cards already pointing at it.
-- `task_show` and `task_take_next` add the card's goal chain, top-level first, as `goals` only when a goal is set; cards without one are unchanged. The goal text fits a fixed 1200-character budget: higher goals are dropped from the top level down and counted, and the card's own goal always stays.
-- `goal_set` and `card_goal` are checked writes under the rules freshness gate (`docs/design/RULES.md`): goals are instructions in agent context.
-- Interim choices pending owner: the tree is workspace-wide (no per-board goals), agents cannot point a card at a goal themselves, and there is no web goal picker yet.
+Moved to [`docs/system/goals-tree-in-card-context.md`](docs/system/goals-tree-in-card-context.md); edit it there.
 
 ### Opt-in blockers, waiting reasons and split delivery
 
-- Disabled orchestration retains legacy capacity refusals; shared waiting text is applied only while the switch is enabled.
-
-- Split completion markers obey the same MCP and REST rules-freshness checks as other card decisions. Card schemas advertise blocker arguments only while the workspace switch is on; properties are derived per request without changing shared extension schemas. Split labels cannot be added to roots or removed from keyed children through label edits. REST marker references must be bounded positive integers. Only lock timeouts become busy responses, through the shared admission classifier; settings read errors retain their retryable status. Checkpoint inbox reads are best effort. A failed inbox snapshot after lease commit logs sanitized diagnostics without exception messages and retains the pinned launch instructions and asks the agent to read the inbox before acting. Board waiting summaries share one runner connection and count usage once for active slots and once for queued reservations. Card lists likewise share one read connection and one usage calculation per board. Capacity refusals retain the original error if a display waiting reason is unavailable. Release waiting applies only to todo/backlog cards. Existing runner rows migrate with a NULL launch role, which preserves their configured role and stored job fields.
-
-- The workspace switch defaults off. Enabled boards add same-board blocker
-  edges (maximum 16 per card, no self/cycles, DFS bounded to 200 nodes).
-  Only Done unblocks. SQL selection skips unresolved blockers and the runner
-  checks them before starting. Views use the pure `boards.why` predicate in
-  blocker/person/release/cap order (the full list is in docs/boards/API.md);
-  explicit claims share its waiting text.
-  Dependency waiting alone does not enter `needs_me`.
-
-- Blocker links are edited in the app through the ordinary card `PATCH` with the full `blocked_by` list and the card version, so ownership, visibility and optimistic-version rules are unchanged. Refusals (`self`, `cycle`, `other_board`, `invalid_blockers`, `blocker_graph_too_large`) carry a plain sentence; a card the caller cannot read is answered exactly like a missing number.
-
-- `boards.why` is the single source of waiting sentences. Besides blockers, person, release and capacity it explains an expired claim, a plan awaiting review, no connected agent and pending checks; only `blocked_by`, `waits_on_person`, `plan_review` and `not_released` refuse a claim or start. Board lists add `waiting_notes` built from the same counts.
-
-- `boards.sqlite3` adds `task_blockers` and `card_splits`. Keyed children use
-  `split:<parent>:<key>` labels; key checks and inserts share the board write
-  transaction. Inbox reads include open unsplit roots, excluding children and
-  coordinator-created roots. Only the coordinator PAT or a signed-in owner
-  reads or marks them. The first split/kept marker wins and appends card history.
-- Configured todo triggers retain their prior behavior with the switch off.
-  Enabled roots launch `main`; children never trigger split starts. Jobs pin
-  the selected `launch_role` in an additive runner column, so later switch
-  changes cannot change a queued job's launch instructions. Messages include
-  inbox context; the agent creates missing stable keys and marks completion.
-- Each trigger-enabled runner sweep reconciles eligible roots older than 10 minutes with no
-  active/started job. Retry keys are `split-retry:<card>:<n>`; gaps are 10, 30,
-  90 minutes and n is bounded to 3. Attempts (including refusals) use the existing
-  `orch_misses` log with negative event ids. Eligibility and attempt number are
-  rechecked under `fenced_start` before inserting a job or miss. Three refused
-  attempts show `not_released` / `split stuck` in waiting reasons and checkpoints.
-  A completed marker stops reconciliation. The hub never creates children.
-  Retry keys share the caller key space, scoped by card and requester. Reusing
-  the same key and arguments returns the stored job; different arguments refuse
-  with `request_conflict` rather than launching another job.
-- Board reads inside runner transactions use the read-only connection path;
-  no BoardService or BoardStore migration runs there. New route lock timeouts
-  return `409 busy` without mutation. No external service is called.
-- Without a runner, card delivery uses a subscribed `card.created` webhook
-  plus the inbox at the next session. Without either, a new card waits for that
-  session. Runner-owned persistent board sessions are described below; richer
-  done/stuck routing and runner-job events remain separate work. Stable keys are the agent's responsibility; changing
-  keys after a crash can create additional children.
-
-- `runner.sqlite3`: runner jobs with pinned launch role; orchestrator configs, cursors, leases, steps, journal, retry attempts, restore flag
+Moved to [`docs/system/opt-in-blockers-waiting-reasons-and-split-delivery.md`](docs/system/opt-in-blockers-waiting-reasons-and-split-delivery.md); edit it there.
 
 ### Foreground refresh rendering
 
-- A background workspace refresh that supersedes a pending foreground render inherits that render on the same screen.
-
-- Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
-
-- A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
+Moved to [`docs/system/foreground-refresh-rendering-2.md`](docs/system/foreground-refresh-rendering-2.md); edit it there.
 
 ### Routines create cards on a schedule
 
-A routine (name, card template, schedule, owner) creates one card per due time. The worker claims a `routine_runs` row, unique per routine and due time, before it creates the card, and the card carries a marker label, so a restart between the claim and the card finds the existing card instead of making a second. Cards are made by `BoardService.task_add` as the routine's owner (a workspace owner), so priority, origin and authorization rules apply at run time; if the owner has lost ownership or the board is gone, the run is recorded as failed and five failed runs in a row pause the routine. A board is never created by a routine. After downtime at most three due times are made up; earlier ones become a single `skipped` history row. Time spent paused is not made up. Limits: 25 routines per workspace, 60-minute minimum interval, 200 history rows per routine. Only signed-in workspace owners read or change routines (`/api/routines`). Due times come from the shared pure `commonplace/schedule_time.py` (every N minutes or a cron, in an IANA time zone).
+Moved to [`docs/system/routines-create-cards-on-a-schedule.md`](docs/system/routines-create-cards-on-a-schedule.md); edit it there.
 
 ### Tool policy: Allowed, Ask first or Off per action
 
-A workspace owner sets every tool action to Allowed, Ask first or Off (`commonplace/tool_policy/`, `/api/tool-policy`, Settings). Allowed is the default and stores nothing, so nothing changes until the owner changes it. The check sits at the gateway's one dispatch point for `tools/call`, after the connection's own policy, so it can only narrow what scopes already allow; a connection's REST form of an action follows the same policy. It covers agent connections, not people in the app, and each action is gated under its own name: the gateway's nested calls inside an allowed action are not gated again.
-
-Off refuses the call with a clear message. Ask first does not run the call: it files a review card to the owner through the existing ask path (Approve and Deny as decision blocks, in Needs me) and records a request bound to the connection id, the action and a SHA-256 digest of the canonical arguments. The same call runs once after a signed-in owner picked Approve. The request is closed before the call runs (single use), the owner has 24 hours to answer and the approval lasts one hour. Whether a request is approved is read from the card's append-only event log: every event after the request, up to the decision, must be stamped by a signed-in person who is an owner now, so an edit or comment by the asking agent, an answer by any connection (including an app holding `cards:decide`) or by someone who lost ownership voids it. Accepting only the signed-in owner is deliberate: an approval that lets an agent act is not delegated to another connection. The card shows a bounded preview of the arguments on the board the asking connection sees first, so anyone who reads that board can read the preview.
+Moved to [`docs/system/tool-policy-allowed-ask-first-or-off-per-action.md`](docs/system/tool-policy-allowed-ask-first-or-off-per-action.md); edit it there.
 
 ### Webhook dispatcher recovery
 
-- Each delivery pass contains unexpected errors from reconciliation, due-delivery lookup and delivery.
-
-- An error is logged without its private message and the dispatcher waits on its stop event before continuing: 5 s initially, doubling after consecutive errors to a 300 s cap.
-
-- A successful pass resets the backoff; stopping interrupts the wait.
-
-- A `sqlite3.ProgrammingError` ends the dispatcher silently only when its ControlDB is closed; otherwise it follows the logged, bounded-backoff recovery path. Exit always removes the event listener.
-
-- This keeps a temporary failure from silently ending background delivery.
+Moved to [`docs/system/webhook-dispatcher-recovery.md`](docs/system/webhook-dispatcher-recovery.md); edit it there.
 
 ### Revoked-token socket guard
 
-- The real-socket revoked-token guard records the server's completed 401 and asserts that neither body reads nor route dispatch occurred.
-
-- A forced early close covers upload failure independently of whether the client can read the response.
-
-- The gateway already sends `Connection: close`; this test does not add body draining to the unauthenticated request path.
+Moved to [`docs/system/revoked-token-socket-guard.md`](docs/system/revoked-token-socket-guard.md); edit it there.
 
 ### Design before code
 
-- A planner role must include `design_before_code`.
-
-- On a configured board, approving a `plan` card runs `orch plan-check` on its body; only `task_approve` removes the `plan` label; a planner connection's card must pass plan-check before it reaches `todo` or `done`.
-
-- Plan-check G3 requires each numeric line in (a) to lead with M, T, G, MEASURED, TARGET or GUESS after indentation and an optional Markdown list marker.
-
-- G7 requires each mapped test file to exist within the current repository root at check time; `tests/test_orch_acceptance.py` is allowed.
-
-- The root is the nearest enclosing Git checkout, or the current directory outside a checkout.
-
-- Absolute paths and paths resolving outside the root are refused.
-
-- `orch_card_start(board, role, card, step_key, epoch, token, config_ref?)` uses `role` to identify the lease and step lineage.
-
-- Acceptance cases R1, R1b, R1d, R1e, R8b, R10a and R11e live in `tests/test_orch_acceptance.py`.
-
-- `SYSTEM.md` and `MODULES.md` are kept current by `docs-check`, which runs in the test suite.
+Moved to [`docs/system/design-before-code.md`](docs/system/design-before-code.md); edit it there.
 
 ### Defaults chosen for slice 1
 
-| Question | Default |
-|---|---|
-| Who approves a config | The owner only. |
-| Who may hold an orchestrator lease | A principal that passes `requester_ok` for the configured machine (a listed trusted PAT or the person owner); a project seat only on its own board. Without `[runner]`: only the board's own trusted project seat, for its seat role. |
-| Lease TTL | 1800 s (G). |
-| Wait budgets | Guesses until measured (see Numbers). |
-| CLI acts as owner | Yes, through data-dir access. |
-| Members' moves fire triggers | No. |
-| Model slots | Four (`main` = orchestrator, `worker` = builder, `reviewer`, `gate`), set per project by the owner. An optional per-project escalation rule (`after_failures` 1–10 and/or card `labels`, plus a stronger model) swaps the builder and reviewer model at start: the card's `failed` jobs are counted inside the start transaction, so a card that failed twice is retried on the escalation model. The job stores the model and `model_reason` (`failed_rounds:<n>` or `label:<name>`); the rule's model comes from the workspace model list; a keyed retry replays its stored job whatever escalation decided, judged by the job's pre-escalation request digest (`request_base_hash`, default model included), so a changed default is still a conflict; a role with no default stays unmapped; with no rule a start resolves exactly as before. |
+Moved to [`docs/system/defaults-chosen-for-slice-1.md`](docs/system/defaults-chosen-for-slice-1.md); edit it there.
 
 ### Live chat delivery state
 
-The chat page (`GET /api/chat/<board>`) reports a `live` state for the caller's
-own newest message: `idle`, `delivered`, `working`, `answered`, `no_agent` or
-`no_answer`, with a reason. It is derived from stored facts only: the wake
-delivery row of the `space_message` event that carried the message
-(`chat_live_posts` maps message to event), the read cursor of the board's
-current orchestrator connection (`chat_live_reads`, advanced after that
-connection's `space_read`), and any later agent message. Both tables live in
-the control database, are keyed by workspace and board, and hold ids and times
-but no message text. The server calls no model and no outside service for this
-state. A read by a person or by an agent that is not the board's coordinator
-records nothing, and a failed cursor write never fails the read. The agent's
-read time is returned only to a caller who may see that agent in the console.
-`no_answer` follows 60 seconds after a successful wake without a read, 5
-minutes without a wake hook or after a read without a reply, and at once when
-every wake attempt failed. See `docs/chat.md`.
+Moved to [`docs/system/live-chat-delivery-state.md`](docs/system/live-chat-delivery-state.md); edit it there.
 
 ### Board coordinator settings
 
-- Owners can read coordinator candidates through the board settings API; reads and writes share the same active PAT eligibility rule and never return tokens.
-
-- Restricted-origin backlog, todo and doing cards can require deliberate origin release. Healthy active work, released/rejected/terminal cards and explicit person decisions create no origin item. Existing configured plan-check and person-decision rules remain in force.
-- A live appointed independent coordinator requires memory read/write, board-wing read/write and visible space_read, space_post, task_approve and needs_me. Standard member coordinators can discover release work without decide; release boards never confer authority to answer asks or read unrelated proposal/plan reviews.
-- The creator and its descendants cannot release their own restricted origin; the creator's ancestors remain eligible. Missing, cyclic or foreign lineage and unverifiable creator stamps fail closed, including on stored agent markers. A coordinator may release origin while holding the card, preserving status, holder, lease timestamps, provenance and any separate proposal/plan review. Release requires an affirmative decision and a nonempty reason up to 500 characters, grants no self-review, and never renews the lease. Its reason-bearing audit event keeps the existing decide kind with choice="release origin".
-- A completed origin release outlives later appointment changes. A stored agent marker stays valid when the card's history records that agent's `release origin` decision and the agent remains independent of the creator with every release grant, including while it holds the card. Revocation, lost grants, creator lineage and markers with no recorded decision still lapse.
-- The signed-in workspace owner may explicitly release any card awaiting origin release, including with a live coordinator or while coordinator configuration is needed. Implicit release by moving a card stays limited to boards with no live coordinator. Cards awaiting release expose `awaiting_release`, and the card panel offers Release with a required reason.
-- The owner and the live board coordinator may take over or drop a released todo reservation held by another connection. Unreleased cards, doing cards, pending/rejected proposals and person decisions stay protected.
-- Handoff recipients accept `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool; a board with no coordinator and an unknown recipient get a refusal naming the valid choices. Known limit: these four words are reserved, so an agent named one of them cannot be handed a card by name. A workspace owner may close a released restricted-origin todo card directly, and refused card actions appear inside the open card panel. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor on any route (update, web move or handoff).
-- Project settings show the owner each orchestrator config version with its changes and an Accept control, and a Release control for cards waiting for release. Accept uses the existing owner-only route and refuses agent tokens.
-- A creator may cancel its own todo reservation with a status-only `task_update status=backlog`, including after a handoff when origin release has lapsed. Cancellation clears the assignee without changing provenance or the approval marker, and does not authorize activation. Another connection's reservation, pending/rejected proposals and person decisions remain protected.
-- The signed-in owner receives one approvals item per origin awaiting person recovery. An absent/non-live configured record, or a verified independent record lacking any required release grant, yields approval_kind=origin, need=release and actions=[approve]. Live creator/descendant conflicts, unsafe lineage or an unverifiable stamp with any live configured record yield origin_configuration, need=you and actions=[configure_coordinator], with can_approve=false on that queue item; the card itself still offers the owner Release. Owner-role tokens receive no person fallback. An independent fully eligible coordinator yields no owner origin item or notice.
-- Configuration navigates to existing board settings. An invalid creator stamp requires clearing the coordinator before existing owner recovery; this is board-wide and sends other unreleased cards on that board to owner recovery too. Changing to another live coordinator cannot cure an invalid stamp.
-- Origin release never approves a pending proposal/plan. Owner recovery is two actions: release origin, then review. Outside owner fallback, owners retain ordinary rejection of pending proposals without releasing origin, including while coordinator configuration is required. The configuration item itself offers only board settings; owner rejection in these states is available via the card/API approve route with approve=false, not via that configuration item. Explicit person-targeted backlog proposals and plan reviews remain visible independently; while the person cannot release their unreleased origin, these review items advertise only reject and explain that release must precede approval. An applicable owner origin item takes precedence until recovery, then the separate review remains with its full actions.
-- The exact validated choice "release origin" is reserved for origin-release audit events: user decisions and ask options refuse it. Validation preserves case and whitespace as for other text. Claim delivery ignores decide events whose choice is "release origin", preserving the earlier return-routed decision and its verbatim reply, including reply-only decisions.
-- The signed-in owner's list includes at most one coordinator_waiting notice per visible non-archived board, counting unique owner-release and configuration cards separately. Non-person/non-owner callers omit that bucket. Digest omits notices but retains origin card reasons, approval kind, actions and can_approve, with release ordered after you and before plan. Counts deduplicate cards. Existing opt-in phone needs-you notifications also consume actionable Approvals, preserving coordinator-revocation recovery notifications. Notices use "card needs" for one card and "cards need" otherwise.
-- The signed-in owner's list includes `model_roles`: one item per visible non-archived board and model role (`main`, `worker`) that a role a start can run uses while `resolve` finds no project or workspace model. The roles are `Config.start_roles`: the runner role and the role a split start runs (`main` when the config has one), the same selection `prepare()` makes. An item carries `kind` `model_role`, `board`, `board_name`, `role`, `config_roles`, `message` and `action`. A role that names no `model_role` gives `role` null and `action` null: the message says the board config needs one, because no setting can fix it. The message says which starts cannot run. The bucket has no card number, is added to `count`, is absent from the digest and phone notifications, and disappears on the next read once the role resolves; members and agents get no such bucket. The shell draws a "Set up" row whose button opens that board's project settings with the Agent models section open and the role's picker focused; saving a model or going Back re-reads the lists.
-- Agent models (`PUT /api/projects/<board>/models`) accept only models in the board's list (`models.catalog(db, workspace, board)`): rows an owner added for that board (`POST /api/projects/<board>/models/catalog` with `{provider, model}`, owner-only, audited, idempotent), choices saved for that board and workspace defaults (scope `*`) for the roles `main`, `worker`, `reviewer` and `gate`. Rows of other boards never appear, so a reader of one project sees no other project's labels. Any other id is refused with 400 `unknown_model` and nothing is stored. A save that adds a model to the board's list is audited as `project.model_catalog`. The project view returns `model_catalog`; the UI offers a select per role, keeps the stored id visible, and never sends a free-text id. The list is `project_model_catalog` in the control database, scoped by board (additive).
-- A start refused with `model_unresolved` names the role and board and says an owner sets the model in the board's project settings under Agent models (`details.role`, `details.config_role`, `details.board`); for a role without `model_role` it says the config role needs one, never "the None role".
-- The existing Needs me consumer renders Origin release and Coordinator configuration in Approvals. Release uses a required reason and the direct approve route, preserving separate review without a proposal hold; configuration opens existing board settings. Proposal Decline and plan Reject buttons render whenever reject is allowed, independently of approve; approval controls still require approve permission. Both rejection buttons use the existing decline handler.
-- Shell project attention counts and refresh selection include origin/configuration approvals. Release items rank after person decisions and before plan review; a selected origin stays open until it leaves the queue.
+Moved to [`docs/system/board-coordinator-settings.md`](docs/system/board-coordinator-settings.md); edit it there.
 
 
 ### Thread-derived mutations and citations
 
-- Within one workspace, a fact with any readable thread source is mutable.
-  The read rule considers both flat provenance and source rows. The worker
-  rechecks each authorized fact's wing and source set inside its transaction;
-  rows changed or added after the probe do not acquire authorization.
-- Every lookup and worker call uses the authenticated principal's workspace.
-  A foreign workspace identifier resolves as missing. Internal mutation scopes
-  are stripped from client arguments and hidden from tool schemas.
-- Every principal, including an owner, needs read access to cited threads,
-  private source ids, drawers and closets. Missing, unreadable or undecodable
-  citations use the same not-found reply. Existing mutations on unreadable
-  facts and rooms are no-ops; owners have no bypass.
-- Provenance is decoded up to four percent-decoding rounds and checked for
-  control/format characters after decoding, before whitespace is stripped.
-  Recognized tokens anywhere in a provenance string must resolve readable;
-  original strings are forwarded and stored unchanged. Plain strings with
-  encoded controls are also refused, and partial hex tokens in filenames
-  such as `thr_2024_notes.md` are recognized. Private source ids allow path
-  separators, so the complete private token remains literal rather than
-  guessing where a path-embedded id ends.
-- Source deletes enumerate explicit ids and filter drawers, closets, AAAK
-  rows and revisions by their own readable room. A roomless row needs a
-  readable current drawer or, when its drawer is unresolved/absent, readable
-  normalized source tokens. A resolved unreadable drawer or resolver error
-  always keeps the row. Snapshots are rechecked before current drawers go;
-  revision checks hold the revision lock. Unassociated legacy rows remain,
-  even for an owner's MCP call. Unscoped local calls retain source-wide purge.
-- Tunnel deletion rechecks endpoint snapshots, including drawer ids. Hallway
-  deletion rechecks every room under its lock. Taxonomy and room-list results
-  remove unreadable thread keys for every principal.
-- Non-reader extraction leaves its cursor unchanged so a later reader can
-  finish filing. A missing optional closet collection means no closet rows;
-  other probe failures propagate. Parser/access caches expire with a response.
-- No scope is persisted and no existing user text is rewritten. Rollback is
-  a code revert; the per-request revocation window remains unchanged.
-
-- **Deck settings:** the Workspace section Deck adds to Settings is plain links to existing routes; Admin appears only when `/api/me` says `can_admin` is true, the same rule the account menu uses.
-
-- **Deck look (opt-in):** a second look and navigation for the web app, chosen per browser (`localStorage` `cmmn.ui`; nothing is stored on the server and no request carries it). It changes markup and CSS only: the same routes, APIs, permissions and CSP apply, the font it adds is a same-origin file, and with the switch off the app draws exactly as before. `#/today` and `#/compute` are reserved for Deck screens and resolve to the home screen until a screen registers for them.
-
-- **Deck bots:** the same bots routes show responsive tiles or a focused conversation with bot chips while Deck is on; the classic layout stays unchanged. A project bot’s glance reads open work and dated completions through the existing signed-in person’s project API, groups the bot work statuses, and offers no mutations. A session draft (`cmmn.deck.draft`, `{bot,text}`) is consumed only into the named bot’s loaded composer, without sending, in either look; another bot’s draft survives and malformed input is discarded.
-
-- **Deck Today home:** when Deck is on, `#/` lands on `#/today`; with it off, Today remains an unknown address and its module is never loaded. Today reads only the existing bot roster and waiting blocks, prefers a project bot for repeated questions, posts `{version, choice}` to the existing decide route, and reloads a changed question after 409. A successful answer stays settled until refresh; failures keep the question open. Refresh preserves the composer controls, and stopping aborts pending reads and answers and removes listeners. The composer stores only its explicit hand-off `{bot, text}` in session storage (`cmmn.deck.draft`) before opening that bot; the receiving thread is a separate slice. Working rows and project agent counts use reported data; no finished-work history is inferred.
-
-- **Deck Compute:** `#/compute` reads only `/api/runners` and `/api/bots`. Revoked machines are omitted; disabled machines are Off, enabled owner-attested machines are Ready, and other enabled machines wait for attestation. These are enrollment states, not online status; attestation is the owner's statement, not verification. The map reserves label boxes outside its link lanes, widens within a scrollable field for crowded layers and keeps SVG type at real pixel size. Physical details, sites and running work have honest empty states. Add machine opens Admin; the two bot actions store a `cmmn.deck.draft` in session storage and open General without sending it.
-
-- **Bots web screens (S5):** `#/bots` and `#/bots/<id>` (`web/static/bots.js`, `botstream.js`, `bots.css`) talk only to the `/api/bots*` contract and the existing `POST /api/cards/<n>/decide`; they hold no conversation text beyond the open page, store nothing in the browser except an unsent draft in memory, and never send a model or mode choice. Every server string is escaped before it is drawn. A turn is streamed with `fetch` and a stream reader; a connection lost after the `ack` event is not a failure, the page polls `GET /api/bots/<id>/messages?after=` until `running` is false. The roster is polled every 15 s and an open thread every 5 s (1.5 s while a turn runs), both paused while the tab is hidden. A failed send keeps the text and retries under the same `request_id`. Work stays "work", "task" and "question" in the screen's wording.
-
-- **Bots-first navigation (S8):** `#/` resolves to `#/bots` for a person who has at least one project and to `#/start` for one who has none; no storage, API or permission changes. The rail and phone tabs list Bots and Memory; the Bots badge is the number of questions waiting on the person, read from the same `GET /api/bots` roster the bots screen loads (the shell reads it itself only on other screens, so the screen adds no second poll), and it counts the General bot's total when that bot exists because that total already covers every project. Projects, Needs me and Console moved into a "Workspace" group of the account menu, still gated by the same rules as before (Admin only for `can_admin`); no route was removed.
+Moved to [`docs/system/thread-derived-mutations-and-citations.md`](docs/system/thread-derived-mutations-and-citations.md); edit it there.
 
 ### Coordinator release authority
 
-- A seat counts as the board coordinator when it is the board's configured coordinator, or when it holds a live coordinator lease of exactly that board. The coordinator lease is the lease of the accepted live config's orchestrator role; the configured coordinator is preferred when it qualifies. A replaced epoch (a newer claim by another holder), an expired or released lease, a lease of another board, a missing or unparsable config, a pending restore and an unreadable runner store name nobody. Releasing needs every release grant and independence from the card's creator; being counted as an approver candidate needs a holder that can see the card in needs-me (needs_me and task_approve visible, memory read and write, wing read).
-- The lease holder has the whole coordinator role on that board: it releases restricted-origin cards, is a candidate approver and supervisor for the board's pending proposals and plans, may edit the title and body of an unassigned restricted-origin todo card, is the target of the `orchestrator`/`coordinator` handoff alias when no live configured coordinator exists, and receives release discovery (needs-me, release boards) for the board. The owner's needs-you item is hidden only while a candidate that can see the card in needs-me, configured or leased, can act on it: for restricted-origin work, a coordinator that can release it; for a pending proposal or plan, an approver candidate that can see it. A candidate that cannot see needs-me never hides the owner's item. Routed asks (`ask`, coordinated ask boards) and runner or planner routing still follow the configured coordinator only.
-- A coordinator may release a restricted-origin card reserved for it and keep working it after later handoffs. A seat that is neither the configured coordinator nor the live lease holder is refused on approve, update and take, and the creator never releases its own card.
-- A release recorded by an agent authorizes handed-over work only while that agent keeps every release grant (task_approve, needs_me, space_read, space_post, memory read and write, and write access to the board's wing). This holds for every agent route that can store a release: coordinator, parent, top-level agent and other trusted agents. A former approver that loses any grant no longer authorizes work it released, whoever holds the card.
+Moved to [`docs/system/coordinator-release-authority.md`](docs/system/coordinator-release-authority.md); edit it there.
 
 ### Eval archives (slice 1)
 
-- `commonplace eval` is an owner-only local CLI. It archives immutable runs of
-  eligible stored threads (handoff transcripts and ACL imports in the `threads`
-  wing) and reads them back as exact bytes. No REST, MCP, UI, hook, daemon,
-  network, model, judge, score or replay is part of slice 1; later slices need
-  their own plan.
-
-- Live captures, grant imports, private chats and continuity threads refuse
-  (`eval_source_gap: unsupported_in_slice1`). Owner role, eligibility, the read
-  policy and the continuity probe are rechecked inside every archive commit and
-  every list/show/read response; a hidden run keeps its quota. A lookup error
-  refuses the response rather than hiding a run. The probe covers the
-  continuity tables that record stored IDs (`sync_streams`, `sync_groups`,
-  `sync_backfill`, `capture_ops`). `handoffs.stored_thread_id` also records
-  stored IDs and is deliberately not probed: a handoff transcript is the
-  eligible case, so its handoff record must not hide it.
-
-- `eval preflight` is the one eval command dispatched without the backup fence
-  and data lock (a deviation from slice-1 plan §6.3, accepted by the lead): it
-  only stats paths and reads `workspace.json`, so it creates nothing, even on a
-  fresh data directory.
-
-- Eval uses local OS trust like every CLI command, never constructs
-  `ControlDB`, and reads the control database `?mode=ro` behind a write-denying
-  authorizer. Its principal has only `threads:read` and `memory:read`.
-
-- Runs live in `<workspace>/evals/runs.sqlite3` (WAL, 0600 in a 0700 `evals/`,
-  encrypted with the workspace). Purge by exact run ID is the only delete; keys
-  are stored only as digests and stay retired for 30 days after purge. With
-  plans enabled, the eval DB counts against plan storage, measured under the
-  thread-store writer lock.
+Moved to [`docs/system/eval-archives-slice-1.md`](docs/system/eval-archives-slice-1.md); edit it there.
 
 ## Numbers
 
@@ -1736,37 +1485,7 @@ every wake attempt failed. See `docs/chat.md`.
 
 ### Authenticated owner progress scope, State lifetime and quota causality
 
-- The owner-only `/api/search-index` route always carries its authenticated
-  principal. Counts include every currently readable thread in the workspace,
-  including another member's readable threads, using the existing indexed and
-  pending predicates. Owner status grants no extra thread read authority.
-- Each poll makes one current authorization decision per thread over metadata
-  pages of at most 500 rows; the allowed descriptor map lives only for that response. Concrete metadata
-  descriptors are revalidated in the aggregation snapshot; changed or newly
-  encountered descriptors are excluded. Message and chunk content is not read.
-- Successful sweep writes accrue units by stored thread id for the process
-  State lifetime. Every poll reauthorizes those ids; revocation hides accumulated
-  units, and a fresh State starts at zero without recovering historical totals.
-  Hidden-only activity and hidden-only quota refusals do not set the public state.
-- State precedence is configured `off`, then `deferred_storage` for readable
-  pending work actually refused by quota, then readable active `running`, then
-  `idle`. Active means inside a thread's write loop; queued or paused work
-  alone does not set `running`. The global workspace storage meter is unchanged: hidden storage may
-  cause genuinely blocked readable work to report `deferred_storage`. This
-  causality is explicitly accepted; there is no unconditional state-equality
-  claim when readable quota eligibility differs.
-- Polling has one one-second proof budget, including timed snapshot/attribution
-  lock acquisition and SQLite progress interruption. Owner progress uses a
-  separate strict Recall probe: store and private-reader faults propagate to the
-  proof boundary, while ordinary Recall consumers retain deny-on-fault behavior.
-  Incomplete enumeration, authority faults, missing strict reader context or expired proof returns the fixed HTTP 503
-  `{"error":"Progress unavailable"}`, with no partial totals, raw errors or
-  global fallback. Successful and unavailable responses carry `no-store`.
-  The proof budget is a failure boundary, not a latency guarantee.
-- Local operator CLI status/run explicitly use `principal=None`, retain their
-  unscoped count keys and existing enrolment behavior, and do not supply the
-  authority for the HTTP projection. Other provenance and read residuals below
-  are unchanged.
+Moved to [`docs/system/authenticated-owner-progress-scope-state-lifetime-and.md`](docs/system/authenticated-owner-progress-scope-state-lifetime-and.md); edit it there.
 
 ## Residuals
 
@@ -1865,289 +1584,23 @@ every wake attempt failed. See `docs/chat.md`.
 
 ### Scoped wing counts and search fan-out
 
-- Authenticated `list_wings` and `get_taxonomy` enumerate complete metadata
-  pages, authorize each pair with the existing workspace-bound thread reader,
-  and sum only identities revalidated against current metadata. Owners use
-  the same thread boundary. Readable imported rooms retain their existing
-  presence/count behavior; message reads still require the consented range
-  proof. No stored content or authorization policy is changed.
-- The workspace store opens before deadline-bound pair authorization, so
-  cold and warm requests retain the same readable rooms. Ordinary room names
-  such as `thr_notes` use the existing thread-room predicate.
-- Standalone mediators with a workspace-bound principal keep metadata
-  projection even without gateway or handoff context: ordinary readable pairs
-  remain visible, and unresolved thread pairs stay hidden. Principals without
-  workspace context receive empty wing lists, taxonomy and search fan-out;
-  no raw worker listing can bypass wing policy or thread authorization.
-- SQLite identity seeks and the generic metadata fallback read at most 500
-  records per page or final batch, without document columns. Missing, null
-  and question-mark wing/room values normalize to `unknown`; bookkeeping
-  stays excluded. Local CLI/stdio reads with no scope keep legacy behavior.
-- Search fan-out uses that same visible wing projection before requested-wing
-  selection, CLI compatibility filtering or the fan-out limit. Hidden-only
-  wings cannot appear in `wings_searched` or change the denial count. Internal
-  web and memory consumers inherit the scoped listing; connection validation
-  rejects ordinary wings with only unreadable content.
-- Worker scopes, identity descriptors and advancing cursors remain private.
-  The gateway strips client-supplied scopes and removes them from discovery.
-  Raw overview caches never hold a principal's projection; every response
-  authorizes afresh, including after revocation or changed associations.
-- Malformed pages, storage faults, partial acquisition and deadline exhaustion
-  discard every accumulated page. Listings return exactly `{"wings": {}}` or
-  `{"taxonomy": {}}`; fan-out returns the query with empty results and
-  `wings_searched`, plus its normal facts attachment. No raw exception,
-  partial count, hidden marker or cursor is published. One caller deadline
-  bounds acquisition; this contract makes no timing or constant-time claim.
-- Imported holder-room counts can include rows outside a consented range,
-  as before this projection; content reads retain their separate range gate.
-- Restricted structured drawer searches gate each ranked prefix before
-  applying the requested result limit, for explicit wings and fan-out alike.
-  A short readable page retries with doubled worker limits until filled,
-  the worker returns a short prefix, or the 100-candidate bound is reached.
-  At most eight worker searches share one existing request deadline; ranking
-  still uses the same joint wing pool. Readable hits beyond that bound may
-  remain unavailable. Every-wing principals keep their existing search path.
-- Refill requires an attached gateway handoff context; standalone worker
-  helpers retain their exact response shape and existing authorization gates.
-  Pinned-wing searches retain the original forwarded worker response, including
-  protocol errors and opaque replies, and refill only structured search hits.
-  The first search and every refill share the same deadline and call bound.
-- Restricted structured responses omit `total`, `total_before_filter` and
-  `filtered_by_max_distance`; any `count` describes only returned readable
-  hits. No hidden-candidate count or refill diagnostic is returned. Restricted
-  CLI-compatible search acquires structured hits, so it uses the same refill
-  before the final gate and rendering.
-- Other overview, legacy
-  provenance and owner search-index progress remain separate residuals.
+Moved to [`docs/system/scoped-wing-counts-and-search-fan-out.md`](docs/system/scoped-wing-counts-and-search-fan-out.md); edit it there.
 
 ### Visible logical drawer pagination
 
-- Authenticated drawer listings enumerate metadata in bounded pages, authorize
-  current physical identities in the caller's workspace, and revalidate them
-  before logical grouping, date filtering, totals and slicing. Owners use the
-  same reader. An unreadable chunk cannot authorize readable siblings or
-  contribute to their preview, date or count. Wing aliases retain their meaning.
-- SQLite final membership and page hydration share one snapshot. SDK fallback
-  revalidates metadata and hydrates only visible page identities in batches of
-  at most 500, checking their metadata again with the fetched documents.
-  One request deadline bounds acquisition and final reads; no timing claim is made.
-- Missing workspace context, incomplete enumeration, malformed pages and read
-  faults return the normal empty pagination envelope with zero totals. No raw
-  exception, partial global total or private descriptor is published. Raw caches
-  contain no principal projection; local unscoped calls retain existing behavior.
-- The final response gate retains the proven visible total when it only scrubs
-  provenance metadata. If it removes a drawer after projection, the listing
-  fails closed to the same empty envelope rather than returning a page gap.
-- Literal-wing readers with imported-history read consent retain proved visible
-  totals through both response gates, including provenance-only metadata scrubs.
-  Existing wing and thread authority still controls membership.
-- Page arguments use the worker's shared schema rules after policy checks:
-  JSON null selects the default, invalid integers retain JSON-RPC invalid-params,
-  and worker filter validation errors remain error results. Date validation stays
-  in the worker; invalid filters never masquerade as empty successful pages.
-  A metadata-free worker call with an empty allow-list validates first, preserving
-  worker ordering without loading the worker server in the gateway process.
-  Non-owner wing refusals retain their existing messages. Incomplete membership
-  proof still returns the empty envelope rather than a worker failure message.
-- Consented `private_chats` drawer listings use the same worker validation before
-  reading imports, under one request deadline. Null defaults and integer/range
-  errors match the worker route; invalid dates retain the worker error result.
-  Import listing receives the validated limit and offset unchanged. Valid date
-  windows still exclude imports without a proved date. Incomplete validation or
-  import-listing faults yield the existing empty listing shape, with no raw error.
-- The import branch of `list_rooms` also validates through `list_drawers`, so
-  validation errors name `mempalace_list_drawers`. Its public schema declares only
-  `wing`; legacy extra filters are still accepted through drawer validation,
-  including the raw `room` filter passed to import listing. This is not parity
-  with the worker's own `list_rooms` argument validation.
-- Stored bytes, imported-history consent/range rules, provenance alias scrubbing
-  and legacy source-file proof retain their separate contracts and residuals.
+Moved to [`docs/system/visible-logical-drawer-pagination.md`](docs/system/visible-logical-drawer-pagination.md); edit it there.
 
 ### Hallway read eligibility and visible pagination
 
-- Authenticated hallway reads require readable wing policy and every room. Every
-  returned string, including embedded room tokens, ids, labels, entity/author and
-  timestamp values, uses the same independent raw thread/private token scan and
-  current read proof. Missing proof drops that row before visible counts/paging.
-  Kept strings, emoji joiners and literal percent text remain byte-identical.
-- One shared public field tuple is applied before count/sort/page and again by the
-  final gate: id, wing, rooms, label, entity_a, entity_b, co_occurrence_count,
-  created_at, created_by, strength, stability, last_activated and access_count.
-  Existing dynamics fields remain present. Present string fields must be strings;
-  rooms must be a list of nonempty strings. Strength, stability, access_count and
-  co_occurrence_count must be finite int/float values (not bool/text); invalid
-  rows are excluded, with absent legacy fields left absent. No other key returns.
-- Metadata pages contain at most 500 descriptors in SQLite rowid or JSON insertion
-  order. Request-local authorization yields concrete allow descriptors, revalidated
-  in final read snapshots. Eligible rows retain stable strength ties. Ineligible
-  rows drop before counting; only a failed final-gate recheck discards the entire
-  page and its counts. Readable mirror rows avoid singular-room drawer scrubbing.
-  Client discovery hides internal scope, mediation replaces client-supplied scope,
-  and worker scope requires verified gateway identity. Local unscoped reads remain.
-- Every scanned string is capped before scanning by the public shared
-  provenance_refs.MAX_REFERENCE_CHARS. Duplicate tokens collapse. Overlapping
-  raw scans cost O(C²) time/memory per capped string of at most C characters;
-  the cap bounds a scan but does not promise it completes within a deadline.
-  Deadline checkpoints precede each field scan and each token lookup, rather than
-  waiting for an entire 500-row batch. Oversized/unproved values exclude the row.
-- Missing context, incomplete acquisition, malformed protocol or deadline expiry
-  discards all projected counts and returns the fixed empty pagination envelope.
-  Reads do not recompute strings, clean up stored legacy rows (O4), or extend import
-  consent. Non-canonical spellings outside the raw token grammar (percent escapes,
-  fullwidth/NFKC forms) remain the accepted limitation; no returned string field is
-  exempt from scanning. Other graph/provenance residuals below remain unchanged.
+Moved to [`docs/system/hallway-read-eligibility-and-visible-pagination.md`](docs/system/hallway-read-eligibility-and-visible-pagination.md); edit it there.
 
 ### Authenticated room and status counts
 
-- For `status`, `list_rooms`, `list_wings` and `get_taxonomy`, backup pauses
-  retain the gateway retry contract: JSON-RPC error -32603 with `retry_after_s`,
-  and an internal ToolError explaining the backup pause. Pair acquisition and
-  status diagnostics propagate that pause rather than returning zero counts.
-  Consented `private_chats` import listings retain the same retry errors for
-  `list_rooms` and `list_drawers`. Shared pair-projection search fan-out also
-  propagates the pause. Other acquisition faults retain the zero-count empty
-  response. Other drawer, hallway, tunnel, graph and KG projection pause behavior
-  remains separate work.
-
-- Authenticated `list_rooms` and `status` sum the complete authorized pair
-  projection, including wing aliases and unknown loci. Wing policy and the
-  current workspace thread reader both apply, including to actual owners.
-  Malformed private mirror rooms need readable association proof.
-- Metadata pages and final snapshot batches stay bounded to 500 under one
-  request deadline. Changed descriptors are excluded. Incomplete acquisition
-  returns zero counts/maps without partial global totals or raw failures.
-- Authenticated status suppresses global `hnsw_capacity` and raw capacity
-  probe messages. A disabled vector index reports `vector_disabled: true`
-  with the fixed reason `Vector index unavailable; repair required.`, including
-  after incomplete acquisition. Local operator status retains its raw diagnostics.
-- Authenticated diagnostics omit `sqlite_integrity`, `library_versions` and
-  `updates`, including embedded palace/database paths. Integrity failure still
-  reports `sqlite_integrity_failed`, the fixed error and `partial`. Unexpected
-  fields fail closed. Principal projections never enter raw caches.
-- The worker status schema retains the private scope property required by
-  internal argument whitelisting; authenticated discovery strips it and client
-  scopes are discarded. Non-object local scopes receive an argument error.
-  Invalid room-list wing types return the ordinary name-validation error;
-  whitespace-only wing filters retain the existing all-rooms convention.
-- Imported-history listing consent and source-range rules remain in force;
-  these counts create no new read grant. The merged hallway, tunnel, graph and
-  KG projections retain their own read contracts. Legacy provenance remains
-  separate work. Stored rows stay intact.
+Moved to [`docs/system/authenticated-room-and-status-counts.md`](docs/system/authenticated-room-and-status-counts.md); edit it there.
 
 ### Thread-boundary residuals
 
-- Token-free plain-file provenance still has no local association proof on read.
-  Typed drawer/closet citations now resolve current local metadata as described
-  below; foreign identifiers already stored before this change are not purged.
-- Non-canonical spellings outside the token grammar remain possible, including
-  inserted characters that are neither Cc nor Cf (combining marks or Unicode
-  spaces), fullwidth letters, and missing underscores. Subject, predicate and
-  object text stays verbatim and is outside provenance parsing.
-- `add_drawer` source publication is outside KG citation checks. External
-  `ext-`, `mcp:` and `import:` ids hidden only by wing policy remain ungated.
-  Drawer update/id-delete closet cleanup still follows the complete source
-  across rooms; scoped replies omit its closet count.
-- An any-readable-source fact remains mutable despite other hidden sources.
-  A single-valued save leaves an unreadable rival open; a new racing row can
-  produce a duplicate. Scoped cleanup can leave stale unassociated legacy
-  index rows, while unscoped local cleanup retains its broader purge.
-
-- **Same OS user.**
-
-  - Anyone who runs as the service's OS user can use the CLI (which is `orch_owner`) and read the data directory.
-
-- **Restore outside `restore()`.**
-
-  - A hand-copied data directory or a deleted `runner.sqlite3` carries no restore marker: the journal resets and nothing is blocked.
-
-- **Effects after T.**
-
-  - After a restore, effects made after the backup time are unknown to the journal; the truth checks in step 5 are the only guard.
-
-- **Outside the journal.**
-
-  - External effects and gate runs started outside the journal are invisible to resume.
-
-- **Revocation window on trigger starts.**
-
-  - The trigger's requester and grants are read in a control snapshot before the fenced transaction.
-
-  - A grant or requester revocation that commits between that snapshot and the in-lock insert is not re-read; the start can still be inserted.
-
-  - The runner re-checks the requester and grants at `starting`, so the job is refused before launch.
-  - The runner re-checks requester, grants and binding epoch at `starting`, including idempotent retry. Each job snapshots the validated machine epoch; legacy jobs have NULL snapshots and are refused.
-
-  - Topic/wing reset, worker rotation and revoke increment the machine epoch once. Same-provider confirmation and project-only edits preserve it; changing an attested provider returns 409 `provider_change_requires_reset` until explicit reset and owner review.
-
-  - Board prechecks finish before runner admission; fresh control authority is then held through the guarded starting write and runner commit in both switch modes. A committed reset before the write refuses; one after the write leaves starting work to become uncertain at the next sweep, retaining capacity and never relaunching. Owner resolution takes runner first, then control audit.
-
-  - Stop old hub processes before upgrading/restarting: old reset writers do not increment epochs, so mixed-version writers cannot uphold this fence.
-
-- **Same-second ties are listed.**
-
-  - Job starts and board events are stamped in whole seconds, so a start in the same second as a card's latest firing event cannot be ordered against it.
-
-  - Resume lists such a card as unstarted; it may be a false positive.
-
-- **Skipped events.**
-
-  - Board events committed between a configuring accept (or a restore acknowledgement) and arming are skipped, not replayed.
-
-  - Resume lists the affected `todo` cards as unstarted.
-
-- **Refused triggers are not retried.**
-
-  - A `todo` card whose trigger start is refused (`busy`, `at_cap`, `started_recently` or any other code) is a final miss: the cursor moves past it and nothing re-fires it, even after the queue drains or a slot frees up.
-
-  - It shows in the checkpoint's unstarted list and as a miss; move the card out of `todo` and back to retry.
-
-- **Orchestrator tools on every workspace.**
-
-  - The `orch_*` tools appear in the tool list on every workspace, also where no board has a config (runner children never see them; owner-only tools are listed for owners only).
-
-  - Without a config only proposing and reading do anything.
-
-- **Docs-check checks change, not accuracy.**
-
-  - It refuses a touched module whose block did not change and a change without a `SYSTEM.md` edit (whitespace-only edits do not count); it never judges whether the new text is right.
-
-- **Cap overshoot.**
-
-  - The cap reads card state from `boards.sqlite3` as a snapshot, so a concurrent claim outside the runner can overshoot it.
-
-  - Started jobs hold machine in-flight capacity and per-machine project exclusion only while their cards are doing with that machine's worker as assignee, even after an hour.
-
-  - A terminal job state, a card leaving doing, or reassignment releases that capacity.
-
-  - The lease resolves the worker identity before its runner transaction and reads cards through the read-only boards helper inside it, without constructing BoardService/BoardStore or acquiring a boards write lock.
-
-  - Card state can change after that read; the next lease reads it again.
-
-- **D1 shared worker PAT.**
-
-  - All runner children use the machine's worker PAT, so per-child provenance and per-child limits are not available.
-
-- **D2 launch shape.**
-
-  - Whether T3 accepts `modelSelection` at runtime is unverified; when it is given, effort comes from T3's defaults.
-
-- **D3 thread-list keys.**
-
-  - An empty thread list is no proof that a launch did not happen; such steps go to `needs_person`.
-
-- **Plaintext job lease tokens.**
-
-  - The runner's job lease token is stored in `runner_jobs` and in the machine journal (pre-existing).
-
-- **Waiver list.**
-
-  - Approval of the waiver list below is a manual owner review.
-
-- **Capture hook spool.**
-
-  - The capture hook stores the hook JSON as received (session metadata and a transcript path, no transcript text) in `~/.commonplace/spool` and an uploader reads the transcript later. A transcript deleted or rewritten before the upload is lost to the hub; the item is set aside under `rejected/` with a log line. The spool is bounded (500 items, 8 MiB) and drops the oldest items first, logging each drop.
-
-- **Scheduled prompts:** A schedule's prompt is delivered as an owner-authored message on the board the agent coordinates, through the ordinary `space_message` wake; delivery is at most once per due time (a missed or interrupted due time is recorded, never replayed), is re-authorised at each due time, and is limited to coordinators. Non-coordinator agents have no existing prompt channel that avoids creating a card, so they are not supported yet. The worker polls every 30 seconds, so a prompt can arrive up to that much after its due time.
+Moved to [`docs/system/thread-boundary-residuals.md`](docs/system/thread-boundary-residuals.md); edit it there.
 
 ## Open dependencies (D1–D3)
 
