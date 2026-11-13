@@ -1,7 +1,7 @@
 """Meeting-join bots, capture: frames become transcript segments on the local engine, in memory.
 
 A stub engine stands in for the hub's transcription engine (the real one runs only in the opt-in
-voice tests), the audio is a recorded generic PCM fixture (a short tone, repeated with pauses), and
+voice tests), the audio is a generated PCM fixture (a short 220 Hz tone, repeated with pauses), and
 meetings run over the in-memory fake provider: no network, no audio device, no platform.
 """
 
@@ -44,7 +44,7 @@ SPOKEN = "sentinel-spoken-words-b83f"
 
 
 def stream(seconds):
-    """``seconds`` of 16 kHz mono audio: the recorded tone, then a pause, over and over."""
+    """``seconds`` of 16 kHz mono audio: the generated tone, then a pause, over and over."""
     return (TONE + PAUSE) * seconds
 
 
@@ -227,6 +227,39 @@ def test_the_transcript_recovers_after_a_gap_and_a_stall_is_one_gap_segment(cons
     assert rows(hub)[0]["t_end_ms"] > 30000  # a stall of two windows is one gap segment
     assert len(voice_engine.calls) == len(texts) - 1  # and everything after it was said
     assert [r["seq"] for r in rows(hub)] == list(range(1, len(texts) + 1))
+
+
+def test_a_short_meeting_is_transcribed_on_the_threaded_path(console_hub):
+    hub = console_hub
+    ready(hub)
+    voice_engine = installed(hub)
+    live_meeting(hub)
+    sink = sink_for(hub, threaded=True)  # what production runs
+    for frame in frames(stream(10)):  # under one window: no thread was started by a frame
+        sink.frame("m1", frame)
+    sink.finish("m1")
+    [only] = rows(hub)
+    assert only["text"].startswith("window") and only["t_end_ms"] == 10000
+    assert len(voice_engine.calls) == 1
+
+
+def test_a_failure_outside_the_engine_call_is_a_failed_window_not_a_dead_thread(console_hub):
+    hub = console_hub
+    ready(hub)
+    installed(hub)
+    live_meeting(hub)
+    sink = sink_for(hub, threaded=True)
+
+    def boom():
+        raise RuntimeError(f"{SPOKEN} from the store")
+
+    sink.meetings.settings = boom  # read before the engine is called
+    for frame in frames(stream(70)):
+        sink.frame("m1", frame)
+    sink.finish("m1")
+    assert {r["text"] for r in rows(hub)} == {capture.GAP}
+    assert sink.broken is True  # counted toward the three-in-a-row rule
+    assert sink._thread is not None and not sink._thread.is_alive()  # ended, not died mid-queue
 
 
 def test_a_window_the_engine_fails_on_is_a_gap_and_a_broken_engine_ends_the_meeting(console_hub):

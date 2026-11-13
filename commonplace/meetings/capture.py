@@ -260,6 +260,8 @@ class CaptureSink(engine.Sink):
                 if window is not None:
                     self._queue.append((key, window))
             self._finishing = True
+            if self._queue:
+                self._start()  # a meeting shorter than a window never started the thread
             self._cv.notify_all()
             thread = self._thread
         if self.threaded:
@@ -320,6 +322,21 @@ class CaptureSink(engine.Sink):
         return self._closed
 
     def _process(self, key, window):
+        """One window, whatever goes wrong: a failure anywhere (the store, the settings, the
+        engine) is a failed window, so the thread outlives it and the three-in-a-row rule sees it."""
+        try:
+            return self._work(key, window)
+        except Exception as exc:  # the type only: a message may carry the user's words
+            logger.warning("meeting capture failed type=%s", type(exc).__name__)
+            try:
+                self._failed(key, window)
+            except Exception as again:
+                logger.warning("meeting capture failed type=%s", type(again).__name__)
+                self._failures += 1
+                self.broken = self.broken or self._failures >= FAIL_LIMIT
+            return None
+
+    def _work(self, key, window):
         voice_engine = engine_for(self.gateway)
         if voice_engine is None:
             return self._failed(key, window)
