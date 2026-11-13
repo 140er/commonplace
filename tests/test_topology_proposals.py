@@ -404,6 +404,21 @@ def test_a_map_that_moved_on_voids_the_approval(world):
     assert store.get_node(topo(world), "web1")["values"]["os"] == "Linux 7.0"
 
 
+def test_a_fact_that_already_holds_the_proposed_value_does_not_void_the_rest(world):
+    seed(world)
+    row = proposals.propose(
+        ctx(world),
+        items=[{"node": "web1", "fields": {"os": "Linux 6.9", "role": "web server"}}],
+        evidence="os-release reports Linux 6.9",
+    )["proposal"]
+    # Another observer wrote one of the two proposed values before the owner answered.
+    seed(world, [{"node": "web1", "fields": {"os": "Linux 6.9"}}])
+    answer(world, row, "Approve")
+    closed = proposals.get(ctx(world), row["id"])
+    assert closed["state"] == "applied"
+    assert store.get_node(topo(world), "web1")["values"]["role"] == "web server"
+
+
 def test_a_missed_event_is_settled_on_the_next_read(world):
     seed(world)
     row = os_change(world)

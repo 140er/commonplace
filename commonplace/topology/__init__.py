@@ -6,13 +6,20 @@ from runner signals. See ``docs/topology.md``.
 """
 
 from . import (
+    discovery_api,
     model,
     site_route_api,  # noqa: F401  registers topology_discover_site
     status,
     store,
 )
 from .model import TOPOLOGY_WING, Observer, SecretRefused, TopologyError
-from .proposal_api import install  # also registers topology_propose
+from .proposal_api import install as _install_proposals  # also registers topology_propose
+
+
+def install(gateway):
+    _install_proposals(gateway)
+    discovery_api.install(gateway)
+
 
 __all__ = [
     "TOPOLOGY_WING",

@@ -2,7 +2,7 @@
 
 The single source of truth for the Compute map: machines, how they reach each other, and how a website is routed to the app that serves it. Everything is a structured fact in the workspace's `topology` wing. The map, the agent tools and the live status all read from this store; nothing else holds a second copy.
 
-Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`. How agents write and the owner approves is under Proposals below; how an agent finds a website's route is under Site route discovery.
+Code: `commonplace/topology/model.py` (what may be stored) and `commonplace/topology/store.py` (how it is stored and read). Tests: `tests/test_topology_store.py`. How agents write and the owner approves is under Proposals below; how an agent finds a website's route is under Site route discovery; how one button maps the user's machines is under Map discovery.
 
 ## Facts
 
@@ -449,7 +449,7 @@ The owner opens the map from **Compute map** under **Workspace** in the account 
 - **Moving around:** drag the background to pan, scroll or pinch to zoom, or use the buttons. With the canvas focused, the arrow keys pan, `+` and `-` zoom and `0` fits everything. On a focused device, Enter selects it and Shift with an arrow key moves it.
 - **Route** highlights one site's route as a path, dims the rest, and writes the hops out in words, including a hop that is unknown or stale.
 - **Live:** the map reads again every five seconds while the tab is visible and redraws only when something changed. If a read fails, the last map stays and a line says it is not updating.
-- **Empty workspace:** the empty state has one button, "Start agent work on map". The canvas only offers it; the discovery work behind it is separate, and until that is connected the button is off and says so.
+- **Empty workspace:** the empty state has one button, "Start agent work on map". The canvas only offers it: a screen that gives the map an `onStartWork` handler turns it on (both screens do, with `topology-discovery.js`, which posts to `/api/topology/discovery` and writes what happened on each machine under the button), and a screen without a handler shows it off and says so.
 - **In the Deck look** the map is the Compute screen (`#/compute`; `#/compute-map` goes there and the account menu has no second entry). It draws this same canvas in Deck colours inside one card, with the legend under it and the chosen device's details (Physical, Config, Agents, Sites) in a second card. Links are routed around every device and label, so none runs through one. Names and roles keep their size (12px and 11px) at every zoom; the first view and **Fit** fit the graph's width and the card is as tall as the graph, so the page scrolls. When the topology read is empty or fails, it draws the hub and the enrolled runner machines from `GET /api/runners` instead, with the states Ready, Waiting for attestation and Off and nothing about liveness, sites or routes.
 
 Selecting a device sends a `topology:select` event (`detail.key`) from the map's root element, which is where the detail panel attaches (see below).
@@ -585,3 +585,40 @@ A resolver is a callable `resolver(name) -> site_dns.DnsAnswer(addresses, cnames
 ## Existing workspaces
 
 The store is additive: one new file per workspace with three tables, created by the first write. No existing file or table changes. A workspace from before this feature has no `topology.sqlite3`; it reads as an empty map (`nodes`, `links`, `routes` and `conflicts` all empty), `get_*` return `None`, and reading does not create the file.
+
+## Map discovery
+
+"Start agent work on map" asks every runner machine of the workspace to describe itself and how it reaches the hub and the other machines. Code: `commonplace/topology/discovery.py` (the start), `discovery_api.py` (the routes) and `collector.py` (what runs on a machine). Tests: `tests/test_topology_discovery.py`.
+
+```
+POST /api/topology/discovery      {} or {"project": "...", "topic": "..."}   the signed-in workspace owner only
+GET  /api/topology/discovery      the newest run, each started machine with its job's live state
+```
+
+A run answers `{"run", "note", "machines": [{machine, label, outcome, reason, card, job, job_state}]}`, one entry for every runner machine that is not revoked:
+
+| Outcome | When | `reason` |
+| --- | --- | --- |
+| `started` | a card was made and started through `card_start` | none |
+| `running` | the machine's earlier discovery is still queued, starting or underway (six hours at most after it started) | none |
+| `unreachable` | the hub has no live signal from the machine (Live status: `down`, or `unknown`) or it is turned off | `never_reported`, `no_heartbeat`, `disabled` |
+| `refused` | the machine cannot take the work | `not_attested`, `no_topology_wing`, `no_project_or_topic`, or the card-start refusal |
+
+A workspace with no runner machine answers `note: "no_runner_machines"`. The project and topic default to the machine's first grants.
+
+**The run is a normal run.** Each machine gets one card, "Map discovery on <label>", on the board `compute-map` (wing `topology`), whose body is the discovery prompt. The card is started through the ordinary `card_start`, so the machine's node detail panel lists the run with its card and log like any other, and the owner's rules for starts apply (machine grants, requesters, runtime mode `approval-required`). A start the rules refuse leaves its card in the backlog.
+
+**The collector** is `python3 -m commonplace.topology.collector --runner-id <id> [--hub-url <url>] [--max-peers N]`, run by the started agent, which prints JSON:
+
+- `propose`: the machine's own node (`kind`, `name`, `hostname`, `runner_id`, `os`, `hardware`, `resources`, `tailscale_name`) and its own links (to the hub, to Tailscale peers, to the hosts of the user's ssh config, directly or by a jump host), each link with the `status` the collector saw. A runner's additions about itself apply at once.
+- `propose_peers`: the other machines it saw (the hub, Tailscale peers, ssh config hosts) as nodes. These are the owner's decision, in one proposal; a second call, so a machine that reports itself meanwhile cannot void the first.
+- `unreachable`: what it tried and could not reach, with the reason; the link of such a place is written `down`. `notes` and a one-line `summary` complete the output.
+
+Node keys are the first label of the host name in lowercase (`beta.local` is `beta`), so two machines that see each other agree on the key.
+
+**Read-only.** The collector reads only `ALLOWED_READS` (the OS release, CPU and memory files, the DMI product name and vendor, the ssh config) and runs only `ALLOWED_COMMANDS` (`tailscale status --json`, three `sysctl -n` reads, `nvidia-smi -L`), enforced in `Probe.read` and `Probe.run`. It writes no file, changes no configuration, reads no key file or credential (the ssh config's key file lines are dropped, not emitted), connects only to the hub and to the hosts the user's own ssh and Tailscale setup names (two seconds each), and its output passes the store's secret filter as it is. The prompt tells the agent to run that one command, pass its output on unchanged and run nothing else.
+
+**Reruns.** The evidence holds no times, so the same machine produces the same evidence: the facts are observed again (freshness and `seen_count` move) and nothing is asked. A fact that really changed is a proposal for that fact alone. A proposal whose fact already holds the proposed value (another observer wrote it first) still applies; one whose fact changed to something else is void and is proposed again by the next run.
+
+**Needs.** The machine's grants must include the `topology` wing, because the agent works on a card of that board and writes the topology; a machine without it is reported as `no_topology_wing` and is not widened. The machine needs the Commonplace client installed (the prompt tells the agent to install nothing and to say so on the card when it is missing).
+

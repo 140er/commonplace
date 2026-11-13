@@ -481,9 +481,11 @@ def _apply(topo, row) -> None:
 
 
 def _still_true(changes, current) -> bool:
-    """Is the map still what the proposal showed as "before"?"""
+    """Is the map still what the proposal showed as "before"? A fact that already holds
+    the proposed value (another observer got there first) is no reason to void the rest."""
     for change in changes:
-        if not _same(current.get(change["subject"], {}).get(change["predicate"]), change["before"]):
+        now = current.get(change["subject"], {}).get(change["predicate"])
+        if not _same(now, change["before"]) and not _same(now, change["after"]):
             return False
     removed = {c["subject"] for c in changes if c["after"] is None}
     for subject in removed:
