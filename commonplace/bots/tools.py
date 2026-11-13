@@ -65,6 +65,7 @@ class Result:
     data: Any = None
     blocks: tuple = ()
     say: str = ""  # plain refusal sentence; on success, an optional plain outcome sentence
+    keep: tuple = ()  # our own opaque ids in ``data``: shown to the model as they are, not redacted
 
 
 REGISTRY: dict[str, Tool] = {}

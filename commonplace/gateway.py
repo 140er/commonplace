@@ -1990,6 +1990,8 @@ def _rest_tool(method, path):
         return {"GET": "task_list", "POST": "task_add"}.get(method)
     if parts == ["api", "needs-me"] and method == "GET":
         return "needs_me"
+    if parts == ["api", "costs"] and method == "GET":
+        return "costs_summary"
     if parts == ["api", "topology"] and method == "GET":
         return "topology_get"
     if parts == ["api", "topology", "route"] and method == "GET":

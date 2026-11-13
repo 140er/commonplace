@@ -175,6 +175,24 @@
           "name": "card_goal"
         },
         {
+          "description": "Read what the workspace's agent runs cost over a window (default: the UTC calendar month the owner set): sums for the workspace, per agent connection, project, board and card. Cost is only what machines reported, per currency; a run with no known cost is counted as unknown and listed, never as zero. You see the runs of boards you can read.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "since": {
+                "description": "Start of the window: YYYY-MM-DD or a UTC timestamp.",
+                "type": "string"
+              },
+              "until": {
+                "description": "End of the window, exclusive; same format.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "costs_summary"
+        },
+        {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
@@ -2374,6 +2392,7 @@
       "card_start_cancel",
       "card_start_resolve",
       "card_start_status",
+      "costs_summary",
       "decide",
       "fact_save",
       "goal_list",
@@ -3773,6 +3792,24 @@
           "name": "card_goal"
         },
         {
+          "description": "Read what the workspace's agent runs cost over a window (default: the UTC calendar month the owner set): sums for the workspace, per agent connection, project, board and card. Cost is only what machines reported, per currency; a run with no known cost is counted as unknown and listed, never as zero. You see the runs of boards you can read.",
+          "inputSchema": {
+            "additionalProperties": false,
+            "properties": {
+              "since": {
+                "description": "Start of the window: YYYY-MM-DD or a UTC timestamp.",
+                "type": "string"
+              },
+              "until": {
+                "description": "End of the window, exclusive; same format.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": "costs_summary"
+        },
+        {
           "description": "Answer a review as its owner, an owner's connection holding cards:decide (asks addressed to that owner only) or the addressed live coordinator. Never answer your own ask. A coordinator may escalate to the owner with then=escalate and a reason in reply. Pass the version you read to reject decisions on an edited card.",
           "inputSchema": {
             "additionalProperties": false,
@@ -5972,6 +6009,7 @@
       "card_start_cancel",
       "card_start_resolve",
       "card_start_status",
+      "costs_summary",
       "decide",
       "fact_save",
       "goal_list",

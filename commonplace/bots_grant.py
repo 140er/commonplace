@@ -4,7 +4,9 @@ Any signed-in person grants them, for their own top-level app connection in that
 only. The app then acts as that person (their permissions, their bots). Agent machinery never
 holds them: child agents, runner connections, project orchestrator seats and board
 coordinators are refused when granting and again at use. ``bots:confirm`` (tapping a confirm
-chip) is separate, explicit, and useless without ``bots:chat``.
+chip) is separate, explicit, and useless without ``bots:chat``. ``bots:learned`` is a read-only
+scope on top of ``bots:chat``: the app may list what the person's bots learned and can change
+nothing (the person's own screen is the only place to edit or forget).
 """
 
 from __future__ import annotations
@@ -13,7 +15,8 @@ from commonplace import decide_grant
 
 CHAT_SCOPE = "bots:chat"
 CONFIRM_SCOPE = "bots:confirm"
-SCOPES = (CHAT_SCOPE, CONFIRM_SCOPE)
+LEARNED_SCOPE = "bots:learned"
+SCOPES = (CHAT_SCOPE, CONFIRM_SCOPE, LEARNED_SCOPE)
 # One source for the consent copy: the OAuth form and Settings → Agents show these.
 CHAT_TEXT = (
     "Allow this app to use your bots as you (scope bots:chat): read your chats, send "
@@ -25,13 +28,18 @@ CONFIRM_TEXT = (
     "Also allow this app to confirm what a bot proposes (scope bots:confirm), the same as "
     "tapping a confirm button yourself. It needs bots:chat and you can stop it separately."
 )
+LEARNED_TEXT = (
+    "Also allow this app to read what your bots learned about you (scope bots:learned). It can "
+    "only list those items, never change or delete them. It needs bots:chat and you can stop "
+    "it separately."
+)
 NOT_MEMBER_TEXT = "Only a member of this workspace can let an app use their bots."
 NOT_YOURS_TEXT = "This connection belongs to someone else. Only your own apps can use your bots."
 TOP_LEVEL_TEXT = "Only a top-level app connection of yours can use your bots."
 AGENT_TEXT = "Agent, runner and orchestrator connections cannot use bots."
 INACTIVE_TEXT = decide_grant.INACTIVE_TEXT
 OAUTH_GRANT_TEXT = decide_grant.OAUTH_GRANT_TEXT
-NEEDS_CHAT_TEXT = "Confirming needs the chat scope as well."
+NEEDS_CHAT_TEXT = "Confirming and reading learned items need the chat scope as well."
 AUDIT_GRANT = "connection.bots.grant"
 AUDIT_REVOKE = "connection.bots.revoke"
 AUDIT_WRITE = "bots.write"  # one row per write request made through an app connection

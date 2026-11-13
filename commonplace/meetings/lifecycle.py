@@ -42,6 +42,9 @@ ACTIVE = (REQUESTED, *RUNNING)
 # What a meeting holds besides its row (participants, working segments) is only written while it is
 # in one of these, so an end that discards cannot be followed by a late write that survives it.
 CAPTURING = (LIVE,)
+# Transcribed segments are written while the meeting listens and while the capture drains what it
+# still holds at ``ending``; never after the meeting is removed, processing or ended.
+SEGMENTING = (LIVE, ENDING)
 
 # The events: one per kind of writer.
 CLAIM = "claim"  # a worker takes a requested meeting

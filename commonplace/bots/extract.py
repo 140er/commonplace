@@ -14,7 +14,7 @@ import threading
 
 from commonplace import redact, sessions
 from commonplace.boards.service import BoardService
-from commonplace.bots import learned, limits, modelcfg
+from commonplace.bots import learned, limits, modelcfg, store as store_module
 from commonplace.bots.learn_runs import has_cue  # noqa: F401  (re-exported for callers and tests)
 from commonplace.bots.store import Conflict, Invalid, Missing
 from commonplace.chat import model_stream
@@ -138,17 +138,38 @@ def _run(gateway, workspace_id, user_id, bot, plan, now) -> None:
         store.finish_run(bot_id, upto, "failed:schema", now=now)
         return
     kept = dropped = 0
+    fresh = []
     state = "proposed" if _mode(store, bot_id, user_id) == "ask" else "active"
     originals = {m["id"] for m in plan["messages"]}
     for item in items[:MAX_ITEMS]:
         if not store.running(bot_id, upto):  # taken over as interrupted: write nothing more
             return
-        if _store(store, user_id, bot_id, item, originals, projects, state, now):
-            kept += 1
-        else:
+        stored = _store(store, user_id, bot_id, item, originals, projects, state, now)
+        if stored is None:
             dropped += 1
+            continue
+        kept += 1
+        if stored["seen_count"] == 1:  # a repeated sentence was shown when it was new
+            fresh.append(stored["id"])
     dropped += max(0, len(items) - MAX_ITEMS)
     store.finish_run(bot_id, upto, "done", len(items), kept, dropped, now=now)
+    _announce(gateway, workspace_id, user_id, bot_id, fresh, state)
+
+
+def _announce(gateway, workspace_id, user_id, bot_id, ids, state) -> None:
+    """Put what a run stored in the person's thread, so it can be answered there: one block
+    per proposal in ask mode, one "learned" block in auto mode. The sentence is fixed text; the
+    person's words are only ever shown by the block, hydrated with their own rights."""
+    if not ids:
+        return
+    bots = store_module.open_bots(gateway, workspace_id)
+    if state == "proposed":
+        text = "I could keep this for next time. Do you want that?"
+        blocks = [{"type": "learn_proposal", "id": item_id} for item_id in ids]
+    else:
+        text = "I learned something from this conversation."
+        blocks = [{"type": "learned", "how": "learned", "ids": ids}]
+    bots.add_event_message(bot_id, user_id, text, blocks)
 
 
 def _mode(store, bot_id, user_id) -> str:
@@ -224,8 +245,8 @@ def _parse(raw) -> list[dict] | None:
     return data["items"]
 
 
-def _store(store, user_id, bot_id, item, originals, projects, state, now) -> bool:
-    """Validate one item on the server and store it. False means it was dropped."""
+def _store(store, user_id, bot_id, item, originals, projects, state, now) -> dict | None:
+    """Validate one item on the server and store it. None means it was dropped."""
     message_id, quote = item["message_id"], item["quote"]
     board, note = item.get("board"), item.get("note")
     if (
@@ -238,9 +259,9 @@ def _store(store, user_id, bot_id, item, originals, projects, state, now) -> boo
         or sensitive(quote)
         or (isinstance(note, str) and sensitive(note))
     ):
-        return False
+        return None
     try:
-        store.add_item(
+        return store.add_item(
             user_id,
             bot_id,
             kind=item["kind"],
@@ -261,5 +282,4 @@ def _store(store, user_id, bot_id, item, originals, projects, state, now) -> boo
         Conflict,
         Missing,
     ):
-        return False
-    return True
+        return None

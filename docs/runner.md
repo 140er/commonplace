@@ -391,3 +391,7 @@ coordinator or switch changes in that gap can therefore allow a launch that the
 worker later refuses when it tries to claim the card. A switch from off to on in
 the gap also uses the earlier snapshot for the coordinator check.
 See [project orchestration](projects.md#opt-in-agent-orchestration) for owner consent.
+
+## Cost events and sums
+
+Each usage report that touches tokens or cost, and each report that ends a run, appends a cost event (`cost_events`, same file as the ledger); `{"job_id": "<job>", "cost_unknown": true}` (or `runner report --cost-unknown`) says the machine cannot tell the cost, excludes `cost_micros`, and answers 409 `cost already reported` once a cost exists. A run that ends with no cost is recorded as unknown. `costs_summary` and `GET /api/costs[?since=&until=]` return sums per workspace, agent connection, project, board and card over the workspace window (default: UTC calendar month; the owner changes it with `PUT /api/settings/costs`), with unknown-cost runs counted and listed apart, never as zero. Readers see the runs of boards their token can read. Design and slice 2 choices: `docs/system/cost-ledger.md`.

@@ -38,6 +38,7 @@ def session_world(hub, tmp_path, monkeypatch):
         return SimpleNamespace(
             returncode=0,
             stdout=json.dumps({"isError": w.host_error, "structuredContent": data}),
+            stderr="",
         )
 
     monkeypatch.setattr(agent.subprocess, "run", host)

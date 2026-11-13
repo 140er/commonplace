@@ -1,4 +1,10 @@
-"""Bot tools for the learning memory: sharing one of the person's learned items with a project.
+"""Bot tools for the learning memory: listing, forgetting, pausing and sharing learned items.
+
+Every tool runs as the person (the user id comes from the turn, never from an argument) and none
+turns learning on, widens a mode or edits text. ``learned_list`` only reads, ``pause_learning``
+only pauses, and ``forget_learned``, ``forget_all_learned`` and ``share_learned`` are confirm
+tools: the model can only ask, nothing is deleted or copied until the person taps the chip, and
+the chip label is built here from the stored item.
 
 ``share_learned`` is a confirm tool: the model can only ask; nothing is copied until the person
 taps the chip. The chip label is built here from the stored item, never from model text, and
@@ -191,5 +197,189 @@ tools.register(
         check=_check,
         run=_run,
         label=_label,
+    )
+)
+
+
+# Listing, forgetting and pausing
+
+LIST_MAX = 20
+FORGET_SAYS = {
+    "missing": "There is no such learned item.",
+    "gone": "That was already forgotten.",
+}
+
+
+def _learning_on(turn) -> bool:
+    """Offered only to the person's own bot (a shared bot has no learning setting of its own) and
+    only while the workspace switch is on, so a workspace that never turned learning on sends
+    exactly the tool list it always sent."""
+    return not turn.bot.get("shared") and _items(turn).policy()["enabled"]
+
+
+def _list(turn, args):
+    page = _items(turn).list(
+        turn.user_id,
+        scope=args.get("scope"),
+        state=args.get("state"),
+        limit=min(args.get("limit", LIST_MAX), LIST_MAX),
+    )
+    return tools.Result(
+        True,
+        {
+            "items": [
+                {
+                    "id": item["id"],
+                    "kind": item["kind"],
+                    "scope": item["scope"],
+                    "state": item["state"],
+                    "said": item["source_at"][:10],
+                    "text": redact.redact(item["text"])[0],
+                }
+                for item in page
+            ]
+        },
+        keep=tuple(item["id"] for item in page),
+    )
+
+
+def _quote(item) -> str:
+    return redact.redact(item["text"])[0]
+
+
+def _stored(turn, args) -> dict:
+    try:
+        return _items(turn).get(turn.user_id, args["id"])
+    except store.Missing:
+        raise ToolError(FORGET_SAYS["missing"]) from None
+
+
+def _forget_check(turn, args):
+    _stored(turn, args)
+
+
+def _forget_label(turn, args) -> str:
+    return f"Forget this for good: “{_quote(_stored(turn, args))}”. It cannot be undone."
+
+
+def _forget_run(turn, args):
+    try:
+        _items(turn).forget(turn.user_id, args["id"])
+    except store.Missing:
+        return tools.Result(False, say=FORGET_SAYS["gone"])
+    return tools.Result(True, {"id": args["id"]}, say="Forgotten.")
+
+
+def _forget_all_label(turn, args) -> str:
+    counts = _items(turn).counts(turn.user_id, turn.bot["id"])
+    items = counts["person"] + counts["shared"] + counts["proposed"]
+    return (
+        f"Forget everything this bot learned about you: {items} learned items and "
+        f"{counts['notes']} notes, including what you shared with a project. "
+        "It will also ignore your messages so far. It cannot be undone."
+    )
+
+
+def _forget_all_run(turn, args):
+    try:
+        done = _items(turn).forget_all(turn.bot["id"], turn.user_id)
+    except store.Missing:
+        return tools.Result(False, say=FORGET_SAYS["missing"])
+    return tools.Result(True, done, say="Forgot everything this bot learned.")
+
+
+def _pause_run(turn, args):
+    days = args["days"]
+    try:
+        _items(turn).configure(turn.bot["id"], turn.user_id, pause=days)
+    except (store.Missing, store.Invalid):
+        return tools.Result(False, say="I cannot pause learning here.")
+    return tools.Result(True, {"days": days}, say=f"Paused learning for {days} days.")
+
+
+tools.register(
+    tools.Tool(
+        name="learned_list",
+        description=(
+            "List what this person's bots learned about them (their own words, newest first), "
+            "optionally only one `scope` (person or shared) or `state` (active or proposed). "
+            "Only when the person asks what you remember or learned."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "enum": ["person", "shared"]},
+                "state": {"type": "string", "enum": ["active", "proposed"]},
+                "limit": {"type": "integer", "minimum": 1, "maximum": LIST_MAX},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+        kind="read",
+        reach="none",
+        available=_learning_on,
+        run=_list,
+        label=lambda turn, args: "Looked at what I learned",
+    )
+)
+tools.register(
+    tools.Tool(
+        name="forget_learned",
+        description=(
+            "Offer to forget one learned item for good, by its `id`. Only when the person asks. "
+            "Waits for the person's tap; nothing is deleted before that."
+        ),
+        schema={
+            "type": "object",
+            "properties": {"id": {"type": "string", "minLength": 1, "maxLength": 64}},
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+        kind="confirm",
+        reach="none",
+        available=_learning_on,
+        check=_forget_check,
+        run=_forget_run,
+        label=_forget_label,
+    )
+)
+tools.register(
+    tools.Tool(
+        name="forget_all_learned",
+        description=(
+            "Offer to forget everything this bot learned about the person. Only when the "
+            "person asks. Waits for the person's tap; nothing is deleted before that."
+        ),
+        schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+        kind="confirm",
+        reach="none",
+        available=_learning_on,
+        run=_forget_all_run,
+        label=_forget_all_label,
+    )
+)
+tools.register(
+    tools.Tool(
+        name="pause_learning",
+        description=(
+            "Pause learning from this conversation for a number of days (1 to 30), when the "
+            "person asks you to stop learning. It never turns learning on or changes a mode."
+        ),
+        schema={
+            "type": "object",
+            "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 30}},
+            "required": ["days"],
+            "additionalProperties": False,
+        },
+        kind="routine",
+        reach="none",
+        available=_learning_on,
+        run=_pause_run,
+        label=lambda turn, args: f"Paused learning for {args['days']} days",
     )
 )

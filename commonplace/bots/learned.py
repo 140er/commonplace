@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from commonplace.bots import learning
 from commonplace.bots.learn_recall import RecallMixin
+from commonplace.bots.learn_review import ReviewMixin
 from commonplace.bots.learn_runs import RunsMixin
 from commonplace.bots.learn_share import ShareMixin
 from commonplace.bots.store import BotStore, Conflict, Invalid, Missing, stamp
@@ -121,7 +122,7 @@ def _note(row) -> dict:
     }
 
 
-class Learned(RunsMixin, RecallMixin, ShareMixin):
+class Learned(RunsMixin, RecallMixin, ShareMixin, ReviewMixin):
     def __init__(self, bots: BotStore):
         self._bots = bots
         self._key = None

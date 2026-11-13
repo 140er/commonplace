@@ -299,6 +299,11 @@ def _show_authorize(gateway, h, *, status=200):
                     '<label><input type="checkbox" name="grant_bots_confirm" value="1"> '
                     f"{escape(bots_grant.CONFIRM_TEXT)}</label>"
                 )
+            if bots_grant.LEARNED_SCOPE in requested:
+                consent += (
+                    '<label><input type="checkbox" name="grant_bots_learned" value="1"> '
+                    f"{escape(bots_grant.LEARNED_TEXT)}</label>"
+                )
         content = (
             f"<h1>{escape(client['client_name'])}</h1><p>{escape(workspace)}</p>"
             f"<p>Code destination: {escape(destination, quote=True)}</p>"
@@ -329,6 +334,25 @@ def _show_authorize(gateway, h, *, status=200):
         headers=headers,
         form_origin=form_origin,
     )
+
+
+def _keep_bots_grants(db, principal, data, granted) -> None:
+    """Drop every bots scope the person did not tick (or may not grant); the confirm and learned
+    scopes also need the chat scope."""
+    for scope, field in (
+        (bots_grant.CHAT_SCOPE, "grant_bots_chat"),
+        (bots_grant.CONFIRM_SCOPE, "grant_bots_confirm"),
+        (bots_grant.LEARNED_SCOPE, "grant_bots_learned"),
+    ):
+        if scope in granted and not (
+            data.get(field) == "1"
+            and bots_grant.eligible(db, principal.user_id, principal.workspace_id)
+        ):
+            granted.remove(scope)
+    if bots_grant.CHAT_SCOPE not in granted:
+        for scope in (bots_grant.CONFIRM_SCOPE, bots_grant.LEARNED_SCOPE):
+            if scope in granted:
+                granted.remove(scope)
 
 
 def _submit_authorize(gateway, h):
@@ -392,9 +416,9 @@ def _submit_authorize(gateway, h):
                 "memory:write",
             }.issubset(parameters["scope"].split()):
                 location = _response(parameters, error="invalid_scope")
-            elif bots_grant.CONFIRM_SCOPE in parameters["scope"].split() and (
-                bots_grant.CHAT_SCOPE not in parameters["scope"].split()
-            ):
+            elif {bots_grant.CONFIRM_SCOPE, bots_grant.LEARNED_SCOPE} & set(
+                parameters["scope"].split()
+            ) and (bots_grant.CHAT_SCOPE not in parameters["scope"].split()):
                 location = _response(parameters, error="invalid_scope")
             elif data["decision"] == "deny":
                 location = _response(parameters, error="access_denied")
@@ -415,17 +439,7 @@ def _submit_authorize(gateway, h):
                     and decide_grant.eligible(db, principal.user_id, principal.workspace_id)
                 ):
                     granted.remove(decide_grant.DECIDE_SCOPE)
-                for scope, field in (
-                    (bots_grant.CHAT_SCOPE, "grant_bots_chat"),
-                    (bots_grant.CONFIRM_SCOPE, "grant_bots_confirm"),
-                ):
-                    if scope in granted and not (
-                        data.get(field) == "1"
-                        and bots_grant.eligible(db, principal.user_id, principal.workspace_id)
-                    ):
-                        granted.remove(scope)
-                if bots_grant.CONFIRM_SCOPE in granted and bots_grant.CHAT_SCOPE not in granted:
-                    granted.remove(bots_grant.CONFIRM_SCOPE)
+                _keep_bots_grants(db, principal, data, granted)
                 if not granted:
                     location = _response(parameters, error="invalid_scope")
                 else:

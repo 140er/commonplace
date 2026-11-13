@@ -32,7 +32,8 @@ function botsAccess(c) {
   const button = (label, data) => `<button type="button" data-action="agent-bots" ${data} data-agent-mutation data-agent-id="${e(c.id)}" data-agent-name="${e(c.name)}">${label}</button>`;
   if (c.bots_chat) {
     const confirm = c.bots_confirm ? button("Stop confirming", 'data-bots-confirm="false"') : button("Allow confirming", 'data-bots-confirm="true"');
-    return `<small data-agent-bots="on">Uses your bots (bots:chat${c.bots_confirm ? ", bots:confirm" : ""})</small>${confirm}${button("Stop using bots", 'data-bots-chat="false"')}`;
+    const learned = c.bots_learned ? button("Stop reading learned items", 'data-bots-learned="false"') : button("Allow reading learned items", 'data-bots-learned="true"');
+    return `<small data-agent-bots="on">Uses your bots (bots:chat${c.bots_confirm ? ", bots:confirm" : ""}${c.bots_learned ? ", bots:learned" : ""})</small>${confirm}${learned}${button("Stop using bots", 'data-bots-chat="false"')}`;
   }
   return c.bots_grantable ? button("Allow using my bots", 'data-bots-chat="true"') : "";
 }
@@ -50,7 +51,7 @@ function agentRows(rows, wings = []) {
 
 export function agentsView(payload) {
   const rows = payload.connections || [];
-  return `<section class="settings-section agents-settings" data-decide-consent="${e(payload.decide_consent || "")}" data-bots-chat-consent="${e(payload.bots_consent?.chat || "")}" data-bots-confirm-consent="${e(payload.bots_consent?.confirm || "")}"><h2>Agents</h2><div data-agent-reveal></div><form class="agent-form" data-form="agent"><label>Name<input name="name" required maxlength="120" autocomplete="off"></label><label>Client<select name="client">${options("claude-code")}</select></label><label class="agent-consent"><input type="checkbox" name="import">${e(importConsent)}</label><label class="agent-consent"><input type="checkbox" name="import_read">${e(readerConsent)}</label><small>${e(readerDetail)}</small>${payload.decide_consent ? `<label class="agent-consent"><input type="checkbox" name="decide">${e(payload.decide_consent)}</label>` : ""}<details><summary>Restrict access or set a parent</summary><label>Read wings (comma separated)<input name="read_wings" autocomplete="off"></label><label>Parent<select name="parent">${parents(rows)}</select></label></details><button class="blockbtn" data-agent-mutation>Create token</button></form><div data-agent-list>${agentRows(rows, payload.wings || [])}</div></section>`;
+  return `<section class="settings-section agents-settings" data-decide-consent="${e(payload.decide_consent || "")}" data-bots-chat-consent="${e(payload.bots_consent?.chat || "")}" data-bots-confirm-consent="${e(payload.bots_consent?.confirm || "")}" data-bots-learned-consent="${e(payload.bots_consent?.learned || "")}"><h2>Agents</h2><div data-agent-reveal></div><form class="agent-form" data-form="agent"><label>Name<input name="name" required maxlength="120" autocomplete="off"></label><label>Client<select name="client">${options("claude-code")}</select></label><label class="agent-consent"><input type="checkbox" name="import">${e(importConsent)}</label><label class="agent-consent"><input type="checkbox" name="import_read">${e(readerConsent)}</label><small>${e(readerDetail)}</small>${payload.decide_consent ? `<label class="agent-consent"><input type="checkbox" name="decide">${e(payload.decide_consent)}</label>` : ""}<details><summary>Restrict access or set a parent</summary><label>Read wings (comma separated)<input name="read_wings" autocomplete="off"></label><label>Parent<select name="parent">${parents(rows)}</select></label></details><button class="blockbtn" data-agent-mutation>Create token</button></form><div data-agent-list>${agentRows(rows, payload.wings || [])}</div></section>`;
 }
 
 export function clientConfig(client, url, token) {
@@ -145,7 +146,8 @@ export async function agentAction(button) {
     const body = {};
     if (button.dataset.botsChat) body.bots_chat = button.dataset.botsChat === "true";
     if (button.dataset.botsConfirm) body.bots_confirm = button.dataset.botsConfirm === "true";
-    const on = body.bots_chat === true ? section.dataset.botsChatConsent : body.bots_confirm === true ? section.dataset.botsConfirmConsent : "";
+    if (button.dataset.botsLearned) body.bots_learned = button.dataset.botsLearned === "true";
+    const on = body.bots_chat === true ? section.dataset.botsChatConsent : body.bots_confirm === true ? section.dataset.botsConfirmConsent : body.bots_learned === true ? section.dataset.botsLearnedConsent : "";
     if (!confirm(on ? `Let ${button.dataset.agentName} use your bots?\n\n${on}` : `Stop ${button.dataset.agentName} using your bots?`)) return;
     await mutation(section, async () => {
       await api(`/api/connections/${encodeURIComponent(button.dataset.agentId)}`, { method: "PATCH", body });

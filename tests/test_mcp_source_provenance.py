@@ -141,6 +141,22 @@ def test_tunnel_label_naming_no_stored_thread_is_unchanged(hub, collection, conf
     assert "mcp:unfiled-source" in raw, raw
 
 
+def test_tunnel_label_with_emoji_joiner_and_percent_is_unchanged(hub, collection, config, blind):
+    label = "\U0001f469\u200d\U0001f4bb 50% ready"
+    label_tunnel(config, label)
+    raw = mcp(hub, blind[1], "mempalace_list_tunnels")
+    assert "50% ready" in raw, raw
+
+
+def test_blind_reader_never_sees_joiner_split_mcp_source_in_tunnel_label(
+    hub, collection, config, blind
+):
+    thread = hidden(hub, blind)
+    label_tunnel(config, "see m\u200dcp:" + thread.source_thread_id)
+    raw = mcp(hub, blind[1], "mempalace_list_tunnels")
+    assert probe(thread) not in raw, raw
+
+
 def drawer(collection, value):
     collection.add(
         ids=["probe-provenance"],

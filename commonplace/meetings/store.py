@@ -696,10 +696,13 @@ class MeetingStore(notes_store.NotesMixin):
             raise Invalid("connection_required", "Choose which provider connection to use")
         return rows[0]
 
-    def invite(self, user_id, body: dict, *, bot_name: str, now: float) -> tuple[dict, bool]:
+    def invite(
+        self, user_id, body: dict, *, bot_name: str, now: float, transcription: bool = True
+    ) -> tuple[dict, bool]:
         """Store one invite and return ``(meeting, created)``. A repeat of the same ``request_id``
         returns the first meeting, whatever else the request says. The meeting link is sealed
-        before it is stored and is not returned by anything."""
+        before it is stored and is not returned by anything. ``transcription`` is whether the hub
+        has a local engine: without one a new meeting is refused (there is no fallback)."""
         required = {"link", "title", "attested", "request_id"}
         if set(body) - INVITE_KEYS or not required <= set(body):
             raise Invalid("invalid_field", "Link, title, attestation and request id are required")
@@ -751,6 +754,11 @@ class MeetingStore(notes_store.NotesMixin):
             parsed = None
         if not isinstance(parsed, adapter.JoinRef):
             raise Invalid("invalid_link", "That meeting link is not accepted")
+        if not transcription:
+            raise Refused(
+                "needs_local_transcription",
+                "Meetings need transcription on this server, and voice is not available",
+            )
         meeting_id = uuid.uuid4().hex
         blob = seal.seal(self.data_dir, self.workspace_id, "join_ref", meeting_id, parsed.ref)
         stamped = stamp_ts(now)
