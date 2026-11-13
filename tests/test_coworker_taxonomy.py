@@ -1,6 +1,7 @@
 """Live directory contracts, with real person sessions and private-thread canaries."""
 
 import json
+import sqlite3
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -319,6 +320,12 @@ def test_read_mark_classification_and_account_purge_in_retained_workspace(api, f
     api.request("GET", f"/conversations/{group}", user=api.member)
     reply(api, cid)
     api.request("GET", f"/conversations/{cid}")
+    root = api.gateway.supervisor.root / api.workspace
+    retired = root.with_name(root.name + ".generation-" + "a" * 24)
+    retired.mkdir()
+    with sqlite3.connect(root / "coworkers.sqlite3") as source:
+        with sqlite3.connect(retired / "coworkers.sqlite3") as target:
+            source.backup(target)
     assert tables.WORKSPACE_RULES["coworkers.sqlite3"]["coworker_reads"].user == ("user_id",)
     deletion.ensure_schema(api.gateway.db)
     api.gateway.wall_clock = time.time
@@ -331,6 +338,20 @@ def test_read_mark_classification_and_account_purge_in_retained_workspace(api, f
         )
     assert deletion.purge(api.gateway, api.member)["state"] == "purged"
     with store._transaction() as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM coworker_reads WHERE user_id=?", (api.member,)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM coworker_reads WHERE user_id=?", (api.owner,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert conn.execute("SELECT count(*) FROM messages").fetchone()[0] == 3
+    with sqlite3.connect(retired / "coworkers.sqlite3") as conn:
         assert (
             conn.execute(
                 "SELECT count(*) FROM coworker_reads WHERE user_id=?", (api.member,)
