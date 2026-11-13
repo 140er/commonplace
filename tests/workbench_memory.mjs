@@ -208,6 +208,44 @@ const cases = {
     assert.equal(calls.find(Array.isArray)[1].body.text, text);
     control.stop(); assert.equal(mount.listeners.size, 0); assert.equal(pane.listeners.size, 0);
   },
+  async typed_query() {
+    const mount = node(), paths = [];
+    const control = memory.createMemory({ mount, boards: [board], api: async (path) => {
+      paths.push(path);
+      return { results: [{ ...row, text: 'rate limit matching source' }] };
+    } });
+    // Derive the submitted field names from the rendered form, as a browser does.
+    const field = mount.innerHTML.match(/<input id="mq" name="([^"]+)"/)[1];
+    const values = { [field]: 'rate limit', project: '', source: 'chat', from: '', when: '' };
+    const form = { matches: () => true, elements: Object.fromEntries(Object.entries(values).map(([name, value]) => [name, { value }])) };
+    const original = globalThis.FormData;
+    globalThis.FormData = class { constructor() { return Object.entries(values); } };
+    try {
+      let prevented = false;
+      mount.listeners.get('submit')({ target: form, preventDefault() { prevented = true; } });
+      await tick();
+      assert.ok(prevented);
+      assert.ok(!mount.innerHTML.includes('Use 1–8 words'), 'typed words reached empty-query validation');
+      assert.equal(paths.length, 1, 'typed words must reach search');
+      assert.equal(new URLSearchParams(paths[0].split('?')[1]).get('q'), 'rate limit');
+      assert.ok(mount.innerHTML.includes('matching source'));
+      assert.ok(mount.innerHTML.includes('value="rate limit"'));
+      values.project = 'atlas';
+      mount.listeners.get('change')({ target: { tagName: 'SELECT', closest: () => form } });
+      await tick();
+      assert.equal(paths.length, 2, 'changing a filter must search again');
+      assert.equal(new URLSearchParams(paths[1].split('?')[1]).get('q'), 'rate limit');
+      assert.ok(mount.innerHTML.includes('value="rate limit"'));
+      values[field] = '';
+      mount.listeners.get('submit')({ target: form, preventDefault() {} });
+      await tick();
+      assert.ok(mount.innerHTML.includes('Use 1–8 words, up to 200 characters.'));
+      assert.equal(paths.length, 2, 'empty search must stay local');
+    } finally {
+      globalThis.FormData = original;
+      control.stop();
+    }
+  },
   async stale() {
     const mount = node(), pane = node();
     let finish;
