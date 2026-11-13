@@ -3,11 +3,59 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 
 const STATIC = new URL("../commonplace/web/static/", import.meta.url);
 const read = (name) => readFileSync(new URL(name, STATIC), "utf8");
 const deck = await import(new URL("deck.js", STATIC));
 const rail = await import(new URL("rail.js", STATIC));
+
+for (const [label, base, route, drawer] of [
+  ["board", "#/board/atlas", "#/board/atlas", false],
+  ["card", "#/board/atlas", "#/card/7", true],
+  ["project settings", "#/board/atlas", "#/board/atlas", true],
+  ["Needs me", "#/needs", "#/needs", false],
+  ["Memory", "#/memory", "#/memory", false],
+]) test(`phone ${label}: dock redraw preserves Deck and destinations take at most two taps`, () => {
+  const app = read("app.js"), mount = { innerHTML: "" };
+  const state = { base, route, needs: { count: 2 }, botsWaiting: 3,
+    deck: deck.createDeck({ storage: storage({ [deck.UI_KEY]: "deck" }), doc: doc() }) };
+  // Execute the actual dock callback that runs after navigation(), including background redraws.
+  const start = app.indexOf("      phone() {"), end = app.indexOf("      dispose() {", start);
+  assert.ok(start >= 0 && end > start);
+  const callback = app.slice(start, end).trim().replace(/,$/, "");
+  const context = { state, renderPhoneTabs: rail.renderPhoneTabs,
+    root: { querySelector: selector => selector === "#phone-tabs" ? mount : null } };
+  const closes = [];
+  if (drawer) {
+    Object.assign(context, { phone: () => true, detailsUI: null,
+      history: { state: label === "project settings" ? { deckProjectSettings: true } : null, back: () => closes.push("back") },
+      location: { set hash(value) { closes.push(value); } } });
+    const close = app.slice(app.indexOf("function closeCardPanel()"), app.indexOf("function openSelectedCard("));
+    runInNewContext(`${close}\ncloseCardPanel()`, context);
+    assert.deepEqual(closes, [label === "project settings" ? "back" : base]);
+  }
+  for (let refresh = 0; refresh < 2; refresh++) {
+    runInNewContext(`({${callback}}).phone()`, context);
+    assert.match(mount.innerHTML, /data-deck="tabs"/);
+    for (const destination of ["today", "bots", "compute", "settings"]) {
+      assert.match(mount.innerHTML, new RegExp(`href="#/${destination}"`));
+      assert.ok(closes.length + 1 <= 2, "close drawer, then choose a tab");
+    }
+    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>3<span/);
+  }
+  state.deck = undefined;
+  runInNewContext(`({${callback}}).phone()`, context);
+  assert.equal(mount.innerHTML, rail.renderPhoneTabs({ view: base === "#/memory" ? "memory" : "", botsWaiting: 3 }));
+});
+
+test("phone workspace tools include switching workspace and project settings stay discoverable", () => {
+  const tools = deck.toolsHTML();
+  for (const href of ["#/boards", "#/memory", "#/needs"]) assert.ok(tools.includes(`href="${href}"`));
+  assert.match(tools, /data-action="switch-workspace"/);
+  assert.match(deck.renderDeckTop({ board: { slug: "atlas", name: "Atlas" } }), /data-action="coordinator" data-board="atlas"/);
+  assert.doesNotMatch(deck.renderDeckTop(), /data-action="coordinator"/);
+});
 
 function storage(initial = {}) {
   const data = new Map(Object.entries(initial));

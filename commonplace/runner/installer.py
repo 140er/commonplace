@@ -11,6 +11,7 @@ import sys
 import threading
 import urllib.request
 from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -20,6 +21,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from . import enrollment_crypto
 from .install_files import MANIFEST, STATE, Files, digest, encoded
 from .install_host import UNIT, InstallError, LiveHost
+from .receipt_cache import APPROVAL_KEY, CACHE
 
 UNIT_PATH = ".config/systemd/user/" + UNIT
 KEY = STATE + "/machine-key.pem"
@@ -27,6 +29,8 @@ DELIVERY = STATE + "/delivery.json"
 CONFIG = STATE + "/config.json"
 LOCK = STATE + "/install.lock"
 FILES = {
+    APPROVAL_KEY,
+    CACHE,
     KEY,
     DELIVERY,
     CONFIG,
@@ -78,6 +82,24 @@ class Transport:
             raise InstallError(
                 "enrollment delivery unavailable; retry with the saved identity"
             ) from None
+
+    def receipt(self, token, nonce):
+        from .install_receipts import PATH
+
+        if not token or any(c in token for c in "\r\n"):
+            raise InstallError("invalid machine credential")
+        request = urllib.request.Request(
+            self.origin + PATH + "?nonce=" + nonce,
+            headers={"Authorization": "Bearer " + token},
+        )
+        try:
+            with self.opener.open(request, timeout=15) as response:
+                raw = response.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError
+                return json.loads(raw)
+        except Exception:
+            raise InstallError("approved binding unavailable; owner review required") from None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -329,9 +351,13 @@ class Installer:
             raise InstallError("invalid credential delivery")
         return credentials
 
-    def install(self, intent, *, accepted=False, code_source=None, release=None):
+    def install(self, intent, *, accepted=False, code_source=None, release=None, approval_key=None):
         if not accepted:
             return self.plan()
+        if approval_key is not None:
+            from .receipt_cache import public_key
+
+            public_key(approval_key)
         self.host.preflight()
         self.load()
         self._preflight_files()
@@ -423,11 +449,15 @@ class Installer:
                     "agent_ready": False,
                     "hub_url": intent["hub_url"],
                     "machine_id": credentials["machine_id"],
+                    "worker_connection_id": credentials["worker_connection_id"],
                     "installation_id": self.journal["installation_id"],
                     "machine_token_file": "machine.token",
                     "worker_token_file": "worker.token",
                 }
                 self.file(CONFIG, encoded(config))
+                if approval_key is not None:
+                    self.file(APPROVAL_KEY, approval_key)
+                    self.file(CACHE, encoded({}))
                 self.journal["phase"] = "credentials"
                 self.flush()
                 try:
@@ -490,7 +520,11 @@ class Installer:
             if info is None:
                 raise InstallError("installation artifact is missing")
             self.fs._check(info, directory=item["kind"] == "dir")
-            if item["kind"] == "file" and digest(self.fs.read(item["path"])) != item["digest"]:
+            if (
+                item["kind"] == "file"
+                and item["path"] != CACHE
+                and digest(self.fs.read(item["path"])) != item["digest"]
+            ):
                 raise InstallError("an owned installation file changed")
         config = json.loads(self.fs.read(CONFIG))
         if config.get("mode") != "setup-only" or config.get("agent_ready") is not False:
@@ -508,6 +542,18 @@ class Installer:
         self.out("installation phase: " + phase + "; execution disabled")
         return 0
 
+    def sync_receipts(self):
+        from .receipt_cache import Cache
+
+        if not self.load() or self.journal["phase"] != "installed":
+            raise InstallError("installation is incomplete")
+        with self.locked():
+            self.load()
+            self.verify(check_service=False)
+            config = json.loads(self.fs.read(CONFIG))
+            transport = self.transport or Transport(config["hub_url"])
+            return Cache(self.fs, self.journal, config, transport).sync()
+
     def uninstall(self):
         if not self.load():
             self.out("not installed; no changes")
@@ -520,7 +566,10 @@ class Installer:
             # Validate every file before the first discard; changed files are retained.
             for item in self.journal["items"]:
                 if item["kind"] == "file" and self.fs.info(item["path"]) is not None:
-                    if digest(self.fs.read(item["path"])) != item["digest"]:
+                    if (
+                        item["path"] != CACHE
+                        and digest(self.fs.read(item["path"])) != item["digest"]
+                    ):
                         raise InstallError("an owned installation file changed; uninstall refused")
             for item in reversed(list(self.journal["items"])):
                 path = item["path"]
@@ -545,7 +594,7 @@ class Installer:
 
 
 def serve(home):
-    """An inert supervisor placeholder. Never reads credentials, polls or launches work."""
+    """Sync approved settings when a trust pin exists; never lease or launch work."""
     fs = Files(home)
     config = json.loads(fs.read(CONFIG))
     if config.get("mode") != "setup-only" or config.get("agent_ready") is not False:
@@ -553,7 +602,15 @@ def serve(home):
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    stop.wait()
+    if fs.info(APPROVAL_KEY) is None:
+        stop.wait()
+        return 0
+    while not stop.is_set():
+        try:
+            Installer(home, host=object()).sync_receipts()
+        except Exception:
+            pass  # setup remains incomplete; no raw error enters service output
+        stop.wait(30)
     return 0
 
 
@@ -574,6 +631,11 @@ def run(args, *, host=None, transport=None, code_source=None):
             accepted=args.accept and not args.plan,
             code_source=code_source or (lambda: sys.stdin.read(128).strip()),
             release=release if all(release) else None,
+            approval_key=(
+                Path(args.approval_key).read_bytes()
+                if args.approval_key and args.accept and not args.plan
+                else None
+            ),
         )
     except Exception:
         # Neither remote errors nor parsing/path/library errors may reflect a credential.

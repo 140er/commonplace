@@ -45,6 +45,7 @@ def main(argv=None, *, launch=None):
             parser.add_argument("--" + flag, required=True)
         parser.add_argument("--accept", action="store_true")
         parser.add_argument("--plan", action="store_true")
+        parser.add_argument("--approval-key")
         args = parser.parse_args(argv)
         raw = verified_release(args.release, args.release_signature, args.release_key)
         if args.plan or not args.accept:
@@ -75,6 +76,8 @@ def main(argv=None, *, launch=None):
                 os.fsync(stream.fileno())
             command = [sys.executable, "-I", str(archive), "runner", "install"]
             for flag, value in vars(args).items():
+                if value is None:
+                    continue
                 if isinstance(value, bool):
                     if value:
                         command.append("--" + flag.replace("_", "-"))

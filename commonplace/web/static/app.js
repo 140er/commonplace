@@ -273,6 +273,7 @@ function currentBoard() {
 }
 function boardPreference() { return `cmmn.board.last.${state.me?.workspace || ""}`; }
 function closeCardPanel() {
+  if (state.deck?.on() && phone() && history.state?.deckProjectSettings) { history.back(); return; }
   detailsUI?.stop(); detailsUI = null;
   if (state.route.startsWith("#/card/")) location.hash = state.base;
   else root.querySelector("#card-panel").hidden = true;
@@ -404,7 +405,7 @@ function navigation() {
   const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
   // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
   boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-  root.querySelector("#phone-bar").innerHTML = state.deck?.top() || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
+  root.querySelector("#phone-bar").innerHTML = state.deck?.top({ board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
   root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
@@ -772,8 +773,12 @@ async function openProjectSettings(action, b, { mountProject, settingsOptions })
   needs?.pause(true);
   panel.hidden = false;
   panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
+  if (state.deck?.on() && phone() && !history.state?.deckProjectSettings) {
+    history.pushState({ ...history.state, deckProjectSettings: true }, "", location.hash);
+  }
   await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen,
-    ...settingsOptions({ action, dataset: b.dataset, needs, panel, refresh: () => refresh({ background: true }) }) });
+    ...settingsOptions({ action, dataset: b.dataset, needs, panel, refresh: () => refresh({ background: true }) }),
+    ...(state.deck?.on() && phone() ? { onBack: closeCardPanel } : {}) });
 }
 // The no-answer error's restart link opens project settings in the chat's Details slot; Back returns to the link.
 async function openRestart(link, projects) {
@@ -1002,7 +1007,7 @@ function mountWorkbenchChat() {
     service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
       phone() {
         const mount = root.querySelector("#phone-tabs");
-        if (mount) mount.innerHTML = renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
+        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
       },
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
@@ -1905,6 +1910,11 @@ async function poll() {
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
 document.addEventListener("session-expired", () => { adminUI?.stop(); instanceAdminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
+window.addEventListener("popstate", () => {
+  if (state.deck?.on() && phone() && !history.state?.deckProjectSettings && root.querySelector("[data-project-settings]")) {
+    root.querySelector("#card-panel").hidden = true;
+  }
+});
 window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
