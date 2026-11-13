@@ -70,6 +70,15 @@
 :root[data-ui="deck"] .rail[data-deck="bar"] .user-links a:hover, :root[data-ui="deck"] .rail[data-deck="bar"] .user-links button:hover { background: var(--accent-weak); }
 
 /* ---------- Phone: title bar and four tabs ---------- */
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell, :root[data-ui="deck"] .shell.two { display: grid; height: 100dvh; grid-template-rows: minmax(0, 1fr); }
+  :root[data-ui="deck"] .center { grid-row: 1; overflow: hidden; padding-bottom: calc(56px + max(14px, env(safe-area-inset-bottom))); }
+  :root[data-ui="deck"] #phone-tabs { position: fixed; inset: auto 0 0; z-index: 10; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs { display: grid; }
+  :root[data-ui="deck"] .m-top .iconbtn { min-width: 44px; min-height: 44px; }
+  :root[data-ui="deck"] .shell[data-view="needs"] #content { padding-inline: 16px; }
+  :root[data-ui="deck"] .shell .workbench-project :is(.project-top, .settings) { padding-inline: 16px; }
+}
 :root[data-ui="deck"] .m-top { border: 0; }
 :root[data-ui="deck"] .m-top .deck-brand { margin: 0 0 0 4px; font-size: 17px; }
 :root[data-ui="deck"] .m-tabs { border-top-color: var(--line); }
