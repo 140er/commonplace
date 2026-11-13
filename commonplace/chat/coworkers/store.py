@@ -19,6 +19,8 @@ from pathlib import Path
 from commonplace.admission import GATE
 from mempalace.sqlite_crypto import connect, row_factory
 
+from . import taxonomy, unread
+
 MAX_TEXT = 8_000
 MAX_REPLY = 2_000
 MAX_INSTRUCTIONS = 4_000
@@ -45,7 +47,8 @@ TERMINAL = frozenset(
     }
 )
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
-_SCHEMA = """
+_SCHEMA = (
+    """
 CREATE TABLE IF NOT EXISTS bots (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, instructions TEXT NOT NULL,
  connection_id TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL
@@ -106,6 +109,9 @@ BEGIN SELECT RAISE(ABORT, 'coworker control intent is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS task_controls_no_delete BEFORE DELETE ON task_controls
 BEGIN SELECT RAISE(ABORT, 'coworker control history is append-only'); END;
 """
+    + taxonomy.SCHEMA
+    + unread.SCHEMA
+)
 for _table in ("messages", "intake", "memories", "memory_tombstones"):
     for _operation in ("UPDATE", "DELETE"):
         _SCHEMA += (
@@ -374,7 +380,9 @@ class Store:
         with self._transaction() as conn:
             return self._conversation_view(conn, self._conversation(conn, user_id, conversation_id))
 
-    def list_messages(self, user_id, conversation_id, after=0, limit=100, *, before=None):
+    def list_messages(
+        self, user_id, conversation_id, after=0, limit=100, *, before=None, mark_read=False
+    ):
         _number(after, zero=True)
         if before is not None:
             _number(before)
@@ -392,6 +400,8 @@ class Store:
                     "SELECT * FROM messages WHERE conversation_id=? AND id>? AND id<? ORDER BY id DESC LIMIT ?",
                     (conversation_id, after, before, limit),
                 ).fetchall()[::-1]
+            if mark_read:
+                unread.mark_read(conn, user_id, conversation_id, rows)
             return [self._message(r) for r in rows]
 
     def _target(self, conn, conversation_id, text, bot_id):
