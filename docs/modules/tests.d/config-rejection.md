@@ -4,3 +4,4 @@
 - **Promises:**
 
   - Controls require confirmation, support cancellation and retries, prevent concurrent decisions and stop rendering after navigation. Members have read-only review; gateway tests verify refused member decisions, a final rejected version and the decision audit row.
+  - The connection browser fixture answers the optional config-list and checkpoint reads made by project settings, so its routed requests settle before connection actions are tested.
