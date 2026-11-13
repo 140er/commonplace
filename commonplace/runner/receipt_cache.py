@@ -82,7 +82,7 @@ def compatibility(receipt):
             "runtime_ceiling": mode,
             "runtime_ack": label + ":" + mode,
         }
-    return {
+    config = {
         "projects": result,
         "topics": topics,
         "wings": receipt["wings"],
@@ -95,6 +95,12 @@ def compatibility(receipt):
         "settings_version": receipt["settings_version"],
         "agent_ready": False,
     }
+
+    if "runtime" in receipt:
+        from .runtime_manifest import validate
+
+        config["runtime"] = validate(receipt["runtime"], topics)
+    return config
 
 
 class Cache:
@@ -150,7 +156,18 @@ class Cache:
             ):
                 raise ValueError("receipt rollback")
             config = compatibility(receipt)
-            self.fs.write(CACHE, encoded({"signed": envelope, "config": config}), replace=True)
+            # A fresh challenge was verified above; unchanged, still-valid disk
+            # evidence need not be rewritten on every setup-service pass.
+            volatile = {"nonce", "issued_at", "expires_at"}
+            same = previous and {k: v for k, v in previous.items() if k not in volatile} == {
+                k: v for k, v in receipt.items() if k not in volatile
+            }
+            try:
+                self.read()
+            except Exception:
+                same = False
+            if not same:
+                self.fs.write(CACHE, encoded({"signed": envelope, "config": config}), replace=True)
             return config
         except Exception:
             self.fs.write(CACHE, encoded({}), replace=True)

@@ -23,6 +23,8 @@ from .install_files import MANIFEST, STATE, Files, digest, encoded
 from .install_host import UNIT, InstallError, LiveHost
 from .receipt_cache import APPROVAL_KEY, CACHE
 
+RUNTIME_CACHE = STATE + "/runtime-config.json"
+
 UNIT_PATH = ".config/systemd/user/" + UNIT
 KEY = STATE + "/machine-key.pem"
 DELIVERY = STATE + "/delivery.json"
@@ -82,6 +84,26 @@ class Transport:
             raise InstallError(
                 "enrollment delivery unavailable; retry with the saved identity"
             ) from None
+
+    def runtime_status(self, token, body):
+        from .runtime_status import PATH
+
+        if not token or any(c in token for c in "\r\n"):
+            raise InstallError("invalid machine credential")
+        request = urllib.request.Request(
+            self.origin + PATH,
+            data=encoded(body),
+            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self.opener.open(request, timeout=15) as response:
+                result = json.loads(response.read(1025))
+                if result != {"ok": True, "agent_ready": False}:
+                    raise ValueError
+                return result
+        except Exception:
+            raise InstallError("runtime status unavailable") from None
 
     def receipt(self, token, nonce):
         from .install_receipts import PATH
@@ -161,12 +183,13 @@ def service_text(home, archive=False):
 
 
 class Installer:
-    def __init__(self, home, host=None, transport=None, *, out=print):
+    def __init__(self, home, host=None, transport=None, *, out=print, runtime_host=None):
         self.fs = Files(home)
         self.host = host if host is not None else LiveHost()
         self.transport = transport
         self.out = out
         self.journal = None
+        self.runtime_host = runtime_host
 
     def load(self):
         if self.fs.info(MANIFEST) is None:
@@ -180,13 +203,15 @@ class Installer:
             or not isinstance(document.get("items"), list)
         ):
             raise InstallError("installation manifest is invalid")
+        from .runtime_install import owned
+
         seen = set()
         for item in document["items"]:
             path, kind = item["path"], item["kind"]
             if (
                 path in seen
-                or (kind == "file" and path not in FILES)
-                or (kind == "dir" and path not in DIRS)
+                or (kind == "file" and path not in FILES and not owned(path, kind))
+                or (kind == "dir" and path not in DIRS and not owned(path, kind))
                 or kind not in ("file", "dir")
             ):
                 raise InstallError("installation manifest is invalid")
@@ -257,6 +282,13 @@ class Installer:
             "On failure stop the owned unit before rollback; retain only recoverable enrollment state.",
             "Uninstall stops the owned unit, removes unchanged owned files and empty owned directories;",
             "restore linger only if enabled here and no other user service depends on it.",
+        ):
+            self.out(action)
+        for action in (
+            "Verify signed runtime choices; locate selected compatible components only.",
+            "Download only approved version/digest pins; verify all before execution or publication.",
+            "Write owned 0600 artifacts and runtime config cache in private 0700 directories.",
+            "Derive provider/topic/project mappings; report sign-in needed, without login or grants.",
         ):
             self.out(action)
         return 0
@@ -453,6 +485,7 @@ class Installer:
                     "installation_id": self.journal["installation_id"],
                     "machine_token_file": "machine.token",
                     "worker_token_file": "worker.token",
+                    "runtime_cache_file": "runtime-config.json",
                 }
                 self.file(CONFIG, encoded(config))
                 if approval_key is not None:
@@ -522,7 +555,7 @@ class Installer:
             self.fs._check(info, directory=item["kind"] == "dir")
             if (
                 item["kind"] == "file"
-                and item["path"] != CACHE
+                and item["path"] not in (CACHE, RUNTIME_CACHE)
                 and digest(self.fs.read(item["path"])) != item["digest"]
             ):
                 raise InstallError("an owned installation file changed")
@@ -539,6 +572,16 @@ class Installer:
         phase = self.journal["phase"]
         if phase == "installed":
             self.verify()
+        if self.fs.info(RUNTIME_CACHE) is not None:
+            from .runtime_install import Runtime
+
+            try:
+                config = json.loads(self.fs.read(CONFIG))
+                runtime = Runtime(self, config, self.transport).read()
+                for name, fact in sorted(runtime["components"].items()):
+                    self.out(name + ": " + fact["availability"] + "; " + fact["login"])
+            except Exception:
+                self.out("runtime cache unavailable; fresh approved settings required")
         self.out("installation phase: " + phase + "; execution disabled")
         return 0
 
@@ -552,7 +595,21 @@ class Installer:
             self.verify(check_service=False)
             config = json.loads(self.fs.read(CONFIG))
             transport = self.transport or Transport(config["hub_url"])
-            return Cache(self.fs, self.journal, config, transport).sync()
+            from .runtime_install import Runtime
+
+            runtime = None
+            try:
+                approved = Cache(self.fs, self.journal, config, transport).sync()
+                if "runtime" in approved:
+                    runtime = Runtime(self, config, transport, self.runtime_host)
+                    runtime.sync()
+                elif self.fs.info(RUNTIME_CACHE) is not None:
+                    Runtime(self, config, transport).clear()
+                return approved
+            except Exception:
+                if self.fs.info(RUNTIME_CACHE) is not None:
+                    (runtime or Runtime(self, config, transport)).clear()
+                raise
 
     def uninstall(self):
         if not self.load():
@@ -567,7 +624,7 @@ class Installer:
             for item in self.journal["items"]:
                 if item["kind"] == "file" and self.fs.info(item["path"]) is not None:
                     if (
-                        item["path"] != CACHE
+                        item["path"] not in (CACHE, RUNTIME_CACHE)
                         and digest(self.fs.read(item["path"])) != item["digest"]
                     ):
                         raise InstallError("an owned installation file changed; uninstall refused")

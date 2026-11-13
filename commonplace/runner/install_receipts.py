@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from commonplace import control_db, sessions
 
-from . import enrollment, registry
+from . import enrollment, registry, runtime_manifest
 
 PATH = "/api/runner/install-manifest"
 SCHEMA = """
@@ -38,6 +38,9 @@ def canonical(value):
 def ensure(db):
     with db._lock:
         db._conn.executescript(SCHEMA)
+    from . import runtime_status
+
+    runtime_status.ensure(db)
 
 
 def installation(db, workspace, machine_id):
@@ -111,7 +114,7 @@ def approve_in(db, owner, row, settings):
         _identity(db, row)
     except enrollment.Refused:
         raise registry.NotFound("installation not found") from None
-    if not isinstance(settings, dict) or set(settings) != {
+    if not isinstance(settings, dict) or set(settings) - {"runtime"} != {
         "grant_version",
         "binding_epoch",
         "settings_version",
@@ -148,6 +151,8 @@ def approve_in(db, owner, row, settings):
             raise ValueError("invalid approved project settings")
         ids.add(project["project_id"])
     snapshot = {**_scope(row), "projects": projects}
+    if "runtime" in settings:
+        snapshot["runtime"] = runtime_manifest.validate(settings["runtime"], snapshot["topics"])
     stamp = control_db._iso(control_db._now())
     item = installation(db, owner.workspace_id, row["id"])
     db._conn.execute(
@@ -235,7 +240,9 @@ def attention(db, owner):
             "SELECT r.id,r.machine_id,r.grant_version,r.binding_epoch FROM runner_setup_requests r JOIN runner_machines m ON m.id=r.machine_id JOIN runner_enrollments e ON e.id=r.enrollment_id WHERE r.workspace_id=? AND r.state='pending' AND m.revoked_at IS NULL AND e.revoked_at IS NULL AND r.grant_version=m.grant_version AND r.binding_epoch=m.binding_epoch ORDER BY r.created_at,r.id",
             (owner.workspace_id,),
         ).fetchall()
-    return [
+    from . import runtime_status
+
+    return runtime_status.attention(db, owner) + [
         {
             **dict(row),
             "kind": "runner_settings",
