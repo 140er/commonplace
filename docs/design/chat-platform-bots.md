@@ -1,7 +1,7 @@
 # Chat-platform bots
 
 Card #455 (one card for chat-platform presence; builds on the Bots layer, `docs/bots.md`).
-Status: design note, nothing built yet. Slack is the first platform; Teams and Discord follow
+Status: design note; slice 1 (foundation) is built, the rest is not. Slack is the first platform; Teams and Discord follow
 through the same adapter interface.
 
 ## Problem and goal
@@ -157,7 +157,7 @@ count, last intake time). Nothing that installs, maps, links or reads secrets: a
 **CLI.** `commonplace bridge status` and `commonplace bridge disable [--all]` (the kill switch).
 Secrets are never accepted on a command line.
 
-**Adapter interface (`commonplace/bridge/adapter.py`).**
+**Adapter interface (`commonplace/chat_bridge/adapter.py`; the package is not named `bridge` because `commonplace/bridge.py` is the MCP client bridge).**
 
 ```
 Adapter.platform: str
