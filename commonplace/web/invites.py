@@ -34,7 +34,9 @@ _PAGE = """<!doctype html><html lang="en"><head>
 <h1>{title}</h1><p class="lead">{text}</p>{action}</main></body></html>"""
 _CONFIRM = (
     '<form method="post" action="/app/join"><button class="blockbtn" name="confirm" value="1">'
-    "Join workspace</button></form>"
+    'Join workspace</button><p role="status" data-join-status></p></form>'
+    "<noscript><p>Enable JavaScript, then open your invite link again to join.</p></noscript>"
+    '<script type="module" src="/app/join.js"></script>'
 )
 _OPEN = '<p><a class="blockbtn" href="/app/">Open Commonplace</a></p>'
 _MESSAGES = {
@@ -195,7 +197,7 @@ def _join(gateway, h):
         if h.command == "GET":
             _send(h, 302, headers=(("Location", "/app/?next=" + quote(JOIN_PATH, safe="")),))
         else:
-            send_json(h, 401, {"error": "Sign in"})
+            _page(h, 401, "Sign in again", "Sign in, then open your invite link again.", _OPEN)
         return
     try:
         if h.command == "GET":
@@ -212,8 +214,16 @@ def _join(gateway, h):
             return
         from commonplace.gateway import _same_origin_allowed
 
-        if not _same_origin_allowed(gateway, h):
-            send_json(h, 403, {"error": "same-origin request required"})
+        # The shared guard also serves non-browser clients, but joining requires
+        # an explicit browser Origin. Fetch metadata alone is not CSRF proof.
+        if not h.headers.get_all("Origin", []) or not _same_origin_allowed(gateway, h):
+            _page(
+                h,
+                403,
+                "Open your invite link again",
+                "A same-origin request is required. Open your invite link in this browser and try again.",
+                '<p><a href="/app/join">Try again</a></p>',
+            )
             return
         workspace_id = invites.accept(db, secret, principal.user_id)
     except invites.InviteError as exc:

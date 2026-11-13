@@ -30,7 +30,9 @@ class Browser:
         self.cookies = {sessions.COOKIE: session} if session else {}
 
     def request(self, method, path, body=None, *, headers=None, form=False, token=None):
-        sent = dict(headers or {})
+        sent = {"Origin": f"http://127.0.0.1:{self.port}"} if form else {}
+        sent.update(headers or {})
+        sent = {key: value for key, value in sent.items() if value is not None}
         if self.cookies and token is None:
             sent["Cookie"] = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
         if token:
@@ -384,6 +386,25 @@ def test_foreign_origin_cannot_confirm_a_join(world):
     assert refused.status == 403
     assert world.db.role(world.owner.workspace, world.guest.id) is None
     assert world.guest.browser.post("/app/join", form=True).status == 303
+
+
+@pytest.mark.parametrize("origin", [None, "null", "https://evil.example"])
+def test_join_requires_explicit_same_origin_even_with_fetch_metadata(world, origin):
+    made = invite(world)
+    guest = world.guest
+    guest.browser.get(f"/app/join?t={made['secret']}")
+    before = guest.browser.cookies[sessions.COOKIE]
+    refused = guest.browser.post(
+        "/app/join",
+        form=True,
+        headers={"Origin": origin, "Sec-Fetch-Site": "same-origin"},
+    )
+    assert refused.status == 403
+    assert "Open your invite link again" in refused.text
+    assert world.db.role(world.owner.workspace, guest.id) is None
+    assert guest.browser.cookies[sessions.COOKIE] == before
+    assert world.owner.browser.get("/api/invites").json()["invites"][0]["state"] == "pending"
+    assert guest.browser.post("/app/join", form=True).status == 303
 
 
 def owner_token(world, person):
