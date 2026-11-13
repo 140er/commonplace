@@ -99,7 +99,7 @@ export function signinView({ providers = [], paused = [], via = "", error = "", 
     </ol>
     <dl class="terms" aria-label="Two words you will see">
       <div><dt>Agent</dt><dd>An AI helper that works on cards, for example a coding assistant on your computer.</dd></div>
-      <div><dt>Orchestrator</dt><dd>The project's lead agent. It reads what you ask in chat and turns it into cards. Each project gets one automatically: the first agent you connect.</dd></div>
+      <div><dt>Coworker</dt><dd>The project's lead agent. It reads what you ask in chat and turns it into cards. Each project gets one automatically: the first agent you connect.</dd></div>
     </dl>
   </section></main>`;
 }

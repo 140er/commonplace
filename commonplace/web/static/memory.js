@@ -1,5 +1,6 @@
 import { api as request, escape as e, actor } from "./api.js";
 import { cardId, isBlocked } from "./board.js";
+import { createMemoryImport } from "./memory-import.js";
 
 const enc = encodeURIComponent;
 const exact = (value) => e(value).replaceAll("\r", "&#13;");
@@ -35,7 +36,7 @@ export function memoryAuthor(result, board = {}) {
   let ref = result.actor || result.author;
   if (ref && result.kind === "note" && !/^(conn:|user:)/.test(ref)) ref = `conn:${ref}`;
   if (!ref) return "";
-  if (ref === board.coordinator) return `${name(board)} orchestrator`;
+  if (ref === board.coordinator) return `${name(board)} Coworker`;
   return String(ref).startsWith("conn:") ? `${actor(ref)} (agent)` : actor(ref);
 }
 
@@ -138,8 +139,9 @@ export function renderMemory(state) {
   const options = (rows, selected) => rows.map(([value, label]) => `<option value="${e(value)}"${value === (selected || "") ? " selected" : ""}>${e(label)}</option>`).join("");
   const status = busy ? `Searching…${searched ? ` showing results for “${state.completedQuery}” until done` : ""}` : searched ? `${results.length} results${state.truncated ? " · more matches available; narrow your search" : ""}` : "";
   return `<section class="memory-search" aria-label="Memory">
+    <div class="memory-import-entry"><button class="btn" data-memory-action="import">Import</button></div>
     <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="query" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
-    <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} orchestrator`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
+    <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} Coworker`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
     ${error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
     ${state.errors?.length ? '<p class="memory-warning" role="alert">Some sources could not be searched. Try again for all results.</p>' : ""}
     <div class="memory-results list" aria-busy="${Boolean(busy)}">${results.map((row, i) => `<button class="res${selected && key(row) === key(selected) ? " is-selected" : ""}${busy ? " is-loading" : ""}" data-memory-result="${i}"${selected && key(row) === key(selected) ? ' aria-current="true"' : ""}><span class="src"><b>${e(row.sourceLabel)}</b><span> · ${e(row.author)} · </span>${stamp(row, { dateOnly: row.kind === "note" })}</span><span class="ex">${highlighted(row.text, busy ? state.completedQuery : filters.query)}</span></button>`).join("")}${!busy && !error && !results.length ? `<div class="memory-empty" role="status"><h2>${searched ? "No exact words match" : "Search your memory"}</h2><p>${searched ? "Memory finds the words you type, not their meaning. Try fewer or different words, or search every project." : "Exact words from chats, cards and notes. Never summarised."}</p>${searched ? '<button class="btn" data-memory-action="clear">Search all projects</button>' : ""}</div>` : ""}</div>
@@ -164,9 +166,10 @@ export function renderMemoryPanel({ result, destination, source, cards = [], me,
 export function createMemory({ mount, panel, api = request, boards = [], me = {}, destination = null, dock, clipboard = globalThis.navigator?.clipboard, onSelect = () => {}, singleKeys = () => true } = {}) {
   const state = { boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
   let searchEpoch = 0, sourceEpoch = 0, stopped = false, writing = false, returnKey = "";
+  let importer = null;
   const person = typeof me === "string" ? me : me.actor;
   const draw = () => {
-    if (stopped) return;
+    if (stopped || importer) return;
     const focused = mount.ownerDocument?.activeElement;
     let restore = null;
     if (focused && (mount.contains(focused) || panel?.contains(focused))) {
@@ -260,6 +263,17 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     finally { writing = false; if (epoch === sourceEpoch) draw(); }
   }
   function click(event) {
+    const importButton = event.target.closest("[data-memory-action]");
+    if (importButton?.dataset.memoryAction === "import") {
+      ++searchEpoch; ++sourceEpoch;
+      state.busy = false; state.selected = null;
+      if (panel) { panel.hidden = true; panel.innerHTML = ""; }
+      importer = createMemoryImport({ mount, me, api, onClose() {
+        importer?.stop(); importer = null; draw();
+        mount.querySelector('[data-memory-action="import"]')?.focus();
+      } });
+      return;
+    }
     const row = event.target.closest("[data-memory-result]");
     if (row) { void select(state.results[Number(row.dataset.memoryResult)]); return; }
     const button = event.target.closest("[data-memory-action], [data-memory-post]");
@@ -303,6 +317,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     setDestination(board) { state.destination = board; state.linking = false; draw(); },
     restoreSource() { if (state.selected && returnKey === key(state.selected)) backToSource(); },
     stop() {
+      importer?.stop(); importer = null;
       stopped = true; ++searchEpoch; ++sourceEpoch;
       for (const node of new Set([mount, panel].filter(Boolean))) {
         node.removeEventListener("click", click); node.removeEventListener("submit", submit); node.removeEventListener("change", change); node.removeEventListener("keydown", keydown);

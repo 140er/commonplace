@@ -18,7 +18,7 @@ export const BOTS_COPY = Object.freeze({
   offline: "Could not reach the server. Retrying…",
   unavailable: "This bot is no longer available.",
   stopped: "Stopped.",
-  orchestrator: "Orchestrator",
+  orchestrator: "Coworker",
   coworker: "Coworker",
   learnedGone: "That item is gone.",
 });

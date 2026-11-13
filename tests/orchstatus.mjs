@@ -96,7 +96,7 @@ const cases = {
   async no_lease() {
     const {host} = await mount({responses: [view({lease: null, config: null})]});
     assert.match(host.text, /Nobody is coordinating this project\./);
-    assert.match(host.text, /No orchestrator config is accepted yet\./);
+    assert.match(host.text, /No Coworker config is accepted yet\./);
     assert.equal(has(host, "end"), false);
   },
   async member_sees_state_without_button() {

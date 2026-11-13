@@ -320,7 +320,7 @@ const cases = {
     ui.showConnectResult(result, e, { api: async () => ({ ...project, main: { ...project.main, seen: true } }), path: "/api/projects/ledger", project, opener: button });
     await tick();
     const dialog = openDialog();
-    assert.match(dialog.querySelector("#project-connect-title").textContent, /Orchestrator connected/);
+    assert.match(dialog.querySelector("#project-connect-title").textContent, /Coworker connected/);
     assert.ok(doc.activeElement.matches(".btn.primary") && dialog.contains(doc.activeElement), `focus: ${doc.activeElement.tagName}`);
     dialog.dispatch("cancel");
     assert.equal(openDialog(), null);
@@ -367,7 +367,7 @@ const cases = {
     await tick();
     const dialog = doc.querySelector('[aria-modal="true"], dialog[open]');
     assert.ok(dialog, "a drawn dialog is open");
-    assert.match(dialog.textContent, /Disconnect Ledger orchestrator\?/);
+    assert.match(dialog.textContent, /Disconnect Ledger Coworker\?/);
     assert.match(dialog.textContent, /What happens:/);
     assert.match(dialog.textContent, /It is the only agent in Ledger/);
     assert.ok(doc.activeElement.matches('[data-confirm="cancel"]'), "Cancel has focus");

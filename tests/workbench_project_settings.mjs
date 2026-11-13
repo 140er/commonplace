@@ -62,7 +62,7 @@ async function pendingSettings(pending, fail = false) {
     const expected = pending.reduce((count, part) => count + (part === "/cards" ? 2 : 1), 0);
     assert.equal(resolvers.length, expected, "prerequisite requests must still be pending");
     const heading = host.querySelector("[data-project-heading]");
-    assert.match(heading.innerHTML || "", /Atlas orchestrator/, "the card must render before prerequisite reads settle");
+    assert.match(heading.innerHTML || "", /Atlas Coworker/, "the card must render before prerequisite reads settle");
     assert.match(heading.innerHTML, /Connect agent/);
     await click(host, "[data-project-connect]");
     assert.ok(calls.some(call => call.path.endsWith("/orchestrator/connect") && call.method === "POST"), "Connect must work while sections load");
@@ -74,7 +74,7 @@ async function pendingSettings(pending, fail = false) {
     await mounting;
   }
   assert.doesNotMatch(host.querySelector("[data-project-agents]").innerHTML, /Loading agents/);
-  assert.match(host.querySelector("[data-project-heading]").innerHTML, /Atlas orchestrator/);
+  assert.match(host.querySelector("[data-project-heading]").innerHTML, /Atlas Coworker/);
   if (fail) {
     assert.match(host.querySelector("[data-project-chat]").innerHTML, /Could not load chat settings/);
     assert.match(host.querySelector("[data-project-agents]").innerHTML, /Could not load the agent list/);
@@ -213,13 +213,13 @@ const cases = {
   async phases() {
     const render = exists("connectPhaseHTML");
     assert.match(render("waiting", project, e), /Waiting for the agent/);
-    assert.match(render("done", project, e), /Delivered to the orchestrator/);
+    assert.match(render("done", project, e), /Delivered to the Coworker/);
     const failed = render("failed", project, e); assert.match(failed, /Try again/); assert.match(failed, /120/);
   },
   async settings_screen() {
     const render = exists("projectSettingsHTML");
     const html = render(project, e, {origin: "#/needs"});
-    for (const text of ["Atlas", "Orchestrator", "Chat answers", "Agents", "Connect an agent on a computer", "Project memory"]) assert.ok(html.includes(text), text);
+    for (const text of ["Atlas", "Coworker", "Chat answers", "Agents", "Connect an agent on a computer", "Project memory"]) assert.ok(html.includes(text), text);
     assert.match(html, /data-project-back/); assert.match(html, /data-project-chat/); assert.match(html, /data-project-limit/);
     const restart = render(project, e, {origin: "#/board/atlas/chat", restart: true});
     assert.match(restart, /How to restart the agent/); assert.match(restart, /Check again/);

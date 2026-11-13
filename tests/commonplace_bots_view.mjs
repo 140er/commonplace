@@ -233,15 +233,15 @@ test("stopped and failed replies carry one plain note; redaction markers become 
 test("an event with an orchestrator block carries an Orchestrator label and escaped text", () => {
   const ctx = { open: new Set(), busy: new Set() };
   const reply = ui.messageHTML({ id: 4, role: "event", text: `Done <img src=x onerror=alert(1)> [redacted:key]`, blocks: [{ type: "orchestrator" }], state: "ok" }, ctx, e);
-  assert.match(reply, /<p class="bm-from">Orchestrator<\/p>/);
+  assert.match(reply, /<p class="bm-from">Coworker<\/p>/);
   assert.doesNotMatch(reply, /<img/);
   assert.match(reply, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(reply, /<mark class="redacted">\[redacted:key\]<\/mark>/);
   assert.doesNotMatch(reply, /bb /, "the marker block draws nothing of its own");
   const plain = ui.messageHTML({ id: 5, role: "event", text: "“Fix” is done.", blocks: [{ type: "work", card: 1, title: "Fix", status: "done" }], state: "ok" }, ctx, e);
-  assert.doesNotMatch(plain, /Orchestrator/);
+  assert.doesNotMatch(plain, /Coworker/);
   const bot = ui.messageHTML({ id: 6, role: "bot", text: "hi", blocks: [{ type: "orchestrator" }], state: "ok" }, ctx, e);
-  assert.doesNotMatch(bot, /Orchestrator/, "only event messages are labelled");
+  assert.doesNotMatch(bot, /Coworker/, "only event messages are labelled");
 });
 
 test("server keys that match inherited object members get the default text, never a function or a throw", () => {
