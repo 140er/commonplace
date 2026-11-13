@@ -27,7 +27,7 @@ import threading
 import time
 from typing import Optional
 
-from commonplace.meetings import adapter, lifecycle, notes, store
+from commonplace.meetings import adapter, answers, lifecycle, notes, store
 
 logger = logging.getLogger("commonplace.meetings")
 
@@ -158,6 +158,7 @@ class Run:
         self._t0 = 0.0
         self._reminded_at = 0.0
         self._reminded_count = 0
+        self._answers: Optional[answers.Answerer] = None
 
     # --- entry ----------------------------------------------------------------------------
 
@@ -285,6 +286,8 @@ class Run:
             raise _Gone
         self._audio = threading.Thread(target=self._pump_audio, name="meeting-audio", daemon=True)
         self._audio.start()
+        if self.provider.caps.chat_receive:
+            self._answers = self._answerer()
 
     def _live(self, events):
         for event in events:
@@ -292,6 +295,8 @@ class Run:
             self._common_exit(event, announced=True)
             if event.kind in ("participant_joined", "participant_left"):
                 self._participant(event)
+            elif event.kind == "chat" and self._answers is not None:
+                self._answers.offer(event)
             self._maybe_remind()
         raise _Finish("done", "done", discard=False)  # the stream closed: the meeting is over
 
@@ -326,6 +331,20 @@ class Run:
             self._reminded_at, self._reminded_count = now, present
             text = REMINDER.get(self._language(), REMINDER["en"]).format(inviter=self._inviter())
             self._post("reminder", f"r{int(now)}", text)
+
+    def _answerer(self) -> answers.Answerer:
+        return answers.Answerer(
+            self.gateway,
+            self.workspace_id,
+            self.row,
+            meetings=self.meetings,
+            clock=self.clock,
+            post=self._post,
+            live=self._is_live,
+            allowed=self._allowed,
+            inviter=self._inviter,
+            max_text=self.provider.caps.max_text,
+        )
 
     def _pump_audio(self):
         try:
@@ -439,6 +458,11 @@ class Run:
         """Close the gate first, say goodbye if the bot told the meeting it was there, leave, then
         record the end. The record is the table's: a meeting that already ended stays as it is, and
         one that was stopped (or whose keep-end the table refuses) ends discarded."""
+        if self._answers is not None:
+            if end.discard:
+                self._answers.close()  # a stop, a removal or a failure: no answer after this
+            else:
+                self._answers.drain()  # questions already accepted are answered while still live
         self.capture.close(discard=end.discard)  # the gate first: nothing more is captured
         told = self.meetings.outbox_state(self.meeting_id, "announce", "announce") == "sent"
         if end.notice and told and self.handle is not None:

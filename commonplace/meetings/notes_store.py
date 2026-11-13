@@ -366,6 +366,8 @@ class NotesMixin:
             "origin": "edited" if row["edited"] else "generated",
             "model": row["model"],
             "evidence": {"ranges": ranges, "speakers": speakers},
+            # an action typed into the meeting chat: the asker's label, as the provider gave it
+            "requested_by": evidence.get("asker"),
             "filed_ref": row["filed_ref"],
             # an open note's ``decided_at`` is only the time of a filing claim
             "decided_at": row["decided_at"]

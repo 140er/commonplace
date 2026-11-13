@@ -18,7 +18,7 @@
 
   - `needs_local_transcription` (409) on invite; meeting ends `failed:needs_local_transcription` (engine gone before the start) or `failed:transcription` (three windows in a row failed). An engine error on a window is a gap and a warning with the error type.
 
-  - Not built here: in-meeting answers, provider captions as a stream, a provider adapter, and speaker labels beyond the provider's own stream ids. The engine takes one window at a time, so a long window holds a dictation request for its duration.
+  - Not built here: provider captions as a stream, a provider adapter, and speaker labels beyond the provider's own stream ids. The engine takes one window at a time, so a long window holds a dictation request for its duration.
 
 - **Tests:**
 
