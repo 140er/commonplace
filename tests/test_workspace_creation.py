@@ -188,3 +188,15 @@ def test_request_and_rate_limit_survive_reopening_control_database(creation):
         assert create(site).status == 429
     finally:
         reopened.close()
+
+
+def test_same_second_creation_preserves_original_signin_home(creation, monkeypatch):
+    from commonplace import control_db
+
+    site = creation
+    first = site.db.workspace(site.owner.workspace)
+    monkeypatch.setattr(control_db, "_now", lambda: control_db._parse(first["created_at"]))
+    monkeypatch.setattr(control_db, "_new_id", lambda prefix: "ws_0000000000000000")
+    assert create(site).status == 201
+    assert sessions.home_workspace(site.db, site.owner.id) == site.owner.workspace
+    assert plans.workspace_account(site.db, "ws_0000000000000000") == site.owner.id

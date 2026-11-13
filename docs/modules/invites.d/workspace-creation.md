@@ -19,3 +19,5 @@
   - `tests/test_workspace_creation.py` proves session authority, CSRF refusal, plan preservation and refusal rollback, durable limits and request replay, owner-only membership and data isolation through real HTTP.
 
   - `tests/test_workspace_creation_ui.py` and `tests/workspace_creation.mjs` prove the switcher journey without a browser, including cancel, duplicate click, safe rendering and retry. `tests/test_workspace_creation_browser.py` optionally runs the real shell and session journey in both looks at desktop and phone widths.
+
+  - Same-second workspace creation preserves the original sign-in home; personal workspace billing stays associated with its creator.
