@@ -1057,8 +1057,8 @@ class ControlDB:
             return cursor.lastrowid
 
     def clear_decide(self, connection_id: str, *, reason: str, user_id=None) -> bool:
-        """Remove stored app-scope grants (cards:decide, bots:chat, bots:confirm); True when one
-        was removed (audited). Called when a connection turns into agent machinery or expires."""
+        """Remove stored app scopes and phone capabilities; True when one was removed
+        (audited). Called when a connection turns into agent machinery or expires."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, workspace_id, user_id, auth, policy FROM connections WHERE id=?",
@@ -1066,14 +1066,17 @@ class ControlDB:
             ).fetchone()
             if row is None:
                 return False
+            from commonplace import person_actions
+
+            revoked = person_actions.revoke(self, row, user_id=user_id)
             try:
                 policy = json.loads(row["policy"])
                 scopes = list(policy.get("scopes", ()))
             except (TypeError, ValueError, AttributeError):
-                return False
+                return revoked
             gone = {DECIDE_SCOPE, *bots_grant.SCOPES} & set(scopes)
             if not gone:
-                return False
+                return revoked
             policy["scopes"] = sorted(set(scopes) - gone)
             self._conn.execute(
                 "UPDATE connections SET policy=? WHERE id=?",

@@ -2037,9 +2037,17 @@ def _rest_tool(method, path):
     return None
 
 
-def _rest_tool_refusal(gateway, principal, tool, method, path):
+def _rest_tool_refusal(gateway, principal, tool, method, path, handler=None):
     """Why a connection's REST alias is refused: its own policy first, then the owner's."""
     if principal is None or principal.person:
+        return None
+    from . import person_actions
+
+    if (
+        handler is not None
+        and person_actions.chat_post_path(method, path)
+        and person_actions.chat_person(gateway, handler) is not None
+    ):
         return None
     if tool and not principal.policy.tool_visible(tool):
         return {"error": "tool not allowed for this connection"}
@@ -2646,7 +2654,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                     parse_error = (400, _rpc_error(None, -32700, "Parse error"))
         if not self._instance_charged and self._rate_limit(path, principal, request):
             return
-        refused = _rest_tool_refusal(self.server.gateway, principal, tool, self.command, path)
+        refused = _rest_tool_refusal(self.server.gateway, principal, tool, self.command, path, self)
         if refused is not None:
             self.close_connection = True
             self._send_json(403, refused)
