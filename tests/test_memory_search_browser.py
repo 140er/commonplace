@@ -13,6 +13,7 @@ from tests.test_commonplace_boards import service
 @pytest.mark.parametrize("size", [(1280, 800), (390, 844)], ids=["desktop", "phone"])
 @pytest.mark.parametrize("role", ["owner", "member"])
 def test_typed_memory_search_and_filters(chat_hub, look, size, role):
+    pytest.importorskip("playwright.sync_api", reason="optional browser regression dependency")
     from playwright.sync_api import expect, sync_playwright
 
     h = chat_hub
