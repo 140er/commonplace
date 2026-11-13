@@ -185,7 +185,11 @@ def handle(gateway, h):
             raise StoreError("not_found", 404)
         params = _parameters(
             h,
-            ("after", "limit") if len(parts) == 3 and parts[2] == "messages" and not write else (),
+            ("cursor", "limit")
+            if "log" in parts and not write
+            else ("after", "limit")
+            if len(parts) == 3 and parts[2] == "messages" and not write
+            else (),
         )
         store = open_store(gateway, principal.workspace_id)
         if not parts and h.command == "GET":
@@ -225,6 +229,10 @@ def handle(gateway, h):
                 )
         if len(parts) >= 2 and parts[0] == "conversations":
             return _conversation_route(gateway, h, principal, session, store, parts, params)
+        if not write and (len(parts) == 1 or len(parts) in (2, 3) and parts[1] == "log"):
+            return _conversation_route(
+                gateway, h, principal, session, store, ["conversations", *parts], params
+            )
         if (
             len(parts) == 3
             and parts[0] == "jobs"
@@ -270,7 +278,14 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
     conversation_id = _id(parts[1])
     # Authorize the object before parsing any subordinate body or IDs.
     conversation = store.get_conversation(principal.user_id, conversation_id)
+    if h.command == "GET" and (parts[2:] == ["log"] or parts[2:] == ["log", "stream"]):
+        from . import livelog
+
+        return livelog.handle(gateway, h, principal, session, store, conversation_id, params)
     if len(parts) == 2 and h.command == "GET":
+        from . import livelog
+
+        live = livelog.snapshot(store, principal, conversation_id, sessions._hash(session))
         return send_json(
             h,
             200,
@@ -284,6 +299,7 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
                     session_hash=sessions._hash(session),
                 ),
                 "memories": store.list_memory(principal.user_id, conversation_id),
+                "working_on": live["working_on"],
             },
         )
     if len(parts) == 3 and parts[2] == "messages":
