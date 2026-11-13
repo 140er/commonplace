@@ -10,7 +10,15 @@ import sys
 from ..client import ClientError
 from . import agent, ledger
 
-_KEYS = ("status", "log_ref", "input_tokens", "output_tokens", "cost_micros", "currency")
+_KEYS = (
+    "status",
+    "log_ref",
+    "input_tokens",
+    "output_tokens",
+    "cost_micros",
+    "currency",
+    "cost_unknown",
+)
 
 
 def run(args) -> int:

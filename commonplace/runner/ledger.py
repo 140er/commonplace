@@ -10,14 +10,27 @@ This module is also imported by the runner client, so it uses the standard libra
 
 import re
 
+from . import costs
+
 # What a machine may report as the end of a started run.
 END_STATUSES = ("completed", "errored", "stopped")
 MAX_COUNT = 10**15
 LOG_REF_LIMIT = 512
 REPORT_KEYS = frozenset(
-    ("job_id", "status", "log_ref", "input_tokens", "output_tokens", "cost_micros", "currency")
+    (
+        "job_id",
+        "status",
+        "log_ref",
+        "input_tokens",
+        "output_tokens",
+        "cost_micros",
+        "currency",
+        "cost_unknown",
+    )
 )
 USAGE_KEYS = ("log_ref", "input_tokens", "output_tokens", "cost_micros", "currency")
+# A report carrying any of these appends a cost event.
+COST_KEYS = frozenset(("input_tokens", "output_tokens", "cost_micros", "cost_unknown"))
 VIEW_KEYS = (
     "status",
     "started_at",
@@ -72,16 +85,16 @@ def ensure(conn):
     conn.execute(TABLE)
     for statement in INDEXES:
         conn.execute(statement)
-    if conn.execute(_MISSING + " LIMIT 1").fetchone() is None:
-        return
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        for row in conn.execute(_MISSING).fetchall():
-            sync(conn, row)
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
+    if conn.execute(_MISSING + " LIMIT 1").fetchone() is not None:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for row in conn.execute(_MISSING).fetchall():
+                sync(conn, row)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    costs.ensure(conn)
 
 
 def _optional(row, key):
@@ -167,6 +180,11 @@ def clean(body):
         if not isinstance(currency, str) or CURRENCY.match(currency) is None:
             raise ValueError("invalid currency")
         fields["currency"] = currency
+    if "cost_unknown" in body:
+        # The machine says it cannot tell the cost: recorded as unknown, never as zero.
+        if body["cost_unknown"] is not True or "cost_micros" in body:
+            raise ValueError("cost_unknown is true and excludes cost_micros")
+        fields["cost_unknown"] = True
     if len(fields) == 1:
         raise ValueError("nothing to report")
     return fields
@@ -188,10 +206,14 @@ def report(conn, machine_id, fields, now):
     sync(conn, job)
     row = conn.execute("SELECT * FROM run_ledger WHERE job_id=?", (job["id"],)).fetchone()
     values = {key: fields[key] for key in USAGE_KEYS if key in fields}
+    if fields.get("cost_unknown") and row["cost_micros"] is not None:
+        raise ReportError(409, "cost already reported")
     status = fields.get("status")
+    ending = False
     if status is not None:
         if row["ended_at"] is None:
             values.update(status=status, ended_at=now)
+            ending = True
         elif status != row["status"]:
             raise ReportError(409, "run already ended")
     values.update(reported_at=now, updated_at=now)
@@ -199,7 +221,18 @@ def report(conn, machine_id, fields, now):
         "UPDATE run_ledger SET " + ",".join(key + "=?" for key in values) + " WHERE job_id=?",
         (*values.values(), job["id"]),
     )
-    return conn.execute("SELECT * FROM run_ledger WHERE job_id=?", (job["id"],)).fetchone()
+    row = conn.execute("SELECT * FROM run_ledger WHERE job_id=?", (job["id"],)).fetchone()
+    # One cost event per report that touches usage or ends the run. A run that ends with
+    # no cost reported is recorded as an explicit unknown.
+    if ending or fields.keys() & COST_KEYS:
+        costs.snapshot(
+            conn,
+            row,
+            now,
+            source="run_end" if ending and row["cost_micros"] is None else "machine_report",
+            unknown=bool(fields.get("cost_unknown")) or (ending and row["cost_micros"] is None),
+        )
+    return row
 
 
 def view(row):

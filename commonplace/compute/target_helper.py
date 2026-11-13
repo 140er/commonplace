@@ -43,6 +43,7 @@ from pathlib import Path
 
 from .protocol import FrameIO, ProtocolDenied, canonical, exact_fields, finite
 from .script_sandbox import (
+    AnchoredPath,
     BubblewrapSandbox,
     ScriptResult,
     ScriptTargetConfig,
@@ -580,8 +581,8 @@ class TargetHelper:
             # bwrap needs an existing empty destination for the read-only script bind.
             atomic_file(job, "script.py", b"")
             self._stage_inputs(root, job, request)
-            script_path = Path(self.config.workspace_root) / "attempts" / claim_name / "script.py"
-            job_path = Path(self.config.scratch_root) / job_name
+            script_path = AnchoredPath(claim, "script.py")
+            job_path = AnchoredPath(job)
             result = self.sandbox.run(request, script_path, job_path, cancelled=cancelled)
             if result.state == "observed_exit" and result.termination_confirmed:
                 try:

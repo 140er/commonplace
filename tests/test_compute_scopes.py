@@ -127,3 +127,22 @@ def test_scope_copies_collections_before_caller_can_mutate_them(scope):
 def test_malformed_scope_contracts_fail_closed(scope, changes):
     with pytest.raises(ScopeDenied):
         replace(scope, **changes)
+
+
+@pytest.mark.parametrize(
+    "cidr,addresses,outside",
+    [
+        ("fd42:289::/125", ("fd42:289::", "fd42:289::7"), "fd42:289::8"),
+        ("fd42:289::/127", ("fd42:289::", "fd42:289::1"), "fd42:289::2"),
+        ("fd42:289::1/128", ("fd42:289::1",), "fd42:289::"),
+    ],
+)
+def test_ipv6_prefix_edges_and_normalization(scope, cidr, addresses, outside):
+    grant = replace(scope, cidrs=(cidr.upper(),))
+    assert grant.cidrs == (cidr,)
+    for address in addresses:
+        assert authorize(grant, address=address.upper()) == address
+    with pytest.raises(ScopeDenied):
+        authorize(grant, address=outside)
+    with pytest.raises(ScopeDenied):
+        authorize(grant, address="fe80::1")

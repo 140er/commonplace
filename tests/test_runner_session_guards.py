@@ -182,7 +182,7 @@ def test_launch_without_a_run_keeps_the_created_thread_bound(session_world, monk
         if argv[-2] == "t3_thread_launch":
             data = json.loads(response.stdout)
             data["structuredContent"].pop("runId")
-            return SimpleNamespace(returncode=0, stdout=json.dumps(data))
+            return SimpleNamespace(returncode=0, stdout=json.dumps(data), stderr="")
         return response
 
     monkeypatch.setattr(agent.subprocess, "run", no_run)

@@ -264,6 +264,7 @@ def install(gateway):
                 "bots_consent": {
                     "chat": bots_grant.CHAT_TEXT,
                     "confirm": bots_grant.CONFIRM_TEXT,
+                    "learned": bots_grant.LEARNED_TEXT,
                 },
                 "wings": wings,
                 "mcp_url": urls.AGENT_URL + "/mcp",

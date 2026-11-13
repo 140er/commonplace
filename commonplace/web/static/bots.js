@@ -19,6 +19,7 @@ export const BOTS_COPY = Object.freeze({
   unavailable: "This bot is no longer available.",
   stopped: "Stopped.",
   orchestrator: "Orchestrator",
+  learnedGone: "That item is gone.",
 });
 
 const STATUS = Object.freeze({ queued: "Queued", working: "Working", needs_you: "Needs you", ready: "Ready", blocked: "Blocked", done: "Done" });
@@ -113,6 +114,83 @@ export function confirmHTML(b, ctx, e) {
   return `<p class="bb-settled">${label}${word ? ` · ${word}` : ""}</p>`;
 }
 
+const learnedButton = (e, what, id, label, off) => `<button type="button" class="bb-opt${what === "accept" ? " go" : ""}" data-bots-action="learned" data-do="${what}" data-id="${e(id)}"${off}>${label}</button>`;
+
+function learnedEditHTML(id, text, e) {
+  return `<form class="bb-reply" data-bots-form="learned-edit" data-id="${e(id)}"><input name="text" aria-label="Your words" maxlength="300" value="${e(text)}" autocomplete="off" required><button type="submit" class="bb-opt go">Save</button><button type="button" class="bb-opt" data-bots-action="learned" data-do="cancel" data-id="${e(id)}">Cancel</button></form>`;
+}
+
+/** A reply used learned items, or a turn just learned some: each with a Forget tap. */
+export function learnedHTML(b, ctx, e) {
+  if (b.gone || !Array.isArray(b.items) || !b.items.length) return `<p class="bb-gone">${e(BOTS_COPY.learnedGone)}</p>`;
+  const lead = b.how === "learned" ? "Learned" : "Used";
+  const rows = b.items.map((item) => {
+    const off = ctx.busy?.has(`l:${item?.id}`) ? " disabled" : "";
+    return `<li data-learned="${e(item?.id)}"><span>${marked(item?.text ?? "", e)}</span>${learnedButton(e, "forget", item?.id, "Forget", off)}</li>`;
+  }).join("");
+  return `<div class="bb learned" data-how="${e(b.how === "learned" ? "learned" : "used")}"><p class="bb-label">${lead}: ${b.items.length} ${b.items.length === 1 ? "item" : "items"}</p><ul class="memory">${rows}</ul></div>`;
+}
+
+/** Ask mode: one proposed item with Accept, Reject and Edit; once answered it reads as kept. */
+export function learnProposalHTML(b, ctx, e) {
+  const item = b.item;
+  if (b.gone || !item || typeof item !== "object") return `<p class="bb-gone">${e(BOTS_COPY.learnedGone)}</p>`;
+  const off = ctx.busy?.has(`l:${item.id}`) ? " disabled" : "";
+  const text = `<p class="bb-label">${marked(item.text ?? "", e)}</p>`;
+  if (ctx.editing?.has(item.id)) return `<div class="bb learn-proposal" data-state="editing">${learnedEditHTML(item.id, item.text ?? "", e)}</div>`;
+  if (b.state === "accepted") return `<div class="bb learn-proposal" data-state="accepted">${text}<p class="bb-settled">Kept${item.edited ? " · edited" : ""}</p><div class="bb-btns">${learnedButton(e, "edit", item.id, "Edit", off)}${learnedButton(e, "forget", item.id, "Forget", off)}</div></div>`;
+  return `<div class="bb learn-proposal" data-state="open">${text}<div class="bb-btns">${learnedButton(e, "accept", item.id, "Accept", off)}${learnedButton(e, "reject", item.id, "Reject", off)}${learnedButton(e, "edit", item.id, "Edit", off)}</div></div>`;
+}
+
+const LEARNED_GROUPS = [
+  ["proposed", "Waiting for your answer"],
+  ["person", "What I know about you"],
+  ["shared", "Shared with a project"],
+  ["earlier", "Earlier versions"],
+  ["old", "Not used lately"],
+];
+const LEARNED_ACTIONS = {
+  proposed: ["accept", "reject", "edit"],
+  person: ["edit", "pin", "forget"],
+  shared: ["forget"],
+  earlier: ["forget"],
+  old: ["edit", "pin", "forget"],
+};
+const LEARNED_LABEL = { accept: "Accept", reject: "Reject", edit: "Edit", pin: "Pin", unpin: "Unpin", forget: "Forget" };
+
+function learnedRowHTML(item, group, sheet, e) {
+  const off = sheet.busy ? " disabled" : "";
+  const src = item.source || {};
+  const wording = item.kind === "note" ? ["forget"] : LEARNED_ACTIONS[group];
+  const buttons = wording.map((what) => {
+    const real = what === "pin" && item.pinned ? "unpin" : what;
+    return learnedButton(e, real, item.id, LEARNED_LABEL[real], off);
+  }).join("");
+  const line = [item.kind, item.scope, src.bot_name, String(src.at || "").slice(0, 10), item.text_by === "person_edit" ? "edited" : "", item.pinned ? "pinned" : ""].filter(Boolean).map(e).join(" · ");
+  const body = sheet.editing === item.id ? learnedEditHTML(item.id, item.text ?? "", e) : `<p class="learned-text">${marked(item.text ?? "", e)}</p>`;
+  const note = item.note ? `<p class="learned-note">Bot’s note: ${marked(item.note, e)}</p>` : "";
+  const from = src.bot_id ? `<a class="learned-from" href="#/bots/${enc(src.bot_id)}">Open conversation</a>` : "";
+  return `<li data-learned="${e(item.id)}">${body}<p class="learned-src">${line}</p>${note}<div class="bb-btns">${buttons}${from}</div></li>`;
+}
+
+/** The review sheet: everything the person's bots learned, with its source, grouped. */
+export function learnedSheetHTML(sheet, bot, e) {
+  const items = Array.isArray(sheet.items) ? sheet.items : [];
+  const sections = LEARNED_GROUPS.map(([key, title]) => {
+    const rows = items.filter((item) => item.group === key);
+    return rows.length ? `<section class="learned-group" data-group="${key}"><h3>${title}</h3><ul class="memory">${rows.map((item) => learnedRowHTML(item, key, sheet, e)).join("")}</ul></section>` : "";
+  }).join("");
+  const off = sheet.busy ? " disabled" : "";
+  const paused = sheet.learning?.paused === true;
+  const control = (what, label) => `<button type="button" class="bb-opt" data-bots-action="learned-bot" data-do="${what}"${off}>${label}</button>`;
+  const controls = `${paused ? control("resume", "Resume learning") : control("pause", "Pause learning for 7 days")}${control("forget-all", sheet.confirmAll ? "Forget everything for good?" : `Forget everything ${e(bot.name ?? "")} learned`)}`;
+  return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body"><h2 id="sheet-h">What ${e(bot.name ?? "")} learned</h2>
+    ${sheet.loading ? `<p class="bots-note">${e(BOTS_COPY.loading)}</p>` : sections || '<p class="bots-note">Nothing learned yet.</p>'}
+    ${sheet.error ? `<p class="bots-notice" role="alert">${e(sheet.error)}</p>` : ""}
+    <div class="sheet-btns">${sheet.loading ? "" : controls}<button type="button" class="bb-opt" data-bots-action="close" data-focus>Close</button></div>
+  </div></div>`;
+}
+
 export function setupHTML(b, e) {
   const canConfigure = b.can_configure === true;
   return `<div class="bb setup"><p>${e(setupText(b.code, canConfigure))}</p>${canConfigure ? '<a class="bb-open" href="#/settings">Open settings</a>' : ""}</div>`;
@@ -141,6 +219,8 @@ export function blocksHTML(blocks, ctx, e) {
     if (b.type === "work") out.push(workHTML(b, ctx, e));
     else if (b.type === "decision") out.push(decisionHTML(b, ctx, e));
     else if (b.type === "confirm") out.push(confirmHTML(b, ctx, e));
+    else if (b.type === "learned") out.push(learnedHTML(b, ctx, e));
+    else if (b.type === "learn_proposal") out.push(learnProposalHTML(b, ctx, e));
     else if (b.type === "setup") out.push(setupHTML(b, e));
     else if (b.type === "machines") out.push(machinesHTML(b, e));
   }
@@ -228,6 +308,7 @@ export function sendButtonHTML({ busy, canStop }) {
 
 export function sheetHTML(sheet, bot, e) {
   if (sheet.kind === "project") return projectHTML(sheet, bot, e);
+  if (sheet.kind === "learned") return learnedSheetHTML(sheet, bot, e);
   if (sheet.kind === "new") {
     return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><form class="sheet-body" data-bots-form="create"><h2 id="sheet-h">New bot</h2>
       <label>Name<input name="name" maxlength="60" required autocomplete="off" data-focus></label>
@@ -244,6 +325,8 @@ export function sheetHTML(sheet, bot, e) {
       <label>How to work<textarea name="instructions" maxlength="4000" rows="3">${e(bot.instructions ?? "")}</textarea></label>
       <div class="sheet-btns"><button type="submit" class="bb-opt go"${sheet.busy ? " disabled" : ""}>Save</button></div>
     </form>
+    <h3>Learned</h3>
+    <div class="sheet-btns"><button type="button" class="bb-opt" data-bots-action="learned-sheet">What ${e(bot.name)} learned</button></div>
     <h3>Memory</h3>
     ${memories === null ? `<p class="bots-note">${e(BOTS_COPY.loading)}</p>` : memories.length ? `<ul class="memory">${memories.map((m) => `<li><span>${marked(m.text, e)}</span><button type="button" class="bb-opt" data-bots-action="forget" data-id="${e(m.id)}" aria-label="Remove this note">Remove</button></li>`).join("")}</ul>` : `<p class="bots-note">Nothing remembered yet. Say “remember that…” in the chat, or add a note.</p>`}
     <form class="memory-add" data-bots-form="memory"><input name="text" maxlength="2000" aria-label="New note" placeholder="Add a note" autocomplete="off" required><button type="submit" class="bb-opt">Add</button></form>
@@ -300,7 +383,7 @@ export function createBots({
   const s = {
     bots: [], model: null, canConfigure: false, loaded: false, error: "",
     botId: null, bot: null, messages: [], waiting: [], running: false, more: false, ready: false,
-    open: new Set(), busy: new Set(), waitingOpen: false, notice: null,
+    open: new Set(), busy: new Set(), editing: new Set(), waitingOpen: false, notice: null,
     turn: null, unsent: null, sheet: null,
     drafts: new Map(), readSent: new Map(),
   };
@@ -313,7 +396,7 @@ export function createBots({
   const region = (name) => host()?.querySelector(`[data-region="${name}"]`) ?? null;
   const atBottom = (node) => !node || node.scrollHeight - node.scrollTop - node.clientHeight <= 40;
   const busy = () => Boolean(s.turn) || s.running;
-  const ctx = () => ({ open: s.open, busy: s.busy });
+  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing });
   const runningRequestId = () => s.turn?.requestId || (s.running ? [...s.messages].reverse().find((m) => m.role === "user")?.request_id : "") || "";
   const deck = () => globalThis.document?.documentElement?.dataset?.ui === "deck";
 
@@ -655,6 +738,70 @@ export function createBots({
       if (s.sheet === sheet) { sheet.memories = result.memories || []; paintSheet(); }
     } catch (error) { if (s.sheet === sheet) { sheet.memories = []; sheet.error = error.message; paintSheet(); } }
   }
+  // --- what the bots learned: the review sheet and the thread blocks share these calls ---
+  async function loadLearned(sheet) {
+    const id = s.botId;
+    try {
+      const [list, learning] = await Promise.all([api("/api/learned?limit=100"), api(`/api/bots/${enc(id)}/learning`)]);
+      if (s.sheet !== sheet) return;
+      sheet.items = list.items || [];
+      sheet.learning = learning.learning || null;
+    } catch (error) { if (s.sheet === sheet) sheet.error = error.message; }
+    if (s.sheet === sheet) { sheet.loading = false; paintSheet(); }
+  }
+  async function openLearned() {
+    if (!s.botId) return;
+    const sheet = s.sheet = { kind: "learned", loading: true, items: [], learning: null, busy: false, error: "", confirmAll: false, editing: null, painted: false };
+    paintSheet();
+    await loadLearned(sheet);
+  }
+  const LEARNED_CALLS = {
+    accept: (id) => [`/api/learned/${enc(id)}/accept`, "POST", {}],
+    reject: (id) => [`/api/learned/${enc(id)}/reject`, "POST", {}],
+    forget: (id) => [`/api/learned/${enc(id)}`, "DELETE"],
+    pin: (id) => [`/api/learned/${enc(id)}`, "PATCH", { pinned: true }],
+    unpin: (id) => [`/api/learned/${enc(id)}`, "PATCH", { pinned: false }],
+  };
+  /** One tap on an item, from the sheet or from the thread; the thread and the sheet both refresh. */
+  async function learnedAct(what, id, extra) {
+    if (!id) return;
+    const sheet = s.sheet?.kind === "learned" ? s.sheet : null;
+    if (what === "edit" || what === "cancel") {
+      if (sheet) { sheet.editing = what === "edit" ? id : null; paintSheet(); }
+      else { if (what === "edit") s.editing.add(id); else s.editing.delete(id); paintMessages(); }
+      return;
+    }
+    const key = `l:${id}`;
+    const call = extra ? [`/api/learned/${enc(id)}`, "PATCH", extra] : LEARNED_CALLS[what]?.(id);
+    if (!call || s.busy.has(key)) return;
+    s.busy.add(key);
+    if (sheet) { sheet.busy = true; sheet.error = ""; paintSheet(); } else repaintAll();
+    try {
+      await api(call[0], { method: call[1], ...(call[2] ? { body: call[2] } : {}) });
+      s.editing.delete(id);
+      if (sheet) sheet.editing = null;
+      s.notice = null; paintNotice();
+    } catch (error) {
+      if (sheet) sheet.error = error.message; else { s.notice = { text: error.message, tone: "error" }; paintNotice(); }
+    } finally {
+      s.busy.delete(key);
+      if (sheet) sheet.busy = false;
+    }
+    if (sheet && s.sheet === sheet) await loadLearned(sheet);
+    await reloadTail();
+  }
+  async function learnedBot(what) {
+    const sheet = s.sheet, id = s.botId;
+    if (sheet?.kind !== "learned" || sheet.busy || !id) return;
+    if (what === "forget-all" && !sheet.confirmAll) { sheet.confirmAll = true; paintSheet(); return; }
+    const call = what === "forget-all"
+      ? [`/api/bots/${enc(id)}/learned/forget-all`, "POST", {}]
+      : [`/api/bots/${enc(id)}/learning`, "PATCH", { pause: what === "pause" ? 7 : null }];
+    sheet.confirmAll = false;
+    await sheetCall(sheet, () => api(call[0], { method: call[1], body: call[2] }));
+    if (s.sheet === sheet) await loadLearned(sheet);
+    await reloadTail();
+  }
   function closeSheet() { const project = s.sheet?.kind === "project"; s.sheet = null; paintSheet(); region("head")?.querySelector?.(deck() ? project ? ".deck-project-link" : ".deck-bot-settings" : ".bots-name")?.focus?.(); }
   async function sheetCall(sheet, work) {
     sheet.busy = true; sheet.error = ""; paintSheet();
@@ -729,6 +876,9 @@ export function createBots({
       case "confirm": void confirm(d.pending, d.accept === "1"); break;
       case "stop": void stop(); break;
       case "forget": void forget(d.id); break;
+      case "learned-sheet": void openLearned(); break;
+      case "learned": void learnedAct(d.do, d.id); break;
+      case "learned-bot": void learnedBot(d.do); break;
       case "archive": void archive(); break;
       default: break;
     }
@@ -738,6 +888,7 @@ export function createBots({
     switch (d.botsForm) {
       case "send": return sendText(form.elements.text.value);
       case "reply": { const reply = form.elements.reply.value.trim(); return reply ? decide(Number(d.work), d.version, { reply }) : undefined; }
+      case "learned-edit": { const text = form.elements.text.value.trim(); return text ? learnedAct("save", d.id, { text }) : undefined; }
       case "create": return create(form);
       case "save": return save(form);
       case "memory": return addMemory(form).then(() => { if (form.elements.text) form.elements.text.value = ""; });

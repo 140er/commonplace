@@ -3,11 +3,13 @@
 - **Paths:** `commonplace/compute/`
 - **Owns:**
 
+  - Operator recovery (`operator.py`): fenced controller execution and discovery recovery and helper tunnel and passive recovery, with private audit notes and no HTTP route.
   - Durable discovery (`discovery_store.py`, `discovery_service.py`, `discovery_routes.py`, `discovery_transport.py`): reservations with permanent scope-ceiling charges, owner-session REST, a pinned outer SSH adapter and an explicit default-off lifecycle.
   - Durable execution attempts (`executor.py`): signed enrollment receipts, exact-stage checks, one-shot approval consumption and bounded redacted evidence, started only by the trusted default-off configuration.
   - Owner-session management (`control.py`, `routes.py`), the script control path (`script_control.py`) and the trusted, default-off startup configuration (`ExecutionConfig`) that `ControlDB` accepts as an explicit constructor argument; the package `__init__` installs it and nothing else enables execution.
   - Encrypted SSH key custody (`credentials.py`), the pinned two-hop SSH transport and script transfer (`transport.py`, `script_transport.py`) and the cross-process authority fence (`fence.py`).
   - The typed helper wire (`protocol.py`), immutable script bundles (`scripts.py`), the default-off confined script runtime (`script_sandbox.py`) and the target-side entry (`target_helper.py`), plus passive cache collection in `discovery.py`.
+  - `target_installer.py`: one-root-invocation, manifest-recorded, idempotent and reversible provisioning of the script target (account, private workspace and bounded tmpfs scratch, read-only runtime tree, delegated cgroup entry, sshd drop-in, controller key, protected ScriptTargetConfig) with a `--root` staging mode, a placed copy of the python sources the helper imports and the `pin_approval_keys` seam.
   - Pure validation of explicitly approved, finite gateway discovery scopes.
   - Immutable crypto-aware script bundles/manifests, strict chunked target-helper wire and a default-off concrete namespace/cgroup/tmpfs-confined Python runtime; owner script REST, runtime receipts and existing exact approvals/one-use pinned SSH execution integrate those bundles.
   - Bounded passive ARP/IPv6 cache parsing and typed helper support, plus durable crypto-aware discovery reservations, owner-session REST, pinned outer SSH adapter and explicit default-off lifecycle.
@@ -17,6 +19,8 @@
 
 - **Promises:**
 
+  - Script self-approval defaults to denied unless trusted workspace configuration explicitly allows it, and is rechecked at claim. Taskless scopes remain rejected by the NOT NULL task column. Pre-claim security denials and terminal, uncertain and exit outcomes are audited durably without output or exception text.
+  - Script execution verifies bytes relative to held upload and job descriptors and binds sealed snapshots of code and inputs, so pathname replacement cannot change approved bytes. A small sealing helper uses Python constants or Linux ABI values, verifies all seals and denies before launch if unavailable.
   - Inventory reports current automatic executor availability without opening transport or custody. Approval explicitly authorizes automatic background execution over SSH; it is not a no-dispatch promise. Discovery cancellation shares the queued/claimed/dispatching/uncertain state predicate and distinguishes intent from confirmed termination.
 
   - Script source remains exact and immutable; target uploads reject path/link/digest substitution and durable claims never replay unknown work. Missing mandatory unprivileged containment fails closed, never falls back to host shell.
@@ -35,11 +39,13 @@
 - **How it fails:**
 
   - Invalid, incomplete, nonfinite, foreign or out-of-scope requests raise ScopeDenied without network or credential access. Aggregate discovery accounting remains the dispatch service's responsibility.
+  - The installer refuses without root, with an unsuitable controller key (non-ed25519, options, private key, several lines), missing prerequisites, an sshd that accepts SSH_USER_AUTH or has PermitUserEnvironment enabled globally, foreign pre-existing paths or changed settings; pin_approval_keys raises NotImplementedError until #431 defines the format. Account, mount, sshd and cgroup behavior is covered on a disposable VM, not by the automated tests.
   - Missing/unsafe credential custody fails closed; transport is inert without explicit enablement. Host-key mismatch, missing approvals, expiry, replay or unknown operations deny; uncertain remote outcomes never imply termination. Public control authority fencing, output redaction and outbox integration remain parent-service prerequisites.
 
 - **Tests:**
 
   - `tests/test_compute_script_integration.py` covers canonical script proposal/approval/claim, signed runtime binding, logical-vs-dispatch epoch, actual pinned two-hop wire-only target transfer, tampering/revocation/cancellation and reserved uncertainty.
+  - `tests/test_compute_target_installer.py` covers the plan, exact installed tree/modes, sshd drop-in/config content, no-op second install, manifest uninstall to an empty root, root refusal, key refusals, the pin seam, evidence retention and the recorded live commands, all against a staged root.
   - `tests/test_compute_scripts.py` and `tests/test_compute_script_sandbox.py` cover immutable exact bytes/digests, crypto-aware storage, finite strict wire, protected atomic uploads, literal sandbox argv, denial and uncertain retention; the real positive-confinement fixture is separately provisioned and optional.
   - `tests/test_compute_passive_admission.py` proves actual guarded outer SSH collection, purpose-bound one-use permits, replay/tamper/expiry and revocation ordering, uncertain restart retention and default-off behavior.
   - `tests/test_compute_control_r3.py` covers real bound-card heartbeat/comment renewal and holder/status/lease revocation before claim, before permit and during collection, including immutable pre-upgrade bindings and already-claimed attempts.

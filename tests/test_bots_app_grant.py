@@ -552,6 +552,7 @@ def test_settings_agents_grant_and_withdraw_with_one_consent_text(bots_hub):
     assert listing["bots_consent"] == {
         "chat": bots_grant.CHAT_TEXT,
         "confirm": bots_grant.CONFIRM_TEXT,
+        "learned": bots_grant.LEARNED_TEXT,
     }
     path = f"/api/connections/{cid}"
     status, body, _ = hub.request(hub.owner, "PATCH", path, {"bots_confirm": True})

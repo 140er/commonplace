@@ -94,6 +94,22 @@ def limited_voice(app, monkeypatch):
     return fresh_voice_user(app[0], "fresh@example.com")
 
 
+def test_dictation_holds_the_priority_marker_while_it_uses_the_engine(app):
+    hub, _ = app
+    engine, seen = hub.gateway.voice_engine, []
+    original = engine.transcribe
+
+    def transcribe(language, pcm):
+        seen.append(voice._dictating)  # background transcription waits while this is above zero
+        return original(language, pcm)
+
+    engine.transcribe = transcribe
+    enable(app)
+    assert call(app, "POST", "/api/voice/transcribe?lang=en", b"\0\0" * 16000)[0] == 200
+    assert seen == [1] and voice._dictating == 0
+    assert voice.wait_for_dictation() is True
+
+
 @pytest.mark.parametrize("samples,expected", [(15999, 200), (16000, 200), (16001, 429)])
 def test_fresh_user_transcription_quota_uses_received_audio(limited_voice, samples, expected):
     app, user = limited_voice

@@ -810,11 +810,12 @@ class ControlDB:
                 auth=row["auth"],
             )
 
-    def set_connection_bots(self, ref, *, chat, confirm, actor, workspace_ref):
-        """Set ``bots:chat`` and ``bots:confirm`` on the signed-in person's own top-level app.
+    def set_connection_bots(self, ref, *, chat, confirm, actor, workspace_ref, learned=None):
+        """Set ``bots:chat``, ``bots:confirm`` and ``bots:learned`` on the person's own top-level app.
 
-        ``actor`` is the signed-in person's principal (any role). Confirming needs chat (asking for
-        it alone is refused); withdrawing chat withdraws both. Granting is for personal access tokens; OAuth clients
+        ``actor`` is the signed-in person's principal (any role). Confirming and reading learned
+        items need chat (asking for either alone is refused); withdrawing chat withdraws all.
+        ``learned=None`` leaves the learned scope as it is. Granting is for personal access tokens; OAuth clients
         gain the scopes only through consent. Withdrawing works for both and takes effect on
         the next request. Refusals carry a message safe to show the person.
         """
@@ -827,13 +828,20 @@ class ControlDB:
             if decide_grant.is_runner(self, row["id"]):
                 raise RunnerLinkedError()
             chat, confirm = bool(chat), bool(confirm)
-            if confirm and not chat:
-                raise ControlError(bots_grant.NEEDS_CHAT_TEXT)
             policy = json.loads(row["policy"])
             before = set(policy.get("scopes", ()))
+            if learned is None:
+                learned = bots_grant.LEARNED_SCOPE in before and chat
+            learned = bool(learned)
+            if (confirm or learned) and not chat:
+                raise ControlError(bots_grant.NEEDS_CHAT_TEXT)
             wanted = {
                 s
-                for s, on in ((bots_grant.CHAT_SCOPE, chat), (bots_grant.CONFIRM_SCOPE, confirm))
+                for s, on in (
+                    (bots_grant.CHAT_SCOPE, chat),
+                    (bots_grant.CONFIRM_SCOPE, confirm),
+                    (bots_grant.LEARNED_SCOPE, learned),
+                )
                 if on
             }
             added = wanted - before

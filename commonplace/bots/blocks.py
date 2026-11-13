@@ -107,12 +107,76 @@ def confirm(reader, stored) -> dict:
     return {**stored, "label": _clean(pending["label"]), "state": state}
 
 
+def _can_read(reader):
+    """``can_read(slug)`` for the reader, from their projects, listed once on first use."""
+    slugs = None
+
+    def can_read(slug):
+        nonlocal slugs
+        if slugs is None:
+            slugs = {board["slug"] for board in reader.boards.board_list()}
+        return slug in slugs
+
+    return can_read
+
+
+def learned(reader, stored) -> dict:
+    """The learned items a reply used, or a turn just learned, that this person still has;
+    forgotten ones are omitted. ``how`` (used or learned) is only what the stored block said."""
+    from commonplace.bots import learned as store
+
+    ids = stored.get("ids")
+    items = store.open_learned(reader.gateway, reader.principal.workspace_id).visible(
+        reader.principal.user_id, ids if isinstance(ids, list) else [], _can_read(reader)
+    )
+    if not items:
+        return {"type": "learned", "gone": True}
+    return {
+        "type": "learned",
+        "how": "learned" if stored.get("how") == "learned" else "used",
+        "items": [{**item, "at": item["said"], "text": _clean(item["text"])} for item in items],
+    }
+
+
+def learn_proposal(reader, stored) -> dict:
+    """One item the bot proposes to keep (ask mode), as this person sees it now: ``open`` until
+    they answer, ``accepted`` once it is active. A rejected or forgotten one is ``gone``."""
+    from commonplace.bots import learned as store
+
+    items = store.open_learned(reader.gateway, reader.principal.workspace_id)
+    try:
+        item = items.get(reader.principal.user_id, stored.get("id"))
+    except store.Missing:
+        return {"type": "learn_proposal", "gone": True}
+    if (
+        item["kind"] == "note"
+        or item["scope"] != "person"
+        or (item["board"] and not _can_read(reader)(item["board"]))
+    ):
+        return {"type": "learn_proposal", "gone": True}
+    return {
+        "type": "learn_proposal",
+        "id": item["id"],
+        "state": "open" if item["state"] == "proposed" else "accepted",
+        "item": {
+            "id": item["id"],
+            "text": _clean(item["text"]),
+            "scope": item["scope"],
+            "kind": item["kind"],
+            "at": item["source_at"][:10],
+            "edited": item["text_by"] == "person_edit",
+        },
+    }
+
+
 HYDRATORS = {
     "work": work,
     "decision": decision,
     "action": action,
     "setup": setup,
     "confirm": confirm,
+    "learned": learned,
+    "learn_proposal": learn_proposal,
 }
 
 

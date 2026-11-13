@@ -1,0 +1,5 @@
+### Bot learning, shared scope (slice S4 built)
+
+- A person can share one of their own learned items with a project, only when the workspace owner turned on both "learning" and "sharing learned items" for the workspace and for that project. Sharing is always the person's own tap on a confirmation that shows the exact words, the project and "with your name"; a bot can only ask, never share. Nothing is shared by learning itself, by default or in the background, and a private item stays private.
+- A shared item shows up in the bots of members who can read that project, as a labelled hint that a teammate said it (no name in the prompt), at most three per answer and only when it matches the question. Switching either switch off hides all shared items at once; switching it back on restores them; a member who cannot read or loses the project sees none. Members who read the project can list its shared items with the sharer's address.
+- The sharer, or a workspace owner who can read the project, can delete a shared copy (the person's own item stays). Forgetting a person's item, or everything a bot learned, deletes every shared copy of it for good.

@@ -42,6 +42,7 @@ SCOPES = (
     "cards:decide",
     "bots:chat",
     "bots:confirm",
+    "bots:learned",
     "admin",
 )
 

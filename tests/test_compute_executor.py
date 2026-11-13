@@ -783,7 +783,10 @@ def test_bounded_redaction_before_workspace_persistence_and_projection(execution
         audit = " ".join(str(row) for row in conn.execute("SELECT * FROM audit"))
     assert "synthetic-secret-canary" not in values
     assert "synthetic-private-canary" not in values
-    assert "output" not in audit
+    # Fixed outcome codes such as output_budget_exceeded are audit metadata;
+    # arbitrary output content and secret canaries must still never enter it.
+    for canary in ("synthetic-secret-canary", "synthetic-private-canary", "binary", "x" * 256):
+        assert canary not in audit
 
 
 def test_output_redaction_sees_tokens_split_across_transport_chunks(execution_env):

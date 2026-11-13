@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import gc
 import importlib.util
@@ -82,6 +83,35 @@ def load_config(environ=None):
     if switch == "off":
         return VoiceConfig(False, dict(DEFAULT_MODELS))
     return VoiceConfig(True, {lang: _model_setting(lang, environ) for lang in LANGUAGES})
+
+
+_dictating = 0
+_dictation_idle = threading.Condition()
+
+
+@contextlib.contextmanager
+def dictating():
+    """Held by a dictation request while it uses the engine. Background transcription (a meeting's
+    capture) waits for it between windows, so dictation keeps priority."""
+    global _dictating
+    with _dictation_idle:
+        _dictating += 1
+    try:
+        yield
+    finally:
+        with _dictation_idle:
+            _dictating -= 1
+            _dictation_idle.notify_all()
+
+
+def wait_for_dictation(give_up=lambda: False, poll=0.25) -> bool:
+    """Block until no dictation request is in flight. False when ``give_up()`` turned true first."""
+    with _dictation_idle:
+        while _dictating:
+            if give_up():
+                return False
+            _dictation_idle.wait(poll)
+    return not give_up()
 
 
 def available():
@@ -376,7 +406,8 @@ def install(gateway):
             send_json(h, 429, {"error": str(exc), "limit": "transcription"})
             return
         try:
-            text = gateway.voice_engine.transcribe(language, pcm)
+            with dictating():
+                text = gateway.voice_engine.transcribe(language, pcm)
         except VoiceConfigError as exc:
             plans.refund_transcription(gateway.db, principal.user_id, seconds, day)
             # Setting names only, never user content: the operator needs this.

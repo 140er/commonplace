@@ -65,6 +65,7 @@ RULES = {
     "chat_runners_seen": Rule(user=_U, workspace=_W),
     "connections": Rule(user=_U, workspace=_W),
     "console_settings": Rule(workspace=_W, connection=_C),
+    "coworker_model_attempts": Rule(user=_U, workspace=_W),
     "email_challenges": Rule(email=("email",)),
     "events": Rule(workspace=_W),
     "github_account_owners": Rule(user=_U),
