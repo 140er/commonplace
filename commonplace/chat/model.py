@@ -250,6 +250,7 @@ def complete(
     timeout: float = MODEL_TIMEOUT_S,
     max_tokens: int = MAX_OUTPUT_TOKENS,
     on_sent=None,
+    reasoning_effort=None,
 ) -> str:
     if len(system) + sum(len(turn["content"]) for turn in turns) > MAX_INPUT_CHARS:
         raise ValueError("model input too long")
@@ -264,6 +265,10 @@ def complete(
         body.update(system=system, messages=turns)
     else:
         body.update(stream=False, messages=[{"role": "system", "content": system}, *turns])
+    if reasoning_effort is not None:
+        from commonplace.chat.coworkers.model_effort import payload
+
+        payload(body, settings.provider, reasoning_effort)
     payload = json.dumps(body).encode()
     with Call(settings, endpoint, timeout) as call:
         response = call.open(payload, on_sent)

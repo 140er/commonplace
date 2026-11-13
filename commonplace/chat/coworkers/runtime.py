@@ -31,6 +31,8 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.orch import runner_bridge, store as orch_store
 from commonplace.projects import orchestration
 
+from . import model_effort
+from .routes import Authority
 from .store import StoreError, open_store
 
 logger = logging.getLogger(__name__)
@@ -452,7 +454,11 @@ class CoworkerWorker:
                 self._task(wid, store, job, snapshot, message)
                 return
             board = snapshot["conversation"].get("board")
-            config = settings.front(self.gateway.db, wid, board)
+            baseline = settings.front(self.gateway.db, wid, board)
+            with store._transaction() as conn:
+                config, selected = model_effort.runtime_config(
+                    Authority(self.gateway, wid), board, conn, job["message_id"]
+                )
             if (
                 not config.enabled
                 or not config.applies
@@ -472,11 +478,25 @@ class CoworkerWorker:
             endpoint = self._provider_enter(config)
             with self.gateway.db._lock:
                 self._fresh(wid, store, job, snapshot, used)
-                if settings.front(self.gateway.db, wid, board) != config:
+                if settings.front(
+                    self.gateway.db, wid, board
+                ) != baseline or not model_effort.current(
+                    store, Authority(self.gateway, wid), board, job["message_id"], config
+                ):
                     raise _Withheld("configuration_changed")
                 self._reserve(wid, job, config)
             answer = model.complete(
-                config, key, system, turns, timeout=PROVIDER_TIMEOUT, max_tokens=MAX_OUTPUT_TOKENS
+                config,
+                key,
+                system,
+                turns,
+                timeout=PROVIDER_TIMEOUT,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                **(
+                    {"reasoning_effort": selected["reasoning_effort"]}
+                    if selected["reasoning_effort"]
+                    else {}
+                ),
             )
             if not isinstance(answer, str) or not answer.strip() or len(answer) > MAX_REPLY_CHARS:
                 provider_failed = True
@@ -487,7 +507,11 @@ class CoworkerWorker:
                 raise _Withheld("bad_response")
             with self.gateway.db._lock:
                 self._fresh(wid, store, job, snapshot, used)
-                if settings.front(self.gateway.db, wid, board) != config:
+                if settings.front(
+                    self.gateway.db, wid, board
+                ) != baseline or not model_effort.current(
+                    store, Authority(self.gateway, wid), board, job["message_id"], config
+                ):
                     raise _Withheld("configuration_changed")
                 store.add_bot_reply(
                     job["id"],

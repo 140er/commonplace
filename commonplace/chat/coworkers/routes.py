@@ -10,6 +10,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import read_json, send_json
 
+from . import turn_mode
 from .store import StoreError, _id, open_store
 
 
@@ -219,7 +220,19 @@ def handle(gateway, h):
                 body = _body(h)
                 if body is None:
                     return None
-                _fields(body, ("kind", "title", "member_ids", "bot_ids", "board"), ("kind",))
+                _fields(
+                    body,
+                    (
+                        "kind",
+                        "title",
+                        "member_ids",
+                        "bot_ids",
+                        "board",
+                        "model",
+                        "reasoning_effort",
+                    ),
+                    ("kind",),
+                )
                 return send_json(
                     h, 201, {"conversation": store.create_conversation(principal.user_id, **body)}
                 )
@@ -234,7 +247,11 @@ def handle(gateway, h):
             body = _body(h)
             if body is None:
                 return None
-            _fields(body, ("operation", "request_id", "text"), ("operation", "request_id"))
+            _fields(
+                body,
+                ("operation", "request_id", "text", "model", "reasoning_effort"),
+                ("operation", "request_id"),
+            )
             if body.get("operation") == "stop" and "text" in body:
                 raise StoreError()
             return send_json(
@@ -309,17 +326,27 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
             body = _body(h)
             if body is None:
                 return None
-            _fields(body, ("text", "request_id", "bot_id"), ("text", "request_id"))
-            result = store.post_message(
+            _fields(
+                body,
+                ("text", "request_id", "bot_id", "mode", "fallback", "model", "reasoning_effort"),
+                ("text", "request_id"),
+            )
+            composer = bool(set(body) & {"mode", "fallback", "model", "reasoning_effort"})
+            post = (
+                (lambda *args, **kwargs: turn_mode.post(store, *args, **kwargs))
+                if composer
+                else store.post_message
+            )
+            result = post(
                 principal.user_id,
                 conversation_id,
                 **body,
                 session_hash=sessions._hash(session),
             )
             worker = getattr(gateway, "coworker_worker", None)
-            if result["job"] is not None and worker is not None:
+            if result.get("job") is not None and worker is not None:
                 worker.wake()
-            return send_json(h, 201, result)
+            return send_json(h, 200 if result.get("mode") == "steer" else 201, result)
     if len(parts) == 3 and parts[2] == "memory":
         if h.command == "GET":
             return send_json(

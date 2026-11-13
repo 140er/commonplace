@@ -1,0 +1,5 @@
+### Coworker composer model choices and turn modes
+
+- Coworker creation and message turns accept model and effort choices within the workspace's existing configured provider. Omission inherits the configured default; choices never enable a provider, grant tools, bypass project consent or change task builder settings.
+- The conversation message route accepts explicit Chat or Steer. Steer reuses existing canonical controls and their conservative receipts; fallback to Chat requires an explicit boolean. Immutable intent/selection journals preserve retry mode and scope; person, private-audience and canonical-control authority remain unchanged.
+- The complete request/response, enum and error contract lives in the chat-and-voice module's coworker model turns fragment.
