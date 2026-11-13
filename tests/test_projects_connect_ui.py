@@ -85,6 +85,10 @@ def connect_page(browser):
                 route.fulfill(json={"connections": []})
             elif path == "/api/boards/ledger/cards":
                 route.fulfill(json={"cards": []})
+            elif path == "/api/orch/boards/ledger/configs":
+                route.fulfill(json={"versions": [], "accepted": None})
+            elif path == "/api/orch/boards/ledger/roles/main/checkpoint":
+                route.fulfill(json={"lease": None, "config": None})
             else:
                 assert path == "/api/chat-settings"
                 route.fulfill(json={"front": {"provider": "none"}})
