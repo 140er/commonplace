@@ -28,6 +28,31 @@ BODY_KEYS = {
 }
 
 
+def _install_manifest(gateway, h):
+    """A machine-self action on the existing authenticated prefix, never public."""
+    from . import enrollment, enrollment_api, install_receipts
+
+    principal = gateway.principal_for(h)
+    if enrollment_api.preflight(gateway, h, install_receipts.PATH, principal):
+        return
+    try:
+        query = parse_qs(urlsplit(h.path).query, keep_blank_values=True)
+        if h.command != "GET" or set(query) != {"nonce"} or len(query["nonce"]) != 1:
+            raise ValueError
+        payload = install_receipts.fetch(gateway, principal, query["nonce"][0])
+    except enrollment.Refused:
+        send_json(h, 404, {"error": "not found"})
+    except install_receipts.ApprovalRequired:
+        send_json(h, 409, {"error": "approval_required"})
+    except ValueError:
+        send_json(h, 400, {"error": "invalid receipt request"})
+    except Exception:
+        # Signing, audit and inbox failures never reflect remote or credential data.
+        send_json(h, 503, {"error": "receipt unavailable"})
+    else:
+        send_json(h, 200, payload)
+
+
 def _body(h, action):
     media = (h.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
     if media != "application/json":
@@ -185,6 +210,13 @@ def _listing(store, machine, query):
     }
 
 
+def _dispatch(gateway, h, route):
+    if urlsplit(h.path).path == "/api/runner/install-manifest":
+        _install_manifest(gateway, h)
+    else:
+        route(h)
+
+
 def register(gateway):
     def route(h):
         try:
@@ -308,4 +340,4 @@ def register(gateway):
             send_json(h, 400, {"error": str(exc)})
 
     for method in ("GET", "POST"):
-        gateway.add_prefix_route(method, "/api/runner/", route)
+        gateway.add_prefix_route(method, "/api/runner/", lambda h: _dispatch(gateway, h, route))

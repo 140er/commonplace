@@ -323,6 +323,11 @@ def patch_in(
         else get_machine(db, owner.workspace_id, machine_id)
     )
     _expect(row, version)
+    if isinstance(grant, dict) and grant.get("enabled") is True:
+        from . import install_receipts
+
+        if install_receipts.installation(db, owner.workspace_id, row["id"]) is not None:
+            raise Conflict("installation_setup_only")
     if remove_requester is None:
         data = _grant(db, owner, grant, held=json.loads(row["requesters"]))
     else:
@@ -395,6 +400,11 @@ def attest(db, owner, machine_id, binding):
     _owner(owner)
     with db._lock, db._tx():
         row = _active(db, owner, machine_id)
+        settings = binding.get("install_settings") if isinstance(binding, dict) else None
+        if isinstance(binding, dict) and "install_settings" in binding:
+            binding = {k: v for k, v in binding.items() if k != "install_settings"}
+            if settings is None:
+                raise ValueError("invalid installation settings")
         if not isinstance(binding, dict) or set(binding) != {
             "topics",
             "provider_instance_id",
@@ -431,6 +441,12 @@ def attest(db, owner, machine_id, binding):
             ),
         )
         _audit(db, owner, "attest", row["id"])
+        if settings is not None:
+            from . import install_receipts
+
+            install_receipts.approve_in(
+                db, owner, get_machine(db, owner.workspace_id, row["id"]), settings
+            )
         return {
             "binding_state": "owner_attested",
             "verified": False,
