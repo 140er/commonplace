@@ -727,598 +727,142 @@ records of another agent or session. No Cursor database reader is claimed.
 
 ### Compact rules index
 
-- `session_start rules=index` and `rules_get effective=true format=index` list each effective rule as key, section, scope, size of the full text and a short quoted title (the owner summary, else the first sentence), so a large rule set costs a few kilobytes instead of the whole text.
-- `rules_get keys=[...]` returns the selected rules in full, one key-labelled line each, and names unknown keys. Both are partial reads: they never record the set as served and give no `rules_seq`, so a checked connection must still read the full set before a write. In warn or enforce mode the index says so.
-- The default of both tools is unchanged, and replies stay within the existing reply size bound.
+Moved to [`docs/system/compact-rules-index.md`](docs/system/compact-rules-index.md); edit it there.
 
 ### Chroma session rebuilds
 
-- If a session's cached palace database disappears, invalidate that palace's shared Chroma System before constructing another client.
-
-- Closing only the session owner leaves a System retained by dropped clients; its SQLite pool still targets the renamed database and may fail when it opens a connection.
-
-- The reset uses the existing palace-scoped lifecycle path.
-
-- The collection configuration repair remains unchanged and still adds missing `_type` markers.
+Moved to [`docs/system/chroma-session-rebuilds.md`](docs/system/chroma-session-rebuilds.md); edit it there.
 
 ### Email session cookie domain migration
 
-- When a shared session cookie domain is configured, successful email verification first expires the same-named host-only cookie at Path=/, then sets the new domain cookie.
-
-- The redirect destination and session security attributes stay the same.
-
-- This prevents an older host-only session from taking precedence in the browser's Cookie header.
-
-- Invalid or used email links still return a visible error without changing cookies; requesting a link returns the same confirmation for every account.
+Moved to [`docs/system/email-session-cookie-domain-migration.md`](docs/system/email-session-cookie-domain-migration.md); edit it there.
 
 ### Release email login readiness
 
-- The disposable release journey considers email login ready only after authenticated identity checks and the signed-in Board region appears; step failure reports retain exception messages with shared credential redaction.
+Moved to [`docs/system/release-email-login-readiness.md`](docs/system/release-email-login-readiness.md); edit it there.
 
 ### Restricted-origin release
 
-- Cards created by subagents or restricted agents start inactive in backlog, including create-and-claim requests.
-
-- Activation and claiming require release by the board's live coordinator, or by the signed-in workspace owner when no coordinator is configured or live.
-
-- `task_approve` supports both pending proposals and unreleased restricted submissions, with an audit entry and an `approved_by` release marker.
-
-- Nonproposal releases leave `proposal_status` unset.
-
-- Proposal approval by a parent alone does not activate the card without that release.
-
-- An inactive card's holder may update only its status line without release; this does not activate, claim or approve the card.
-
-- Rejected-proposal handoffs retain the proposal-approval guard before origin authorization.
+Moved to [`docs/system/restricted-origin-release.md`](docs/system/restricted-origin-release.md); edit it there.
 
 ### Owner manual assignment starts
 
-- **Manual assignments.** An owner assignment to an active agent connection claims the card immediately, including project admission and the busy-agent guard. With orchestration enabled, an assignment to the configured machine's worker requests a fresh start through the owner orchestrator path. A disabled switch, missing runner config, a different worker or a refused start leaves an explicit reason in the card's status line. Assignment never bypasses origin release. The worker can confirm its existing claim with an explicit take without a second claim event or lease renewal.
+Moved to [`docs/system/owner-manual-assignment-starts.md`](docs/system/owner-manual-assignment-starts.md); edit it there.
 
 ### Privacy scanner timing checks
 
-- Large-input and delimiter-heavy near-miss correctness checks run in the behaviour suite without measuring time.
-
-- Each input also retains a separate `timing`-marked check of the 20 ms average scan budget over 20 iterations.
-
-- The duration assertion is outside loops so a slow host produces an informational timing failure while incorrect flags remain blocking.
+Moved to [`docs/system/privacy-scanner-timing-checks.md`](docs/system/privacy-scanner-timing-checks.md); edit it there.
 
 ### Rules initialization timing checks
 
-- Rules initialization tests check remaining SQLite wait budgets with a fake clock; wall-clock budgets stay in separate timing-marked tests.
+Moved to [`docs/system/rules-initialization-timing-checks.md`](docs/system/rules-initialization-timing-checks.md); edit it there.
 
 ### Orchestrator no-progress wake
 
-- The hub measures progress, not liveness: a runner-configured board with actionable open work and no card done for N minutes (default 20, per board, 0 = off) emits one `board.stalled` wake through the existing event and webhook path, with backoff and owner escalation after three unanswered nudges. Boards whose open cards all wait on a blocker or a person are never nudged.
+Moved to [`docs/system/orchestrator-no-progress-wake.md`](docs/system/orchestrator-no-progress-wake.md); edit it there.
 
 ### Orchestrator trigger sweep never wedges
 
-- A trigger start that cannot be planned is a coded miss that advances the board's cursor; only infrastructure errors leave the cursor. A split start falls back to the `[runner]` role when the config has no `main` role, and an origin release fires the trigger.
-
-- Repeated sweep failures are visible: the second consecutive failure of a board alerts the owner once (`orch.trigger.failing`, `needs_me.orchestrator_failing`) until a sweep succeeds.
-
-- A todo start refused for a transient reason (`at_cap`, `project_limit`, `busy`, `settings_unavailable`, `config_changed`, `worker_unavailable`, `started_recently`) is retried by the sweep with bounded backoff (1, 5, 15, 30, 60 minutes, then `retry_exhausted`); every refusal stays a miss and the attempts are kept in `orch_start_retries`. A permanent refusal is never retried.
+Moved to [`docs/system/orchestrator-trigger-sweep-never-wedges.md`](docs/system/orchestrator-trigger-sweep-never-wedges.md); edit it there.
 
 ### Board store opens take no write lock (#428)
 
-- `BoardStore(...)` migrates a file once per process and then only reads to decide that it is current, so the trigger sweep, the stall check and gateway reads never queue for the boards write lock. All boards connections use a 10 s busy timeout; a short one is an explicit caller choice (deploy migration). SQLite failures log their error name and code, plus the message only when it is a fixed SQLite text.
+Moved to [`docs/system/board-store-opens-take-no-write-lock-428.md`](docs/system/board-store-opens-take-no-write-lock-428.md); edit it there.
 
 ### Card context in a start
 
-- A runner lease carries `card_context`: the started card as the machine's worker connection may read it. The runner appends it to the launch message, so an agent starts from the card itself and not only from its number.
-- Fields, title and body are always present and verbatim. Asks, decisions and handoff notes, comments, blockers and related cards, linked evidence and linked memory text follow in that order while the block stays inside `COMMONPLACE_START_CONTEXT_TOKENS` (default 6000; 0 sends none).
-- Nothing is shortened or summarised: an item is kept or cut whole, and a cut section ends with a marker that counts the cut items and names the call that returns them. User text is JSON-quoted.
-- A card that cannot be read at lease time never fails the lease. `commonplace/runner/start_context.py` holds the assembly in one function with an ordered section list for later additions. A started card's own goal is never cut, like its title; the goals above it are a section after decisions and are cut from the top level down.
+Moved to [`docs/system/card-context-in-a-start.md`](docs/system/card-context-in-a-start.md); edit it there.
 
 ### Runner wings and the owner runner block
 
-- A runner machine's worker PAT reads and writes every wing in the machine grant and no other; its first wing is the default write wing. `startable()` accepts a card whose board wing is granted and otherwise refuses with `outside_worker_wing`, naming the board wing and the granted wings. Machines enrolled before this keep a first-wing-only worker policy until their wings are saved once (same wings do not reset the binding).
-- The Admin page's runner block lists, enrolls, attests and edits wings through the existing owner-only `/api/runners` routes. Enrollment tokens are shown once in a panel and never stored, logged or redrawn.
-- The runner block reads its wing picker from `GET /api/runners/wings`, never from the connections listing. For an owner who reads every wing, the wing names come from the palace's Chroma metadata index in one seek per wing, skipping wings that hold only miner bookkeeping rows, under a two-second deadline; other principals, compact stores and a failed index read use the memory listing. Grant validation, connection read wings and `GET /api/connections` share that read (#451: the drawer-by-drawer listing did not answer on a 2.6 million drawer palace). When the wing read still fails, the editor keeps the granted wings ticked and offers a typed wing field; the server validates every name.
+Moved to [`docs/system/runner-wings-and-the-owner-runner-block.md`](docs/system/runner-wings-and-the-owner-runner-block.md); edit it there.
 
 ### Workspace invites
 
-- An owner invites a person with a single-use link that expires (7 days, or 1 to 30) and can be revoked. The secret is shown once and stored only as a SHA-256. Joining needs a signed-in account and one confirming click, and grants the existing `member` role with no connection, token or scope. `docs/invites.md` is the contract.
-- Invites change no access rule. A member still reads no private wing, their own notes included; who may read a private wing in a shared workspace stays an open product decision.
-- A person in several workspaces switches with `/api/workspaces/switch`, which only ever accepts one of their own memberships.
+Moved to [`docs/system/workspace-invites.md`](docs/system/workspace-invites.md); edit it there.
 
 ### Run ledger
 
-- A run is one runner start. Its ledger row (`run_ledger` in `runner.sqlite3`) is written in the start's own transaction and follows its state; the table is additive and older starts get a row when the store opens.
-
-- The hub never measures, prices or estimates usage. Tokens, cost (millionths of a currency unit plus the currency), the log pointer and the run's end are only what the run's own enabled machine reported through `POST /api/runner/usage`; an unreported value stays NULL and reads "not reported".
-
-- A reported end changes neither the start job nor machine capacity nor the card (D3 stays open).
+Moved to [`docs/system/run-ledger.md`](docs/system/run-ledger.md); edit it there.
 
 ### Raw test runs on a shared test host
 
-- A host that caps concurrent test runs (its test runner holds a slot per run) opts in with `~/.config/commonplace/require-test-runner`, naming the variable the runner sets; there `tests/conftest.py` stops a pytest run without it, so agents cannot overload the host by bypassing the cap. Machines without the marker run unchanged; `COMMONPLACE_ALLOW_RAW_PYTEST=1` is the one-run override.
+Moved to [`docs/system/raw-test-runs-on-a-shared-test-host.md`](docs/system/raw-test-runs-on-a-shared-test-host.md); edit it there.
 
 ### Mirror and search-index test waits
 
-- Tests that wait for background mirror or search-index work drain on the actual completion condition (no sweep active, no mirror job pending) through one shared test helper, with a 120 s stuck-job limit, rather than one fixed `wait_for_mirrors` budget that returns silently when it runs out.
-
-- A slow-host regression re-runs the converted selections with late-starting jobs and a wait that returns at once; the production sweep, its 20-thread and unit bounds and `wait_for_mirrors` are unchanged.
+Moved to [`docs/system/mirror-and-search-index-test-waits.md`](docs/system/mirror-and-search-index-test-waits.md); edit it there.
 
 ### Console activity query checks
 
-- Console activity schema and query checks freeze the store clock, keeping both dated rows within the seven-day retention window while asserting ordering, latest timestamps and redaction.
+Moved to [`docs/system/console-activity-query-checks.md`](docs/system/console-activity-query-checks.md); edit it there.
 
 ### Agent questions
 
-Agent `ask` calls and `task_update status=review` questions target the board's
-appointed coordinator by default when that connection is live, unrestricted,
-can read and write the board wing, and can use `space_read`, `space_post`,
-`needs_me` and `decide`. They appear in the coordinator's queue instead of the
-owner's. Supply a nonempty `person_reason` (at most 500 characters) to explain
-why a person is required; the reason is preserved in context and opening history.
-Without an authorized coordinator the question reaches the owner. Completion
-reviews, person callers and explicit person handoffs keep their owner/person route.
-A status line never hides a person decision or an item needing person release.
-
-Only the addressed, still-authorized coordinator or a signed-in workspace owner
-can answer, plus an owner's own connection holding the owner-granted
-`cards:decide` scope for asks addressed to that owner; agents never answer their
-own asks. The coordinator may instead use
-`decide(then="escalate", reply=<reason>)` to send the unchanged question, options,
-context and return recipient to the owner; an empty reason is refused. An appointed
-coordinator may withdraw only an agent-directed decision it requested itself,
-using `task_update status=todo|doing` with optional `reason`. Current appointment,
-recipient and requester are rechecked. Other agents, member people and coordinators
-of other boards have no withdrawal authority. Withdrawal keeps the original ask
-in append-only history and does not imply approval. Person decisions cannot be
-withdrawn by agents. Existing asks are never rewritten by this routing change.
-
-Subagents still need an existing approved and released card before asking. If a
-routed coordinator becomes unavailable or is replaced, the pending ask appears
-in the owner's queue without changing its stored words or audit log.
-
-The shipped agent skill teaches the same routing and withdrawal boundaries. The
-pinned MCP contract adds only optional `person_reason` to `ask` and `task_update`,
-with matching descriptions for `ask`, `task_update` and `decide`; tool names and
-visibility for slim, standard and full profiles remain unchanged.
+Moved to [`docs/system/agent-questions.md`](docs/system/agent-questions.md); edit it there.
 
 ### Completion reviewer
 
-A card may name one reviewer of its completion, a current workspace member
-(`user:<id>`). Only a signed-in workspace owner chooses, changes or clears it
-(`reviewer` on `task_add` and `task_update`, and on the card REST routes); agents
-and members are refused. Without a reviewer nothing changes: the owner is asked
-and only an owner answers. With a reviewer, a move to Done by anyone but that
-member (an agent, the assignee or the owner) opens a completion review addressed
-to them even on a board that does not gate completions, and `decide` answers it
-only for that member. An assignee therefore reviews their own work only when the
-owner explicitly chose them. A reviewer who has left the workspace counts as no
-reviewer. Changing the reviewer re-addresses an open completion review, and the
-chosen reviewer sees it in `needs_me`. The pinned MCP contract adds only the
-optional `reviewer` argument to `task_add` and `task_update`.
+Moved to [`docs/system/completion-reviewer.md`](docs/system/completion-reviewer.md); edit it there.
 
 
 ### Project seat wake recommendations
 
-- Project Connect writes every HTTP 409 conflict to its persistent status. Shared-memory
-  and replacement conflicts retain their explanation and next step after dialog dismissal;
-  shared-memory consent and own-section conversion still require the existing explicit choices.
-  Other conflicts include the server's reason in the Orchestrator section of project settings.
-
-- Project settings render the orchestrator status and bind Connect as soon as the
-  project view arrives, before chat settings, connections, cards or chat status
-  settle. Chat and agent sections show loading and their own unavailable states;
-  their initial reads have ten-second client deadlines.
-
-- `GET /api/connections` spends at most one second waiting for its optional memory
-  wing listing, including worker transport. Timeout, `ToolError` or an already
-  busy lookup returns the existing connections and `wings: []`. One daemon lookup
-  per gateway bounds outstanding work; a timed-out call may finish later, without
-  caching its result or delaying later requests. Until it finishes, other requests
-  use the same empty-wings fallback, including requests from other workspaces.
-
-- Connect recommends a board-scoped webhook for `space_message` and `card.moved`, so messages and worker completion moves can wake the orchestrator.
-
-- Setup is advisory: Connect and reconnect neither register nor modify subscriptions.
-
-- Existing users must explicitly update their webhooks to receive card moves.
-
-- Message coordinator filtering and reply-loop suppression still apply.
-
-- With orchestration enabled, the list appends `card.created` and `project.report`.
+Moved to [`docs/system/project-seat-wake-recommendations.md`](docs/system/project-seat-wake-recommendations.md); edit it there.
 
 ### Card-lifecycle rule replay
 
-- `tests/test_statechart_card_rules.py` keeps one proof per rule of the card-lifecycle statechart replay: release of restricted and subagent cards by the live orchestrator, subagent questions to the orchestrator, approvals offered to the owner only from Needs me, claimed manual assignments, starts by an owner-trusted seat, the machine limit past an hour, and completion reaching the recommended seat webhook. It changes no behavior; a seat without the owner's trust confirmation still cannot request starts.
+Moved to [`docs/system/card-lifecycle-rule-replay.md`](docs/system/card-lifecycle-rule-replay.md); edit it there.
 
 ### Restricted-origin card content
 
-- Trusted agents and authorized board coordinators may update only the title and body of an unassigned todo card marked as restricted-origin.
-
-- Board write access and proposal approval remain required.
-
-- Each edit records its actor in the existing audit log; it neither releases the origin nor changes claiming, activation, reservation or other update permissions.
+Moved to [`docs/system/restricted-origin-card-content.md`](docs/system/restricted-origin-card-content.md); edit it there.
 
 ### Token-slot refusal verification
 
-- Marked-workspace connection, snapshot and database classification regressions use real synthetic B2 keyslots and exact-data controls before setting the marker. Direct provider tests likewise prove valid unmarked wraps and workspace-key reads. Malformed direct metadata raises an encryption error, and marked-workspace errors retain the locked diagnostic rather than implying settings corruption.
+Moved to [`docs/system/token-slot-refusal-verification.md`](docs/system/token-slot-refusal-verification.md); edit it there.
 
 
 ### Browser GitHub connection (experimental, default off)
 
-- One GitHub worker owns a control-database lease shared by every serve on the same volume, including containers with private temporary directories or different mount paths. Claim and recovery occur in one short write transaction; no lifetime lock file is held in the data tree. The lease lasts 30 seconds and renews every 5 seconds. A second serve fails closed for GitHub writes and retries acquisition every 5 seconds after the owner closes or its lease expires. Restored backups may retain the lease until expiry. The Node lifecycle harness exercises connected rendering, stale reads, card switches and logout without a browser installation.
-
-- Browser consent requires a person session, JSON, exact Origin and session-derived CSRF; agents and MCP receive no GitHub capability. Connecting asks for an exactly empty scope; inherited sign-in scopes require confirmation, every repeated scope header is cross-checked, and refresh material is discarded before encryption. A connection alone never carries merge rights.
-
-- Expired grants purge locally, increment generation and permit a new Connect without acknowledgement or a GitHub request. The expired view links to GitHub app access. Only ambiguous revocation requires acknowledgement.
-
-- The ten-minute flow binds PKCE, browser, session, workspace, visible card and generation. Callbacks reopen the selected Needs item. Login and grants share subject ownership without provisioning a new login identity during connect.
-
-- One person owns at most one grant. Another workspace reports the existing workspace explicitly and offers Disconnect; it does not expose Open PR or reuse that grant for work. The same person's browser consent may revoke the grant from either workspace.
-
-- `COMMONPLACE_GITHUB_CONNECT` defaults off and prevents new start/callback/confirm work. Existing grants stay visible and browser-authenticated DELETE stays available while disabled; missing app credentials make revocation unconfirmed and purge locally.
-
-- Confirmation expiry cleanup runs on the person's next Connect, Confirm or Disconnect write. GET status remains local-only and never revokes remotely. Failed cleanup marks revocation unconfirmed and settles exchange counters in finally blocks.
-
-- Serve closes its control database on normal return and signal unwind, stopping registered workers and releasing only its own GitHub lease in a short transaction. HTTP server close also stops email admission before GitHub joins its heartbeat and releases its lease; database callbacks use the same order so GitHub cannot delay the email stop signal while waiting for SQLite. Repeated GitHub closes are serialized and perform no SQL after successful cleanup, including after SQLite closes. Never-owners retry claim and recovery; an expired former owner stays fenced because remote work may still be in flight.
-
-- Generation, remote-work and exchange counters fence disconnect, confirmation and late callbacks until all cleanup settles. Lease ownership and expiry are checked in each state-changing transaction, including late remote completions. An expired owner cannot renew itself or alter a successor’s counters. A new owner recovers after lease expiry without replaying remote DELETE; orderly close releases only its own lease. No writable temporary directory or platform-specific file locking is required.
-
-- Disconnect purges local grants and confirmations even if stored ciphertext is tampered or the wrapping key is unavailable. It retains the reconnect acknowledgement requirement for unconfirmed remote revocation and never retries unavailable credentials.
-
-- AES-256-GCM encrypts tokens/verifiers before SQLite/WAL using per-user DEKs and user/provider/schema AAD. `COMMONPLACE_GITHUB_KEY_FILE` is a private, owner-held 32-byte key; code rejects it within the control database's parent directory. Operators must also exclude it from separately located workspace and backup trees, which this store does not inventory. Install the `commonplace` extra for cryptography.
-
-- Back up the wrapping key separately. Rewrap DEKs offline with unchanged AAD/version while workers are stopped; replacing only the key file is unsupported. Retain the matching old key/database backup until a migrated copy is verified. Online rotation and migration tooling remain deferred.
-
-- Needs disables loading controls, contains GitHub-only errors without hiding card actions, drops stale reads and clears rendered connection details on teardown. Ordinary decision details retain their existing teardown contract. PR links require HTTPS, exact github.com, a default port and a positive pull-request number; reports stay unverified and a connection alone proves no merge rights.
-
-- Full account-deletion integration, composite multi-worker HTTP acceptance and a live browser workspace-switch flow remain deferred. The GitHub deletion helper fences its own cleanup only, not other stores or the user record.
-
-- Absent token expiry requires dated `COMMONPLACE_GITHUB_NONEXPIRING_EVIDENCE` in `YYYY-MM-DD|OAuth App|client-id|expiration disabled` form. Before enabling, record fresh-account/prior-login scope, header and expiry outcomes plus ingress/callback/backend no-secret logging canaries. Live GitHub OAuth behavior remains unproven. Refresh and reconciliation remain deferred.
-
-- **Connect GitHub with repo access (separate, explicit per-person opt-in).** Owner decision (11 Nov 2026, option B): merging uses GitHub's full `repo` scope, granted per person and never server-wide. A connected person may add this second consent (`POST /api/github/merge-consent`, offered as the button "Connect GitHub with repo access to merge"), which runs one more PKCE flow (`purpose=merge`) requesting exactly `repo`. OAuth Apps cannot narrow it: it reads and writes every repository, private and organisation repositories included, that the person's GitHub account can reach, and the Needs copy says so and that it is optional. The callback accepts `repo` only in a merge flow, requires it, rejects any other extra scope (revoking the issued token) and requires the same GitHub subject as the existing grant. The new token waits in the usual encrypted confirmation; only after the person accepts does it replace the stored token (stored with its scopes) and the old token is revoked. Declining or any failure revokes the new token and leaves the empty-scope connection. A revoke GitHub refuses (any answer but 204) is not retried: revocation is flagged unconfirmed, the record is dropped, and the person is asked to review GitHub app access before connecting again; only a revoke that raises keeps its record for a retry. An unanswered confirmation is not forgotten: the worker heartbeat revokes one lapsed candidate per tick outside the database lock (an unreadable record is purged and marks revocation unconfirmed), and startup recovery keeps each pending record, lapsed, so the next sweep revokes it instead of dropping the only handle. The encrypted record outlives every revoke it guards: a connect accept deletes it in the swap's own transaction and a merge accept turns it into a settlement record (below), while a decline, lapse, failed commit or Disconnect deletes it only after the revoke has an outcome, so a crash or lease loss in between leaves it for the next sweep instead of an unrecorded token. The callback records a candidate and releases its own in-flight exchange in one transaction, so no moment exists where a record is visible while its exchange still counts as in flight with no owner left to revoke it (a settled record without an owner is the sweep's). The issued token counts as owned only once that transaction has committed: a failed COMMIT leaves it to the callback's cleanup, which revokes it or flags it. A token-exchange answer that is lost or unreadable flags revocation unconfirmed, because GitHub may have issued a token that cannot be revoked without it. Disconnect revokes a pending candidate before the grant and marks the record it takes as in flight for the length of that revoke, releasing the marker in its closing transaction, which deletes only that record. Any failure before that transaction commits runs it again as a release, and the original error is still returned: if every revoke had returned, the release is the closing transaction itself (the record goes and nothing is revoked twice); if a revoke raised, the record is lapsed so the next sweep revokes its candidate (a second DELETE when the candidate's own revoke had succeeded and the grant's raised, which then reads as unconfirmed), and the grant is purged unrevoked with revocation flagged unconfirmed, as a restart does, without replaying anything at GitHub. Either way nothing of that Disconnect stays pending, and an account deletion keeps the person's keys while a candidate record remains so the sweep can still decrypt and revoke it. The grant-first order is avoided on the assumption, not verified against live GitHub, that a grant delete also removes the app's tokens and would leave the candidate's own revoke answering 404, read as unconfirmed. A record whose exchange is in flight (`active_exchanges` set) belongs to that owner, who revokes it exactly once, and an exchange releases only a marker its own transaction committed: the sweep, expiry, a decline or second consumer and Disconnect all leave it alone, so each candidate is revoked at most once and the sweep cannot be starved by one busy record. An accepted swap turns the pending record into a lapsed settlement record holding the replaced empty-scope token in the same transaction and drops it only after that token is revoked. A restarted process flags revocation unconfirmed for exchanges that have no record (a token issued but not yet recorded), for users with a pending connect flow, and for users whose Disconnect was pending, had remote work or a disabled grant; a pending record alone does not flag, it is retried by the sweep, and a failed revoke still flags; a candidate equal to the live grant is neither revoked nor flagged. Acceptance counts only after the swap's transaction commits; a failed commit revokes the candidate and keeps the stored token. Remaining windows: a process death or lease loss after GitHub issues a token but before its confirmation record commits leaves a token GitHub still lists under app access, neither revoked nor recorded (a restart flags it; a fenced worker cannot write until then); a revoke retried after a crash, a lease loss or an ordinary failure inside the revoke call that GitHub had already honoured reads as unconfirmed, because GitHub is assumed, not verified against live GitHub, to answer an already revoked token with a non-204 (the cost accepted instead of an orphaned token); an in-flight owner's candidate revoke overtaken by a Disconnect's grant delete likewise gets that answer and flags, which is not closed because a revoke that failed after the grant delete must still flag a token issued later. A Disconnect whose grant revoke never ran because an earlier revoke raised leaves that grant token live at GitHub, flagged unconfirmed; a restart likewise deletes a disabled grant without revoking it. A release transaction that itself fails (for example the database stays locked) is retried by the worker heartbeat, before its sweep, every tick until it commits; until then the sweep skips that record and the person's connect, Disconnect and decline answer `github_pending`, which a release that keeps failing (a bug, not a transient lock) holds until a restart. The heartbeat survives a failed tick (only the error type is logged) and stops only on lease loss, so a record whose revoke keeps raising an unexpected error is retried every tick and holds up the sweep of other lapsed records until that bug is fixed; a lease loss or a process death leaves its markers to the next claim, at restart. A record left by a failed decline or expiry keeps its expiry: declining again revokes it at once, otherwise the sweep does once it lapses, one record per tick. While an exchange owns a pending record, status can still show its confirmation and accepting is refused with `github_pending` until the owner settles. Connecting without this consent keeps today's empty scope; Disconnect revokes the whole authorization, including merging.
-
-- **Merge** (`POST /api/github/merge`, body `csrf`, `card` and `head`) uses the same browser-session, exact-Origin and CSRF guards; agents, Bearer tokens and MCP cannot reach it, and it is blocked while `COMMONPLACE_GITHUB_CONNECT` is off. The server resolves the PR from the visible card: Needs must classify it as Merge for this person (a fresh passing report with a pinned head and no open question or plan), and its `pr_url` must be a plain github.com pull URL in exactly the raw form the panel accepts for Merge (no case folding, no port). Owner, repository and number are never read from the request; `head` is only the commit the person confirmed and must equal the card's reported head, else `github_head_moved` before any GitHub call. Only the caller's own grant in the session's workspace is read, and it fails closed (`github_not_connected`, `github_merge_consent`) when absent, expired, disabled, pending disconnect, key-unreadable or without `repo` (`github_merge_consent`, shown as "Connect GitHub with repo access to merge."); there is no server-token or other-person fallback. Before any merge, GitHub must show the repository to this account (a 404 answers `github_merge_refused`; private repositories are allowed because the person granted `repo`), the PR open, not a draft, not merged, still at the reported head SHA (`github_head_moved`) and `mergeable_state` `clean` (`github_not_mergeable`). The merge call pins `sha` to that head, so a push after the check is refused by GitHub, and uses the first merge method the repository allows (squash, merge commit, rebase), which the Confirm text states. A 401 from GitHub answers `github_not_connected` (Connect GitHub again). Branch protection, required checks and reviews stay with GitHub; its refusals return as generic codes (`github_merge_refused`, `github_not_mergeable`, `github_merge_failed`), never as GitHub bodies. Each attempt that reaches GitHub writes an audit entry with ids and the outcome code only (`allow`, `deny`, or `error` for an unexpected failure); tokens appear in no response, log or audit row. The Needs panel shows Merge (after a second Confirm merge click naming the PR, short head and merge method rule) only for a consented connection and that raw PR URL form, and drops the merge controls once a merge succeeds, including one that finishes after the person has moved to another card, for the current page session only (a reload offers Merge again for a card that still reports merge-ready, and GitHub then refuses the merged PR); otherwise it shows "Connect GitHub with repo access to merge", and every refusal leaves Open PR with a plain reason. GitHub's own rules, including any administrator bypass, stay with GitHub. Live GitHub behaviour of these calls (protected-branch and administrator-bypass cases, `mergeable_state` timing) is unproven until run against a protected test repository.
+Moved to [`docs/system/browser-github-connection-experimental-default-off.md`](docs/system/browser-github-connection-experimental-default-off.md); edit it there.
 
 ### Generic agent skills
 
-- `skills/untangle-codebase` is a repository-independent skill: it names no host, path, person or product of this system, and its helper only reads files. A test keeps its front matter, required sections and absence of local paths checked, and the Claude marketplace copy must match the canonical files byte for byte. It changes no stored data and is never installed or enabled by the system itself.
+Moved to [`docs/system/generic-agent-skills.md`](docs/system/generic-agent-skills.md); edit it there.
 
 ### Optional agent orchestration
 
-- **Default off.**
-
-  - The workspace owner explicitly enables orchestration; absent settings mean off.
-
-  - A settings read error refuses admission.
-
-  - Off retains the existing claim/start behavior and board JSON shape.
-
-- **One project count.**
-
-  - Claims, queued starts, leases and configured starts share a runner transaction.
-
-  - Ordinary agents count by connection, workers by card; card/job overlaps count once.
-
-  - Default cap is 3; project rows override it, configured boards use the smaller config/row cap.
-
-  - Board `used` shows active slots, excluding the queued reservations counted at start creation.
-
-- **Authority.**
-
-  - Unconfigured starts require the active board coordinator PAT or a signed-in owner.
-
-  - Owners separately trust seats and grant machines atomically; switching off demotes all seats and removes only their requester ids.
-
-  - Trusted seats cannot create boards.
-
-  - Connect alone never grants this trust.
-
-  - A trusted project seat may hold the orchestrator lease of its own board and seat role while the board has no `[runner]` config; no config or requester edit is needed. Its direct starts are unchanged. Demotion, switch-off or revocation ends that authority at the next lease call.
-
-  - A project seat never claims another board's lease, also when that board's runner machine lists it as a requester.
-
-- **Lock order.**
-
-  - Control snapshots precede waits.
-
-  - Claims hold boards RESERVED then runner admission until board commit; runner admissions read boards SHARED.
-
-- **Residual.**
-
-  - Without a runner or subscribed `card.created` webhook, a new card waits for the orchestrator's next session.
-
-  - An accepted live `[runner]` with `session = true` enables a persistent session through the existing machine runner loop, without requiring a `card.todo` trigger; configs without the key are unchanged and no service is activated automatically.
-
-  - Splitting and inbox behavior are not introduced by this switch.
+Moved to [`docs/system/optional-agent-orchestration.md`](docs/system/optional-agent-orchestration.md); edit it there.
 
 ### Optional project completion and stuck reports
 
-Owner-enabled orchestration adds a durable `project.report` route for transitions
-from a non-done state to done and for observed stuck episodes. It is off by
-default and carries only board, card number, report id, reason, generation and
-captured coordinator. No card words, exception contents or credentials are sent.
-Reports grant no start, split, claim or other authority.
-
-Connect the project seat again after enabling, then remove and re-add its webhook
-using Connect's returned event list
-(`["space_message", "card.moved", "card.created", "project.report"]`).
-Enabling alone never edits subscriptions. Setup gaps do not replay old reports.
-Raw subscriptions retain their behavior: a legacy completion hook still gets its
-raw wake; subscribing to both channels can deliver raw plus report. Cross-channel
-deduplication is deferred.
-
-Done capture shares the source transaction. An unavailable settings/coordinator
-snapshot rejects the transition with `settings_unavailable` (503), before a lesson
-is saved. Ordinary edits remain available. A board created by the same transaction
-has no coordinator and stays history only when the snapshot is available; an
-unavailable snapshot still rejects a relevant done transition. This is fail-closed,
-not a guarantee to undo arbitrary external memory side effects after a lesson.
-Existing raw event emission can still fail after the board commit.
-
-Report installation registers recovery without resolving workspace directories.
-Recovery installs the report reset trigger only when all watched task columns
-exist and removes an existing incomplete trigger otherwise. For sources missing
-only `heartbeat_at`, this keeps raw status writes usable until BoardStore adds
-that column and installs the trigger. The other watched columns belong to the
-base schema; BoardStore does not add them during this migration. Until migration,
-no episodes are recorded, while reporting is enabled, a pass that reaches a coordinated task logs an error, and watched writes do
-not bump `report_reset_rev`. Product writers open BoardStore before writing.
-The first dispatcher scan recovers and migrates existing board databases without creating
-workspace directories, followed by monotonic 30-second scan deadlines independent
-of requests and webhook traffic. Source initialization is cached by database path,
-inode and SQLite schema version. Zero-byte files are deferred without opening a
-connection; a read-only probe defers nonempty files without both base tables
-(`boards` and `tasks`). Neither case opens a write transaction or runs report
-migrations; a later pass picks up the source after its creator initializes it.
-Ready sources have their schema version read through the same read-only probe.
-Ordinary data writes preserve the cache; a new inode or a changed schema version
-triggers initialization again, including repair of dropped report tables.
-Failures are isolated per workspace and logged with exception type and stack
-locations, excluding exception text and local values. Each workspace pass reads
-at most 100 cards, publishes at most 100 source rows separately and cleans at most
-100 deleted episode keys. Persisted pagination provides fair continuation; a cycle can
-take longer than 30 seconds. The first observation in a generation baselines
-existing staleness without sending it. Heartbeat and leave/reclaim revisions
-separate later observed episodes, even at equal timestamps across restart.
-Episodes beginning and ending entirely between observations are lost. There is
-no historical-done replay. A workspace failure leaves other workspaces progressing.
-
-Source access closes before control publication. Event and receipt commit together;
-source acknowledgement happens later. Receipts are retained without age pruning
-because a publisher may still retry an old source row. Report reconcile saves an
-immutable per-event routing envelope atomically with cursor advancement. Unknown
-routing facts defer only that report with persisted 1/2/4/8/16/30-second capped
-backoff, while later raw events and due HTTP deliveries keep progressing. Enqueue
-and retry-work deletion are atomic. Inability to persist control work, cursor or
-retry metadata uses the existing infrastructure-error path and can delay dispatch.
-
-Send rechecks the captured coordinator, current connection/wing authority, board
-and activation/binding generations across separate control/source/control phases;
-HTTP holds no database lock. Positive invalidation cancels only reports. Busy,
-locked, wrong-key and unknown failures retry indefinitely without using HTTP
-attempts or producing dead-letter failures. Existing delivery inspection shows
-`error=report_authorization_retry`, `count` and stable `retry_since`; ALLOW and
-cancellation clear them. All unresolved auth rows remain visible beyond the latest
-100 ordinary deliveries. This unresolved set is unbounded by design; inspection
-reads all rows for that hook. Operators should repair authority/storage or cancel
-the affected hook. Exception contents never enter inspection or payloads.
-
-A receiver deduplicates `report_id`, fetches the current card and version, and
-reports progress through existing authorized tools. For done, inspect the current
-result and continue only work already authorized. For stuck, inspect the current
-holder and person-wait state before an authorized follow-up. HTTP is at least
-once: duplicate requests must not repeat the receiver's action. Broader receiver
-playbooks and the original wider orchestration acceptance remain separate work.
+Moved to [`docs/system/optional-project-completion-and-stuck-reports.md`](docs/system/optional-project-completion-and-stuck-reports.md); edit it there.
 
 
 ### Orchestrator config as code
 
-- **The store is the source of truth.**
-
-  - Each board has versioned orchestrator configs (`v<n>`, with parent version, channel, source ref and sha256) in the workspace's `runner.sqlite3`.
-
-  - `.commonplace/orchestrator.toml` in a repo is only a proposal; `orch submit` proposes it and the owner approves its sha256.
-
-- **The owner approves every change.**
-
-  - Wing writers propose; only `orch_owner` accepts, rejects, retires an experiment, forces a lease, voids a step or acknowledges a restore.
-
-  - `orch_owner` is a signed-in person with role owner, or the local CLI (data-dir access).
-
-  - Agent tokens with an owner role are refused.
-
-- **The app shows who coordinates.**
-
-  - Project settings > Orchestrator reads the read-only checkpoint for role `main` and says in words who holds the lease, when it runs out and how much work is open, in doubt or unstarted. A signed-in owner can End lease (a confirm first); it calls the same `force-release` as the CLI and MCP, so members, agent tokens and other workspaces are refused. Ending a lease changes no step: unfinished work stays listed and becomes in doubt when the next coordinator claims.
-
-- **A project can show its own panel.**
-
-  - A project panel (`commonplace.panel/1`, `docs/project-panels.md`) is a few text highlight lines and http(s) action links, set with `PUT /api/projects/<slug>/panel` by the owner or an agent with board-write authority and shown at the top of the project's board. It is untrusted: unknown fields, markup, control characters, over-limit sizes (4096 bytes) and non-http(s) links are refused, and the page draws only escaped text. Its rules are adopted as a constructed style sheet, never an inline style element, so the app's content security policy applies them. A project without a panel is unchanged.
-
-- **Channels.**
-
-  - `live` and `exp:<name>`.
-
-  - An experiment may change only `prompt`, `workflow`/`workflows`, `topic`, `model_role` and `skills`.
-
-  - Triggers always use live.
-
-  - Only accepted versions run.
-
-- **What is enforced.**
-
-  - For the runner role: the launch message (`SPAWN_MESSAGE` + prompt + workflow steps), `harness = "t3"`, the topic (grant checks), `model_role` (resolved once at insert and pinned on the job), `runner.machine`/`project`/`runtime_mode` (grant checks), `card.todo` triggers, `limits.max_agents` and planner `connections`.
-
-  - Every other role, `skills` and `mcps` are advisory: rendered for sessions to read.
-
-- **Boards without an accepted live `[runner]` config behave exactly as before.**
-
-  - No new columns change their digest, no sweep scans them, no lease exists for them.
-
-  - The tool list does change: the `orch_*` tools are listed on every workspace, so a config can be proposed before one exists (see Residuals).
+Moved to [`docs/system/orchestrator-config-as-code.md`](docs/system/orchestrator-config-as-code.md); edit it there.
 
 ### Foreground refresh rendering
 
-- A background workspace refresh that supersedes a pending foreground render inherits that render on the same screen.
-
-- Outside the bots screen every refresh also reads the bots roster, next to its three shared reads, to fill the Bots badge; a failed roster read leaves the badge as it was and never fails the refresh. The refresh harness answers that read and checks the badge total.
-
-- A background refresh leaves an edit, hand-off or ask form in the card panel alone, including a form opened after the refresh already requested the card; `state.card` stays at the version the person started from, and Cancel or Save redraws the panel from a fresh read. On Needs me the item's detail is paused while a hand-off form is open, so a changed queue redraws the list but not the form; Cancel, a saved hand-off, choosing another item or a filter that drops the item resumes it. Known limits: a hand-off form keeps the version it started from, so after a conflict Save keeps failing until the form is cancelled and opened again; on a card route a conflict redraws the panel and drops the typed note.
-
-- Navigation epochs reject stale reads and Settings completions; ordinary events leave an already rendered Settings view intact.
-
-- Settings bounds each of its six section reads and three prerequisite reads to ten seconds, including response decoding. Failures name the section or request and offer Retry; successful reads show saved values. Orchestration settings lock contention returns retryable HTTP 503 after a one-second lock wait.
-
-- A current request failure clears the pending render; a later background refresh retains its usual form-preservation policy.
-
-- On Settings, a background prerequisite failure preserves already-rendered sections and mounted webhook drafts, reporting the named failure through the separate screen error with Retry. Initial and foreground failures may replace content with the error.
+Moved to [`docs/system/foreground-refresh-rendering.md`](docs/system/foreground-refresh-rendering.md); edit it there.
 
 ### Starts on a configured board
 
-- Every config-driven start runs one fenced transaction (`BEGIN IMMEDIATE` on `runner.sqlite3`): resolve and hash, refuse under the restore flag or for a `plan`-labelled card (`plan_pending`), look up the existing step (or, for a person, the runner's own request key), check the cap, insert.
-
-- A same-step retry returns the stored job; any mismatch is a 409 with the stored step.
-
-- `card_start` on a configured board is person-owner only; every other caller gets `no: use orch_card_start`.
-
-- Cancelling a job that belongs to a step is person-owner only.
-
-- The person owner may send `card_start` the card alone on a configured board: machine, project and topic come from the config, and values that are sent must still equal it. `GET /api/card-starts/options` (person owner only, read-only) tells the card panel what it may offer and why nothing can be started; it creates no job.
-
-- The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
-
-- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set. Both accept 1–100. Per machine, `max_in_flight` and `max_starts_per_hour` still apply at lease time, and the runner refuses a leased start with the pre-spawn code `low_memory` when its available memory is under `min_free_memory_mb` (the job ends `failed`, shown by `card_start_status`; the guard never blocks when the probe is unreadable).
-
-- A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
-
-- The plan is also re-checked when the runner reports `starting`; a refused job ends `cancelled` with outcome `plan_pending`.
+Moved to [`docs/system/starts-on-a-configured-board.md`](docs/system/starts-on-a-configured-board.md); edit it there.
 
 ### Bots from a person's own app (`bots:chat`, `bots:confirm`)
 
-- A person's own native or mobile app can use `/api/bots*` as that person through two scopes the person grants themselves. Unlike `cards:decide` (owner-only), any signed-in member grants them, and only for their own top-level PAT or OAuth connection in that workspace; the shared classifier `decide_grant.machinery` refuses child agents, runner connections, orchestrator seats and agent-started connections, and board coordinators are refused by the web layer and again at use.
-- At use, `bots.auth.person` re-checks everything on every request (scope, live top-level app owned by that person, not a coordinator, the person still a member) and then returns the person's own `sessions.person_principal`, so every downstream check is the person's and an app reaches only that person's bots. Anything else stays 404; a revoked or expired connection is 401.
-- `bots:confirm` is separate and useless without `bots:chat`; `/confirm` through an app without it is 403 `scope_required` and runs nothing. Buttons on a question remain the existing `cards:decide` route.
-- `bots:learned` is a third, read-only scope with the same rules (needs chat, granted and withdrawn separately): it lists what the person's bots learned and can change nothing.
-- OAuth apps get either scope only through a ticked consent; PAT grants and withdrawals go through `PATCH /api/connections/<id>` (`bots_chat`, `bots_confirm`) or Settings > Agents, and a member may use that PATCH for their own connection only. The command line and session policies never carry them. Becoming a coordinator or expiring clears the grants.
-- Every grant and withdrawal is audited per scope, and every write made through an app adds one `bots.write` row with the connection id, route and the status actually sent as `ok`, `refused` or `error` (never text; a refused confirm and a request that dies before answering are recorded too); person-session writes add none.
+Moved to [`docs/system/bots-from-a-person-s-own-app-bots-chat-bots-confirm.md`](docs/system/bots-from-a-person-s-own-app-bots-chat-bots-confirm.md); edit it there.
 
 ### Owner-granted answers from the owner's own apps (`cards:decide`)
 
-- Answering a Needs-me ask stays a signed-in owner action by default. A separate,
-  unticked `cards:decide` consent lets one of the owner's own connections answer
-  asks addressed to that owner, over MCP `decide` or REST
-  `POST /api/cards/<n>/decide`.
-- Granting: the owner's browser session only. PATs get it at creation
-  (`"decide": true`) or through `PATCH /api/connections/<id>`; OAuth clients get it
-  only when the owner ticks the consent box, and the request must also carry
-  `memory:read` and `memory:write`. Members see an owner-only notice and a forged
-  tick grants nothing. Authorization-server metadata advertises the scope; OAuth
-  defaults never include it. The control layer takes the signed-in owner's
-  principal, never a bare user id: `create_token` needs it as `grantor` for its
-  own top-level, non-seat connection; `set_connection_decide` needs it as actor
-  and refuses runner (its runner message), inactive, child, agent-started and
-  seat connections with specific 409 messages; OAuth code minting rechecks a
-  person owner. The CLI refuses it; person policies, profile defaults and seat or
-  runner policies never include it. The grant route also refuses any current
-  board coordinator (checked in the board store). Settings → Agents offers the
-  grant only on the viewing owner's own eligible, unexpired, non-coordinator
-  PATs, with the consent text served from one source. Withdrawing works on any
-  connection, also expired or revoked ones; another member's row gets its own
-  message.
-- Answering: the connection must be a live PAT or OAuth connection of a current
-  owner, top-level, not a runner, hold the scope, and the ask's recipient must be
-  exactly that owner. Project seats and board coordinators are refused. The app
-  needs `memory:write` and read access to the board's wing; write access is the
-  owner's **person-level** access (`_owner_writes`: the owner's current person
-  policy can write the board's wing), so it answers wherever the owner could in
-  the browser, regardless of the app's own `inbox` write wing, and is refused
-  where the owner cannot write. It cannot escalate or answer its own ask. An untrusted PAT with the scope sees `decide`; without it,
-  tool lists stay unchanged.
-- Audit: inside the answer's board transaction, before it commits, every
-  delegated answer writes `audit_log` action `card.decide.delegated` with user,
-  connection id, auth kind, board and card number. A failed audit write fails the
-  answer. The audit log is append-only and a separate database, so if the board
-  transaction rolls back after the row was written, a `card.decide.rolled_back`
-  row with `reason=audit_seq=<seq>` cancels it. Window: an audit row without an answer is possible after a kill between the two commits, or when the cancel write fails. No answer commits without its audit row; no
-  reconcile exists yet. Grants and withdrawals write
-  `connection.decide.grant` and `connection.decide.revoke`.
-- Revocation: `PATCH {"decide": false}` (PAT or OAuth) or revoking the connection
-  takes effect on the next request; policies load on every request and lose the
-  scope when the holder stops being owner. Losing eligibility removes the stored
-  grant, each with a `connection.decide.revoke` audit row, so regaining it needs
-  fresh consent:
-  - demotion: a membership trigger fires on an `UPDATE` of `memberships.role`
-    from `owner` to anything else (reason "ownership lost"); deleting a
-    membership is refused by the foreign key while the user has connections;
-  - coordinator assignment: `board_set` clears the grant of the connection it
-    assigns (reason "coordinator") inside its transaction and again after the
-    commit; the grant route re-reads coordinators after writing a grant and
-    withdraws it (409) if the app became one meanwhile. Unassigning does not
-    restore it, because every path that removes or replaces a coordinator
-    (`board_set` replace or unassign, and the auto-unbind when the owner runs the
-    own-wing action and the app can no longer coordinate the board, whether or not
-    the wing changes) clears that connection's grant before the board commit. The
-    clear is its own control-database commit, ordered before the board COMMIT, not
-    one atomic transaction with it: a grant left by a failed clear or a crash is
-    gone before the app stops coordinating; a failed clear rolls the removal back;
-    a crash after the clear leaves the coordinator in place without a grant (fail
-    closed);
-  - expiry: rotating an expired PAT clears the grant (reason "expired"); rotating
-    a live PAT keeps it. Expired tokens can still be rotated, as the connection
-    docs describe.
-- OAuth token and refresh responses (and the stored token rows) carry only the
-  granted scopes the connection still holds after policy and role intersection,
-  so a withdrawn `cards:decide` never reappears in a refresh.
-
-- Test collection: the consent and Agents browser test skips without Playwright
-  (collecting `tests/` must never error); `CP_BROWSER_E2E=1` makes a missing
-  Playwright fail instead.
-
-- Compatibility baseline: the pinned handoff "off" baseline test supplies
-  `commonplace/decide_grant.py` and `mempalace/deadline.py` (leaf modules the current
-  board and rules code import);
-  its gateway, policy and handoff comparison stays pinned.
+Moved to [`docs/system/owner-granted-answers-from-the-owner-s-own-apps-cards.md`](docs/system/owner-granted-answers-from-the-owner-s-own-apps-cards.md); edit it there.
 
 ### Explicit imported-history reader consent
 
-  - Imported view proofs share the response access checker with normalized citation and private-source authorization; thread-bound mutation and source-delete checks remain enforced.
-  - Ordinary recall checks imported identity fields only for imported threads; the release journey verifies owner read-back and the write-only bearer’s metadata-free not-found response.
-  - Legacy import compatibility: Existing three-part import identities retain ordinary filer-bound read access without data migration; consented reader views require complete four-part identities.
-
-- `memory:import` stays write-only.
-
-- New PAT and OAuth readers need a separate, unticked consent and `memory:read` plus `memory:import:read`.
-
-- No defaults, person policies, migration, parent relationship, wing PATCH, refresh or CLI issuer adds this scope.
-
-- PAT trust remains untrusted; OAuth trust remains standard.
-
-- Exact filing account, workspace, private-import identity and current personal ownership authorize the read-only view.
-
-- Import views bypass read-wing grants; explicit filters still select results.
-
-- Full-ACL imports, other accounts, captures and unrelated private data remain outside the exception.
-
-- REST and Memory reads share Recall authorization; MCP thread tools retain threads:read.
-
-- A holder's complete archive ranges must fit within the import offset.
-
-- Forks contribute only the bounded imported suffix.
-
-- Unknown or inconsistent bounds fail closed, without read-time adoption.
-
-- Mirror words require stored source, complete range and reconstructed unit proof before previews or CLI rendering; room authority and caller labels are insufficient.
-
-- Indexed candidates may fall back to exact-view matches.
-
-- Startup preserves the live eligibility callback and its deadline without opening new stores or scanning history.
-
-- Revoking the connection stops all credentials; rotation preserves consent.
-
-- Refresh narrowing affects descendants, while earlier access tokens and the connection policy retain their original authority.
-
-- Revoke and reconnect with the reader box unticked to withdraw all authority.
-
-- Stored imports and text already returned remain.
-
-- No authority cache survives a response.
+Moved to [`docs/system/explicit-imported-history-reader-consent.md`](docs/system/explicit-imported-history-reader-consent.md); edit it there.
 
 
 ### Triggers
