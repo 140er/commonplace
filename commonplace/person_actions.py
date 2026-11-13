@@ -1,7 +1,7 @@
 """Explicit phone consent for a person's card actions; disabled unless enabled.
 
-These capabilities grant only their dedicated routes. They never turn an OAuth bearer
-into a session, and never authorize other person-only routes or MCP tools.
+These capabilities grant only their dedicated routes and card queue projection.
+They never turn an OAuth bearer into a session or authorize other person-only tools.
 """
 
 from __future__ import annotations
@@ -188,11 +188,11 @@ def authority(gateway, h, capability, board_conn=None):
             raise HTTPError(404, "not found")
         with gateway.db._lock:
             grant = gateway.db._conn.execute(
-                "SELECT g.client_id,c.client_name FROM oauth_person_grants g "
+                "SELECT g.client_id,c.client_name,g.revoked_at FROM oauth_person_grants g "
                 "JOIN oauth_clients c ON c.client_id=g.client_id "
                 "JOIN oauth_tokens t ON t.connection_id=g.connection_id AND t.client_id=g.client_id "
                 "WHERE g.connection_id=? AND g.capability=? AND g.user_id=? AND g.workspace_id=? "
-                "AND g.revoked_at IS NULL AND t.token_hash=? AND t.kind='access' "
+                "AND t.token_hash=? AND t.kind='access' "
                 "AND t.revoked_at IS NULL AND t.expires_at>?",
                 (
                     app.connection_id,
@@ -206,7 +206,9 @@ def authority(gateway, h, capability, board_conn=None):
         person = sessions.person_principal(gateway.db, app.user_id, app.workspace_id)
         if grant is None or person is None:
             raise HTTPError(404, "not found")
-        return app, person, dict(grant)
+        if grant["revoked_at"] is not None:
+            raise HTTPError(403, "capability revoked")
+        return app, person, {key: grant[key] for key in ("client_id", "client_name")}
     except (ControlError, LookupError):
         raise HTTPError(404, "not found") from None
 
@@ -254,6 +256,31 @@ def chat_person(gateway, h):
         return authority(gateway, h, CHAT_CAPABILITY)[1]
     except HTTPError:
         return None
+
+
+def needs_me(gateway, h):
+    """Route-local card projection; only live capabilities expose web action ids."""
+    if not enabled():
+        return None
+    person, allowed = None, set()
+    for capability, actions in (
+        (DECIDE_CAPABILITY, ("accept", "answer")),
+        (APPROVE_CAPABILITY, ("approve", "reject")),
+    ):
+        try:
+            _, person, _ = authority(gateway, h, capability)
+        except HTTPError:
+            continue
+        allowed.update(actions)
+    if not allowed:
+        return None
+    service = BoardService(ToolContext(principal=person, gateway=gateway))
+    groups = service.needs_me(cards_only=True)
+    for bucket in groups.values():
+        if isinstance(bucket, list):
+            for card in bucket:
+                card["actions"] = [action for action in card["actions"] if action in allowed]
+    return groups
 
 
 def post_chat(gateway, h, board, body):

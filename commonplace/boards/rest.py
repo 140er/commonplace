@@ -389,7 +389,10 @@ def dispatch(service, h, parts, method):
     if parts == ["cards"] and method == "GET":
         return 200, open_cards(service.task_list(top_level=True), query(h).get("limit"))
     if parts == ["needs-me"] and method == "GET":
-        return 200, service.needs_me()
+        from commonplace import person_actions
+
+        projected = person_actions.needs_me(service.ctx.gateway, h)
+        return 200, projected if projected is not None else service.needs_me()
     if parts == ["needs-me", "digest"] and method == "GET":
         if query(h).get("format", "json") not in ("json", "text", "ssml"):
             raise HTTPError(400, "format must be json, text or ssml")

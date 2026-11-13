@@ -4761,7 +4761,7 @@ class BoardService(lifecycle.LifecycleMixin):
             conn.execute("SELECT 1 FROM boards WHERE coordinator=? LIMIT 1", (p.actor,)).fetchone()
         )
 
-    def needs_me(self, format="list"):
+    def needs_me(self, format="list", *, cards_only=False):
         if not self.principal.policy.has_scope(
             "memory:read"
         ) or not self.principal.policy.tool_visible("needs_me"):
@@ -4806,6 +4806,8 @@ class BoardService(lifecycle.LifecycleMixin):
                 }
             )
             groups["approvals_truncated"] = approvals["truncated"] or approvals["more"]
+        if cards_only:
+            return groups
         if format == "digest":
             result = digest(groups)
             if groups["approvals_truncated"]:
