@@ -42,7 +42,8 @@ export function createDeckAppearance({ root, context, on, doc = globalThis.docum
   const home = () => base === '#/' || base === '#/home';
   function loadPerson() {
     const next = appearanceStore(context?.()?.me, storage);
-    if (next.key !== personKey || !store) { store = next; personKey = next.key; value = store.read(); }
+    if (next.key !== personKey || !store) { store = next; personKey = next.key; value = store.read(); return true; }
+    return false;
   }
   function apply() {
     doc.documentElement.style.setProperty('--surface-a', String(value.surface));
@@ -66,7 +67,7 @@ export function createDeckAppearance({ root, context, on, doc = globalThis.docum
     if (!on()) { stop(); return; }
     const center = root?.querySelector?.('.center');
     if (!center || !doc?.createElement) return;
-    loadPerson();
+    const personChanged = loadPerson();
     // Set the saved alpha before the shell paints; construct with the saved scene on the first pass.
     doc.documentElement.style.setProperty('--surface-a', String(value.surface));
     if (panel && !panel.isConnected) clearPreviews();
@@ -77,7 +78,7 @@ export function createDeckAppearance({ root, context, on, doc = globalThis.docum
       const canvas = doc.createElement('canvas'); canvas.className = 'stage-dither';
       stage.append(canvas); center.prepend(stage);
       renderer = new StageDither(canvas, { ...value, dim: home() ? 0 : .45 });
-    } else if (renderer.opts.dim !== (home() ? 0 : .45) || renderer.opts.scene !== value.scene) apply();
+    } else if (personChanged || renderer.opts.dim !== (home() ? 0 : .45) || renderer.opts.scene !== value.scene) apply();
   }
   function settings(box) {
     if (!on() || !box?.ownerDocument) return;
