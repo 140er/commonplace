@@ -272,7 +272,10 @@ def attention(db, owner):
                         "projects": list(view["scope"]["projects"]),
                         "topics": view["scope"]["topics"],
                         "runtime": view["scope"]["max_runtime_mode"],
-                        "unsupported": row["provider"] == "claude",
+                        "manual_login": row["provider"] == "claude",
+                        "sign_in_command": 'sh "$HOME/.commonplace-runner/sign-in" claude'
+                        if row["provider"] == "claude"
+                        else None,
                     }
                 )
             if _prerequisites(db, machine, view["scope"]):
@@ -322,7 +325,7 @@ def decide(gateway, owner, mid, rid, data):
         if row["kind"] == "attest":
             raise ValueError("use the owner attestation action")
         if row["provider"] == "claude" and data["approve"]:
-            raise registry.Conflict("browser-only login unavailable")
+            raise registry.Conflict("sign in on the machine; signed status required")
         if row["kind"] == "grant" and data["approve"]:
             _mint_in(gateway, row, scope)
         stamp = control_db._iso(control_db._now())
@@ -331,6 +334,28 @@ def decide(gateway, owner, mid, rid, data):
             ("approved" if data["approve"] else "denied", owner.user_id, stamp, rid),
         )
         _audit(db, row, "approve" if data["approve"] else "deny", owner)
+        return {"ok": True, "agent_ready": False}
+
+
+def refuse(gateway, owner, mid, rid, data):
+    """Reject the whole enrollment, atomically using the ordinary revoke path."""
+    db = gateway.db
+    with db._tx():
+        owner = enrollment.owner_now(db, owner)
+        machine = registry.require_active(db, owner, mid)
+        row, scope = _current_request(db, machine, rid)
+        if row["owner_id"] != owner.user_id:
+            raise enrollment.Refused(404)
+        if not isinstance(data, dict) or set(data) != {"scope_digest", "fingerprint"}:
+            raise ValueError("invalid setup refusal")
+        if (
+            row["state"] not in ("pending", "approved")
+            or data["scope_digest"] != row["scope_digest"]
+            or data["fingerprint"] != scope["machine_key_digest"]
+        ):
+            raise registry.Conflict("setup approval changed or expired")
+        registry.revoke_in(db, owner, mid)
+        _audit(db, row, "refuse", owner)
         return {"ok": True, "agent_ready": False}
 
 
@@ -406,14 +431,29 @@ def report(gateway, principal, data):
     db = gateway.db
     with db._tx():
         machine = machine_now(db, principal)
-        row, scope = _proof(db, machine, data, "login_succeeded")
-        if row["kind"] != "login" or row["provider"] != "codex" or row["state"] != "approved":
-            raise registry.Conflict("login approval required")
-        db._conn.execute(
-            "UPDATE runner_browser_requests SET state='succeeded',proof_hash=? WHERE id=?",
-            (enrollment._hash(data["signature"]), row["id"]),
+        action = data.get("action") if isinstance(data, dict) else None
+        if action not in ("login_succeeded", "login_needed"):
+            raise ValueError("invalid login status")
+        row, scope = _proof(db, machine, data, action)
+        allowed = (
+            ("pending", "approved", "succeeded")
+            if row["provider"] == "claude"
+            else ("approved", "succeeded")
         )
-        _audit(db, row, "login_succeeded", principal)
+        if (
+            row["kind"] != "login"
+            or row["provider"] not in ("claude", "codex")
+            or row["state"] not in allowed
+        ):
+            raise registry.Conflict("login approval required")
+        if action == "login_succeeded" and row["state"] == "succeeded":
+            raise registry.Conflict("login status already recorded")
+        state = "succeeded" if action == "login_succeeded" else "pending"
+        db._conn.execute(
+            "UPDATE runner_browser_requests SET state=?,proof_hash=? WHERE id=?",
+            (state, enrollment._hash(data["signature"]), row["id"]),
+        )
+        _audit(db, row, action, principal)
         return {"ok": True, "agent_ready": False}
 
 
@@ -457,16 +497,13 @@ def delivery(gateway, principal, data):
 def _prerequisites(db, machine, scope):
     frozen = enrollment._hash(install_receipts.canonical(scope).decode())
     stamp = control_db._iso(control_db._now())
-    providers = set(scope["runtime"]["components"]) - {"host"}
-    rows = db._conn.execute(
-        "SELECT provider FROM runner_browser_requests WHERE machine_id=? AND scope_digest=? AND kind='login' AND state='succeeded' AND expires_at>?",
-        (machine["id"], frozen, stamp),
-    ).fetchall()
     grant = db._conn.execute(
         "SELECT 1 FROM runner_host_grants g JOIN runner_browser_requests r ON r.id=g.request_id WHERE g.machine_id=? AND r.scope_digest=? AND r.state='succeeded' AND g.acknowledged_at IS NOT NULL AND g.revoked_at IS NULL AND g.expires_at>?",
         (machine["id"], frozen, stamp),
     ).fetchone()
-    return providers == {r[0] for r in rows} and grant is not None
+    # Identity attestation and the host grant do not assert a provider login.
+    # Execution remains disabled; a missing login never authorizes that provider.
+    return grant is not None
 
 
 def attest_in(db, owner, machine, data):

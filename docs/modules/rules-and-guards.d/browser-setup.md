@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - The explicit inventory of setup consent, short-code display, signed machine status and encrypted-delivery write shapes.
+  - The explicit inventory of setup consent, enrollment refusal, short-code display, signed machine status and encrypted-delivery write shapes.
 
 - **Promises:**
 

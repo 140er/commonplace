@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - The guide distinguishes supported device login from unsupported remote code entry, private delivery from live host authority, and owner attestation from independently verified identity. It claims no execution readiness or real issuer compatibility.
+  - The guide distinguishes device login from the supported owner terminal sign-in exception, private delivery from live host authority, and owner attestation from independently verified identity. It claims no execution readiness or real issuer compatibility.
 
 - **Tests:**
 

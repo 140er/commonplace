@@ -514,25 +514,37 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (button.disabled) return;
     if (button.hasAttribute("data-runner-consent")) {
       const item = (data.needs.runner_setup || []).find(row => row.id === button.dataset.runnerConsent);
-      const card = button.closest('[data-runner-consent-card]'), status = card?.querySelector('[data-runner-consent-status]');
-      if (!item || !status || busy) return;
-      if (!card.querySelector('[data-runner-fingerprint]')?.checked) { status.textContent = 'Compare and confirm the machine fingerprint first.'; return; }
-      busy = true; button.disabled = true; status.textContent = 'Saving…';
+      const card = button.closest('[data-runner-consent-card]');
+      if (!item || !card || busy || item.ui_result) return;
+      const action = button.dataset.runnerConsentAction;
+      if (action === 'refuse-start' || action === 'refuse-cancel') {
+        item.ui_refusing = action === 'refuse-start'; item.ui_error = '';
+        card.outerHTML = runnerConsent(item);
+        const updated = [...mount.querySelectorAll('[data-runner-consent-card]')].find(el => el.dataset.runnerConsentCard === item.id);
+        updated?.querySelector(`[data-runner-consent-action="${item.ui_refusing ? 'refuse-cancel' : 'refuse-start'}"]`)?.focus();
+        return;
+      }
+      if (action !== 'refuse' && !card.querySelector('[data-runner-fingerprint]')?.checked) return;
+      if (action === 'refuse' && !item.ui_refusing) return;
+      busy = true;
+      for (const control of card.querySelectorAll('button,input')) control.disabled = true;
+      card.querySelector('[data-runner-consent-status]').textContent = 'Saving…';
       try {
-        const result = await decideRunner(api, item, button.dataset.runnerConsentAction);
+        const result = await decideRunner(api, item, action);
         if (stopped) return;
-        if (button.dataset.runnerConsentAction === 'device') {
+        if (action === 'device') {
           if (result.url !== 'https://auth.openai.com/codex/device' || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(result.user_code)) throw new Error();
-          const link = doc.createElement('a'); link.href = result.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Open provider sign-in';
-          status.replaceChildren(link, doc.createTextNode(' · One-time code: ' + result.user_code + '. Enter it only on the provider’s website. This code is shown once.'));
-        } else {
-          status.textContent = 'Saved. The machine will continue setup automatically.';
-          item.state = 'approved';
-          if (item.approval_kind === 'login') { button.dataset.runnerConsentAction = 'device'; button.textContent = 'Show sign-in link and code'; button.disabled = false; }
-          onChange();
+          item.ui_device = result.user_code;
         }
-      } catch { if (!stopped) { status.textContent = 'Setup changed or is not ready. Refresh Needs me before trying again.'; button.disabled = false; } }
-      finally { busy = false; }
+        item.ui_result = action === 'refuse' ? 'refused' : 'confirmed';
+        item.ui_error = '';
+        if (action === 'refuse') data.needs.runner_setup = data.needs.runner_setup.filter(row => row.machine_id !== item.machine_id || row.id === item.id);
+      } catch {
+        if (!stopped) item.ui_error = 'Could not save. Refresh Needs me to check the current setup before trying again.';
+      } finally {
+        busy = false;
+        if (!stopped) card.outerHTML = runnerConsent(item);
+      }
       return;
     }
     // Picking an item takes the shared panel back from whatever paused the detail.
@@ -589,8 +601,14 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       try { await refreshHolds(); } catch (failure) { onError(failure); }
     }
   }
+  const consentChange = event => {
+    if (!event.target.matches?.('[data-runner-fingerprint]')) return;
+    const card = event.target.closest('[data-runner-consent-card]');
+    const primary = card?.querySelector('.runner-primary');
+    if (primary) primary.disabled = busy || !event.target.checked;
+  };
   const visibility = () => { if (!doc.hidden) void refreshHolds().catch(onError); };
-  for (const root of mounts) { root.addEventListener("click", click); root.addEventListener("keydown", keydown); }
+  for (const root of mounts) { root.addEventListener("click", click); root.addEventListener("keydown", keydown); root.addEventListener("change", consentChange); }
   doc?.addEventListener("visibilitychange", visibility);
   const timer = schedule(tick, 1000);
   return {
@@ -622,7 +640,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     stop() {
       stopped = true; github = null; mergedHeads.clear(); revision++; unschedule(timer);
       detailMount?.querySelector("dialog.confirm")?.close(); if (detailMount && current?.need === "merge") detailMount.innerHTML = ""; cards.clear(); notes.clear(); holds = []; current = null;
-      for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); }
+      for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); root.removeEventListener("change", consentChange); }
       doc?.removeEventListener("visibilitychange", visibility);
     },
   };

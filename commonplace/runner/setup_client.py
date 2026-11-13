@@ -112,9 +112,19 @@ class Setup:
                     raise ValueError
                 if row["kind"] == "login":
                     provider = row["provider"]
-                    status["providers"][provider] = (
-                        "unsupported" if provider == "claude" else row["state"]
-                    )
+                    status["providers"][provider] = row["state"]
+                    if provider == "claude":
+                        fact = self.runtime.read()["components"][provider]
+                        if fact["login"] == "unverified" and row["state"] != "succeeded":
+                            self.call(
+                                "/api/runner/setup-requests", self._proof(row, "login_succeeded")
+                            )
+                            status["providers"][provider] = "succeeded"
+                        elif fact["login"] != "unverified" and row["state"] == "succeeded":
+                            self.call(
+                                "/api/runner/setup-requests", self._proof(row, "login_needed")
+                            )
+                            status["providers"][provider] = "pending"
                     if provider == "codex" and row["state"] == "approved":
                         self.install.device_login.advance(self, row, scope)
                 elif row["kind"] == "grant":

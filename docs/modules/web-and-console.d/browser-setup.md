@@ -4,8 +4,8 @@
 
 - **Promises:**
 
-  - Cards use plain labels, 24px titles, phone gutters and a deliberate fingerprint comparison. Opaque identifiers stay out of visible copy. A short provider code is shown once through a person-only action; provider credentials and access secrets are never displayed.
-  - Disabled setup contributes no cards, counts or new navigation. Unsupported sign-in offers no workaround.
+  - Cards use the real Deck shell, 24px titles, a 720px maximum width, phone gutters, selectable eight-character fingerprint groups in a 4/2 grid, exclusive form/result states and a deliberate comparison. Refusal has one confirmation step and revokes enrollment. Opaque identifiers stay out of visible copy. A short provider code is shown once through a person-only action; provider credentials and access secrets are never displayed.
+  - Disabled setup contributes no cards, counts or new navigation. The supported terminal sign-in card gives the exact command and resolves only from signed machine status.
 
 - **Tests:**
 

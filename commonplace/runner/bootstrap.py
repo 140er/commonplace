@@ -8,6 +8,7 @@ No download or package installation is performed by this slice.
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -87,12 +88,20 @@ def main(argv=None, *, launch=None):
                 result = subprocess.run(
                     command,
                     stdin=sys.stdin,
-                    stdout=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     check=False,
                     env={"PATH": "/usr/bin:/bin", "HOME": args.home},
                 )
                 code = result.returncode
+                # Forward only the public comparison value, never raw installer output.
+                if code == 0:
+                    match = re.search(
+                        rb"(?m)^Machine fingerprint: ([0-9a-f]{8}(?: [0-9a-f]{8}){7})$",
+                        result.stdout,
+                    )
+                    if match:
+                        print("Machine fingerprint: " + match[1].decode("ascii"))
             else:
                 code = launch(command)
         print("runner bootstrap: " + ("complete" if code == 0 else "refused"))

@@ -30,7 +30,9 @@ KEY = STATE + "/machine-key.pem"
 DELIVERY = STATE + "/delivery.json"
 CONFIG = STATE + "/config.json"
 LOCK = STATE + "/install.lock"
+SIGN_IN = STATE + "/sign-in"
 FILES = {
+    SIGN_IN,
     APPROVAL_KEY,
     CACHE,
     KEY,
@@ -547,7 +549,7 @@ class Installer:
                 self._remove_unit()
                 raise
         _, _, fingerprint = enrollment_crypto.public_key(self._identity()["public_key"])
-        self.out("Machine fingerprint: " + fingerprint)
+        self.out("Machine fingerprint: " + " ".join(re.findall(".{8}", fingerprint)))
         self.out(
             "Continue in Needs me to approve sign-in, machine access and the matching fingerprint."
         )
@@ -622,11 +624,42 @@ class Installer:
         if self.fs.info(STATE + "/setup-status.json") is not None:
             state = json.loads(self.fs.read(STATE + "/setup-status.json"))
             if state.get("fingerprint"):
-                self.out("Machine fingerprint: " + state["fingerprint"])
+                self.out(
+                    "Machine fingerprint: " + " ".join(re.findall(".{8}", state["fingerprint"]))
+                )
                 for provider, outcome in state.get("providers", {}).items():
                     self.out(provider + ": " + outcome)
                 self.out("Machine access: " + state.get("grant", "approval-needed"))
         self.out("installation phase: " + phase + "; execution disabled")
+        return 0
+
+    def sign_in(self, provider):
+        from .runtime_install import HOME, Runtime
+
+        if provider != "claude":
+            raise InstallError("unsupported terminal sign-in")
+        self.sync_receipts()  # Live authority and signed scope before the terminal step.
+        with self.locked():
+            self.load()
+            config = json.loads(self.fs.read(CONFIG))
+            runtime = Runtime(self, config, self.transport, self.runtime_host)
+            scope = runtime._receipt()
+            component = runtime.read()["components"][provider]
+            raw = (
+                self.fs.read(component["path"])
+                if not os.path.isabs(component["path"])
+                else runtime.host.locate(provider)["raw"]
+            )
+            fact = runtime.host.probe(
+                provider,
+                scope["runtime"]["components"][provider],
+                raw,
+                self.fs.home / HOME,
+                sign_in=True,
+            )
+            if fact["availability"] != "present" or fact["login"] != "unverified":
+                raise InstallError("subscription sign-in is still needed")
+        self.sync_receipts()  # Only a new CLI probe and signed machine fact resolve the card.
         return 0
 
     def sync_receipts(self):
@@ -648,8 +681,21 @@ class Installer:
                     runtime = Runtime(self, config, transport, self.runtime_host)
                     runtime.sync()
                     if hasattr(transport, "setup"):
+                        import shlex
+
                         from .setup_client import Setup
 
+                        command = (
+                            [sys.executable, "-I", str(self.fs.home / STATE / "runner.pyz")]
+                            if self.fs.info(STATE + "/runner.pyz") is not None
+                            else [sys.executable, "-m", "commonplace"]
+                        )
+                        self.file(
+                            SIGN_IN,
+                            (
+                                "#!/bin/sh\nexec " + shlex.join(command) + ' runner sign-in "$@"\n'
+                            ).encode(),
+                        )
                         Setup(self, runtime).sync()
                 elif self.fs.info(RUNTIME_CACHE) is not None:
                     Runtime(self, config, transport).clear()
@@ -746,6 +792,8 @@ def run(args, *, host=None, transport=None, code_source=None):
         installer = Installer(args.home, host, transport)
         if args.action == "status":
             return installer.status()
+        if args.action == "sign-in":
+            return installer.sign_in(args.provider)
         if args.action == "uninstall":
             return installer.uninstall()
         release = (args.release, args.release_signature, args.release_key)

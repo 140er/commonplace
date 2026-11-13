@@ -12,7 +12,7 @@ from . import enrollment, enrollment_api, install_receipts, registry, setup_appr
 def _reply(h, operation):
     try:
         result = operation()
-    except enrollment.Refused:
+    except (enrollment.Refused, registry.NotFound):
         send_json(h, 404, {"error": "not found"})
     except (registry.Conflict, install_receipts.ApprovalRequired):
         send_json(h, 409, {"error": "setup approval unavailable; review current settings"})
@@ -67,7 +67,7 @@ def owner_dispatch(gateway, h):
         if (
             len(parts) != 4
             or parts[1] != "setup-requests"
-            or parts[3] not in ("decide", "device")
+            or parts[3] not in ("decide", "device", "refuse")
             or h.command != "POST"
             or urlsplit(h.path).query
         ):
@@ -76,6 +76,8 @@ def owner_dispatch(gateway, h):
             if enrollment_api._body(h) != {}:
                 raise ValueError
             return consent.reveal(gateway, owner, parts[0], parts[2])
+        if parts[3] == "refuse":
+            return consent.refuse(gateway, owner, parts[0], parts[2], enrollment_api._body(h))
         return consent.decide(gateway, owner, parts[0], parts[2], enrollment_api._body(h))
 
     _reply(h, operation)

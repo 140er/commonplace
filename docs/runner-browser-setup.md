@@ -1,90 +1,85 @@
-# Browser approvals for runner setup
+# Runner setup approvals
 
-Slice 5 of [the installer plan](design/runner-box-installer.md) adds browser
-consent, private access delivery and final fingerprint confirmation. Setup stays
-off by default. This slice does not enable execution; supervised stop and lease
-proofs in slice 6 remain required.
+Slice 5 of [the installer plan](design/runner-box-installer.md) adds owner consent,
+provider sign-in, private host access delivery and final fingerprint confirmation.
+Setup is off by default. Execution remains disabled until slice 6 proves the
+real host issuer, direct scope enforcement, supervised stop and offline deadlines.
 
-## What the owner does by hand
+## Exact owner steps
 
 1. In the browser or app, enable runner setup, review the selected projects,
    topics, providers and access limit, and choose **Add runner** once.
 2. On the intended machine, run the generated command and accept its installation
-   scope once. Keep the displayed machine fingerprint available for comparison.
-3. In **Needs me**, compare the fingerprint with the machine, then choose
-   **Allow sign-in** for each selected provider with a supported device flow.
-   Choose **Show sign-in link and code**, open the provider's own website on any
+   scope once. Keep the printed fingerprint available for comparison.
+3. For Codex, compare every fingerprint group in **Needs me**, tick the comparison
+   and choose **Confirm matching machine**. On the next refresh, compare again
+   and choose **Show sign-in link and code**. Open the provider website on any
    device, sign in to the intended subscription account and enter the displayed
-   short code there. Never enter a credential or a returned login code on the
-   runner machine. The short code is displayed once; after a lost or expired
-   presentation, wait for a fresh request.
-4. In **Needs me**, review the machine fingerprint, projects, topics and access
-   limit, confirm the comparison and choose **Approve access**. Delivery to the
-   machine is automatic; there is no secret to copy, type or carry.
-5. When **Confirm this machine** appears, compare every fingerprint group again,
-   confirm the comparison and choose **Confirm matching machine**. This records
-   the owner's attestation, not independent machine verification. Execution stays
-   disabled until the lifecycle prerequisites are implemented and proved.
+   short code there. It is shown once; lost or expired presentations require a
+   fresh request. The machine completes the device exchange itself.
+4. For Claude, on that machine run `sh "$HOME/.commonplace-runner/sign-in" claude`.
+   This invokes the verified CLI's `claude auth login --claudeai` using the installation's
+   private credential directory, without inherited API keys. Open the link it
+   prints on any device, then type the code the sign-in page shows into the
+   machine when asked. The hub never sees this code. The card says
+   **waiting for sign-in on the machine** until the next CLI status probe and
+   signed machine report; there is no completion checkbox to tick.
+5. In **Needs me**, compare the fingerprint, review **Projects**, **Topics** and
+   **Access limit**, tick the comparison and choose **Approve access**. Delivery
+   is automatic; no host access secret is copied, typed or displayed.
+6. At **Confirm this machine**, compare every fingerprint group again, tick the
+   comparison and choose **Confirm matching machine**. This records the owner's
+   attestation. Host access approval and attestation can finish while a provider
+   still needs sign-in. That provider remains unable to run.
 
-The counts are one Add action and one installation accept, followed by one
-browser consent and one provider website sign-in per missing supported login,
-one access approval and one final machine confirmation. Existing subscription
-credentials are not copied or silently reused. There is no additional terminal
-prompt, password entry or configuration edit.
+At any comparison, a mismatch ends with **This is not my machine**, followed by
+**Yes, refuse this machine**. Refusal ends the enrollment and revokes its machine
+and worker credentials, binding, grants, CLI status and pending Needs me requests.
+Cancel returns to comparison without a write. Every decision records the person.
 
-## Compatibility limits
+The owner-approved terminal step for Claude is a supported exception to the
+plan's original browser-only login recommendation. Nothing from that exchange is
+entered into the hub. Only the machine's signed fixed status reaches it. The
+command has no credential argument; no credential directory is copied, no
+callback proxy is introduced and no alternate billing path is used.
 
-The device-capable subscription CLI documents a dedicated device login command;
-its own process exchanges the device authorization and writes its credentials in
-the private runtime home. The hub receives only a signed success fact. Access
-keys and alternate billing paths are not used.
+The manual counts are one Add action and one installation accept, followed by
+one browser consent and one provider website sign-in for missing Codex login,
+one terminal command and one provider website/code exchange for missing Claude
+login, one access approval and one final machine confirmation. Refreshes and
+fingerprint comparisons carry no secrets. Sources: [device authentication](https://learn.chatgpt.com/docs/auth),
+[terminal/browser authentication](https://code.claude.com/docs/en/authentication)
+and [sign-in/status commands](https://code.claude.com/docs/en/cli-reference).
 
-The other selected subscription CLI documents browser OAuth with a local
-callback and a fallback that requires pasting a returned code into the terminal.
-Its checked login command offers no device-code option. That remote login path
-is **unsupported** here: no callback proxy, terminal-code relay, credential copy
-or billing fallback is invented. Its Needs me item states the limitation and
-setup stays incomplete. Sources: [device authentication](https://learn.chatgpt.com/docs/auth)
-and [browser authentication](https://code.claude.com/docs/en/authentication).
+## Scope, authority and recovery
 
-The access file minted by the hub contains a random secret and a signed exact
-scope: machine key, workspace, installation, provider instance, projects, topics,
-wings, requesters, versioned binding and access limits. It is a dormant host
-integration contract. Compatibility with a real host issuer and enforcement of
-the scope on direct host calls remain release blockers, along with the lifecycle
-proofs. A synthetic issuer or a successful delivery is not proof of live access.
+Only the enrollment's current person owner can approve, reveal a device code,
+refuse or attest. Writes require JSON and same-origin protection. Machine, worker,
+member and other connected credentials cannot decide. Requests freeze the complete
+scope and expire after five minutes. Wrong workspace, machine, fingerprint,
+settings or binding versions, replay and expired decisions are refused.
 
-## Authority and recovery
+The hub mints a dormant host access contract bound to the machine key, workspace,
+installation, provider instance, projects, topics, wings, requesters, versioned
+binding and access limit. Real issuer compatibility remains a release blocker.
+The hub stores only a verifier hash and machine-key ciphertext; the only persistent
+plaintext copy is the machine's 0600 access file in its 0700 installation directory.
+Durable storage precedes acknowledgement, which purges ciphertext. Lost responses
+recover the same envelope, never another secret. Access lasts ten minutes and
+renewal requires fresh consent, with no silent scope expansion.
 
-Only the enrollment's current person owner can decide its browser requests.
-Browser writes require JSON and the existing same-origin protection. Machine,
-worker and other connected credentials cannot approve, reveal a short code or
-perform final confirmation. All successful decisions record the person in audit.
-Machine reports require the enrolled private key and current machine credential.
+Short device codes are hashed at rest and displayed once from bounded volatile
+memory. Restart loses the presentation. Provider credentials never reach the hub.
+The automatic device process has closed stdin, an isolated private home, bounded
+output and a hard deadline. The deliberate terminal exchange inherits only the
+owner's terminal streams and a restricted environment, with a five-minute timeout;
+its output and input are never captured by setup or forwarded to the hub. A
+subscription-only read-only probe runs afterwards in the same private directory.
 
-Requests expire after five minutes and freeze a digest of the complete approved
-scope. Decisions consume one pending state. Changed scope, settings, key,
-workspace or binding versions invalidate old decisions. Final confirmation uses
-the existing owner attestation route and refuses missing logins, unacknowledged
-access delivery, a wrong fingerprint or replay.
-
-Short provider codes exist only in bounded, expiring process memory until one
-owner read; only a hash is stored in the database. A restart loses the display,
-requiring a new request after expiry. Provider access and refresh credentials
-never reach the hub. The login process has closed standard input, an isolated
-private home, no inherited credentials, bounded output and a hard deadline.
-
-Access secrets are stored as a verifier hash and machine-key ciphertext in the
-hub. The only plaintext persistent copy is the machine's private access file,
-mode 0600 in its 0700 installation directory. Acknowledgement follows a durable
-write and removes ciphertext. Lost fetch responses recover the same ciphertext;
-replay never mints another secret. The access file expires after ten minutes.
-Renewal requires fresh browser consent; there is no silent renewal or permission
-expansion. These are setup lifetimes, not execution leases.
-
-Revoke and Disable runner setup invalidate machine credentials, login status,
-pending decisions and access verifiers together. Current reads immediately
-refuse revoked authority. Offline process termination is not claimed by this
-slice. The setup service clears private cached access after a refusal and stops
-its owned login process. Re-enabling revives no previous approval. Export
-redacts verifiers and ciphertext; account deletion removes the dependent rows.
+Revoke, refusal and Disable runner setup invalidate credentials, status, decisions
+and access verifiers atomically. Reads immediately refuse revoked authority. The
+setup service clears cached access and stops its owned device login when it next
+checks authority. Offline process termination is a slice 6 proof, not claimed
+here. Re-enabling revives no approval. Account export redacts secret fields and
+account deletion removes the dependent rows. The UI lives within the real Deck
+shell, with a selectable fingerprint grouped exactly like installer output.

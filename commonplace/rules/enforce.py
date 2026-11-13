@@ -145,6 +145,14 @@ RUNNER_SETUP_ROUTES = (
     RestRoute(
         "runner.setup_api",
         "POST",
+        "/api/runners/<machine>/setup-requests/<request>/refuse",
+        "",
+        "exempt",
+        "Enrollment owner person session only; fingerprint-bound enrollment revocation",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
         "/api/runners/<machine>/setup-requests/<request>/decide",
         "",
         "exempt",

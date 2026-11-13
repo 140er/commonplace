@@ -1,4 +1,4 @@
-"""Behavioral witness that also runs unchanged against the pre-consent base."""
+"""Behavioral regression witness: missing consent is an expected base failure."""
 
 # ruff: noqa: F811
 from commonplace.runner import install_receipts, registry

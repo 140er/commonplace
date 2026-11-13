@@ -259,21 +259,6 @@ def test_device_code_is_volatile_once_hashed_and_bound_to_owner(consented):
         approvals.present(s.gateway, s.principal, body)
 
 
-def test_missing_supported_flow_is_a_precise_refusal_without_login(ready):
-    s = ready
-    s.local.sync_receipts()
-    gateway = SimpleNamespace(db=s.db, runner_receipt_signer=s.key)
-    document = approvals.fetch(gateway, s.principal, "0" * 32)["receipt"]
-    row = next(r for r in document["requests"] if r["kind"] == "login")
-    s.document = document
-    assert row["provider"] == "claude"
-    with pytest.raises(registry.Conflict, match="browser-only login unavailable"):
-        approvals.decide(gateway, s.owner, s.config["machine_id"], row["id"], decision(s, row))
-    assert next(r for r in approvals.attention(s.db, s.owner) if r.get("provider") == "claude")[
-        "unsupported"
-    ]
-
-
 def handler(s, path, body, *, origin="https://hub.example.test"):
     raw = json.dumps(body).encode()
     headers = Message()
@@ -377,6 +362,7 @@ def test_setup_route_inventory_is_explicit_and_exempts_only_bound_facts_or_peopl
 
     assert {r.path for r in RUNNER_SETUP_ROUTES} == {
         "/api/runners/<machine>/setup-requests/<request>/decide",
+        "/api/runners/<machine>/setup-requests/<request>/refuse",
         "/api/runners/<machine>/setup-requests/<request>/device",
         "/api/runners/<machine>/attest",
         "/api/runner/setup-requests",
@@ -462,8 +448,9 @@ def test_installer_syncs_fresh_signed_decisions_and_clears_tampered_reply(consen
     assert json.loads(s.local.fs.read(GRANT)) == {}
 
 
+@pytest.mark.parametrize("persisted", [True, False])
 def test_verified_device_adapter_exchanges_on_machine_without_inherited_credentials(
-    consented, capsys, caplog
+    consented, capsys, caplog, persisted
 ):
     import signal
 
@@ -509,9 +496,21 @@ signal.pause()
         assert shown["user_code"] == "ABCD-EFGH"
         login.process.send_signal(signal.SIGUSR1)
         login.process.wait(timeout=5)
+        credential = s.home / HOME / ".codex/auth.json"
+        if not persisted:
+            credential.unlink()
+            with pytest.raises(InstallError):
+                login.advance(s.client, s.requests["login"], scope)
+            assert (
+                s.db._conn.execute(
+                    "SELECT state FROM runner_browser_requests WHERE id=?",
+                    (s.requests["login"]["id"],),
+                ).fetchone()[0]
+                == "approved"
+            )
+            return
         login.advance(s.client, s.requests["login"], scope)
         assert login.process is None
-        credential = s.home / HOME / ".codex/auth.json"
         assert stat.S_IMODE(credential.stat().st_mode) == 0o600
         assert "SyntheticProviderCredentialSentinel" in credential.read_text()
         captured = capsys.readouterr()
@@ -523,3 +522,361 @@ signal.pause()
     finally:
         login.stop()
         s.client.runtime = original
+
+
+def refusal(s, row):
+    return {k: v for k, v in decision(s, row).items() if k != "approve"}
+
+
+def test_owner_refusal_route_ends_setup_and_revokes_every_authority(consented, monkeypatch):
+    s = consented
+    final = finish(s, monkeypatch)
+    machine_token = s.local.fs.read(STATE + "/machine.token").decode()
+    worker_token = s.local.fs.read(STATE + "/worker.token").decode()
+    path = f"/api/runners/{s.config['machine_id']}/setup-requests/{final['id']}/refuse"
+    s.gateway.principal_for = lambda _: s.owner
+    h = handler(s, path, refusal(s, final))
+    assert setup_api.owner_dispatch(s.gateway, h) and h.status == 200
+    machine = registry.get_machine(s.db, s.owner.workspace_id, s.config["machine_id"])
+    assert machine["revoked_at"] and not machine["enabled"]
+    assert machine["binding_state"] == "unbound"
+    assert s.db.authenticate_token(machine_token) is None
+    assert s.db.authenticate_token(worker_token) is None
+    assert approvals.attention(s.db, s.owner) == []
+    assert (
+        s.db._conn.execute(
+            "SELECT count(*) FROM runner_browser_requests WHERE state!='revoked'"
+        ).fetchone()[0]
+        == 0
+    )
+    grant = s.db._conn.execute("SELECT * FROM runner_host_grants").fetchone()
+    assert grant["revoked_at"] and grant["secret_hash"] is None and grant["ciphertext"] is None
+    audit = s.db._conn.execute(
+        "SELECT * FROM audit_log WHERE action='runner.setup.refuse'"
+    ).fetchone()
+    assert audit["user_id"] == s.owner.user_id and audit["auth"] == "session"
+    for operation in (
+        lambda: approvals.fetch(s.gateway, s.principal, "1" * 32),
+        lambda: registry.attest(s.db, s.owner, machine["id"], final_body(s, final)),
+        lambda: approvals.refuse(s.gateway, s.owner, machine["id"], final["id"], refusal(s, final)),
+        lambda: approvals.report(
+            s.gateway, s.principal, s.client._proof(s.requests["login"], "login_succeeded")
+        ),
+    ):
+        with pytest.raises((enrollment.Refused, registry.NotFound, registry.Conflict)):
+            operation()
+    with pytest.raises(InstallError):
+        s.local.sync_receipts()
+    assert json.loads(s.local.fs.read(GRANT)) == {}
+
+
+@pytest.mark.parametrize("caller", ["member", "agent", "machine", "worker", "foreign"])
+def test_nonowner_cannot_refuse_machine(consented, caller):
+    s = consented
+    member_id = s.db.create_user("member@example.test")
+    s.db.add_member(s.owner.workspace_id, member_id, "member", actor=s.owner.user_id)
+    member = sessions.person_principal(s.db, member_id, s.owner.workspace_id)
+    who = {
+        "member": member,
+        "agent": replace(s.owner, auth="pat", person=False),
+        "machine": s.principal,
+        "worker": s.db.authenticate_token(s.local.fs.read(STATE + "/worker.token").decode()),
+        "foreign": replace(s.owner, workspace_id="other-workspace"),
+    }[caller]
+    s.gateway.principal_for = lambda _: who
+    row = s.requests["grant"]
+    path = f"/api/runners/{s.config['machine_id']}/setup-requests/{row['id']}/refuse"
+    h = handler(s, path, refusal(s, row))
+    assert setup_api.owner_dispatch(s.gateway, h) and h.status == 404
+    assert not registry.get_machine(s.db, s.owner.workspace_id, s.config["machine_id"])[
+        "revoked_at"
+    ]
+
+
+@pytest.mark.parametrize(
+    "change", ["origin", "expiry", "scope", "fingerprint", "machine", "request", "disabled"]
+)
+def test_refusal_refuses_foreign_stale_or_changed_request(consented, monkeypatch, change):
+    s = consented
+    row = s.requests["grant"]
+    body = refusal(s, row)
+    mid, rid = s.config["machine_id"], row["id"]
+    if change == "expiry":
+        now = control_db._now()
+        monkeypatch.setattr(control_db, "_now", lambda: now + timedelta(minutes=6))
+    elif change == "scope":
+        body["scope_digest"] = "f" * 64
+    elif change == "fingerprint":
+        body["fingerprint"] = "f" * 64
+    elif change == "machine":
+        mid = "mach_" + "0" * 16
+    elif change == "request":
+        rid = "another-request"
+    elif change == "disabled":
+        enrollment.set_enabled(s.db, s.owner, False)
+    s.gateway.principal_for = lambda _: s.owner
+    h = handler(
+        s,
+        f"/api/runners/{mid}/setup-requests/{rid}/refuse",
+        body,
+        origin="https://foreign.example.test" if change == "origin" else "https://hub.example.test",
+    )
+    assert setup_api.owner_dispatch(s.gateway, h) and h.status in (403, 404, 409)
+    assert (
+        s.db._conn.execute(
+            "SELECT count(*) FROM audit_log WHERE action='runner.setup.refuse'"
+        ).fetchone()[0]
+        == 0
+    )
+
+
+@pytest.fixture
+def manual(consented):
+    s = consented
+    runtime, artifacts = selection(("claude",))
+    s.runtime_host.artifacts.update({digest(raw): raw for raw in artifacts.values()})
+    assert approve(s, runtime)
+    s.local.sync_receipts()
+    s.document = approvals.fetch(s.gateway, s.principal, "3" * 32)["receipt"]
+    s.requests = {r["kind"]: r for r in s.document["requests"]}
+    return s
+
+
+def test_terminal_login_instructions_and_signed_probe_resolve_without_owner_checkbox(manual):
+    s = manual
+    card = next(r for r in approvals.attention(s.db, s.owner) if r["approval_kind"] == "login")
+    assert card.get("manual_login") is True
+    assert card["sign_in_command"] == 'sh "$HOME/.commonplace-runner/sign-in" claude'
+    # No browser claim or ordinary runtime report is accepted as completed login.
+    with pytest.raises(registry.Conflict):
+        allow(s, "login")
+    assert s.client.sync()["providers"] == {"claude": "pending"}
+    s.runtime_host.facts["claude"] = {"availability": "present", "login": "unverified"}
+    s.client.runtime.sync()  # Read-only CLI status; still only an unverified local fact.
+    assert any(r["approval_kind"] == "login" for r in approvals.attention(s.db, s.owner))
+    assert s.client.sync()["providers"] == {"claude": "succeeded"}
+    assert not any(r["approval_kind"] == "login" for r in approvals.attention(s.db, s.owner))
+    from commonplace.runner import runtime_status
+
+    assert runtime_status.attention(s.db, s.owner) == [], "no generic sign-in card remains"
+    with pytest.raises(registry.Conflict):
+        approvals.report(
+            s.gateway, s.principal, s.client._proof(s.requests["login"], "login_succeeded")
+        )
+    # Logging out invalidates the signed login result on the next probe and sync.
+    s.runtime_host.facts["claude"]["login"] = "logged-out"
+    s.client.runtime.sync()
+    assert s.client.sync()["providers"] == {"claude": "pending"}
+    assert any(r["approval_kind"] == "login" for r in approvals.attention(s.db, s.owner))
+
+
+def test_grant_and_attestation_can_finish_with_provider_sign_in_needed(manual):
+    s = manual
+    allow(s, "grant")
+    s.client._grant(s.requests["grant"], s.document["scope"])
+    final = next(r for r in approvals.attention(s.db, s.owner) if r["approval_kind"] == "attest")
+    registry.attest(s.db, s.owner, s.config["machine_id"], final_body(s, final))
+    status = s.client.sync()
+    assert status["providers"] == {"claude": "pending"}
+    assert status["attestation"] == "succeeded" and status["agent_ready"] is False
+    assert not registry.get_machine(s.db, s.owner.workspace_id, s.config["machine_id"])["enabled"]
+
+
+def test_manual_sign_in_command_uses_verified_private_runtime_then_signed_probe(
+    manual, monkeypatch, caplog, capsys
+):
+    from commonplace.cli import build_parser
+    from commonplace.runner.runtime_host import LiveRuntimeHost
+    from commonplace.runner.runtime_install import HOME
+
+    s = manual
+    args = build_parser().parse_args(["runner", "sign-in", "claude"])
+    assert args.action == "sign-in" and args.provider == "claude"
+    real = s.runtime_host.probe
+    calls = []
+
+    def terminal(name, release, raw, home, **options):
+        if options.get("sign_in"):
+            calls.append((name, raw, home))
+            assert digest(raw) == release["sha256"]
+            credential = home / ".claude" / "credential.json"
+            s.local.fs.write(
+                str(credential.relative_to(s.home)), b"SyntheticManualProviderCodeSentinel"
+            )
+            s.runtime_host.facts[name] = {"availability": "present", "login": "unverified"}
+        return real(name, release, raw, home)
+
+    monkeypatch.setattr(s.runtime_host, "probe", terminal)
+    assert s.local.sign_in("claude") == 0
+    assert len(calls) == 1 and calls[0][2] == s.home / HOME
+    assert s.client.sync()["providers"]["claude"] == "succeeded"
+    assert "SyntheticManualProviderCodeSentinel" not in json.dumps(
+        approvals.attention(s.db, s.owner)
+    ) + caplog.text + str(capsys.readouterr())
+    # Actual subprocess adapter: terminal stdio is inherited, never captured;
+    # the login/status environment has no inherited API or hub credentials.
+    import subprocess
+
+    native_run = subprocess.run
+    seen = []
+
+    def run(command, **kwargs):
+        if command[-3:] == ["auth", "login", "--claudeai"]:
+            seen.append(kwargs)
+            assert "capture_output" not in kwargs and "stdin" not in kwargs
+            assert kwargs["env"]["CLAUDE_CONFIG_DIR"] == str(s.home / HOME / ".claude")
+            assert kwargs["env"]["BROWSER"] == "/bin/false"
+            assert not any("TOKEN" in k or "KEY" in k for k in kwargs["env"])
+            return subprocess.CompletedProcess(command, 0)
+        return native_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    release = s.document["scope"]["runtime"]["components"]["claude"]
+    LiveRuntimeHost().probe("claude", release, calls[0][1], calls[0][2], sign_in=True)
+    assert len(seen) == 1
+
+
+def test_refusal_audit_failure_rolls_back_all_revocation(consented, monkeypatch):
+    s = consented
+    row = s.requests["grant"]
+    original = s.db.audit
+
+    def fail(**kwargs):
+        if kwargs["action"] == "runner.setup.refuse":
+            raise RuntimeError("SyntheticRefusalAuditFailure")
+        return original(**kwargs)
+
+    monkeypatch.setattr(s.db, "audit", fail)
+    with pytest.raises(RuntimeError):
+        approvals.refuse(s.gateway, s.owner, s.config["machine_id"], row["id"], refusal(s, row))
+    assert s.db.authenticate_token(s.local.fs.read(STATE + "/machine.token").decode())
+    assert not registry.get_machine(s.db, s.owner.workspace_id, s.config["machine_id"])[
+        "revoked_at"
+    ]
+    assert (
+        s.db._conn.execute(
+            "SELECT state FROM runner_browser_requests WHERE id=?", (row["id"],)
+        ).fetchone()[0]
+        == "pending"
+    )
+
+
+def test_terminal_codes_and_credentials_never_cross_signed_status_boundary(manual, caplog, capsys):
+    from commonplace.account import export, tables
+
+    s = manual
+    sentinel = "SyntheticTerminalProviderCodeSentinel"
+    row = s.requests["login"]
+    for extra in ({"user_code": sentinel}, {"credential": sentinel}):
+        with pytest.raises(ValueError):
+            approvals.report(
+                s.gateway, s.principal, s.client._proof(row, "login_succeeded", **extra)
+            )
+    with pytest.raises((ValueError, registry.Conflict)):
+        approvals.present(
+            s.gateway, s.principal, s.client._proof(row, "device_code", user_code=sentinel)
+        )
+    s.runtime_host.facts["claude"] = {"availability": "present", "login": "unverified"}
+    s.client.runtime.sync()
+    s.client.sync()
+    values = [
+        approvals.attention(s.db, s.owner),
+        approvals.fetch(s.gateway, s.principal, "4" * 32),
+        s.local.fs.read(MANIFEST).decode(),
+        *[dict(r) for r in s.db._conn.execute("SELECT * FROM audit_log")],
+    ]
+    output = io.BytesIO()
+    archive = export._Archive(output)
+    for table in ("runner_browser_requests", "runner_host_grants"):
+        archive.rows(table, s.db._conn.execute("SELECT * FROM " + tables.quote(table)), redact=True)
+    archive.zip.close()
+    with zipfile.ZipFile(io.BytesIO(output.getvalue())) as z:
+        values.extend(z.read(name).decode() for name in z.namelist())
+    assert sentinel not in json.dumps(values) + caplog.text + str(capsys.readouterr())
+
+
+def test_installer_and_browser_compare_identical_eight_character_groups(consented):
+    import re
+
+    s = consented
+    lines = []
+    s.client.sync()
+    s.local.out = lines.append
+    s.local.status()
+    printed = next(
+        line.removeprefix("Machine fingerprint: ")
+        for line in lines
+        if line.startswith("Machine fingerprint: ")
+    )
+    assert re.fullmatch(r"[0-9a-f]{8}( [0-9a-f]{8}){7}", printed)
+    assert printed.replace(" ", "") == s.document["scope"]["machine_key_digest"]
+
+
+def test_bootstrap_forwards_only_the_public_grouped_fingerprint(tmp_path, monkeypatch, capsys):
+    from commonplace.runner import bootstrap
+
+    fingerprint = "01234567 " * 7 + "01234567"
+    monkeypatch.setattr(bootstrap, "verified_release", lambda *_: b"synthetic archive")
+    monkeypatch.setattr(
+        bootstrap.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "SyntheticBootstrapSecretSentinel\nMachine fingerprint: "
+                + fingerprint
+                + "\nSyntheticBootstrapSecretSentinel\n"
+            ).encode(),
+        ),
+    )
+    args = []
+    for key in (
+        "release",
+        "release-signature",
+        "release-key",
+        "hub",
+        "workspace",
+        "label",
+        "manifest-digest",
+        "enrollment-id",
+    ):
+        args.extend(("--" + key, "fixture"))
+    args.extend(("--home", str(tmp_path), "--accept"))
+    assert bootstrap.main(args) == 0
+    output = capsys.readouterr()
+    assert output.out == "Machine fingerprint: " + fingerprint + "\nrunner bootstrap: complete\n"
+    assert "SyntheticBootstrapSecretSentinel" not in output.out + output.err
+
+
+@pytest.mark.parametrize("archive", [False, True])
+def test_private_sign_in_launcher_supports_package_and_archive_without_secrets(manual, archive):
+    import shlex
+
+    from commonplace.runner.installer import SIGN_IN
+
+    s = manual
+    if archive:
+        # Model the archive being present before the first launcher creation.
+        s.local.fs.remove(SIGN_IN)
+        s.local.journal["items"] = [i for i in s.local.journal["items"] if i["path"] != SIGN_IN]
+        s.local.flush()
+        s.local.file(STATE + "/runner.pyz", b"synthetic selected runner archive")
+    s.local.sync_receipts()
+    script = s.local.fs.read(SIGN_IN).decode()
+    assert stat.S_IMODE((s.home / SIGN_IN).stat().st_mode) == 0o600
+    command = shlex.split(script.splitlines()[1])
+    assert command[-3:] == ["runner", "sign-in", "$@"]
+    assert (str(s.home / STATE / "runner.pyz") in command) is archive
+    assert ("commonplace" in command) is not archive
+    assert SECRET not in script and s.local.fs.read(STATE + "/machine.token").decode() not in script
+
+
+def test_codex_sign_in_needed_does_not_block_access_or_identity_attestation(consented):
+    s = consented
+    allow(s, "grant")
+    s.client._grant(s.requests["grant"], s.document["scope"])
+    final = next(r for r in approvals.attention(s.db, s.owner) if r["approval_kind"] == "attest")
+    registry.attest(s.db, s.owner, s.config["machine_id"], final_body(s, final))
+    status = s.client.sync()
+    assert status["providers"] == {"codex": "pending"}
+    assert status["attestation"] == "succeeded" and status["agent_ready"] is False

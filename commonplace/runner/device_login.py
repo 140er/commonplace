@@ -82,8 +82,10 @@ class DeviceLogin:
             if code or not self.presented:
                 self.stop()
                 raise InstallError("device sign-in unavailable")
-            # Only a successful device exchange in an isolated subscription-only
-            # invocation can report success. No output or credential is returned.
+            # Confirm durable private storage without returning its contents.
+            if not setup.fs.read(HOME + "/.codex/auth.json"):
+                self.stop()
+                raise InstallError("device sign-in unavailable")
             setup.call("/api/runner/setup-requests", setup._proof(row, "login_succeeded"))
             self.stop()
 
@@ -159,11 +161,6 @@ class DeviceLogin:
 
 def cleanup(fs, journal):
     """Remove only the dedicated owned provider directory after confirmed stop."""
-    root = HOME + "/.codex"
-    if fs.info(root) is None:
-        return
-    if not any(i["path"] == root and i["kind"] == "dir" for i in journal["items"]):
-        raise InstallError("private provider directory is unmanaged")
     import stat
 
     entries = []
@@ -177,6 +174,11 @@ def cleanup(fs, journal):
                 inspect(str(child.relative_to(fs.home)))
         entries.append((path, directory))
 
-    inspect(root)  # Validate the whole owned tree before removing anything.
+    for root in (HOME + "/.codex", HOME + "/.claude"):
+        if fs.info(root) is None:
+            continue
+        if not any(i["path"] == root and i["kind"] == "dir" for i in journal["items"]):
+            raise InstallError("private provider directory is unmanaged")
+        inspect(root)  # Validate all owned trees before removing anything.
     for path, directory in entries:
         fs.remove(path, directory=directory)
