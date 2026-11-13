@@ -10,7 +10,7 @@ This module is also imported by the runner client, so it uses the standard libra
 
 import re
 
-from . import costs
+from . import budgets, costs
 
 # What a machine may report as the end of a started run.
 END_STATUSES = ("completed", "errored", "stopped")
@@ -95,6 +95,7 @@ def ensure(conn):
             conn.execute("ROLLBACK")
             raise
     costs.ensure(conn)
+    budgets.ensure(conn)
 
 
 def _optional(row, key):
@@ -232,6 +233,7 @@ def report(conn, machine_id, fields, now):
             source="run_end" if ending and row["cost_micros"] is None else "machine_report",
             unknown=bool(fields.get("cost_unknown")) or (ending and row["cost_micros"] is None),
         )
+        budgets.after_run(conn, job["id"], now)
     return row
 
 

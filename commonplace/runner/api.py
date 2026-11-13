@@ -1,6 +1,7 @@
 """Install the machine runner's routes once per gateway."""
 
 from . import (
+    budgets_api,
     chat_relay,
     chat_routes,
     costs_api,
@@ -21,6 +22,7 @@ def install(gateway):
     runner_api.register(gateway)
     ledger_api.register(gateway)
     costs_api.install(gateway)
+    budgets_api.install(gateway)
     requester_api.register(gateway)
     chat_routes.register(gateway)
     gateway.runner_installed = True
