@@ -134,6 +134,16 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
         expect(page.locator(".bot-thread-audience")).to_contain_text(
             "Shared conversation · visible"
         )
+        fake.script = [[("text", "Shared conversation answer.")]]
+        page.get_by_label("Message to Team helper").fill("A message for everyone")
+        page.get_by_role("button", name="Send", exact=True).click()
+        expect(page.locator('[data-region="messages"]')).to_contain_text(
+            "Shared conversation answer."
+        )
+        expect(page.locator(".bm-author")).to_have_text("Workspace owner")
+        expect(page.locator('[data-region="messages"]')).not_to_contain_text(
+            "Hello from my private conversation"
+        )
         # Read-only permission remains usable even when there is no private thread.
         page.locator(".deck-bot-settings").click()
         page.get_by_role("button", name="Change access", exact=True).click()

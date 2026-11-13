@@ -240,7 +240,8 @@ function noteHTML(m, e) {
 
 export function messageHTML(m, ctx, e) {
   const kind = m.role === "user" ? "me" : m.role === "event" ? "event" : "bot";
-  const bubble = m.text ? `<div class="bm-bubble"><div class="bm-text">${marked(m.text, e)}</div></div>` : "";
+  const author = ctx.deck && ctx.shared && kind === "me" && m.author?.name ? `<p class="bm-author">${e(m.author.name)}</p>` : "";
+  const bubble = m.text ? `<div class="bm-bubble">${author}<div class="bm-text">${marked(m.text, e)}</div></div>` : "";
   // An event carrying an orchestrator block is the orchestrator's own reply, forwarded word for word.
   const from = kind === "event" && Array.isArray(m.blocks) && m.blocks.some((b) => b?.type === "orchestrator") ? `<p class="bm-from">${ctx.deck ? BOTS_COPY.coworker : BOTS_COPY.orchestrator}</p>` : "";
   return `<li class="bm ${kind}" data-id="${e(m.id)}"${m.at ? ` title="${e(m.at)}"` : ""}>${from}${bubble}${blocksHTML(m.blocks, { ...ctx, mid: m.id }, e)}${kind === "bot" ? noteHTML(m, e) : ""}</li>`;
@@ -405,7 +406,7 @@ export function createBots({
   const region = (name) => host()?.querySelector(`[data-region="${name}"]`) ?? null;
   const atBottom = (node) => !node || node.scrollHeight - node.scrollTop - node.clientHeight <= 40;
   const busy = () => Boolean(s.turn) || s.running;
-  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing, deck: deck() });
+  const ctx = () => ({ open: s.open, busy: s.busy, editing: s.editing, deck: deck(), shared: Boolean(s.threadId) });
   const runningRequestId = () => s.turn?.requestId || (s.running ? [...s.messages].reverse().find((m) => m.role === "user")?.request_id : "") || "";
   const deck = () => globalThis.document?.documentElement?.dataset?.ui === "deck";
   const draftKey = () => deck() && s.threadId ? `${s.botId}:${s.threadId}` : s.botId;

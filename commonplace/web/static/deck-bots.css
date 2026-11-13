@@ -181,3 +181,4 @@
 }
 :root[data-ui="deck"] .bot-access .learned-group .memory > li { display: grid; gap: 8px; padding-block: 12px; }
 :root[data-ui="deck"] .bot-access .learned-src { overflow-wrap: anywhere; }
+:root[data-ui="deck"] .bm-author { margin: 0 0 4px; font-size: 12px; line-height: 18px; color: var(--text-2); }

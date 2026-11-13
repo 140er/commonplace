@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createBots, sheetHTML } from '../commonplace/web/static/bots.js';
+import { createBots, sheetHTML, messageHTML } from '../commonplace/web/static/bots.js';
 import { escape as e } from '../commonplace/web/static/api.js';
 import { sendMessage } from '../commonplace/web/static/botstream.js';
 
@@ -148,4 +148,12 @@ test('drafts from a private conversation never populate a shared conversation', 
   assert.equal(h.ui.state.drafts.get('bot:shared-one'), undefined);
   assert.equal(h.ui.state.drafts.get('bot'), 'Private words must stay here');
   h.ui.stop();
+});
+
+
+test('shared human messages name their author without changing private or classic bubbles', () => {
+  const message = { id: 1, role: 'user', text: 'Team message', author: { id: 'member', name: '<Workspace member>' } };
+  assert.match(messageHTML(message, { deck: true, shared: true }, e), /bm-author.*&lt;Workspace member&gt;/);
+  assert.doesNotMatch(messageHTML(message, { deck: true, shared: false }, e), /bm-author/);
+  assert.doesNotMatch(messageHTML(message, { deck: false, shared: true }, e), /bm-author/);
 });
