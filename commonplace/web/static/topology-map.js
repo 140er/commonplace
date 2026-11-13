@@ -12,7 +12,7 @@ import { escape as esc } from "./api.js";
 import { KINDS, kindOf } from "./topology-icons.js";
 import { createNodePanel } from "./topology-detail.js";
 import { autoLayout, fitLabelled, fitView, layeredLayout, layoutLinks, toWorld, zoomAbout } from "./topology-layout.js";
-import { DISC, GAP, routeLinks, straightClear } from "./topology-route.js";
+import { DISC, GAP, plateOf, routeLinks, straightClear } from "./topology-route.js";
 import { labelBox } from "./topology-text.js";
 
 export const MAP_PATH = "/api/topology";
@@ -86,12 +86,48 @@ export const nodeLabel = (node, words = STATUS_TEXT) => `${node.name}, ${KINDS[n
 
 const subOf = (node) => [node.role, node.missing && "not recorded", node.stale && "stale", node.conflicted && "conflict"].filter(Boolean).join(" · ");
 
+// Counts keep an 11px screen size. Reserve their full box at the smallest fitted
+// scale, beside the mark and away from the disc, labels and every link stroke.
+function bundlePosition(key, count, model, positions, places, labels, selectedLink) {
+  const origin = positions[key], width = String(count).length * 8 / K_LEAST, half = 8 / K_LEAST;
+  const overlaps = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+  const nodes = model.nodes.filter(node => positions[node.key]);
+  const plates = labels ? nodes.map(node => plateOf({ ...node, height: labelBox(node.name, subOf(node), labels).height }, positions[node.key], labels, K_LEAST)) : [];
+  const strokes = [...places.values()].flatMap(place => {
+    const points = place.points || [{ x: place.x1, y: place.y1 }, { x: place.x2, y: place.y2 }];
+    return points.slice(1).map((p, i) => [points[i], p]);
+  });
+  const clear = box => !plates.some(plate => overlaps(box, plate)) && !nodes.some(node => {
+    const at = positions[node.key], x = Math.max(box.x, Math.min(at.x, box.x + box.width)), y = Math.max(box.y, Math.min(at.y, box.y + box.height));
+    return Math.hypot(x - at.x, y - at.y) <= DISC + 2;
+  });
+  const crosses = (box, [a, b]) => {
+    // Clip the stroke against the count box, including the selected stroke's width.
+    let low = 0, high = 1;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    for (const [p, q] of [[-dx, a.x - box.x + 2], [dx, box.x + box.width - a.x + 2], [-dy, a.y - box.y + 2], [dy, box.y + box.height - a.y + 2]]) {
+      if (!p) { if (q < 0) return false; } else { const t = q / p; if (p < 0) low = Math.max(low, t); else high = Math.min(high, t); if (low > high) return false; }
+    }
+    return true;
+  };
+  const dots = nodes.map(node => ({ x: positions[node.key].x + 17, y: positions[node.key].y - 31, width: 14, height: 14 }));
+  const selected = places.get(selectedLink);
+  if (selected) for (const end of ["from", "to"]) dots.push({ x: selected[end].x - 7, y: selected[end].y - 7, width: 14, height: 14 });
+  // A finite scene always leaves a free side farther out; prefer a nearby badge.
+  for (let distance = 40; ; distance += 16) for (const side of [1, -1]) for (const y of [0, -20, 20]) {
+    const at = { x: side * distance, y }, x = origin.x + at.x, cy = origin.y + y;
+    const mark = { x: x - 7, y: cy - 7, width: 14, height: 14 };
+    const box = { x: x + side * 12 - (side < 0 ? width : 0), y: cy - half, width, height: 2 * half };
+    if (clear(mark) && clear(box) && !dots.some(dot => overlaps(mark, dot) || overlaps(box, dot)) && !strokes.some(stroke => crosses(box, stroke))) return { ...at, side };
+  }
+}
+
 function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
   const sub = subOf(node);
   const bundleTitle = bundle ? `${bundle.count} links, worst ${node.name} end: ${words[bundle.state]}.` : "";
   const aria = esc(nodeLabel(node, words) + (bundleTitle ? ` ${bundleTitle}` : ""));
-  const badge = bundle ? `<g class="topo-bundle" data-bundle-node="${esc(node.key)}" data-count="${bundle.count}" data-state="${bundle.state}" transform="translate(-24 -24)">${statusDot(bundle.state, { x: 0, y: 0 }, bundleTitle)}<text class="topo-bundle-count" x="0" y="17">${bundle.count}</text></g>` : "";
+  const badge = bundle ? `<g class="topo-bundle" data-bundle-node="${esc(node.key)}" data-count="${bundle.count}" data-state="${bundle.state}" transform="translate(${bundle.x} ${bundle.y})">${statusDot(bundle.state, { x: 0, y: 0 }, bundleTitle)}<g transform="translate(${bundle.side * 12} 0)"><text class="topo-bundle-count" x="0" y="4" text-anchor="${bundle.side > 0 ? "start" : "end"}">${bundle.count}</text></g></g>` : "";
   // A label is drawn at a constant size on the screen: its group is scaled by the inverse of the view's scale
   // (the stage's --inv), so the type is the same size at every zoom. The plate hides a line that passes under it.
   // The hub's label sits above it: every line leaves the hub downwards.
@@ -133,7 +169,7 @@ export function renderScene(model, positions, { route = null, selected = null, s
       const remaining = ends.filter(end => end.id !== selectedLink);
       // Match the status reader: worst known state; unknown only with no known state.
       const state = ["down", "degraded", "up", "unknown"].find(state => remaining.some(end => end.state === state)) || "none";
-      bundles.set(key, { count: remaining.length, state });
+      bundles.set(key, { count: remaining.length, state, ...(state === "none" ? {} : bundlePosition(key, remaining.length, model, positions, places, labels, selectedLink)) });
     }
   }
   const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id, bundles }));

@@ -147,3 +147,11 @@ test('classic rail and phone tabs remain exactly Bots and Memory, with the same 
     assert.doesNotMatch(render({ can_admin: true }), /coworkers|compute\/management/);
   }
 });
+
+test('Deck Compute phone workspace keeps its 16px gutter around the nested map', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-workspace.css', import.meta.url), 'utf8');
+  const phone = css.slice(css.indexOf('@media(max-width:699px)'));
+  assert.match(phone, /:root\[data-ui="deck"\] \.shell #content\.deck-workspace\.dw-map\s*\{[^}]*padding:\s*12px 16px 88px/);
+  assert.match(phone, /:root\[data-ui="deck"\] \.dw-map > \.dw-tabs\s*\{\s*margin:\s*0;/);
+  assert.match(phone, /:root\[data-ui="deck"\] \.dw-map > \[data-workspace="content"\]\s*\{[^}]*min-width:\s*0;/);
+});
