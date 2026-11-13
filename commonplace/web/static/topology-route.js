@@ -185,13 +185,15 @@ export function routeLinks(links, nodes, positions, labels, k = 1) {
     pairs.get(key).push(link);
   }
   for (const pair of pairs.values()) {
-    if (pair.length !== 2) continue;
+    if (pair.length < 2) continue;
     const [left, right] = [pair[0].from, pair[0].to].sort();
     const a = positions[left], b = positions[right];
     if (a.y !== b.y || Math.abs(b.x - a.x) <= 2 * DISC) continue;
-    const inset = Math.sqrt(DISC * DISC - 8 * 8), direction = Math.sign(b.x - a.x);
+    const width = Math.min(32, 16 * (pair.length - 1)), direction = Math.sign(b.x - a.x);
     const lanes = pair.map((link, index) => {
-      const y = round(a.y + (index ? 8 : -8));
+      const offset = -width / 2 + index * width / (pair.length - 1);
+      const inset = Math.sqrt(DISC * DISC - offset * offset);
+      const y = round(a.y + offset);
       const points = [{ x: round(a.x + direction * inset), y }, { x: round(b.x - direction * inset), y }];
       if (link.from !== left) points.reverse();
       return routePlace(points);
@@ -199,6 +201,54 @@ export function routeLinks(links, nodes, positions, labels, k = 1) {
     if (!lanes.every((lane) => segmentClear(lane.points[0], lane.points[1], left, right, placed, positions, labels, k)
       && plates.every((plate) => [lane.from, lane.to].every((dot) => !touchesRect(dot, dot, { x: plate.x - 7, y: plate.y - 7, width: plate.width + 14, height: plate.height + 14 }))))) continue;
     pair.forEach((link, index) => out.set(link.id, { ...lanes[index], parallel: true }));
+  }
+  // Dense cross-row traffic shares a bounded side corridor. Keep sparse routes
+  // exactly as routed above, including the two-link parallel-neighbour case.
+  // Both side exits must clear the entire scene before a link can join a corridor.
+  const clear = (lane, a, b) => lane.points.slice(1).every((point, i) =>
+    segmentClear(lane.points[i], point, a, b, placed, positions, labels, k)
+    && placed.every(node => toSegment(positions[node.key], lane.points[i], point) >= DISC - 0.1))
+    && plates.every(plate => [lane.from, lane.to].every(dot => !touchesRect(dot, dot, { x: plate.x - 7, y: plate.y - 7, width: plate.width + 14, height: plate.height + 14 })));
+  const sides = [-1, 1].map(sign => ({ sign, x: sign < 0 ? inside.left - 8 : inside.right + 8, links: [] }));
+  const sideLane = (link, side, index = 0, count = 1) => {
+    const a = positions[link.from], b = positions[link.to], down = Math.sign(b.y - a.y);
+    const offset = count > 1 ? -16 + index * 32 / (count - 1) : 0;
+    const x = round(side.x + side.sign * (offset + 16));
+    const inset = Math.sqrt(DISC * DISC - offset * offset);
+    const y1 = round(a.y - down * offset), y2 = round(b.y + down * offset);
+    return routePlace([{ x: round(a.x + side.sign * inset), y: y1 }, { x, y: y1 }, { x, y: y2 }, { x: round(b.x + side.sign * inset), y: y2 }]);
+  };
+  for (const link of order) {
+    if (!out.has(link.id) || positions[link.from].y === positions[link.to].y || straightClear(link.from, link.to, placed, positions, labels, k)) continue;
+    const a = positions[link.from], b = positions[link.to];
+    // Links already using an interior channel must not be sent around the graph.
+    if (!out.get(link.id).points.some(point => point.x < Math.min(a.x, b.x) - MARGIN || point.x > Math.max(a.x, b.x) + MARGIN)) continue;
+    const choices = sides.filter(side => clear(sideLane(link, side), link.from, link.to));
+    choices.sort((a, b) => Math.abs(a.x - positions[link.from].x) + Math.abs(a.x - positions[link.to].x)
+      - Math.abs(b.x - positions[link.from].x) - Math.abs(b.x - positions[link.to].x));
+    choices[0]?.links.push(link);
+  }
+  for (const side of sides) {
+    const bands = [];
+    for (const link of [...side.links].sort((a, b) => Math.min(positions[a.from].y, positions[a.to].y) - Math.min(positions[b.from].y, positions[b.to].y))) {
+      const start = Math.min(positions[link.from].y, positions[link.to].y), end = Math.max(positions[link.from].y, positions[link.to].y);
+      if (!bands.length || start >= bands.at(-1).end) bands.push({ end, links: [] });
+      const band = bands.at(-1);
+      band.links.push(link); band.end = Math.max(band.end, end);
+    }
+    for (const band of bands) {
+      // A shared interval, rather than the scene's total link count, defines congestion.
+      const events = band.links.flatMap(link => {
+        const ys = [positions[link.from].y, positions[link.to].y].sort((a, b) => a - b);
+        return [[ys[0], 1], [ys[1], -1]];
+      }).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      let active = 0, peak = 0;
+      for (const [, delta] of events) { active += delta; peak = Math.max(peak, active); }
+      if (peak < 4) continue;
+      const lanes = band.links.map((link, index) => sideLane(link, side, index, band.links.length));
+      if (!lanes.every((lane, index) => clear(lane, band.links[index].from, band.links[index].to))) continue;
+      band.links.forEach((link, index) => out.set(link.id, { ...lanes[index], parallel: true }));
+    }
   }
   return out;
 }
