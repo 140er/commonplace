@@ -83,7 +83,11 @@ class DeviceLogin:
                 self.stop()
                 raise InstallError("device sign-in unavailable")
             # Confirm durable private storage without returning its contents.
-            if not setup.fs.read(HOME + "/.codex/auth.json"):
+            try:
+                stored = bool(setup.fs.read(HOME + "/.codex/auth.json"))
+            except (OSError, InstallError):
+                stored = False
+            if not stored:
                 self.stop()
                 raise InstallError("device sign-in unavailable")
             setup.call("/api/runner/setup-requests", setup._proof(row, "login_succeeded"))
