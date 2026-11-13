@@ -42,6 +42,8 @@ _W = ("workspace_id",)
 _C = ("connection_id",)
 
 RULES = {
+    "account_delete_checks": Rule(user=_U, workspace=_W, connection=_C, credential=True),
+    "account_delete_tokens": Rule(user=_U, workspace=_W, connection=_C, credential=True),
     "account_deletions": Rule(user=_U),
     "account_plans": Rule(user=_U),
     "agent_schedule_runs": Rule(parent=("schedule_id", "agent_schedules", "id")),
