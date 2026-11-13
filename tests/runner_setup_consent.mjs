@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import { runnerConsent, decideRunner } from '../commonplace/web/static/runnerconsent.js';
+import { renderNeeds } from '../commonplace/web/static/needs.js';
+
+const item = { id:'opaque-request',machine_id:'opaque-machine',kind:'runner_consent',approval_kind:'grant',provider:'host',state:'pending',scope_digest:'frozen',fingerprint:'a'.repeat(64),label:'Build machine',projects:['demo'],topics:['work'],runtime:'approval-required' };
+assert.ok(!renderNeeds().includes('runner-consent-card'));
+assert.ok(!renderNeeds({needs:{runner_setup:[item]},filter:'reviews'}).includes('runner-consent-card'));
+const html = runnerConsent(item);
+assert.ok(html.includes('Approve machine access'));
+assert.ok(html.includes('data-runner-fingerprint'));
+assert.ok(html.includes('aaaaaaaa aaaaaaaa'));
+assert.ok(!html.replace(/data-[a-z-]+="[^"]*"/g,'').includes('opaque-'));
+assert.ok(runnerConsent({...item,label:'<script>'}).includes('&lt;script&gt;'));
+assert.ok(!runnerConsent({...item,approval_kind:'login',provider:'claude',unsupported:true}).includes('data-runner-consent='));
+const calls=[];
+const api=async (path,options)=>calls.push({path,...options});
+await decideRunner(api,item,'grant');
+assert.deepEqual(calls[0],{path:'/api/runners/opaque-machine/setup-requests/opaque-request/decide',method:'POST',body:{approve:true,scope_digest:'frozen',fingerprint:'a'.repeat(64)}});
+await decideRunner(api,{...item,approval_kind:'attest',binding:{topics:['work'],provider_instance_id:'private-provider',worker_connection_id:'private-worker'}},'attest');
+assert.ok(calls[1].path.endsWith('/attest'));
+assert.equal(calls[1].body.setup_attestation.request_id,item.id);
+assert.equal(calls[1].body.setup_attestation.fingerprint,item.fingerprint);
+await decideRunner(api,item,'device');
+assert.ok(calls[2].path.endsWith('/device'));
+assert.deepEqual(calls[2].body,{});
+assert.ok(renderNeeds({needs:{runner_setup:[item]}}).includes('1 item, 0 projects'));

@@ -346,6 +346,9 @@ def patch_in(
         updated_at=control_db._iso(control_db._now()),
     )
     _write(db, row["id"], data)
+    from . import setup_approvals
+
+    setup_approvals.invalidate_in(db, row["id"])
     if reset:
         db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
     _audit(db, owner, audit[0], row["id"], reset=reset, also=audit[1])
@@ -400,6 +403,13 @@ def attest(db, owner, machine_id, binding):
     _owner(owner)
     with db._lock, db._tx():
         row = _active(db, owner, machine_id)
+        if isinstance(binding, dict) and "setup_attestation" in binding:
+            from . import setup_approvals
+
+            if "install_settings" in binding:
+                raise ValueError("review settings before final confirmation")
+            setup_approvals.attest_in(db, owner, row, binding["setup_attestation"])
+            binding = {k: v for k, v in binding.items() if k != "setup_attestation"}
         settings = binding.get("install_settings") if isinstance(binding, dict) else None
         if isinstance(binding, dict) and "install_settings" in binding:
             binding = {k: v for k, v in binding.items() if k != "install_settings"}

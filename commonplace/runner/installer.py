@@ -37,6 +37,8 @@ FILES = {
     DELIVERY,
     CONFIG,
     LOCK,
+    STATE + "/host-grant.json",
+    STATE + "/setup-status.json",
     UNIT_PATH,
     STATE + "/machine.token",
     STATE + "/worker.token",
@@ -104,6 +106,28 @@ class Transport:
                 return result
         except Exception:
             raise InstallError("runtime status unavailable") from None
+
+    def setup(self, token, route, body=None, *, nonce=None):
+        from .setup_approvals import MACHINE_PATHS
+
+        if route not in MACHINE_PATHS or not token or any(c in token for c in "\r\n"):
+            raise InstallError("invalid setup operation")
+        if nonce is not None and not re.fullmatch(r"[0-9a-f]{32}", nonce):
+            raise InstallError("invalid setup challenge")
+        request = urllib.request.Request(
+            self.origin + route + ("?nonce=" + nonce if nonce else ""),
+            data=encoded(body) if body is not None else None,
+            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+            method="GET" if nonce else "POST",
+        )
+        try:
+            with self.opener.open(request, timeout=15) as response:
+                raw = response.read(65537)
+                if len(raw) > 65536:
+                    raise ValueError
+                return json.loads(raw)
+        except Exception:
+            raise InstallError("browser setup unavailable") from None
 
     def receipt(self, token, nonce):
         from .install_receipts import PATH
@@ -288,7 +312,9 @@ class Installer:
             "Verify signed runtime choices; locate selected compatible components only.",
             "Download only approved version/digest pins; verify all before execution or publication.",
             "Write owned 0600 artifacts and runtime config cache in private 0700 directories.",
-            "Derive provider/topic/project mappings; report sign-in needed, without login or grants.",
+            "Derive provider/topic/project mappings; report sign-in needed for browser approval.",
+            "Fetch signed browser decisions; complete supported device sign-in without terminal input.",
+            "Receive the sealed scoped grant into a private 0600 file; compare the machine fingerprint in the browser.",
         ):
             self.out(action)
         return 0
@@ -520,6 +546,11 @@ class Installer:
                 self._rollback_service()
                 self._remove_unit()
                 raise
+        _, _, fingerprint = enrollment_crypto.public_key(self._identity()["public_key"])
+        self.out("Machine fingerprint: " + fingerprint)
+        self.out(
+            "Continue in Needs me to approve sign-in, machine access and the matching fingerprint."
+        )
         self.out("installed; setup-only; execution disabled")
         return 0
 
@@ -555,7 +586,13 @@ class Installer:
             self.fs._check(info, directory=item["kind"] == "dir")
             if (
                 item["kind"] == "file"
-                and item["path"] not in (CACHE, RUNTIME_CACHE)
+                and item["path"]
+                not in (
+                    CACHE,
+                    RUNTIME_CACHE,
+                    STATE + "/host-grant.json",
+                    STATE + "/setup-status.json",
+                )
                 and digest(self.fs.read(item["path"])) != item["digest"]
             ):
                 raise InstallError("an owned installation file changed")
@@ -582,6 +619,13 @@ class Installer:
                     self.out(name + ": " + fact["availability"] + "; " + fact["login"])
             except Exception:
                 self.out("runtime cache unavailable; fresh approved settings required")
+        if self.fs.info(STATE + "/setup-status.json") is not None:
+            state = json.loads(self.fs.read(STATE + "/setup-status.json"))
+            if state.get("fingerprint"):
+                self.out("Machine fingerprint: " + state["fingerprint"])
+                for provider, outcome in state.get("providers", {}).items():
+                    self.out(provider + ": " + outcome)
+                self.out("Machine access: " + state.get("grant", "approval-needed"))
         self.out("installation phase: " + phase + "; execution disabled")
         return 0
 
@@ -603,10 +647,21 @@ class Installer:
                 if "runtime" in approved:
                     runtime = Runtime(self, config, transport, self.runtime_host)
                     runtime.sync()
+                    if hasattr(transport, "setup"):
+                        from .setup_client import Setup
+
+                        Setup(self, runtime).sync()
                 elif self.fs.info(RUNTIME_CACHE) is not None:
                     Runtime(self, config, transport).clear()
                 return approved
             except Exception:
+                from .setup_client import Setup
+
+                login = getattr(self, "device_login", None)
+                if login:
+                    login.stop()
+                if self.fs.info(STATE + "/host-grant.json") is not None:
+                    Setup(self, runtime or Runtime(self, config, transport)).clear()
                 if self.fs.info(RUNTIME_CACHE) is not None:
                     (runtime or Runtime(self, config, transport)).clear()
                 raise
@@ -624,10 +679,19 @@ class Installer:
             for item in self.journal["items"]:
                 if item["kind"] == "file" and self.fs.info(item["path"]) is not None:
                     if (
-                        item["path"] not in (CACHE, RUNTIME_CACHE)
+                        item["path"]
+                        not in (
+                            CACHE,
+                            RUNTIME_CACHE,
+                            STATE + "/host-grant.json",
+                            STATE + "/setup-status.json",
+                        )
                         and digest(self.fs.read(item["path"])) != item["digest"]
                     ):
                         raise InstallError("an owned installation file changed; uninstall refused")
+            from .device_login import cleanup
+
+            cleanup(self.fs, self.journal)
             for item in reversed(list(self.journal["items"])):
                 path = item["path"]
                 if path in (STATE, LOCK):
@@ -662,12 +726,16 @@ def serve(home):
     if fs.info(APPROVAL_KEY) is None:
         stop.wait()
         return 0
+    service = Installer(home, host=object())
     while not stop.is_set():
         try:
-            Installer(home, host=object()).sync_receipts()
+            service.sync_receipts()
         except Exception:
             pass  # setup remains incomplete; no raw error enters service output
-        stop.wait(30)
+        stop.wait(2)
+    login = getattr(service, "device_login", None)
+    if login:
+        login.stop()
     return 0
 
 

@@ -121,6 +121,12 @@ RULES = {
     "runner_setup_requests": Rule(
         workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
     ),
+    "runner_browser_requests": Rule(
+        workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
+    ),
+    "runner_host_grants": Rule(
+        workspace=_W, parent=("request_id", "runner_browser_requests", "id")
+    ),
     "runner_installations": Rule(
         workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
     ),

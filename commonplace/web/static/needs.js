@@ -1,3 +1,4 @@
+import { runnerConsent, consentStyle, decideRunner } from "./runnerconsent.js";
 import { api as request, escape as e } from "./api.js";
 import { detailsAuthor, detailsContext } from "./details.js";
 import { cardId } from "./board.js";
@@ -59,7 +60,7 @@ function holdCopy(hold, now) {
 }
 
 // Styles are scoped here so the shell can wire the module without a shared-sheet edit.
-const styles = `
+const styles = consentStyle + `
 .needs-me,.needs-detail { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; background:#FEFEFC; color:var(--text); }
 .needs-me .bar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
 .needs-me h1 { font-size:18px; line-height:24px; font-weight:650; }
@@ -141,8 +142,8 @@ function modelRoleRow(item) {
 export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], filter = "all", selected = null, now = Date.now() } = {}) {
   const items = needsItems(needs, filter);
   const roles = modelRoleItems(needs, filter);
-  const setup = filter === "all" || filter === "decisions" ? (needs.runner_setup || []).filter((item) => item.kind === "runner_settings") : [];
-  const setupRows = setup.map((item) => `<article class="row-item" data-runner-setup="${e(item.id)}"><span class="typ decision">Set up</span><div><h3>${e(item.message)}</h3><div class="sub">Runner settings need owner approval.</div></div><a class="btn" href="#/admin">Review settings</a></article>`).join("");
+  const setup = filter === "all" || filter === "decisions" ? (needs.runner_setup || []).filter((item) => ["runner_settings", "runner_consent"].includes(item.kind)) : [];
+  const setupRows = setup.map((item) => item.kind === "runner_consent" ? runnerConsent(item) : `<article class="row-item" data-runner-setup="${e(item.id)}"><span class="typ decision">Set up</span><div><h3>${e(item.message)}</h3><div class="sub">Runner settings need owner approval.</div></div><a class="btn" href="#/admin">Review settings</a></article>`).join("");
   const known = new Map([...cards, ...needsItems(needs).map((item) => item.card)].map((card) => [card.number, card]));
   const approvals = holds.filter((hold) => hold.kind === "approve");
   const held = [...new Set(approvals.map((hold) => hold.card))].map((number) => latestHold(approvals, number))
@@ -507,10 +508,33 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   }
   const click = async (event) => {
     if (paused && detailMount?.contains(event.target)) return;
-    const button = event.target.closest("[data-needs-github],[data-needs-select],[data-needs-filter],[data-needs-approve],[data-needs-confirm],[data-needs-cancel],[data-needs-stop],[data-needs-ask],[data-needs-choice],[data-needs-close],[data-action=need-reject]");
+    const button = event.target.closest("[data-runner-consent],[data-needs-github],[data-needs-select],[data-needs-filter],[data-needs-approve],[data-needs-confirm],[data-needs-cancel],[data-needs-stop],[data-needs-ask],[data-needs-choice],[data-needs-close],[data-action=need-reject]");
     if (!button) return;
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
+    if (button.hasAttribute("data-runner-consent")) {
+      const item = (data.needs.runner_setup || []).find(row => row.id === button.dataset.runnerConsent);
+      const card = button.closest('[data-runner-consent-card]'), status = card?.querySelector('[data-runner-consent-status]');
+      if (!item || !status || busy) return;
+      if (!card.querySelector('[data-runner-fingerprint]')?.checked) { status.textContent = 'Compare and confirm the machine fingerprint first.'; return; }
+      busy = true; button.disabled = true; status.textContent = 'Saving…';
+      try {
+        const result = await decideRunner(api, item, button.dataset.runnerConsentAction);
+        if (stopped) return;
+        if (button.dataset.runnerConsentAction === 'device') {
+          if (result.url !== 'https://auth.openai.com/codex/device' || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(result.user_code)) throw new Error();
+          const link = doc.createElement('a'); link.href = result.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Open provider sign-in';
+          status.replaceChildren(link, doc.createTextNode(' · One-time code: ' + result.user_code + '. Enter it only on the provider’s website. This code is shown once.'));
+        } else {
+          status.textContent = 'Saved. The machine will continue setup automatically.';
+          item.state = 'approved';
+          if (item.approval_kind === 'login') { button.dataset.runnerConsentAction = 'device'; button.textContent = 'Show sign-in link and code'; button.disabled = false; }
+          onChange();
+        }
+      } catch { if (!stopped) { status.textContent = 'Setup changed or is not ready. Refresh Needs me before trying again.'; button.disabled = false; } }
+      finally { busy = false; }
+      return;
+    }
     // Picking an item takes the shared panel back from whatever paused the detail.
     if (button.hasAttribute("data-needs-github")) await githubAction(button.dataset.needsGithub);
     else if (button.hasAttribute("data-needs-select")) { paused = false; await select(button.dataset.needsSelect); }

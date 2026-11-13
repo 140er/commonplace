@@ -20,7 +20,7 @@ def owned(path, kind):
         return path == RUNTIME_CACHE or bool(
             re.fullmatch(re.escape(PREFIX) + r"/(host|claude|codex)-[0-9a-f]{64}\.artifact", path)
         )
-    return path in (PREFIX, HOME, CHECKOUTS) or bool(
+    return path in (PREFIX, HOME, HOME + "/.codex", CHECKOUTS) or bool(
         re.fullmatch(re.escape(CHECKOUTS) + r"/[0-9a-f]{64}", path)
     )
 

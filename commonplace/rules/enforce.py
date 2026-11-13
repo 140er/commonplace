@@ -139,6 +139,51 @@ REST_ROUTES = (
     ),
 )
 
+# Setup has its own person/key authority rather than a connection instruction
+# write. Keep every shape explicit; the dedicated consent tests prove each gate.
+RUNNER_SETUP_ROUTES = (
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runners/<machine>/setup-requests/<request>/decide",
+        "",
+        "exempt",
+        "Enrollment owner person session only",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runners/<machine>/setup-requests/<request>/device",
+        "",
+        "exempt",
+        "Enrollment owner person session; one-time device code display",
+    ),
+    RestRoute(
+        "runner.owner_api",
+        "POST",
+        "/api/runners/<machine>/attest",
+        "",
+        "exempt",
+        "Owner person attestation; final fingerprint and prerequisite checks",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runner/setup-requests",
+        "",
+        "exempt",
+        "Bound machine signed login facts, never approval",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runner/secret-delivery",
+        "",
+        "exempt",
+        "Bound machine proof fetch/ack of its approved encrypted delivery",
+    ),
+)
+
 RECONNECT = " If this tool's parameters do not list rules_seq, reconnect first."
 NO_VALUE = " If it gives no rules_seq, call ask without one."
 MESSAGES = {
