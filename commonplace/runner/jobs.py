@@ -14,7 +14,7 @@ from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 from mempalace.sqlite_crypto import connect, row_factory
 
-from . import ledger, registry
+from . import budgets, ledger, registry
 
 QUEUE_LIMIT = 8
 STARTED_HOLD_SECONDS = 3600
@@ -78,6 +78,18 @@ CONFLICT_CODES = {
 
 class Conflict(Exception):
     """A requested job transition conflicts with its current state."""
+
+
+class BudgetExceeded(Conflict):
+    """A new start is refused because a budget of its scope is spent (see ``budgets``).
+
+    The message names the scope, the budget and the window; it carries no amounts."""
+
+    code = "budget_exceeded"
+
+    def __init__(self, stop):
+        self.stop = stop
+        super().__init__("budget_exceeded: " + budgets.describe(stop))
 
 
 def _now() -> str:
@@ -148,7 +160,7 @@ def open_store(gateway, ws):
 
 def conflict_code(exc) -> str:
     """Stable refusal code of a create/create_in Conflict."""
-    return CONFLICT_CODES.get(str(exc), "conflict")
+    return getattr(exc, "code", None) or CONFLICT_CODES.get(str(exc), "conflict")
 
 
 def job_object(row, *, tokens=False):
@@ -390,6 +402,15 @@ def create_in(
         raise Conflict("busy")
     if admission_check is not None:
         admission_check()
+    stop = budgets.stop_reason(
+        conn,
+        now,
+        agent=machine["worker_connection_id"],
+        project=project,
+        task_number=task_number,
+    )
+    if stop is not None:
+        raise BudgetExceeded(stop)
     job = "job_" + secrets.token_hex(8)
     conn.execute(
         "INSERT INTO runner_jobs(id,task_number,board_slug,machine_id,project,topic,"
@@ -491,6 +512,20 @@ def lease(store, machine):
                         return None
                     capped_boards.add(row["board_slug"])
                     continue
+            if budgets.stop_reason(
+                conn,
+                now,
+                agent=machine["worker_connection_id"],
+                project=row["project"],
+                task_number=row["task_number"],
+            ):
+                # Queued, not running: a spent budget cancels it. Running work is never touched.
+                _update(
+                    conn,
+                    row,
+                    dict(state="cancelled", outcome_code="budget_exceeded", updated_at=now),
+                )
+                continue
             authority.enter_context(store.gateway.db._lock)
             current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
             refusal = binding_problem(current, row)
@@ -604,7 +639,10 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None):
         values = dict(state=outcome, thread_id=thread_id, outcome_code=code, updated_at=now)
         if outcome == "started":
             values["started_at"] = now
-        return _update(conn, row, values, token=True)
+        updated = _update(conn, row, values, token=True)
+        if outcome == "started":
+            budgets.after_run(conn, row["id"], now)
+        return updated
 
 
 def cancel(store, job, principal, *, conn=None, now=None, actor=None):

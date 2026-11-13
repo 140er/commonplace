@@ -12,7 +12,7 @@ Card #361 asks for costs and budgets per workspace, agent connection, project an
 
 **Scope.** A signed-in owner reads every run of the workspace. Anyone else reads the runs of boards whose wing their token can read, and the sums cover only those runs (`scope: "readable"`). A machine credential reads nothing. The store is one workspace's file, so another workspace never appears.
 
-**Open choices for slice 2 (budgets), for the owner to decide:**
+**Open choices for slice 2 (budgets); slice 2 took the recommendations below as decisions (`docs/system/cost-budgets.md`):**
 
 - Budgets attach to a scope (workspace, agent connection, project, card) and to the window above, in one currency each; a run in another currency or with unknown cost does not count against a limit and is shown as unknown.
 - Soft warning at 80% of a budget: a mark in the UI and a Needs me item for the owner, once per window and scope.

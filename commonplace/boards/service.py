@@ -4813,7 +4813,25 @@ class BoardService(lifecycle.LifecycleMixin):
             if self.principal.person:
                 groups["model_roles"] = self._missing_model_roles()
                 groups["count"] += len(groups["model_roles"])
+                spent = self._budget_warnings()
+                if (
+                    spent
+                ):  # absent until a budget is set and crossed: a clean workspace is unchanged
+                    groups["budget_warnings"] = spent
+                    groups["count"] += len(spent)
         return groups
+
+    def _budget_warnings(self):
+        """One item per cost budget that crossed its warning in this window. Owner-only."""
+        if not self.principal.person or self.principal.role != "owner":
+            return []
+        from commonplace.projects import split
+        from commonplace.runner import budgets, costs
+
+        with split.runner_read(self.ctx.workspace_dir()) as reader:
+            if reader is None:
+                return []
+            return budgets.attention(reader, datetime.now(timezone.utc).strftime(costs.TS))
 
     def _orchestrator_stalled(self):
         if not self.principal.person:
