@@ -5,6 +5,7 @@
 
 - **Promises:**
 
+  - Deck settings uses one scrolling section row and an opaque surface anchored at the top. Saved access feedback stays in the changed card and clears on another action. Adoption uses a primary action; disabling lives only in name, job and memory with a separate explanation and confirmation. Access changes show local calendar times with the exact timestamp available on hover.
   - These controls exist only in Deck. Classic keeps its original settings and request paths. The browser uses existing routes and does not widen server authorization. Owner previews name the readers; member previews describe the reader permissions because a member may only read their own share row. Historical log changes never infer permission flags that were not recorded; a person no longer in the workspace is described as a former member.
 
 - **Tests:**
