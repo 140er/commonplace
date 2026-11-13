@@ -44,7 +44,7 @@ import re
 import time
 
 from commonplace import http_util
-from commonplace.meetings import adapter, engine, filing, seal, store, worker
+from commonplace.meetings import adapter, capture, engine, filing, seal, store, worker
 
 PREFIX = "/api/meetings"
 logger = logging.getLogger("commonplace.meetings")
@@ -233,7 +233,10 @@ def _person_route(gateway, h, principal, meetings, method, parts):
         return None
     if len(parts) in (1, 2) and MEETING_ID.fullmatch(parts[0]):
         if len(parts) == 1 and method == "GET":
-            return _send(h, 200, {"meeting": meetings.meeting(parts[0], principal.user_id)})
+            view = meetings.meeting(parts[0], principal.user_id)
+            if capture.DELAYED in meetings.events_for(parts[0]):
+                view = {**view, "notices": [capture.DELAYED]}  # the transcript fell behind
+            return _send(h, 200, {"meeting": view})
         if parts[1:] == ["leave"] and method == "POST":
             view = meetings.request_end(parts[0], "inviter_left", time.time(), principal.user_id)
             _audit(gateway, principal, "leave", "ok", target=[parts[0]])
@@ -351,7 +354,13 @@ def _invite(gateway, h, principal, meetings):
         return _error(h, refusal.status, refusal.code, refusal.message)
     try:
         name = engine.bot_name(gateway.db.user(principal.user_id)["name"])
-        meeting, created = meetings.invite(principal.user_id, body, bot_name=name, now=time.time())
+        meeting, created = meetings.invite(
+            principal.user_id,
+            body,
+            bot_name=name,
+            now=time.time(),
+            transcription=capture.engine_for(gateway) is not None,
+        )
     except (store.Invalid, store.Refused) as exc:
         _audit(gateway, principal, "invite", "refused", reason=exc.code)
         raise

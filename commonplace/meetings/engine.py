@@ -77,8 +77,13 @@ def is_stop(text) -> bool:
 
 
 class Sink:
-    """Where captured audio goes. This slice ships no engine, so frames are dropped; the capture
-    slice replaces it with the segmenter. ``discard`` and ``finish`` are the two ways out."""
+    """Where captured audio goes. This base drops frames (tests use it); the capture sink
+    (``capture.CaptureSink``) is what a real hub runs. ``discard`` and ``finish`` are the two ways
+    out: the first drops everything held, the second keeps it for the notes."""
+
+    def ready(self) -> bool:
+        """Can this sink transcribe at all. False ends the meeting before the bot joins."""
+        return True
 
     def frame(self, meeting_id: str, frame: adapter.Frame) -> None:
         return None
@@ -206,6 +211,12 @@ class Run:
             raise _Finish(
                 "failed:provider_unavailable", "failed:provider_unavailable", discard=True
             )
+        if not self.sink.ready():  # no local engine: not joining, and nothing to discard
+            raise _Finish(
+                "failed:needs_local_transcription",
+                "failed:needs_local_transcription",
+                discard=True,
+            )
         self._guard()
         parsed = self.provider.parse_link(self.meetings.open_join_ref(self.meeting_id))
         if not isinstance(parsed, adapter.JoinRef):
@@ -319,6 +330,8 @@ class Run:
     def _pump_audio(self):
         try:
             for frame in self.provider.audio(self.connection, self.handle):
+                if frame.ext_participant is not None and not self.provider.caps.per_speaker_audio:
+                    frame = adapter.Frame(frame.pcm)  # a mixed stream carries no speaker
                 if not self.capture.feed(frame):
                     return
         except Exception as exc:
@@ -337,6 +350,8 @@ class Run:
             raise _Gone
         if self._audio_failed:
             raise _Finish("failed:audio", "failed:audio", discard=True)
+        if getattr(self.sink, "broken", False):  # the engine failed window after window
+            raise _Finish("failed:transcription", "failed:transcription", discard=True)
         if row["state"] == lifecycle.REMOVED:
             raise _Finish(
                 "discarded", row["end_reason"] or "stop_requested", discard=True, notice="stopped"

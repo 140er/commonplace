@@ -81,6 +81,46 @@ class NotesMixin:
             )
             return [dict(r) for r in rows]
 
+    def add_segment(self, meeting_id, ext, t_start_ms, t_end_ms, text) -> int | None:
+        """Append one transcribed (or gap) segment and return its seq. Only while the meeting is
+        listening or draining: after a stop, a kill or an end has deleted what it held, a late
+        write from the capture thread must not put it back (None)."""
+        with self._tx() as conn:
+            row = conn.execute("SELECT state FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+            if row is None or row["state"] not in lifecycle.SEGMENTING:
+                return None
+            seq = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM meeting_segments WHERE meeting_id=?",
+                (meeting_id,),
+            ).fetchone()["n"]
+            conn.execute(
+                "INSERT INTO meeting_segments(meeting_id, seq, ext_participant, t_start_ms, "
+                "t_end_ms, text) VALUES (?,?,?,?,?,?)",
+                (meeting_id, seq, ext, t_start_ms, t_end_ms, text),
+            )
+            return seq
+
+    def extend_segment(self, meeting_id, seq, t_end_ms) -> bool:
+        """A gap that goes on: its end moves, so one stall is one gap segment."""
+        with self._tx() as conn:
+            return (
+                conn.execute(
+                    "UPDATE meeting_segments SET t_end_ms=? WHERE meeting_id=? AND seq=?",
+                    (t_end_ms, meeting_id, seq),
+                ).rowcount
+                == 1
+            )
+
+    def note_event(self, meeting_id, kind, now: float) -> bool:
+        """A text-free line in the lifecycle journal (the capture's ``transcript_delayed``), only
+        for a meeting that is still running."""
+        with self._tx() as conn:
+            row = conn.execute("SELECT state FROM meetings WHERE id=?", (meeting_id,)).fetchone()
+            if row is None or not lifecycle.is_active(row["state"]):
+                return False
+            self._event(conn, meeting_id, kind, _stamp(now))
+            return True
+
     @staticmethod
     def _keeps(conn, row) -> bool:
         """A transcript is kept only when the owner allows it and the inviter ticked it."""
