@@ -1,8 +1,7 @@
 # Disposable sandbox and SC-30 verification
 
-Card #370; verification attempted on 13 November 2026. Isolation was approved by
-Chief of Staff on Jeffrey's standing approval of 11 November, 11:22 CET. The
-approval is recorded in the card's 13 November comment. Provisioning and rollback
+Card #370; verification attempted on 13 November 2026, under maintainer approval,
+recorded in the project tracker (card #370). Provisioning and rollback
 remain operator responsibilities; these tests change no machine settings.
 
 ## Explicit opt-in
@@ -31,11 +30,13 @@ overriding only `cgroup_root`; the original config is unchanged. All test tempor
 files stay there. Scope properties and process membership are printed before and
 after the tests. The temporary config/files are removed at exit, and systemd
 collects the scope. No persistent unit, global cgroup or machine setting changes.
-Chief authorized this harness correction on 13 November after the failure below.
+Maintainer approval for this harness correction is recorded in the project tracker
+(card #370), following the failure below.
 
 This positive test also checks the SC-30 sandbox boundary: distinct network,
 mount, PID, user, UTS and IPC namespaces; only the private loopback interface;
-no IPv4 routes or IPv6 routes through other interfaces; no resolver configuration
+no IPv4 routes, a non-empty IPv6 loopback route inventory and no routes through
+other interfaces; no resolver configuration
 or host interface filesystem. It performs no network connections or DNS queries.
 The existing non-root, hidden/unchanged outside sentinel, literal argument,
 cleared agent socket and exact artifact assertions remain required.
@@ -93,8 +94,9 @@ body. The three SSH cases establish synthetic transport evidence only.
 
 ## Delegated-scope rerun
 
-Chief's subsequent decision was to fix the test harness, matching the runner's
-systemd launch contract, without changing the product. The opt-in launcher above
+The subsequent maintainer approval, recorded in the project tracker (card #370),
+covered fixing the test harness to match the runner's systemd launch contract,
+without changing the product. The opt-in launcher above
 ran successfully as the fixture user. Observed scope properties: `Delegate=yes`;
 scope `cgroup.procs` empty; runner child containing the invoking process; fixture
 subtree empty before and after the tests. The unchanged original fixture config

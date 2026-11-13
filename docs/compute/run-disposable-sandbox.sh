@@ -50,8 +50,8 @@ settings["cgroup_root"] = str(fixture)
 with tempfile.TemporaryDirectory(prefix="scope-run-", dir=config_path.parent) as temporary:
     temporary = Path(temporary)
     scoped_config = temporary / "config.json"
-    with scoped_config.open("x", encoding="utf-8") as stream:
-        os.chmod(scoped_config, 0o600)
+    fd = os.open(scoped_config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(settings, stream)
     env = dict(os.environ, COMMONPLACE_COMPUTE_SANDBOX_FIXTURE=str(scoped_config),
                TMPDIR=str(temporary))
