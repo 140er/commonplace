@@ -580,6 +580,17 @@ def check(config_path) -> int:
 
     try:
         config = _read(config_path)
+        if isinstance(config, dict) and config.get("mode") == "setup-only":
+            from . import installer
+
+            path = Path(config_path).expanduser().absolute()
+            _require(path.name == "config.json" and path.parent.name == installer.STATE)
+            try:
+                installer.Installer(path.parent.parent, host=object()).sync_receipts()
+            except installer.InstallError:
+                raise _ConfigError("approved binding unavailable; owner review required") from None
+            print("runner: approved acknowledgements fetched; setup-only; execution disabled")
+            return 0
         chat_only = isinstance(config, dict) and config.keys() == chat_agent.CONFIG_KEYS
         config = chat_agent.load(config_path) if chat_only else _load(config_path)
         if (
