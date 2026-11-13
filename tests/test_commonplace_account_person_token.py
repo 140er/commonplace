@@ -48,13 +48,15 @@ def post(client, path, data, **kwargs):
     return client.request("POST", path, data, headers=headers, **kwargs)
 
 
-def consent(client, *, checked=True):
+def consent(client, *, checked=True, events=False):
     path = client.authorize_path(client.cid, redirect_uri=CALLBACK, scope="memory:read")
     status, _, html = client.request("GET", path)
     assert status == 200, html
     data = {"request": field(html), "decision": "allow"}
     if checked:
         data["grant_person_delete"] = "1"
+    if events:
+        data["grant_person_events"] = "1"
     status, headers, text = client.request("POST", path, data)
     assert status == 303, text
     code = parse_qs(urlsplit(headers["Location"]).query)["code"][0]
@@ -781,3 +783,89 @@ def test_proof_timestamps_and_binding_are_bounded(phone):
     assert saved["user_id"] == app.user_id and saved["client_id"] == phone.cid
     assert json.loads(saved["workspace_set"]) == [[app.workspace_id, "owner"]]
     assert saved["challenge_hash"] == store.challenge(VERIFIER)
+
+
+def test_event_and_deletion_capabilities_are_separate_and_share_no_proof_state(phone):
+    def feed(pair, suffix=""):
+        return phone.request(
+            "GET",
+            "/api/events" + suffix,
+            cookies=False,
+            headers={"Authorization": "Bearer " + pair["access_token"]},
+        )
+
+    deletion_pair, _ = consent(phone)
+    assert feed(deletion_pair)[0] == 403
+    event_pair, event_app = consent(phone, checked=False, events=True)
+    assert feed(event_pair)[0] == 200
+    path = phone.authorize_path(
+        phone.cid,
+        redirect_uri=CALLBACK,
+        scope="memory:read",
+        purpose="account_deletion",
+        connection_id=event_app.connection_id,
+    )
+    assert phone.request("GET", path)[0] == 403
+    combined, app = consent(phone, events=True)
+    before_feed = feed(combined)
+    assert before_feed[0] == 200
+    cursor = json.loads(before_feed[2])["cursor"]
+    before = rows(
+        phone,
+        "SELECT * FROM oauth_person_grants WHERE connection_id=? AND capability='events:person'",
+        (app.connection_id,),
+    )
+    assert before[0]["cursor_secret"]
+    token = mint(phone, app)
+    saved = rows(phone, "SELECT * FROM account_delete_tokens")
+    assert "cursor_secret" not in saved[0]
+    assert rows(
+        phone,
+        "SELECT cursor_secret FROM oauth_person_grants WHERE connection_id=? AND capability=?",
+        (app.connection_id, CAPABILITY),
+    ) == [{"cursor_secret": None}]
+    assert feed(combined) == before_feed
+    assert rows(phone, "SELECT * FROM account_delete_tokens") == saved
+    assert feed(combined, "?cursor=" + token)[0] == 400
+    assert use(phone, combined, cursor)[0] == 403
+    assert use(phone, combined, token)[0] == 200
+    assert (
+        rows(
+            phone,
+            "SELECT * FROM oauth_person_grants WHERE connection_id=? AND capability='events:person'",
+            (app.connection_id,),
+        )
+        == before
+    )
+    assert feed(combined) == before_feed
+
+
+def test_revoking_a_deletion_proof_never_changes_event_cursor_state(phone, monkeypatch):
+    pair, app = consent(phone, events=True)
+    token = mint(phone, app)
+    before = rows(
+        phone,
+        "SELECT * FROM oauth_person_grants WHERE connection_id=? AND capability='events:person'",
+        (app.connection_id,),
+    )
+    monkeypatch.delenv("COMMONPLACE_PHONE_ACTIONS")
+    assert use(phone, pair, token)[0] == 403
+    monkeypatch.setenv("COMMONPLACE_PHONE_ACTIONS", "on")
+    assert use(phone, pair, token)[0] == 403
+    assert (
+        phone.request(
+            "GET",
+            "/api/events",
+            cookies=False,
+            headers={"Authorization": "Bearer " + pair["access_token"]},
+        )[0]
+        == 200
+    )
+    assert (
+        rows(
+            phone,
+            "SELECT * FROM oauth_person_grants WHERE connection_id=? AND capability='events:person'",
+            (app.connection_id,),
+        )
+        == before
+    )
