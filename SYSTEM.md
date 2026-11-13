@@ -2200,540 +2200,109 @@ every wake attempt failed. See `docs/chat.md`.
 
 ### Topology is one store of structured facts
 
-The Compute map has one source of truth: `(subject, predicate, object)` facts in the workspace's `topology` wing, kept in the workspace file `topology.sqlite3` and not in the control database or the memory knowledge graph. A fact keeps every observation (who, when, verbatim evidence, expiry); a stale fact stays readable but is marked stale; two observers disagreeing is a conflict record, not an overwrite. Writes pass a field allow-list and a secret filter that refuses keys, tokens, passwords and private key material instead of cleaning them. The store does not authorize: tools and routes check the `topology` wing with the ordinary wing grants. Agents write through `topology_propose`: a runner's new facts about itself apply at once, every other addition, change or removal is one proposal that the workspace owner approves or rejects as an ordinary ask, and every applied change keeps its before and after so the owner can undo it. A website's route is found the same way: `topology_discover_site` looks the public name up, reads the reverse proxy config text the agent hands in (site names and upstream targets only, never its credentials), ends in an explicit external node where the user's machines stop, and proposes the result. Live status of machines and link ends is derived on read from signals runners already send (connection use, chat poll, runner jobs, an optional link `status` report) with configurable thresholds; a silent machine is unknown, never green. Agents read the map through two tools, `topology_get` and `topology_route` (REST `GET /api/topology`, `GET /api/topology/route`), under the same scope and wing grant as other memory reads; an answer states how fresh each hop is and says plainly when a hop is unknown or stale. Contract: `docs/topology.md`.
-
-The owner sees the store as a map at `#/compute-map`: an SVG canvas (`web/static/topology-map.js`) that draws only what `GET /api/topology` returns, the graph plus the live status as one word per node and per link end (`status` in the whole-graph answer, the same read the agent tools use). The canvas keeps nothing but dragged positions and the view, in the browser per workspace; it loads nothing from another origin, and a status is never shown by colour alone.
+Moved to [`docs/system/topology-is-one-store-of-structured-facts.md`](docs/system/topology-is-one-store-of-structured-facts.md); edit it there.
 
 ### Bots keep conversations in the workspace store
 
-Bot threads live only in the workspace file `bots.sqlite3`; the control database, logs, audit reasons and error strings never hold message, model or tool-argument text. A bot is not a principal: every read goes through the board services as the person it belongs to, and `/api/bots*` serves signed-in people only (agent tokens and machine credentials get 404, anonymous callers 401). Display text is redacted while the stored message stays verbatim and append-only. Roster previews are cut to 200 characters for display only. Input bounds count raw characters, never the stripped text, so verbatim storage and the limit agree. When a person already has 50 live bots, default bots for further projects are simply not created.
+Moved to [`docs/system/bots-keep-conversations-in-the-workspace-store.md`](docs/system/bots-keep-conversations-in-the-workspace-store.md); edit it there.
 
 ### Bots hear about their work without being asked
 
-A hub event listener appends one short `event` message to a bot's thread when a card the bot filed needs its owner, is ready for review or is done, and when the project's orchestrator answers a post the bot forwarded (the first coordinator reply after it; the reply is stored verbatim and marked as the orchestrator's). It runs on the emitting thread after the commit, never raises, filters with one indexed lookup before any other work and does nothing for a card or post no bot is linked to. It speaks only in the bot that filed or forwarded the item and only while the owner can still see it (fresh person principal, same visibility check as webhooks). A work item posts when its status word changes and only for an event newer than the last one applied, decided and written in one transaction, so a redelivered, repeated, stale or racing event adds nothing; a forwarded post is answered once, by the coordinator's first reply after it, even when replies are handled out of order. Card titles are redacted and cut for display; logs carry a code and a stack location, never text. A start that never launched has no hub event, so no update is made for it.
-
-A bot turn runs on its own thread and never holds a lock, the admission gate or a database handle while it waits on the provider; the HTTP handler only relays the turn's queue, so a dropped client never stops a turn. The model's output is never executed: tools are a fixed registered list, arguments are validated against each tool's schema, results go back quoted as data, and text a tool writes must be a verbatim span of the person's message. Consequential tools only create a pending action that the person confirms. The project tools (status, list, detail, file, order and comment on work, steer the orchestrator, answer questions, approve work, create a project) call the board services as the person, so a member's refusals are the service's own, worded as one plain sentence; filing and forwarding are routine, answering, approving and creating a project wait for the person's tap and run with the item's frozen version. A message a bot forwards to the project chat is posted inside `chat.front.skipping()`: the front agent adds no receipt, model answer, runner relay or five-minute fallback card for it, while the orchestrator's own wake is unchanged. A request id never runs twice; a turn interrupted by a restart is reported from its journal and never rerun. Bots and project chat draw on one model budget: bot requests are counted in the control table `bot_model_calls` (numbers only) and included in the daily count and the per-minute rate project chat uses; a bot takes its unit atomically with the daily check just before sending. The hub is not assumed to be one process (serve holds the data-directory lock shared): whether a turn is running is read from a lease in the workspace store that the turn renews, never only from process memory, and a reply that loses the race to an interrupted marker is reported and logged, not stored twice. Streamed reply text is redacted over the whole reply so far and only its settled part is sent. A confirm tool that takes free text cannot be registered without a `check`; on `/confirm` that check runs against the message that asked for the action before the action is consumed, so a fixable refusal leaves it open, and the compare-and-set still runs it at most once.
+Moved to [`docs/system/bots-hear-about-their-work-without-being-asked.md`](docs/system/bots-hear-about-their-work-without-being-asked.md); edit it there.
 
 ### Bots use machines only through the runner's own checks
 
-A bot never holds machine rights. `commonplace/bots/machines.py` lists, starts and cancels as the person who typed, through the runner's registry, `card_start`, `card_start_status` and `card_start_cancel`, so a person can use a machine only when the runner would let them start on it. Attestation is shown as what it is, set by the owner and not verified, and the listing carries no credential, token or host name. Starting an agent and cancelling a start that has not launched are confirm actions (one tap, label built by the server, request key derived from the turn so a repeat creates one start); running commands is not offered until a provider reports that it can.
+Moved to [`docs/system/bots-use-machines-only-through-the-runner-s-own-checks.md`](docs/system/bots-use-machines-only-through-the-runner-s-own-checks.md); edit it there.
 
 ### After Done: archive hides, never deletes
 
-A done card is final. A signed-in person (owner or member) may archive it, carry on from it in a new linked backlog card, and pin key facts to its Pocket; connections may not. Archiving only flags the card in `card_archive`: it leaves board lists and counts but stays readable and restorable, and nothing is deleted (restore and unpin mark rows, they never remove them). Archived cards refuse updates and Pocket changes until restored. These routes are person-only, so they sit outside the agent-write rules inventory.
+Moved to [`docs/system/after-done-archive-hides-never-deletes.md`](docs/system/after-done-archive-hides-never-deletes.md); edit it there.
 
 ### Reassigning active work
 
-- **Claim boundary.** Immediate owner-assignment claims apply only when handing off a todo card. Reassigning doing work, including a stuck card from needs-me, returns it to todo with no lease or automatic start so the receiver can explicitly claim it.
+Moved to [`docs/system/reassigning-active-work.md`](docs/system/reassigning-active-work.md); edit it there.
 ### Legacy surface comparison and agent guidance
 
-- The pinned handoff baseline overlays current board definitions and applies their live availability and workspace schema seam before strict HTTP and audit comparison; disabled opt-in tools remain absent.
-- Agent instructions keep the existing size budget; the project guide holds runner retry and delivery details.
+Moved to [`docs/system/legacy-surface-comparison-and-agent-guidance.md`](docs/system/legacy-surface-comparison-and-agent-guidance.md); edit it there.
 
 ### Compatibility fixture coverage boundary
 
-- The overlaid board definitions share schemas between baseline and current servers; the strict fixture protects visibility, HTTP and audit compatibility, while focused card tests cover opt-in schema fields.
+Moved to [`docs/system/compatibility-fixture-coverage-boundary.md`](docs/system/compatibility-fixture-coverage-boundary.md); edit it there.
 
 ### Refused Done moves and handoffs
 
-When the service refuses `PATCH /api/cards/<n>` with `status: "done"` or
-`POST /api/cards/<n>/handoff` with 403, the answer is
-`{error, next_step, code}`: `error` is a plain reason, `next_step` says what to do
-next (for example release the restricted-origin card first, or move a todo card to
-Doing before Done), and `code` is `done_refused` or `handoff_refused`. Refusals the
-service does not know get its own text plus a generic reload-and-ask step. Only the
-wording is added here: who may move or hand off a card, and every status code
-(404 not found, 409 version clash, 400 invalid input), stay as the service decides.
-The owner web client joins `error` and `next_step`, and shows a readable message
-for a 403 that carries no JSON body.
+Moved to [`docs/system/refused-done-moves-and-handoffs.md`](docs/system/refused-done-moves-and-handoffs.md); edit it there.
 
 ### Canonical Space REST foundation
 
-`GET /api/spaces` lists `{spaces:[Space]}`, `POST /api/spaces` creates a `Space`
-with status 201, and `GET /api/spaces/<slug>` reads metadata. A Space contains
-`slug`, `name`, `wing`, `coordinator`, top-level status `counts`, `can_configure`,
-`open_url`, `version:1` and `deleted:false`. `open_url` points to
-`/app/#/board/<encoded slug>`; only a signed-in workspace owner person has
-`can_configure:true`. Legacy board responses remain supported.
-
-The existing board row is the Space. Board, Memory and Chat are views of that
-Space, with Board as the default view. Identity is the authenticated workspace and
-exact slug; no new identity object or identity migration is needed.
-List retains claim expiry; metadata is a plain active-row read without expiry,
-transactions, orchestration, seats, settings or credential creation.
-`POST /api/spaces` creates through `board_add`, preserving board authorization,
-the transaction and the `space_created` event with `data.board`.
-Non-person callers must pass the existing board tool visibility gate. Checked
-create accepts freshness only through `Commonplace-Rules-Seq`; refresh failures
-retain status 428 and their original payload. Optional null name/wing/repo use
-slug/shared/no-repo defaults; distinct slugs may share a name.
-
-Canonical validation is 400 `invalid_arguments`; policy or seat refusal is 403
-`forbidden`; missing, hidden or archived metadata is 404 `space_not_found`.
-Readable slug/repo collisions are 409 `space_exists` / `repo_assigned`, including
-archived reservations. Hidden slug collisions are concealed as 404 and hidden repo
-owners produce 403 without identity details. These different outcomes do not
-eliminate existence oracles. Unknown subpaths are 404 `not_found`; collection
-PATCH/DELETE and item POST/PATCH/DELETE are 405 `method_not_allowed` with
-`Allow: GET, POST` or `Allow: GET`. Unregistered methods retain gateway errors.
-An Idempotency-Key or include_deleted query is rejected with 400
-`unsupported_idempotency` or `unsupported_include_deleted`.
-
-#### Space cards and chat
-
-`GET`/`POST /api/spaces/<slug>/cards` and `GET`/`POST /api/spaces/<slug>/chat` are
-adapters over the board card and chat operations of one exact Space. They run the
-same service calls as `/api/boards/<slug>/cards` and `/chat`, so card payloads,
-authority, verbatim chat and rules freshness are unchanged. Differences are the
-canonical vocabulary and identity: the slug must match an active, readable Space
-exactly (a repo reference or a sole visible board is not accepted; otherwise 404
-`space_not_found`); chat reads name the Space as `space` instead of `board`; a body
-`space` or `board` must equal the path slug; a body `rules_seq`, an unknown field or
-invalid JSON is 400 `invalid_arguments`; freshness comes only from
-`Commonplace-Rules-Seq`. Non-person callers must pass the `task_list`/`task_add`
-or `space_read`/`space_post` tool gate. Other methods are 405 with `Allow: GET, POST`
-and other subpaths are 404 `not_found`.
-
-#### MCP names
-
-`space_list`, `space_add`, `space_set` and `space_own_wing` run the `board_list`,
-`board_add`, `board_set` and `board_own_wing` operations with a `space` argument; the
-board names remain. `space_read` and `space_post` accept `space` or the legacy
-`board`; naming two different spaces, or none, is refused. A connection that lists
-either name of a pair is granted both, so an alias never widens authority. Scope,
-trust, owner and profile rules, rules freshness and legacy output are unchanged.
-
-Rename, archive, versions/retries/tombstones, settings and orchestrator adapters,
-the `space` argument on card tools, UI wording, new-user migration and desktop
-synchronization are deferred.
+Moved to [`docs/system/canonical-space-rest-foundation.md`](docs/system/canonical-space-rest-foundation.md); edit it there.
 
 
 ### Authorization-only provenance spelling recognition
 
-Provenance authorization keeps the existing ordinary thread/private reference scan
-and at most four strict percent-decoding rounds, refusing controls and undecodable
-citations. A separate NFKC authorization copy recognizes only complete protected
-shapes: `capture:<actor>:<source>:<identity>`,
-`import-private:<user>:<source>:<identity>`, and
-`capture-fork:<user>:<32 lowercase hex characters>`. ASCII space or NBSP may follow
-structural colons; the namespace colon alone may be omitted when the actor starts
-with an ASCII letter or digit and contains a digit or underscore (as production
-user/connection ids do). This excludes prose actors such as `ing-notes` in
-`capturing-notes:codex:v2`. New shadows begin at the field start or after
-space, NBSP, `/`, `?`, `&`, `#`, `=`, `(`, `<`, `"` or `'`, or inside an already
-recognized reference run. Every namespace start in a run is checked, including
-overlapping ordinary and spelled candidates with no intervening boundary. A run
-must begin before a candidate to waive its boundary check: a non-boundary
-`notes.capture-fork:<user>:<digest>)` retains ordinary whole-run proof rather than
-gaining a digest-only shadow. Internal separators stay mandatory; actor/source
-components exclude whitespace, colons, path separators and
-query delimiters. Identity suffixes retain internal colons and complete `#sha256:`
-qualifiers through the existing whitespace/`?` boundary for capture/import ids.
-Fork identities end after exactly 32 lowercase hex characters; any following
-character (including another hex digit, punctuation, wrapper, text or a hash
-suffix) is citation context and cannot hide the protected digest. Any protected
-reference embedded in that context requires its own readable proof; proving the
-leading fork never proves or suppresses a later candidate. Both ordinary
-and spelled forks authorize that digest while preserving the complete citation
-bytes. Fewer than 32 lowercase hex characters and uppercase digests do not create
-new fork shadows. This does not detect arbitrary Unicode insertion.
-
-Capture source labels are exactly `claude-code` and `codex`. Private import labels
-are exactly `claude-code`, `codex`, `cursor`, `t3`, `grok-bot`, `chatgpt`, `claude-ai`
-and the grant-only `native-memory`. New shadow namespace/source matching ignores
-case and forms lowercase producer labels before lookup; actor and identity case
-remain literal. Existing ordinary legacy tokens retain authorization outside these
-new domains. A complete shadow authorizes the entire spaced reference rather than
-an incomplete ordinary prefix split at an internal structural colon. Embedded
-thread references are still independently authorized.
-
-Every recognized reference requires readable local proof in the caller's
-workspace. Missing and unreadable production-shaped shadows receive the same
-not-found write response as canonical citations. Readable fork spellings are
-readable with trailing citation context only when every embedded reference is
-also proved. Capture/import identities remain literal,
-including trailing punctuation: a spaced spelling with an appended wrapper can
-therefore fail closed when no such exact identity exists. Punctuation is not
-stripped from those variable-length ids, since it can be part of a real identity.
-Read projections omit unproved citation fields while retaining D1-readable fact text. Authorization does not rewrite stored/displayed citation
-bytes or subject, predicate, object and content. Ordinary URL/path citations such
-as `https://example.test/capturing-notes` and `capture-notes.md`, unshaped trigger
-words, and readable canonical fork citations remain compatible. A complete
-protected reference embedded in a URL/path still requires proof. Existing
-navigable-URL validation applies to new `source_url` writes; KG exposes that
-citation as `origin_link`, and file citations in source observation rows.
-
-The decoded field and its NFKC authorization copy each have a hard cap of
-16,384 Unicode characters, counting decoded padding before trimming. An over-limit
-field is refused in full, never scanned as a truncated prefix. Gateway fact reads
-omit only the citation while retaining readable fact text and stored bytes.
-KG writes refuse the entire operation before storage with the explicit error
-`<field>: citation length limit of 16384 Unicode characters exceeded (decoded or NFKC-normalized)`.
-The pending fact is not saved or rewritten; callers can correct the citation and
-resubmit the same verbatim fact. Existing triples and source observations remain
-unchanged; refused writes never reach a worker mutation. Protected-reference,
-control and decoding refusals retain their existing
-not-found responses; a length error discloses only the caller's field and limit.
-This deliberately also refuses over-limit readable citations, including token-free
-legacy files; citations within the cap retain their existing byte-preservation
-rules. New URL writes also retain their existing 2,048-character validation.
-
-This is a gateway fact-provenance policy, not a storage-wide citation limit.
-Drawer writes retain their existing unchecked `source_file` storage; ordinary
-gateway projections scrub top-level provenance fields. Import-proved non-fact
-records remain exempt for the `source_path` and nested `metadata.source_file`
-aliases constructed after exact import-range proof. Those aliases retain their
-original citation bytes. This exception does not grant access to unproved words.
-
-The bound covers both overlapping suffix output and omitted-colon near misses.
-For input length n and fixed cap C = 16,384, four strict decoding/control passes
-cost O(n) time and memory; candidate scanning costs at most O(C²) time and memory.
-No per-start suffix work occurs above either cap, including NFKC expansion.
-Thread tokens are deduplicated on insertion, preserving first-occurrence order
-without accumulating repeated ids from every overlapping shadow.
-Deterministic behavior regressions assert zero candidate enumeration above either
-cap and verify public refusal, preservation and exact-boundary compatibility.
-The raw decode/control passes remain input-proportional before the decoded cap;
-there is no per-response character budget.
-
-Wall-clock and RSS measurements use the serial, informational `timing` lane;
-plain pytest excludes that marker by default, matching the behavior lane. Explicit
-`-m timing` selects measurements. Performance never gates a PR, merge or release.
-Isolated subprocesses report cap-sized and 1 MiB repeated namespaces, omitted-colon
-near misses, fullwidth spellings and mixed namespace/thread-id expansion against
-3-second scan and 128 MiB peak RSS reference budgets. Their 256 MiB address-space
-limit and 300-second hang guard contain bad measurements; budget misses, memory
-exhaustion and hang-guard results are recorded as information, not test failures.
-
-This changes reference recognition only: typed associations, provenance aliases,
-plain-file association proof and search-index progress retain their existing
-contracts.
+Moved to [`docs/system/authorization-only-provenance-spelling-recognition.md`](docs/system/authorization-only-provenance-spelling-recognition.md); edit it there.
 
 
 ### Current typed provenance association proof
 
-- Every outgoing source_drawer_id and source_closet resolves the complete decoded
-  local id in the authenticated workspace. Physical ids and both logical parent
-  keys resolve to current metadata on Chroma; every chunk requires a nonempty wing/room,
-  wing authority and the existing thread reader. Owners use the same checks.
-- Private metadata reads return no documents, page by at most 500 records, open
-  collections read-only with create=False, and revalidate concrete descriptors.
-  Chroma uses a final read snapshot. Other backends support exact physical ids;
-  logical handles fail closed because the collection API offers no ordered
-  snapshot enumeration guarantee. Missing targets, failed lookups, missing room proof,
-  changed metadata or revoked authority omit the citation. Probes never invoke
-  KG mutation handlers, write the KG or create an optional closet collection.
-- Original source sets still decide any-readable-source fact eligibility before
-  citation omission. Readable text and stored citations remain verbatim. Complete
-  raw source_file tokens are checked before drawer metadata displays a basename;
-  readable citation spellings and token-free plain-file behavior stay compatible.
-- D9.1=A is locked: complete local plain-file proof is separate follow-up work.
-  D9.2=A remains locked, including accepted global-quota deferral of actually
-  blocked readable work. Neither decision grants new read authority. Imported
-  history retains consent/range checks; unproved roomless derived rows stay stored.
-  Provenance aliases and external-id wing-only limitations remain unchanged.
+Moved to [`docs/system/current-typed-provenance-association-proof.md`](docs/system/current-typed-provenance-association-proof.md); edit it there.
 
 
 ### Memory map citation omission
 
-- Owner maps keep visible person relationships when a fact cites a missing,
-  deleted or unreadable drawer. An unproved citation produces no memory link;
-  it does not turn the whole map into an error or remove readable fact text.
-- Hidden and absent targets have the same public map. Citation proof still uses
-  current thread authority; stored facts and citations are never rewritten.
+Moved to [`docs/system/memory-map-citation-omission.md`](docs/system/memory-map-citation-omission.md); edit it there.
 ### Explicit tunnel read proof
 
-Authenticated list_tunnels and follow_tunnels require both stored endpoint pairs
-and every optional drawer's current metadata association to pass wing policy and
-the existing reader in the authenticated workspace, including for owners. A
-readable endpoint hint cannot authorize a moved drawer. Missing, malformed or
-unresolved optional drawers drop the entire tunnel; room-only readable tunnels
-remain eligible. Local unscoped calls keep their behavior.
-
-Private probes page at most 250 tunnels and resolve at most 500 drawer metadata
-rows per batch without loading document columns or calling get_drawers. Concrete
-allow descriptors are request-local. The final read rechecks stored endpoints
-and metadata descriptors, excluding changed or newly arrived associations before
-follow previews or traversal recording. Reader authority is refreshed after
-probing. Incomplete acquisition, malformed protocol responses and deadline errors
-produce an empty public list without private markers. Read-only follow retains
-record=False behavior; create/delete authorization and delete snapshot checks
-are unchanged. Passive graph reads use the input projection described below.
+Moved to [`docs/system/explicit-tunnel-read-proof.md`](docs/system/explicit-tunnel-read-proof.md); edit it there.
 
 
 ### Explicit tunnel concurrency and import qualification
 
-- Tunnel probes use identity keysets from one file read per worker call. Deleting
-  an earlier id cannot shift later pages. Final identity lookup compares only the
-  id, label and endpoint wing/room/drawer associations and returns the current row, so
-  traversal potentiation and unrelated drawer metadata updates remain visible.
-- Missing or changed associations still fail closed before preview hydration or
-  traversal recording. Probe and allow batches remain bounded and request-local.
-  Invalid name arguments retain the ordinary validation error envelope.
-- Computed `imported:` drawers have no stored metadata association and are excluded
-  from explicit tunnels even when the existing import reader proves their consent
-  and source range. Ordinary imported-history read APIs retain their range rules.
-- The read-only server seam used by the regression witness passes `record=False`;
-  the public follow schema does not expose that argument. Tunnel labels now use
-  independent protected-token scans before listing, following or counting them.
+Moved to [`docs/system/explicit-tunnel-concurrency-and-import-qualification.md`](docs/system/explicit-tunnel-concurrency-and-import-qualification.md); edit it there.
 
 
 ### Graph projection before traversal and ranking
 
-- Authenticated graph reads first enumerate metadata in batches of at most 500,
-  authorize each placement with wing policy and the live workspace reader, then
-  revalidate concrete descriptors in fresh metadata snapshots. Empty allow means
-  no placements; local unscoped graph calls keep their existing behavior.
-- Nodes, plural wings/halls/dates, counts, edges, fuzzy suggestions, traversal and
-  top-N ranking use only surviving rows. Grouped reads retain backend-specific
-  ordering; collection paths retain enumeration order for tied readable candidates.
-  Traversal and tunnel discovery retain the 50-result caps and stats the ten-node
-  top list. Projected results never enter the raw graph or overview caches.
-- Explicit tunnel totals reuse the authorized endpoint and drawer association set.
-  Labels independently prove every recognized thread/private token before list,
-  follow, preview hydration or counting. Kept labels (including emoji with a zero
-  width joiner and ordinary percent text) and other stored fields remain unchanged.
-  Label changes invalidate final tunnel descriptors; unrelated dynamics fields do
-  not. Missing/unresolved optional drawers and duplicate tunnel ids fail closed as
-  documented for explicit reads; computed imported drawers still require stored
-  associations. Imported-history consent/range rules are not widened.
-- Incomplete acquisition, malformed protocol replies, missing workspace context or
-  deadline failure discard the entire graph response: zero stats, an empty tunnel
-  list, or the ordinary not-found traversal envelope with empty suggestions. Odd
-  client argument errors retain their JSON-RPC validation shape. No private diagnostics,
-  redaction markers or partial global counts are returned. Literal-wing readers
-  retain the existing all-wing-tool refusal; actual owners use the same live reader.
-- Storage is never rewritten or purged. O4/O8 remain in force; external ids hidden
-  only by wing policy retain their accepted limitation. The separate LOCKED
-  D9.1 = A and D9.2 = A decisions, including actual-readable-work quota deferral,
-  are unchanged by graph projection.
+Moved to [`docs/system/graph-projection-before-traversal-and-ranking.md`](docs/system/graph-projection-before-traversal-and-ranking.md); edit it there.
 
 
 ### Readable legacy graph parity
 
-- Graph descriptors bind literal projected wing and room names, including legacy
-  `?` values. Readable registry and sentinel rows remain graph inputs, matching
-  the local graph paths; overview bookkeeping rules do not change.
-- Graph argument names are checked against the worker's tool schema before any
-  metadata probe. Unknown and missing arguments retain JSON-RPC `-32602` errors.
-  Traversal retains the worker's null/default and integer-coercion conventions;
-  booleans and non-coercible values retain its JSON-RPC error shape. Schema lookup
-  and projection share one deadline. Worker/schema/projection faults still return
-  the empty operation envelope, never a client-validation error.
-- Ordering follows the reader that actually served the metadata page. Grouped
-  Chroma uses room/wing/hall order. Exact and Compact readers use wing/room/hall
-  with generated locus columns, or room/wing/hall on older read-only databases
-  without them. Collection fallback keeps enumeration order. Sibling ties,
-  suggestions and the 50-result cap follow that order; grouped statistics retain
-  their separate room-name tie break.
-- Exact and Compact projections read the local graph's SQL expressions and schema
-  from one metadata-only snapshot. SQLite applies TEXT affinity on exact loci,
-  including booleans and integers beyond int64; Compact and locus-less readers
-  preserve native numeric values and their falsy-zero behavior before converting
-  to text. Descriptors bind both projected values and stored SQLite sort values.
-  Chroma preserves its grouped numeric text casts, ignores boolean locus columns,
-  and reads dates from the string column. Collection fallback retains its existing
-  metadata interpretation; overview bookkeeping rules remain separate.
-- Null and missing tunnel labels are empty only for protected-token scanning.
-  Returned/stored nulls, missing keys and unrelated fields remain unchanged; other
-  non-string labels still fail closed. No palace data is rewritten.
+Moved to [`docs/system/readable-legacy-graph-parity.md`](docs/system/readable-legacy-graph-parity.md); edit it there.
 
 
 ### Graph compatibility residuals
 
-- Accepted parity exception: non-string tunnel labels other than null remain
-  ineligible on authenticated list/follow/count paths, although legacy local reads
-  can list those records. Null and absent labels remain readable and stored intact.
-- The existing explicit-follow path predates graph projection: unknown arguments
-  can still become an empty list instead of a JSON-RPC invalid-params error.
-  This remains a separate follow-up; graph-tool validation does not change it.
-  the public follow schema does not expose that argument. Tunnel label reference
-  handling predates this change and remains follow-up work for graph traversal.
+Moved to [`docs/system/graph-compatibility-residuals.md`](docs/system/graph-compatibility-residuals.md); edit it there.
 
 
 ### Local worker allocation observation
 
-Storage-serving MCP entrypoints enable metadata-only allocation observation by default;
-`MEMPALACE_WORKER_MEMORY_OBSERVE=0` opts out. Imports, durable jobs and forwarding-only
-proxies do not activate a storage observer. HTTP startup activates it before
-preflight and optional eager warmup; later capacity probes reuse it. Other
-entrypoints activate it on the first local storage dispatch.
-Each activation has a random generation;
-call ids are local counters, never client request ids. Fixed startup phases and actual
-cache, collection, restricted-pickle and native-session branches report only observed
-facts. Missing samples and untouched components stay null. No payload, result, content
-hash, identity, path, arbitrary name, exception text or configuration value is recorded.
-
-The resolved config directory owns private `diagnostics/worker-memory.jsonl` and one
-backup, each at most 4 MiB. A stable nonblocking cross-process lock serializes append
-and rotation; files are opened inside that lock. Symlink and nonregular destinations
-are refused. There is no per-call stderr or general-log copy. At most 64 primitive
-contexts and 128 serialized records of at most 4096 bytes are retained in memory.
-Token-construction failures drop observation, release the active count and slot,
-and let the request continue. Observer-construction failure is latched for the
-process lifetime and counted in a saturating activation-loss counter, without
-retrying on every request. End RSS source/status describe the same end read.
-Begin and end delivery is asynchronous and best effort, without a producer-side
-acknowledgment wait. A present unmatched begin is usable evidence that a scope
-began; an absent begin proves nothing. A busy delivery lock, full queue or failed
-sink drops observations and increases the saturating loss count without stopping
-storage work. Idle HTTP startup now creates the diagnostics directory and queues
-startup records even before a memory call. Shutdown attempts
-only a bounded 50 ms flush. This adds no network destination, database write, memory
-limit change or restart policy. Whole-process RSS deltas during overlapping calls
-are not uniquely attributable. Rotation, losses and unmatched pairs leave unknown
-coverage: these observations alone do not establish or exclude a production cause.
-
-Observation does consume CPU on the request thread: a synthetic interleaved trivial
-call measurement found median 3.18 ms disabled versus 3.98 ms enabled (about
-+0.8 ms per call). A slow sink did not add request-thread waiting in that probe.
-These measurements are informational, not a merge threshold or a guarantee of
-zero latency overhead. Concurrent producer contention and a full queue can drop
-records; coverage claims require loss counts and complete begin/end pairs for
-the exported interval, not only sequential scratch results.
+Moved to [`docs/system/local-worker-allocation-observation.md`](docs/system/local-worker-allocation-observation.md); edit it there.
 
 
 ### D1-visible KG pages and aggregates
 
-- Every authenticated KG query mode and timeline authorizes wing, sensitivity and original source sets before counts, entity labels, candidates and pagination. Stats derive participating entities, predicates and wings from visible facts; orphan entities do not contribute.
-- Search mode and drawer-search fact enrichment use the same metadata probe, allow descriptors and final read snapshot. Scoped search copies the authorized snapshot and uses a private in-memory lexical index with the same tokenizer, query-specific name handling, selective-term rule, BM25 seeds, 50-key candidate cap and history expansion as the local scorer. Document frequencies come only from authorized facts; hidden facts cannot affect scores, seeds or pages. Local unscoped reads keep their existing index.
-- Metadata descriptor pages contain at most 500 facts. Authorization uses the workspace reader, including owner and imported source-range rules, within the shared worker request deadline. The final snapshot excludes new or changed descriptors before copying fact text. The palace lock and read transaction are released after the copy, before index construction or scoring. One absolute gateway expiry is carried to workers; copy/scan/scoring loops check it, SQLite progress handlers interrupt long statements, and temporary indexes close on failure. Authority caches last one response: a revocation during a request takes effect on the next request.
-- `kg_query.search` requires a boolean at the authenticated gateway and is strict in the worker protocol; other tools retain their normal unknown-key validation. Declared pagination keys follow protocol integer conversion and minimum/maximum validation; undeclared keys return the worker-compatible `-32602` unknown-parameter error before projection. Malformed declared arguments and missing required entity retain worker-compatible protocol errors; data-independent entity/date/direction refusals retain their handler error results. An offset outside SQLite integer range retains the generic worker error. Malformed pagination returns the worker-compatible `-32602` validation error; null selects the protocol default. Non-owner wing filters first check the raw spelling against policy, then resolve matching canonical names to stored wing spellings; owners and wildcard readers retain literal filtering; string wing names from sees-all readers bypass the raw policy refusal; the worker validates names, while per-fact wing policy and the final allow-list still enforce visibility. Schema/required-argument validation and the handler retain their existing error shapes and order. Limited readers still get the policy refusal. The final authorized allow-list still bounds all results. An in-process scoped search without its detached search snapshot refuses global-index fallback. Incomplete search proof on public reads returns exactly `{"facts": []}`; other reads preserve their empty operation envelope without partial totals or raw errors.
-- Fact text, temporal buckets and any-readable-source mixed facts remain intact; citation scrubbing follows eligibility. Reads do not create a missing graph or write an intent log. These projections preserve local unscoped reads, O4 stored rows, O8 external-id limitations and remaining provenance exceptions. D9.1 = A and D9.2 = A remain LOCKED, including accepted quota deferral caused by actually blocked readable work.
+Moved to [`docs/system/d1-visible-kg-pages-and-aggregates.md`](docs/system/d1-visible-kg-pages-and-aggregates.md); edit it there.
 
 
 ### Scoped KG search cost
 
-- Authorized snapshot copy and temporary lexical indexing use O(facts + entities + sources + text bytes) space and work linear in the copied corpus, plus the existing candidate SQL and ranking costs. There is no hard corpus row cap. The 50-key seed cap controls candidate semantics, not corpus size; a deadline returns empty rather than partial facts.
-- Synthetic worker-side measurements (median of three, queries `Acme`, `uses`, `uses Acme`): 1,968 facts took 82.5 ms for metadata enumeration, 518.6–681.3 ms for scoped snapshot/index/search, and 3.8–31.5 ms for local indexed search. At 9,808 facts these were 478.8 ms, 2,563.7–2,924.4 ms and 4.1–181.3 ms respectively. The scoped total includes descriptor revalidation and copying; no palace lock is retained during index construction or scoring.
-- These measurements exclude gateway per-row authorization and network round trips, use synthetic data, and depend on runtime load. They describe cost rather than a latency guarantee or merge threshold. Performance does not justify truncating authorized enumeration. Cooperative worker expiry bounds work, and lock/deadline regressions verify cancellation and cleanup.
+Moved to [`docs/system/scoped-kg-search-cost.md`](docs/system/scoped-kg-search-cost.md); edit it there.
 
 ### Search enrichment compatibility note
 
-The public search response deliberately omits `facts_error`, including on failed fact enrichment. A failure-only marker could distinguish hidden-present and hidden-absent worlds and break response equality. Failed enrichment therefore preserves drawers and returns the same empty facts shape as no eligible facts. The Unreleased changelog records this public-shape change, strict KG search booleans and restored argument/wing-filter compatibility; clients should no longer use `facts_error` as an availability signal.
+Moved to [`docs/system/search-enrichment-compatibility-note.md`](docs/system/search-enrichment-compatibility-note.md); edit it there.
 ### Bounded memory for overview reads
 
-Status, wing, room and taxonomy overviews retain backend facet aggregates when
-available, including pgvector, qdrant and exact/compact when their fast path is
-unavailable. Facet acquisitions have explicit distinct-key limits; bookkeeping
-subtraction uses a fixed number of room facets per wing: registry, sentinel
-union and their overlap. Only the bookkeeping facets' returned rooms are expanded;
-ordinary rooms do not cause additional facet calls. Missing rooms are reconciled
-from three global wing-keyed bookkeeping facets over those same predicates.
-Global room facets supply the wingless room remainder; two additional scalar
-facets (registry ingest_mode and non-registry sentinel is_sentinel) reconcile
-missing wing keys without double subtraction or string/numeric flag confusion.
-The exact/compact SQL filter pushes scalar $ne with an explicit NULL arm so
-missing ingest_mode keys remain eligible for the disjoint sentinel count.
-Facet taxonomy retains its existing explicitly keyed-wing enumeration; wingless
-bookkeeping cannot subtract from a literal wing named "unknown". Boolean and legacy string
-sentinel aliases share one union predicate, preventing duplicate subtraction.
-Taxonomy per-wing facets use at most eight concurrent calls, releasing each map
-after reduction. With W explicitly keyed wings, the unscoped facet-call bounds
-are status <= 9 + 3W, list_wings <= 8 + 3W, list_rooms <= 9 + 3W, taxonomy
-<= 8 + 4W, plus at most 2 calls when wingless rows exist. This conservative
-baseline includes the three global room facets even without wingless rows.
-These count facet calls, not backend requests or elapsed time. From backend
-code, sqlite_exact executes two SQL statements per facet (collection lookup
-and aggregate); pgvector and qdrant perform one existence probe per facet in
-addition to its aggregate request. Live remote costs have not been measured.
-Up to eight completed in-flight maps can transiently retain eight times 8 MiB,
-plus the separately bounded tally; the 8 MiB map limit is not a combined
-transient limit. Qdrant membership unions use homogeneous string/integer
-MatchAny groups, single boolean matches and numeric equality ranges, keeping
-bookkeeping filters server-side without mixed-type MatchAny bodies.
-
-Only `UnsupportedCapabilityError` in bookkeeping acquisition preserves ordinary
-facet results with `partial: true` and
-`bookkeeping_error: bookkeeping_unavailable`, including unsubtracted bookkeeping.
-Any other `BackendError`, including transient service or closed-backend errors,
-returns `overview_unavailable` in the normal refusal envelope with no drawer total
-and no aggregates. A transient error cannot publish inflated counts as partial.
-Live Qdrant/pgvector facet support remains unverified; local wrapper tests use
-isolated test clients and do not establish live payload-index/filter parity.
-
-Two public count corrections are deliberate: facet overviews subtract legacy
-string sentinels (`"true"` and `"1"`) as well as boolean flags, and explicit
-facet limits replace the previous default-1000 silent truncation. Counts are
-complete within the configured aggregate bounds; over-cap acquisitions refuse
-explicitly rather than publishing truncated totals.
-
-Missing-room registry/sentinel rows and rows without either locus key are
-also excluded from facet counts. Pre-existing sqlite_exact fast-path handling
-of the string "yes" and scoped first-page facet probe fan-out are unchanged.
-
-Non-facet raw fallback uses a presence-preserving projection of wing, room,
-is_sentinel and ingest_mode. Chroma reads these fields in one recovery-checked
-SQLite snapshot, including a drawer without any projected key. The reader also
-supports a deduplicated indexed wing scope. Room alias discovery and room counts
-reuse one bounded aggregate pass, avoiding a second projected scan. Unrelated
-metadata and documents never enter this acquisition. General keyed metadata
-iterators keep their previous semantics.
-
-Projected batches contain at most 500 rows and 1 MiB of canonical UTF-8 JSON
-(compact separators, ensure_ascii=False). Complete rows split a batch before its
-byte limit. SQL checks cell lengths before decoding; a projected cell over
-64 KiB is refused. Aggregates have at most 16,384 distinct wing/room pairs and
-8 MiB of deep sys.getsizeof container/key/value accounting, counting shared
-objects once. Conservative preflight may refuse earlier; one bounded dictionary
-insertion's allocation overhead can precede the final accounting check. These
-are allocation-structure bounds, not a whole-process RSS cap. The primary grouped
-Chroma/exact/compact path also enforces these caps: over-cap palaces now receive
-an explicit diagnostic instead of an unlimited public overview. Facet result
-maps are checked under the same aggregate/key limits; they are backend
-aggregates, not the byte-bounded raw metadata acquisition contract.
-
-Only one bounded taxonomy cache is retained, keyed by palace, collection and
-database fingerprint, including only `overview_too_large` refusals; transient
-`overview_unavailable` errors are never cached. Writes, reconnects and a changed
-or lost fingerprint invalidate successful and refused entries alike. The
-existing freshness TTL applies only while both cached and current fingerprints
-are absent. Raw overview metadata is never cached.
-
-A lazy SQLite acquisition error closes the failed snapshot and discards its
-entire partial tally. The same byte-bounded projected reader is reopened once
-from the beginning with identical where. A second acquisition failure, including
-persistent MetadataRecoveryPending, returns explicit `overview_unavailable`.
-This read-only retry can recover a transient failure; it does not apply queued
-Chroma writes or call an unbounded SDK reader. There is no invented Chroma byte
-capability. A non-facet backend without a bounded projected reader is refused
-without calling get; no production backend advertises a byte-bounded page adapter.
-Unsupported non-facet raw acquisition returns `overview_unavailable`; oversized
-cells/aggregates return `overview_too_large`. These refusals carry the normal
-empty aggregate keys and `partial: true`; status keeps its protocol/backend
-fields and uses a null total. No partial tally is published as complete.
-
-This fixes a measured fallback defect. Production worker memory attribution
-remains open. Other full metadata consumers, including delete-by-source and the
-palace-graph fallback, and model/vector allocations remain separate candidates.
-Storage format and verbatim drawer retrieval are unchanged.
+Moved to [`docs/system/bounded-memory-for-overview-reads.md`](docs/system/bounded-memory-for-overview-reads.md); edit it there.
 ### Outgoing provenance aliases and coherent ranges
 
-Outgoing memory responses clean `source.thread` and `source_kept.thread` bundles through the existing workspace provenance authority, including readable private-chat source identities. Missing, malformed, hidden or unproved token parents omit the nested bundle; non-null flat `source_seq_start` and `source_seq_end` are omitted only when the provenance pass leaves `source_thread` absent or None. Token-free flat parents and ranges retain their existing wing-policy semantics (the accepted external-id residual); token-free nested bundles retain their existing wing-policy semantics. Readable bundles and verbatim drawer text are retained, including idempotent retries and independent batch siblings. Memory conversion consumes this cleaned metadata. Projection never changes stored bytes or adds a write refusal for old provenance. Typed citations and token-free plain `source_file` proof retain their existing semantics. Non-dict nested `source`/`source_kept` values retain their existing behavior: no current producer emits these shapes, and their potential token exposure remains a residual.
-
-Alias-only nested bundles use `source_thread` when `thread` is absent and require the same provenance authority, including token-free compatibility. Only provenance-shaped nested bundles containing `thread`, `seq_start`, `seq_end` or their `source_` aliases are scrubbed. Tunnel wing/room endpoints without a drawer id remain unchanged; source and target endpoints carrying `drawer_id` require a current readable drawer association or the entire endpoint is omitted. A pre-existing residual remains in KG projection: a readable private-source primary can be omitted when a readable native `thr_` secondary is present; this slice does not change that behavior.
-
-Accepted endpoint residual: on non-Chroma backends, a readable chunked drawer's logical handle omits its endpoint because association proof supports exact physical ids only, even when get reconstructs the drawer. This inherits the limit in “Current typed provenance association proof” above (logical handles lack ordered snapshot enumeration); no broader proof is added here.
-
-Dependent non-null sequence values are omitted when their parent provenance is missing, hidden or unproved; earlier gateway expectations that retained orphan ranges are updated to this rule.
-
-Tunnel reads also inherit the earlier whole-record tunnel projection: malformed, unresolved or non-Chroma logical drawer descriptors can remove the entire tunnel before this final endpoint scrub.
+Moved to [`docs/system/outgoing-provenance-aliases-and-coherent-ranges.md`](docs/system/outgoing-provenance-aliases-and-coherent-ranges.md); edit it there.
 
 ### Authorized room and status count responses
 
-- Only `mempalace_list_rooms` and `mempalace_status` replies produced by the
-  gateway's `respond` path skip the final generic mirror/provenance gate.
-  Their room/wing maps already come from complete request-local wing and
-  thread authorization plus descriptor revalidation; imported room listings
-  retain their existing consented-reader proof.
-- This keeps visible labels such as `source_file` or `origin_id` as count-map
-  keys and preserves room/wing sums. Hidden pairs are excluded before counts;
-  incomplete proof still yields zero visible counts and maps.
-- Tunnel replies, drawer records, every other tool and ordinary forwarded
-  replies keep the generic gate. Provenance scrubbing and typed-association
-  semantics are unchanged, including omission of malformed scalar citations.
-- Broader semantic record/count-map collisions and search/duplicate vector
-  diagnostics remain separate work.
+Moved to [`docs/system/authorized-room-and-status-count-responses.md`](docs/system/authorized-room-and-status-count-responses.md); edit it there.
 
 ## Person private-read containment
 
@@ -2912,72 +2481,4 @@ not define a restricted estate response or restore filer-specific private reads.
 
 ### Event, write and durable-token boundaries
 
-Non-owner person event feeds use the same current-principal visibility as
-webhooks: boardless events require every-wing access, and board events require
-a readable active board (space messages retain coordinator checks). Their feed
-and cursor are projected onto visible events; hidden events do not change the
-member feed response. Members consequently lose boardless
-live Memory refresh signals. Card and board linked-memory state can remain stale
-until the next board event or an explicit refresh. Owner feeds retain their
-original ordered log.
-
-Each member poll snapshots readable active boards once and filters a bounded
-SQL page against that set. The opaque epoch hashes the member role and readable
-board identities, never hidden activity. A missing or changed epoch, or a cursor
-above the projected latest, returns `reset: true` without replaying events. The
-app refetches the open screen, including an open card, before adopting the reset
-cursor and epoch. Ordinary pages advance only through returned events. An owner
-request carrying a non-empty member-era epoch also returns a reset with no
-events, adopting the latest raw cursor before resuming the owner feed.
-
-Deploy note: open member tabs from before this deploy stop receiving live events
-until they reload. Reload those tabs after upgrading to resume live updates.
-
-Webhook subscriptions whose effective principal lacks `policy.sees_all_wings`
-receive no numbers: payload `seq` and delivery-list `event_seq` are omitted.
-Their payload id is `evt_` followed by the first 32 hexadecimal characters of
-HMAC-SHA256 of the raw event sequence, keyed by an independent server-only
-per-subscription key. The disclosed signing secret cannot derive those ids.
-A restricted retry keeps the same opaque id for the same event.
-The internal `(webhook_id, event_seq)` key still deduplicates enqueue attempts.
-There is no subscription counter, counter column or counter backfill. One
-nullable key column is initialized atomically on first restricted use, persists
-across restarts and is never returned by any API or logged. No operator setting
-or manual data setup is required. Subscriptions with `sees_all_wings` retain the
-raw sequence and id. Enqueue, send and listing resolve the subscription's current
-effective authority, including owner-held restricted tokens; an unresolvable
-principal is restricted. Send rechecks queued payloads after authority changes.
-Subscription lookup exceptions log one diagnostic with exception type and stack
-locations, excluding exception text and key material; admission still fails closed.
-
-Writes into unreadable private wings remain allowed, but duplicate drawer
-retries return the same successful shape as fresh writes. Replay fields and
-retained source provenance are hidden; returned structural fields depend only
-on the supplied request and current chunk configuration. Readable-owner retries
-still report already_exists. Tunnel creation additionally requires both endpoint
-wings to be readable for principals without every-wing access, and outgoing
-write results pass the wing scrubber. Denial happens before any private upsert.
-
-Token issuance refuses private read scope for a holder who is not a workspace
-owner. PAT, durable subscription connection and OAuth authentication strip both
-private read and admin scopes unless current membership is exactly owner;
-missing membership rejects authentication. Stored policies are not rewritten.
-Member PATs minted earlier with private:read silently lose it when loaded.
-
-Health-flagged member notes are always saved privately when private writing is
-allowed; they are never redirected to shared storage. The successful HTTP save
-response includes a notice, and the MCP save text states: "Saved privately. You
-cannot read this note for now." This also applies to other saves into unreadable
-private wings. The notice uses the actual filed destination after write-wing
-pinning; readable shared or inbox saves do not carry that notice. A save that
-succeeds privately but fails to link to a card includes the same notice in its
-saved-but-not-linked error.
-
-An ask may carry structured decision blocks: options given as `{label, detail,
-preview}`. The labels alone remain the offered options, so recipient routing,
-the event log, digests, push and `decide` treat a structured ask exactly like a
-plain one, and an answer is always one of the offered labels. Detail and preview
-are bounded plain text stored beside the ask (`ask_blocks`) and dropped whenever
-the offered options change. Previews are text, not images: the app's content
-security policy loads images from its own origin only, and there is no upload
-path for decision images yet.
+Moved to [`docs/system/event-write-and-durable-token-boundaries.md`](docs/system/event-write-and-durable-token-boundaries.md); edit it there.
