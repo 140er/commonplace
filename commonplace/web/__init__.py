@@ -130,6 +130,16 @@ def _connection_wings(gateway, principal, slot):
         raise ToolError("Memory wing listing timed out") from None
 
 
+def _phone_feed(gateway, h, principal):
+    from commonplace import person_actions
+
+    if principal.person or not person_actions.enabled():
+        return False
+    from commonplace import person_events
+
+    return person_events.handle(gateway, h)
+
+
 def install(gateway):
     # A timed-out read may still be unwinding; never queue more optional reads.
     connection_wings_slot = threading.BoundedSemaphore()
@@ -227,7 +237,7 @@ def install(gateway):
 
     def feed(h):
         principal = require_principal(gateway, h)
-        if principal is None:
+        if principal is None or _phone_feed(gateway, h, principal):
             return
         if query(h).get("feed") == "sync":
             sync_feed.handle(gateway, h, principal)

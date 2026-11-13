@@ -161,7 +161,7 @@ def latest_seq(db, workspace_id: str) -> int:
     return int(row["s"] or 0)
 
 
-def member_page(db, gateway, principal, cursor: int, epoch: str) -> dict:
+def _member_page(db, gateway, principal, cursor, epoch, limit, initial):
     """Read one bounded ordinal page against one current board snapshot.
 
     The control lock protects only SQL reads, never board-store access or a
@@ -200,19 +200,53 @@ def member_page(db, gateway, principal, cursor: int, epoch: str) -> dict:
         latest = db._conn.execute(f"SELECT count(*) FROM events WHERE {where}", params).fetchone()[
             0
         ]
-        reset = epoch != current_epoch or cursor > latest
+        reset = (not initial and epoch != current_epoch) or cursor > latest
         rows = (
             []
             if reset
             else db._conn.execute(
-                f"SELECT * FROM events WHERE {where} ORDER BY seq LIMIT 200 OFFSET ?",
-                [*params, cursor],
+                f"SELECT * FROM events WHERE {where} ORDER BY seq LIMIT ? OFFSET ?",
+                [*params, limit + 1, cursor],
             ).fetchall()
         )
-    batch = [{**_row(row), "seq": cursor + index} for index, row in enumerate(rows, 1)]
+    batch = [_row(row) for row in rows[:limit]]
     return {
         "events": batch,
         "seq": latest if reset else cursor + len(batch),
         "epoch": current_epoch,
         "reset": reset,
+        "has_more": len(rows) > limit,
+    }
+
+
+def member_page(db, gateway, principal, cursor: int, epoch: str) -> dict:
+    """The web's visible ordinal cursor, without disclosing raw log positions."""
+    page = _member_page(db, gateway, principal, cursor, epoch, 200, False)
+    page.pop("has_more")
+    page["events"] = [
+        {**event, "seq": cursor + index} for index, event in enumerate(page["events"], 1)
+    ]
+    return page
+
+
+def person_page(db, gateway, principal, cursor, epoch, limit, *, initial=False):
+    """Same ordered log and member projection as the web, with bounded pages.
+
+    Raw ids stay inside this module's caller; the phone signs them before display.
+    Readable-set changes reset without replay, exactly like the web feed.
+    """
+    if principal.role != "owner":
+        return _member_page(db, gateway, principal, cursor, epoch, limit, initial)
+    with db._lock:
+        latest = latest_seq(db, principal.workspace_id)
+        reset = epoch != "" or cursor > latest
+        batch = [] if reset else after(db, principal.workspace_id, cursor, limit + 1)
+    more = len(batch) > limit
+    batch = batch[:limit]
+    return {
+        "events": batch,
+        "seq": latest if reset else batch[-1]["seq"] if batch else cursor,
+        "epoch": "",
+        "reset": reset,
+        "has_more": more,
     }
