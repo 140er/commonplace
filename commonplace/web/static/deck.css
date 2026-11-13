@@ -136,19 +136,7 @@
 :root[data-ui="deck"] .workbench-project [data-config-state] { color: var(--text-2); }
 :root[data-ui="deck"] .workbench-project [data-config-state="proposed"] { color: var(--wait); }
 :root[data-ui="deck"] .workbench-project [data-config-people] { display: block; color: var(--text-2); font-size: 13px; font-weight: 400; line-height: 1.5; }
-:root[data-ui="deck"] .workbench-project [data-config-diff] {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 13px;
-  line-height: 1.5;
-  background: var(--well);
-  padding: 12px;
-  border-radius: 12px;
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: 100%;
-}
+:root[data-ui="deck"] .workbench-project [data-config-diff] { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono, ui-monospace, monospace); font-size: 13px; line-height: 1.5; background: var(--well); padding: 12px; border-radius: 12px; box-sizing: border-box; min-width: 0; max-width: 100%; }
 :root[data-ui="deck"] .workbench-project [data-config-accept] { background: var(--text); color: var(--bg); border-radius: 999px; }
 :root[data-ui="deck"] .workbench-project [data-config-version] > .callout { background: var(--well); border: 0; border-radius: 12px; padding: 12px; }
 :root[data-ui="deck"] .workbench-project [data-config-version] > .callout p { margin: 0; }
