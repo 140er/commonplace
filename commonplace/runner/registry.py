@@ -208,54 +208,61 @@ def _write(db, machine_id, data):
 
 def enroll(db, owner, grant):
     _owner(owner)
-    with db._lock, db._tx() as conn:
-        data = _grant(db, owner, grant, initial=True)
-        mid = control_db._new_id("mach")
-        now = control_db._iso(control_db._now())
-        credentials = {}
-        for kind, policy in (
+    with db._lock, db._tx():
+        return enroll_in(db, owner, grant)
+
+
+def enroll_in(db, owner, grant):
+    """Enroll in an existing control transaction, including credentials and audit."""
+    _owner(owner)
+    conn = db._conn
+    data = _grant(db, owner, grant, initial=True)
+    mid = control_db._new_id("mach")
+    now = control_db._iso(control_db._now())
+    credentials = {}
+    for kind, policy in (
+        (
+            "machine",
+            Policy.build(profile="slim", tools=[], scopes=[], read_wings=[], trust="standard"),
+        ),
+        ("worker", _worker_policy(data["wings"])),
+    ):
+        cid, token = db.create_token(
+            workspace_ref=owner.workspace_id,
+            user_ref=owner.user_id,
+            actor=owner.user_id,
+            name=f"runner-{kind}:{mid}",
+            client="commonplace-runner",
+            policy=policy,
+            expires_days=90,
+        )
+        control_db.link_runner(conn, cid, mid, kind)
+        credentials[f"{kind}_connection_id"] = cid
+        credentials[f"{kind}_token"] = token
+    try:
+        conn.execute(
+            "INSERT INTO runner_machines(id, workspace_id, label, machine_connection_id, worker_connection_id, projects, topics, wings, enrolled_by, updated_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                "machine",
-                Policy.build(profile="slim", tools=[], scopes=[], read_wings=[], trust="standard"),
+                mid,
+                owner.workspace_id,
+                data.pop("label"),
+                credentials["machine_connection_id"],
+                credentials["worker_connection_id"],
+                json.dumps(data.pop("projects")),
+                json.dumps(data.pop("topics")),
+                json.dumps(data.pop("wings")),
+                owner.user_id,
+                owner.user_id,
+                now,
+                now,
             ),
-            ("worker", _worker_policy(data["wings"])),
-        ):
-            cid, token = db.create_token(
-                workspace_ref=owner.workspace_id,
-                user_ref=owner.user_id,
-                actor=owner.user_id,
-                name=f"runner-{kind}:{mid}",
-                client="commonplace-runner",
-                policy=policy,
-                expires_days=90,
-            )
-            control_db.link_runner(conn, cid, mid, kind)
-            credentials[f"{kind}_connection_id"] = cid
-            credentials[f"{kind}_token"] = token
-        try:
-            conn.execute(
-                "INSERT INTO runner_machines(id, workspace_id, label, machine_connection_id, worker_connection_id, projects, topics, wings, enrolled_by, updated_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    mid,
-                    owner.workspace_id,
-                    data.pop("label"),
-                    credentials["machine_connection_id"],
-                    credentials["worker_connection_id"],
-                    json.dumps(data.pop("projects")),
-                    json.dumps(data.pop("topics")),
-                    json.dumps(data.pop("wings")),
-                    owner.user_id,
-                    owner.user_id,
-                    now,
-                    now,
-                ),
-            )
-        except sqlite3.IntegrityError:
-            raise Conflict("an active machine already uses this label") from None
-        if data:
-            _write(db, mid, data)
-        _audit(db, owner, "enroll", mid)
-        return {"machine_id": mid, **credentials, "binding_state": "unbound"}
+        )
+    except sqlite3.IntegrityError:
+        raise Conflict("an active machine already uses this label") from None
+    if data:
+        _write(db, mid, data)
+    _audit(db, owner, "enroll", mid)
+    return {"machine_id": mid, **credentials, "binding_state": "unbound"}
 
 
 def get_machine(db, ws, ref):
@@ -489,6 +496,9 @@ def revoke(db, owner, machine_id):
         )
         db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
         _audit(db, owner, "revoke", row["id"], reset=True)
+        from . import enrollment
+
+        enrollment.revoke_machine_in(db, owner, row["id"])
         return {"ok": True}
 
 
