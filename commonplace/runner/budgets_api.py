@@ -97,6 +97,8 @@ def install(gateway):
                         body = read_json(h)
                     except ValueError:
                         return
+                    if not isinstance(body, dict):
+                        raise ToolError("no: invalid budget")
                     body.pop("rules_seq", None)
                     payload = set_budget(ctx, body)
                 elif action == "delete":

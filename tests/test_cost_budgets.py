@@ -438,3 +438,11 @@ def test_budget_tables_are_plain_and_reopen_cleanly(two_projects):
         assert conn.execute("SELECT COUNT(*) FROM cost_budgets").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize("body", [[1, 2], "text", 7, None, True])
+def test_a_body_that_is_not_an_object_is_a_400_never_a_500(two_projects, body):
+    hub, owner, _machine = two_projects
+    status, _ = http(hub.port, "PUT", BUDGETS, cookie=owner["cookie"], body=body)
+    assert status == 400
+    assert http(hub.port, "GET", BUDGETS, cookie=owner["cookie"])[1]["budgets"] == []
