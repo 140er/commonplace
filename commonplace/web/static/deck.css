@@ -123,7 +123,7 @@
 :root[data-ui="deck"] .setting-row button:hover { background: var(--accent-weak); box-shadow: none; }
 :root[data-ui="deck"] .setting-row button[aria-pressed="true"] { background: var(--text); color: var(--bg); box-shadow: none; }
 :root[data-ui="deck"] .settings :is(input:not([type=checkbox], [type=radio]), select, textarea) { min-height: 36px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
-:root[data-ui="deck"] .deck-tools { display: none; }
+:root[data-ui="deck"] .deck-tools { display: block; }
 :root[data-ui="deck"] .deck-tools a { display: flex; align-items: center; justify-content: space-between; min-height: 48px; color: var(--text); text-decoration: none; font-weight: 500; }
 :root[data-ui="deck"] .deck-tools a + a { border-top: 1px solid var(--line); }
 @media (max-width: 699px) {
@@ -223,3 +223,21 @@
   :root[data-ui="deck"] .center:has(.memory-import) { padding-bottom: calc(57px + max(14px, env(safe-area-inset-bottom))); }
   :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
 }
+
+/* Settings shortcuts stay before the longer lists, on every screen size. */
+:root[data-ui="deck"] #deck-settings-nav { display: flex; flex-wrap: wrap; gap: 8px; }
+:root[data-ui="deck"] #deck-settings-nav button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--well); color: var(--text); font: inherit; cursor: pointer; }
+:root[data-ui="deck"] #deck-settings-nav button:first-child { background: var(--text); color: var(--bg); }
+:root[data-ui="deck"] .settings > *, :root[data-ui="deck"] .settings .setting-row > * { min-width: 0; }
+:root[data-ui="deck"] .settings-section { scroll-margin-top: 12px; overflow-wrap: anywhere; }
+:root[data-ui="deck"] #tool-policy [data-tool-policy-filter] { width: 100%; min-height: 44px; margin-top: 12px; }
+:root[data-ui="deck"] .deck-permission-group { margin-top: 24px; }
+:root[data-ui="deck"] .deck-permission-group h3 { margin: 0 0 8px; color: var(--text); font-size: 16px; font-weight: 600; }
+:root[data-ui="deck"] .deck-permission-group .setting-row { align-items: start; gap: 16px; padding-block: 14px; }
+:root[data-ui="deck"] .deck-permission-label { flex: 1; }
+:root[data-ui="deck"] .deck-permission-label small { display: block; color: var(--text-3); }
+:root[data-ui="deck"] .deck-permission-label summary { min-height: 28px; color: var(--text-2); cursor: pointer; font-size: 12px; }
+:root[data-ui="deck"] .deck-permission-label code { display: block; color: var(--text-2); white-space: normal; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .settings .setting-row select { flex: 0 0 auto; max-width: 130px; min-height: 44px; }
+:root[data-ui="deck"] .settings :is(.agent-form, .webhook-form) { min-width: 0; }
+:root[data-ui="deck"] .settings :is(input, select, textarea) { max-width: 100%; }
