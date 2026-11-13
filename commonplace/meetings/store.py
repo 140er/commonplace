@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from commonplace.admission import GATE
-from commonplace.meetings import adapter, lifecycle, notes_store, seal
+from commonplace.meetings import adapter, chat_store, lifecycle, notes_store, seal
 from mempalace.sqlite_crypto import connect, row_factory
 
 LABEL_MAX = 60
@@ -302,7 +302,7 @@ def open_meetings(gateway, workspace_id: str) -> "MeetingStore":
     return stores[workspace_id]
 
 
-class MeetingStore(notes_store.NotesMixin):
+class MeetingStore(notes_store.NotesMixin, chat_store.ChatMixin):
     def __init__(self, locate, data_dir, workspace_id):
         self._locate = locate
         self.data_dir = data_dir
@@ -998,6 +998,7 @@ class MeetingStore(notes_store.NotesMixin):
             if step.discard:
                 conn.execute("DELETE FROM meeting_segments WHERE meeting_id=?", (meeting_id,))
                 conn.execute("DELETE FROM meeting_participants WHERE meeting_id=?", (meeting_id,))
+                conn.execute("DELETE FROM meeting_chat WHERE meeting_id=?", (meeting_id,))
                 if (
                     step.state != lifecycle.CANCELLED
                 ):  # a removal or a failure keeps no notes either

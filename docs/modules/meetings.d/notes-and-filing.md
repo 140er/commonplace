@@ -18,4 +18,4 @@
 
   - Refusals carry a code: `not_open` (a note already filed or dismissed), `filing_in_progress`, `wrong_kind` (409); `choose_wing`, `secret_detected`, `cannot_file` (409); `meeting_active` (409); `invalid_text`, `invalid_request_id`, `invalid_board` (400); `no_transcript` (404); `not_allowed` (403, the inviter can no longer write in the workspace). Generation failures are codes on the run (`needs_configuration`, `needs_turn_on`, `key_missing`, `hosted_model_not_allowed`, `limit`, `rate`, `schema`, `model`, `timeout`, `http_error`, `bad_response`), never text from the meeting or the model.
 
-  - Not built here: capture and transcription (the segments), a reduce pass over the per-batch summaries of a very long meeting (at most ten batches are read, the run says `partial`), in-meeting answers and the first provider adapter.
+  - Not built here: capture and transcription (the segments), a reduce pass over the per-batch summaries of a very long meeting (at most ten batches are read, the run says `partial`), and the first provider adapter.

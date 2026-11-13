@@ -85,6 +85,7 @@ class Event:
     host: bool = False
     text: str = ""  # chat text, or the provider's display name for a participant event (untrusted)
     addressed: bool = False
+    bot: bool = False  # chat sent by a bot, this app's own post included: never answered
 
 
 @dataclass(frozen=True)
