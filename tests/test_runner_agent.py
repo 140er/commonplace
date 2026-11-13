@@ -429,7 +429,7 @@ def test_x1_child_environment(signup_hub, owners, tmp_path, monkeypatch):  # noq
     assert entry["token_seen"] is False
 
 
-def test_x2_no_secret_or_stderr_in_results(signup_hub, owners, tmp_path):  # noqa: F811
+def test_x2_no_secret_in_results(signup_hub, owners, tmp_path):  # noqa: F811
     machine, path, env = _run_control(signup_hub, owners["A"], tmp_path, mode="nonzero")
     number, job_id = _queue(signup_hub, owners["A"], machine)
     result = _invoke(path, env)
@@ -444,10 +444,10 @@ def test_x2_no_secret_or_stderr_in_results(signup_hub, owners, tmp_path):  # noq
         machine["machine_token"],
         machine["worker_token"],
         env["RUNNER_T3_GRANT"],
-        "fake launch failed",
     ):
         assert forbidden not in output
     assert result.stdout == result.stderr == ""
+    assert "fake launch failed" in row["reason"]["detail"]
 
 
 def test_s1_success_idempotency_and_fence(signup_hub, owners, tmp_path):  # noqa: F811

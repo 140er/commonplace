@@ -19,6 +19,7 @@ from ..client import ClientError, _endpoint
 from ..handoff.hook import _atomic_text, _NoRedirect
 from ..http_util import log_failure
 from ..mailer import _loopback
+from . import launch_output
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,6 @@ SPAWN_MESSAGE = (
 
 _MODES = ("approval-required", "auto-accept-edits", "auto", "full-access")
 MAX_MESSAGE_CHARS = 120_000  # thread launch message limit
-MAX_LAUNCH_LOG_CHARS = 4_000
-_TOKEN_LIKE = re.compile(r"[A-Za-z0-9_\-.]{40,}")
 _MAX_REPLY_BYTES = 65_536
 _MAX_LEASE_BYTES = 1_048_576  # a config-driven lease carries the pinned launch message
 _PROVIDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")  # as projects.types.PROVIDER
@@ -424,30 +423,26 @@ def _spawn(config, job, env, secrets):
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        _launch_log(config, job, secrets, f"launch not completed: {type(exc).__name__}")
-        return {"outcome": "uncertain", "code": "launch_unknown"}
-    _launch_log(
-        config,
-        job,
-        secrets,
-        f"exit {result.returncode}\nstdout:\n{_text(result.stdout)}\nstderr:\n{_text(result.stderr)}",
+        output = launch_output.captured(
+            f"launch not completed: {type(exc).__name__}",
+            getattr(exc, "stdout", None),
+            getattr(exc, "stderr", None),
+            secrets,
+        )
+        _launch_log(config, job, output)
+        return {"outcome": "uncertain", "code": "launch_unknown", "launch_output": output}
+    output = launch_output.captured(
+        f"exit {result.returncode}", result.stdout, result.stderr, secrets
     )
-    return _parse_launch(result, secrets)
+    _launch_log(config, job, output)
+    parsed = _parse_launch(result, secrets)
+    if parsed["outcome"] == "uncertain":
+        parsed["launch_output"] = output
+    return parsed
 
 
-def _text(raw):
-    return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw or "")
-
-
-def _launch_log(config, job, secrets, text):
-    """Keep what the launch bridge said, so a launch_unknown can be explained afterwards.
-
-    Credentials and any long token-like string are redacted before the text is written; the
-    file is private and sits next to the journal, which only reads ``*.json``."""
-    for secret in secrets:
-        if secret:
-            text = text.replace(secret, "<redacted>")
-    text = _TOKEN_LIKE.sub("<redacted>", text)[:MAX_LAUNCH_LOG_CHARS]
+def _launch_log(config, job, text):
+    """Write only sanitized output; journal replay still reads only *.json."""
     try:
         _atomic_text(
             Path(config["journal_dir"]).expanduser() / (job["job_id"] + ".launch.log"), text
@@ -462,7 +457,9 @@ def _save(path, entry):
 
 def _deliver(hub, path, entry, replay=False):
     body = {
-        key: entry[key] for key in ("lease_token", "outcome", "thread_id", "code") if key in entry
+        key: entry[key]
+        for key in ("lease_token", "outcome", "thread_id", "code", "launch_output")
+        if key in entry
     }
     if body["outcome"] == "spawning":
         body.update(outcome="uncertain", code="restart_unknown")

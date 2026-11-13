@@ -1264,7 +1264,7 @@ class BoardService(lifecycle.LifecycleMixin):
         )
 
     def _member_reservation(self, row):
-        """People other than the owner never take, drop or reassign another actor's reservation."""
+        """Non-owner people cannot change another actor's todo/doing status or hand it off."""
         p = self.principal
         if (
             p.person

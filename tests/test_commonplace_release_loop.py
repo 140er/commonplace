@@ -7,13 +7,19 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.policy import Policy
 from commonplace.projects.types import SEAT_CLIENT
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    REVIEW_QUESTION,
+    hub_fixture,  # noqa: F401
+)
 from tests.test_commonplace_board_authority import fresh as fresh
 from tests.test_commonplace_boards import api, service
 from tests.test_commonplace_origin_holder_release import edit, policy, raw, snapshot
 
 NOTE = "Hand this to the coordinator seat"
 REASON = "Independent origin checked"
+MEMBER_REFUSAL = "card is reserved for another connection; the workspace owner can move it"
 
 
 def released(hub, fresh):
@@ -274,9 +280,19 @@ def reserved_for_agent(hub, fresh, kind):
 MEMBER_MOVES = {
     "take-over": ("PATCH", "", {"status": "doing"}),
     "drop": ("PATCH", "", {"status": "backlog"}),
+    "return-to-todo": ("PATCH", "", {"status": "todo"}),
     "handoff-anyone": ("POST", "/handoff", {"to": "anyone", "note": NOTE}),
     "complete": ("PATCH", "", {"status": "done"}),
-    "review": ("PATCH", "", {"status": "review"}),
+    "review": (
+        "PATCH",
+        "",
+        {
+            "status": "review",
+            "question": REVIEW_QUESTION,
+            "context": REVIEW_CONTEXT,
+            "options": REVIEW_OPTIONS,
+        },
+    ),
 }
 
 
@@ -294,14 +310,14 @@ def test_member_web_session_cannot_move_another_reservation(hub, fresh, kind, mo
         f"/api/cards/{number}{suffix}",
         {**body, "version": before[0]["version"]},
     )
-    if kind == "held" and move == "take-over":
-        # Doing to doing is no status change, so the guard does not apply; the holder keeps it.
+    if body.get("status") == before[0]["status"]:
+        # Restating either todo or doing keeps the holder; it is not a status change.
         assert status == 200, reply
         assert reply["assignee"] == before[0]["assignee"]
         assert snapshot(fresh.owner, number)[0]["assignee"] == before[0]["assignee"]
         return
     assert status == 403, reply
-    assert "reserved for another connection" in str(reply)
+    assert reply["error"].rstrip(".").lower() == MEMBER_REFUSAL
     assert snapshot(fresh.owner, number) == before
 
 
@@ -311,22 +327,21 @@ def test_member_service_cannot_move_another_reservation(hub, fresh, kind, move):
     number = reserved_for_agent(hub, fresh, kind)
     member = member_session(hub, fresh)
     version = raw(fresh.owner, number)["version"]
-    calls = {
-        "take-over": lambda: member.task_update(number, status="doing", version=version),
-        "drop": lambda: member.task_update(number, status="backlog", version=version),
-        "handoff-anyone": lambda: member.task_handoff(number, "anyone", NOTE, version=version),
-        "complete": lambda: member.task_update(number, status="done", version=version),
-        "review": lambda: member.task_update(number, status="review", version=version),
-    }
-    if kind == "held" and move == "take-over":
-        # Doing to doing is not a status change, so the guard does not apply; the holder keeps it.
-        assert calls[move]()["assignee"] == raw(fresh.owner, number)["assignee"]
+
+    def call():
+        if move == "handoff-anyone":
+            return member.task_handoff(number, "anyone", NOTE, version=version)
+        return member.task_update(number, version=version, **MEMBER_MOVES[move][2])
+
+    if MEMBER_MOVES[move][2].get("status") == raw(fresh.owner, number)["status"]:
+        # Restating either todo or doing keeps the holder; it is not a status change.
+        assert call()["assignee"] == raw(fresh.owner, number)["assignee"]
         return
     refuse(
         fresh.owner,
         number,
-        calls[move],
-        match="reserved for another connection; the workspace owner can move it",
+        call,
+        match=f"^no: {MEMBER_REFUSAL}$",
     )
 
 
@@ -410,7 +425,8 @@ def other_workspace_agent(hub, name, user, workspace, trust="trusted"):
     return service(hub, hub.db.authenticate_token(token))
 
 
-def test_same_named_agent_in_another_workspace_is_refused(hub, fresh):
+@pytest.mark.parametrize("move", ["take-over", "drop"])
+def test_same_named_agent_in_another_workspace_is_refused(hub, fresh, move):
     number = reserved_for_agent(hub, fresh, "released")
     other_user = hub.db.create_user("other-owner@example.test")
     other_ws = hub.db.create_workspace("other-workspace", other_user)
@@ -428,21 +444,21 @@ def test_same_named_agent_in_another_workspace_is_refused(hub, fresh):
     twin = other_workspace_agent(hub, "coordinator", other_user, other_ws, trust="standard")
     # The twin reads its own card with that number, never the released card in the first workspace.
     assert twin.task_show(number)["title"] == "Other workspace work"
-    before_own = snapshot(owner, own)
+    before_original = snapshot(fresh.owner, number)
+    calls = {
+        "take-over": lambda: twin.task_take_next(task=number),
+        "drop": lambda: twin.task_update(
+            number, status="backlog", version=raw(owner, own)["version"]
+        ),
+    }
+    # Assert the specific authority refusal, and snapshot the store the caller actually uses.
     refuse(
-        fresh.owner,
-        number,
-        lambda: twin.task_take_next(task=number),
-        match="not available to take",
+        owner,
+        own,
+        calls[move],
+        match="not available to take" if move == "take-over" else "reserved for another connection",
     )
-    assert snapshot(owner, own) == before_own
-    refuse(
-        fresh.owner,
-        number,
-        lambda: twin.task_update(number, status="backlog", version=raw(owner, own)["version"]),
-        match="reserved for another connection",
-    )
-    assert snapshot(owner, own) == before_own
+    assert snapshot(fresh.owner, number) == before_original
 
 
 def test_member_web_session_cannot_drop_work_another_agent_holds(hub, fresh):

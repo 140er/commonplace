@@ -1079,7 +1079,7 @@ def test_r12_pin_runner_store_gains_columns_and_keeps_digest_and_payload(world):
     store = jobs.open_store(world.gw, world.ws)
     with store.connection() as conn:
         after = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
-    assert after == before | set(jobs.CONFIG_COLUMNS)
+    assert after == before | set(jobs.CONFIG_COLUMNS) | set(jobs.SNAPSHOT_COLUMNS)
     card = world.card(board=PLAIN)
     status, job = world.person_start(card)
     assert status == 201 and set(job) == PIN_JOB_KEYS
@@ -1095,6 +1095,7 @@ def test_r12_pin_runner_store_gains_columns_and_keeps_digest_and_payload(world):
     ).hexdigest()
     assert row["request_hash"] == digest
     assert all(row[name] is None for name in jobs.CONFIG_COLUMNS)
+    assert row["launch_output"] is None
     assert set(world.lease()) == PIN_JOB_KEYS | {"card_context"}
 
 
