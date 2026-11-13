@@ -30,16 +30,27 @@ BODY_KEYS = {
 
 def _install_manifest(gateway, h):
     """A machine-self action on the existing authenticated prefix, never public."""
-    from . import enrollment, enrollment_api, install_receipts
+    from . import enrollment, enrollment_api, install_receipts, runtime_status
 
     principal = gateway.principal_for(h)
-    if enrollment_api.preflight(gateway, h, install_receipts.PATH, principal):
+    path = urlsplit(h.path).path
+    if enrollment_api.preflight(gateway, h, path, principal):
         return
     try:
         query = parse_qs(urlsplit(h.path).query, keep_blank_values=True)
-        if h.command != "GET" or set(query) != {"nonce"} or len(query["nonce"]) != 1:
+        if path == runtime_status.PATH:
+            from commonplace.runner.enrollment_api import _body
+
+            if h.command != "POST" or query:
+                raise ValueError
+            body = _body(h)
+            if body is None:
+                return
+            payload = runtime_status.report(gateway, principal, body)
+        elif h.command != "GET" or set(query) != {"nonce"} or len(query["nonce"]) != 1:
             raise ValueError
-        payload = install_receipts.fetch(gateway, principal, query["nonce"][0])
+        else:
+            payload = install_receipts.fetch(gateway, principal, query["nonce"][0])
     except enrollment.Refused:
         send_json(h, 404, {"error": "not found"})
     except install_receipts.ApprovalRequired:
@@ -211,7 +222,7 @@ def _listing(store, machine, query):
 
 
 def _dispatch(gateway, h, route):
-    if urlsplit(h.path).path == "/api/runner/install-manifest":
+    if urlsplit(h.path).path in ("/api/runner/install-manifest", "/api/runner/install-status"):
         _install_manifest(gateway, h)
     else:
         route(h)

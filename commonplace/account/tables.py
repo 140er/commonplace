@@ -120,6 +120,9 @@ RULES = {
     "runner_setup_requests": Rule(
         workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
     ),
+    "runner_installations": Rule(
+        workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
+    ),
     "sessions": Rule(user=_U),
     "short_links": Rule(workspace=_W),
     "signin_flows": Rule(),
