@@ -77,13 +77,7 @@ def python_literals(text):
 def prose_matches(text):
     # Inline code, fenced examples and link destinations contain stable command/config names.
     text = re.sub(r"(?<!`)`[^`\n]+`(?!`)|\]\([^)]*\)", lambda m: " " * len(m[0]), text, flags=re.S)
-    return [
-        m
-        for m in ROLE.finditer(text)
-        if not re.match(
-            r"\s*(?:kind|schema|topic)\s*=", text[text.rfind("\n", 0, m.start()) + 1 : m.start()]
-        )
-    ]
+    return list(ROLE.finditer(text))
 
 
 def visible_matches(path, text):
@@ -187,3 +181,10 @@ def test_runtime_failure_copy_uses_display_names(monkeypatch):
     assert result["orchestration"]["error"] == "Coworker management unavailable; try again"
     assert result["orchestrators"]["error"] == "Coworkers unavailable; try again"
     assert result["machines"]["error"] == "Machines unavailable; try again"
+
+
+@pytest.mark.parametrize(
+    "text", ['kind = "orchestrator"', 'schema = "ask the orchestrator"', 'topic = "orchestrator"']
+)
+def test_instruction_guard_does_not_exempt_assignment_prose(text):
+    assert prose_matches(text)
