@@ -207,10 +207,11 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
             "Send a test notification",
         ]:
             assert page.get_by_text(label, exact=True).count() == 1
-        meta = page.locator('[data-tool-policy-row="webhook_add"] .deck-permission-meta')
-        assert meta.locator("small").bounding_box()["y"] == pytest.approx(
-            meta.locator("summary").bounding_box()["y"], abs=2
-        )
+        for wire in ["webhook_add", "webhook_list", "webhook_remove", "webhook_test"]:
+            meta = page.locator(f'[data-tool-policy-row="{wire}"] .deck-permission-meta')
+            assert meta.locator("small").bounding_box()["y"] == pytest.approx(
+                meta.locator("summary").bounding_box()["y"], abs=2
+            )
         status = page.locator("[data-tool-policy-status]")
         assert status.evaluate("el=>getComputedStyle(el).marginTop") == "12px"
         assert not page.get_by_text("webhook_add", exact=True).is_visible()

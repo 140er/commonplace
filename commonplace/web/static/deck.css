@@ -233,8 +233,8 @@
 :root[data-ui="deck"] #tool-policy [data-tool-policy-filter] { width: 100%; min-height: 44px; margin-top: 12px; }
 :root[data-ui="deck"] .deck-permission-group { margin-top: 24px; }
 :root[data-ui="deck"] .deck-permission-group h3 { margin: 0 0 8px; color: var(--text); font-size: 16px; font-weight: 600; }
-:root[data-ui="deck"] .deck-permission-group .setting-row { align-items: start; gap: 16px; padding-block: 14px; }
-:root[data-ui="deck"] .deck-permission-label { flex: 1; }
+:root[data-ui="deck"] .deck-permission-group .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 16px; padding-block: 14px; }
+:root[data-ui="deck"] .deck-permission-label { display: contents; }
 :root[data-ui="deck"] .deck-permission-label small { display: block; color: var(--text-3); }
 :root[data-ui="deck"] .deck-permission-label summary { min-height: 0; line-height: 18px; color: var(--text-2); cursor: pointer; font-size: 12px; }
 :root[data-ui="deck"] .deck-permission-label code { display: block; color: var(--text-2); white-space: normal; overflow-wrap: anywhere; }
@@ -242,7 +242,12 @@
 :root[data-ui="deck"] .settings :is(.agent-form, .webhook-form) { min-width: 0; }
 :root[data-ui="deck"] .settings :is(input, select, textarea) { max-width: 100%; }
 
-:root[data-ui="deck"] .deck-permission-meta { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 0 8px; color: var(--text-3); font-size: 12px; line-height: 18px; }
+:root[data-ui="deck"] .deck-permission-meta { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: flex-start; flex-wrap: nowrap; gap: 0 8px; color: var(--text-3); font-size: 12px; line-height: 18px; }
 :root[data-ui="deck"] .deck-permission-meta summary { color: var(--text-3); }
 :root[data-ui="deck"] #tool-policy [data-tool-policy-status] { margin-top: 12px; color: var(--text-3); }
 :root[data-ui="deck"] .deck-permission-meta small { font-size: 12px; line-height: 18px; }
+
+:root[data-ui="deck"] .deck-permission-label > span { grid-column: 1; grid-row: 1; }
+:root[data-ui="deck"] .deck-permission-group .setting-row > select { grid-column: 2; grid-row: 1; }
+:root[data-ui="deck"] .deck-permission-meta small { flex: none; white-space: nowrap; }
+:root[data-ui="deck"] .deck-permission-meta details { min-width: 0; }
