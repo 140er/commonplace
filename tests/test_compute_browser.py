@@ -57,7 +57,12 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                 page.goto(origin + "/app/?ui=deck#/compute/management")
                 heading = page.locator(".compute-title h1")
                 assert heading.inner_text() == "Compute"
-                assert heading.evaluate("e => getComputedStyle(e).fontSize") == "24px"
+                page.wait_for_function(
+                    """() => {
+                        const heading = document.querySelector('.compute-title h1');
+                        return heading && getComputedStyle(heading).fontSize === '24px';
+                    }"""
+                )
                 page.locator('[data-compute-action="gateway"]').click()
                 page.locator('select[name="board"]').select_option("compute")
                 _enrollment(
