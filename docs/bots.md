@@ -230,13 +230,13 @@ plain sentence with what to do next.
 What the bot can do:
 
 - **Look.** `project_status` (counts by status, who is working, what waits and why, whether the
-  orchestrator is connected and woken), `list_work` (up to 20 tasks, filtered by status),
+  Coworker is connected and woken), `list_work` (up to 20 tasks, filtered by status),
   `work_detail` (one task with its latest notes and links) and `list_decisions` (the open
   questions waiting for you).
 - **File and order work.** `create_work` files your message as a new task, `prioritize_work`
   changes a task's priority (project owner only) or moves it before or after another task, and
   `comment_work` adds a comment.
-- **Steer.** `tell_orchestrator` passes your words to the project's orchestrator and says
+- **Steer.** `tell_orchestrator` passes your words to the project's Coworker and says
   honestly whether it is connected and woken, or will only see them when it next checks. New
   work goes through `create_work` only, never also forwarded. One message that does both uses
   the span arguments: one part is filed, another is forwarded.
@@ -298,7 +298,7 @@ empty list and a short reason.
 
 ## Updates between turns
 
-When something happens to work a bot filed, or the project's orchestrator answers a message a
+When something happens to work a bot filed, or the project's Coworker answers a message a
 bot forwarded, the person sees it in that bot's thread without asking: one short message with
 the role `event`, and the roster follows (`unread` counts it, `state` changes).
 
@@ -307,7 +307,7 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
 | A question for the person on a task the bot filed | `A question about “<title>” needs you.` | `decision` |
 | The task is ready for review | `“<title>” is ready for you to look at.` | `work` |
 | The task is done | `“<title>” is done.` | `work` |
-| The orchestrator replies to a post the bot forwarded | the reply, word for word | `orchestrator` |
+| The Coworker replies to a post the bot forwarded | the reply, word for word | `orchestrator` |
 
 - Only the bot that filed the task or forwarded the post gets the message. Other bots, and
   other people's bots, get nothing.
@@ -316,11 +316,11 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
 - Exactly once: a task posts when its status changes into one of the three above, so the
   same event twice, two events for one change, or events handled out of order add one
   message each, in order. A forwarded post is
-  answered by the first reply from the project's orchestrator after it (the rule project
+  answered by the first reply from the project's Coworker after it (the rule project
   chat uses); later replies are not attached to it.
 - A title is other people's text: it is redacted and shortened for the message and never
   interpreted. The `orchestrator` block lets a client label the message as the
-  orchestrator's own words; display redaction applies as for every message.
+  Coworker's own words; display redaction applies as for every message.
 - `state` on a bot is `needs_you` while a question waits for the person, else `working` while
   a task it filed is in progress, else `idle`.
 - Not covered: a start that fails to launch. The hub emits no event for it, and nothing here
@@ -425,7 +425,7 @@ An app that signs in with OAuth asks for the scopes and you tick the boxes on it
 form; an unticked box grants nothing. Members use the same PATCH for their own connection, or
 the authorization form.
 
-**What never qualifies.** Child agents, runner connections, project orchestrator seats, board
+**What never qualifies.** Child agents, runner connections, project Coworker seats, board
 coordinators, connections that belong to someone else, and revoked or expired connections. They
 are refused when granting and again on every request, even if a stored scope claims otherwise;
 they get the same 404 as any other token. Assigning an app as a board coordinator removes its
@@ -478,7 +478,7 @@ Send turns into **Stop**; stopping keeps what was already written.
 
 Inside the reply you may see:
 
-- a small grey line of **actions** ("Filed “Fix login”", "Told the orchestrator"); several actions
+- a small grey line of **actions** ("Filed “Fix login”", "Told the Coworker"); several actions
   share one line, and a refused one is shown in red;
 - a **work** block with the task's title and a status chip (Queued, Working, Needs you, Ready,
   Blocked, Done). Tap it to read the latest note and open its links;
@@ -486,7 +486,7 @@ Inside the reply you may see:
   tap is your own answer and goes straight to the task;
 - a **confirmation** for the few actions that need your tap before they run. Confirm runs what
   the line says; Cancel drops it;
-- a **message from the orchestrator**, labelled "Orchestrator", when the project's orchestrator
+- a **message from the Coworker**, labelled "Coworker", when the project's Coworker
   replies to something the bot forwarded (see [Updates between turns](#updates-between-turns));
 - a **setup** note when no chat model can answer yet. Workspace owners get a link to the settings;
   members are told to ask the owner.
