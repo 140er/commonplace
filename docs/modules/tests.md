@@ -132,6 +132,7 @@
   - Synthetic legacy safety-stop cases and explicitly classified transcript-only fixture updates.
   - `tests/test_backup_online_processes.py` reproduces separate backup/gateway ancestry and preserves foreign-writer and paused-worker refusals using a synthetic `/proc`.
   - The canonical Space REST matrix and base-captured profile/tool schemas.
+  - `tests/test_spaces_adapters.py` covers the Space cards and chat adapters, the space-named MCP tools and alias authority; `tests/spaces_surfaces.json` adds exactly the four space tools and the `space` property of `space_read` and `space_post`.
 
   - Card339 regressions exercise MCP and HTTP routing, owner fallback, person queue visibility, withdrawal history and authorization refusals. The pinned Space tool contract records the optional person_reason parameter and matching ask/review descriptions without changing tool names or profile visibility.
 

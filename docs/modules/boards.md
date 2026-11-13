@@ -12,6 +12,8 @@
   - The owner-only Needs me `model_roles` bucket: one item per board and model role used by the accepted config with no resolved model, counted in `count`, absent from the digest. Every slot (orchestrator, builder, reviewer, gate) gets a button to its picker; only a role that names no `model_role` has none.
 
   - Canonical Space REST response projection and typed creation refusals.
+  - Space card and chat adapters over the board service, and the `space` argument for the chat and board-setting tools.
+  - Adapters resolve an exact active readable slug first (no repo reference or sole-board fallback); a body `space` or `board` must equal the path, a body `rules_seq` is refused, and chat reads name the Space as `space`. Card payloads, verbatim chat and legacy board routes are unchanged.
 
   - After Done (`boards/lifecycle.py`): a done card is final and can be archived, restored, carried on in a new linked backlog card and given a Pocket of pinned key facts. Archive flags a row and hides the card from board lists and counts; it is still readable (`GET /api/cards/<n>`, `?archived=1`) and restorable, and nothing is deleted (unpinning marks the fact, restoring marks the archive row). Only signed-in people (owner or member) act; connections are refused. Archived cards refuse updates until restored. Deferred: MCP tools, bulk Clear Done, agent-side Pocket.
 
