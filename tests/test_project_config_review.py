@@ -23,6 +23,11 @@ from tests.test_orch_surfaces import BOARD, env as env
         "escape",
         "first",
         "refresh_failure",
+        "deck_names",
+        "deck_unknown",
+        "deck_wrap",
+        "deck_escape",
+        "classic_bytes",
     ],
 )
 def test_config_review_controls(case):

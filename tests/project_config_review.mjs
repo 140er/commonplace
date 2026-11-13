@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
+import {readFileSync} from "node:fs";
 import {mountProjectReview} from "../commonplace/web/static/projects.js";
 
 const e = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
@@ -22,12 +24,17 @@ class Host {
 }
 
 const caseName = process.argv[2];
+const deck = caseName.startsWith("deck_");
+if (deck) globalThis.document = {documentElement: {dataset: {ui: "deck"}}};
+const snapshots = [];
+const snapshot = () => snapshots.push(createHash("sha256").update(host.innerHTML).digest("hex"));
 let current = true, pending, release;
 const host = new Host(), calls = [];
 let version = {version: 2, ref: "v2", status: "proposed", proposed_by: "user:author", sha256: "b".repeat(64)};
 if (caseName === "escape") version.proposed_by = '<img src=x onerror="bad()">';
 const api = async (path, options = {}) => {
   calls.push({path, ...options});
+  if (path === "/api/me") return {actor: "user:owner", people: {"user:author": caseName === "deck_escape" ? '<img src=x onerror="bad()">' : "Config author", "user:owner": "Config owner"}};
   if (options.method === "POST") {
     if (caseName === "failure") throw new Error("Could not reject this version. Try again.");
     if (caseName === "busy" || caseName === "stale") await new Promise(resolve => {release = resolve;});
@@ -45,6 +52,7 @@ const api = async (path, options = {}) => {
   throw new Error(`Unexpected read: ${path}`);
 };
 await mountProjectReview(host, {project: {board: "ledger", can_configure: caseName !== "member"}, api, e, current: () => current});
+if (caseName === "classic_bytes") snapshot();
 const posts = () => calls.filter(c => c.method === "POST");
 const click = selector => {
   const button = host.querySelector(selector);
@@ -54,6 +62,35 @@ const click = selector => {
 };
 assert.match(host.innerHTML, /Changes/);
 assert.match(host.innerHTML, /New prompt/);
+if (deck) {
+  if (caseName === "deck_unknown") {
+    // Re-mount without a directory entry: unknown actors remain identifiable.
+    await mountProjectReview(host, {project: {board: "ledger", can_configure: false}, api: async (path, options) => path === "/api/me" ? {actor: "user:reader", people: {}} : api(path, options), e});
+    assert.match(host.innerHTML, /Proposed by user:author/);
+    assert.doesNotMatch(host.innerHTML, /data-config-accept/);
+  } else if (caseName === "deck_escape") {
+    assert.doesNotMatch(host.innerHTML, /<img/);
+    assert.match(host.innerHTML, /&lt;img/);
+  } else if (caseName === "deck_wrap") {
+    const css = readFileSync(new URL("../commonplace/web/static/deck.css", import.meta.url), "utf8");
+    const rules = css.match(/:root\[data-ui="deck"\] \.workbench-project \[data-config-diff\]\s*\{([^}]+)\}/)?.[1];
+    assert.ok(rules, "config diff needs a Deck-only wrapping rule");
+    assert.match(rules, /white-space:\s*pre-wrap/);
+    assert.match(rules, /overflow-wrap:\s*anywhere/);
+    assert.match(rules, /font-size:\s*13px/);
+    assert.match(rules, /padding:\s*12px/);
+    assert.match(rules, /border-radius:\s*12px/);
+  } else {
+    assert.match(host.innerHTML, /Proposed by Config author/);
+    assert.doesNotMatch(host.innerHTML, /user:author/);
+    await click('[data-config-reject="2"]');
+    await click('[data-config-confirm-reject="2"]');
+    assert.match(host.innerHTML, /Rejected by you/);
+    assert.doesNotMatch(host.innerHTML, /user:owner|data-config-accept|data-config-reject/);
+    assert.ok(host.innerHTML.indexOf("data-project-review-status") < host.innerHTML.indexOf("Waiting for release"));
+  }
+  process.exit(0);
+}
 if (caseName === "member") {
   assert.doesNotMatch(host.innerHTML, /data-config-(accept|reject|confirm-reject)/);
   assert.doesNotMatch(host.innerHTML, /data-project-release/);
@@ -64,6 +101,7 @@ if (caseName === "member") {
 } else {
   assert.match(host.innerHTML, /data-config-accept/);
   await click('[data-config-reject="2"]');
+  if (caseName === "classic_bytes") snapshot();
   assert.equal(posts().length, 0, "Reject must ask before writing");
   assert.match(host.innerHTML, /Reject Coworker config v2\?/);
   assert.match(host.innerHTML, /current config/);
@@ -82,6 +120,7 @@ if (caseName === "member") {
       release();
     }
     await pending;
+    if (caseName === "classic_bytes") snapshot();
     assert.deepEqual(posts().map(c => ({path: c.path, body: c.body})), [{path: "/api/orch/boards/ledger/configs/2/reject", body: {}}]);
     if (caseName === "failure") {
       assert.match(host.innerHTML, /Could not reject/);
@@ -96,3 +135,8 @@ if (caseName === "member") {
     }
   }
 }
+if (caseName === "classic_bytes") assert.deepEqual(snapshots, [
+  "035449945ce241cca9dafe7040dd898435ce912fb93d82243dd3e772be69d300",
+  "ccc8efe383f5531c48b83f653d1d6b61c34c92f54acc1cf701cb03d699ec8b16",
+  "e5bebf5a75c73c7832f092c1915f818a5e762fdffaa4b3367de03d2834400a21",
+]);
