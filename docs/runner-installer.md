@@ -94,3 +94,52 @@ the real enrollment handlers with in-memory request/response streams. No socket
 or systemd process is used. It covers both original linger states, occupied
 paths, secret scans, private creation, lost delivery, interrupted writes,
 idempotence, rollback, stop-before-discard and archive verification.
+
+## Approved settings and acknowledgement cache (slice 3)
+
+An installation can fetch an approved binding using its own machine credential at
+`GET /api/runner/install-manifest?nonce=<fresh challenge>`. This is an action on
+the existing authenticated machine prefix, never a public bootstrap route or an
+MCP tool. Setup must be enabled for that workspace. Ordinary, worker and person
+credentials cannot read this machine-self response.
+
+The existing owner-only attestation request optionally includes `install_settings`:
+its current `grant_version`, `binding_epoch`, `settings_version` and a `projects`
+mapping. The existing owner registry view supplies the settings revision (zero
+before the first approval); stale settings revisions conflict too. Every
+project maps to its discovered `project_id`, `checkout: "shared"` and an explicit
+`runtime_ceiling` no higher than the machine grant. The mapping must cover exactly
+the granted projects, with distinct project ids. Attestation and the settings
+snapshot commit together; stale versions roll both back. Only a current signed-in
+person owner can approve this snapshot. This slice adds no final attestation UI.
+
+The hub signs only the current owner-approved snapshot, binding the workspace,
+enrollment digest, installation, machine-key fingerprint, worker, provider,
+projects, topics, wings, requesters, ceilings and authority versions. Each response
+also covers the request's random challenge and a lifetime of at most 60 seconds.
+Missing signing support or audit persistence refuses delivery. Signing uses a
+trusted provisioning seam; a request can neither supply a signing key nor choose
+a grant. The separate approval-key custody and format remain prerequisites for
+production availability, with no unsigned fallback.
+
+A trusted launcher can supply the public approval pin using `--approval-key`.
+It is copied into the owned private installation directory during acceptance;
+it never comes from the hub response. The setup-only service synchronizes every
+30 seconds when this pin exists. `runner check --config` also synchronizes an
+installation's generated configuration. Without the pin the service stays inert.
+Neither path leases work, installs a runtime, logs in a provider or enables work.
+
+The private `approved-binding.json` contains the signed receipt and a derived
+compatibility cache: `binding_acks`, each `shared_checkout_ack` and each
+`runtime_ack`. Signature, identity, freshness and versions are checked before
+writing it. Edited acknowledgement strings are rejected and replaced by a fresh
+fetch. Fetch failure clears the compatibility cache; it cannot authorize offline
+work. The generated installation configuration stays setup-only, and an owner
+cannot enable an incomplete installation through an ordinary grant patch.
+
+A changed wing, topic, grant or ceiling makes the old snapshot stale. On its next
+sync the machine loses the old cache and a deduplicated settings reminder appears
+in the owner's Needs me. The reminder opens existing runner settings and grants
+no authority. A fresh owner attestation and settings approval lets the next sync
+replace the cache without editing any machine file. Reminders and metadata stay
+absent while setup is off; existing token tool catalogs remain unchanged.
