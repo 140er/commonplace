@@ -146,7 +146,11 @@ def test_decide_retry_is_atomic_and_records_person_and_client(phone):
     assert len(history) == 1
     assert history[0]["stamp_user"] == phone.hub.admin
     assert "Mobile client" in history[0]["context"]
-    audits = [r for r in phone.hub.db.audit_entries() if r["action"] == "person_action.decide"]
+    audits = [
+        r
+        for r in phone.hub.db.audit_entries()
+        if r["action"] == "tool.call" and r["tool"] == "decide"
+    ]
     assert len(audits) == 1 and audits[0]["decision"] == "ok"
     assert "Mobile client" in audits[0]["reason"]
     assert call(phone, pair, card, body={"version": card["version"], "reply": "Wait"})[0] == 409
@@ -217,7 +221,11 @@ def test_approve_matches_web_and_is_idempotent(phone, approve):
     assert first[0] == 200, first
     assert call(phone, pair, card, "approve", body) == first
     assert first[1]["proposal_status"] == ("approved" if approve else "rejected")
-    rows = [r for r in phone.hub.db.audit_entries() if r["action"] == "person_action.approve"]
+    rows = [
+        r
+        for r in phone.hub.db.audit_entries()
+        if r["action"] == "tool.call" and r["tool"] == "task_approve"
+    ]
     assert len(rows) == 1 and "Mobile client" in rows[0]["reason"]
 
 
@@ -456,7 +464,7 @@ def test_audit_failure_rolls_back_decision_and_receipt(phone, monkeypatch):
     original = phone.hub.db.audit
 
     def fail(**fields):
-        if fields["action"] == "person_action.decide":
+        if fields["action"] == "tool.call" and fields.get("tool") == "decide":
             raise RuntimeError("audit unavailable")
         return original(**fields)
 

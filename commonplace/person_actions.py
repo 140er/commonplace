@@ -266,7 +266,7 @@ def post_chat(gateway, h, board, body):
             finally:
                 service._action_conn = None
             audit_seq = gateway.db.audit(
-                action="person_action.chat.post",
+                action="tool.call",
                 decision="ok",
                 workspace_id=person.workspace_id,
                 user_id=person.user_id,
@@ -366,13 +366,13 @@ class PersonCardService(BoardService):
                     ),
                 )
                 audit_seq = gateway.db.audit(
-                    action="person_action." + action,
+                    action="tool.call",
                     decision="ok",
                     workspace_id=self.principal.workspace_id,
                     user_id=self.principal.user_id,
                     connection_id=self.app.connection_id,
                     auth="oauth",
-                    tool=action,
+                    tool="task_approve" if action == "approve" else action,
                     target_ids=[str(task)],
                     reason=json.dumps(self.origin),
                 )
@@ -386,7 +386,7 @@ class PersonCardService(BoardService):
                     user_id=self.principal.user_id,
                     connection_id=self.app.connection_id,
                     auth="oauth",
-                    tool=action,
+                    tool="task_approve" if action == "approve" else action,
                     target_ids=[str(task)],
                     reason=f"audit_seq={audit_seq}",
                 )

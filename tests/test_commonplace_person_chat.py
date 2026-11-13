@@ -50,7 +50,11 @@ def test_phone_reads_and_posts_as_person_without_memory_write(phone):
         e for e in events.after(phone.hub.db, phone.hub.workspace) if e["kind"] == "space_message"
     ]
     assert recorded[-1]["actor"] == message["actor"]
-    audit = [r for r in phone.hub.db.audit_entries() if r["action"] == "person_action.chat.post"]
+    audit = [
+        r
+        for r in phone.hub.db.audit_entries()
+        if r["action"] == "tool.call" and r["tool"] == "space_post"
+    ]
     assert len(audit) == 1 and audit[0]["user_id"] == phone.hub.admin
     assert "Mobile client" in audit[0]["reason"]
     app = phone.hub.gateway.authenticate("Bearer " + token)
@@ -360,7 +364,7 @@ def test_chat_audit_failure_rolls_back_person_message(phone, monkeypatch):
     original = phone.hub.db.audit
 
     def fail(**fields):
-        if fields["action"] == "person_action.chat.post":
+        if fields["action"] == "tool.call" and fields.get("tool") == "space_post":
             raise RuntimeError("audit unavailable")
         return original(**fields)
 
