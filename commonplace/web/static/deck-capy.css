@@ -1,0 +1,89 @@
+/* Capy tokens and stage. Every rule is inert in the classic look. */
+:root[data-ui="deck"] {
+  --ground: #09090c;
+  --rail: #111015;
+  --stage: #08080b;
+  --surface-a: .94;
+  --s1: rgba(20,19,25,var(--surface-a));
+  --card: var(--s1);
+  --s2: #1b1a21;
+  --s3: #25242c;
+  --line: rgba(255,255,255,0.06);
+  --line2: rgba(255,255,255,0.10);
+  --ink: #ededf2;
+  --ink2: #aeacbb;
+  --ink3: #85839a;
+  --ink4: #5f5d70;
+  --violet: #9d5cff;
+  --violet-ink: #cdb6ff;
+  --cyan: #22d3ee;
+  --amber: #f59e0b;
+  --red: #fb7185;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-float: 14px;
+  --radius-dialog: 16px;
+  --space-1: 4px; --space-2: 6px; --space-3: 8px; --space-4: 10px;
+  --space-5: 12px; --space-6: 14px; --space-7: 16px; --space-8: 18px;
+  --space-9: 20px; --space-10: 24px; --space-11: 32px; --space-12: 40px;
+  --page-top: 36px; --page-side: 40px;
+  --bg: var(--ground); --pane: var(--stage); --surface: var(--s1); --well: var(--s2);
+  --line-strong: var(--line2); --text: var(--ink); --text-2: var(--ink2); --text-3: var(--ink3);
+  --accent: var(--ink); --accent-hover: var(--ink2); --accent-weak: var(--s2); --focus: var(--violet);
+  --wait: var(--amber); --wait-bg: var(--s2); --wait-line: var(--amber);
+  --block: var(--red); --block-bg: var(--s2); --block-line: var(--line2);
+  --ok: var(--cyan); --ok-bg: var(--s2); --agent: var(--violet-ink); --agent-bg: var(--s2);
+  --r: var(--radius-control);
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+:root[data-ui="deck"] body { font-variant-numeric: tabular-nums; font-feature-settings: "cv11", "ss01"; }
+:root[data-ui="deck"] .center { position: relative; isolation: isolate; background: var(--ground); }
+:root[data-ui="deck"] .deck-stage { position: absolute; inset: 8px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-float); background: var(--stage); pointer-events: none; z-index: -1; }
+:root[data-ui="deck"] .stage-dither { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+:root[data-ui="deck"] .deck-stage::after { content: ""; position: absolute; inset: 0; background: rgba(8,8,11,.5); }
+:root[data-ui="deck"] .deck-stage[data-dimmed="false"]::after { display: none; }
+:root[data-ui="deck"] :is(.deck-today, .workbench-board, .bots-page, .memory-page, .deck-workspace, .settings) { background: transparent; }
+:root[data-ui="deck"] .center > #content { background: transparent; }
+:root[data-ui="deck"] :is(.settings-section, .today-question, .today-now, .bot-card, .needs-card, .workbench-board .card, .dw-worker, .memory-result) { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); box-shadow: none; backdrop-filter: none; }
+:root[data-ui="deck"] :is(.btn, .opt, .blockbtn, input, select, textarea, .today-option) { border-radius: var(--radius-control); }
+:root[data-ui="deck"] .chip.ready { color: var(--ink2); background: var(--s2); }
+:root[data-ui="deck"] .chip.working { color: var(--violet-ink); background: var(--s2); }
+:root[data-ui="deck"] :is(.rail, .m-top, .m-tabs) { background: var(--rail); }
+:root[data-ui="deck"] .count.need { color: #1a1003; }
+:root[data-ui="deck"] .settings-section h2 { color: var(--ink); font-size: 13.5px; font-weight: 600; }
+:root[data-ui="deck"] .shell .head h1 { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
+:root[data-ui="deck"] :is(#shell-dialog, dialog) { border-radius: var(--radius-dialog); border-color: var(--line2); }
+:root[data-ui="deck"] :is(.today-composer, .composer) { border-radius: var(--radius-float); }
+:root[data-ui="deck"] :is(.today-send, .composer-send, .voice-start) { background: var(--violet); box-shadow: none; }
+:root[data-ui="deck"] :is(.today-send, .composer-send, .voice-start):hover { background: #aa70ff; }
+
+/* Appearance owns its panel; the other Settings sections keep their controllers and order. */
+:root[data-ui="deck"] .settings:has(> .deck-appearance) { display: grid; grid-template-columns: minmax(0,1fr) 360px; align-items: start; gap: 20px; overflow: visible; }
+:root[data-ui="deck"] .deck-settings-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+:root[data-ui="deck"] .deck-appearance { position: sticky; top: 0; min-width: 0; padding: 20px; }
+:root[data-ui="deck"] .deck-appearance > p { color: var(--ink3); font-size: 13.5px; line-height: 1.5; }
+:root[data-ui="deck"] .appearance-preview { position: relative; height: 168px; margin: 14px 0; overflow: hidden; border-radius: var(--radius-control); border: 1px solid var(--line); background: var(--stage); }
+:root[data-ui="deck"] .appearance-preview canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+:root[data-ui="deck"] .appearance-sample { position: absolute; left: 18%; right: 12%; top: 42%; height: 36px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); }
+:root[data-ui="deck"] .appearance-scenes { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin-bottom: 16px; }
+:root[data-ui="deck"] .appearance-scenes button { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 44px; padding: 4px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink3); font-size: 12px; text-align: left; }
+:root[data-ui="deck"] .appearance-scenes button[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
+:root[data-ui="deck"] .appearance-scenes canvas { width: 100%; height: 44px; border-radius: 4px; image-rendering: pixelated; }
+:root[data-ui="deck"] .appearance-pattern { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13.5px; }
+:root[data-ui="deck"] .appearance-pattern small { display: block; font-size: 12.5px; color: var(--ink3); }
+:root[data-ui="deck"] .appearance-pattern [role="group"] { display: flex; padding: 3px; background: var(--s2); border-radius: var(--radius-control); }
+:root[data-ui="deck"] .appearance-pattern button { min-height: 32px; border: 0; padding: 0 10px; background: transparent; color: var(--ink3); border-radius: var(--radius-control); }
+:root[data-ui="deck"] .appearance-pattern button[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
+:root[data-ui="deck"] .appearance-slider { display: grid; grid-template-columns: 1fr auto; gap: 4px; margin-top: 18px; font-size: 13.5px; color: var(--ink2); }
+:root[data-ui="deck"] .appearance-slider output { color: var(--ink3); font-size: 12.5px; }
+:root[data-ui="deck"] .appearance-slider input { grid-column: 1/-1; width: 100%; height: 24px; min-height: 24px; margin: 0; padding: 0; border: 0; box-shadow: none; accent-color: var(--violet); background: transparent; }
+:root[data-ui="deck"] .deck-appearance .appearance-save { margin-top: 14px; font-size: 12px; }
+@media (max-width: 1099px) {
+  :root[data-ui="deck"] .settings:has(> .deck-appearance) { grid-template-columns: minmax(0,1fr); }
+  :root[data-ui="deck"] .deck-appearance { position: static; }
+}
+@media (max-width: 699px) {
+  :root[data-ui="deck"] { --page-top: 16px; --page-side: 16px; }
+  :root[data-ui="deck"] .appearance-pattern button { min-height: 44px; }
+  :root[data-ui="deck"] .appearance-slider input { height: 44px; }
+}
