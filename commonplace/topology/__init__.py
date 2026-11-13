@@ -6,6 +6,7 @@ from runner signals. See ``docs/topology.md``.
 """
 
 from . import (
+    add_api,
     discovery_api,
     model,
     site_route_api,  # noqa: F401  registers topology_discover_site
@@ -19,6 +20,7 @@ from .proposal_api import install as _install_proposals  # also registers topolo
 def install(gateway):
     _install_proposals(gateway)
     discovery_api.install(gateway)
+    add_api.install(gateway)
 
 
 __all__ = [

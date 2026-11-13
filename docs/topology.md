@@ -450,7 +450,7 @@ The owner opens the map from **Compute map** under **Workspace** in the account 
 - **Route** highlights one site's route as a path, dims the rest, and writes the hops out in words, including a hop that is unknown or stale.
 - **Live:** the map reads again every five seconds while the tab is visible and redraws only when something changed. If a read fails, the last map stays and a line says it is not updating.
 - **Empty workspace:** the empty state has one button, "Start agent work on map". The canvas only offers it: a screen that gives the map an `onStartWork` handler turns it on (both screens do, with `map-discovery.js`, which posts to `/api/topology/discovery` and writes what happened on each machine under the button), and a screen without a handler shows it off and says so.
-- **In the Deck look** the map is the Compute screen (`#/compute`; `#/compute-map` goes there and the account menu has no second entry). It draws this same canvas in Deck colours inside one card, with the legend under it and the chosen device's details (Physical, Config, Agents, Sites) in a second card. Links are routed around every device and label, so none runs through one. Names and roles keep their size (12px and 11px) at every zoom; the first view and **Fit** fit the graph's width and the card is as tall as the graph, so the page scrolls. When the topology read is empty or fails, it draws the hub and the enrolled runner machines from `GET /api/runners` instead, with the states Ready, Waiting for attestation and Off and nothing about liveness, sites or routes.
+- **In the Deck look** the map is the Compute screen (`#/compute`; `#/compute-map` goes there and the account menu has no second entry). It draws this same canvas in Deck colours inside one card, with the legend under it and the chosen device's details (Physical, Config, Agents, Sites) in a second card. Links are routed around every device and label, so none runs through one. Names and roles keep their size (12px and 11px) at every zoom; the first view and **Fit** fit the graph's width and the card is as tall as the graph, so the page scrolls. When the topology read is empty or fails, it draws the hub and the enrolled runner machines from `GET /api/runners` instead, with the states Ready, Waiting for attestation and Off and nothing about liveness, sites or routes. Above it are one button each for **Add machine** and **Add site** (see "Add machine and add site"); a member who may not see the machines sees neither.
 
 Selecting a device sends a `topology:select` event (`detail.key`) from the map's root element, which is where the detail panel attaches (see below).
 
@@ -622,3 +622,24 @@ Node keys are the first label of the host name in lowercase (`beta.local` is `be
 
 **Needs.** The machine's grants must include the `topology` wing, because the agent works on a card of that board and writes the topology; a machine without it is reported as `no_topology_wing` and is not widened. The machine needs the Commonplace client installed (the prompt tells the agent to install nothing and to say so on the card when it is missing).
 
+## Add machine and add site
+
+The Compute screen has one button for each. Code: `commonplace/topology/add_node.py` (the logic), `add_api.py` (the routes) and `discovery.py` (the start both reuse). Tests: `tests/test_topology_add.py`.
+
+```
+POST /api/topology/add-machine    {}                    the signed-in workspace owner only
+POST /api/topology/add-site       {"site": "example.com"}   the signed-in workspace owner only
+```
+
+Both answer `{"kind": "machine" | "site", "mode", "machines", "prompt"}`:
+
+| `mode` | When | The answer |
+| --- | --- | --- |
+| `started` | a runner machine took the work (or already has it underway) | `machines`: the discovery start's rows (`machine`, `label`, `outcome`, `reason`, `card`, `job`); `prompt` is `null` |
+| `prompt` | no runner machine could take it: none enrolled, none reachable, none attested for the topology wing, or (for a machine) every one is already on the map | `prompt`: the generic prompt to give an agent on the machine; `command`: for a machine, the short command to run there (`null` for a site); `machines` says why each runner was not asked |
+
+**Add machine** asks every runner machine of the workspace that has no node on the map yet (no node holds its `runner_id`) to run the discovery prompt: the same read-only collector and the same two `topology_propose` calls as "Start agent work on map". The press takes no input. The fallback is for a machine that is not enrolled: `python3 -m commonplace.topology.collector [--hub-url <hub>]`, whose `--runner-id` is optional (the node then has no `runner_id`), and a prompt that tells an agent in a session connected to the workspace to run it and propose the output. The prompt never creates or asks for credentials: enrolling the machine as a runner stays the owner's step in the app.
+
+**Add site** asks one runner machine, the first that can take it, to trace the route of one domain with `topology_discover_site`: it reads the reverse proxy configuration on that machine, as it is, and passes it on. The domain is the only input and must be a public domain name (`site_dns.public_name`; otherwise 400 and nothing starts). A second press for the same domain while the run is underway answers `running` and starts nothing; another domain starts its own run. The fallback prompt is the same text, for an agent on the machine that runs the proxy.
+
+Both runs are cards on the `compute-map` board, started through the ordinary `card_start`, with `kind` and `subject` in their rows of `topology_discovery_runs` so that they never appear as the map button's own result. The prompts are fixed generic texts (`MACHINE_PROMPT`, `SITE_PROMPT`): they hold no host name, address, account name, path or person; the only values filled in are the hub's address, the command and the domain. The new node or site is part of the map only after the owner approves the proposal in the app.

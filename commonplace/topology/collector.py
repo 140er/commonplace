@@ -250,7 +250,9 @@ def own_node(probe, runner_id, tailscale_name):
         if value not in (None, ""):
             resources[name] = value
     key = key_of(probe.node)
-    fields = {"kind": kind, "name": key, "runner_id": runner_id, "os": _line(os_text)}
+    fields = {"kind": kind, "name": key, "os": _line(os_text)}
+    if runner_id:  # a machine that is not enrolled as a runner has none
+        fields["runner_id"] = runner_id
     if hostname := _hostname(probe.node):
         fields["hostname"] = hostname
     if hardware:
@@ -263,7 +265,7 @@ def own_node(probe, runner_id, tailscale_name):
 
 
 # ── Collect ───────────────────────────────────────────────────────────────
-def collect(probe, runner_id, hub_url=None, max_peers=DEFAULT_PEERS) -> dict:
+def collect(probe, runner_id=None, hub_url=None, max_peers=DEFAULT_PEERS) -> dict:
     """Everything this machine can say about itself and its ways to others.
 
     Returns ``propose`` (this machine and its own links; arguments of ``topology_propose``),
@@ -367,7 +369,9 @@ def main(argv=None) -> int:
         prog="python3 -m commonplace.topology.collector",
         description="Collect this machine's facts for the Compute map, read-only.",
     )
-    parser.add_argument("--runner-id", required=True, help="this machine's runner id (mach_...)")
+    parser.add_argument(
+        "--runner-id", default=None, help="this machine's runner id (mach_...), when it has one"
+    )
     parser.add_argument("--hub-url", default=None, help="the hub's address, to check the way to it")
     parser.add_argument("--max-peers", type=int, default=DEFAULT_PEERS)
     args = parser.parse_args(argv)

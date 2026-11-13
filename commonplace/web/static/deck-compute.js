@@ -1,6 +1,7 @@
 import { escape as e } from './api.js';
 import { MAP_PATH, createTopologyMap, mapModel } from './topology-map.js';
 import { discoveryAction } from './map-discovery.js';
+import { addAction } from './map-add.js';
 
 export const TITLE = 'Compute';
 const HUB = 'commonplace-hub';
@@ -180,6 +181,7 @@ export function mount(context) {
   const region = name => root.querySelector(`[data-compute-region="${name}"]`);
   const narrow = () => globalThis.matchMedia?.('(max-width:699px)').matches === true;
   const note = text => { const host = region('notice'); if (host) host.textContent = text; return Boolean(host); };
+  const add = addAction({ api: (path, options) => ctx.api(path, options), note });
 
   // What the details card shows for a node this screen describes itself: the runners fallback has no topology facts.
   function own(key) {
@@ -228,7 +230,7 @@ export function mount(context) {
   }
   function actions() {
     const host = region('actions');
-    if (host) host.innerHTML = '<a class="dc-action" href="#/admin">Add machine</a>' + (general ? '<button class="dc-action" type="button" data-compute-action="site">Add site</button><button class="dc-action dc-primary" type="button" data-compute-action="map">Let a bot map it</button>' : '');
+    if (host) host.innerHTML = '<button class="dc-action" type="button" data-compute-action="add-machine">Add machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action dc-primary" type="button" data-compute-action="map">Let a bot map it</button>' : '');
   }
   function frame() {
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
@@ -277,10 +279,11 @@ export function mount(context) {
     }
   }
   function click(event) {
-    const action = event.target.closest?.('[data-compute-action]')?.dataset.computeAction;
+    const target = event.target.closest?.('[data-compute-action]'), action = target?.dataset.computeAction;
+    if (action === 'add-machine' || action === 'add-site') { void add(action, target); return; }
     if (!action || !general) return;
     try {
-      globalThis.sessionStorage.setItem('cmmn.deck.draft', JSON.stringify({ bot: general.id, text: action === 'site' ? 'Add a site to my map.' : 'Map my machines and sites.' }));
+      globalThis.sessionStorage.setItem('cmmn.deck.draft', JSON.stringify({ bot: general.id, text: 'Map my machines and sites.' }));
       ctx.go(`#/bots/${encodeURIComponent(general.id)}`);
     } catch { note('The message could not be prepared. Try again.'); }
   }
