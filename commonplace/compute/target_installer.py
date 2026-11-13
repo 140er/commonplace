@@ -64,6 +64,7 @@ AUTHORIZED_KEYS_PATH = "/etc/commonplace/compute-authorized-keys"
 MANIFEST_PATH = "/etc/commonplace/compute-install-manifest.json"
 SSHD_DROPIN_PATH = "/etc/ssh/sshd_config.d/60-commonplace-compute.conf"
 SSHD_CONFIG_PATH = "/etc/ssh/sshd_config"
+SSHD_RUNTIME_DIR = "/run/sshd"
 LIB_ROOT = "/opt/commonplace-compute/lib"
 SYSTEMD_DIR = "/etc/systemd/system"
 SCOPE_UNIT = "commonplace-compute-helper"
@@ -934,7 +935,7 @@ class Installer:
             self.items.remove(item)
             self._flush()
             raise
-        self.host.run(["systemctl", "reload", self.host.sshd_service()])
+        self.host.run(["systemctl", "try-reload-or-restart", self.host.sshd_service()])
         item["validated"] = True
         self._flush()
         return True
@@ -974,7 +975,21 @@ class Installer:
                 "0600 root; records exactly what is added",
                 None,
                 lambda: self._dir("/etc/commonplace", 0o755, shared=True),
-            )
+            ),
+            Op(
+                "dir",
+                SSHD_RUNTIME_DIR,
+                "0755 root; create and record if missing, before sshd validation",
+                None,
+                lambda: self._dir(SSHD_RUNTIME_DIR, 0o755, shared=True),
+            ),
+            Op(
+                "sshd-effective-config",
+                SSHD_CONFIG_PATH,
+                "sshd -T; require global PermitUserEnvironment no before provisioning the account",
+                None,
+                self._check_sshd_effective_config,
+            ),
         ]
         ops.append(
             Op(
@@ -1078,8 +1093,8 @@ class Installer:
             Op(
                 "python-pth",
                 f"{site}/commonplace-compute.pth",
-                f"0644 root; adds {LIB_ROOT} for /usr/bin/python3, then checks "
-                "`/usr/bin/python3 -I -B -c import commonplace.compute.target_helper`",
+                "0644 root; checks `/usr/bin/python3 -I -B -c import "
+                f"commonplace.compute.target_helper` before adding {LIB_ROOT} for /usr/bin/python3",
                 lambda: self._file_conflict(f"{site}/commonplace-compute.pth"),
                 self._pth,
             )
@@ -1100,7 +1115,7 @@ class Installer:
                 "sshd-dropin",
                 SSHD_DROPIN_PATH,
                 f"0644 root; Match User {o.account}, ExposeAuthInfo yes, ForceCommand {ENTRY_PATH}; "
-                f"sshd -t then reload",
+                "sshd -t then systemctl try-reload-or-restart (inactive service stays inactive)",
                 lambda: self._file_conflict(SSHD_DROPIN_PATH),
                 self._dropin,
             )
@@ -1139,6 +1154,12 @@ class Installer:
                 f"block); effective value: {value or 'unknown'}"
             ]
         return []
+
+    def _check_sshd_effective_config(self):
+        problems = self._sshd_effective_problems()
+        if problems:
+            raise InstallError("\n".join(problems))
+        return False
 
     # -- sshd preflight (file reads only) -----------------------------------------
     def _sshd_problems(self):
@@ -1183,9 +1204,7 @@ class Installer:
         self.out(
             "  cgroup v2 cpu/memory/pids, useradd/userdel/systemctl/systemd-run/sshd, sshd Include and"
         )
-        self.out(
-            "  no AcceptEnv SSH_USER_AUTH, effective global PermitUserEnvironment no (sshd -T),"
-        )
+        self.out("  no AcceptEnv SSH_USER_AUTH,")
         self.out("  no pre-existing target path outside the manifest")
         for number, op in enumerate(self._operations(), 1):
             self.out(f"{number:2}. {op.kind} {op.target} {op.detail}")
@@ -1201,7 +1220,6 @@ class Installer:
         self._load()
         ops = self._operations()
         problems = self.host.preflight(self.options) + self._sshd_problems()
-        problems += self._sshd_effective_problems()
         problems += [message for op in ops if op.check and (message := op.check())]
         if problems:
             raise InstallError("\n".join(problems))
@@ -1299,7 +1317,13 @@ class Installer:
             self._discard(sub)
         left, deferred, errors = [], [], []
         reloads = set()
+        # Keep sshd's runtime directory through the refresh: an active unit's
+        # ExecReload may itself run sshd -t. Only then remove directories we created.
+        runtime_dirs = []
         for item in reversed(self.items):
+            if item["kind"] == "dir" and item["path"] in (SSHD_RUNTIME_DIR, "/run"):
+                runtime_dirs.append(item)
+                continue
             try:
                 self._remove(item, deferred, reloads)
             except (InstallError, OSError) as error:
@@ -1308,7 +1332,13 @@ class Installer:
         if "units" in reloads:
             self.host.run(["systemctl", "daemon-reload"])
         if "sshd" in reloads:
-            self.host.run(["systemctl", "reload", self.host.sshd_service()])
+            self.host.run(["systemctl", "try-reload-or-restart", self.host.sshd_service()])
+        for item in runtime_dirs:
+            try:
+                self._remove(item, deferred, reloads)
+            except (InstallError, OSError) as error:
+                errors.append(str(error))
+                left.append(item)
         if errors:
             keep = {id(item) for item in left + deferred}
             self.items = [item for item in self.items if id(item) in keep]
