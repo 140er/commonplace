@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import vm from 'node:vm';
 import { escape as e } from '../commonplace/web/static/api.js';
 import { mount, questionsFrom, questionHTML, workingHTML, summary } from '../commonplace/web/static/deck-today.js';
 import { createDeck, SCREENS, deckHome, deckSections, UI_KEY } from '../commonplace/web/static/deck.js';
@@ -13,7 +14,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 
 function dom() {
-  const regions = new Map(['summary', 'waiting', 'working', 'draft-error'].map((name) => [name, { innerHTML: '', textContent: '', hidden: true }]));
+  const regions = new Map(['summary', 'waiting', 'working', 'draft-error', 'no-bots'].map((name) => [name, { innerHTML: '', textContent: '', hidden: true }]));
   const text = { value: '', selectionStart: 0, selectionEnd: 0 };
   const picker = { innerHTML: '', value: '', disabled: true }, send = { disabled: true };
   const form = { elements: { bot: picker, text }, querySelector: () => send };
@@ -165,7 +166,44 @@ test('working bots and project agent counts use only reported data, with honest 
   f.ui.stop();
   const empty = fixture({ roster: [] }); await flush();
   assert.match(waiting(empty), /Nothing waits on you./);
+  assert.equal(empty.form.hidden, true);
+  assert.equal(empty.regions.get('no-bots').hidden, false);
+  assert.match(empty.root.html, /No bots yet/);
+  assert.match(empty.root.html, /href="#\/bots\?new=1"[^>]*>New bot/);
   assert.equal(empty.send.disabled, true); empty.ui.stop();
+});
+
+test('the composer keeps a named destination and survives an empty roster', async () => {
+  let roster = [bot('atlas', { name: 'Release helper', waiting: 0 })];
+  const f = fixture({ api: () => ({ bots: roster }) }); await flush();
+  assert.equal(f.form.hidden, false);
+  assert.match(f.picker.innerHTML, />Release helper<\/option>/);
+  assert.equal(f.picker.value, 'atlas');
+  roster = []; await f.ui.refresh();
+  assert.equal(f.form.hidden, true);
+  assert.equal(f.regions.get('no-bots').hidden, false);
+  roster = [bot('atlas', { name: 'Release helper', waiting: 0 })]; await f.ui.refresh();
+  assert.equal(f.form.hidden, false);
+  assert.equal(f.regions.get('no-bots').hidden, true);
+  f.ui.stop();
+});
+
+test('New bot opens the existing creation flow once and removes the route flag', async () => {
+  const app = readFileSync(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
+  const source = app.slice(app.indexOf('function botsScreen()'), app.indexOf('// The map keeps itself current'));
+  const calls = [], state = { base: '#/bots?new=1', route: '#/bots?new=1' };
+  const context = vm.createContext({
+    state, URLSearchParams, Promise,
+    botsUI: { show: (id) => { calls.push(['show', id]); return Promise.resolve(); }, newBot: () => calls.push(['new']) },
+    history: { replaceState: (_s, _t, path) => calls.push(['replace', path]) },
+    title() {},
+  });
+  vm.runInContext(`${source}\nbotsScreen();`, context);
+  await flush();
+  assert.deepEqual(calls, [['replace', '#/bots'], ['show', null], ['new']]);
+  assert.equal(state.base, '#/bots');
+  vm.runInContext('botsScreen();', context); await flush();
+  assert.equal(calls.filter(([kind]) => kind === 'new').length, 1);
 });
 
 test('server strings are escaped, ids encoded and at most one affirmative option is inverted', () => {

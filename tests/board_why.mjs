@@ -5,13 +5,13 @@ const { waitingSection, whyStrip } = await load('waiting.js');
 const { renderDetails } = await load('details.js');
 const base = { number: 3, board: 'atlas', version: 1, title: 'Card', body: '', events: [], status: 'todo', need: 'idle', assignee: null };
 const reasons = {
-  blocked_by: 'Waiting on #7: Dependency',
+  blocked_by: 'Waiting for #7: Dependency',
   waits_on_person: 'Waiting on a person',
   claim_expired: 'Claim expired: the agent stopped reporting; its next update renews it, or hand the card off',
   plan_review: 'Waiting for plan review',
   not_released: 'Waiting for release',
   no_agent: 'No agent is connected to this project yet',
-  project_limit: 'Waiting for a free slot: 1 of 1',
+  project_limit: 'Waiting for a free slot: 1 of 1 agents busy',
   checks_pending: 'Waiting for checks to finish',
   snoozed: 'Snoozed until 2030-01-07 10:00 Europe/Amsterdam',
 };

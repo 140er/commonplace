@@ -181,6 +181,7 @@ def _run(ctx, name, args):
             "\n".join(
                 f"{b['slug']}  "
                 + "  ".join(f"{s} {b['counts'][s]}" for s in ("todo", "doing", "review"))
+                + ("  " + b["waiting_summary"] if b.get("waiting_summary") else "")
                 for b in result
             )
             or f"no {noun}s"
