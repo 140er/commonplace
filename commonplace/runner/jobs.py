@@ -29,6 +29,7 @@ PRESPAWN_CODES = frozenset(
         "job_invalid",
         "t3_missing",
         "low_memory",
+        "low_cpu",
         "busy",
     )
 )
@@ -533,6 +534,13 @@ def lease(store, machine):
                 _update(conn, row, dict(state="cancelled", outcome_code=refusal, updated_at=now))
                 authority.pop_all().close()
                 continue
+            from . import capacity
+
+            if (
+                len(in_flight) >= current["max_in_flight"]
+                or capacity.available(conn, current, now) <= 0
+            ):
+                return None
             # A switch flip requires another admission pass; never use an OFF read
             # as authority for an ON lease. Release control only after commit.
             if orch.enabled(store.gateway.db, store.workspace_id) != on:

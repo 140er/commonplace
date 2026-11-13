@@ -117,6 +117,9 @@ def start_setup(tmp_path, monkeypatch):
         "runtime_mode": "approval-required",
     }
     (tmp_path / "journal").mkdir()
+    from commonplace.runner import headroom
+
+    monkeypatch.setattr(headroom, "cpu_free", lambda: 8)
     spawned = []
     monkeypatch.setattr(agent, "_spawn", lambda *a: spawned.append(a) or {"outcome": "uncertain"})
     return config, job, spawned
@@ -139,9 +142,9 @@ def test_start_is_refused_below_the_memory_floor(start_setup, tmp_path, monkeypa
     assert "low_memory" in jobs.PRESPAWN_CODES  # the hub accepts and shows the reason
 
 
-def test_start_proceeds_when_memory_meets_the_floor(start_setup, tmp_path, monkeypatch):
+def test_start_proceeds_with_memory_floor_and_launch_reserve(start_setup, tmp_path, monkeypatch):
     config, job, spawned = start_setup
-    monkeypatch.setattr(agent, "_available_memory_mb", lambda: 1024, raising=False)
+    monkeypatch.setattr(agent, "_available_memory_mb", lambda: 1536, raising=False)
     hub = _start(config, job, tmp_path)
     assert [route for route, _ in hub.posts] == ["starting", "result"]
     assert len(spawned) == 1

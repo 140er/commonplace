@@ -94,3 +94,5 @@
 
   - `tests/test_runner_revoke_scope.py` covers a second workspace's owner failing to list or revoke a machine (404, tokens still valid) and revoke/list never returning a token.
   - The `tests/test_runner_` files (including binding migration, reset races, direct fences and lock-order instrumentation), `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
+
+  - `headroom.py` reserves startup memory/CPU in the private local journal; `capacity.py` stores numeric machine reports and bounds leases by hourly/resource headroom. Reports add no launch authority.
