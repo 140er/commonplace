@@ -20,6 +20,7 @@ import { createInviteBlock, openWorkspaces } from "./invites.js";
 import { createConsole } from "./console.js";
 import { createBots, waitingTotal } from "./bots.js";
 import { createTopologyMap } from "./topology-map.js";
+import { discoveryAction } from "./map-discovery.js";
 import { createChat } from "./chat.js";
 import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
@@ -1046,7 +1047,7 @@ function botsScreen() {
 }
 // The map keeps itself current and stops itself when another screen replaces it.
 function topologyScreen() {
-  topologyUI ??= createTopologyMap({ mount: () => root.querySelector("#content"), api, workspace: () => state.me?.workspace || "" });
+  topologyUI ??= createTopologyMap({ mount: () => root.querySelector("#content"), api, workspace: () => state.me?.workspace || "", onStartWork: discoveryAction({ api, root: () => root.querySelector("#content") }) });
   topologyUI.show();
   title("Compute map");
 }

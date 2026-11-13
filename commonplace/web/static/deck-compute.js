@@ -1,5 +1,6 @@
 import { escape as e } from './api.js';
 import { MAP_PATH, createTopologyMap, mapModel } from './topology-map.js';
+import { discoveryAction } from './map-discovery.js';
 
 export const TITLE = 'Compute';
 const HUB = 'commonplace-hub';
@@ -218,6 +219,7 @@ export function mount(context) {
       // The screen reads the topology itself (refresh drives it); the canvas asks for what was read.
       api: (path, options) => path === MAP_PATH ? Promise.resolve(latest) : ctx.api(path, options),
       workspace: () => `deck:${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
+      onStartWork: discoveryAction({ api: (path, options) => ctx.api(path, options), root: () => region('map') }),
       interval: 0,
       look: { labels: metrics.labels, pad: metrics.pad, grow: true, preselect, compact: true, layout: 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
     });
