@@ -786,7 +786,7 @@ def test_helper_errors_never_publish_raw_exception_text(tmp_path, monkeypatch):
 
 
 def test_optional_actual_disposable_confined_script(tmp_path):
-    """No auto-provisioning/probing: opt in only with a disposable operator setup."""
+    """Positive execution and SC-30 namespace isolation; explicit disposable setup only."""
     config_path = os.environ.get("COMMONPLACE_COMPUTE_SANDBOX_FIXTURE")
     if not config_path:
         pytest.skip("no explicitly provisioned disposable cgroup/tmpfs/read-only runtime fixture")
@@ -799,7 +799,22 @@ def test_optional_actual_disposable_confined_script(tmp_path):
         b"assert os.environ.get('SSH_AUTH_SOCK') is None\n"
         b"assert not os.path.exists(sys.argv[1])\n"
         b"assert sys.argv[2]=='; literal $(id)'\n"
-        b"open('result.txt','wb').write(b'confined artifact')\n"
+        b"names=('net','mnt','pid','user','uts','ipc')\n"
+        b"assert len(sys.argv[3:])==len(names)\n"
+        b"for name,outer in zip(names,sys.argv[3:]):\n"
+        b"    assert os.readlink('/proc/self/ns/'+name)!=outer\n"
+        b"with open('/proc/net/dev') as stream:\n"
+        b"    devices=stream.read().splitlines()[2:]\n"
+        b"assert {line.split(':')[0].strip() for line in devices}=={'lo'}\n"
+        b"with open('/proc/net/route') as stream:\n"
+        b"    assert not stream.read().splitlines()[1:]\n"
+        b"with open('/proc/net/ipv6_route') as stream:\n"
+        b"    routes=[line.split() for line in stream]\n"
+        b"assert routes and all(route[-1]=='lo' for route in routes)\n"
+        b"assert not os.path.exists('/etc/resolv.conf')\n"
+        b"assert not os.path.exists('/sys')\n"
+        b"with open('result.txt','wb') as stream:\n"
+        b"    stream.write(b'confined artifact')\n"
         b"print('confined result')\n"
     )
     sentinel = tmp_path / "host-private.txt"
@@ -807,12 +822,17 @@ def test_optional_actual_disposable_confined_script(tmp_path):
     current = replace(
         binding(), workspace=settings.workspace, gateway=settings.gateway, node=settings.node
     )
+    namespace_names = ("net", "mnt", "pid", "user", "uts", "ipc")
     value = ScriptManifest.create(
         current,
         "disposable-bundle",
         script,
         runtime_digest=settings.runtime_digest,
-        arguments=(str(sentinel), "; literal $(id)"),
+        arguments=(
+            str(sentinel),
+            "; literal $(id)",
+            *(os.readlink("/proc/self/ns/" + name) for name in namespace_names),
+        ),
         output_paths=("result.txt",),
     )
     BubblewrapSandbox(settings).check(value)
