@@ -8,7 +8,13 @@ import pytest
 
 
 @pytest.mark.parametrize(
-    "harness", ["deck_home_today.mjs", "deck_home_today_routes.mjs", "deck_home_activity.mjs"]
+    "harness",
+    [
+        "deck_home_today.mjs",
+        "deck_home_today_routes.mjs",
+        "deck_home_activity.mjs",
+        "deck_home_roster.mjs",
+    ],
 )
 def test_home_today(harness):
     node = shutil.which("node")
