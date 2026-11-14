@@ -111,8 +111,8 @@ def test_card253_s13_duplicate(diverged):
     reply, _ = w.h.call(w.owner_token, "mempalace_check_duplicate", content="ordinary words")
     assert w.probes and reply["vector_disabled"] is True
     assert reply["is_duplicate"] is False and reply["matches"] == []
-    assert_private(reply)
-    assert reply["vector_disabled_reason"] == FIXED
+    # Owners read every wing, so they keep the raw reason (card #398).
+    assert reply["vector_disabled_reason"] == RAW
 
 
 def test_card253_s13_protocol(diverged):
@@ -177,8 +177,8 @@ def test_card253_s13_orphan_reason(diverged, monkeypatch, flag):
         w.owner, "mempalace_check_duplicate", {"content": "ordinary words"}
     )
     assert w.probes
-    assert_private(reply)
     if flag is True:
-        assert reply["vector_disabled_reason"] == FIXED
+        assert reply["vector_disabled_reason"] == RAW
     else:
+        assert_private(reply)
         assert "vector_disabled_reason" not in reply
