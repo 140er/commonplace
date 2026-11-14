@@ -4,6 +4,8 @@ import { panelHTML, panelCloseHTML } from './topology-detail.js';
 import { stateHTML, effectiveState } from './deck-compute-state.js';
 import { linkName } from './deck-compute-scene.js';
 
+const PHONE_CLOSE = '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>';
+
 export const ENROLL_ROUTE = '#/admin';
 export const COMPUTE_COPY = {
   add: 'Add a machine',
@@ -60,7 +62,7 @@ export function decorateComputePanel(html, summary, phone = false) {
   const body = html.slice(headEnd + header.length, footStart);
   const footer = html.slice(footStart).replace(readOnly, 'Bots propose changes here. You approve them in Today.');
   let result = `${start}${summary}<details class="dc-more"><summary>Device details</summary>${body}</details>${footer}`;
-  if (phone) result = result.replace(/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/, '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>');
+  if (phone) result = result.replace(/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/, PHONE_CLOSE);
   return result;
 }
 
@@ -114,13 +116,13 @@ export function computeStyles(doc) {
 
 export function summaryStatesHTML(nodes) {
   const rank = { down:0, degraded:1, unknown:2 };
-  return ' '+nodes.filter(n => n.status !== 'up' || n.stale || n.missing).filter(n=>n.status !== 'none').sort((a,b)=>rank[effectiveState(a)]-rank[effectiveState(b)]).map(n => `<span class="dc-summary-state">${stateHTML(effectiveState(n),`${n.name} ${effectiveState(n)}`)}</span>`).join(' ');
+  return ' '+nodes.filter(n => n.status !== 'up' || n.stale || n.missing).filter(n=>n.status !== 'none').sort((a,b)=>(rank[effectiveState(a)] ?? 3)-(rank[effectiveState(b)] ?? 3)).map(n => `<span class="dc-summary-state">${stateHTML(effectiveState(n),`${n.name} ${effectiveState(n)}`)}</span>`).join(' ');
 }
 
-export function computeLinkPanel({ link, names, compact = false }) {
+export function computeLinkPanel({ link, names, compact = false, phone = false }) {
   const states = [link.status.from,link.status.to];
   const state = link.stale || link.missing ? 'unknown' : states.includes('down') ? 'down' : states.includes('degraded') ? 'degraded' : states.every(s=>s === 'up') ? 'up' : 'unknown';
-  const close = compact ? '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>' : panelCloseHTML(true);
+  const close = phone ? PHONE_CLOSE : panelCloseHTML(compact);
   const observed = link.observedAt;
   const seen = observed && Number.isFinite(Date.parse(observed)) ? `<time datetime="${e(observed)}">${e(new Date(observed).toLocaleString('en',{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'}))} UTC</time>` : 'Unknown';
   return `<header class="td-head"><h2 class="td-title">${e(names.get(link.from) || link.from)} to ${e(names.get(link.to) || link.to)}</h2>${close}</header><dl class="dc-facts dc-link-facts"><div><dt>Route</dt><dd>${e(linkName(link.method) || 'Not reported')}</dd></div><div><dt>State</dt><dd>${stateHTML(state)}</dd></div><div><dt>Last seen</dt><dd>${seen}</dd></div></dl>`;

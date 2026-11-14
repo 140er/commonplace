@@ -223,11 +223,6 @@ test('health, summary and selected-link facts use the same shapes and honest obs
 });
 
 
-test('every idle or live link keeps its route caption', async () => {
-  const css = await readFile(new URL('../commonplace/web/static/deck-compute-capy.css', import.meta.url), 'utf8');
-  assert.doesNotMatch(css,/data-active="false"[^}]*dc-link-label[^}]*display:\s*none/);
-});
-
 test('phone curves attach twelve screen pixels apart on the node left edge', async () => {
   const {directLinks,cardSize} = await import('../commonplace/web/static/deck-compute-scene.js');
   const nodes=['runner','middle','a','b'].map(key=>({key,name:key}));
@@ -260,11 +255,23 @@ test('summary sorts effective status worst first without reordering the input', 
   assert.equal(nodes[0].name,'Unknown');
 });
 
-test('link detail missing time is Unknown and uses the node close control', () => {
+test('link detail forwards both compact modes to the shared node close control', () => {
+  const close=html=>/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/.exec(html)[0];
+  for (const compact of [false,true]) {
+    const options={key:'runner',node:{name:'Runner',status:'up'},tab:'physical',detail:{fields:{},sites:[]},links:[],names:new Map(),compact};
+    const node=computePanel(options,{});
+    const link=computeLinkPanel({link:{from:'a',to:'b',method:'direct',status:{from:'up',to:'up'}},names:new Map(),compact});
+    assert.match(link,/>Last seen<\/dt><dd>Unknown/);
+    assert.equal(close(link),close(node),`same close control with compact=${compact}`);
+  }
+});
+
+
+test('phone node and link inspectors share their separate Back treatment', () => {
   const options={key:'runner',node:{name:'Runner',status:'up'},tab:'physical',detail:{fields:{},sites:[]},links:[],names:new Map(),compact:true};
-  const node=computePanel(options,{});
-  const link=computeLinkPanel({link:{from:'a',to:'b',method:'direct',status:{from:'up',to:'up'}},names:new Map()});
-  assert.match(link,/>Last seen<\/dt><dd>Unknown/);
+  const node=computePanel(options,{},true);
+  const link=computeLinkPanel({link:{from:'a',to:'b',status:{from:'up',to:'up'}},names:new Map(),compact:true,phone:true});
   const close=html=>/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/.exec(html)[0];
   assert.equal(close(link),close(node));
+  assert.match(close(link),/>Back<\/button>/);
 });

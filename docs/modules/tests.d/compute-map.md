@@ -11,3 +11,5 @@
   - Compute follow-up regressions cover glyph sizes and geometry, selection exclusivity and endpoint outlines, shared phone lanes and caption midpoints, viewport fit, Health and summary glyphs, link observation absence, selected-link stroke and inspector, four-state colour captures, and below-map phone actions with the top-bar shortcut. The optional browser file runs at desktop and phone sizes and captures all four states together using the real node renderer.
 
   - Compute nit regressions cover visible captions on idle links, 12px phone port separation at two zoom levels, wrapped separator placement, worst-first effective-state ordering without input mutation, Unknown observation-time copy and identical node/link close controls. Browser checks assert all four fixture captions at both widths.
+
+  - Close-control parity is checked with compact false and true, plus the separate phone Back treatment. Caption visibility and 11px tertiary styling are asserted in the rendered browser DOM rather than inferred from absent CSS rules. Browser checks also verify complete summary glyph bounds and that its clip contains no focusable controls.

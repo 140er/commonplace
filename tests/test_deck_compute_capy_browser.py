@@ -156,6 +156,17 @@ def test_compute_capy_screen(browser, size):
             == '"·"'
         )
         summary = page.locator(".dc-summary")
+        assert (
+            summary.locator(
+                'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])'
+            ).count()
+            == 0
+        )
+        assert summary.evaluate("""el => [...el.querySelectorAll('.dc-state-word')].every(word => {
+          const range = document.createRange(); range.selectNodeContents(word);
+          const glyphs = range.getBoundingClientRect(), clip = el.getBoundingClientRect();
+          return glyphs.top >= clip.top - .5 && glyphs.bottom <= clip.bottom + .5;
+        })""")
         assert summary.evaluate("el=>getComputedStyle(el).overflow") == "hidden"
         # Separators belong to an item; at a new row they sit outside the clipped summary edge.
         assert (
