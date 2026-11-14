@@ -83,7 +83,8 @@
 :root[data-ui="deck"] .cb-send { margin-left: auto; min-height: 34px; padding: 0 12px; border: 0; border-radius: var(--radius-control); background: var(--violet); color: var(--ink); font-size: 12.5px; }
 :root[data-ui="deck"] .cb-composer > a { display: block; margin-top: 10px; color: var(--ink2); font-size: 12.5px; }
 :root[data-ui="deck"] .capy-coworkers :is(a, button, textarea):focus-visible, :root[data-ui="deck"] .cb-bot-row:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
-:root[data-ui="deck"] .cb-composer button:disabled { opacity: .5; cursor: default; }
+:root[data-ui="deck"] .cb-composer button:disabled { opacity: 1; cursor: default; }
+:root[data-ui="deck"] .cb-send:disabled { background: var(--s3); color: var(--ink3); }
 /* Reuse the complete settings controller, including its permission previews. */
 :root[data-ui="deck"] .cb-sharing-root > .bots { display: contents; }
 :root[data-ui="deck"] .cb-sharing-root .bot-settings-sheet { position: fixed; inset: 0; z-index: 30; display: flex; justify-content: flex-end; padding: 8px; background: transparent; }
@@ -97,11 +98,14 @@
 :root[data-ui="deck"] .cb-sharing-root .bot-access-tabs [aria-pressed="true"] { background: var(--s3); color: var(--ink); }
 @media (max-width: 900px) {
   :root[data-ui="deck"] .cb-panels { grid-template-columns: minmax(0, 1fr); }
+  :root[data-ui="deck"] [data-cb-composer] { position: static; }
 }
 @media (max-width: 699px) {
   :root[data-ui="deck"] .bots-roster { padding: 16px; }
   :root[data-ui="deck"] .bots-bar h1 { display: none; }
   :root[data-ui="deck"] .bots-new { min-height: 44px; }
+  :root[data-ui="deck"] .bots-bar .deck-bots-intro { grid-column: 1 / -1; grid-row: 2; }
+  :root[data-ui="deck"] .bots-bar .bots-new { grid-row: 1; }
   :root[data-ui="deck"] .cb-bot-row { flex-wrap: wrap; padding: 12px; gap: 6px 10px; }
   :root[data-ui="deck"] .cb-bot-main { flex-basis: calc(100% - 40px); }
   :root[data-ui="deck"] .cb-bot-count { margin-left: 38px; }

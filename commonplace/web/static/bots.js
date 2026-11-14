@@ -365,7 +365,7 @@ export function sheetHTML(sheet, bot, e) {
 
 const shellHTML = `<div class="bots" data-pane="roster">
   <section class="bots-roster" aria-labelledby="bots-h">
-    <header class="bots-bar"><h1 id="bots-h">${BOTS_COPY.title}</h1><p class="deck-bots-intro" hidden>One thread per bot. Tap one to talk.</p><button type="button" class="bots-new" data-bots-action="new">${BOTS_COPY.newBot}</button></header>
+    <header class="bots-bar"><h1 id="bots-h">${BOTS_COPY.title}</h1><p class="deck-bots-intro" hidden>One thread per bot. Coworkers run under each one.</p><button type="button" class="bots-new" data-bots-action="new">${BOTS_COPY.newBot}</button></header>
     <div data-region="model"></div>
     <ul class="bots-list" data-region="roster"></ul>
   </section>

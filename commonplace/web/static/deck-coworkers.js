@@ -5,6 +5,7 @@ import { workspaceRoute } from './routes.js';
 const enc = encodeURIComponent;
 const list = value => Array.isArray(value) ? value : [];
 const positive = value => Number.isSafeInteger(value) && value > 0 ? value : 0;
+const requestId = () => globalThis.crypto?.randomUUID?.() || `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
 const present = (objects, key) => objects.find(value => value && Object.hasOwn(value, key));
 // This is presentation copy only; request bodies always preserve the exact draft.
 export const displayCopy = value => String(value ?? '').replace(/\b(?:PR|card|ticket)\s*#\d+\s*[:·-]?\s*/gi, '').replace(/#\d+\b/g, '').replace(/(?:~\/|\/(?:home|Users|var|tmp)\/)[^\s,;]+/g, '').replace(/\s+/g, ' ').trim();
@@ -47,7 +48,7 @@ export function capyRosterHTML({ bots = [], conversations = [], loaded = true })
   return botGroups(bots).map(group => `<li class="cb-folder"><h2>${e(group.label)}</h2><ul>${group.bots.map(bot => {
     const coworkers = Array.isArray(bot.coworkers) ? bot.coworkers.length : Number.isSafeInteger(bot.coworker_count) ? bot.coworker_count : conversations.filter(row => belongs(row, bot)).length || (bot.board ? 1 : 0);
     const unread = positive(bot.unread_count ?? bot.unread);
-    const privateBot = bot.private === true || bot.is_private === true;
+    const privateBot = Object.hasOwn(bot, 'private') ? bot.private === true : bot.is_private === true;
     return `<li><a class="cb-bot-row" href="#/bots/${enc(bot.id)}/coworkers">${avatar(bot.name)}<span class="cb-bot-main"><span class="cb-bot-name"><b>${e(name(bot.name))}</b>${dot(bot.state)}${privateBot ? lock('Private bot') : ''}</span><span class="cb-summary">${e(displayCopy(bot.last?.text || bot.summary || bot.job))}</span></span><span class="cb-bot-count">${coworkers} ${coworkers === 1 ? 'coworker' : 'coworkers'}</span>${unread ? `<span class="cb-unread">${unread}<span class="sr"> unread</span></span>` : ''}</a></li>`;
   }).join('')}</ul></li>`).join('');
 }
@@ -206,7 +207,7 @@ export function mount(context) {
   }
   async function send() {
     if (!current() || busy) return;
-    const request = attempt || composerRequest(detail, mode, text, globalThis.crypto.randomUUID());
+    const request = attempt || composerRequest(detail, mode, text, requestId());
     if (!request) return;
     const mine = epoch, id = detail.conversation.id;
     attempt = request; busy = true; notice = ''; paint();
