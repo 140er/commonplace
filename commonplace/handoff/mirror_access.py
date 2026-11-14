@@ -342,6 +342,23 @@ _THREAD_FIELDS = frozenset(
 )
 
 
+def _association_proved(node, key, value, parsed, access):
+    """Local metadata proof of a citation whose references are already readable."""
+    if key in {"source_file", "source_path"} and not parsed.tokens:
+        if not parsed.text or not access.association("source_file", (value, parsed.text)):
+            return False
+    if key in {"source_drawer_id", "source_closet"}:
+        kind = "drawer" if key == "source_drawer_id" else "closet"
+        if not parsed.text or not access.association(kind, parsed.text):
+            return False
+    if key == "source_path":
+        if "source_file" in node and node["source_file"] not in (value, Path(value).name):
+            return False
+        if node.get("result_type") == "asset" and "path" in node and node["path"] != value:
+            return False
+    return True
+
+
 def scrub_provenance(node, access, *, import_alias=False, import_file_alias=False):
     if access.scrubbed.get(id(node)) is node:
         return node
@@ -373,19 +390,8 @@ def scrub_provenance(node, access, *, import_alias=False, import_file_alias=Fals
                 # Any spelling of an mcp: source ID, not only thr_ tokens, follows
                 # the room rule: shown only to readers of every matching thread.
                 allowed = not private_thread_reference(access, value)
-            if allowed and key in {"source_file", "source_path"} and not parsed.tokens:
-                allowed = bool(parsed.text) and access.association(
-                    "source_file", (value, parsed.text)
-                )
-            if allowed and key in {"source_drawer_id", "source_closet"}:
-                allowed = bool(parsed.text) and access.association(
-                    "drawer" if key == "source_drawer_id" else "closet", parsed.text
-                )
-            if allowed and key == "source_path":
-                if "source_file" in node:
-                    allowed = node["source_file"] in (value, Path(value).name)
-                if node.get("result_type") == "asset" and "path" in node:
-                    allowed = allowed and node["path"] == value
+            if allowed:
+                allowed = _association_proved(node, key, value, parsed, access)
         if not allowed:
             if out is node:
                 out = dict(node)
