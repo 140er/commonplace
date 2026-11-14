@@ -11,6 +11,7 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import read_json, send_json
 
+from . import taxonomy
 from ._util import numeric as _numeric
 from .store import StoreError, _id, open_store
 
@@ -193,7 +194,14 @@ def handle(gateway, h):
             )
         if parts == ["bots"]:
             if h.command == "GET":
-                return send_json(h, 200, {"bots": store.list_bots()})
+                return send_json(
+                    h,
+                    200,
+                    {
+                        "bots": taxonomy.directory(store, principal.user_id)["bots"],
+                        "team_bots": taxonomy.team_bots(gateway, principal),
+                    },
+                )
             if h.command == "POST":
                 if principal.role != "owner":
                     raise StoreError("owner_required", 403)
@@ -202,12 +210,26 @@ def handle(gateway, h):
                     return None
                 _fields(body, ("name", "instructions", "connection_id"), ("name",))
                 return send_json(h, 201, {"bot": store.create_bot(principal.user_id, **body)})
+        if len(parts) == 3 and parts[0] == "bots" and parts[2] == "section" and h.command == "POST":
+            if principal.role != "owner":
+                raise StoreError("owner_required", 403)
+            body = _body(h)
+            if body is None:
+                return None
+            _fields(body, ("section",), ("section",))
+            return send_json(
+                h, 200, taxonomy.set_section(store, principal.user_id, parts[1], body["section"])
+            )
         if parts == ["conversations"]:
             if h.command == "GET":
                 return send_json(
                     h,
                     200,
-                    {"conversations": store.list_conversations(principal.user_id, owns=True)},
+                    {
+                        "conversations": taxonomy.directory(store, principal.user_id, owns=True)[
+                            "conversations"
+                        ]
+                    },
                 )
             if h.command == "POST":
                 body = _body(h)
@@ -288,7 +310,7 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
             200,
             {
                 "conversation": conversation,
-                "messages": store.list_messages(principal.user_id, conversation_id),
+                "messages": store.list_messages(principal.user_id, conversation_id, mark_read=True),
                 "jobs": store.list_jobs(
                     principal.user_id,
                     conversation_id,
@@ -308,7 +330,7 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
                 200,
                 {
                     "messages": store.list_messages(
-                        principal.user_id, conversation_id, after=after, limit=limit
+                        principal.user_id, conversation_id, after=after, limit=limit, mark_read=True
                     ),
                     "jobs": store.list_jobs(
                         principal.user_id,
