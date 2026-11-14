@@ -1,9 +1,13 @@
 // Deck Board presentation. Card mutations, drag/drop and drawer lifecycle stay in the shell.
 import { escape as e, actor } from './api.js';
+import { inNeedsQueue, needsMeCount, currentNeeds, hideReferences } from './needs-me.js';
 
-export const needsOwner = (card, me) => card.status !== 'done' && (card.need === 'you' ||
+// What the card itself says: the server flagged it for this person. Used only while no owner queue is loaded.
+const awaitsYou = (card, me) => card.status !== 'done' && (card.need === 'you' ||
   (card.awaiting_release === true && card.can_approve === true) ||
   (card.status === 'review' && !!card.ask && !!me && card.ask_to === me && card.review_kind !== 'completion'));
+// "Needs you" means the owner queue lists the card, the same list Today, Home and the badges count.
+export const needsOwner = (card, me, needs) => card.status !== 'done' && (inNeedsQueue(card, needs) ?? awaitsYou(card, me));
 export function stateWord(card, me) {
   if (card.status === 'done') return 'Live';
   if (needsOwner(card, me)) return 'Needs you';
@@ -14,12 +18,8 @@ export function stateWord(card, me) {
 }
 // Display copy only: stored text and action values are never changed.
 export function boardCopy(value) {
-  return String(value ?? '')
-    .replace(/\bEvidence\s*:[^\n]*/gi, '')
-    .replace(/(?:~\/|\/(?:home|Users|tmp|var|work)\/|[A-Z]:\\)[^\s<>]*/g, '')
-    .replace(/(?:\bPR\s*)?(?<!&)#\d+\b/gi, '')
-    .replace(/\b(?:Sonnet|Opus|Haiku|GPT|Claude)[ -]?\d+(?:\.\d+)*(?:[- ](?:high|low|medium))?\b/gi, '')
-    .replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  return hideReferences(value, /\bEvidence\s*:[^\n]*/gi, /(?:~\/|\/(?:home|Users|tmp|var|work)\/|[A-Z]:\\)[^\s<>]*/g, /(?:\bPR\s*)?(?<!&)#\d+\b/gi,
+    /\b(?:Sonnet|Opus|Haiku|GPT|Claude)[ -]?\d+(?:\.\d+)*(?:[- ](?:high|low|medium))?\b/gi).replace(/\n{3,}/g, '\n\n').trim();
 }
 export function cardBot(card, { board = {}, bots = [] } = {}) {
   return bots.find(bot => bot.id === card.bot_id) || bots.find(bot => bot.board === (card.board || board.slug)) || null;
@@ -42,6 +42,9 @@ function boardNotice(cards, columns, { added, me }) {
 export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = 'todo', ...options }) {
   const backlog = cards.filter(card => card.status === 'backlog' && !needsOwner(card, options.me));
   const count = status => cards.filter(card => (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status).length;
+  // The Needs you column counts this project; Today counts every project. When they differ, say so in words.
+  const queued = currentNeeds(), everywhere = queued ? needsMeCount(queued) : null;
+  const note = everywhere != null && everywhere !== count('todo') ? `<p class="deck-board-needs-note" data-needs-note>${everywhere} ${everywhere === 1 ? 'card is' : 'cards are'} waiting on you across all projects; ${count('todo')} ${count('todo') === 1 ? 'is' : 'are'} in this one.</p>` : '';
   const columnHTML = columns.map(([status, name, tone]) => {
     const list = cards.filter(card => (!filter.startsWith('state:') || filter === `state:${status}`) && (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status);
     return `<section class="col" id="col-${status}" data-status="${status}" data-active="${column === status}" aria-label="${name}"><div class="col-h">${dot(status === 'todo' && !list.length ? 'idle' : tone)}<h2>${name}</h2><span class="n">${count(status)}</span></div><div class="cards">${status === 'todo' && !sheet ? form : ''}${list.map((card, i) => cardHTML(card, options, i === 0)).join('') || '<p class="empty-col">Nothing here yet</p>'}</div></section>`;
@@ -49,7 +52,7 @@ export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = t
   const stateFilters = [['all','All'], ...columns.map(([status,name]) => [`state:${status}`,name])];
   const add = '<button class="btn deck-board-add" data-action="new-card">Add card</button>';
   const menu = `<details class="deck-board-menu"><summary aria-label="Board options">…</summary><div>${[['mine','Mine'],['agents','Agents'],['blocked','Blocked']].map(([key,label]) => `<button data-board-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}<button data-action="coordinator" data-board="${e(options.board?.slug)}">Settings</button><a href="#/board/${e(options.board?.slug)}/chat">New thread</a></div></details>`;
-  return `<div class="workbench-board deck-board"><header class="deck-board-heading"><div class="deck-board-title"><div class="deck-board-title-row"><h1>Board</h1><div class="deck-board-phone-actions">${add}${menu}</div></div>${boardNotice(cards, columns, options)}</div><div class="board-tools"><div class="seg deck-board-filters" role="group" aria-label="Filter cards">${stateFilters.map(([key,label]) => `<button data-board-filter="${key}" aria-pressed="${filter === key}">${label} <span>${key === 'all' ? columns.reduce((sum,[status]) => sum + count(status),0) : count(key.slice(6))}</span></button>`).join('')}</div>${add}${menu}</div></header><div class="deck-board-phone-tools"><nav class="deck-board-states" aria-label="Board states">${columns.map(([status,name]) => `<button data-board-column="${status}" aria-controls="col-${status}" aria-pressed="${column === status}">${name} <span>${count(status)}</span></button>`).join('')}</nav></div><div class="board" role="region" aria-label="Board" tabindex="0">${columnHTML}</div>${backlog.length ? `<details class="backlog"><summary>Backlog</summary><div class="cards">${backlog.map((card,i) => cardHTML(card, options, i === 0)).join('')}</div></details>` : ''}${sheet ? form : ''}</div>`;
+  return `<div class="workbench-board deck-board"><header class="deck-board-heading"><div class="deck-board-title"><div class="deck-board-title-row"><h1>Board</h1><div class="deck-board-phone-actions">${add}${menu}</div></div>${boardNotice(cards, columns, options)}${note}</div><div class="board-tools"><div class="seg deck-board-filters" role="group" aria-label="Filter cards">${stateFilters.map(([key,label]) => `<button data-board-filter="${key}" aria-pressed="${filter === key}">${label} <span>${key === 'all' ? columns.reduce((sum,[status]) => sum + count(status),0) : count(key.slice(6))}</span></button>`).join('')}</div>${add}${menu}</div></header><div class="deck-board-phone-tools"><nav class="deck-board-states" aria-label="Board states">${columns.map(([status,name]) => `<button data-board-column="${status}" aria-controls="col-${status}" aria-pressed="${column === status}">${name} <span>${count(status)}</span></button>`).join('')}</nav></div><div class="board" role="region" aria-label="Board" tabindex="0">${columnHTML}</div>${backlog.length ? `<details class="backlog"><summary>Backlog</summary><div class="cards">${backlog.map((card,i) => cardHTML(card, options, i === 0)).join('')}</div></details>` : ''}${sheet ? form : ''}</div>`;
 }
 const stepWords = {claim:['Work','Started'],pr:['Builder','Pushed'],approve:['Review gate','Approved'],done:['Work','Finished'],handoff:['Handoff','Sent']};
 export function drawerSummary(card, options = {}) {
@@ -65,7 +68,7 @@ export function drawerSummary(card, options = {}) {
 export function drawerActions(card, me) {
   const reply = '<button class="btn ghost" data-deck-reply-toggle aria-expanded="false" aria-controls="deck-card-reply">Reply</button>';
   const move = `<button class="btn" data-action="card-menu" data-card="${e(card.number)}" aria-haspopup="dialog">Move to…</button>`;
-  if (!needsOwner(card, me)) return `<div class="deck-card-actions">${move}${reply}</div>`;
+  if (!needsOwner(card, me) && !awaitsYou(card, me)) return `<div class="deck-card-actions">${move}${reply}</div>`;
   const choices = card.ask_to === me ? card.ask_options || [] : [];
   const affirmative = choices.find(choice => /^(approve|accept|yes|ship|go ahead)(?:\b|$)/i.test(choice));
   const hold = choices.find(choice => /^(hold|wait|later)(?:\b|$)/i.test(choice));
