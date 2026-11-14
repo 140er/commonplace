@@ -55,7 +55,7 @@ from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
 from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
-from .vector_diagnostics import public_vector_diagnostics
+from .vector_diagnostics import public_vector_diagnostics, sees_raw_vector_reason
 from .workers import SupervisorClosed, Worker, WorkersPaused, WorkerSupervisor
 
 logger = logging.getLogger("commonplace.gateway")
@@ -73,8 +73,10 @@ _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
 
 
-def _public_worker_response(response):
+def _public_worker_response(response, raw_reason=False):
     """Strip global vector reasons from tool payloads and protocol error data.
+
+    ``raw_reason`` (workspace owners) keeps the reason behind a true disabled flag.
 
     Only diagnostic envelopes are inspected; stored drawer/fact text stays verbatim.
     This boundary also covers internal tool calls and search fan-out.
@@ -85,7 +87,7 @@ def _public_worker_response(response):
     error = response.get("error")
     if isinstance(error, dict):
         data = error.get("data")
-        cleaned = public_vector_diagnostics(data)
+        cleaned = public_vector_diagnostics(data, raw_reason)
         if cleaned is not data:
             out = {**out, "error": {**error, "data": cleaned}}
     result = response.get("result")
@@ -100,7 +102,7 @@ def _public_worker_response(response):
                 except (KeyError, TypeError, ValueError):
                     pass
                 else:
-                    cleaned = public_vector_diagnostics(payload)
+                    cleaned = public_vector_diagnostics(payload, raw_reason)
                     if cleaned is not payload:
                         replacement = {
                             **block,
@@ -310,7 +312,10 @@ class WorkerClient:
                     pin = getattr(self.supervisor, "pin", None)
                     try:
                         with pin(worker) if pin is not None else contextlib.nullcontext():
-                            result = _public_worker_response(self._post(worker, principal, request))
+                            result = _public_worker_response(
+                                self._post(worker, principal, request),
+                                sees_raw_vector_reason(principal),
+                            )
                     except ProvenRecycling:
                         self.supervisor.retire(worker)
                         if attempt:

@@ -1,7 +1,7 @@
 """Complete request-local overview projection, shared with search fan-out."""
 
 from commonplace.rules import checks
-from commonplace.vector_diagnostics import public_vector_diagnostics
+from commonplace.vector_diagnostics import public_vector_diagnostics, sees_raw_vector_reason
 from mempalace.read_scope import PAGE_SIZE, valid_descriptors
 
 from .mirror_access import reader, unreadable_room
@@ -241,7 +241,7 @@ def summary(gateway, principal, workers, name, wing=None, *, timeout=660.0):
             }
             if not isinstance(diagnostics, dict) or set(diagnostics) - keys:
                 return empty
-            diagnostics = public_vector_diagnostics(diagnostics)
+            diagnostics = public_vector_diagnostics(diagnostics, sees_raw_vector_reason(principal))
             checks.remaining(0)
             return {
                 **diagnostics,
