@@ -10,7 +10,7 @@
 :root[data-ui="deck"] .deck-memory .memory-toolbar { display: flex; padding: 0; gap: 12px; margin: 0 0 14px; }
 :root[data-ui="deck"] .deck-memory .search-big { min-height: 46px; padding: 0 16px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); }
 :root[data-ui="deck"] .deck-memory .search-big:focus-within { outline: 2px solid var(--violet); outline-offset: 2px; }
-:root[data-ui="deck"] .deck-memory .search-big input { color: var(--ink); font-family: var(--font); }
+:root[data-ui="deck"] .deck-memory .search-big input { min-height: 44px; color: var(--ink); font-family: var(--font); }
 :root[data-ui="deck"] .deck-memory .search-big input::placeholder { color: var(--ink3); }
 :root[data-ui="deck"] .deck-memory .search-big button { min-height: 32px; padding: 0 8px; background: transparent; color: var(--ink3); }
 :root[data-ui="deck"] .memory-rooms { display: flex; flex-wrap: nowrap; gap: 4px; max-width: 100%; overflow-x: auto; }

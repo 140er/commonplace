@@ -92,6 +92,7 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
                 "nodes => nodes.map(n => n.getBoundingClientRect().height)"
             )
             assert min(metrics) >= 44
+            assert query.bounding_box()["height"] >= 44
             assert page.locator(".deck-memory").bounding_box()["x"] == 16
         page.locator('[data-memory-result="0"]').click()
         expect(page.locator(".memory-source-details")).to_be_visible()
