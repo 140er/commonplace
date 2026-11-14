@@ -10,10 +10,16 @@ direct call to the searcher (which skips the probe) looked fast. The worker was
 not recycled between requests; the same worker process answered every query.
 
 The verdict is now reused while the probed files keep their signature wherever a
-timestamp proves sub-10 ms resolution. Coarse-timestamp filesystems keep the 10
-second ceiling. One verdict still expires with time: a standing gap between the
-database and an aging metadata pickle turns "diverged" once the pickle is old
-enough, so it is served only until then.
+timestamp proves sub-10 ms resolution, for at most 300 seconds. The ceiling stays
+finite because even a fine timestamp comes from the kernel's coarse clock (about
+4 ms on Linux): two same-size writes in one tick leave the stat signature equal.
+SQLite's own file change counter (header bytes 24 to 27) is part of the
+signature and closes that for sqlite writes, and the ceiling bounds whatever the
+counter cannot see (for example a write in WAL mode that only touches the log).
+Coarse-timestamp filesystems keep the 10 second ceiling. One verdict still
+expires with time: a standing gap between the database and an aging metadata
+pickle turns "diverged" once the pickle is old enough, so it is served only until
+then.
 
 A gateway-launched worker also warms itself up in a background thread right
 after it binds: it runs the ordinary search path once with a sentinel query,
@@ -28,12 +34,14 @@ every 30 seconds), which gives the worker's start and warm-up a head start befor
 the first search after an idle stop or a deploy. The idle stop itself (15
 minutes) is unchanged. `COMMONPLACE_WORKER_WARMUP=0` on the gateway turns the warm-up off. The
 operator's own warm-up variables still never reach a worker, so the decision in
-`eager-warmup-scope` stands for them.
+`eager-warmup-scope` stands for them. If the eager variable is ever set next to
+the worker one, only the worker warm-up runs.
 
 Measured on a synthetic 120,000-drawer palace through a real worker process
 (local harness figures, not production): searches spaced 11 seconds apart took
 0.11 to 0.14 s before and 0.034 to 0.044 s after; the first search took 2.0 to
-2.6 s before and 0.6 s after, flagged as warming up. The cost removed is linear
+2.6 s before and 0.44 to 2.3 s after (depending on how far the warm-up got
+before the search arrived), flagged as warming up. The cost removed is linear
 in the palace (about 0.1 s per 120,000 drawers). Whether it explains the full
 12 to 19 seconds seen on the live palace is not established here: that needs a
 measurement on the live host, with the page cache and other load in the picture.

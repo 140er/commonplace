@@ -1057,16 +1057,19 @@ _capacity_cache_generation = 0
 _CAPACITY_CACHE_MAX_ENTRIES = 32
 
 # Ceiling on how long one verdict may be reused while the files that fed it
-# look unchanged. It only applies where the stamps cannot be trusted to notice
-# a rewrite: filesystems whose timestamps are too coarse (FAT32 stores mtime at
-# 2 s granularity, exFAT at 10 ms, HFS+ at 1 s) and a write inside existing
-# sqlite pages need not change the file size either. Where a stamp proves
-# finer resolution (see ``_timestamps_resolve_writes``) the signature alone
-# makes a verdict fresh and it is reused until a file changes. The probe is
-# O(palace size) (an embeddings COUNT plus a full unpickle of the segment
-# metadata), so expiring a good verdict every 10 s made every search spaced
-# further apart than that pay for it again.
+# look unchanged. Coarse timestamps (FAT32 stores mtime at 2 s granularity,
+# exFAT at 10 ms, HFS+ at 1 s) cannot notice a quick rewrite, and a write inside
+# existing sqlite pages need not change the file size, so there the ceiling is
+# 10 s. Where a stamp proves finer resolution (see ``_timestamps_resolve_writes``)
+# the ceiling is longer but still finite: even a fine timestamp comes from the
+# kernel's coarse clock (a ~4 ms tick on Linux), so two same-size writes in one
+# tick leave the stamps equal. SQLite's own change counter closes that for
+# sqlite writes (see ``_db_change_counter``); the ceiling bounds whatever it
+# cannot see. The probe is O(palace size) (an embeddings COUNT plus a full
+# unpickle of the segment metadata), so expiring a good verdict every 10 s made
+# every search spaced further apart than that pay for it again.
 _CAPACITY_CACHE_MAX_AGE_SECONDS = 10.0
+_CAPACITY_FINE_STAMP_MAX_AGE_SECONDS = 300.0
 
 # mtimes that are whole multiples of this are what coarse filesystems produce.
 _COARSE_MTIME_NS = 10_000_000
@@ -1140,6 +1143,21 @@ def _segment_id_safe(palace_path: str, collection_name: str) -> Optional[str]:
         return None
 
 
+def _db_change_counter(palace_path: str) -> Optional[bytes]:
+    """SQLite's file change counter, header bytes 24-27, or ``None`` if unreadable.
+
+    Every committed write in rollback-journal mode bumps it, including one that
+    keeps the file size and lands in the same timestamp tick as the last write,
+    which the stat signature alone cannot see. Never raises.
+    """
+    try:
+        with open(os.path.join(palace_path, "chroma.sqlite3"), "rb") as handle:
+            header = handle.read(28)
+    except Exception:
+        return None
+    return header[24:28] if len(header) == 28 else None
+
+
 def _capacity_fingerprint(palace_path: str, segment_id: Optional[str]) -> tuple:
     """Signature over every file the probe reads: sqlite, pickle, and header.
 
@@ -1153,6 +1171,7 @@ def _capacity_fingerprint(palace_path: str, segment_id: Optional[str]) -> tuple:
         _db_family_signature(palace_path),
         _pickle_signature(palace_path, segment_id),
         _header_signature(palace_path, segment_id),
+        _db_change_counter(palace_path),
     )
 
 
@@ -1165,7 +1184,7 @@ def _timestamps_resolve_writes(fingerprint: tuple) -> bool:
     are checked, so the fallback to the age ceiling is rare there and only costs
     one extra probe.
     """
-    db_family, pickle_sig, header_sig = fingerprint
+    db_family, pickle_sig, header_sig, _change_counter = fingerprint
     return any(
         mtime_ns and mtime_ns % _COARSE_MTIME_NS
         for _inode, mtime_ns, _size in (*db_family, pickle_sig, header_sig)
@@ -1181,11 +1200,11 @@ def _capacity_reuse_limit(fingerprint: tuple, status: dict) -> float:
         # The one verdict that changes with no file touched: a standing gap
         # between sqlite and the pickle turns "diverged" once the pickle is
         # old enough, so serve it only until then.
-        return max(
-            _CAPACITY_CACHE_MAX_AGE_SECONDS,
-            _HNSW_PERSISTENT_DIVERGENCE_GRACE_SECONDS - age,
+        return min(
+            _CAPACITY_FINE_STAMP_MAX_AGE_SECONDS,
+            max(_CAPACITY_CACHE_MAX_AGE_SECONDS, _HNSW_PERSISTENT_DIVERGENCE_GRACE_SECONDS - age),
         )
-    return float("inf")
+    return _CAPACITY_FINE_STAMP_MAX_AGE_SECONDS
 
 
 def _served_capacity_status(status: dict, fingerprint: tuple) -> dict:
@@ -1249,8 +1268,9 @@ def hnsw_capacity_status(palace_path: str, collection_name: str = "mempalace_dra
     ``_CAPACITY_CACHE_MAX_AGE_SECONDS`` caps how long one verdict may be
     reused, but only as a backstop for filesystems with coarse timestamps; the
     signature is what makes the verdict fresh. Where a stamp proves fine
-    timestamps a verdict is reused for as long as the files stay the same,
-    except one whose outcome depends on the clock (see
+    timestamps a verdict is reused for up to
+    ``_CAPACITY_FINE_STAMP_MAX_AGE_SECONDS`` while the files and SQLite's change
+    counter stay the same, less for one whose outcome depends on the clock (see
     ``_capacity_reuse_limit``), and its reported metadata age is refreshed.
 
     Unlike :meth:`ChromaBackend._client`, which tolerates a 0.01 s mtime

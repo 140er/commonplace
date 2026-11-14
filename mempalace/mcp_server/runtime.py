@@ -426,9 +426,10 @@ def _run_http_loop() -> None:
         _start_write_stall_watchdog()
 
         if env_bool(_WORKER_WARMUP_ENV, False):
+            # The worker warm-up runs the search path the eager one only
+            # approximates; running both would load everything twice.
             _start_worker_warmup()
-
-        if env_bool("MEMPALACE_EAGER_WARMUP", False):
+        elif env_bool("MEMPALACE_EAGER_WARMUP", False):
 
             def _warmup_with_lock():
                 with _HTTP_REQUEST_LOCK:
