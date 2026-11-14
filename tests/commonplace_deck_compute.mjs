@@ -461,6 +461,8 @@ const machines = [
 ];
 const EMPTY = { wing: 'topology', nodes: [], links: [], routes: [], status: { nodes: {}, links: {} } };
 const flush = async () => { for (let i = 0; i < 24; i++) await new Promise(resolve => setImmediate(resolve)); };
+// A selection reads the node after a zero-delay timer, which a run of immediates does not wait for.
+const settle = async () => { await flush(); await new Promise(resolve => setTimeout(resolve, 20)); await flush(); };
 
 // A page that records what the real canvas draws; markup is not parsed, regions are found by their attribute.
 function element(doc) {
@@ -597,7 +599,7 @@ test('empty or failed topology: the runners through the same canvas, in honest s
 });
 
 test('selecting a runner node opens exactly one detail view with its Config from the runner row', async () => {
-  const f = harness(); await flush();
+  const f = harness(); await settle();
   assert.equal(f.chosen(), 'build');
   assert.equal(f.panels.length, 1);
   const panel = f.panels[0];
@@ -770,7 +772,7 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
 });
 
 test('Add a machine navigates to the existing enrollment screen without a discovery write', async () => {
-  const f = harness(); await flush();
+  const f = harness(); await settle();
   const before = f.calls.length;
   f.click({ computeAction: 'add-machine' }); await flush();
   assert.deepEqual(f.nav, ['#/admin']);
@@ -917,8 +919,6 @@ const fallbackAgents = () => ({
   studio: agentsOf('Studio machine', []),
   old: agentsOf('Old tower', [run('j4', 'started', 14, 9, { board: 'orchard', project: 'orchard-site' })]),
 });
-// A selection reads the node after a zero-delay timer, which a run of immediates does not wait for.
-const settle = async () => { await flush(); await new Promise(resolve => setTimeout(resolve, 20)); await flush(); };
 const nodeCalls = (f, only = null) => f.calls.filter(c => c[0].startsWith('/api/topology/node') && (only === null || (c[1]?.timeoutMs === 15000) === only)).map(c => decodeURIComponent(c[0].split('key=')[1]));
 
 test('runner-only topology (no machine on the map): counts and the job list come from the node route of each runner', async () => {
