@@ -2061,6 +2061,18 @@ class BoardService(lifecycle.LifecycleMixin):
                             lease=True,
                         )
                         result[-1].update(max_agents=used.cap, used=used.used)
+                        from commonplace.runner.capacity import board_capacity
+
+                        capacity = board_capacity(
+                            self.ctx.gateway,
+                            self.principal.workspace_id,
+                            runner,
+                            board["slug"],
+                            used.cap,
+                            jobs._now(),
+                        )
+                        if capacity is not None:
+                            result[-1].update(capacity)
                         waiting_usage = orch.usage(
                             conn,
                             runner,
@@ -2093,10 +2105,17 @@ class BoardService(lifecycle.LifecycleMixin):
                             summary, used=waiting_usage.used, cap=waiting_usage.cap
                         )
                         result[-1]["waiting_summary"] = why.summary_line(
-                            summary, used=waiting_usage.used, cap=waiting_usage.cap
+                            summary,
+                            used=waiting_usage.used,
+                            cap=waiting_usage.cap,
+                            runner_capacity=capacity["runner_capacity"] if capacity else None,
                         )
                         result[-1]["waiting_task_summary"] = why.summary_line(
-                            summary, used=waiting_usage.used, cap=waiting_usage.cap, tasks=True
+                            summary,
+                            used=waiting_usage.used,
+                            cap=waiting_usage.cap,
+                            tasks=True,
+                            runner_capacity=capacity["runner_capacity"] if capacity else None,
                         )
             return result
 

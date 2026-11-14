@@ -13,7 +13,7 @@ const WORDS = { task:'card', board:'project', space:'project chat', kg:'knowledg
   config:'configuration', auth:'access', own:'dedicated', aaak:'abbreviation', spec:'guide',
   orch:'Coworker', gate:'check', exp:'experiment', diff:'changes', render:'preview',
   void:'cancel', force:'forced', intent:'plan', artifact:'file', peers:'connections' };
-const SPECIAL = { ask:'Ask a question', decide:'Answer a decision', needs_me:'Read what needs you',
+const SPECIAL = { 'shell.exec':'Run commands on runners', 'git.push':'Push branches', memory_save:'Save to memory', ask:'Ask a question', decide:'Answer a decision', needs_me:'Read what needs you',
   orchestrator_inbox:'Read Coworker inbox', session_start:'Start a session',
   webhook_add:'Send notifications to another app', webhook_list:'See where notifications are sent',
   webhook_remove:'Stop sending to an app', webhook_test:'Send a test notification',
@@ -34,6 +34,7 @@ const VERBS = { add:'Create', create:'Create', list:'List', get:'Read', show:'Re
   invalidate:'Invalidate', supersede:'Replace', find:'Find', follow:'Follow', put:'Store', submit:'Submit',
   publish:'Publish', test:'Test', select:'Select', discover:'Discover' };
 export function permissionLabel(action) {
+  if (action.name.startsWith('deploy.')) return `Deploy to ${action.name.slice(7)}`;
   if (Object.hasOwn(SPECIAL, action.name)) return SPECIAL[action.name];
   const words = action.name.replace(/^mempalace_/, 'memory_').split(/[_:.\s-]+/).filter(Boolean);
   const verbAt = words.findIndex(word => Object.hasOwn(VERBS, word));
@@ -91,9 +92,12 @@ export function arrangeSettings(box, { owner = false } = {}) {
   const nav = box.querySelector('#deck-settings-nav');
   if (connections) box.prepend?.(connections);
   if (phone) box.prepend?.(phone);
-  if (nav) { box.prepend?.(nav); return; }
-  box.insertAdjacentHTML('afterbegin', `<nav id="deck-settings-nav" aria-label="Settings sections"><button type="button" data-deck-setting="phone-push" aria-current="location">Notifications</button><button type="button" data-deck-setting="deck-connections">Connections</button><button type="button" data-deck-setting="deck-tools">Workspace</button>${owner ? '<button type="button" data-deck-setting="tool-policy">Action permissions</button>' : ''}</nav>`);
+  if (nav) box.prepend?.(nav);
+  else box.insertAdjacentHTML('afterbegin', `<nav id="deck-settings-nav" aria-label="Settings sections"><button type="button" data-deck-setting="phone-push" aria-current="location">Notifications</button><button type="button" data-deck-setting="deck-connections">Connections</button><button type="button" data-deck-setting="deck-tools">Workspace</button>${owner ? '<button type="button" data-deck-setting="tool-policy">Action permissions</button>' : ''}</nav>`);
+  if (box.dataset?.deckSettingsScroll) return;
+  if (box.dataset) box.dataset.deckSettingsScroll = 'true';
   box.addEventListener?.('scroll', () => {
+    if (box.classList?.contains('capy-settings')) return;
     const nav = box.querySelector('#deck-settings-nav');
     if (!nav) return;
     let current = 'phone-push';
