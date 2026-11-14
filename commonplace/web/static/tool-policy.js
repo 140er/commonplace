@@ -23,7 +23,7 @@ export function summary(actions) {
 
 export const saveMode = (api, name, mode) => api("/api/tool-policy", { method: "POST", body: { actions: { [name]: mode } } });
 
-export function mountToolPolicy(host, { api, e, current = () => true }) {
+export function mountToolPolicy(host, { api, e, current = () => true, presentation = null }) {
   const active = () => current() && host.isConnected;
   let data = null, filter = "", status = "";
   async function load() {
@@ -36,13 +36,14 @@ export function mountToolPolicy(host, { api, e, current = () => true }) {
     render();
   }
   function rows() {
+    if (presentation) return presentation.rows(data.actions, data.modes, filter, e);
     return sortActions(data.actions, filter).map((a) => policyRow(a, data.modes, e)).join("") || '<p class="message">No action matches</p>';
   }
   function render() {
     if (!active()) return;
     const minutes = Math.round(data.approval.approval_ttl_s / 60);
-    host.innerHTML = `<p>What your agents may do, per action. <b>Allowed</b> is the default. <b>Ask first</b> holds the call and asks you in Needs me; your approval covers that agent and that exact call once, for ${e(minutes)} minutes. <b>Off</b> refuses the call. This never gives an agent more than its own access allows, and it does not apply to you in the app.</p><p role="status" data-tool-policy-status>${e(status || summary(data.actions))}</p><input type="search" data-tool-policy-filter aria-label="Filter actions" placeholder="Filter actions" value="${e(filter)}" autocomplete="off"><div data-tool-policy-list>${rows()}</div>`;
-    host.querySelector("[data-tool-policy-filter]").oninput = (event) => { filter = event.target.value; host.querySelector("[data-tool-policy-list]").innerHTML = rows(); };
+    host.innerHTML = `<p>${presentation ? e(presentation.introduction(minutes)) : `What your agents may do, per action. <b>Allowed</b> is the default. <b>Ask first</b> holds the call and asks you in Needs me; your approval covers that agent and that exact call once, for ${e(minutes)} minutes. <b>Off</b> refuses the call. This never gives an agent more than its own access allows, and it does not apply to you in the app.`}</p><p role="status" data-tool-policy-status>${e(status || summary(data.actions))}</p><input type="search" data-tool-policy-filter aria-label="${e(presentation?.filterLabel || "Filter actions")}" placeholder="${e(presentation?.placeholder || "Filter actions")}" value="${e(filter)}" autocomplete="off"><div data-tool-policy-list>${rows()}</div>`;
+    host.querySelector("[data-tool-policy-filter]").oninput = (event) => { filter = event.target.value; host.querySelector("[data-tool-policy-list]").innerHTML = rows(); presentation?.filterChanged?.(host); };
     host.querySelector("[data-tool-policy-list]").onchange = async (event) => {
       const select = event.target.closest?.("[data-tool-policy-mode]");
       if (!select) return;
