@@ -241,6 +241,9 @@ def test_compute_capy_screen(browser, size):
             assert page.locator(".topo-detail").get_by_text("Healthy", exact=True).is_visible()
         page.emulate_media(reduced_motion="reduce")
         assert live.evaluate("el=>getComputedStyle(el).animationName") == "none"
+        page.wait_for_function(
+            "document.querySelector('.deck-compute')?.dataset.computeMotion === 'reduced'"
+        )
         assert page.locator(".deck-compute").get_attribute("data-compute-motion") == "reduced"
         page.locator('.dc-actions [data-compute-action="add-machine"]').click()
         assert page.evaluate("window.destination") == "#/admin"
