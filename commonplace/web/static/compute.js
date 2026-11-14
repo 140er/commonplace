@@ -7,6 +7,14 @@ const endpoint = row => row.address ? [row.address, row.port].filter(value => va
 const enc = encodeURIComponent;
 const algorithms = ["ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa"];
 const limits = { hosts: 4096, concurrency: 64, rate_per_second: 100, duration_seconds: 300, results: 4096 };
+// Technical settings sit behind one "Advanced" label; each section opens with a one-line plain explanation.
+export const ADVANCED = {
+  label: "Advanced",
+  intro: "Most people never need these. They are the technical settings behind how agents reach your machines.",
+  gateways: "A gateway is the door into one project’s network; agents reach your machines through it.",
+  nodes: "A target is one machine behind a gateway that agents may work on.",
+  scopes: "A passive scope is a time-limited permission to look at a network, never to change it.",
+};
 const same = (a, b) => String(a) === String(b);
 const digestOK = value => /^[a-f0-9]{64}$/.test(String(value));
 const discoveryCancellable = row => row && ["queued", "claimed", "dispatching", "uncertain"].includes(row.state) && row.reason !== "cancellation_requested";
@@ -113,6 +121,7 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
   let inventory = null, projects = [], reading = false, busy = false, uncertain = false, error = "", notice = "", boardError = "";
   let discoveries = [], discoveryAvailable = false, discoveryError = "";
   let scripts = [], scriptDetail = null, scriptsError = "";
+  let advancedOpen = false;
   let editor = "", values = {}, selected = null, approvalDigest = "", attempt = null;
   const requests = new Set();
   const eligible = () => live && current() === session && current()?.workspace === workspace && current()?.actor === identity && route() === expectedRoute;
@@ -213,8 +222,8 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     }
     return `<section class="compute-editor" aria-labelledby="compute-editor-heading"><header><h2 id="compute-editor-heading" tabindex="-1">${heading}</h2>${button("close", "Close", busy)}</header><form data-compute-form="${editor}"><fieldset${busy || uncertain ? " disabled" : ""}><div class="compute-fields">${fields}</div></fieldset><p role="alert">${e(error)}</p><div class="compute-actions"><button class="btn primary" type="submit"${busy || uncertain || reading ? " disabled" : ""}>${busy ? "Saving…" : submit}</button>${button("close", "Cancel", busy)}</div>${uncertain ? '<p role="status">Receipt unavailable. Reload inventory to check what was stored before starting another action.</p>' : ""}</form></section>`;
   }
-  function inventorySection(name, heading, rows, empty, action, label, enabled = true, explanation = "", security = "") {
-    return `<section class="compute-inventory" aria-labelledby="compute-${name}"><header><h2 id="compute-${name}">${heading}</h2>${button(action, label, busy || reading || uncertain || !enabled)}</header>${explanation ? `<p class="compute-quiet">${explanation}</p>` : ""}${rows.length ? `<ul class="compute-list">${rows.join("")}</ul>` : `<p class="compute-empty">${empty}</p>`}${security ? `<details class="compute-guidance"><summary>Access and approval details</summary><p>${security}</p></details>` : ""}</section>`;
+  function inventorySection(name, heading, rows, empty, action, label, enabled = true, explanation = "", security = "", plain = "") {
+    return `<section class="compute-inventory" aria-labelledby="compute-${name}"><header><h2 id="compute-${name}">${heading}</h2>${button(action, label, busy || reading || uncertain || !enabled)}</header>${plain ? `<p class="compute-plain">${plain}</p>` : ""}${explanation ? `<p class="compute-quiet">${explanation}</p>` : ""}${rows.length ? `<ul class="compute-list">${rows.join("")}</ul>` : `<p class="compute-empty">${empty}</p>`}${security ? `<details class="compute-guidance"><summary>Access and approval details</summary><p>${security}</p></details>` : ""}</section>`;
   }
   function render() {
     if (!eligible() || !host) return;
@@ -223,10 +232,11 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
       const gatewayRows = inventory.gateways.map(row => `<li class="compute-row"><header><strong>${e(row.name)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(e(row.board), e(endpoint(row)))}</p><details><summary>Public host key and binding</summary>${bindingHTML(row)}</details></li>`);
       const nodeRows = inventory.nodes.map(row => `<li class="compute-row"><header><strong>${e(row.name)}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(e(row.board), e(endpoint(row)), e(row.interface))}</p><p>Gateway ${e(rowById("gateways", row.gateway_id)?.name || row.gateway_id)}</p><details><summary>Public host key and binding</summary>${bindingHTML(row)}</details></li>`);
       const scopeRows = inventory.scopes.map(row => `<li class="compute-row"><header><strong>${parts(e(row.context?.project), e(row.context?.gateway))}</strong><span class="compute-state">${row.revoked ? "Revoked" : Number(row.expires_at) <= now() ? "Expired" : "Passive grant recorded"}</span></header><p>${parts(e((row.cidrs || []).join(", ")), e((row.interfaces || []).join(", ")))}</p><p>${parts(row.methods?.length ? `Methods: ${e(row.methods.join(", "))}` : "", taskHTML({ task_number: row.context?.task }), row.context?.agent ? `Actor ${e(row.context.agent)}` : "")}</p><p>Expires: ${e(Number.isFinite(Number(row.expires_at)) ? new Date(Number(row.expires_at) * 1000).toLocaleString() : "Unknown")}</p><details><summary>Scope limits and context</summary><dl><dt>Scope</dt><dd>${e(row.id)}</dd><dt>User</dt><dd>${e(row.context?.user)}</dd>${limitsHTML(row.limits)}</dl></details>${!row.revoked && Number(row.expires_at) > now() ? button("revoke", "Revoke passive scope", busy || reading || uncertain, row.id) : ""}</li>`);
-      body = `${editorHTML()}<div class="compute-inventories">`
-        + inventorySection("gateways", "Gateways", gatewayRows, "No gateways added yet.", "gateway", "Add gateway", projects.length > 0, boardError || (!projects.length ? "Create a project before adding a gateway." : ""), "Add an existing project’s numeric management endpoint and explicitly confirm its full public host key.")
-        + inventorySection("nodes", "Targets", nodeRows, "No targets enrolled yet.", "node", "Enroll target", inventory.gateways.length > 0, !inventory.gateways.length ? "Add a gateway before enrolling a target." : "", "Enrollment uses an existing gateway and a separately confirmed public host key.")
-        + inventorySection("scopes", "Passive scopes", scopeRows, "No scopes granted yet.", "scope", "Grant scope", inventory.gateways.length > 0, "", "Each scope binds exact networks, interfaces, actor, task, bounds and expiry.")
+      body = `${editorHTML()}<div class="compute-inventories"><details class="compute-advanced compute-wide" data-compute-advanced${advancedOpen ? " open" : ""}><summary class="compute-advanced-summary">${ADVANCED.label}</summary><p class="compute-quiet">${ADVANCED.intro}</p><div class="compute-inventories">`
+        + inventorySection("gateways", "Gateways", gatewayRows, "No gateways added yet.", "gateway", "Add gateway", projects.length > 0, boardError || (!projects.length ? "Create a project before adding a gateway." : ""), "Add an existing project’s numeric management endpoint and explicitly confirm its full public host key.", ADVANCED.gateways)
+        + inventorySection("nodes", "Targets", nodeRows, "No targets enrolled yet.", "node", "Enroll target", inventory.gateways.length > 0, !inventory.gateways.length ? "Add a gateway before enrolling a target." : "", "Enrollment uses an existing gateway and a separately confirmed public host key.", ADVANCED.nodes)
+        + inventorySection("scopes", "Passive scopes", scopeRows, "No scopes granted yet.", "scope", "Grant scope", inventory.gateways.length > 0, "", "Each scope binds exact networks, interfaces, actor, task, bounds and expiry.", ADVANCED.scopes)
+        + "</div></details>"
         + inventorySection("scripts", "Workspace scripts", scripts.map(row => `<li class="compute-row"><header><strong>${e(row.id)}</strong>${taskHTML(row)}</header><p>${parts(row.node_id ? `Target ${e(row.node_id)}` : "", row.digest ? `Bundle SHA256 <code>${e(row.digest)}</code>` : "")}</p>${button("inspect-script", "Inspect source and manifest", busy || reading || uncertain, row.id)}</li>`), "No scripts saved yet.", "script", "Add Python script", inventory.nodes.length > 0 && !scriptsError, scriptsError, (inventory.capabilities?.scripts === true ? "Scripts use the independently verified confined target runtime and require exact approval." : "Script execution is unavailable until the target runtime and confinement are independently configured and verified."))
         + inventorySection("discoveries", "Passive observations", discoveries.map(row => `<li class="compute-row"><header><strong>${parts(e(row.board), taskHTML(row))}</strong><span class="compute-state">${e(stateText(row.state))}</span></header><p>${parts(row.scope_id ? `Scope ${e(row.scope_id)}` : "", e(row.reason))}</p><details><summary>${e(row.observations?.length || 0)} observations and usage</summary><pre>${e(JSON.stringify({ observations: row.observations || [], usage: row.usage || {} }, null, 2))}</pre></details>${discoveryCancellable(row) ? button("discovery-cancel", "Request cancellation", busy || reading || uncertain, row.id) + "<p>A cancellation request does not confirm remote termination.</p>" : ""}${row.reason === "cancellation_requested" ? "<p>Cancellation requested; remote termination is unconfirmed.</p>" : ""}${row.state === "uncertain" ? "<p>Outcome unknown. Capacity remains reserved; this attempt will not automatically repeat.</p>" : ""}</li>`), "No observations collected yet.", "discovery", "Collect observations", discoveryAvailable && inventory.scopes.some(row => !row.revoked && Number(row.expires_at) > now()), discoveryError || (!discoveryAvailable ? "Observation collection is not available yet." : ""), (discoveryAvailable ? "Collection reads approved gateway caches in the background. Reload to check progress." : "Passive collection is unavailable until its gateway and admission channel are configured."))
         + inventorySection("executions", "Execution proposals", inventory.executions.map(row => computeExecutionHTML(row, { busy: busy || reading || uncertain })), "No tasks waiting for approval.", "proposal", "Propose system info", inventory.nodes.length > 0, "", "The fixed system information operation requires a target and a canonical task.")
@@ -337,6 +347,8 @@ export function createCompute({ mount, api, current, route = () => globalThis.lo
     } catch (failure) { error = failure.message; render(); }
   }
   function click(event) {
+    // The native toggle opens or closes the section; remember it so a re-render keeps it as the person left it.
+    if (event.target.closest("[data-compute-advanced] > summary")) { advancedOpen = !advancedOpen; return; }
     const target = event.target.closest("[data-compute-action]");
     if (!target) return;
     const { computeAction: action, id } = target.dataset;

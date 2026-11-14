@@ -258,6 +258,25 @@ def test_compute_capy_screen(browser, size):
 
 
 @pytest.mark.parametrize("size", [(1440, 900), (390, 844)], ids=["desktop", "phone"])
+def test_compute_status_line_comes_before_the_map(browser, size):
+    page = browser.new_page(viewport={"width": size[0], "height": size[1]}, device_scale_factor=2)
+    try:
+        open_compute(page)
+        status = page.locator(".dc-status")
+        status.wait_for()
+        # This fixture's machines are not recorded as runners, so the line says work cannot be counted.
+        assert status.inner_text().startswith("Running work is not reported")
+        assert page.evaluate("document.documentElement.scrollWidth") == size[0]
+        above = page.evaluate(
+            "document.querySelector('.dc-status').getBoundingClientRect().bottom"
+            " <= document.querySelector('.topo-stage').getBoundingClientRect().top"
+        )
+        assert above
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("size", [(1440, 900), (390, 844)], ids=["desktop", "phone"])
 def test_compute_all_four_states(browser, size):
     page = browser.new_page(viewport={"width": size[0], "height": size[1]}, device_scale_factor=2)
     try:
