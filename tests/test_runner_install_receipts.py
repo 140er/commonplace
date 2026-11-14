@@ -583,7 +583,9 @@ def test_setup_service_fetches_approved_settings_without_starting_work(cached, m
     monkeypatch.setattr(installer.signal, "signal", lambda *args: None)
     monkeypatch.setattr(installer.Installer, "sync_receipts", sync)
     monkeypatch.setattr(agent, "_spawn", lambda *args: pytest.fail("setup service launched work"))
-    assert installer.serve(s.home) == 0
+    # The settings loop is now a child of the independent lifecycle supervisor.
+    # Keep the same in-process assertion that this loop cannot launch work.
+    assert installer.sync_worker(s.home) == 0
     assert len(calls) == 1 and calls[0]["binding_acks"] == ["demo:work"]
     assert machine(s)["enabled"] == 0
 
