@@ -61,47 +61,74 @@ export function memoryActions(result, destination, cards = [], me) {
   };
 }
 
-// The board list is the server's readable set. Each worker finishes one board
-// before taking another, so neither endpoint exceeds four concurrent requests.
-export async function searchMemory({ api = request, boards, query, project = "", source = "", from = "", since = "" }) {
+// Notes come from ONE palace request (the palace is the slow part), chat sources from one
+// request per readable board. A pool of two keeps at most two requests in flight, and one
+// shared deadline and abort signal end the whole search: no endless "Searching…".
+const ROOMS_WAIT_MS = 3000, TYPING_PAUSE_MS = 700;
+export const SEARCH_LIMIT = 25, SEARCH_LIMIT_MAX = 100, SEARCH_TIMEOUT_MS = 20000, SEARCH_CONCURRENCY = 2;
+export const queryProblem = (query = "") => {
   const words = query.trim().split(/\s+/);
-  if (!query.trim() || words.length > 8 || query.length > 200 || words.some((word) => word.length > 100)) throw new Error("Use 1–8 words, up to 200 characters.");
+  return !query.trim() || words.length > 8 || query.length > 200 || words.some((word) => word.length > 100) ? "Use 1–8 words, up to 200 characters." : "";
+};
+export async function searchMemory({ api = request, boards, query, project = "", source = "", from = "", since = "", limit = SEARCH_LIMIT, signal, timeoutMs = SEARCH_TIMEOUT_MS }) {
+  const problem = queryProblem(query);
+  if (problem) throw new Error(problem);
+  limit = Math.max(1, Math.min(SEARCH_LIMIT_MAX, Number(limit) || SEARCH_LIMIT));
   const selected = boards.filter((board) => !project || board.slug === project);
-  const results = [], errors = [];
-  let next = 0, truncated = false;
-  async function worker() {
-    while (next < selected.length) {
-      const board = selected[next++];
-      const params = new URLSearchParams({ q: query });
-      if (source && source !== "note") params.set("source", source);
-      if (from) params.set("from", from);
-      if (since) params.set("since", since);
-      if (source !== "note" && !board.notesOnly) {
+  const results = [], errors = [], tasks = [];
+  let truncated = false, moreNotes = false, timedOut = false;
+  const controller = new AbortController();
+  const stop = (reason) => controller.abort(reason);
+  if (signal?.aborted) stop(signal.reason); else signal?.addEventListener("abort", () => stop(signal.reason), { once: true });
+  const timer = setTimeout(() => { timedOut = true; stop(new Error("Search timed out")); }, timeoutMs);
+  // A client that ignores the signal still settles: the race ends with the abort.
+  const ended = new Promise((_, reject) => { const fail = () => reject(controller.signal.reason); if (controller.signal.aborted) fail(); else controller.signal.addEventListener("abort", fail, { once: true }); });
+  ended.catch(() => {});
+  const call = (path) => Promise.race([api(path, { signal: controller.signal }), ended]);
+  const params = () => { const found = new URLSearchParams({ q: query }); if (source && source !== "note") found.set("source", source); if (from) found.set("from", from); if (since) found.set("since", since); return found; };
+  const wings = new Map();
+  for (const board of selected) if (board.wing && !wings.has(board.wing)) wings.set(board.wing, board);
+  if ((!source || source === "note") && wings.size) {
+    tasks.push(async () => {
+      try {
+        const found = new URLSearchParams({ q: query, limit: String(limit) });
+        if (project) found.set("theme", selected[0].wing);
+        const page = await call(`/api/memory/search?${found}`);
+        for (const row of page.results) {
+          const board = wings.get(row.theme);
+          if (!board || (from && row.author !== from) || (since && !(Date.parse(row.at) >= Date.parse(since)))) continue;
+          const note = { ...row, actor: row.author, kind: "note", board: board.slug, wing: row.theme };
+          results.push({ ...note, author: memoryAuthor(note, board), sourceLabel: sourceLabel(note, board) });
+        }
+        moreNotes = page.results.length >= limit && limit < SEARCH_LIMIT_MAX;
+        truncated ||= page.results.length >= limit;
+      } catch { errors.push({ source: "note" }); }
+    });
+  }
+  if (source !== "note") {
+    for (const board of selected) {
+      if (board.notesOnly) continue;
+      tasks.push(async () => {
         try {
-          const page = await api(`/api/chat/${enc(board.slug)}/search?${params}`);
+          const page = await call(`/api/chat/${enc(board.slug)}/search?${params()}`);
           results.push(...page.results.map((row) => ({ ...row, board: board.slug, wing: board.wing, author: memoryAuthor(row, board), sourceLabel: sourceLabel(row, board) })));
           truncated ||= page.truncated;
         } catch { errors.push({ board: board.slug, source: "project" }); }
-      }
-      if ((!source || source === "note") && board.wing) {
-        try {
-          const page = await api(`/api/memory/search?${new URLSearchParams({ q: query, theme: board.wing, limit: "100" })}`);
-          results.push(...page.results.filter((row) => row.theme === board.wing && (!from || row.author === from) && (!since || Date.parse(row.at) >= Date.parse(since))).map((row) => {
-            const note = { ...row, actor: row.author, kind: "note", board: board.slug, wing: row.theme };
-            return { ...note, author: memoryAuthor(note, board), sourceLabel: sourceLabel(note, board) };
-          }));
-          truncated ||= page.results.length === 100;
-        } catch { errors.push({ board: board.slug, source: "note" }); }
-      }
+      });
     }
   }
-  await Promise.all(Array.from({ length: Math.min(4, selected.length) }, worker));
+  let next = 0;
+  async function worker() { while (next < tasks.length && !controller.signal.aborted) await tasks[next++](); }
+  try { await Promise.all(Array.from({ length: Math.min(SEARCH_CONCURRENCY, tasks.length) }, worker)); }
+  finally { clearTimeout(timer); controller.abort(); }
+  // Tasks skipped after an abort or the deadline count as failed sources, never as "no results".
+  for (; next < tasks.length; next++) errors.push({ source: "skipped" });
   const unique = new Map();
   for (const result of results) {
     const id = result.kind === "note" ? JSON.stringify(["note", result.wing, result.id]) : key(result);
     if (!unique.has(id)) unique.set(id, result);
   }
-  return { results: [...unique.values()].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)), truncated, errors };
+  return { results: [...unique.values()].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)), truncated, moreNotes, errors, timedOut };
 }
 
 export async function loadNeighbours(result, api = request) {
@@ -146,8 +173,8 @@ export function renderMemory(state) {
     <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="query" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
     <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} Coworker`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
     ${error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
-    ${state.errors?.length ? '<p class="memory-warning" role="alert">Some sources could not be searched. Try again for all results.</p>' : ""}
-    <div class="memory-results list" aria-busy="${Boolean(busy)}">${results.map((row, i) => `<button class="res${selected && key(row) === key(selected) ? " is-selected" : ""}${busy ? " is-loading" : ""}" data-memory-result="${i}"${selected && key(row) === key(selected) ? ' aria-current="true"' : ""}><span class="src"><b>${e(row.sourceLabel)}</b><span> · ${e(row.author)} · </span>${stamp(row, { dateOnly: row.kind === "note" })}</span><span class="ex">${highlighted(row.text, busy ? state.completedQuery : filters.query)}</span></button>`).join("")}${!busy && !error && !results.length ? `<div class="memory-empty" role="status"><h2>${searched ? "No exact words match" : "Search your memory"}</h2><p>${searched ? "Memory finds the words you type, not their meaning. Try fewer or different words, or search every project." : "Exact words from chats, cards and notes. Never summarised."}</p>${searched ? '<button class="btn" data-memory-action="clear">Search all projects</button>' : ""}</div>` : ""}</div>
+    ${state.errors?.length && !state.error && !busy ? '<p class="memory-warning" role="alert">Some sources could not be searched. <button class="btn" data-memory-action="retry">Try again</button> for all results.</p>' : ""}
+    <div class="memory-results list" aria-busy="${Boolean(busy)}">${busy && !results.length ? '<div class="memory-loading" role="status"><span class="memory-spinner" aria-hidden="true"></span> Searching saved memory… this can take a few seconds.</div>' : ""}${results.map((row, i) => `<button class="res${selected && key(row) === key(selected) ? " is-selected" : ""}${busy ? " is-loading" : ""}" data-memory-result="${i}"${selected && key(row) === key(selected) ? ' aria-current="true"' : ""}><span class="src"><b>${e(row.sourceLabel)}</b><span> · ${e(row.author)} · </span>${stamp(row, { dateOnly: row.kind === "note" })}</span><span class="ex">${highlighted(row.text, busy ? state.completedQuery : filters.query)}</span></button>`).join("")}${!busy && state.moreNotes ? '<button class="btn memory-more" data-memory-action="more">Show more</button>' : ""}${!busy && !error && !results.length ? `<div class="memory-empty" role="status"><h2>${searched ? "No exact words match" : "Search your memory"}</h2><p>${searched ? "Memory finds the words you type, not their meaning. Try fewer or different words, or search every project." : "Exact words from chats, cards and notes. Never summarised."}</p>${searched ? '<button class="btn" data-memory-action="clear">Search all projects</button>' : ""}</div>` : ""}</div>
     <div class="keys"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open source</span><span><kbd>Y</kbd> copy exact words</span>${memoryActions(selected, state.destination).link ? '<span><kbd>L</kbd> link to a card</span>' : ""}</div></section>`;
 }
 
@@ -169,7 +196,7 @@ export function renderMemoryPanel({ result, destination, source, cards = [], me,
 }
 
 // The shell supplies the two mounts and its dock. It owns route and header wiring.
-export function createMemory({ mount, panel, api = request, boards = [], me = {}, destination = null, dock, clipboard = globalThis.navigator?.clipboard, onSelect = () => {}, singleKeys = () => true } = {}) {
+export function createMemory({ mount, panel, api = request, boards = [], me = {}, destination = null, dock, clipboard = globalThis.navigator?.clipboard, onSelect = () => {}, singleKeys = () => true, searchTimeoutMs = SEARCH_TIMEOUT_MS, typingPauseMs = TYPING_PAUSE_MS } = {}) {
   const look = mount.ownerDocument?.documentElement?.dataset.ui || "classic";
   let storage;
   try { storage = globalThis.sessionStorage; } catch { /* Optional saved query. */ }
@@ -178,6 +205,8 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   if (look === "deck") memoryStyles(mount.ownerDocument);
   const state = { look, viewer: typeof me === "string" ? me : me.actor, boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
   let searchEpoch = 0, sourceEpoch = 0, stopped = false, writing = false, returnKey = "";
+  let inflight = null, typing = null;
+  const cancelSearch = () => { inflight?.abort(new Error("Superseded")); inflight = null; if (typing) clearTimeout(typing); typing = null; };
   let importer = null, importDialog = null;
   let mapDispose = null, mapOpen = null, mapMode = false;
   const person = typeof me === "string" ? me : me.actor;
@@ -201,30 +230,41 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     }
     restore?.();
   };
-  async function search(filters = state.filters, { restored = false } = {}) {
+  async function search(filters = state.filters, { restored = false, limit = SEARCH_LIMIT } = {}) {
     mapMode = false; mapDispose?.(); mapDispose = null;
+    cancelSearch();
     state.restoredQuery = restored;
     if (look === "deck") history.save(filters.query || "");
     const epoch = ++searchEpoch;
     ++sourceEpoch;
     state.filters = { ...filters };
+    state.limit = limit;
     state.busy = true;
     state.error = "";
+    state.errors = [];
     state.selected = null;
     draw();
+    const controller = inflight = new AbortController();
     try {
-      await roomsReady;
-      const page = await searchMemory({ api, boards: state.boards, ...filters, query: filters.query || "", since: filters.when ? new Date(Date.now() - Number(filters.when) * 86400000).toISOString() : "" });
+      // The notes-only room listing must never hold the search: wait for it a moment at most.
+      let waiting;
+      await Promise.race([roomsReady, new Promise((done) => { waiting = setTimeout(done, ROOMS_WAIT_MS); })]).finally(() => clearTimeout(waiting));
+      if (stopped || epoch !== searchEpoch) return;
+      const page = await searchMemory({ api, boards: state.boards, ...filters, query: filters.query || "", limit, signal: controller.signal, timeoutMs: searchTimeoutMs, since: filters.when ? new Date(Date.now() - Number(filters.when) * 86400000).toISOString() : "" });
       if (stopped || epoch !== searchEpoch) return;
       if (look === "deck") rememberRoomCounts(state, page.results, filters);
       Object.assign(state, page, { completedQuery: filters.query, searched: true });
+      // Nothing found because a source failed is an error, never "No exact words match".
+      if (!page.results.length && page.errors.length) state.error = page.timedOut ? "Memory is taking too long to answer. Nothing was lost; try again in a moment." : "Memory could not be searched just now. Try again.";
     } catch (error) {
       if (stopped || epoch !== searchEpoch) return;
       state.error = error.message;
     }
+    if (inflight === controller) inflight = null;
     if (!stopped && epoch === searchEpoch) { state.busy = false; draw(); }
   }
   async function showMap(project = state.filters.project || "") {
+    cancelSearch();
     const epoch = ++searchEpoch;
     ++sourceEpoch;
     mapDispose?.(); mapDispose = null; mapMode = true;
@@ -357,10 +397,11 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     const kind = button.dataset.memoryAction;
     if (kind === "chat") { event.preventDefault(); event.stopPropagation(); }
     if (kind === "map") void showMap(mount.querySelector("[name=project]")?.value || state.filters.project || "");
-    else if (kind === "list") { ++searchEpoch; ++sourceEpoch; mapMode = false; mapDispose?.(); mapDispose = null; state.selected = null; draw(); }
+    else if (kind === "list") { cancelSearch(); state.busy = false; ++searchEpoch; ++sourceEpoch; mapMode = false; mapDispose?.(); mapDispose = null; state.selected = null; draw(); }
     else if (kind === "map-node") { const node = mapDispose?.graph.nodes.find(n => n.id === button.dataset.node); if (node) void mapOpen(node); }
     else if (kind === "map-hide") { ++sourceEpoch; if (panel) panel.hidden = true; }
-    else if (kind === "retry") void search();
+    else if (kind === "retry") void search(state.filters, { limit: state.limit });
+    else if (kind === "more") void search(state.filters, { limit: Math.min(SEARCH_LIMIT_MAX, (state.limit || SEARCH_LIMIT) * 2) });
     else if (kind === "clear") void search({ query: state.filters.query });
     else void action(button.dataset.memoryPost ? "post" : kind, button.dataset.memoryPost);
   }
@@ -377,6 +418,11 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     state.restoredQuery = false;
     history.save(event.target.value);
     mount.querySelector(".memory-restored")?.remove();
+    // Search while typing, after a pause; an older request is aborted by the next one.
+    clearTimeout(typing); typing = null;
+    if (event.target.value.trim().length >= 2 && !queryProblem(event.target.value)) {
+      typing = setTimeout(() => { typing = null; if (!stopped) void search({ ...state.filters, query: event.target.value }); }, typingPauseMs);
+    }
   }
   function change(event) {
     if (event.target.matches?.("[data-map-project]")) { void showMap(event.target.value); return; }
@@ -402,7 +448,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   }
   // Agent connections save to a wing no project owns. The server lists it only when the
   // caller may read it, and it joins the project rooms as a notes-only room.
-  const roomsReady = Promise.resolve().then(() => api("/api/memory/rooms")).then((page) => {
+  const roomsReady = Promise.resolve().then(() => api("/api/memory/rooms", { timeoutMs: 8000 })).then((page) => {
     const owned = new Set(boards.map((board) => board.wing));
     const rooms = (page.rooms || []).filter((room) => room.wing && !owned.has(room.wing)).map((room) => ({ slug: `notes:${room.wing}`, name: room.name || room.wing, wing: room.wing, notesOnly: true }));
     if (rooms.length && !stopped) { state.boards = [...boards, ...rooms]; draw(); }
@@ -417,7 +463,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     stop() {
       importer?.stop(); importer = null;
       importDialog?.close(); importDialog?.remove(); importDialog = null;
-      stopped = true; ++searchEpoch; ++sourceEpoch; mapDispose?.(); mapDispose = null;
+      cancelSearch(); stopped = true; ++searchEpoch; ++sourceEpoch; mapDispose?.(); mapDispose = null;
       for (const node of new Set([mount, panel].filter(Boolean))) {
         node.removeEventListener("input", input); node.removeEventListener("click", click); node.removeEventListener("submit", submit); node.removeEventListener("change", change); node.removeEventListener("keydown", keydown);
       }

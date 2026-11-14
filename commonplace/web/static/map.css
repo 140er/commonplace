@@ -105,6 +105,11 @@
 .memory-search .memory-empty h2 { font-size: 20px; line-height: 28px; margin-bottom: 8px; }
 .memory-search .memory-empty p { color: var(--text-2); margin-bottom: 14px; }
 .memory-search .memory-warning { padding: 8px 16px; color: var(--wait); }
+.memory-search .memory-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px 20px; color: var(--text-2); }
+.memory-search .memory-spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: memory-spin 0.9s linear infinite; }
+@keyframes memory-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .memory-search .memory-spinner { animation: none; } }
+.memory-search .memory-more { display: block; margin: 12px auto; }
 .memory-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface); }
 .memory-panel .ctx-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .memory-panel h2 { font-size: 14px; line-height: 20px; }

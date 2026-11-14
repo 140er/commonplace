@@ -235,3 +235,69 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         assert not errors, errors
     finally:
         context.close()
+
+
+def _signed_in_page(browser, h, size=(1440, 900)):
+    origin = f"http://{h.server.server_address[0]}:{h.port}"
+    cookie_name, cookie_value = h.owner["Cookie"].split("=", 1)
+    context = browser.new_context(viewport={"width": size[0], "height": size[1]})
+    context.add_cookies([{"name": cookie_name, "value": cookie_value, "url": origin}])
+    return context, context.new_page(), origin
+
+
+@pytest.mark.parametrize("size", [(1440, 900), (390, 844)], ids=["desktop", "phone"])
+def test_one_note_request_per_query_with_a_small_limit(memory_browser, chat_hub, size):
+    from playwright.sync_api import expect
+
+    h = chat_hub
+    service(h, h.person(h.admin)).space_post("work", "Exact words for one request.")
+    context, page, origin = _signed_in_page(memory_browser, h, size)
+    requests = []
+
+    def note_search(route):
+        requests.append(route.request.url)
+        route.fulfill(json={"results": []})
+
+    page.route("**/api/memory/search*", note_search)
+    try:
+        page.goto(origin + "/app/?ui=deck#/memory")
+        query = page.get_by_role("searchbox", name="Search saved memory")
+        query.fill("Exact words")
+        query.press("Enter")
+        expect(page.locator(".memory-results")).to_contain_text("Exact words for one request.")
+        expect(page.locator(".memory-results")).to_have_attribute("aria-busy", "false")
+        assert len(requests) == 1, requests
+        assert "limit=25" in requests[0] and "theme=" not in requests[0], requests
+    finally:
+        context.close()
+
+
+def test_a_stuck_search_ends_in_an_error_with_retry(memory_browser, chat_hub):
+    from playwright.sync_api import expect
+
+    h = chat_hub
+    service(h, h.person(h.admin)).space_post("work", "Exact words after the retry.")
+    context, page, origin = _signed_in_page(memory_browser, h)
+    stuck = {"on": True}
+
+    def note_search(route):
+        if not stuck["on"]:
+            route.fulfill(json={"results": []})
+
+    page.route("**/api/memory/search*", note_search)
+    try:
+        page.goto(origin + "/app/?ui=deck#/memory")
+        page.clock.install()
+        query = page.get_by_role("searchbox", name="Search saved memory")
+        query.fill("Exact words")
+        query.press("Enter")
+        expect(page.locator(".memory-loading")).to_be_visible()
+        page.clock.fast_forward(21000)
+        expect(page.locator("[role=alert]").filter(has_text="taking too long")).to_be_visible()
+        expect(page.locator(".memory-loading")).to_have_count(0)
+        expect(page.get_by_text("No exact words match")).to_have_count(0)
+        stuck["on"] = False
+        page.get_by_role("button", name="Try again").click()
+        expect(page.locator(".memory-results")).to_contain_text("Exact words after the retry.")
+    finally:
+        context.close()
