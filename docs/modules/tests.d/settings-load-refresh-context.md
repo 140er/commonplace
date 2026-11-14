@@ -1,0 +1,4 @@
+- **Owns:** The Settings load and retry Node harness in `test_settings_load.py` extracts the production shell refresh function together with the roster helper and the real needs receipt ledger it closes over.
+- **Promises:** Every failed shared or settings read still surfaces its labelled error and Retry, a background failure keeps the rendered sections and the unsaved draft, and the saved coworker-management state survives a reload. The harness imports the real ledger instead of substituting a pass-through needs snapshot.
+- **How it fails:** A refresh dependency missing from the extracted context fails every case at once with a reference error instead of the asserted deadline, error or recovery message.
+- **Tests:** `test_settings_load.py` covers each failing read (stalled fetch, stalled body, HTTP error, network error, invalid JSON), navigation away, background refresh, and the saved ON and OFF states after reload.
