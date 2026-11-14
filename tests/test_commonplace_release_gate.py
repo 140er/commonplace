@@ -1,10 +1,12 @@
 """Fast release-gate helper checks; full browser/MCP evidence is a separate run."""
 
+import ast
 import asyncio
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
@@ -12,7 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
-from scripts.commonplace_release import CHECKS, Journey, email_login, main
+from scripts.commonplace_release import CHECKS, Journey, api, email_login, main
 from scripts.commonplace_release_support import (
     Blocked,
     Mailbox,
@@ -140,6 +142,7 @@ def test_runner_cannot_report_success_after_only_one_finished_check(tmp_path, mo
 
 @pytest.mark.parametrize("signup", [False, True])
 def test_email_login_waits_through_stale_app_until_signed_in_board(signup):
+    """A new account lands on its board; a returning login on whatever the shell restores."""
     email, origin = "signup-release@example.test", "http://127.0.0.1:1234"
     me = {"email": email, "user": "new-person", "actor": "user:new-person", "workspace": "new"}
     states = [{".app"}]
@@ -178,6 +181,8 @@ def test_email_login_waits_through_stale_app_until_signed_in_board(signup):
             return SimpleNamespace(click=AsyncMock(side_effect=confirm))
         if (role, name) == ("region", "Board"):
             return DOMLocator("board")
+        if (role, name) == ("navigation", "Workspace"):
+            return DOMLocator(".shell")
         raise AssertionError(f"Unexpected role: {role}, {name}")
 
     responses = iter([202, 200, 303])
@@ -212,12 +217,13 @@ def test_email_login_waits_through_stale_app_until_signed_in_board(signup):
 
     async def login():
         identity = await email_login(page, instance, email, signup=signup)
-        assert "board" in seen[-1], "Login returned before the signed-in board appeared"
+        landed = "board" if signup else ".shell"
+        assert landed in seen[-1], "Login returned before the signed-in page appeared"
         assert identity == me
 
     asyncio.run(journey.check("email_signup", login))
     assert report.results["email_signup"].status == "PASS", report.results["email_signup"].detail
-    assert seen == [set(), {".shell"}, {".shell", "board"}]
+    assert seen == [set(), {".shell"}, {".shell", "board"}][: 3 if signup else 2]
 
 
 @pytest.mark.parametrize("exception", [TimeoutError, RuntimeError, AssertionError, Blocked])
@@ -379,3 +385,79 @@ def test_throwaway_instance_closes_supervisor_and_handoff_on_exit():
         assert not gateway.handoff.service._background_closed
     assert gateway.supervisor._closed and not gateway.supervisor._workers
     assert gateway.handoff.service._background_closed
+
+
+def test_failure_report_names_each_error_inside_sdk_task_groups():
+    report = Report(["mcp_startup"])
+    journey = Journey(None, SimpleNamespace(), None, report)
+
+    class Group(Exception):  # shape of ExceptionGroup, which Python 3.10 lacks
+        def __init__(self, message, parts):
+            super().__init__(message)
+            self.exceptions = parts
+
+    async def action():
+        raise Group(
+            "unhandled errors in a TaskGroup",
+            [ValueError("first leaf"), Group("inner", [KeyError("second leaf")])],
+        )
+
+    asyncio.run(journey.check("mcp_startup", action))
+    row = report.results["mcp_startup"]
+    assert row.status == "FAIL"
+    assert "ValueError: first leaf" in row.detail and "second leaf" in row.detail
+    assert "TaskGroup" not in row.detail
+
+
+def test_api_helper_takes_a_longer_deadline_for_the_cold_worker_write():
+    async def call(**extra):
+        fetch = AsyncMock(
+            return_value=SimpleNamespace(status=201, json=AsyncMock(return_value={"ok": 1}))
+        )
+        page = SimpleNamespace(
+            url="http://127.0.0.1:1/app/",
+            context=SimpleNamespace(request=SimpleNamespace(fetch=fetch)),
+        )
+        await api(page, "/api/memory", "POST", {"text": "x"}, 201, **extra)
+        return fetch.await_args.kwargs["timeout"]
+
+    assert asyncio.run(call()) == 15000
+    assert asyncio.run(call(timeout=40000)) == 40000
+
+
+def test_release_journey_browser_labels_exist_in_the_shipped_interface():
+    """The journey drives the browser by visible names; renaming one in the app must fail here."""
+    root = Path(__file__).resolve().parents[1]
+    corpus = "\n".join(
+        path.read_text(errors="ignore")
+        for base in (root / "commonplace", root / "scripts" / "commonplace_release_support.py")
+        for path in ([base] if base.is_file() else base.rglob("*"))
+        if path.is_file() and path.suffix in {".js", ".py", ".html"}
+    )
+
+    def literal(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "compile"
+            and node.args
+        ):
+            return literal(node.args[0])
+        return None
+
+    names = set()
+    source = (root / "scripts" / "commonplace_release.py").read_text()
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr == "get_by_role":
+            names.update(literal(k.value) for k in node.keywords if k.arg == "name")
+        elif node.func.attr in {"get_by_label", "get_by_text"} and node.args:
+            names.add(literal(node.args[0]))
+    # Option text is data the journey itself sends to the agent, not interface copy.
+    names = {name.lstrip("^") for name in names if name} - {"Continue the release"}
+    assert len(names) >= 10
+    missing = sorted(name for name in names if name not in corpus)
+    assert not missing, f"Journey looks for interface text the app no longer ships: {missing}"
