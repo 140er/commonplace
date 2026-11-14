@@ -158,9 +158,10 @@ export function renderScene(model, positions, { route = null, selected = null, s
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
   const places = given || layoutLinks(model.links, positions);
   // Count incident ends before removing the selected link: a four-link bundle stays
-  // collapsed while its selected link shows its own two marks. Classic keeps every mark.
+  // collapsed while its selected link shows its own two marks. A presentation draws every
+  // stroke and no end marks, so it only needs the count: its node tells the user links overlap.
   const bundles = new Map();
-  if (interactiveLinks && !presentation) {
+  if (interactiveLinks) {
     for (const link of model.links) if (places.has(link.id)) for (const end of ["from", "to"]) {
       const key = link[end];
       if (!bundles.has(key)) bundles.set(key, []);
@@ -168,6 +169,7 @@ export function renderScene(model, positions, { route = null, selected = null, s
     }
     for (const [key, ends] of bundles) {
       if (ends.length <= 3) { bundles.delete(key); continue; }
+      if (presentation) { bundles.set(key, { count: ends.length }); continue; }
       const remaining = ends.filter(end => end.id !== selectedLink);
       // Match the status reader: worst known state; unknown only with no known state.
       const state = ["down", "degraded", "up", "unknown"].find(state => remaining.some(end => end.state === state)) || "none";
@@ -175,7 +177,7 @@ export function renderScene(model, positions, { route = null, selected = null, s
     }
   }
   const links = model.links.filter((link) => places.has(link.id)).map((link) => (presentation?.link || linkMarkup)(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id, bundles }));
-  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => (presentation?.node || nodeMarkup)(node, positions[node.key], { linkEnd: selectedEnds.has(node.key), on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, cards, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
+  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => (presentation?.node || nodeMarkup)(node, positions[node.key], { linkEnd: selectedEnds.has(node.key), on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, cards, bundle: presentation ? bundles.get(node.key) || null : bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
 
