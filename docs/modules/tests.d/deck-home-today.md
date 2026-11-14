@@ -1,8 +1,3 @@
-- **Home and Today:** `test_deck_home_today.py` runs the browser-free Node cases
-  for keyboard guards, permission-derived actions, version and idempotency
-  payloads, queue deduplication, stale-read/person isolation, phone action markup,
-  additive model controls, run steps, Home routing and shared Today counts.
-  `test_deck_home_today_browser.py` optionally exercises the real shell against a
-  local hub: root routing and stage dimming, slash palette, mentions, the normal
-  send route, phone More, live approval and badge updates at desktop and phone
-  sizes. It skips when browser support is absent or explicitly disabled.
+- **Tests:**
+
+  - Home and Today: `test_deck_home_today.py` runs the browser-free Node cases for keyboard guards, permission-derived actions, version and idempotency payloads, queue deduplication, stale-read/person isolation, phone action markup, additive model controls, run steps, Home routing and shared Today counts. `test_deck_home_today_browser.py` optionally exercises the real shell against a local hub: root routing and stage dimming, slash palette, mentions, the normal send route, phone More, live approval and badge updates at desktop and phone sizes. It skips when browser support is absent or explicitly disabled.
