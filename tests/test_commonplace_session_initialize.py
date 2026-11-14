@@ -186,7 +186,14 @@ def test_person_malformed_and_budget_exhausted_worker_are_unchanged(local, sessi
 
 @pytest.fixture
 def http_worker(local):
-    return SimpleNamespace(host="127.0.0.1", port=1, host_header="127.0.0.1:1", token="worker")
+    # Mirrors the supervised Worker, which always carries a generation id.
+    return SimpleNamespace(
+        host="127.0.0.1",
+        port=1,
+        host_header="127.0.0.1:1",
+        token="worker",
+        generation="test-generation",
+    )
 
 
 def test_http_deadline_rearms_each_read_and_restores_normal_timeout(
