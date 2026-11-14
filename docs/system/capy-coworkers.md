@@ -29,3 +29,10 @@ Descriptions that repeat a waiting state are omitted. Timestamped log lines use
 separate text nodes for time, source and message; wrapping stays in the message
 column. Unstructured lines remain literal text. The composer names the selected
 Coworker in each mode and keeps its privacy note clear of the phone navigation.
+
+Sharing aligns its first settings pill with the title at the desktop drawer's
+24px padding (16px on phones), with 12px after the explanatory line. Permission
+selects use the requested flat Deck fill, no border or inset shadow, and a 12px
+radius. The phone shell keeps its Bots label. Access log actor labels compare
+the authenticated viewer ID, never the person's display name, before using
+“You”; absent viewer metadata retains the recorded actor's normal label.
