@@ -436,6 +436,7 @@ def _http_status_payload(httpd) -> dict:
             "sqlite_integrity": integrity,
         },
         "writer": writer,
+        "warmup": {"state": _worker_warmup_state},
         "requests": {
             "total": request_count,
             "by_status": status_counts,

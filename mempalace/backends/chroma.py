@@ -1056,13 +1056,20 @@ _capacity_cache_generation = 0
 # (benchmarks, batch tooling) cannot grow it without limit.
 _CAPACITY_CACHE_MAX_ENTRIES = 32
 
-# Ceiling on how long one verdict may be reused, as a backstop for filesystems
-# whose timestamps are too coarse to notice a quick rewrite: FAT32 stores mtime
-# at 2 s granularity, exFAT at 10 ms, and a write that lands inside existing
-# sqlite pages need not change the file size either. On ext4/APFS/NTFS the
-# signature already catches every write, so this ceiling never fires in
-# practice. It bounds the worst case; it is not the freshness mechanism.
+# Ceiling on how long one verdict may be reused while the files that fed it
+# look unchanged. It only applies where the stamps cannot be trusted to notice
+# a rewrite: filesystems whose timestamps are too coarse (FAT32 stores mtime at
+# 2 s granularity, exFAT at 10 ms, HFS+ at 1 s) and a write inside existing
+# sqlite pages need not change the file size either. Where a stamp proves
+# finer resolution (see ``_timestamps_resolve_writes``) the signature alone
+# makes a verdict fresh and it is reused until a file changes. The probe is
+# O(palace size) (an embeddings COUNT plus a full unpickle of the segment
+# metadata), so expiring a good verdict every 10 s made every search spaced
+# further apart than that pay for it again.
 _CAPACITY_CACHE_MAX_AGE_SECONDS = 10.0
+
+# mtimes that are whole multiples of this are what coarse filesystems produce.
+_COARSE_MTIME_NS = 10_000_000
 
 
 def _stat_signature(path: str) -> tuple[int, int, int]:
@@ -1149,6 +1156,48 @@ def _capacity_fingerprint(palace_path: str, segment_id: Optional[str]) -> tuple:
     )
 
 
+def _timestamps_resolve_writes(fingerprint: tuple) -> bool:
+    """True when a stamp in ``fingerprint`` proves sub-10 ms timestamp resolution.
+
+    FAT32, exFAT and HFS+ only ever produce mtimes that are whole multiples of
+    10 ms, so one stamp outside that grid rules them out. A fine-grained
+    filesystem lands on the grid for one file in 10^6 / 10^7, and several files
+    are checked, so the fallback to the age ceiling is rare there and only costs
+    one extra probe.
+    """
+    db_family, pickle_sig, header_sig = fingerprint
+    return any(
+        mtime_ns and mtime_ns % _COARSE_MTIME_NS
+        for _inode, mtime_ns, _size in (*db_family, pickle_sig, header_sig)
+    )
+
+
+def _capacity_reuse_limit(fingerprint: tuple, status: dict) -> float:
+    """Seconds a verdict may be served while its files still match."""
+    if not _timestamps_resolve_writes(fingerprint):
+        return _CAPACITY_CACHE_MAX_AGE_SECONDS
+    age = status.get("hnsw_metadata_age_seconds")
+    if status.get("status") == "ok" and (status.get("divergence") or 0) > 0 and age is not None:
+        # The one verdict that changes with no file touched: a standing gap
+        # between sqlite and the pickle turns "diverged" once the pickle is
+        # old enough, so serve it only until then.
+        return max(
+            _CAPACITY_CACHE_MAX_AGE_SECONDS,
+            _HNSW_PERSISTENT_DIVERGENCE_GRACE_SECONDS - age,
+        )
+    return float("inf")
+
+
+def _served_capacity_status(status: dict, fingerprint: tuple) -> dict:
+    """A copy of a cached verdict with the metadata age brought up to date."""
+    served = dict(status)
+    if served.get("hnsw_metadata_age_seconds") is not None:
+        pickle_mtime_ns = fingerprint[1][1]
+        if pickle_mtime_ns:
+            served["hnsw_metadata_age_seconds"] = max(0.0, time.time() - pickle_mtime_ns / 1e9)
+    return served
+
+
 def reset_hnsw_capacity_cache() -> None:
     """Forget every cached capacity verdict.
 
@@ -1199,7 +1248,10 @@ def hnsw_capacity_status(palace_path: str, collection_name: str = "mempalace_dra
     instead of leaving the divergence guard blind for a fixed window.
     ``_CAPACITY_CACHE_MAX_AGE_SECONDS`` caps how long one verdict may be
     reused, but only as a backstop for filesystems with coarse timestamps; the
-    signature is what makes the verdict fresh.
+    signature is what makes the verdict fresh. Where a stamp proves fine
+    timestamps a verdict is reused for as long as the files stay the same,
+    except one whose outcome depends on the clock (see
+    ``_capacity_reuse_limit``), and its reported metadata age is refreshed.
 
     Unlike :meth:`ChromaBackend._client`, which tolerates a 0.01 s mtime
     epsilon to avoid rebuilding an expensive client, this compares exactly:
@@ -1210,9 +1262,9 @@ def hnsw_capacity_status(palace_path: str, collection_name: str = "mempalace_dra
     cached = _capacity_cache.get(key)
     if cached is not None:
         fingerprint, cached_segment, status, probed_at = cached
-        if time.monotonic() - probed_at <= _CAPACITY_CACHE_MAX_AGE_SECONDS:
+        if time.monotonic() - probed_at <= _capacity_reuse_limit(fingerprint, status):
             if _capacity_fingerprint(palace_path, cached_segment) == fingerprint:
-                return dict(status)
+                return _served_capacity_status(status, fingerprint)
 
     generation = _capacity_cache_generation
     # Snapshot the files the probe is about to read, before it reads them, and

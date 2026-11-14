@@ -1023,6 +1023,8 @@ def tool_search(
     wings: Optional[list[str]] = None,
 ):
     limit = max(1, min(limit, _MAX_RESULTS))
+    # A call that arrives while the worker warms up may be slow; say so.
+    warming_up = _worker_warmup_state == "running"
     try:
         wing = _sanitize_optional_name(wing, "wing")
         wings = _sanitize_search_wings(wings)
@@ -1205,7 +1207,10 @@ def tool_search(
         if include_facts
         else {"facts": []}
     )
-    return {**fact_result, **{k: v for k, v in result.items() if k != "facts"}}
+    merged = {**fact_result, **{k: v for k, v in result.items() if k != "facts"}}
+    if warming_up:
+        merged["warming_up"] = True
+    return merged
 
 
 def tool_check_duplicate(content: str, threshold: float = 0.9):

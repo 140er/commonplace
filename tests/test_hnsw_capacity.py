@@ -769,7 +769,12 @@ class TestCapacityProbeCache:
         second = hnsw_capacity_status(str(tmp_path), COLLECTION)
         third = hnsw_capacity_status(str(tmp_path), COLLECTION)
         assert len(probe_runs) == 1
-        assert first == second == third
+
+        def settled(verdict):
+            # The age of the metadata keeps moving; the verdict itself must not.
+            return {k: v for k, v in verdict.items() if k != "hnsw_metadata_age_seconds"}
+
+        assert settled(first) == settled(second) == settled(third)
         assert first["status"] == "ok"
 
     def test_pickle_rewrite_reprobes_and_reports_divergence(self, tmp_path, probe_runs):
@@ -902,11 +907,28 @@ class TestCapacityProbeCache:
         hnsw_capacity_status(str(tmp_path), COLLECTION)
         assert len(runs) == 2, "a quiet palace must be cached again afterwards"
 
+    @staticmethod
+    def _stamp_files(tmp_path, *, fine: bool, age_s: float = 5.0):
+        """Give the probed files a timestamp grid, as a filesystem would.
+
+        ``fine`` stamps land off the 10 ms grid (ext4, APFS, NTFS); coarse ones
+        are whole seconds (FAT32, HFS+). Both sit ``age_s`` in the past, so the
+        pickle is recent enough for a verdict that depends on its age.
+        """
+        base = int((time.time() - age_s) * 1e9) // 1_000_000_000 * 1_000_000_000
+        mtime_ns = base + (123_456_789 if fine else 0)
+        for root, _dirs, names in os.walk(str(tmp_path)):
+            for name in names:
+                if name == "chroma.sqlite3" or name.endswith(".pickle"):
+                    path = os.path.join(root, name)
+                    os.utime(path, ns=(mtime_ns, mtime_ns))
+
     def test_verdict_is_not_reused_past_the_age_ceiling(self, tmp_path, probe_runs, monkeypatch):
         """Backstop for filesystems whose timestamps are too coarse to notice."""
         from mempalace.backends import chroma as chroma_mod
 
         self._balanced_palace(tmp_path)
+        self._stamp_files(tmp_path, fine=False)
         clock = [1_000.0]
         monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
 
@@ -918,6 +940,96 @@ class TestCapacityProbeCache:
         clock[0] += chroma_mod._CAPACITY_CACHE_MAX_AGE_SECONDS
         hnsw_capacity_status(str(tmp_path), COLLECTION)
         assert len(probe_runs) == 2, "past the ceiling: re-probe even with identical files"
+
+    def test_unchanged_palace_is_not_reprobed_by_the_clock_alone(
+        self, tmp_path, probe_runs, monkeypatch
+    ):
+        """A search spaced further apart than the old 10 s ceiling paid the whole probe again.
+
+        The probe is O(palace size): an embeddings COUNT and a full unpickle of
+        the segment metadata. On a filesystem whose timestamps resolve a rewrite
+        the files are the freshness check, so idle time alone must not expire a
+        verdict.
+        """
+        from mempalace.backends import chroma as chroma_mod
+
+        # No standing gap, so nothing in the verdict depends on the clock.
+        _seed_chroma_db(str(tmp_path), sqlite_count=20_000, segment_id="seg-level")
+        _write_pickle(str(tmp_path), "seg-level", hnsw_count=20_000)
+        self._stamp_files(tmp_path, fine=True)
+        clock = [1_000.0]
+        monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
+
+        first = hnsw_capacity_status(str(tmp_path), COLLECTION)
+        for gap in (11.0, 60.0, 3_600.0):
+            clock[0] += gap
+            assert hnsw_capacity_status(str(tmp_path), COLLECTION)["status"] == first["status"]
+        assert len(probe_runs) == 1, "an unchanged palace must be probed once, not once per gap"
+
+    def test_fine_timestamps_still_reprobe_when_a_file_changes_after_a_long_gap(
+        self, tmp_path, probe_runs, monkeypatch
+    ):
+        from mempalace.backends import chroma as chroma_mod
+
+        seg = self._balanced_palace(tmp_path)
+        self._stamp_files(tmp_path, fine=True)
+        clock = [1_000.0]
+        monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
+        assert hnsw_capacity_status(str(tmp_path), COLLECTION)["diverged"] is False
+
+        clock[0] += 3_600.0
+        _write_pickle(str(tmp_path), seg, hnsw_count=2_000)
+
+        assert hnsw_capacity_status(str(tmp_path), COLLECTION)["diverged"] is True
+        assert len(probe_runs) == 2
+
+    def test_standing_gap_turns_diverged_when_the_pickle_ages_with_no_file_change(
+        self, tmp_path, probe_runs, monkeypatch
+    ):
+        """The one verdict the clock can change: do not serve it past that moment."""
+        from mempalace.backends import chroma as chroma_mod
+
+        self._balanced_palace(tmp_path)  # 100 rows behind, no explicit sync threshold
+        self._stamp_files(tmp_path, fine=True, age_s=5.0)
+        clock = [1_000.0]
+        wall = [time.time()]
+        monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(chroma_mod.time, "time", lambda: wall[0])
+
+        assert hnsw_capacity_status(str(tmp_path), COLLECTION)["status"] == "ok"
+        grace = chroma_mod._HNSW_PERSISTENT_DIVERGENCE_GRACE_SECONDS
+
+        clock[0] += grace / 2
+        wall[0] += grace / 2
+        assert hnsw_capacity_status(str(tmp_path), COLLECTION)["status"] == "ok"
+        assert len(probe_runs) == 1, "well inside the window: serve the cached verdict"
+
+        clock[0] += grace
+        wall[0] += grace
+        assert hnsw_capacity_status(str(tmp_path), COLLECTION)["status"] == "diverged"
+        assert len(probe_runs) == 2, "the pickle aged past the grace window: probe again"
+
+    def test_reused_verdict_reports_the_current_metadata_age(
+        self, tmp_path, probe_runs, monkeypatch
+    ):
+        from mempalace.backends import chroma as chroma_mod
+
+        self._balanced_palace(tmp_path)
+        self._stamp_files(tmp_path, fine=True, age_s=5.0)
+        clock = [1_000.0]
+        wall = [time.time()]
+        monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(chroma_mod.time, "time", lambda: wall[0])
+
+        first = hnsw_capacity_status(str(tmp_path), COLLECTION)
+        clock[0] += 60.0
+        wall[0] += 60.0
+        later = hnsw_capacity_status(str(tmp_path), COLLECTION)
+
+        assert len(probe_runs) == 1
+        assert later["hnsw_metadata_age_seconds"] == pytest.approx(
+            first["hnsw_metadata_age_seconds"] + 60.0, abs=0.01
+        )
 
     def test_probe_still_never_raises_on_an_unstattable_path(self):
         """The probe's stated contract is "never raises"; caching must keep it.
