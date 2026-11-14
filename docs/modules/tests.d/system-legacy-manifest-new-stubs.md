@@ -1,0 +1,4 @@
+- **Owns:** The legacy decision manifests in `tests/fixtures/system_legacy_part*.json` list every stub that `SYSTEM.md` keeps for a decision moved into `docs/system/`, including stubs added after the original split.
+- **Promises:** A stub in `SYSTEM.md` without a manifest entry fails the one-to-one check; the entry records the title, slug, size and SHA-256 of the moved file, as the earlier entries do. The gateway vector diagnostics stub is listed.
+- **How it fails:** `test_repository_moves_are_one_to_one` names the slug of any stub without an entry, so a decision moved by a later change cannot pass unlisted.
+- **Tests:** `test_system_legacy_fragments.py` covers the one-to-one check on the repository and on synthetic trees, including a stub without a manifest entry.
