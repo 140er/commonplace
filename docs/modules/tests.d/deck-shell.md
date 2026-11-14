@@ -6,3 +6,5 @@
   checks skip when disabled or when the browser dependency is absent.
 - **Tests:** The shell wrapper plus related rail, app and navigation wrappers;
   optional browser checks capture desktop, tablet and phone at scale two.
+  `tests/test_deck_phone_navigation_browser.py` measures attached navigation
+  targets atomically so a replaced board cannot yield empty computed gutters.

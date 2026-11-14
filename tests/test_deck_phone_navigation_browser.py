@@ -46,10 +46,17 @@ async def assert_tabs(page):
 
 
 async def assert_gutters(page, selector):
-    padding = await page.locator(selector).first.evaluate(
-        "e => [getComputedStyle(e).paddingLeft, getComputedStyle(e).paddingRight]"
+    # Navigation can replace a matched board between locator resolution and evaluation.
+    # Measure the current attached node and its styles in the same browser task.
+    await page.wait_for_function(
+        """selector => {
+          const node = document.querySelector(selector);
+          if (!node) return false;
+          const style = getComputedStyle(node);
+          return style.paddingLeft === '16px' && style.paddingRight === '16px';
+        }""",
+        arg=selector,
     )
-    assert padding == ["16px", "16px"]
 
 
 @pytest.mark.parametrize("surface", ["board", "card", "project-settings", "needs"])
