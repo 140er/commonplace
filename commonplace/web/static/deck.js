@@ -65,9 +65,9 @@ export function lookHTML(on) {
 }
 
 /** The workspace tools as one Settings section. The phone layout shows it, because a phone has no account menu. */
-export function toolsHTML({ needs = 0, rulesWaiting = 0, can_admin = false } = {}) {
-  const row = (href, label, n = 0) => `<a href="${href}">${label}${badge(n, 'waiting')}</a>`;
-  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Needs me', needs)}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules', rulesWaiting)}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
+export function toolsHTML({ can_admin = false } = {}) {
+  const row = (href, label) => `<a href="${href}">${label}</a>`;
+  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Needs me')}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules')}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
 }
 
 /** The shell's handle on Deck. Everything it needs comes in, so it runs without a browser.

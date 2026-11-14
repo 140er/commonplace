@@ -32,7 +32,10 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
     )
     store = open_store(hub.gateway, fresh.workspace)
     bot = store.create_bot(fresh.user, "Research")
-    store.create_conversation(fresh.user, "dm", title="Plan the next release", bot_ids=[bot["id"]])
+    conversation = store.create_conversation(
+        fresh.user, "dm", title="Plan the next release", bot_ids=[bot["id"]]
+    )
+    store.post_message(fresh.user, conversation["id"], "Plan the next release", "shell-fixture")
     output = Path(os.environ.get("CAPY_SHELL_SHOTS", str(tmp_path / "shell-shots")))
     output.mkdir(parents=True, exist_ok=True)
 
@@ -94,12 +97,6 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                             == "Owner · " + (await me.json())["workspace_name"]
                         )
                         await page.locator(".deck-rail-heading.ws").click()
-                        await page.get_by_role("combobox", name="Search or run an action").fill(
-                            "Switch workspace"
-                        )
-                        await page.get_by_role(
-                            "option", name="Switch workspace", exact=True
-                        ).click()
                         await page.locator(".workspace-switch").wait_for(state="visible")
                         assert await page.get_by_role(
                             "button", name="Create workspace", exact=True

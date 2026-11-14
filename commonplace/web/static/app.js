@@ -1587,6 +1587,7 @@ root.addEventListener("click", async (event) => {
   }
   try {
     if (action === "shortcuts") shortcutsView();
+    else if (action === "switch-workspace" && state.deck?.on()) openWorkspaces({ api, e, onError: showError });
     else if (["palette", "switch-project", "switch-workspace"].includes(action)) shellMenu(action);
     else if (action === "cancel-card") cancelCard();
     else if (action === "card-menu") {
