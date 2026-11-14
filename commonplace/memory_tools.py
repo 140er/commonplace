@@ -724,6 +724,24 @@ def memory_map(ctx, limit=400, theme=None):
     }
 
 
+AGENT_NOTES_WING = "inbox"
+
+
+def note_rooms(principal):
+    """Wings with no project of their own that the Memory page searches as rooms.
+
+    Agent connections save to the inbox wing. It is listed under the same read
+    check as any other wing, so a scoped token, a private wing or a caller that
+    may not search memory gets no room and nothing about it.
+    """
+    policy = principal.policy
+    if policy.refusal("memory_search") or is_private_wing(AGENT_NOTES_WING):
+        return []
+    if not policy.can_read_wing(AGENT_NOTES_WING):
+        return []
+    return [{"wing": AGENT_NOTES_WING, "name": "Agent notes"}]
+
+
 def install(gateway):
     def handle(h):
         principal = require_principal(gateway, h)
@@ -746,6 +764,8 @@ def install(gateway):
                 args = {"query": params.get("q"), "theme": params.get("theme")}
                 args["limit"] = params.get("limit")
                 send_json(h, 200, {"results": _search(ctx, args, _boards(ctx))})
+            elif h.command == "GET" and parts == ["rooms"]:
+                send_json(h, 200, {"rooms": note_rooms(principal)})
             elif h.command == "GET" and parts == ["map"]:
                 params = query(h)
                 send_json(h, 200, memory_map(ctx, params.get("limit"), params.get("theme")))

@@ -76,7 +76,7 @@ export async function searchMemory({ api = request, boards, query, project = "",
       if (source && source !== "note") params.set("source", source);
       if (from) params.set("from", from);
       if (since) params.set("since", since);
-      if (source !== "note") {
+      if (source !== "note" && !board.notesOnly) {
         try {
           const page = await api(`/api/chat/${enc(board.slug)}/search?${params}`);
           results.push(...page.results.map((row) => ({ ...row, board: board.slug, wing: board.wing, author: memoryAuthor(row, board), sourceLabel: sourceLabel(row, board) })));
@@ -213,6 +213,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     state.selected = null;
     draw();
     try {
+      await roomsReady;
       const page = await searchMemory({ api, boards: state.boards, ...filters, query: filters.query || "", since: filters.when ? new Date(Date.now() - Number(filters.when) * 86400000).toISOString() : "" });
       if (stopped || epoch !== searchEpoch) return;
       if (look === "deck") rememberRoomCounts(state, page.results, filters);
@@ -267,7 +268,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     Object.assign(state, { selected: result, destination: board, source: board, neighbours: [], cards: [], loading: true, panelError: "", notice: "", linking: false, at: null, chatOpen: false });
     onSelect(result, board);
     draw();
-    const [source, cards] = await Promise.allSettled([loadNeighbours(result, api), api(`/api/boards/${enc(board.slug)}/cards`)]);
+    const [source, cards] = await Promise.allSettled([loadNeighbours(result, api), board.notesOnly ? { cards: [] } : api(`/api/boards/${enc(board.slug)}/cards`)]);
     if (stopped || epoch !== sourceEpoch) return;
     if (source.status === "fulfilled") Object.assign(state, source.value);
     else state.panelError = "The messages around this source could not be loaded.";
@@ -399,6 +400,13 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   for (const node of new Set([mount, panel].filter(Boolean))) {
     node.addEventListener("input", input); node.addEventListener("click", click); node.addEventListener("submit", submit); node.addEventListener("change", change); node.addEventListener("keydown", keydown);
   }
+  // Agent connections save to a wing no project owns. The server lists it only when the
+  // caller may read it, and it joins the project rooms as a notes-only room.
+  const roomsReady = Promise.resolve().then(() => api("/api/memory/rooms")).then((page) => {
+    const owned = new Set(boards.map((board) => board.wing));
+    const rooms = (page.rooms || []).filter((room) => room.wing && !owned.has(room.wing)).map((room) => ({ slug: `notes:${room.wing}`, name: room.name || room.wing, wing: room.wing, notesOnly: true }));
+    if (rooms.length && !stopped) { state.boards = [...boards, ...rooms]; draw(); }
+  }).catch(() => {});
   draw();
   if (saved.trim()) void search({ query: saved }, { restored: true });
   return {

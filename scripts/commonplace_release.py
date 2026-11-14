@@ -532,23 +532,25 @@ class Journey:
         memory = next((row for row in matches if row["text"] == text), None)
         require(memory is not None, "Person cannot retrieve the agent's saved memory")
         self.values["memory"] = memory
-        # Agent notes land in the inbox wing, which the Memory page does not list; it
-        # searches each project's own wing. The owner's project note proves the page.
         owner_text = "Owner note: café, two  spaces, and\na second line — exact words."
         await api(
             self.page, "/api/memory", "POST", {"text": owner_text, "theme": space["wing"]}, 201
         )
         await self.page.goto(self.instance.origin + "/app/#/memory")
-        await self.page.get_by_role("searchbox", name="Search memory").fill("café owner note")
-        await (
-            self.page.get_by_role("search")
-            .get_by_role("button", name=re.compile("^Search"))
-            .click()
-        )
-        await self.page.get_by_text(owner_text, exact=True).first.wait_for()
+        # The agent's note sits in the inbox wing, listed as the Agent notes room.
+        for query, note in (("café release memory", text), ("café owner note", owner_text)):
+            box = self.page.get_by_role("searchbox", name="Search memory")
+            await box.fill(query)
+            await (
+                self.page.get_by_role("search")
+                .get_by_role("button", name=re.compile("^Search"))
+                .click()
+            )
+            await self.page.get_by_text(note, exact=True).first.wait_for()
         return (
             "Agent save/search and the owner's API search return verbatim Unicode and "
-            "whitespace; the Memory page shows the owner's project note verbatim"
+            "whitespace; the Memory page shows the agent's note and the owner's project note "
+            "verbatim"
         )
 
     async def rule_owner_acceptance(self):
