@@ -1,4 +1,5 @@
 // Deck bot settings. Names are display text; opaque references stay in request attributes.
+import { compactSettingsFrame, compactSharingHTML } from './deck-coworker-sharing.js';
 const enc = encodeURIComponent;
 const button = (action, label, off = false, extra = "") => `<button type="button" class="bb-opt" data-bots-action="${action}"${off ? " disabled" : ""}${extra}>${label}</button>`;
 
@@ -27,8 +28,9 @@ export function accessLogTime(at, now = new Date()) {
 export function settingsFrameHTML(sheet, bot, content, e) {
   const tabs = [["people", bot.mine || bot.lifecycle ? "People & permissions" : "Your access"], ["log", "Access log"]];
   if (bot.mine || bot.lifecycle) tabs.push(["details", "Name, job & memory"], ["learning", "Learning & sharing"]);
-  const nav = `<nav class="bot-access-tabs" aria-label="Bot settings">${tabs.map(([key, label]) => button("sharing-tab", label, sheet.busy || (["details", "learning"].includes(key) && (!bot.mine || bot.frozen)), ` data-tab="${key}" aria-pressed="${(sheet.tab || "people") === key}"`)).join("")}</nav>`;
-  return `<div class="sheet bot-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><header class="bot-access-heading"><div><h2 id="sheet-h">Bot settings</h2><p>${e(bot.name)}</p></div>${button("close", "Close")}</header>${nav}${content}</div></div>`;
+  const nav = `<nav class="bot-access-tabs" data-cb-scroll aria-label="Bot settings">${tabs.map(([key, label]) => button("sharing-tab", label, sheet.busy || (["details", "learning"].includes(key) && (!bot.mine || bot.frozen)), ` data-tab="${key}" aria-pressed="${(sheet.tab || "people") === key}"`)).join("")}</nav>`;
+  if (sheet.capy) return compactSettingsFrame(sheet, bot, content, nav, e);
+  return `<div class="sheet bot-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><header class="bot-access-heading"><div><h2 id="sheet-h">${sheet.capy ? `Who can use ${e(bot.name)}` : 'Bot settings'}</h2><p>${e(bot.name)}</p></div>${button("close", "Close")}</header>${nav}${content}</div></div>`;
 }
 
 export function audienceText(bot, shares, { mine = false } = {}) {
@@ -54,6 +56,7 @@ export function accessLogText(row, people = {}) {
 }
 
 export function sharingHTML(sheet, bot, e) {
+  if (sheet.capy && bot.mine && !bot.frozen && !bot.lifecycle && sheet.settings?.sharing === true) return settingsFrameHTML(sheet, bot, compactSharingHTML(sheet, bot, e, { accessLogText, accessLogTime, permissionText }), e);
   const off = sheet.busy || sheet.loading, owner = bot.mine === true;
   const frozen = bot.frozen === true;
   const editable = owner && !frozen && bot.kind === "custom" && sheet.settings?.sharing === true;
