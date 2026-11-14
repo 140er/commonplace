@@ -1,0 +1,1 @@
+- **Tests:** `test_chroma_client_lifecycle.py` also covers deferred Chroma cleanup retry: a failure in the pending-cleanup worker is logged and retried without another close, and repeated failures on either the client or guard queue back off to the one-second cap and then drain, leaving no worker slot held.
