@@ -8,7 +8,7 @@
 
 - **How it fails:**
 
-  - Unknown host interfaces remain unavailable; invalid grants, altered files or blocked producer pipes stop renewal. A missing issuer pin blocks the separate host change.
+  - Unknown host interfaces remain unavailable; invalid grants, altered files or blocked producer pipes stop renewal. A missing owner-supplied issuer pin blocks verification.
 
 - **Tests:**
 

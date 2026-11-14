@@ -80,7 +80,7 @@ class Channel:
 
         self.host_status = HostStatus(install)
 
-    def exchange(self, operation="pulse", host_status=None):
+    def exchange(self, operation="pulse", host_status=None, *, scope_request=None):
         with self.fs.parent(CONTROL_LOCK) as (parent, name):
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
             try:
@@ -108,6 +108,14 @@ class Channel:
                 }
                 if operation == "pulse" and host_status is None:
                     body["host_status"] = self.host_status(body["nonce"])
+                if body["host_status"] is not None:
+                    from .host_authority import accept
+
+                    if operation != "pulse":
+                        raise InstallError("host status is not a shutdown operation")
+                    accept(self.install, body["host_status"], body["nonce"], request=scope_request)
+                elif scope_request is not None:
+                    raise InstallError("pinned host scope unavailable")
                 signature = self.install._key().sign(
                     canonical(body),
                     padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),
@@ -153,6 +161,7 @@ class Channel:
                     or receipt["agent_ready"] is not False
                     or receipt["command"] not in ("continue", "stop")
                     or receipt["host_verification"] not in ("verified", "unavailable")
+                    or (receipt["host_verification"] == "verified" and body["host_status"] is None)
                     or type(receipt["lease_seconds"]) is not int
                     or (receipt["command"] == "continue" and not 0 < receipt["lease_seconds"] <= 4)
                     or (receipt["command"] == "stop" and receipt["lease_seconds"] != 0)

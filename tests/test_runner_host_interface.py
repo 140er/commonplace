@@ -20,6 +20,23 @@ from tests.test_runner_setup_approvals import consented, finish, manual, ready  
 from tests.test_runner_setup_lifecycle import host_envelope, request
 
 
+def select_pin(s, signer):
+    from cryptography.hazmat.primitives import serialization
+
+    from commonplace.runner.host_authority import PIN
+    from commonplace.runner.install_files import encoded
+
+    value = {
+        "issuer": "approved-issuer",
+        "public_key": signer.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode(),
+    }
+    s.local.journal["host_issuer_pin"] = value
+    s.local.flush()
+    s.local.file(PIN, encoded(value))
+
+
 def test_headless_host_discovery_does_not_require_hidden_command_in_help(tmp_path):
     original = bundle("host")
     with zipfile.ZipFile(io.BytesIO(original)) as archive:
@@ -111,6 +128,7 @@ def test_lifecycle_uses_fresh_host_producer_instead_of_silently_dropping_status(
     s = consented
     finish(s, monkeypatch)
     signer = Ed25519PrivateKey.generate()
+    select_pin(s, signer)
     s.issuers = {
         "approved-issuer": signer.public_key().public_bytes(
             serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
@@ -224,11 +242,15 @@ def test_provider_cleanup_refuses_replaced_root_and_preserves_both_trees(consent
 def test_real_producer_adapter_keeps_grant_out_of_arguments_environment_and_output(
     consented, monkeypatch, capsys, caplog
 ):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     from commonplace.runner import host_interface
     from tests.test_runner_setup_approvals import SECRET
 
     s = consented
     finish(s, monkeypatch)
+    signer = Ed25519PrivateKey.generate()
+    select_pin(s, signer)
     calls = []
 
     def invoke(command, fd, home, payload=b"", **kwargs):
@@ -241,9 +263,7 @@ def test_real_producer_adapter_keeps_grant_out_of_arguments_environment_and_outp
         body = json.loads(payload)
         assert body["nonce"] == "1" * 32
         assert body["grant"]["secret"] == SECRET
-        return 0, json.dumps(
-            {"receipt": {"nonce": body["nonce"]}, "signature": "synthetic"}
-        ).encode()
+        return 0, json.dumps(host_envelope(s, signer, body["nonce"])).encode()
 
     monkeypatch.setattr(host_interface, "invoke", invoke)
     result = host_interface.HostStatus(s.local)("1" * 32)
@@ -255,10 +275,13 @@ def test_real_producer_adapter_keeps_grant_out_of_arguments_environment_and_outp
 def test_missing_issuer_capability_never_receives_grant_and_never_reuses_old_status(
     consented, monkeypatch
 ):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     from commonplace.runner import host_interface
 
     s = consented
     finish(s, monkeypatch)
+    select_pin(s, Ed25519PrivateKey.generate())
     calls = []
 
     def invoke(command, fd, home, payload=b"", **kwargs):
@@ -277,12 +300,15 @@ def test_missing_issuer_capability_never_receives_grant_and_never_reuses_old_sta
 def test_producer_refuses_bad_or_stale_grants_before_starting_host(consented, monkeypatch, damage):
     import base64
 
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
     from commonplace.runner import host_interface, install_receipts
     from commonplace.runner.install_host import InstallError
     from commonplace.runner.setup_client import GRANT
 
     s = consented
     finish(s, monkeypatch)
+    select_pin(s, Ed25519PrivateKey.generate())
     value = json.loads(s.local.fs.read(GRANT))
     if damage == "signature":
         value["signed"]["signature"] = base64.b64encode(b"wrong").decode()

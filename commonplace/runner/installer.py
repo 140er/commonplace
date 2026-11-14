@@ -19,6 +19,8 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from . import enrollment_crypto
+from .bootstrap import describe_issuer_pin, parse_issuer_pin, read_issuer_pin
+from .host_authority import PIN
 from .install_files import MANIFEST, STATE, Files, digest, encoded
 from .install_host import UNIT, InstallError, LiveHost
 from .receipt_cache import APPROVAL_KEY, CACHE
@@ -32,6 +34,7 @@ CONFIG = STATE + "/config.json"
 LOCK = STATE + "/install.lock"
 SIGN_IN = STATE + "/sign-in"
 FILES = {
+    PIN,
     STATE + "/lifecycle.json",
     STATE + "/lifecycle.lock",
     SIGN_IN,
@@ -315,7 +318,8 @@ class Installer:
             finally:
                 os.close(fd)
 
-    def plan(self):
+    def plan(self, issuer_pin=None):
+        self.out(describe_issuer_pin(parse_issuer_pin(issuer_pin)))
         for action in (
             "Preflight Linux user manager, service collisions and password-free linger permission.",
             "Accept once; read the one-time code from protected stdin, never command arguments.",
@@ -434,9 +438,20 @@ class Installer:
             raise InstallError("invalid credential delivery")
         return credentials
 
-    def install(self, intent, *, accepted=False, code_source=None, release=None, approval_key=None):
+    def install(
+        self,
+        intent,
+        *,
+        accepted=False,
+        code_source=None,
+        release=None,
+        approval_key=None,
+        issuer_pin=None,
+    ):
+        issuer_pin = parse_issuer_pin(issuer_pin)
         if not accepted:
-            return self.plan()
+            return self.plan(issuer_pin)
+        self.out(describe_issuer_pin(issuer_pin))
         if approval_key is not None:
             from .receipt_cache import public_key
 
@@ -444,6 +459,8 @@ class Installer:
         self.host.preflight()
         self.load()
         self._preflight_files()
+        if self.journal and self.journal.get("host_issuer_pin") != issuer_pin:
+            raise InstallError("owner issuer pin changed; uninstall and accept a new plan")
         if self.journal and self.journal["intent"] != intent:
             raise InstallError("installation intent changed; uninstall first")
         archive = None
@@ -466,11 +483,14 @@ class Installer:
                 "service_pending": False,
                 "linger_pending": False,
                 "items": [{"kind": "dir", "path": STATE}],
+                "host_issuer_pin": issuer_pin,
             }
             self.flush()
         with self.locked():
             self.load()
             self.file(LOCK, b"")
+            if issuer_pin is not None:
+                self.file(PIN, encoded(issuer_pin))
             if self.journal["phase"] == "installed":
                 self.verify(check_service=False)
                 state = self.host.state()
@@ -890,6 +910,7 @@ def run(args, *, host=None, transport=None, code_source=None):
                 if args.approval_key and args.accept and not args.plan
                 else None
             ),
+            issuer_pin=read_issuer_pin(args.host_issuer_pin),
         )
     except Exception:
         # Neither remote errors nor parsing/path/library errors may reflect a credential.

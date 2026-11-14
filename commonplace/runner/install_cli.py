@@ -30,3 +30,4 @@ def add_parsers(runner, handler):
         parser.add_argument("--release-signature")
         parser.add_argument("--release-key")
         parser.add_argument("--approval-key")
+        parser.add_argument("--host-issuer-pin")
