@@ -7,7 +7,7 @@ import { createDeck } from '../commonplace/web/static/deck.js';
 import { mountToolPolicy, policyRow } from '../commonplace/web/static/tool-policy.js';
 import { escape as e } from '../commonplace/web/static/api.js';
 
-const ui = on => createDeck({ storage: { getItem: () => on ? 'deck' : null }, doc: null });
+const ui = on => createDeck({ storage: { getItem: () => on ? 'deck' : 'classic' }, doc: null });
 const modes = ['allowed', 'ask', 'off'];
 const names = JSON.parse(process.env.POLICY_ACTIONS || '["task_add","memory_save","notification_list","webhook_add"]');
 const actions = [...names.map(name => ({name, kind:'write', mode:'allowed'})),

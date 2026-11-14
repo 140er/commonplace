@@ -63,17 +63,56 @@ function storage(initial = {}) {
 }
 const doc = () => ({ documentElement: { dataset: {} }, listeners: [], addEventListener(type, fn) { this.listeners.push([type, fn]); } });
 
-test("the switch is off by default, survives a broken storage and is one key", () => {
-  assert.equal(deck.deckOn(storage()), false);
-  assert.equal(deck.deckOn(null), false);
-  assert.equal(deck.deckOn({ getItem() { throw new Error("denied"); } }), false);
+const CLASSIC = { [deck.UI_KEY]: "classic" };
+
+test("the switch is on by default, only a stored classic opts out, and it is one key", () => {
+  assert.equal(deck.deckOn(storage()), true, "first visit: no key");
+  assert.equal(deck.deckOn(storage({ [deck.UI_KEY]: "deck" })), true);
+  assert.equal(deck.deckOn(storage(CLASSIC)), false);
+  assert.equal(deck.deckOn(storage({ [deck.UI_KEY]: "anything else" })), true, "only exactly classic opts out");
+  assert.equal(deck.deckOn(null), true, "no storage at all");
+  assert.equal(deck.deckOn({ getItem() { throw new Error("denied"); } }), true, "storage that throws");
   const s = storage();
   deck.setDeck(true, s);
   assert.deepEqual([...s.data], [[deck.UI_KEY, "deck"]]);
   assert.equal(deck.deckOn(s), true);
   deck.setDeck(false, s);
-  assert.equal(s.data.size, 0);
+  assert.deepEqual([...s.data], [[deck.UI_KEY, "classic"]], "opting out is stored, not removed");
+  assert.equal(deck.deckOn(s), false);
   deck.setDeck(true, { setItem() { throw new Error("full"); } });
+  deck.setDeck(false, { setItem() { throw new Error("full"); } });
+});
+
+test("?ui=classic is remembered across a reload and first paint, boot and the switch agree", () => {
+  const s = storage(), hist = { state: null, replaceState() {} }, boot = (search) => { const d = doc(); return [deck.applyDeck({ doc: d, loc: { search, pathname: "/app/", hash: "" }, hist, storage: s }), d.documentElement.dataset.ui]; };
+  assert.deepEqual(boot(""), [true, "deck"], "first visit is Deck");
+  assert.deepEqual(boot("?ui=classic"), [false, undefined]);
+  assert.deepEqual(boot(""), [false, undefined], "the reload stays classic");
+  assert.deepEqual(boot("?ui=deck"), [true, "deck"]);
+  assert.deepEqual(boot(""), [true, "deck"]);
+  const throwing = { getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); } };
+  const d = doc();
+  assert.equal(deck.applyDeck({ doc: d, loc: { search: "", pathname: "/app/", hash: "" }, hist, storage: throwing }), true);
+  assert.equal(d.documentElement.dataset.ui, "deck", "unreadable storage still draws Deck");
+});
+
+test("the pre-paint script marks the page like boot does, without waiting for the module graph", () => {
+  const run = (search, items, throws = false) => {
+    const d = { documentElement: { dataset: {} } };
+    const localStorage = throws ? { getItem() { throw new Error("denied"); } } : storage(items);
+    runInNewContext(read("deck-prepaint.js"), { document: d, location: { search }, localStorage, URLSearchParams });
+    return d.documentElement.dataset.ui;
+  };
+  assert.equal(run("", {}), "deck");
+  assert.equal(run("", { [deck.UI_KEY]: "deck" }), "deck");
+  assert.equal(run("", CLASSIC), undefined);
+  assert.equal(run("", {}, true), "deck");
+  assert.equal(run("?ui=classic", {}), undefined, "a link can opt out for this visit before boot stores it");
+  assert.equal(run("?ui=deck", CLASSIC), "deck");
+  assert.equal(run("?ui=neon", CLASSIC), undefined, "an unknown value changes nothing");
+  assert.equal(run("?ui=neon", {}), "deck");
+  const index = read("index.html"), at = (text) => index.indexOf(text);
+  assert.ok(at('<script src="/app/deck-prepaint.js"></script>') > 0 && at('<script src="/app/deck-prepaint.js"></script>') < at('type="module" src="/app/app.js"'), "a blocking script ahead of the module");
 });
 
 test("applyDeck marks the document and honours ?ui= once, keeping the rest of the address", () => {
@@ -129,8 +168,8 @@ test("phone: a title bar and one tab per offered section", () => {
   assert.match(deck.renderDeckTop(), /data-action="palette"/);
 });
 
-test("the shell gets the Deck bar, title and tabs only while the switch is on", () => {
-  const s = storage(), ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, screens: { today() {} }, storage: s, doc: doc() });
+test("the shell gets the Deck bar, title and tabs unless classic is chosen", () => {
+  const s = storage(CLASSIC), ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, screens: { today() {} }, storage: s, doc: doc() });
   assert.deepEqual([ui.bar({ workspace: "Northwind" }), ui.top(), ui.tabs({ needs: 1 })], ["", "", ""]);
   assert.doesNotMatch(rail.renderRail({ view: "bots" }) + rail.renderPhoneBar() + rail.renderPhoneTabs(), /data-deck/);
   s.setItem(deck.UI_KEY, "deck");
@@ -160,12 +199,12 @@ test("createDeck mounts a registered screen once, refreshes it, and stops it on 
   assert.deepEqual(log.at(-1), ["refresh", { count: 1 }]);
   ui.leave(); ui.leave();
   assert.deepEqual(log.filter(([k]) => k === "stop").length, 1);
-  s.removeItem(deck.UI_KEY);
-  assert.equal(ui.owns("#/today"), false, "Deck screens do not exist while the switch is off");
+  s.setItem(deck.UI_KEY, "classic");
+  assert.equal(ui.owns("#/today"), false, "Deck screens do not exist while classic is chosen");
 });
 
 test("the Look switch is added to Settings once and flips the look", () => {
-  const s = storage(), d = doc();
+  const s = storage(CLASSIC), d = doc();
   let reloads = 0, html = "";
   const box = { querySelector: (q) => (q === "#look" && html.includes('id="look"') ? {} : null), insertAdjacentHTML: (where, markup) => { assert.equal(where, "beforeend"); html += markup; } };
   const content = { querySelector: (q) => (q === ".settings" ? box : null) };
@@ -182,14 +221,30 @@ test("the Look switch is added to Settings once and flips the look", () => {
   assert.equal(ui.on(), true);
   assert.equal(d.documentElement.dataset.ui, "deck");
   assert.equal(reloads, 1);
+  assert.equal(s.getItem(deck.UI_KEY), "deck");
   ui.toggle();
   assert.equal(ui.on(), false);
   assert.equal("ui" in d.documentElement.dataset, false);
+  assert.equal(s.getItem(deck.UI_KEY), "classic", "turning the look off is remembered");
+});
+
+test("the Look switch shows Deck as on for a first visit and turns it off for good", () => {
+  const s = storage(), d = doc();
+  let html = "", reloads = 0;
+  const box = { querySelector: () => null, insertAdjacentHTML: (where, markup) => { html += markup; } };
+  const ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, reload: () => reloads++, screens: {}, storage: s, doc: d });
+  ui.settings({ querySelector: (q) => (q === ".settings" ? box : null) });
+  assert.match(html, /data-deck-action="toggle" aria-pressed="true">Go back to the classic look/);
+  ui.toggle();
+  assert.deepEqual([ui.on(), s.getItem(deck.UI_KEY), reloads], [false, "classic", 1]);
+  assert.equal(deck.deckOn(s), false, "the next visit stays classic");
+  ui.toggle();
+  assert.deepEqual([ui.on(), s.getItem(deck.UI_KEY)], [true, "deck"]);
 });
 
 test("Settings carries the workspace tools in the Deck look only, with Admin for admins", () => {
   const make = (on, me) => {
-    const s = storage(on ? { [deck.UI_KEY]: "deck" } : {});
+    const s = storage({ [deck.UI_KEY]: on ? "deck" : "classic" });
     const parts = [];
     const box = { querySelector: (q) => (parts.some(([, m]) => m.includes(`id="${q.slice(1)}"`)) ? {} : null), insertAdjacentHTML: (where, markup) => parts.push([where, markup]) };
     const ui = deck.createDeck({ root: {}, context: () => ({ me, needs: { count: 3 } }), title() {}, screens: {}, storage: s, doc: doc() });

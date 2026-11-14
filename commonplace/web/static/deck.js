@@ -1,5 +1,6 @@
-// Deck: the opt-in look and navigation ("decisions first"). One switch per browser, kept in
-// localStorage; while it is off nothing in this file changes what the app draws.
+// Deck: the default look and navigation ("decisions first"). One switch per browser, kept in
+// localStorage: no key (a first visit) or 'deck' is Deck, only an explicit 'classic' opts out.
+// While classic is chosen nothing in this file changes what the app draws.
 // On: the shell draws a top bar instead of the rail (Today, Bots, Compute, Settings), the phone gets the same
 // four tabs, and deck.css re-tokens every screen (true black, lightness for elevation, amber
 // only for what waits on you). Screens that exist only in Deck register in SCREENS.
@@ -21,11 +22,13 @@ export const SCREENS = {
 };
 
 const store = () => { try { return globalThis.localStorage || null; } catch { return null; } };
+// Deck unless the browser stored exactly 'classic'; unreadable storage also means Deck.
+// deck-prepaint.js repeats this rule before first paint, keep the two in step.
 export function deckOn(storage = store()) {
-  try { return storage?.getItem(UI_KEY) === 'deck'; } catch { return false; }
+  try { return storage?.getItem(UI_KEY) !== 'classic'; } catch { return true; }
 }
 export function setDeck(on, storage = store()) {
-  try { if (on) storage?.setItem(UI_KEY, 'deck'); else storage?.removeItem(UI_KEY); } catch { /* The look stays as it was for this visit. */ }
+  try { storage?.setItem(UI_KEY, on ? 'deck' : 'classic'); } catch { /* The look stays as it was for this visit. */ }
 }
 /** Read ?ui=deck or ?ui=classic once (a link can switch the look), then mark the document. */
 export function applyDeck({ doc = globalThis.document, loc = globalThis.location, hist = globalThis.history, storage = store() } = {}) {

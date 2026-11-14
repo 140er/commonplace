@@ -26,7 +26,7 @@ async def with_card(hub, fresh, number, check):
                 [{"name": name, "value": value, "url": f"http://127.0.0.1:{hub.port}"}]
             )
             page = await context.new_page()
-            await page.goto(f"http://127.0.0.1:{hub.port}/app/#/card/{number}")
+            await page.goto(f"http://127.0.0.1:{hub.port}/app/?ui=classic#/card/{number}")
             await page.wait_for_selector(f'#card-panel [data-card="{number}"]', timeout=15000)
             await check(page)
         finally:

@@ -114,7 +114,7 @@ test('the real shell accepts every nested page and tears down the previous contr
   const source = app.slice(app.indexOf('async function route()'), app.indexOf('// The current view'));
   for (const deck of [false, true]) {
     let stopped = 0, left = 0, refreshed = 0;
-    const state = { me: {}, base: '#/bots/b1', route: '#/bots/b1', screen: 1, boards: [], chatVisible: new Set(), deck: createDeck({ storage: { getItem: () => deck ? 'deck' : null }, doc: {} }) };
+    const state = { me: {}, base: '#/bots/b1', route: '#/bots/b1', screen: 1, boards: [], chatVisible: new Set(), deck: createDeck({ storage: { getItem: () => deck ? 'deck' : 'classic' }, doc: {} }) };
     const leave = state.deck.leave; state.deck.leave = () => { left++; leave(); };
     const panel = {}, content = { children: [], innerHTML: '' };
     const context = { state, location: { hash: '' }, history: { state: null, replaceState(_state, _title, hash) { context.location.hash = hash; } }, localStorage: { getItem() {} }, root: { querySelector: s => s === '#content' ? content : s === '#card-panel' ? panel : null }, resolveRoute, boardRoute() {}, boardPreference() {}, decideStart() {}, remember() {}, clearAgentSecret() {}, voice: { stop() {} }, speech: { stop() {} }, botsUI: { stop() { stopped++; } }, boardDispose: null, detailsUI: null, markOpenCard() {}, showError() {}, message: s => s, refresh() { refreshed++; } };
