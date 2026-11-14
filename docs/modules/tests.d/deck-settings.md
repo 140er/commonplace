@@ -10,6 +10,8 @@
 
   - Repeated arrangements and replacement navigation keep a single scroll listener. The member browser journey keeps Sign out, navigation and personal controls enabled while workspace policy, sharing and management stay disabled.
 
+  - The Capy companion tests check joined miscellaneous rows, adjacent row dividers and geometry at desktop and phone widths, matching subtitle sizes, the short action-search placeholder and the full saved note at the phone scroll end.
+
 - **Tests:**
 
   - `tests/test_deck_settings.py`, `tests/deck_settings.mjs` and `tests/test_deck_settings_browser.py`.
