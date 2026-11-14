@@ -722,7 +722,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
   panel.hidden = false;
   const opening = state.card?.number !== number;
   const tab = opening ? "details" : panel.querySelector('[data-details-tab][aria-selected="true"]')?.dataset.detailsTab || "details";
-  if (opening) showLoading(panel, "Loading card…");
+  if (opening) showLoading(panel, "Loading card…", { art: "loading" });
   const request = ++state.panelRequest;
   const chatOrigin = state.chatDetail?.number === number ? state.chatDetail.row : null;
   try {
@@ -1492,7 +1492,7 @@ async function route() {
   // Until the named card's read arrives the panel says so, never what it held before (another card, a Needs me detail) with live buttons.
   const cardPanelHost = root.querySelector("#card-panel");
   cardPanelHost.hidden = !hash.startsWith("#/card/");
-  if (!cardPanelHost.hidden && state.card?.number !== Number(hash.slice(7))) { detailsUI?.stop(); detailsUI = null; showLoading(cardPanelHost, "Loading card…"); }
+  if (!cardPanelHost.hidden && state.card?.number !== Number(hash.slice(7))) { detailsUI?.stop(); detailsUI = null; showLoading(cardPanelHost, "Loading card…", { art: "loading" }); }
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) showLoading(root.querySelector("#content"), "Loading…");
   showError("");

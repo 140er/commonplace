@@ -3,6 +3,7 @@ import { escape as e } from './api.js';
 import { botPage, workspaceRoute } from './routes.js';
 import { scrollFades } from './deck-coworker-sharing.js';
 import { setupText } from './bot-setup.js';
+import { artHTML } from './deck-art.js';
 
 const enc = encodeURIComponent;
 const list = value => Array.isArray(value) ? value : [];
@@ -46,7 +47,7 @@ export function botGroups(bots) {
   return [...groups].map(([label, rows]) => ({ label, bots: rows }));
 }
 export function capyRosterHTML({ bots = [], conversations = [], loaded = true, setup = '' }) {
-  if (!bots.length) return `<li class="bots-note">${loaded ? 'No bots yet. Create one to get started.' : 'Loading…'}</li>`;
+  if (!bots.length) return `<li class="bots-note">${artHTML(loaded ? 'bots' : 'loading')}${loaded ? 'No bots yet. Create one to get started.' : 'Loading…'}</li>`;
   return botGroups(bots).map(group => `<li class="cb-folder"><h2>${e(group.label)}</h2><ul>${group.bots.map(bot => {
     const coworkers = Array.isArray(bot.coworkers) ? bot.coworkers.length : Number.isSafeInteger(bot.coworker_count) ? bot.coworker_count : conversations.filter(row => belongs(row, bot)).length || (bot.board ? 1 : 0);
     const unread = positive(bot.unread_count ?? bot.unread);

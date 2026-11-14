@@ -3,6 +3,7 @@ export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
 import { addStyles, placeMenu, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone, needsMeCount } from './deck-home-today.js';
 import { previewText } from './needs-me.js';
+import { artHTML } from './deck-art.js';
 
 export const TITLE = 'Today';
 const enc = encodeURIComponent;
@@ -24,8 +25,10 @@ export function cardHTML(card, bots, { busy, errors, held, exiting, open = new S
   return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(displayText(name))}</b>` : ''}${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(displayText(card.display_title || card.title))}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${actionRow(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
 }
 export function botsHTML(bots, escape = e) {
-  return `<section class="bt-bots"><header><h2>Your bots</h2><span>Latest from each</span></header><ul>${bots.map(bot => `<li><a href="#/bots/${enc(bot.id)}">${avatar(bot, escape)}<span class="bt-bot-copy"><b>${escape(displayText(bot.name))}${bot.state ? ` <i class="bt-dot" data-tone="${stateTone(bot.state)}" aria-label="${escape(stateName(bot.state))}"></i>` : ''}</b>${bot.last?.text ? `<span>${escape(displayText(bot.last.text))}</span>` : ''}</span>${timeHTML(bot.last?.at, escape)}</a></li>`).join('')}</ul>${bots.length ? '' : '<p class="bt-empty">No bots yet. <a href="#/bots?new=1">New bot</a></p>'}</section>`;
+  return `<section class="bt-bots"><header><h2>Your bots</h2><span>Latest from each</span></header><ul>${bots.map(bot => `<li><a href="#/bots/${enc(bot.id)}">${avatar(bot, escape)}<span class="bt-bot-copy"><b>${escape(displayText(bot.name))}${bot.state ? ` <i class="bt-dot" data-tone="${stateTone(bot.state)}" aria-label="${escape(stateName(bot.state))}"></i>` : ''}</b>${bot.last?.text ? `<span>${escape(displayText(bot.last.text))}</span>` : ''}</span>${timeHTML(bot.last?.at, escape)}</a></li>`).join('')}</ul>${bots.length ? '' : `<p class="bt-empty">${artHTML('bots')}No bots yet. <a href="#/bots?new=1">New bot</a></p>`}</section>`;
 }
+/** The Needs me list when nothing is open: all clear once loaded, otherwise the plain loading line. */
+export const emptyCardsHTML = loaded => `<p class="bt-empty" role="status">${loaded ? `${artHTML('clear')}Nothing is waiting on you` : 'Loading…'}</p>`;
 export function mount(context) {
   const { root, api } = context, doc = root.ownerDocument || globalThis.document;
   addStyles(doc);
@@ -49,7 +52,7 @@ export function mount(context) {
     if (!active) return;
     const list = cards(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
     region('summary').textContent = summaryLine(needs);
-    region('cards').innerHTML = list.length ? list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : `<p class="bt-empty" role="status">${loaded ? 'Nothing is waiting on you' : 'Loading…'}</p>`;
+    region('cards').innerHTML = list.length ? list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : emptyCardsHTML(loaded);
     for (const card of list.filter(card => exiting.has(stamp(card)))) {
       const node = root.querySelector(`[data-bt-card="${card.number}"]`);
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');

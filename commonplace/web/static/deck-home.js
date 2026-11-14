@@ -3,6 +3,7 @@ import { escape as e } from './api.js';
 import { sendMessage } from './botstream.js';
 import { composerHTML, sendButtonHTML } from './bots.js';
 import { needsMeCount, needsKnown } from './needs-me.js';
+import { artHTML } from './deck-art.js';
 import { addStyles, runHTML, displayText, quietSelector, runUpdate, retryIntent } from './deck-home-today.js';
 
 export const TITLE = 'Commonplace';
@@ -17,6 +18,8 @@ export const waitingHint = needs => {
 export const rosterNote = (status, count = 0) => status === 'loading' ? 'Loading bots…'
   : status === 'error' ? 'Could not load bots, retrying. <button type="button" class="btn" data-bh-reload>Retry now</button>'
   : count ? '' : 'No bots yet. <a href="#/bots?new=1">New bot</a>';
+/** Decorative art for the two quiet roster states; the error note stays text only. */
+const noteArt = (status, count) => status === 'loading' ? artHTML('loading') : status !== 'error' && !count ? artHTML('bots') : '';
 const RETRY_MS = [3000, 6000, 12000, 30000];
 const pending = run => ['sending', 'streaming', 'running', 'polling', 'dropped', 'pending', 'queued'].includes(run.state);
 const effortLabels = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
@@ -59,7 +62,7 @@ export function mount(context) {
     }
     root.querySelector('.bh-bot').hidden = !bots.length;
     const note = rosterNote(status, bots.length), empty = root.querySelector('.bh-empty');
-    if (empty.dataset.note !== note) { empty.dataset.note = note; empty.innerHTML = note; }
+    if (empty.dataset.note !== note) { empty.dataset.note = note; empty.innerHTML = noteArt(status, bots.length) + note; }
     empty.hidden = !note;
     const coworkers = conversations(), coworkerKey = JSON.stringify([fields.bot.value, coworkers]);
     if (coworkerSignature !== coworkerKey) {
