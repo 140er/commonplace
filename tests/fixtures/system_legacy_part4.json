@@ -185,6 +185,13 @@
       "occurrences": 1,
       "bytes": 4725,
       "sha256": "ac8cf69c5e2a6dff8389394d5f45e28fc5fa332bff9868772ad98b85966fe568"
+    },
+    {
+      "title": "Gateway vector diagnostics",
+      "slug": "gateway-vector-diagnostics",
+      "occurrences": 1,
+      "bytes": 753,
+      "sha256": "c89c91ca688eab6487b0859b550b8be85309093481311f37678cf5f7318a4853"
     }
   ]
 }
