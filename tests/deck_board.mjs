@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { boardView } from '../commonplace/web/static/board.js';
+import { bindDeckBoard } from '../commonplace/web/static/deck-board.js';
+import { boardView, bindBoard } from '../commonplace/web/static/board.js';
 import { escape as e } from '../commonplace/web/static/api.js';
 import { renderDetails } from '../commonplace/web/static/details.js';
 const board = {slug:'product',name:'Product',coordinator:'conn:coordinator'};
@@ -137,5 +138,29 @@ test('Edit card contains only fields and editing actions; resting sections stay 
     assert.ok(html.includes(marker),marker);
     assert.ok(!edit.includes(marker),`${marker} must not be collapsed under Edit card`);
     assert.ok(html.indexOf(marker) > html.indexOf('</details>'),marker);
+  }
+});
+
+test('optional Deck binding preserves minimal classic roots and tolerates partial scrollers', () => {
+  const events = new Map(), root = {
+    addEventListener: (name, handler) => events.set(name, handler),
+    removeEventListener: name => events.delete(name),
+  };
+  const stop = bindBoard(root, {board});
+  assert.deepEqual([...events.keys()], ['click','submit','keydown']);
+  stop();
+  assert.equal(events.size, 0);
+  for (const partial of [null, {}, {querySelector:null}, {querySelector:()=>null}, {querySelector:()=>({}),querySelectorAll:()=>[]}]) {
+    const cleanup = bindDeckBoard(partial);
+    assert.equal(typeof cleanup, 'function');
+    assert.doesNotThrow(cleanup);
+  }
+  const methods = ['querySelector','querySelectorAll','getBoundingClientRect','addEventListener','removeEventListener'];
+  for (const missing of methods) {
+    const scroller = {querySelector:()=>null,querySelectorAll:()=>[],getBoundingClientRect:()=>({left:0}),addEventListener(){},removeEventListener(){}};
+    delete scroller[missing];
+    const cleanup = bindDeckBoard({querySelector:()=>scroller,querySelectorAll:()=>[]});
+    assert.equal(typeof cleanup, 'function');
+    assert.doesNotThrow(cleanup);
   }
 });

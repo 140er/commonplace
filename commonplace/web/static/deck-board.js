@@ -72,7 +72,10 @@ export const drawerCopy = (html, id = '') => html.replace(/(^|>)([^<]+)(?=<|$)/g
 
 // Keep the phone state pills aligned with swipes and board refreshes.
 export function bindDeckBoard(root) {
+  const noop = () => {};
+  if (typeof root?.querySelector !== 'function' || typeof root?.querySelectorAll !== 'function') return noop;
   const scroller = root.querySelector('.deck-board .board');
+  if (!scroller || ['querySelector', 'querySelectorAll', 'getBoundingClientRect', 'addEventListener', 'removeEventListener'].some(method => typeof scroller[method] !== 'function')) return noop;
   const syncColumn = () => {
     if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
     const columns = [...scroller.querySelectorAll('.col')], left = scroller.getBoundingClientRect().left;
@@ -81,8 +84,8 @@ export function bindDeckBoard(root) {
     columns.forEach(col => { col.dataset.active = String(col === closest); });
     root.querySelectorAll('[data-board-column]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.boardColumn === closest.dataset.status)));
   };
-  scroller?.addEventListener('scrollend', syncColumn);
-  const activeColumn = scroller?.querySelector('[data-active="true"]');
-  if (activeColumn && scroller.scrollWidth > scroller.clientWidth) scroller.scrollLeft = activeColumn.offsetLeft - scroller.querySelector('.col').offsetLeft;
-  return () => scroller?.removeEventListener('scrollend', syncColumn);
+  scroller.addEventListener('scrollend', syncColumn);
+  const activeColumn = scroller.querySelector('[data-active="true"]'), firstColumn = scroller.querySelector('.col');
+  if (activeColumn && firstColumn && scroller.scrollWidth > scroller.clientWidth) scroller.scrollLeft = activeColumn.offsetLeft - firstColumn.offsetLeft;
+  return () => scroller.removeEventListener('scrollend', syncColumn);
 }
