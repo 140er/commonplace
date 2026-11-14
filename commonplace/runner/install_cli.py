@@ -4,10 +4,12 @@ from pathlib import Path
 
 
 def add_parsers(runner, handler):
-    for action in ("install", "status", "uninstall", "_setup-service"):
+    for action in ("install", "status", "uninstall", "sign-in", "_setup-service"):
         parser = runner.add_parser(action)
         parser.add_argument("--home", default=str(Path.home()))
         parser.set_defaults(func=handler)
+        if action == "sign-in":
+            parser.add_argument("provider", choices=("claude",))
         if action != "install":
             continue
         for flag in ("hub", "workspace", "label", "manifest-digest", "enrollment-id"):

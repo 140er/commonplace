@@ -275,7 +275,7 @@ function StageDither(canvas, opts) {
   this.ctx = canvas.getContext("2d");
   this.doc = canvas.ownerDocument;
   this.win = this.doc.defaultView;
-  this.opts = Object.assign({ scene: "capy-cyber", bayer: 4, vignette: 0.55, dim: 0, dot: 4 }, opts || {});
+  this.opts = Object.assign({ scene: "capy-cyber", bayer: 4, vignette: 0.6, dim: 0, dot: 4 }, opts || {});
   this.levels = null;
   this._tw = [];
   this.motion = this.win.matchMedia("(prefers-reduced-motion: reduce)");
@@ -412,6 +412,7 @@ StageDither.prototype.render = function () {
     lowFraction: Object.values(counts).reduce((n, steps) => n + steps[0] + steps[1] + steps[2], 0) / (cols * rows),
     ms: this.win.performance.now() - started, dpr, dot: o.dot, dim: o.dim, scene: o.scene };
   c.dataset.dim = String(o.dim);
+  c.dataset.dot = String(o.dot);
 
 };
 

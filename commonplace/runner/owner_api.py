@@ -14,7 +14,7 @@ from commonplace.http_util import (
 )
 from commonplace.web.agents import _read_wings, grantable_wings
 
-from . import install_receipts, jobs, registry
+from . import install_receipts, jobs, registry, setup_api
 
 LOG = logging.getLogger(__name__)
 
@@ -72,6 +72,11 @@ def _wing_picker(gateway, h):
         send_json(h, 200, {"wings": grantable_wings(gateway, owner)})
     except ToolError:
         send_json(h, 503, {"error": "workspace wings are unavailable; try again"})
+
+
+def _dispatch(gateway, h, route):
+    if not setup_api.owner_dispatch(gateway, h):
+        route(h)
 
 
 def register(gateway):
@@ -155,6 +160,7 @@ def register(gateway):
                 except Exception as exc:
                     log_failure(LOG, "Runner revoke cleanup deferred", exc)
             elif parts[1] == "attest":
+                setup_api.check_final_write(gateway, h, owner, data)
                 result = registry.attest(gateway.db, owner, parts[0], data)
                 status = 200
             else:
@@ -186,4 +192,4 @@ def register(gateway):
         gateway.add_route(method, "/api/runners", manage)
     gateway.add_route("GET", "/api/runners/wings", lambda h: _wing_picker(gateway, h))
     for method in ("PATCH", "POST", "DELETE"):
-        gateway.add_prefix_route(method, "/api/runners/", manage)
+        gateway.add_prefix_route(method, "/api/runners/", lambda h: _dispatch(gateway, h, manage))
