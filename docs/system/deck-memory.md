@@ -25,3 +25,10 @@ new search or permission path. The viewer sees “you” as their saver name, an
 missing room display names are presented as readable words instead of raw slugs.
 The import preview retains the label picked in the chooser, independently of the
 parser’s canonical source field. Consent and confirmation payloads are unchanged.
+
+Phone room chips and More filters share a horizontal scroll area, with a 16px
+right fade and the result count on the next line. The advanced-filter popup stays
+outside that area's clipping boundary. Import dialogs use the opaque background
+token rather than the adjustable card surface, so underlying quotes cannot show
+through either step. These presentation changes retain the existing consent,
+preview binding and import security behavior.

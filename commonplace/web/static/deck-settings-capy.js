@@ -27,7 +27,10 @@ export function capyPermissionRows(actions, modes, filter, escape) {
     return `<div class="setting-row" data-tool-policy-row="${name}" title="${name}"><div class="deck-permission-label"><span>${escape(permissionLabel(action))}</span>${limit ? `<small class="capy-policy-limit">${escape(limit)}</small>` : ''}</div><div class="capy-policy" role="group" aria-label="Permission for ${escape(permissionLabel(action))}">${select.replace('<select ', '<select hidden tabindex="-1" aria-hidden="true" ')}${STATES.map(state => `<button type="button" data-policy-state="${state}" aria-pressed="${state === selected}"${policyValue(state, action.mode, modes) === null ? ' disabled' : ''}>${LABELS[state]}</button>`).join('')}<span class="sr" data-policy-stored>${escape(action.mode)}</span></div></div>`;
   });
   // A miscellaneous heading adds no information beside just one named group.
-  if ((html.match(/class="deck-permission-group"/g) || []).length <= 2) html = html.replace('<h3>Other actions</h3>', '');
+  if ((html.match(/class="deck-permission-group"/g) || []).length <= 2) {
+    html = html.replace('</section><section class="deck-permission-group"><h3>Other actions</h3>', '');
+    html = html.replace('<h3>Other actions</h3>', '');
+  }
   return html;
 }
 export function policySummary(actions) {
@@ -39,7 +42,7 @@ export function settingsSubtitle(me = {}) {
   return `For the ${me.workspace_name || 'current'} workspace. ${me.role === 'owner' ? 'Only you' : 'Only the owner'} can change these.`;
 }
 export const capyPolicyPresentation = {
-  ...commonPolicy, rows: capyPermissionRows, summary: policySummary,
+  ...commonPolicy, rows: capyPermissionRows, summary: policySummary, placeholder: 'Search actions',
   filterChanged(host) {
     const frame = host.closest?.('.capy-settings'), field = host.querySelector('[data-tool-policy-filter]');
     if (!frame || !field) return;
