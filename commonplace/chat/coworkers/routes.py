@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from commonplace import sessions
@@ -11,6 +12,7 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import read_json, send_json
 
 from . import taxonomy, turn_mode
+from ._util import numeric as _numeric
 from .store import StoreError, _id, open_store
 
 
@@ -149,20 +151,6 @@ def _body(h):
         return None
 
 
-def _numeric(value, *, zero=False):
-    if (
-        not isinstance(value, str)
-        or len(value) > 19
-        or not value.isascii()
-        or not value.isdecimal()
-    ):
-        raise StoreError()
-    number = int(value)
-    if not (0 if zero else 1) <= number < 2**63:
-        raise StoreError()
-    return number
-
-
 def _parameters(h, allowed=()):
     pairs = parse_qsl(urlsplit(h.path).query, keep_blank_values=True)
     if len(pairs) != len(dict(pairs)) or set(dict(pairs)) - set(allowed):
@@ -186,7 +174,11 @@ def handle(gateway, h):
             raise StoreError("not_found", 404)
         params = _parameters(
             h,
-            ("after", "limit") if len(parts) == 3 and parts[2] == "messages" and not write else (),
+            ("cursor", "limit")
+            if "log" in parts and not write
+            else ("after", "limit")
+            if len(parts) == 3 and parts[2] == "messages" and not write
+            else (),
         )
         store = open_store(gateway, principal.workspace_id)
         if not parts and h.command == "GET":
@@ -262,6 +254,15 @@ def handle(gateway, h):
         if len(parts) >= 2 and parts[0] == "conversations":
             return _conversation_route(gateway, h, principal, session, store, parts, params)
         if (
+            not write
+            and parts
+            and re.fullmatch(r"conv_[0-9a-f]{32}", parts[0])
+            and (len(parts) == 1 or len(parts) in (2, 3) and parts[1] == "log")
+        ):
+            return _conversation_route(
+                gateway, h, principal, session, store, ["conversations", *parts], params
+            )
+        if (
             len(parts) == 3
             and parts[0] == "jobs"
             and parts[2] == "controls"
@@ -312,7 +313,14 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
     conversation = store.get_conversation(
         principal.user_id, conversation_id, owns=len(parts) == 2 and h.command == "GET"
     )
+    if h.command == "GET" and (parts[2:] == ["log"] or parts[2:] == ["log", "stream"]):
+        from . import livelog
+
+        return livelog.handle(gateway, h, principal, session, store, conversation_id, params)
     if len(parts) == 2 and h.command == "GET":
+        from . import livelog
+
+        live = livelog.detail(gateway, principal, session, store, conversation_id)
         return send_json(
             h,
             200,
@@ -326,6 +334,7 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
                     session_hash=sessions._hash(session),
                 ),
                 "memories": store.list_memory(principal.user_id, conversation_id),
+                **live,
             },
         )
     if len(parts) == 3 and parts[2] == "messages":

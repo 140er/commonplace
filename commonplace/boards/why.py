@@ -112,11 +112,19 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
-def summary_line(summary: dict, *, used: int, cap: int | None, tasks: bool = False) -> str:
+def summary_line(
+    summary: dict,
+    *,
+    used: int,
+    cap: int | None,
+    tasks: bool = False,
+    runner_capacity: int | None = None,
+) -> str:
     """One compact status line, using the same reason counts as the card views."""
     busy = _plural(used, "agent", "agents") + " busy"
     if cap is not None:
-        busy += f" (limit {cap})"
+        capacity = f", runner capacity {runner_capacity}" if runner_capacity is not None else ""
+        busy += f" (limit {cap}{capacity})"
     phrases = {
         "project_limit": "for a free agent" if tasks else "for a free slot",
         "blocked_by": "for another task" if tasks else "for another card",
