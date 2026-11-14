@@ -132,11 +132,12 @@ test("applyDeck marks the document and honours ?ui= once, keeping the rest of th
 test("the bar offers Bots and Settings, and a Deck screen only once it is registered", () => {
   const bare = deck.renderDeckBar({ hash: "#/bots/abc", screens: {} });
   assert.ok(bare.startsWith('<nav class="rail"'), "the shell gives this element its id");
-  assert.deepEqual([...bare.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["bots", "settings"]);
+  assert.deepEqual([...bare.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["bots", "settings"], "no Home entry until the Home screen is registered");
   assert.equal((bare.match(/aria-current="page"/g) || []).length, 1);
   assert.match(bare, /href="#\/bots" data-nav="bots" aria-current="page"/);
   const full = deck.renderDeckBar({ hash: "#/today", needs: 3, screens: { today() {}, compute() {} } });
   assert.deepEqual([...full.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["today", "bots", "compute", "settings"]);
+  assert.deepEqual([...deck.renderDeckBar({ hash: "#/", screens: { home() {}, today() {} } }).matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["home", "today", "bots", "settings"]);
   assert.match(full, /data-nav="today" aria-current="page">[\s\S]*?Today<span class="count need">3/);
   assert.match(full, /class="deck-brand" href="#\/"/);
   assert.equal(deck.deckHome({}), "#/bots");

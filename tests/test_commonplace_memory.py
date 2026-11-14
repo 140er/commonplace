@@ -535,6 +535,32 @@ def test_search_says_only_while_the_memory_worker_is_warming_up(hub, monkeypatch
     assert ready["results"] == warming["results"]
 
 
+def test_search_answers_busy_within_a_bound_while_an_index_write_holds_the_palace(hub, monkeypatch):
+    """The real route and worker: a stuck exclusive lock no longer stalls the search."""
+    import time
+
+    from mempalace import mcp_server
+
+    owner = hub.owner_token()
+    memory_id = _save(hub, owner, "Busy kettle canary", theme="shared")
+    path = "/api/memory/search?q=Busy%20kettle%20canary"
+    monkeypatch.setattr(mcp_server, "_HTTP_READ_LOCK_WAIT_S", 0.3, raising=False)
+    lock = mcp_server._HTTP_REQUEST_LOCK
+    lock.acquire_write()  # what a slow index write holds
+    try:
+        started = time.monotonic()
+        status, busy = _http(hub, owner, path)
+        waited = time.monotonic() - started
+    finally:
+        lock.release_write()
+    assert waited < 5, waited
+    assert status == 403
+    assert busy == {"error": "no: memory is busy indexing; try again in a few seconds"}
+    # Nothing is hidden for good: the same search answers once the write is done.
+    status, ready = _http(hub, owner, path)
+    assert status == 200 and [memory["id"] for memory in ready["results"]] == [memory_id]
+
+
 def _warm_starts(hub, monkeypatch):
     """Record the workspaces the gateway asks its supervisor to start, without starting one."""
     started = []

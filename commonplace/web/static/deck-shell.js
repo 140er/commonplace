@@ -6,8 +6,10 @@ export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Comp
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
 const rows = value => Array.isArray(value) ? value : [];
 const enc = encodeURIComponent;
+const isHome = hash => ['', '#/', '#/home'].includes(hash || '');
 const current = yes => yes ? ' aria-current="page"' : '';
 const paths = {
+  home: '<path d="M2.5 7.5 8 2.5l5.5 5M4 6.5V13h8V6.5M6.5 13V9.5h3V13"/>',
   today: '<path d="M2 9l2-6h8l2 6v4H2zM2 9h3l1 2h4l1-2h3"/>',
   bots: '<rect x="2.5" y="5" width="11" height="8" rx="2"/><path d="M8 5V2.8M5.8 9h.1M10.2 9h.1"/>',
   compute: '<rect x="4" y="4" width="8" height="8" rx="1"/><path d="M6 1v3m4-3v3M6 12v3m4-3v3M1 6h3m-3 4h3m8-4h3m-3 4h3"/>',
@@ -95,7 +97,7 @@ export function renderShellBar(options) {
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
     <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button></div>
     <a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread">${icon('edit')}New thread</a>
-    <div class="deck-links">${sections.map(([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : id === 'bots' ? `<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span>` : ''}</a>`).join('')}</div>
+    <div class="deck-links">${options.homeOn === false ? '' : `<a class="nav" href="#/" data-nav="home"${current(isHome(hash))}>${icon('home')}Home</a>`}${sections.map(([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : id === 'bots' ? `<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span>` : ''}</a>`).join('')}</div>
     <div class="deck-rail-scroll"><button class="deck-rail-heading ws" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">${e(workspace)} workspace</button><a class="nav" href="#/board"${current(/^#\/board(?:\/|$)/.test(hash))}>${icon('board')}Board</a><a class="nav" href="#/memory"${current(hash.startsWith('#/memory'))}>${icon('memory')}Memory</a>
     <h2 class="deck-rail-heading">Bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading">Threads</h2><div data-deck-threads>${shellThreads(options)}</div><p class="deck-rail-error" data-deck-rail-error hidden></p></div>
     <div class="rail-foot"><details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details></div>
@@ -109,7 +111,7 @@ export function renderShellTop(options) {
 }
 // The phone has no rail, so every destination the rail and account menu offer lives in this sheet (rendered beside the tabs).
 // Any click inside it (a link, a button or the scrim) closes it; the shell's click handler does the work.
-export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel"><a href="#/board">${icon('board')}Board</a><a href="#/memory">${icon('memory')}Memory</a>${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
+export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel">${options.homeOn === false ? '' : `<a href="#/" data-nav="home"${current(isHome(options.hash))}>${icon('home')}Home</a>`}<a href="#/board">${icon('board')}Board</a><a href="#/memory">${icon('memory')}Memory</a>${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
 export function renderShellTabs(options) {
   const { sections, section, hash } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
   const more = !section && !['#/', '#/home'].includes(hash);

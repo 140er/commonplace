@@ -26,6 +26,10 @@
 :root[data-ui="deck"] .dc-node-card text { font-family: var(--font); text-anchor: start; stroke: none; }
 :root[data-ui="deck"] .dc-node-name { font-size: 13px; font-weight: 600; fill: var(--ink); }
 :root[data-ui="deck"] .dc-node-role { font-size: 12px; fill: var(--ink3); }
+/* The link count is inside the card's own scale, so the 11px text must not be scaled again. */
+:root[data-ui="deck"] .dc-bundle { pointer-events: none; }
+:root[data-ui="deck"] .dc-bundle-chip { fill: var(--s3); stroke: var(--s2); stroke-width: 2px; }
+:root[data-ui="deck"] .dc-node-card .topo-bundle-count { font: 600 11px/1 var(--font); fill: var(--ink2); text-anchor: middle; transform: none; }
 /* The down mark uses the approved failure rose; other hues come from the Deck tokens. */
 :root[data-ui="deck"] .deck-compute { --compute-down: #f0708a; }
 :root[data-ui="deck"] .dc-node-status { color: var(--ink3); fill: currentColor; }

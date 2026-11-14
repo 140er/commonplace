@@ -131,8 +131,8 @@ test('nested pages belong to their existing Deck section and keep four destinati
   for (const [hash, section] of [['#/compute', 'compute'], ['#/compute/management', 'compute'], ['#/bots/-/coworkers', 'bots'], ['#/bots/project-1/coworkers', 'bots'], ['#/bots/-/coworkers/conversations/c-1?message=m-2', 'bots']]) {
     const ui = createDeck({ storage: { getItem: () => 'deck' }, doc: {} });
     assert.equal(ui.owns(hash), true, hash);
-    for (const html of [renderDeckBar({ hash }), renderDeckTabs({ hash })]) {
-      assert.deepEqual([...html.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), ['today', 'bots', 'compute', 'settings']);
+    for (const [html, lead] of [[renderDeckBar({ hash }), ['home']], [renderDeckTabs({ hash }), []]]) {
+      assert.deepEqual([...html.matchAll(/data-nav="([^"]*)"/g)].map(m => m[1]), [...lead, 'today', 'bots', 'compute', 'settings']);
       assert.match(html, new RegExp(`data-nav="${section}" aria-current="page"`));
       assert.equal((html.match(/aria-current="page"/g) || []).length, 1);
     }

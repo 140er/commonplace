@@ -13,6 +13,11 @@ export const waitingHint = needs => {
   const n = needsMeCount(needs);
   return n > 0 ? `<a href="#/today"><i class="bt-dot" data-tone="waiting" aria-hidden="true"></i>${n} waiting on you in Today</a>` : 'Nothing is waiting on you';
 };
+/** The roster note under the composer. "No bots yet" is only true once a read succeeded and came back empty. */
+export const rosterNote = (status, count = 0) => status === 'loading' ? 'Loading bots…'
+  : status === 'error' ? 'Could not load bots, retrying. <button type="button" class="btn" data-bh-reload>Retry now</button>'
+  : count ? '' : 'No bots yet. <a href="#/bots?new=1">New bot</a>';
+const RETRY_MS = [3000, 6000, 12000, 30000];
 const pending = run => ['sending', 'streaming', 'running', 'polling', 'dropped', 'pending', 'queued'].includes(run.state);
 const effortLabels = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
 export function modelControls(conversation, catalog = [], configured = null) {
@@ -27,9 +32,9 @@ export function mount(context) {
   addStyles(doc);
   const host = root.closest?.('.center') || root;
   host.classList.add('deck-hero');
-  root.innerHTML = `<div class="bh-wrap"><div class="bh-content"><section class="bh-runs" aria-label="Your runs" aria-live="polite"></section><form class="bh-form"><div class="bh-context">${quietSelector('bot', 'Bot', 'bh-bot')}${quietSelector('coworker', 'Coworker', 'bh-coworker')}${quietSelector('machine', 'Machine', 'bh-host')}</div><div class="bh-composer">${composerHTML({ name: TITLE }, e)}<div class="bh-toolbar"><button type="button" data-bh-commands aria-label="Commands">＋</button><button type="button" data-bh-commands aria-label="Tools"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><polygon points="8,1.5 9.7,6.3 14.5,8 9.7,9.7 8,14.5 6.3,9.7 1.5,8 6.3,6.3"/></svg></button>${quietSelector('model', 'Model', 'bh-model-choice')}${quietSelector('effort', 'Effort', 'bh-effort-choice')}<span class="bh-spacer"></span>${sendButtonHTML({ busy: false })}</div></div><div class="bh-mentions" role="listbox" aria-label="Mention a bot" hidden></div></form><p class="bh-hint" aria-live="polite"></p><p class="bh-error" role="alert" hidden></p><p class="bh-empty" hidden>No bots yet. <a href="#/bots?new=1">New bot</a></p></div></div>`;
+  root.innerHTML = `<div class="bh-wrap"><div class="bh-content"><section class="bh-runs" aria-label="Your runs" aria-live="polite"></section><form class="bh-form"><div class="bh-context">${quietSelector('bot', 'Bot', 'bh-bot')}${quietSelector('coworker', 'Coworker', 'bh-coworker')}${quietSelector('machine', 'Machine', 'bh-host')}</div><div class="bh-composer">${composerHTML({ name: TITLE }, e)}<div class="bh-toolbar"><button type="button" data-bh-commands aria-label="Commands">＋</button><button type="button" data-bh-commands aria-label="Tools"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><polygon points="8,1.5 9.7,6.3 14.5,8 9.7,9.7 8,14.5 6.3,9.7 1.5,8 6.3,6.3"/></svg></button>${quietSelector('model', 'Model', 'bh-model-choice')}${quietSelector('effort', 'Effort', 'bh-effort-choice')}<span class="bh-spacer"></span>${sendButtonHTML({ busy: false })}</div></div><div class="bh-mentions" role="listbox" aria-label="Mention a bot" hidden></div></form><p class="bh-hint" aria-live="polite"></p><p class="bh-error" role="alert" hidden></p><p class="bh-empty" role="status" hidden></p></div></div>`;
   const form = root.querySelector('form'), fields = form.elements, runRegion = root.querySelector('.bh-runs'), hint = root.querySelector('.bh-hint'), errorBox = root.querySelector('.bh-error'), mentions = root.querySelector('.bh-mentions');
-  let ctx = context, active = true, generation = 0, read, sending = false, configured = null, bots = [], directory = {}, catalog = [], rosterSignature = '', coworkerSignature = '', controlsSignature = '', timer = null, attempt = null;
+  let ctx = context, active = true, generation = 0, read, sending = false, configured = null, bots = [], directory = {}, catalog = [], rosterSignature = '', coworkerSignature = '', controlsSignature = '', timer = null, attempt = null, status = 'loading', retryTimer = null, retries = 0;
   fields.text.placeholder = 'Ask anything, / for commands, @ for a bot';
   fields.text.setAttribute('aria-label', 'Ask anything'); fields.text.required = true; fields.text.rows = 2;
   const submit = form.querySelector('[type="submit"]'); submit.className = 'bh-send'; submit.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15V5m-4 4 4-4 4 4"/></svg>'; submit.setAttribute('aria-label', 'Send');
@@ -53,7 +58,9 @@ export function mount(context) {
       rosterSignature = signature;
     }
     root.querySelector('.bh-bot').hidden = !bots.length;
-    root.querySelector('.bh-empty').hidden = !!bots.length;
+    const note = rosterNote(status, bots.length), empty = root.querySelector('.bh-empty');
+    if (empty.dataset.note !== note) { empty.dataset.note = note; empty.innerHTML = note; }
+    empty.hidden = !note;
     const coworkers = conversations(), coworkerKey = JSON.stringify([fields.bot.value, coworkers]);
     if (coworkerSignature !== coworkerKey) {
       options(fields.coworker, [['', 'Any coworker'], ...coworkers.map(item => [String(item.id), item.title || (directory.bots || []).find(bot => bot.id === item.bot_ids[0])?.name || 'Coworker'])]);
@@ -102,8 +109,13 @@ export function mount(context) {
     clearTimeout(timer);
     if (active && runs.some(pending)) timer = setTimeout(async () => { if (!doc?.hidden) await refreshRuns(); schedule(); }, 3000);
   }
+  function retryLater() {
+    clearTimeout(retryTimer);
+    if (active && status === 'error') retryTimer = setTimeout(() => { if (active) void refresh(); }, RETRY_MS[Math.min(retries++, RETRY_MS.length - 1)]);
+  }
   async function refresh(next = {}) {
     if (!active) return;
+    clearTimeout(retryTimer);
     ctx = { ...ctx, ...next }; paint();
     read?.abort(); read = new AbortController(); const token = ++generation;
     try {
@@ -112,6 +124,7 @@ export function mount(context) {
       if (roster.status === 'rejected') throw roster.reason;
       bots = (roster.value.bots || []).filter(bot => !bot.frozen && !bot.lifecycle && (bot.mine !== false || bot.perms?.talk)); configured = roster.value.model;
       directory = coworkers.status === 'fulfilled' ? coworkers.value : {};
+      status = 'ready'; retries = 0;
       report(); paint();
       const board = selectedBot()?.board;
       catalog = [];
@@ -121,8 +134,11 @@ export function mount(context) {
       if (active && token === generation) { paint(); await refreshRuns(); }
     } catch (error) {
       if (!active || token !== generation) return;
-      if ([401, 403, 404].includes(error.status)) { bots = []; directory = {}; paint(); }
-      report('Could not refresh your bots. Try again.');
+      if ([401, 403, 404].includes(error.status)) { bots = []; directory = {}; status = 'error'; }
+      else if (status === 'loading') status = 'error';
+      // Before the first good read the note says it; afterwards the bots already shown stay, with the old message.
+      report(status === 'error' ? '' : 'Could not refresh your bots. Try again.');
+      paint(); retryLater();
     }
   }
   async function onSubmit(event) {
@@ -181,6 +197,7 @@ export function mount(context) {
   }
   function onClick(event) {
     if (event.target.closest?.('[data-bh-commands]')) openCommands();
+    if (event.target.closest?.('[data-bh-reload]')) { retries = 0; void refresh(); }
     const retry = event.target.closest?.('[data-bh-retry]');
     if (retry) { const run = runs.find(run => run.requestId === retry.dataset.bhRetry); if (run?.intent) void sendRun(retryIntent(run), run); }
     const mention = event.target.closest?.('[data-bh-mention]');
@@ -198,7 +215,7 @@ export function mount(context) {
   form.addEventListener('submit', onSubmit); fields.text.addEventListener('input', onInput); root.addEventListener('click', onClick); root.addEventListener('keydown', onKey); form.addEventListener('change', onChange);
   paint(); void refresh();
   return { refresh, stop() {
-    active = false; generation++; read?.abort(); requests.forEach(controller => controller.abort()); clearTimeout(timer);
+    active = false; generation++; read?.abort(); requests.forEach(controller => controller.abort()); clearTimeout(timer); clearTimeout(retryTimer);
     form.removeEventListener('submit', onSubmit); fields.text.removeEventListener('input', onInput); root.removeEventListener('click', onClick); root.removeEventListener('keydown', onKey); form.removeEventListener('change', onChange); host.classList.remove('deck-hero');
   } };
 }

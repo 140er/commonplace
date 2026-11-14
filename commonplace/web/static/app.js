@@ -39,7 +39,7 @@ import { createMemory } from "./memory.js";
 import { createPalette } from "./palette.js";
 import { mountOnboarding } from "./onboarding.js";
 import { createCardMenu } from "./cardmenu.js";
-import { putMove, columnName, conflictText } from "./cardmove.js";
+import { putMove, moveNotice, conflictText } from "./cardmove.js";
 import { applyDeck, createDeck } from "./deck.js";
 import { createNeedLedger } from "./deck-home-today.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
@@ -354,9 +354,9 @@ function cardMenuUI() {
   if (state.cardMenu?.mount !== mount) {
     state.cardMenu?.ui.stop();
     state.cardMenu = { mount, ui: createCardMenu({ mount, api,
-      async onChange(card, { moved } = {}) {
+      async onChange(card, { moved, asked } = {}) {
+        if (moved && card?.status) showNotice(moveNotice(card, state.me.actor, asked));
         await refresh();
-        if (moved && card?.status) showNotice(`Moved to ${columnName(card, state.me.actor)}.`);
       },
     }) };
   }
@@ -1559,7 +1559,7 @@ async function move(number, status, extra = {}) {
   if (!card) return;
   let moved;
   const ok = await mutate(`card-${number}`, async () => { moved = await putMove(api, card, status, extra); });
-  if (ok && moved?.status !== card.status) showNotice(`Moved to ${columnName(moved, state.me.actor)}.`);
+  if (ok && moved?.status !== card.status) showNotice(moveNotice(moved, state.me.actor, status));
 }
 root.addEventListener("input", (event) => {
   const removal = event.target.closest('[data-form="remove-assignment"]');
