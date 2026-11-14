@@ -210,6 +210,9 @@ const cases = {
       // The server says it needs the person: that is said, and it is not claimed to be what was asked.
       assert.equal(moveNotice({ ...card, status:'review', need:'you', ask:'Ship it?', ask_to:me, review_kind:'decision' }, me, 'review'), 'Moved. It now shows in Needs you, not In review.');
     } finally { setNeedsQueue(null); }
+    // The real-state Add notice keeps a title's own "#599" (the title is the person's words) and names the state.
+    const { addedNotice } = await import(new URL('../commonplace/web/static/deck-board.js', import.meta.url));
+    assert.equal(addedNotice({ number:30, title:'Fix #599 rent', status:'todo', need:'idle' }, me), 'Added “Fix #599 rent” to Active (Ready).');
     // The entry that moves a todo card to Active says what it does, not that a run starts.
     globalThis.document = { documentElement:{ dataset:{ ui:'deck' } } };
     try {
