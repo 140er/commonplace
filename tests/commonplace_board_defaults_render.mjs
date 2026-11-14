@@ -21,12 +21,9 @@ assert.ok(!nav.outerHTML.includes('href="#/board/fresh-space"'));
 assert.ok(!nav.outerHTML.includes('href="#/space/fresh-space"'));
 assert.ok(phoneBar.innerHTML.includes('href="#/boards">Projects<'));
 assert.equal((phoneTabs.innerHTML.match(/<a /g) || []).length, 2);
-runInNewContext(slice('function reviewForm()', 'function handoffForm(') + '\nreviewForm();', context);
-assert.equal(panel.hidden, false);
-assert.ok(panel.innerHTML.includes('name="question" minlength="24" required'));
-assert.ok(panel.innerHTML.includes('name="context" minlength="20" required'));
-assert.ok(panel.innerHTML.includes('Original &lt;context&gt;'));
-assert.ok(panel.innerHTML.includes('name="options"'));
+// Moving a card to Review just moves it: the shell has no question form for a person's move.
+assert.ok(!app.includes('function reviewForm'));
+panel.hidden = false;
 const submission = slice('else if (kind === "board")', 'else if (kind === "space-message")');
 const body = submission.slice(submission.indexOf('await mutate'), submission.lastIndexOf(';') + 1);
 const location = { hash: '' };

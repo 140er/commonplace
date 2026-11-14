@@ -129,6 +129,10 @@ def _space_value(fn, *args, **kwargs):
         raise SpaceInvalid(str(exc)) from exc
 
 
+# The ask text of a card a person moved to Review by hand: nobody is asked anything.
+MOVED_TO_REVIEW = "Moved to review."
+
+
 class VersionClash(ToolError):
     def __init__(self, current):
         super().__init__("no: card changed")
@@ -3757,7 +3761,7 @@ class BoardService(lifecycle.LifecycleMixin):
             )
         ):
             raise ToolError("no: waiting on a person, they must answer via decide")
-        if old == "review":
+        if old == "review" and not (self.principal.person and row["review_kind"] == "moved"):
             if (
                 not self.principal.person
                 and status in ("todo", "doing")
@@ -3774,6 +3778,10 @@ class BoardService(lifecycle.LifecycleMixin):
                 ("doing", "done"),
                 ("todo", "review"),
                 ("done", "todo"),
+                # A review nobody asked for (the person's own move) has no decision to wait on.
+                ("review", "todo"),
+                ("review", "doing"),
+                ("review", "done"),
             }
             if status == "backlog" or (old, status) in allowed:
                 return
@@ -3920,6 +3928,25 @@ class BoardService(lifecycle.LifecycleMixin):
         """Who a completion review is addressed to: the chosen reviewer, else the owner."""
         members = self.ctx.db.members(self.principal.workspace_id)
         return chosen if chosen in {f"user:{m['id']}" for m in members} else self._owner_actor()
+
+    def _enter_review(self, row, board, args, updates, status):
+        """A person's move to Review without a question is a move, not an ask; else open the ask."""
+        if (
+            status == "review"
+            and self.principal.person
+            and not {"question", "options", "context", "person_reason"} & set(args)
+        ):
+            updates.update(
+                status="review",
+                ask=MOVED_TO_REVIEW,
+                ask_options=json.dumps([]),
+                ask_to=None,
+                return_to=None,
+                review_kind="moved",
+                review_context=None,
+            )
+        else:
+            self._open_review(row, board, args, updates, status == "done")
 
     def _open_review(self, row, board, args, updates, done_review):
         question, offered = review_request(
@@ -4341,8 +4368,7 @@ class BoardService(lifecycle.LifecycleMixin):
                         else None
                     )
                 if status == "review" or self._done_needs_review(board, row, updates):
-                    done_review = status == "done"
-                    self._open_review(row, board, args, updates, done_review)
+                    self._enter_review(row, board, args, updates, status)
             self._position(conn, row, updates, args.get("before"), args.get("after"))
             review_edit_text = self._review_edit_text(conn, row, args, updates)
             from commonplace.projects import reports

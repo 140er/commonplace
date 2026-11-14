@@ -41,6 +41,6 @@ def test_guard_legacy_action_contract():
         'data-action="panel-move"',
         'data-action="handoff"',
         'data-form="comment"',
-        'if (status === "review") reviewForm()',
+        'root.querySelector("#card-status").value',
     ):
         assert marker in source

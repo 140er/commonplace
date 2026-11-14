@@ -233,9 +233,10 @@ if (which === 'shell') {
   context.document.activeElement = null; run('restore(saved)');
   assert.equal(fresh.focused, 1);
 } else if (which === 'anchors') {
-  for (const [start,end] of [['function remember()', 'async function signin('], ['function navigation()', 'function showError'], ['function title(', 'function decision('], ['function needsView()', 'function boardView()'], ['function spaceView()', 'function boardsView()'], ['async function hydrateSpaceTasks()', 'function mergeChat('], ['function reviewForm()', 'function handoffForm('], ['function handoffForm(', 'async function settingsView('], ['async function approveProposal(', 'function clearDecisionDraft('], ['async function sendDecide(', 'async function route()']]) slice(start,end);
+  for (const [start,end] of [['function remember()', 'async function signin('], ['function navigation()', 'function showError'], ['function title(', 'function decision('], ['function needsView()', 'function boardView()'], ['function spaceView()', 'function boardsView()'], ['async function hydrateSpaceTasks()', 'function mergeChat('], ['function handoffForm(', 'async function settingsView('], ['async function approveProposal(', 'function clearDecisionDraft('], ['async function sendDecide(', 'async function route()']]) slice(start,end);
 } else if (which === 'legacy') {
-  assert.match(app, /if \(status === "review"\) reviewForm\(\)/);
+  assert.doesNotMatch(app, /reviewForm/);
+  assert.match(app, /putMove\(api, card, status/);
   assert.match(app, /\/api\/cards\/\$\{number\}\/approve/);
   assert.match(app, /data-form="comment"/);
   assert.match(app, /kind === "space-message"/);
