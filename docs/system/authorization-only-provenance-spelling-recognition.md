@@ -95,6 +95,5 @@ near misses, fullwidth spellings and mixed namespace/thread-id expansion against
 limit and 300-second hang guard contain bad measurements; budget misses, memory
 exhaustion and hang-guard results are recorded as information, not test failures.
 
-This changes reference recognition only: typed associations, provenance aliases,
-plain-file association proof and search-index progress retain their existing
-contracts.
+Reference recognition and local association proof remain separate checks;
+provenance aliases retain their existing contracts.

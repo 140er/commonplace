@@ -40,7 +40,7 @@ def _response_safe_meta(meta):
     return safe_meta
 
 
-def read_associations(kind: str, identifier: str, expect=None):
+def read_associations(kind: str, identifier, expect=None):
     """Read complete current metadata only; never create optional collections.
 
     Physical ids take precedence over logical handles, as in drawer reads.
@@ -48,7 +48,19 @@ def read_associations(kind: str, identifier: str, expect=None):
     Other backends support exact physical ids only, failing closed for logical
     handles. A second request compares the concrete descriptors.
     """
-    if kind not in {"drawer", "closet"} or not isinstance(identifier, str) or not identifier:
+    if kind == "source_file":
+        if isinstance(identifier, str):
+            identifier = (identifier, identifier)
+        valid = (
+            isinstance(identifier, (list, tuple))
+            and len(identifier) == 2
+            and all(isinstance(value, str) for value in identifier)
+            and bool(identifier[0])
+            and bool(identifier[1].strip())
+        )
+    else:
+        valid = kind in {"drawer", "closet"} and isinstance(identifier, str) and bool(identifier)
+    if not valid:
         return {"associations": None}
     if _is_chroma_backend():
         from ..backends.chroma_sqlite import sqlite_drawer_rows
@@ -56,7 +68,7 @@ def read_associations(kind: str, identifier: str, expect=None):
         found = sqlite_drawer_rows(
             _config.palace_path,
             "mempalace_closets" if kind == "closet" else _config.collection_name,
-            drawer_id=identifier,
+            **({"source_file": identifier} if kind == "source_file" else {"drawer_id": identifier}),
             metadata_only=True,
             logical=kind == "drawer",
         )
@@ -64,6 +76,9 @@ def read_associations(kind: str, identifier: str, expect=None):
             return {"associations": None}
         rows = [_association_descriptor(rid, meta) for rid, _, meta in found[1]]
     else:
+        if kind == "source_file":
+            # Generic offset paging cannot prove a complete stable match set.
+            return {"associations": None}
         from ..palace import get_closets_collection, get_collection
 
         if kind == "closet":

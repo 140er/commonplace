@@ -14,8 +14,8 @@
 - Original source sets still decide any-readable-source fact eligibility before
   citation omission. Readable text and stored citations remain verbatim. Complete
   raw source_file tokens are checked before drawer metadata displays a basename;
-  readable citation spellings and token-free plain-file behavior stay compatible.
-- D9.1=A is locked: complete local plain-file proof is separate follow-up work.
+  readable proved citation spellings stay compatible.
+- D9.1=A is locked: plain-file citations require complete local proof.
   D9.2=A remains locked, including accepted global-quota deferral of actually
   blocked readable work. Neither decision grants new read authority. Imported
   history retains consent/range checks; unproved roomless derived rows stay stored.
