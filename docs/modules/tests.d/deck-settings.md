@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - Settings navigation stays visible while scrolling, with one horizontally scrolling phone row and an inverted current destination. Notification labels describe outcomes; permission details share the secondary line. Delayed Voice completion only refreshes the active Settings epoch.
+  - Settings keeps its original shortcuts below the primary sections in the two-column layout; they move focus without discarding form state. Notification labels describe outcomes; permission details share the secondary line. Delayed Voice completion only refreshes the active Settings epoch.
 
   - The permission inventory enumerates every installed action, including retired actions, and checks label and technical-name search. Browser checks preserve the former section and form inventory while checking shortcuts, notifications setup guidance and Deck geometry at phone and desktop widths.
 
