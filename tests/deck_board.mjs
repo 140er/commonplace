@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { boardView } from '../commonplace/web/static/board.js';
+import { escape as e } from '../commonplace/web/static/api.js';
 import { renderDetails } from '../commonplace/web/static/details.js';
 const board = {slug:'product',name:'Product',coordinator:'conn:coordinator'};
 const bot = {id:'shipping',name:'Shipping',board:'product'};
@@ -108,4 +109,31 @@ test('drawer progress is a truthful tree, Reply is opt-in and the close control 
   const memory = renderDetails({...base,linked:[{drawer_id:'note',title:'Saved words'}]},{...options,tab:'memory'});
   assert.match(memory, /data-details-tab="memory"/);
   assert.match(memory, /Saved words/);
+});
+
+test('drawer treats replacement tokens as literal card text and decision values', () => {
+  for (const text of ['$&', '$`', "$'", '$$', "$& $` $' $$"]) {
+    const card = {...base,title:`Title ${text}`,summary:`Summary ${text}`,body:`Body ${text}`,coworker:{name:`Coworker ${text}`},need:'you',ask_to:'user:owner',ask_options:[`Approve ${text}`,`Hold ${text}`]};
+    const html = renderDetails(card, options);
+    assert.equal(html.match(/data-details-title>([^<]*)<\/h2>/)?.[1], e(card.title));
+    assert.equal(html.match(/aria-label="Summary">[\s\S]*?<p>([^<]*)<\/p>/)?.[1], e(card.summary));
+    assert.equal(html.match(/<dt>Coworker<\/dt><dd>([^<]*)<\/dd>/)?.[1], e(card.coworker.name));
+    assert.ok(html.includes(`data-choice="${e(card.ask_options[0])}"`));
+    assert.ok(html.includes(`data-choice="${e(card.ask_options[1])}"`));
+    assert.equal((html.match(/<header class="detail-h">/g) || []).length, 1);
+    const fallback = renderDetails({...card,summary:null}, options);
+    assert.equal(fallback.match(/aria-label="Summary">[\s\S]*?<p>([^<]*)<\/p>/)?.[1], e(card.body));
+  }
+});
+test('Edit card contains only fields and editing actions; resting sections stay outside', () => {
+  const card = {...base,can_prioritize:true,status:'review',need:'you',ask:'Ready?',ask_to:'user:owner',waiting:{text:'Waiting for a decision'},blocked_by:[],events:[{kind:'ask',options:['Approve'],context:'Decision context'}]};
+  const html = renderDetails(card,{...options,origin:{actor:'user:owner',text:'Original request'}});
+  const edit = html.match(/<details class="deck-card-controls"[\s\S]*?<\/details>/)?.[0];
+  assert.ok(edit);
+  for (const control of ['card-status','card-priority','data-action="handoff"','<dl class="fields">']) assert.ok(edit.includes(control),control);
+  for (const marker of ['data-details-description','class="activity"','data-details-waiting','data-details-blockers','data-card-runs','data-context-text','data-origin-text']) {
+    assert.ok(html.includes(marker),marker);
+    assert.ok(!edit.includes(marker),`${marker} must not be collapsed under Edit card`);
+    assert.ok(html.indexOf(marker) > html.indexOf('</details>'),marker);
+  }
 });

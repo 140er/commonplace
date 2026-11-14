@@ -76,7 +76,7 @@ def browser():
         instance.close()
 
 
-def open_board(page, *, look="deck"):
+def open_board(page, *, look="deck", cards=CARDS, origin=None):
     responses = {
         "/api/me": {
             "actor": "user:owner",
@@ -87,7 +87,8 @@ def open_board(page, *, look="deck"):
             "role": "owner",
         },
         "/api/boards": {"boards": [BOARD]},
-        "/api/boards/product/cards": {"cards": CARDS, "children": [], "linked": []},
+        "/api/boards/product/cards": {"cards": cards, "children": [], "linked": []},
+        "/api/chat/product": {"board": "product", "messages": [origin] if origin else []},
         "/api/needs-me": {"count": 1},
         "/api/bots": {"bots": [BOT]},
         "/api/rules/count": {"waiting": 0},
@@ -103,7 +104,7 @@ def open_board(page, *, look="deck"):
             data = responses.get(path, {})
             if path.startswith("/api/cards/") and path.rsplit("/", 1)[-1].isdigit():
                 data = next(
-                    card for card in CARDS if str(card["number"]) == path.rsplit("/", 1)[-1]
+                    card for card in cards if str(card["number"]) == path.rsplit("/", 1)[-1]
                 )
             route.fulfill(body=json.dumps(data), content_type="application/json")
         else:
@@ -197,6 +198,15 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         else:
             assert drawer.evaluate("el=>getComputedStyle(el).borderRadius") == "14px"
         assert not drawer.locator('[data-form="comment"]').is_visible()
+        assert drawer.locator(".ctx-body > [data-details-description]").is_visible()
+        assert drawer.locator(".ctx-body > section:has(> .activity)").is_visible()
+        for marker in [
+            "[data-details-description]",
+            ".activity",
+            "[data-card-runs]",
+            "[data-context-text]",
+        ]:
+            assert drawer.locator(f".deck-card-controls {marker}").count() == 0
         assert drawer.get_by_role("button", name="Close card").is_visible()
         assert drawer.locator(".deck-card-progress .child").count() == 3
         assert drawer.locator(".deck-card-progress span.waiting").inner_text() == "Needs you"
@@ -214,9 +224,13 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         assert drawer.locator("#details-comment").input_value() == "Keep this draft"
         drawer.get_by_role("button", name="Reply", exact=True).click()
         assert not drawer.locator('[data-form="comment"]').is_visible()
-        drawer.locator('.deck-card-actions [data-choice="Hold"]').click()
-        page.wait_for_function("true")
-        page.wait_for_timeout(100)
+        with page.expect_response(
+            lambda response: (
+                urlsplit(response.url).path == "/api/cards/1/decide"
+                and response.request.method == "POST"
+            )
+        ):
+            drawer.locator('.deck-card-actions [data-choice="Hold"]').click()
         assert ("/api/cards/1/decide", {"choice": "Hold", "then": "return", "version": 3}) in writes
         drawer.locator(".hide").click()
         page.locator('.card[data-card="2"] h3').click()
@@ -230,5 +244,49 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         page.wait_for_selector("form.assignment-removal")
         assert page.locator('form.assignment-removal [name="version"]').input_value() == "3"
         assert not errors, errors
+    finally:
+        page.close()
+
+
+def test_drawer_literal_text_and_resting_sections(browser):
+    text = "$& $` $' $$"
+    card = {
+        **CARD,
+        "title": f"Title {text}",
+        "summary": f"Summary {text}",
+        "body": f"Body {text}",
+        "coworker": {"name": f"Coworker {text}"},
+        "message_id": 17,
+        "waiting": {"text": "Waiting for a decision"},
+        "blocked_by": [],
+        "events": [{"kind": "ask", "options": ["Approve"], "context": f"Context {text}"}],
+    }
+    origin = {"id": 17, "board": "product", "actor": "user:owner", "text": f"Origin {text}"}
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    try:
+        open_board(page, cards=[card], origin=origin)
+        page.locator('.card[data-card="1"] h3').click()
+        drawer = page.locator(".deck-card-drawer")
+        assert drawer.locator("[data-details-title]").inner_text() == card["title"]
+        assert drawer.locator(".deck-card-summary p").inner_text() == card["summary"]
+        assert drawer.locator(".deck-card-facts dd").nth(1).inner_text() == card["coworker"]["name"]
+        quote = drawer.locator("[data-origin-text]")
+        quote.wait_for()
+        assert quote.inner_text() == origin["text"]
+        assert drawer.locator(".deck-card-controls").get_attribute("open") is None
+        for marker in [
+            "[data-details-description]",
+            ".activity",
+            "[data-details-waiting]",
+            "[data-details-blockers]",
+            "[data-card-runs]",
+            "[data-context-text]",
+            "[data-origin-text]",
+        ]:
+            section = drawer.locator(marker)
+            assert section.count() == 1
+            assert section.evaluate("el => !el.closest('.deck-card-controls')")
+        assert drawer.locator("[data-details-description] .body-text").inner_text() == card["body"]
+        assert drawer.locator("[data-context-text]").inner_text() == f"Context {text}"
     finally:
         page.close()

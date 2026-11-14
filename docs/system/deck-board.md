@@ -10,3 +10,9 @@ remain reachable. Display cleanup omits evidence locations and ticket/model
 clutter while preserving stored content, exact decision payloads and version checks.
 The header combines live state totals with reachable ownership filters. Progress uses a plain tree with recorded outcomes, and Reply reveals the existing comment form. On phones a state pill selects one complete column inside its own row and the modal drawer is a
 full-height sheet. Classic rendering and server authority stay unchanged.
+
+Generated drawer markup is inserted through replacement callbacks, preserving
+literal dollar tokens in card titles, summaries, body text, coworker names and
+exact decision values. Edit card wraps only fields and action controls;
+Description, Activity, waiting, blockers, runs, context and origin stay in the
+resting view, including origin quotes that load after the initial render.

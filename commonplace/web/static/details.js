@@ -137,15 +137,15 @@ export function renderDetails(card, { board = { slug: card.board }, me, messages
   if (!deck) return html;
   const header = `<header class="detail-h"><div class="deck-card-state"><i class="deck-board-dot ${needsOwner(card, me) ? "waiting" : card.status === "done" ? "live" : "idle"}" aria-hidden="true"></i>${e(stateWord(card, me))}</div><h2 tabindex="-1" data-details-title>${e(card.title)}</h2></header>`;
   return drawerCopy(html
-    .replace('class="workbench-details"', 'class="workbench-details deck-card-drawer"')
-    .replace(/<header class="detail-h">[\s\S]*?<\/header>/, header + drawerSummary(card, { board, people, bots, me }))
-    .replace('<dl class="fields">', '<details class="deck-card-controls" data-deck-card-controls><summary>Edit card</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div><dl class="fields">')
-    .replace('</div><div class="ctx-foot">', '</details></div><div class="ctx-foot">' + drawerActions(card, me))
-    .replace(' aria-keyshortcuts="]">Hide</button>', ' aria-keyshortcuts="]" aria-label="Close card"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>')
-    .replace('<form class="reply" data-form="comment">', '<form class="reply" data-form="comment" id="deck-card-reply" hidden>')
-    .replace(`Memory for ${e(id)}`, 'Linked memory')
-    .replace('Context (exact words)', 'Context')
-    .replace("'s request, quoted exactly", "'s request"), id);
+    .replace('class="workbench-details"', () => 'class="workbench-details deck-card-drawer"')
+    .replace(/<header class="detail-h">[\s\S]*?<\/header>/, () => header + drawerSummary(card, { board, people, bots, me }))
+    .replace(/<dl class="fields">[\s\S]*?<\/dl>/, (fields) => `<details class="deck-card-controls" data-deck-card-controls><summary>Edit card</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div>${fields}</details>`)
+    .replace('</div><div class="ctx-foot">', () => '</div><div class="ctx-foot">' + drawerActions(card, me))
+    .replace(' aria-keyshortcuts="]">Hide</button>', () => ' aria-keyshortcuts="]" aria-label="Close card"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>')
+    .replace('<form class="reply" data-form="comment">', () => '<form class="reply" data-form="comment" id="deck-card-reply" hidden>')
+    .replace(`Memory for ${e(id)}`, () => 'Linked memory')
+    .replace('Context (exact words)', () => 'Context')
+    .replace("'s request, quoted exactly", () => "'s request"), id);
 }
 
 // The shell keeps ownership of card mutations, drafts, sheet modality and chat focus return.
@@ -239,8 +239,7 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
               template.innerHTML = html;
               const block = template.content.querySelector("[data-origin-text]")?.closest("section");
               if (block && body) {
-                const target = body.querySelector("[data-deck-card-controls]") || body;
-                target.insertBefore(block, target.querySelector("[data-details-description]"));
+                body.insertBefore(block, body.querySelector("[data-details-description]"));
               }
             }
           }
