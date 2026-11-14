@@ -21,6 +21,11 @@ mutation controls stay disabled. Second review opens
 project settings and preserves their existing controls. Appearance reuses its
 live preview, dithered thumbnails and person-scoped saved preferences.
 
+The member restriction targets owner-only control groups. Sign out, navigation,
+personal Appearance, notification subscriptions, webhooks and own bot grants keep
+their existing controllers and server checks. Arranging Settings repeatedly uses
+one scroll listener per box, including when a render replaces its navigation.
+
 The presentation is opt-in through Deck. Classic keeps its existing section
 order, policy markup and styling; server authority and save routes are unchanged.
 Delayed Voice completion can refresh only the still-active Settings epoch, and

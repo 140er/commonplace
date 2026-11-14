@@ -8,6 +8,8 @@
 
   - The permission inventory enumerates every installed action, including retired actions, and checks label and technical-name search and row titles. Browser checks preserve the former section and form inventory while checking shortcuts, notifications setup guidance and Deck geometry at phone and desktop widths.
 
+  - Repeated arrangements and replacement navigation keep a single scroll listener. The member browser journey keeps Sign out, navigation and personal controls enabled while workspace policy, sharing and management stay disabled.
+
 - **Tests:**
 
   - `tests/test_deck_settings.py`, `tests/deck_settings.mjs` and `tests/test_deck_settings_browser.py`.

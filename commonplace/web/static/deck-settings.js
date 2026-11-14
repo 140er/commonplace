@@ -92,8 +92,10 @@ export function arrangeSettings(box, { owner = false } = {}) {
   const nav = box.querySelector('#deck-settings-nav');
   if (connections) box.prepend?.(connections);
   if (phone) box.prepend?.(phone);
-  if (nav) { box.prepend?.(nav); return; }
-  box.insertAdjacentHTML('afterbegin', `<nav id="deck-settings-nav" aria-label="Settings sections"><button type="button" data-deck-setting="phone-push" aria-current="location">Notifications</button><button type="button" data-deck-setting="deck-connections">Connections</button><button type="button" data-deck-setting="deck-tools">Workspace</button>${owner ? '<button type="button" data-deck-setting="tool-policy">Action permissions</button>' : ''}</nav>`);
+  if (nav) box.prepend?.(nav);
+  else box.insertAdjacentHTML('afterbegin', `<nav id="deck-settings-nav" aria-label="Settings sections"><button type="button" data-deck-setting="phone-push" aria-current="location">Notifications</button><button type="button" data-deck-setting="deck-connections">Connections</button><button type="button" data-deck-setting="deck-tools">Workspace</button>${owner ? '<button type="button" data-deck-setting="tool-policy">Action permissions</button>' : ''}</nav>`);
+  if (box.dataset?.deckSettingsScroll) return;
+  if (box.dataset) box.dataset.deckSettingsScroll = 'true';
   box.addEventListener?.('scroll', () => {
     if (box.classList?.contains('capy-settings')) return;
     const nav = box.querySelector('#deck-settings-nav');

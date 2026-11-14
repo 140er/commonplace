@@ -80,6 +80,20 @@ test('notification guidance distinguishes the owner and tolerates a missing conn
     assert.equal(notice.textContent.startsWith('Ask the workspace owner'),!owner);
   }
 });
+test('Settings keeps one scroll listener when a render replaces its navigation', () => {
+  const listeners=[];
+  let nav=null;
+  const box={dataset:{},querySelector:q=>q==='#deck-settings-nav'?nav:null,
+    querySelectorAll:()=>[],prepend(){},insertAdjacentHTML(){nav={};},
+    addEventListener:(...args)=>listeners.push(args)};
+  arrangeSettings(box);
+  arrangeSettings(box);
+  nav=null; // A late render can replace the children of the same scrolling box.
+  arrangeSettings(box);
+  assert.equal(listeners.length,1);
+  assert.equal(listeners[0][0],'scroll');
+  assert.deepEqual(listeners[0][2],{passive:true});
+});
 for (const initial of ['#/boards','#/needs','#/settings']) test(`late Voice after boot on ${initial} respects the active Settings epoch`, async () => {
   const app=readFileSync(new URL('../commonplace/web/static/app.js',import.meta.url),'utf8');
   const boot=app.slice(app.indexOf('async function boot()'),app.lastIndexOf('boot();'));

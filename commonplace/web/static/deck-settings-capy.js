@@ -119,7 +119,9 @@ export function arrangeCapySettings(box, { api, context = () => ({}) } = {}) {
   }
   settingsOrder([...main.children]).forEach(section => main.append(section));
   if (me.role && !owner) main.querySelectorAll?.('input, select, textarea, button').forEach(control => {
-    if (!control.matches('[data-deck-setting], [data-deck-action], .deck-tools button')) control.disabled = true;
+    // Session/navigation, personal notifications/webhooks and own bot grants keep their controllers.
+    if (control.matches('[data-action="logout"], [data-action="agent-bots"]')) return;
+    if (control.matches('[data-policy-state], [data-tool-policy-mode]') || control.closest('[data-workspace-orchestration], [data-agent-schedules], [data-voice-settings], [data-form="agent"], [data-agent-list]')) control.disabled = true;
   });
 }
 

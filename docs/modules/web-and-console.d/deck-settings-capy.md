@@ -10,6 +10,8 @@
 
   - Bot sharing reads and writes the existing workspace sharing route and honors its owner flag. Private defaults, access logs and owner-only grants are fixed guarantees grouped under Always on; the real sharing switch remains separate. Second review opens the existing project settings; there is no new workspace-wide review switch. All visible values and project names come from the hub.
 
+  - Members retain sign out, navigation, personal Appearance, notifications, webhooks and their own bot grants. Only workspace policy, management, voice, schedules and connection management controls are disabled; existing controllers and server authority still decide access. Common Settings installs one scroll listener per scrolling box, even when late renders replace its children.
+
 - **Tests:**
 
   - `tests/test_deck_settings_capy.py` enumerates server policy values and installed actions with the Node contracts. `tests/test_deck_settings_capy_browser.py` optionally checks desktop and phone geometry, every original form, policy writes, sharing and live Appearance controls.

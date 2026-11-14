@@ -225,5 +225,15 @@ def test_member_settings_keep_mutation_controls_disabled(browser):
         assert page.locator("[data-policy-state]").count() > 0
         assert page.locator("[data-policy-state]:not(:disabled)").count() == 0
         assert page.locator('[data-form="agent"] button').is_disabled()
+        for selector in [
+            '[data-action="logout"]',
+            '[data-deck-action="toggle"]',
+            '[data-action="switch-workspace"]',
+            '[data-deck-setting="phone-push"]',
+            '[data-form="webhook"] button',
+            '[data-appearance="vignette"]',
+        ]:
+            assert page.locator(".settings").locator(selector).is_enabled(), selector
+        assert page.locator("[data-orchestration-enabled]").is_disabled()
     finally:
         context.close()
