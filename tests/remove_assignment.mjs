@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
+const { conflictText } = await import(new URL('../commonplace/web/static/cardmove.js', import.meta.url));
 
 const read = name => readFile(new URL(`../commonplace/web/static/${name}`, import.meta.url), 'utf8');
 const app = await read('app.js');
@@ -33,6 +34,7 @@ const panel = {innerHTML:'', hidden:false, querySelector:()=>({focus(){focused=t
 const errors = [], requests = [];
 const state = {pending:new Set(), card};
 const context = {
+  conflictText,
   state, canRemoveAssignment:details.canRemoveAssignment, assignmentPickup:details.assignmentPickup,
   deckAssignmentForm:details.deckAssignmentForm, assignmentRefusal:details.assignmentRefusal,
   detailsUI:null, consoleUI:null, root:{querySelector:()=>panel, querySelectorAll:()=>[], addEventListener:(name, fn)=>{context[name]=fn;}},

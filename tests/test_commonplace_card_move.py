@@ -4,9 +4,9 @@ Moving to Review is a plain move (not a question to anyone), a stale version say
 and every destination the menu offers is one the server accepts (and the reverse)."""
 
 import json
-from datetime import datetime, timedelta, timezone
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -46,7 +46,9 @@ def test_a_person_moves_a_card_to_review_without_asking_anything(hub, fresh):
     moved = fresh.owner.task_show(number)
     assert moved["status"] == "review"
     # Nobody is asked: it is not a decision waiting on the owner.
-    assert moved["review_kind"] == "moved" and moved["ask_to"] is None and moved["ask_options"] == []
+    assert (
+        moved["review_kind"] == "moved" and moved["ask_to"] is None and moved["ask_options"] == []
+    )
     assert moved["need"] != "you"
 
 
@@ -107,7 +109,11 @@ def test_a_refused_move_that_is_not_a_version_clash_says_why(hub, fresh):
     code, reply = patch(hub, fresh, number, status="doing")
     assert code == 409, reply
     # Its own code and reason (no "current" card): a client must not call this a stale card.
-    assert reply["code"] == "snoozed" and "snoozed" in reply["error"].lower() and "current" not in reply
+    assert (
+        reply["code"] == "snoozed"
+        and "snoozed" in reply["error"].lower()
+        and "current" not in reply
+    )
 
 
 def menu_options():

@@ -70,7 +70,11 @@ def need(card, *, me=None, owner=False, now=None, person_release: bool | None = 
             else "plan"
         )
     ask_to = card.get("ask_to")
-    if card.get("ask") and card.get("review_kind") != "moved" and (ask_to == me if ask_to else owner):
+    if (
+        card.get("ask")
+        and card.get("review_kind") != "moved"
+        and (ask_to == me if ask_to else owner)
+    ):
         return "you"
     if plan_waiting(card):
         return "you" if owner and person_release else "plan"

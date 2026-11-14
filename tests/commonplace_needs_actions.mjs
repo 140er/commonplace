@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 
+const { conflictText } = await import(new URL("../commonplace/web/static/cardmove.js", import.meta.url));
+
 const app = await readFile(new URL("../commonplace/web/static/app.js", import.meta.url), "utf8");
 function slice(start, end) {
   assert.ok(app.includes(start), `${start} missing`);
@@ -59,7 +61,7 @@ function fixture() {
       if (nextError) { const error = nextError; nextError = null; throw error; }
       return { number: 5, version: 4 };
     },
-    showError: (text) => errors.push(text),
+    showError: (text) => errors.push(text), conflictText,
     async refresh() {
       beforeRefresh(); // Success must clear the live select before remember can copy it.
       refreshes.push([...state.drafts]);
@@ -246,7 +248,7 @@ for (const version of [3, 4]) {
   assert.equal(f.requests[0].body.version, 3);
   assert.equal(f.requests[0].body.then, "done");
   assert.equal(refreshed.then.value, "return");
-  assert.deepEqual(f.errors, ["Card changed. Review it and try again."]);
+  assert.deepEqual(f.errors, ["This card changed while you were looking at it. It was reloaded; check it and try again."]);
   f.errors.length = 0; f.onRefresh(() => {});
   await f.click("decide", { version: 4 });
   assert.equal(f.requests.at(-1).body.then, "return");
