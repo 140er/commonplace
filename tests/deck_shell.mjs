@@ -135,3 +135,17 @@ test('shell refreshes only readable lists, keeps folder collapse and rejects sta
   assert.doesNotMatch(renderDeckBar({bots:[{id:'missing', name:'Missing',last:{at:'invalid'}}]}), /deck-bot-time|deck-tree-state/);
   assert.match(renderDeckBar({role:'owner',workspace:'Studio'}), /Owner · Studio/);
 });
+
+ test('rail destinations preserve registered Home and Today screens', async () => {
+  const {SCREENS,deckHome}=await import('../commonplace/web/static/deck.js');
+  const {resolveRoute}=await import('../commonplace/web/static/routes.js');
+  assert.equal(deckHome(), '#/');
+  assert.equal((await SCREENS.home()).TITLE, 'Commonplace');
+  assert.equal((await SCREENS.today()).TITLE, 'Today');
+  assert.equal(resolveRoute('#/',{deck:true}), '#/');
+  assert.equal(resolveRoute('#/today',{deck:true}), '#/today');
+  const html=renderDeckBar({hash:'#/today'});
+  assert.match(html,/class="deck-brand" href="#\/"/);
+  assert.match(html,/class="deck-new-thread nav" href="#\/"/);
+  assert.doesNotMatch(renderDeckTabs({hash:'#/home'}), /data-deck-shell-action="mic"/);
+});

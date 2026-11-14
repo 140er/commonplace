@@ -1,3 +1,4 @@
+import { deckPaletteItems } from './deck-home-palette.js';
 import { mountWorkspaceOrchestration } from "./projects.js";
 import { mountProjectPanel } from "./projectpanel.js";
 import { mountAgentSchedules } from "./agent-schedules.js";
@@ -37,6 +38,7 @@ import { createPalette } from "./palette.js";
 import { mountOnboarding } from "./onboarding.js";
 import { createCardMenu } from "./cardmenu.js";
 import { applyDeck, createDeck } from "./deck.js";
+import { createNeedLedger } from "./deck-home-today.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
 const shellStyles = `
     .shell #content { flex:1; min-height:0; overflow:auto; }
@@ -82,11 +84,17 @@ const state = {
 // The opt-in Deck look: its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
-  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; } }),
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => shellMenu(), singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
   reload: () => { if (state.me) void route(); },
 });
 let adminUI = null, instanceAdminUI = null;
 let consoleUI = null, botsUI = null, topologyUI = null, chatUI = null, detailsUI = null, boardDispose = null;
+const deckNeedsLedger = createNeedLedger();
+function deckNeedsChanged(card) {
+  deckNeedsLedger.settle(card, state.me);
+  state.needs = deckNeedsLedger.apply(state.needs, state.me);
+  navigation();
+}
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
@@ -304,7 +312,9 @@ function paletteUI() {
 function shortcutsView() { paletteUI().shortcuts(); }
 function shellMenu() {
   const board = currentBoard(), cards = boardCards().filter((card) => !card.board || card.board === board?.slug);
-  paletteUI().open({ can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
+  const deck = document.documentElement.dataset.ui === "deck", roster = state.deckRoster;
+  const bots = roster?.workspace === state.me?.workspace && roster?.actor === state.me?.actor ? roster.bots : [];
+  paletteUI().open({ deck, ...(deck ? { items: deckPaletteItems({ board, bots }) } : {}), can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
 }
 async function paletteCommand(item) {
   const action = item.action;
@@ -868,9 +878,12 @@ async function settingsView(epoch) {
   content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : failed("Plan", plan)}${orchestration.status === "fulfilled" ? '<section class="settings-section"><h2>Coworker management</h2><div data-workspace-orchestration></div></section>' : failed("Coworker management", orchestration)}${voice.settings()}${chatSettings.status === "fulfilled" ? `<section class="settings-section"><h2>Chat</h2><p>${e(chatSettings.value.front.enabled && chatSettings.value.front.provider !== "none" ? `Answers by ${chatSettings.value.front.provider}/${chatSettings.value.front.model}` : chatSettings.value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(chatSettings.value.usage.used_today)} · Yours: ${e(chatSettings.value.usage.user_used_today)}</p>${chatSettings.value.usage.last_error ? `<p role="status">Last model error: ${e(chatSettings.value.usage.last_error)}</p>` : ""}</section>` : failed("Chat", chatSettings)}${connections.status === "fulfilled" ? agentsView(connections.value) : `<section class="settings-section"><h2>Agents</h2>${failed("Agents", connections)}</section>`}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section><section class="settings-section" id="tool-policy"><h2>Tool policy</h2><div data-tool-policy></div></section>${phonePush.status === "fulfilled" ? phonePushView(phonePush.value) : `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${failed("Phone notifications", phonePush)}</section>`}<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : failed("Webhooks", hooks)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
   if (orchestration.status === "fulfilled") mountWorkspaceOrchestration(content.querySelector("[data-workspace-orchestration]"), {api, e, enabled: orchestration.value.enabled, current: () => epoch === state.screen});
   mountAgentSchedules(content.querySelector("[data-agent-schedules]"), {api, e, current: () => epoch === state.screen});
-  mountToolPolicy(content.querySelector("[data-tool-policy]"), {api, e, current: () => epoch === state.screen});
+  mountToolPolicy(content.querySelector("[data-tool-policy]"), {api, e, presentation: state.deck?.policyPresentation(), current: () => epoch === state.screen});
   state.deck?.settings(content);
   restore(saved);
+  void state.voiceReady?.then(() => {
+    if (epoch === state.screen && state.base === "#/settings" && state.deck?.on()) state.deck?.settings(content);
+  });
 }
 
 async function memoryView(epoch, refresh = false) {
@@ -1051,15 +1064,15 @@ function clearWorkbenchChat() {
   chatUI?.stop(); chatUI = null;
   if (typeof Event === "function") document.dispatchEvent?.(new Event("signout"));
 }
-function setBotsWaiting(total, bots) {
-  state.deck?.shell?.roster(bots);
+function rememberDeckBots(bots) { state.deck?.shell?.roster(bots); state.deckRoster = { workspace: state.me?.workspace, actor: state.me?.actor, bots }; }
+function setBotsWaiting(total) {
   if (total === state.botsWaiting) return;
   state.botsWaiting = total;
   if (state.me) navigation();
 }
 function botsScreen() {
   // The roster the screen already loads also feeds the rail badge, so the screen adds no second poll.
-  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => setBotsWaiting(waitingTotal(bots), bots) });
+  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => { rememberDeckBots(bots); setBotsWaiting(waitingTotal(bots)); } });
   const [path, query] = state.base.split("?");
   const create = new URLSearchParams(query).get("new") === "1";
   if (create) {
@@ -1113,8 +1126,8 @@ async function refresh({ background = false, events = [] } = {}) {
     const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : null;
     const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
-    state.boards = boards.boards; state.needs = needs || { count: 0 };
-    if (roster?.bots) { state.botsWaiting = waitingTotal(roster.bots); state.deck?.shell?.roster(roster.bots); }
+    state.boards = boards.boards; state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
+    if (roster?.bots) { rememberDeckBots(roster.bots); state.botsWaiting = waitingTotal(roster.bots); }
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
@@ -1956,7 +1969,7 @@ async function boot() {
   try { state.me = await boundedRequest(api, "/api/me"); setPeople(state.me.people); }
   catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
   if (!state.me) return;
-  shell(); void voice.load();
+  shell(); state.voiceReady = Promise.resolve(voice.load());
   if (!state.me) return;
   let moved = false;
   const params = new URLSearchParams(location.search);

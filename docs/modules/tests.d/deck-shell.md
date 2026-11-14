@@ -14,3 +14,5 @@
   after the Appearance and shell integrations.
   Workspace dialog shape and assignment-removal visual pins use the Capy
   dialog, raised surface, ink and border tokens; authority assertions remain.
+  Home/Today integration verifies the registered root and Today loaders, palette
+  hooks, live queue counts, rail links and composer-aware microphone placement.

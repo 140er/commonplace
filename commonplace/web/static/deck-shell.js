@@ -82,15 +82,15 @@ export function renderShellBar(options) {
 }
 export function renderShellTop(options) {
   const { hash = '', section, user = '', board = null } = options;
-  const label = SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/memory') ? 'Memory' : hash.startsWith('#/board') ? 'Board' : hash === '#/' ? 'Home' : 'Commonplace');
+  const label = SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/memory') ? 'Memory' : hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : 'Commonplace');
   return `<header class="m-top" data-deck="top"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}</a><b>${label}</b><span class="spacer"></span>${board?.slug ? `<button class="iconbtn" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Project settings">${icon('settings')}</button>` : ''}<button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button><button class="deck-phone-avatar" data-action="switch-workspace" aria-label="Account and workspace" data-deck-waiting="${waiting(options) > 0}">${e(initials(user))}</button></header>`;
 }
 export function renderShellTabs(options) {
-  const { sections, section, hash } = options, mic = hash !== '#/' && !options.hasComposer;
+  const { sections, section, hash } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
   return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}${mic ? micButton('deck-tab-mic') : ''}</nav>`;
 }
 const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
-const composerSelector = ':is(#content, #card-panel) :is(.today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
+const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
 
 export function createDeckShell({ root, api, context, on }) {
   let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '';
@@ -104,16 +104,16 @@ export function createDeckShell({ root, api, context, on }) {
       const ownMic = form.querySelector('[data-deck-shell-action="mic"]');
       const voiceMic = form.querySelector('[data-voice="mic"], [data-today="mic"], [data-bot-action="mic"]');
       if (voiceMic) ownMic?.remove();
-      else if (!ownMic) (form.querySelector('.cb-compose-bar') || form).insertAdjacentHTML('beforeend', micButton('deck-composer-mic'));
+      else if (!ownMic) (form.querySelector('.bh-toolbar, .cb-compose-bar') || form).insertAdjacentHTML('beforeend', micButton('deck-composer-mic'));
     }
     if (!tabs) return;
-    const show = globalThis.location?.hash !== '#/' && !form;
+    const show = !['#/', '#/home'].includes(globalThis.location?.hash) && !form;
     if (tabs.dataset.mic !== String(show)) tabs.dataset.mic = String(show);
     const mic = tabs.querySelector('[data-deck-shell-action="mic"]');
     if (show && !mic) tabs.insertAdjacentHTML('beforeend', micButton('deck-tab-mic'));
     if (!show && mic) mic.remove();
   }
-  if (root?.ownerDocument && globalThis.MutationObserver) new MutationObserver(chrome).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+  if (root?.ownerDocument && globalThis.MutationObserver) new MutationObserver(chrome).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'open'] });
   function paint() {
     const tree = root?.querySelector?.('[data-deck-bots]'), threads = root?.querySelector?.('[data-deck-threads]');
     if (tree && tree.innerHTML !== shellTrees(options())) tree.innerHTML = shellTrees(options());

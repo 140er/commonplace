@@ -5,6 +5,7 @@
 // only for what waits on you). Screens that exist only in Deck register in SCREENS.
 import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
+import { arrangeSettings, policyPresentation, selectSettings } from './deck-settings.js';
 import { createDeckAppearance } from './deck-appearance.js';
 import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, createDeckShell } from './deck-shell.js';
 
@@ -12,7 +13,8 @@ export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
 // mount returns { refresh?(context), stop?() }. A name without a loader is not offered in the bar.
 export const SCREENS = {
-  today: () => import('./deck-today.js'),
+  home: () => import('./deck-home.js'),
+  today: () => import('./deck-today-capy.js'),
   compute: () => import('./deck-workspace.js'),
   coworkers: () => import('./deck-workspace.js'),
 };
@@ -47,8 +49,8 @@ export function deckSection(hash = '') {
   return ['settings', 'rules', 'admin'].includes(name) ? 'settings' : '';
 }
 export const deckSections = (screens = SCREENS) => SECTIONS.filter(([id]) => id === 'bots' || id === 'settings' || screens[id]);
-/** Where "#/" lands: Today once that screen is registered, the bots until then. */
-export const deckHome = (screens = SCREENS) => screens.today ? '#/today' : '#/bots';
+/** Home is the undimmed hero; older screen registries keep their fallback. */
+export const deckHome = (screens = SCREENS) => screens.home ? '#/' : screens.today ? '#/today' : '#/bots';
 const here = () => { try { return globalThis.location?.hash || ''; } catch { return ''; } };
 
 // Keep the public render contract; the rail and phone chrome live in the slice module.
@@ -63,9 +65,9 @@ export function lookHTML(on) {
 }
 
 /** The workspace tools as one Settings section. The phone layout shows it, because a phone has no account menu. */
-export function toolsHTML({ can_admin = false } = {}) {
-  const row = (href, label) => `<a href="${href}">${label}</a>`;
-  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Needs me')}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules')}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
+export function toolsHTML({ needs = 0, rulesWaiting = 0, can_admin = false } = {}) {
+  const row = (href, label, n = 0) => `<a href="${href}">${label}${badge(n, 'waiting')}</a>`;
+  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Needs me', needs)}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules', rulesWaiting)}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
 }
 
 /** The shell's handle on Deck. Everything it needs comes in, so it runs without a browser.
@@ -74,7 +76,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
   const shell = createDeckShell({ root, api, context, on: () => deckOn(storage) });
   const appearance = createDeckAppearance({ root, context, on: () => deckOn(storage), doc, storage });
   let active = null;
-  const name = (base) => workspaceRoute(base)?.screen || /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
+  const name = (base) => ['#/', '#/home'].includes(base) ? 'home' : workspaceRoute(base)?.screen || /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
   const owns = (base) => typeof screens[name(base)] === 'function' && (deckOn(storage) || (!!workspaceRoute(base) && base !== '#/compute'));
   function leave() { active?.ui?.stop?.(); active = null; }
   async function show(base, { background = false, epoch = 0 } = {}) {
@@ -94,6 +96,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
       const { me, needs } = context() || {};
       box.insertAdjacentHTML('afterbegin', toolsHTML({ needs: needs?.count, can_admin: me?.can_admin }));
     }
+    if (deckOn(storage)) arrangeSettings(box, { owner: context()?.me?.role === 'owner' });
     if (!box.querySelector('#look')) box.insertAdjacentHTML('beforeend', lookHTML(deckOn(storage)));
     appearance.settings(box);
   }
@@ -103,7 +106,21 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     leave();
     reload();
   }
-  doc?.addEventListener?.('click', (event) => { if (event.target?.closest?.('[data-deck-action="toggle"]')) toggle(); });
+  doc?.addEventListener?.('click', (event) => {
+    if (event.target?.closest?.('[data-deck-action="toggle"]')) toggle();
+    const jump = event.target?.closest?.('[data-deck-setting]');
+    if (jump && deckOn(storage)) {
+      const target = root.querySelector(`#${jump.dataset.deckSetting}`);
+      const scroller = target?.closest?.('.settings');
+      if (scroller) {
+        const nav = scroller.querySelector('#deck-settings-nav');
+        scroller.scrollBy({ top: target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - (nav?.offsetHeight || 0) - 12 });
+        selectSettings(scroller, jump.dataset.deckSetting);
+      }
+      target?.setAttribute?.('tabindex', '-1');
+      target?.focus?.({ preventScroll: true });
+    }
+  });
   const drawn = (render) => (options = {}) => deckOn(storage) ? render({ ...shell.options(), ...options, screens }) : '';
-  return { appearance, shell, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
+  return { appearance, shell, policyPresentation: () => deckOn(storage) ? policyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
 }

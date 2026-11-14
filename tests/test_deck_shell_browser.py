@@ -64,7 +64,7 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         else "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
                     )
                     await page.wait_for_function(
-                        "document.querySelectorAll('.deck-tree-row').length === 1"
+                        "() => document.querySelectorAll('.deck-tree-row').length >= 1"
                     )
                     await page.evaluate("document.fonts.ready")
                     assert await page.evaluate("document.documentElement.scrollWidth") == width
@@ -105,6 +105,16 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                             "button", name="Create workspace", exact=True
                         ).is_visible()
                         await page.keyboard.press("Escape")
+                        await page.locator(".deck-brand-row .deck-brand").click()
+                        await page.locator(".bh-form textarea:enabled").wait_for(state="visible")
+                        assert await page.evaluate("location.hash") == "#/"
+                        assert (
+                            await page.locator(".deck-stage").get_attribute("data-dimmed")
+                            == "false"
+                        )
+                        await page.locator('.deck-links [data-nav="today"]').click()
+                        await page.locator(".bt-card").first.wait_for(state="visible")
+                        assert await page.evaluate("location.hash") == "#/today"
                         await page.locator(".deck-new-bot").click()
                         await page.wait_for_selector('dialog[open], [role="dialog"]')
                         await page.keyboard.press("Escape")
@@ -118,23 +128,24 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.locator('[data-deck-waiting="true"]').wait_for(state="visible")
                         tabs = page.locator('[data-deck="tabs"]')
                         assert await tabs.locator("a").count() == 4
-                        await page.wait_for_function(
-                            "() => document.querySelector('.today-compose:not([hidden])') && !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
+                        await tabs.locator('[data-deck-shell-action="mic"]').wait_for(
+                            state="visible"
                         )
-                        assert await page.locator(".today-compose .deck-composer-mic").is_visible()
-                        await page.locator(".today-compose").evaluate(
+                        await top.locator(".deck-brand").click()
+                        await page.locator(".bh-form textarea:enabled").wait_for(state="visible")
+                        await page.wait_for_function(
+                            "() => !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
+                        )
+                        assert await page.locator(".bh-form .deck-composer-mic").is_visible()
+                        await page.locator(".bh-form").evaluate(
                             "e => e.insertAdjacentHTML('beforeend', '<button type=button data-voice=mic aria-label=Record></button>')"
                         )
                         await page.wait_for_function(
-                            "() => !document.querySelector('.today-compose .deck-composer-mic')"
+                            "() => !document.querySelector('.bh-form .deck-composer-mic')"
                         )
-                        assert await page.locator(".today-compose [data-voice=mic]").count() == 1
-                        await page.locator(".today-compose [data-voice=mic]").evaluate(
-                            "e => e.remove()"
-                        )
-                        await page.locator(".today-compose .deck-composer-mic").wait_for(
-                            state="visible"
-                        )
+                        assert await page.locator(".bh-form [data-voice=mic]").count() == 1
+                        await page.locator(".bh-form [data-voice=mic]").evaluate("e => e.remove()")
+                        await page.locator(".bh-form .deck-composer-mic").wait_for(state="visible")
                         for entry in ["bots", "compute", "settings", "today"]:
                             await tabs.locator(f'[data-nav="{entry}"]').click()
                             await page.wait_for_function(
@@ -170,7 +181,7 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.goto(url + "#/today")
                         await page.locator('[data-deck="top"]').wait_for(state="visible")
                     if width == 390:
-                        await page.wait_for_selector(".today-question", state="visible")
+                        await page.wait_for_selector(".bt-card", state="visible")
                     else:
                         await page.wait_for_selector(".bots-list .cb-bot-row", state="visible")
                     if width == 390:
@@ -192,7 +203,9 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         }""")
                         await page.screenshot(path=str(output / "rail-states-fixture.png"))
                     if width == 390:
-                        await page.locator('.today-compose [data-deck-shell-action="mic"]').click()
+                        await page.locator(
+                            '[data-deck=tabs] [data-deck-shell-action="mic"]'
+                        ).click()
                         metrics = await page.evaluate("""() => {
                           const tabs=document.querySelector('#phone-tabs'), error=document.querySelector('#screen-error');
                           return {tabs:tabs?.getBoundingClientRect().toJSON(), tabsStyle:tabs?.getAttribute('style'), error:error?.textContent, errorHidden:error?.hidden, errorBox:error?.getBoundingClientRect().toJSON(), scrollY, height:innerHeight};
