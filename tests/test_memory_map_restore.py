@@ -10,6 +10,7 @@ import pytest
     "case",
     [
         "entry",
+        "deck_entry",
         "mount",
         "me_failure",
         "me_pending",

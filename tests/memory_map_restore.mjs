@@ -12,6 +12,7 @@ const paths = [];
 const graph = { nodes: [], links: [], themes: [], weeks: [] };
 const context = { mount, panel, mounted: 0, e: String, actor: String, cardId() {}, isBlocked() {}, URLSearchParams, AbortController, request() {}, globalThis: {},
   mountMap(root, data, open) { assert.equal(root, mount); assert.equal(data, graph); assert.equal(typeof open, 'function'); mounted++; return () => disposed++; },
+  queryHistory: () => ({ read: () => '', save() {} }), memoryStyles() {}, createMemoryImport() {}, renderDeckMemory() {}, savedMarkup() {}, rememberRoomCounts() {}, memoryRoom() {}, memoryDetails() {},
   api: async path => { paths.push(path); return path === "/api/me" ? { can_admin: canAdmin } : graph; }, boards: [{ slug: 'atlas', wing: 'project_atlas' }],
 };
 runInNewContext(source.replace(/^import .*;\n/gm, '').replaceAll('export ', '') + '\nglobalThis.memory = {createMemory, renderMemory};', context);
@@ -20,6 +21,9 @@ if (process.argv[2] === 'entry') {
   assert.match(renderMemory({}), /data-memory-action="map"/);
   const app = await readFile(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');
   assert.match(app.slice(app.indexOf('function spaceView()'), app.indexOf('function boardsView()')), /title\(board\?\.name[\s\S]*?href="#\/memory\?project=/, 'Space header must reach its Memory view');
+} else if (process.argv[2] === 'deck_entry') {
+  const { renderDeckMemory } = await import('../commonplace/web/static/deck-memory.js');
+  assert.match(renderDeckMemory({ boards: [], results: [], filters: {} }, { highlighted: String }), /<button type="button" class="btn memory-map-launch" data-memory-action="map">Map<\/button>/, 'Deck Memory must keep Map reachable');
 } else if (process.argv[2] === 'me_failure') {
   const ui = createMemory({ mount, panel, boards: context.boards, me: { can_admin: true },
     api: async path => { paths.push(path); if (path === '/api/me') throw new Error('identity unavailable'); return graph; },
