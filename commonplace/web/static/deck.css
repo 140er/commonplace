@@ -156,16 +156,10 @@
 :root[data-ui="deck"] .workbench-details .ctx-foot textarea { max-height: 120px; }
 :root[data-ui="deck"] .needs-me { height: auto; border-radius: 20px; overflow: hidden; }
 :root[data-ui="deck"] .needs-me .bar { border: 0; }
-/* Reuse the board's seg control, including its selected inversion and type. */
-:root[data-ui="deck"] .needs-me .seg { display: inline-flex; gap: 0; border: 1px solid var(--line-strong); border-radius: var(--r); overflow: hidden; background: var(--surface); }
-:root[data-ui="deck"] .needs-me .seg button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 0; background: none; color: var(--text-2); font-size: 13px; font-weight: 500; }
-:root[data-ui="deck"] .needs-me .seg button + button { border-left: 1px solid var(--line); }
-:root[data-ui="deck"] .needs-me .seg button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
+/* The Needs me filter is the board's seg control (seg.js); deck-board.css styles both in the Deck look. */
 @media (max-width: 699px) {
   :root[data-ui="deck"] .shell #content:has(> [data-needs-mount]) { padding-inline: 16px; }
   :root[data-ui="deck"] .needs-me .bar { padding: 12px 16px; }
-  :root[data-ui="deck"] .needs-me .seg { flex-wrap: nowrap; }
-  :root[data-ui="deck"] .needs-me .seg button { min-height: 44px; padding-inline: 8px; }
   :root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, select, textarea) { min-height: 44px; }
 }
 
