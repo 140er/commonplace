@@ -1,0 +1,3 @@
+### Compute status line from existing reads
+
+- Compute opens with a status line (running, waiting, stuck, last activity) and a job list. No backend was added: the counts come from the `agents.runs` part of `GET /api/topology/node` for each machine node recorded as a runner, and last activity from those runs plus the worker connection of the same read (owner view). Stuck means an unknown start outcome or a queued, leased or starting job older than thirty minutes; started jobs are never stuck by age. The enrollment fallback (no topology nodes) has no route that lists jobs for a machine, so it says running work is not reported instead of showing zeros. Gateways, Targets and Passive scopes moved behind an "Advanced" label with plain explanations.
