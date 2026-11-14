@@ -80,7 +80,7 @@ if (which === "add_flow" || which === "add_flow_classic") {
   assert.doesNotMatch(html, /<article class="card[^"]*is-selected[^"]*"[^>]*data-card="5"/, "The old selection is not highlighted any more");
   assert.equal(focused, 9); assert.equal(scrolled, 9);
   if (deck) {
-    assert.match(html, /<p class="deck-board-intro" role="status" data-board-added>Added “Pay rent” to Active\.<\/p>/, "The notice names the column the card is in");
+    assert.match(html, /<p class="deck-board-intro" role="status" data-board-added>Added “Pay rent” to Active \(Ready\)\.<\/p>/, "The notice names the column and the state the server gave the card");
     assert.match(html, /<section class="col" id="col-doing"[^>]*data-active="true"/, "The phone shows the column the card landed in");
     assert.match(html, /id="col-doing"[\s\S]*data-card="9"[\s\S]*id="col-review"/, "The card sits in that column");
   } else {

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from commonplace.boards.rest import BUSY_TEXT
 from commonplace.boards.service import BoardService
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._phase_b_helpers import seed, trusted_seat
@@ -228,7 +229,11 @@ def test_busy_routes_bounded_and_unchanged(hub, monkeypatch, operation):
             else {"version": before["version"], "blocked_by": []}
         )
     status, error = http(hub.port, method, path, token=token, body=body)
-    assert status == 409 and error == {"error": "busy", "code": "busy"}
+    # Status and code are the contract on every route. The card routes (#550) also say, in a plain
+    # sentence, that nothing went through; the orchestrator routes keep their bare reason.
+    assert status == 409 and error["code"] == "busy"
+    assert error["error"] == (BUSY_TEXT if operation in ("add", "update") else "busy")
+    assert set(error) == {"error", "code"}
     assert w.boards.task_show(a) == before
     with w.boards.store.connection() as conn:
         assert conn.execute("SELECT count(*) FROM tasks").fetchone()[0] == 1

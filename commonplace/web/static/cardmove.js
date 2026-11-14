@@ -14,10 +14,22 @@ const FROM = {
   review: { doing: 'doing', done: 'done' },
   done: { doing: 'todo' },
 };
-const NOTE = { todo: 'Start it', done: 'Reopen it' };
+// A person's move to Active only marks the card started: no run begins from it, except that typed work with
+// an assigned holder starts for that holder. Say which one, so the entry never promises a run it does not make.
+const startNote = (card) => (card.task_type && card.assignee ? 'Starts its assigned work' : 'Marks it as started');
+const NOTE = { done: 'Reopen it' };
+// The column a status asked for ends up in when the move works (a reopened card goes back to Active).
+const WANTED = { todo: 'doing', doing: 'doing', review: 'review', done: 'done' };
 export const BUSY = 'The workspace is busy for a moment. Nothing was lost; try the move again in a few seconds.';
 
-export const columnName = (card, me) => NAMES[boardGroup(card, me)];
+// The column and words come from the card the server answered with (null: not the queue read before the move).
+export const columnName = (card, me) => NAMES[boardGroup(card, me, null)];
+
+// What to tell the person after a move, from the card's real state, and plainly when it is not where they asked.
+export function moveNotice(card, me, asked) {
+  const got = boardGroup(card, me, null), wanted = WANTED[asked];
+  return wanted && wanted !== got ? `Moved. It now shows in ${NAMES[got]}, not ${NAMES[wanted]}.` : `Moved to ${NAMES[got]}.`;
+}
 
 export function moveOptions(card, me) {
   const here = boardGroup(card, me);
@@ -27,7 +39,7 @@ export function moveOptions(card, me) {
     const status = locked ? undefined : FROM[card.status]?.[column];
     const current = !status && here === column;
     const base = { column, name: NAMES[column], status, current };
-    if (status) return { ...base, note: card.status === 'todo' && column === 'doing' ? NOTE.todo : card.status === 'done' ? NOTE.done : '' };
+    if (status) return { ...base, note: card.status === 'todo' && column === 'doing' ? startNote(card) : card.status === 'done' ? NOTE.done : '' };
     return { ...base, disabled: true, note: current ? 'now here' : locked || 'Move it to Active first.' };
   });
 }

@@ -67,6 +67,14 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         buttonGap: groups.length ? rect(actions).top - rect(groups.at(-1)).bottom : null,
                         gutter: rect(el).left,
                         titleSize: style(el.querySelector('#memory-import-title')).fontSize,
+                        titleShown: (() => {
+                            const title = el.querySelector('#memory-import-title');
+                            const box = rect(title), dialog = rect(el.closest('dialog'));
+                            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                            return box.height > 0 && box.top > dialog.top && box.bottom < dialog.bottom &&
+                                box.left >= dialog.left && box.right <= dialog.right &&
+                                !!hit && title.contains(hit);
+                        })(),
                         ghostLeft: el.querySelector('.ghost') ? rect(el.querySelector('.ghost')).left : null,
                         ghostTop: el.querySelector('.ghost') ? rect(el.querySelector('.ghost')).top : null,
                         firstButtonTop: actions ? rect(actions.firstElementChild).top : null,
@@ -115,6 +123,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         json.dumps(metrics, indent=2) + "\n"
                     )
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                assert metrics["titleShown"] is True
                 assert metrics["titleSize"] == ("24px" if viewport[0] == 390 else "17px")
 
             async def choose():
@@ -279,6 +288,68 @@ def test_member_can_choose_and_import_without_private_scope(surface):
                 await page.click('[data-import-action="confirm"]')
                 await page.wait_for_selector('[data-import-action="close"]')
                 assert "Import complete." in await page.locator(".memory-import").inner_text()
+            finally:
+                await browser.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("height", [667, 844])
+def test_phone_import_title_stays_inside_the_visible_sheet(surface, height):
+    pytest.importorskip("playwright.async_api", reason="optional browser regression dependency")
+    from playwright.async_api import async_playwright
+
+    async def run():
+        async with async_playwright() as runtime:
+            browser = await runtime.chromium.launch()
+            try:
+                origin = f"http://127.0.0.1:{surface.port}"
+                context = await browser.new_context(
+                    viewport={"width": 390, "height": height}, device_scale_factor=2
+                )
+                await context.add_cookies(
+                    [{"name": sessions.COOKIE, "value": surface.cookie, "url": origin}]
+                )
+                page = await context.new_page()
+
+                async def title_box(stage):
+                    await page.evaluate("document.fonts.ready")
+                    box = await page.evaluate("""() => {
+                        const sheet = document.querySelector('.deck-memory-dialog');
+                        const title = sheet.querySelector('#memory-import-title');
+                        const s = sheet.getBoundingClientRect(), t = title.getBoundingClientRect();
+                        return {sheetTop: s.top, sheetBottom: s.bottom, titleTop: t.top,
+                            titleBottom: t.bottom, titleHeight: t.height, scrollTop: sheet.scrollTop,
+                            scrollHeight: sheet.scrollHeight, clientHeight: sheet.clientHeight,
+                            text: title.textContent, viewport: innerHeight};
+                    }""")
+                    assert box["titleHeight"] > 0, (stage, box)
+                    assert box["titleTop"] >= box["sheetTop"], (stage, box)
+                    assert box["titleBottom"] <= box["sheetBottom"], (stage, box)
+                    assert box["sheetTop"] >= 0 and box["titleTop"] > 0, (stage, box)
+
+                await page.goto(origin + "/app/?ui=deck#/memory")
+                await page.wait_for_selector('[data-memory-action="import"]', timeout=15000)
+                await page.click('[data-memory-action="import"]')
+                await title_box("choose")
+                body = file_body("chatgpt")
+                await page.select_option('[data-import-choose] [name="format"]', "0")
+                await page.set_input_files(
+                    '[name="file"]',
+                    {
+                        "name": "conversation.json",
+                        "mimeType": "application/json",
+                        "buffer": body["transcript"].encode("utf-8"),
+                    },
+                )
+                await page.click('[data-import-choose] button[type="submit"]')
+                await page.wait_for_selector('[data-import-action="confirm"]', timeout=10000)
+                await title_box("preview")
+                await page.check("[data-import-consent]")
+                await page.locator('[data-import-action="confirm"]').scroll_into_view_if_needed()
+                await page.click('[data-import-action="confirm"]')
+                await page.wait_for_selector('[data-import-action="close"]', timeout=10000)
+                await title_box("report")
             finally:
                 await browser.close()
 

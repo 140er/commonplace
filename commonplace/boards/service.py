@@ -424,7 +424,8 @@ def needs_me(
                 or own_ask
                 or (ask_owner is not None and ask_owner(row) == f"user:{principal.user_id}")
             )
-            if row["status"] == "review" and addressed:
+            # A review the person moved themself (nobody asked) has no decision to wait on.
+            if row["status"] == "review" and addressed and row["review_kind"] != "moved":
                 kind = (
                     "done_review"
                     if row["review_kind"] == "completion" or row["ask"] == "Done?"

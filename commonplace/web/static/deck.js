@@ -59,7 +59,7 @@ export const deckHome = (screens = SCREENS) => screens.home ? '#/' : screens.tod
 const here = () => { try { return globalThis.location?.hash || ''; } catch { return ''; } };
 
 // Keep the public render contract; the rail and phone chrome live in the slice module.
-const shellOptions = (options = {}) => ({ ...options, hash: options.hash ?? here(), sections: deckSections(options.screens || SCREENS), section: deckSection(options.hash ?? here()) });
+const shellOptions = (options = {}) => ({ ...options, hash: options.hash ?? here(), sections: deckSections(options.screens || SCREENS), section: deckSection(options.hash ?? here()), homeOn: !!(options.screens || SCREENS).home });
 export const renderDeckBar = options => renderShellBar(shellOptions(options));
 export const renderDeckTop = options => renderShellTop(shellOptions(options));
 export const renderDeckTabs = options => renderShellTabs(shellOptions(options));

@@ -52,6 +52,13 @@ def test_a_person_moves_a_card_to_review_without_asking_anything(hub, fresh):
     assert moved["need"] != "you"
 
 
+def test_a_card_a_person_moved_to_review_is_not_in_the_needs_you_queue(hub, fresh):
+    number = card_in(hub, fresh, "review")
+    queue = fresh.owner.needs_me()
+    listed = {c["number"] for bucket in queue.values() if isinstance(bucket, list) for c in bucket}
+    assert number not in listed
+
+
 @pytest.mark.parametrize("target", ["todo", "doing", "done"])
 def test_a_person_can_move_on_from_a_review_they_moved(hub, fresh, target):
     number = card_in(hub, fresh, "review")

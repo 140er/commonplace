@@ -20,6 +20,8 @@ REDS = [
     "review",
     "stale",
     "deck",
+    "notices",
+    "closesAtOnce",
     "proposal",
 ]
 
