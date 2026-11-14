@@ -675,8 +675,8 @@ def _snapshot(ctx, st, board, role):
 
 _FIX_TRUST = (
     "a workspace owner trusts the seat and allows its starts in Project settings > "
-    "Orchestrator start permissions > Trust and allow starts (needs workspace "
-    "orchestration on; REST: POST /api/projects/{board}/orchestrator/trust)"
+    "Coworker start permissions > Trust and allow starts (needs Coworker turned on "
+    "for the workspace; REST: POST /api/projects/{board}/orchestrator/trust)"
 )
 _FIX_CONFIG = (
     "a workspace owner proposes a config with a [runner] table (machine, project, "
