@@ -22,7 +22,7 @@ NOT_YOURS_TEXT = (
     "Needs-me questions."
 )
 TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
-AGENT_TEXT = "Agent, runner and orchestrator connections cannot answer Needs-me questions."
+AGENT_TEXT = "Agent, runner and Coworker connections cannot answer Needs-me questions."
 INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
 OAUTH_GRANT_TEXT = "An OAuth app gets this only through a fresh sign-in consent."
 AUDIT_ACTION = "card.decide.delegated"

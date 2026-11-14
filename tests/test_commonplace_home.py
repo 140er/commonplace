@@ -104,6 +104,10 @@ def test_owner_origin_survives_shell_refresh():
     _render("origin_shell")
 
 
+def test_closed_needs_panel_stays_closed_on_refresh():
+    _render("closed_panel")
+
+
 def test_needs_actions_behaviour():
     node = shutil.which("node")
     if not node:

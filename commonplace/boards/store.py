@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from commonplace.admission import GATE
+from commonplace.db_busy import BUSY_TIMEOUT_S, begin_immediate
 from commonplace.extensions import ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
@@ -63,6 +64,26 @@ CREATE TABLE IF NOT EXISTS card_splits (
  state TEXT NOT NULL CHECK(state IN ('split','kept')),
  by TEXT NOT NULL, at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chat_task_origins (
+ actor TEXT NOT NULL,
+ origin_key TEXT NOT NULL,
+ request_digest TEXT NOT NULL,
+ task_id INTEGER NOT NULL REFERENCES tasks(id),
+ PRIMARY KEY(actor, origin_key)
+);
+"""
+
+# One row while a card is snoozed (``commonplace.snooze``): until a time (UTC stamp) or until
+# another card is done. Waking deletes the row, so a wake happens once.
+SNOOZE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS card_snoozes (
+ task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+ until TEXT, timezone TEXT,
+ after_card INTEGER REFERENCES tasks(id),
+ by TEXT NOT NULL, at TEXT NOT NULL,
+ CHECK ((until IS NULL) != (after_card IS NULL))
+);
+CREATE INDEX IF NOT EXISTS card_snoozes_due ON card_snoozes(until);
 """
 
 
@@ -79,6 +100,7 @@ def active_blockers(conn, number):
         dict(row)
         for row in conn.execute(
             "SELECT t.id AS number,t.title FROM task_blockers b JOIN tasks t ON t.id=b.blocker_id "
+            "JOIN tasks source ON source.id=b.task_id AND source.board_id=t.board_id "
             "WHERE b.task_id=? AND t.status!='done' ORDER BY t.id",
             (number,),
         )
@@ -394,7 +416,7 @@ def expire_claims(conn, board_id):
 # A replaced file or any DDL from elsewhere changes the identity and reruns the migration.
 _MIGRATED: dict[str, tuple] = {}
 
-BUSY_TIMEOUT = 10
+BUSY_TIMEOUT = BUSY_TIMEOUT_S
 PENDING_PR_REPO = "(pr_repo IS NULL OR pr_repo='') AND pr_url IS NOT NULL AND pr_url!=''"
 
 
@@ -432,6 +454,7 @@ class BoardStore:
                 + BLOCKERS_SCHEMA
                 + LIFECYCLE_SCHEMA
                 + GOALS_SCHEMA
+                + SNOOZE_SCHEMA
             )
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -528,6 +551,16 @@ class BoardStore:
 
     @contextmanager
     def connection(self):
+        from commonplace.compute.fence import _attach_connection, _mutation
+
+        # Acquire before SQLite and before any callback into ControlDB._lock.
+        with _mutation(self.path):
+            with self._connection() as conn:
+                _attach_connection(conn, self.path, "boards")
+                yield conn
+
+    @contextmanager
+    def _connection(self):
         target = self.path if self.create else Path(self.path).resolve().as_uri() + "?mode=rw"
         with GATE.creating(self.path):
             conn = connect(
@@ -546,7 +579,7 @@ class BoardStore:
     @contextmanager
     def transaction(self):
         with self.connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
                 yield conn
                 conn.commit()

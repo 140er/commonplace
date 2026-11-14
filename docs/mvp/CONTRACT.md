@@ -44,10 +44,14 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 | Tool | Args | Notes |
 |---|---|---|
 | `board_list` | — | |
+| `space_list` | — | same operation as `board_list` |
 | `board_add` | `slug`, `name?`, `wing?`, `repo?` | trusted_only, all profiles |
+| `space_add` | `slug`, `name?`, `wing?`, `repo?` | same operation and authority as `board_add` |
+| `space_set` | `space`, `coordinator` | same operation and authority as `board_set` |
+| `space_own_wing` | `space` | same operation and authority as `board_own_wing` |
 | `board_set` | `board`, `coordinator` (connection or null) | standard/full, owner_only, trusted_only; active PAT agent with chat access; warns without a matching active webhook |
-| `space_read` | `board`, `after?` or `last?` (1–100), `before?` | standard/full; board wing + memory:read; JSON with chronological verbatim messages, cursor, oldest and has_more |
-| `space_post` | `board`, `text` | standard/full, trusted_only; board read/write wing + memory:write; append-only, verbatim |
+| `space_read` | `space` (or legacy `board`), `after?` or `last?` (1–100), `before?` | standard/full; board wing + memory:read; JSON with chronological verbatim messages, cursor, oldest and has_more |
+| `space_post` | `space` (or legacy `board`), `text` | standard/full, trusted_only; board read/write wing + memory:write; append-only, verbatim |
 | `task_list` | `board?`, `status?`, `mine?` | |
 | `task_heartbeat` | `task` | holder-only claim renewal, including after expiry |
 | `task_approve` | `task`, `approve?`, `version?`, `reason?`, `escalate?` | direct parent, top-level agent, board coordinator or owner decides proposals; direct parent, creator-parent, board coordinator or owner decides plan reviews; agents give a reason or escalate |
@@ -78,7 +82,7 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
  "position": 1.0, "message_id": null}
 ```
 
-Events (via `events.emit`, subject `#<n>`): `card.created`, `card.updated`, `card.moved`, `card.commented`, `card.claimed`, `card.expired`, `card.handoff`, `card.review_needed` (a card enters review; `data.ask_to`), `card.decided`. `data` = `{"board","number","title","status","from","to","assignee","ask_to","actor"}` as applicable.
+Events (via `events.emit`, subject `#<n>`): `card.created`, `card.updated`, `card.moved`, `card.commented`, `card.claimed`, `card.expired`, `card.snoozed`, `card.woke`, `card.handoff`, `card.review_needed` (a card enters review; `data.ask_to`), `card.decided`. `data` = `{"board","number","title","status","from","to","assignee","ask_to","actor"}` as applicable.
 
 REST (people via cookie, agents via Bearer; same service, same rules):
 
@@ -202,7 +206,9 @@ CSP `form-action` and shows that same escaped origin as the code destination. Lo
 and generic HTML/error pages remain self-only. Strict parsed DNS
 host and numeric-port validation, including refusal of all IPv6 literals, rejects unsafe new or legacy redirect URIs
 through the existing invalid-redirect path (Chromium ignores IPv6 CSP host-sources); HTTPS/loopback HTTP schemes and
-exact registered-URI matching remain unchanged. HTTPS numeric/`0x`-hex final labels
+exact registered-URI matching remain unchanged, with one exception: the exact private-use redirect
+`cmmn://auth/callback` of the native app (RFC 8252 section 7.1; no other scheme, path or query). Its consent
+CSP `form-action` carries the scheme source `cmmn:` and the code destination shows the full redirect. HTTPS numeric/`0x`-hex final labels
 require canonical dotted-quad IPv4. Registered-but-invalid redirects explicitly
 request re-registration; missing registrations keep their separate error. Live
 redirect registrations must be inventoried before deploy; this inventory is not
@@ -268,8 +274,33 @@ PATCH/DELETE and item POST/PATCH/DELETE are 405 `method_not_allowed` with
 An Idempotency-Key or include_deleted query is rejected with 400
 `unsupported_idempotency` or `unsupported_include_deleted`.
 
-Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
-new-user migration and desktop synchronization are deferred.
+#### Space cards and chat
+
+`GET`/`POST /api/spaces/<slug>/cards` and `GET`/`POST /api/spaces/<slug>/chat` are
+adapters over the board card and chat operations of one exact Space. They run the
+same service calls as `/api/boards/<slug>/cards` and `/chat`, so card payloads,
+authority, verbatim chat and rules freshness are unchanged. Differences are the
+canonical vocabulary and identity: the slug must match an active, readable Space
+exactly (a repo reference or a sole visible board is not accepted; otherwise 404
+`space_not_found`); chat reads name the Space as `space` instead of `board`; a body
+`space` or `board` must equal the path slug; a body `rules_seq`, an unknown field or
+invalid JSON is 400 `invalid_arguments`; freshness comes only from
+`Commonplace-Rules-Seq`. Non-person callers must pass the `task_list`/`task_add`
+or `space_read`/`space_post` tool gate. Other methods are 405 with `Allow: GET, POST`
+and other subpaths are 404 `not_found`.
+
+#### MCP names
+
+`space_list`, `space_add`, `space_set` and `space_own_wing` run the `board_list`,
+`board_add`, `board_set` and `board_own_wing` operations with a `space` argument; the
+board names remain. `space_read` and `space_post` accept `space` or the legacy
+`board`; naming two different spaces, or none, is refused. A connection that lists
+either name of a pair is granted both, so an alias never widens authority. Scope,
+trust, owner and profile rules, rules freshness and legacy output are unchanged.
+
+Rename, archive, versions/retries/tombstones, settings and orchestrator adapters,
+the `space` argument on card tools, UI wording, new-user migration and desktop
+synchronization are deferred.
 
 ## Instance index figures (#284)
 

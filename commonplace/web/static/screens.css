@@ -78,6 +78,34 @@
 
 /* Admin reuses the shell's settings surfaces; tables become labeled rows on phones. */
 .admin { max-width: 100%; padding: 16px 20px; overflow-wrap: anywhere; }
+.instance-admin { max-width: 100%; padding: 16px 20px; overflow-wrap: anywhere; }
+/* Two equal columns and one 20px gutter fill the existing content pane. */
+.instance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.instance-admin .settings-section { min-width: 0; margin: 0; padding: 12px 0; }
+.instance-admin [data-instance-area="audit"] { grid-column: 1 / -1; }
+.instance-admin h2 { font-size: 18px; margin: 0 0 12px; }
+.instance-admin h3 { font-size: 14px; margin: 16px 0 8px; }
+.instance-admin p { margin: 8px 0; }
+.instance-admin form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-bottom: 12px; }
+.instance-admin label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
+.instance-admin input, .instance-admin select { max-width: 100%; min-height: 36px; }
+.instance-admin form input { width: 140px; }
+.instance-admin button { min-height: 36px; margin: 4px 8px 4px 0; }
+.instance-admin .quiet { color: var(--muted); font-size: 12px; }
+.instance-table { overflow-x: auto; }
+.instance-admin table { width: 100%; font-size: 13px; border-collapse: collapse; }
+.instance-admin td, .instance-admin th { padding: 8px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.instance-admin th { font-weight: 500; color: var(--muted); }
+.instance-admin td { border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+@media (max-width: 1000px) { .instance-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) {
+  .instance-admin { padding: 16px; }
+  .instance-admin table, .instance-admin tbody, .instance-admin tr, .instance-admin td { display: block; }
+  .instance-admin thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .instance-admin tr { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .instance-admin td { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; padding: 4px 0; border: 0; }
+  .instance-admin td::before { content: attr(data-label); color: var(--muted); }
+}
 .admin .settings-section { padding: 16px; border-bottom: 1px solid var(--line); min-width: 0; }
 .admin h2 { font-size: 16px; margin: 0 0 12px; }
 .admin p { margin: 8px 0; }

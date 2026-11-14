@@ -14,7 +14,7 @@ from commonplace.http_util import (
 )
 from commonplace.web.agents import _read_wings, grantable_wings
 
-from . import grant_scope, jobs, registry
+from . import grant_scope, install_receipts, jobs, registry, setup_api
 
 LOG = logging.getLogger(__name__)
 MAX_REPORT_BYTES = 20 * 1024
@@ -126,6 +126,11 @@ def _wing_picker(gateway, h):
         send_json(h, 503, {"error": "workspace wings are unavailable; try again"})
 
 
+def _dispatch(gateway, h, route):
+    if not setup_api.owner_dispatch(gateway, h):
+        route(h)
+
+
 def register(gateway):
     def manage(h):
         owner = require_principal(gateway, h)
@@ -142,7 +147,8 @@ def register(gateway):
                 200,
                 {
                     "machines": [
-                        _view(row) for row in registry.machines(gateway.db, owner.workspace_id)
+                        {**_view(row), **install_receipts.owner_view(gateway.db, row)}
+                        for row in registry.machines(gateway.db, owner.workspace_id)
                     ]
                 },
             )
@@ -169,6 +175,8 @@ def register(gateway):
                 result = registry.enroll(gateway.db, owner, _wings(gateway, owner, data))
                 status = 201
             elif method == "PATCH":
+                # Ownership first: wing names are only checked for a machine that is theirs.
+                registry.require_active(gateway.db, owner, parts[0])
                 result = _view(
                     registry.patch(
                         gateway.db,
@@ -204,6 +212,7 @@ def register(gateway):
                 except Exception as exc:
                     log_failure(LOG, "Runner revoke cleanup deferred", exc)
             elif parts[1] == "attest":
+                setup_api.check_final_write(gateway, h, owner, data)
                 result = registry.attest(gateway.db, owner, parts[0], data)
                 status = 200
             else:
@@ -235,4 +244,4 @@ def register(gateway):
         gateway.add_route(method, "/api/runners", manage)
     gateway.add_route("GET", "/api/runners/wings", lambda h: _wing_picker(gateway, h))
     for method in ("PATCH", "POST", "DELETE"):
-        gateway.add_prefix_route(method, "/api/runners/", manage)
+        gateway.add_prefix_route(method, "/api/runners/", lambda h: _dispatch(gateway, h, manage))

@@ -19,7 +19,7 @@ test("runner answer labels and escaping", async () => {
   assert.equal(ui.CHAT_COPY.runnerError, "Last error: {code}");
   const html = ui.chatHTML(page("runner:claude/claude-haiku-5-5"), { user: "owner" }, e);
   assert.match(html, /via your claude login · claude-haiku-5-5/);
-  assert.doesNotMatch(html, /Orchestrator/);
+  assert.doesNotMatch(html, /<b>[^<]*Coworker<\/b>/, "quick replies never use the Coworker author label");
   const escaped = ui.chatHTML(page("runner:claude/<b>"), { user: "owner" }, e);
   assert.match(escaped, /&lt;b&gt;/);
   assert.doesNotMatch(escaped, /login · <b>/);
@@ -28,7 +28,7 @@ test("runner answer labels and escaping", async () => {
   assert.equal(tags(escaped), tags(ui.chatHTML(page("runner:claude/plain"), { user: "owner" }, e)));
   const board = { slug: "atlas", name: "Atlas", coordinator: "conn:iris" };
   const agent = { ...page("plain-model"), project: board, messages: [...page("plain-model").messages, { id: 2, actor: "conn:iris", at: "2026-01-01T00:01:00Z", text: "On it" }] };
-  assert.match(ui.chatHTML(agent, { user: "owner" }, e), /<b>Atlas orchestrator<\/b>/);
+  assert.match(ui.chatHTML(agent, { user: "owner" }, e), /<b>Atlas Coworker<\/b>/);
 });
 
 test("runner status, daily use, errors and basic fallback", async () => {

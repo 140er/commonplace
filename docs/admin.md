@@ -2,9 +2,9 @@
 
 Sign in as the current workspace's owner and choose **Account → Admin**, or choose
 **Admin** in the command palette on a phone. The direct route is `/app/#/admin`.
-The page shows the active workspace's members, connections, runtime configuration, effective limits and cards needing attention. It adds no
-workspace switching, global account directory, invitation, token reveal or editing
-form; the one write is the owner's machine requester list (see below). **Manage agents and workspace settings** opens the existing Settings page.
+The page shows the active workspace's members, connections, runtime configuration, effective limits and cards needing attention. Its sections add no
+workspace switching, global account directory, token reveal or editing
+form; the one write is the owner's machine requester list (see below). Invites live in their own block (see [Invite people](#invite-people-block)). **Manage agents and workspace settings** opens the existing Settings page.
 
 ## Authority
 
@@ -92,16 +92,16 @@ Source failures return safe 503 constants: `Users unavailable; try again` or
 `runtime` has independent `orchestration`, `orchestrators` and `machines` subresults.
 Each has `state: "ready"` or `state: "error"` with a safe error constant. A ready
 switch has `enabled`; ready lists have `items`, `count`, `has_more`, `next_cursor`.
-A failed machines source preserves the switch and orchestrator observations.
+A failed machines source preserves the switch and Coworker observations.
 Older stores without the optional coordinator or heartbeat columns are read as
 not configured/unknown without running migrations. Cursors accept slugs up to 100 characters.
 
-Orchestrators include `id`, `slug`, `name`, `coordinator`, `seat_name`, `source`,
+Coworkers include `id`, `slug`, `name`, `coordinator`, `seat_name`, `source`,
 `connected`, `activity`, `last_used_at`, `wakeable`. Only unarchived projects appear.
 A configured coordinator takes precedence over a stored seat; an absent seat is
 `not_configured` and a seat without a coordinator is configuration only. Current membership,
 user state, credential expiry/revocation and runner kind determine connection
-visibility. Machine credentials never become orchestrators. Wakeability means
+visibility. Machine credentials never become Coworkers. Wakeability means
 current subscription eligibility for `space_message`, with wildcard/exact-board
 filtering and current policy/wing access. It sends no webhook or liveness probe.
 
@@ -162,7 +162,7 @@ never contacted. Attestation never proves a live or verified runner.
 `workspace_limit_source:"not_configured"`, `projects`, `machines`, `pagination`.
 Each project includes `id`, `slug`, `name`, `configured_max_agents`,
 `accepted_config_max_agents`, `effective_max_agents`, `used`, `counting_mode`.
-With orchestration off, distinct doing connection assignees count and a null cap
+With Coworker management off, distinct doing connection assignees count and a null cap
 means unlimited. With it on, existing slot accounting deduplicates cards, ordinary
 agents, queued/leased/starting/uncertain jobs and recent started jobs. The effective
 cap uses accepted runner configuration and the project cap, or default 3. Proposals
@@ -214,8 +214,8 @@ existing stores produce safe source errors, never zero usage. Missing board stor
 produce empty inventories; missing runner stores/tables provide empty job/config
 inputs without creation. Missing settings mean disabled; missing subscription tables
 mean not wakeable. Safe whole-section errors are `Limits unavailable; try again`
-and `Stuck unavailable; try again`; runtime suberrors use `Orchestration`,
-`Orchestrators`, or `Machines` followed by `unavailable; try again`.
+and `Stuck unavailable; try again`; runtime suberrors use `Coworker management`,
+`Coworkers`, or `Machines` followed by `unavailable; try again`.
 
 ## Loading and source bounds
 
@@ -247,6 +247,15 @@ unattempted siblings explicit errors. SQLite may take bounded ordinary read lock
 
 Deployment/health and backup receipts are read-only operational sections. No deploy,
 backup-run, restore, runner control or new enforcement endpoint is present.
+
+## Invite people block
+
+Above the runner block, the Admin page hosts an **Invite people** block for the
+workspace owner. It does not use the `/api/admin` dispatcher; it calls the owner-only
+`/api/invites` routes to make an invite link, list the workspace's invites and revoke an
+open one. A new link is shown once, in a panel the page empties on dismissal, navigation,
+sign-out or session expiry; it is never stored, logged or redrawn. See
+[Workspace invites](invites.md) for the rules and what a member can reach.
 
 ## Runner machines block
 
@@ -321,3 +330,5 @@ and the [deployment guide](../deploy/commonplace/DEPLOY.md#optional-backup-statu
 Receipt timestamps require `YYYY-MM-DDTHH:MM:SSZ`, optionally with one to six
 fractional-second digits before `Z`; shortened or space-separated forms are rejected.
 A parent receipts refresh supersedes older per-mode retries.
+
+The separate [Instance console](instance-admin.md) shows cross-workspace management metadata to signed-in instance admins, including members. It grants no content access.

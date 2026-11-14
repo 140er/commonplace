@@ -1,3 +1,4 @@
+import { deckPaletteItems } from './deck-home-palette.js';
 import { mountWorkspaceOrchestration } from "./projects.js";
 import { mountProjectPanel } from "./projectpanel.js";
 import { mountAgentSchedules } from "./agent-schedules.js";
@@ -15,14 +16,19 @@ import { childProgress } from "./children.js";
 import { agentsView, createAgent, agentAction, changeAgentClient, clearAgentSecret } from "./agents.js";
 import { createAdmin, boundedRequest } from "./admin.js";
 import { createRunnerBlock } from "./adminrunners.js";
+import { createInstanceAdmin } from "./instance-admin.js";
+import { createInviteBlock, openWorkspaces } from "./invites.js";
 import { createConsole } from "./console.js";
 import { createBots, waitingTotal } from "./bots.js";
+import { createTopologyMap } from "./topology-map.js";
+import { discoveryAction } from "./map-discovery.js";
 import { createChat } from "./chat.js";
 import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, roveTo } from "./board.js";
-import { createDetails } from "./details.js";
+import { drawerCopy } from "./deck-board.js";
+import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
@@ -33,6 +39,7 @@ import { createPalette } from "./palette.js";
 import { mountOnboarding } from "./onboarding.js";
 import { createCardMenu } from "./cardmenu.js";
 import { applyDeck, createDeck } from "./deck.js";
+import { createNeedLedger } from "./deck-home-today.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
 const shellStyles = `
     .shell #content { flex:1; min-height:0; overflow:auto; }
@@ -78,11 +85,17 @@ const state = {
 // The opt-in Deck look: its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
-  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, go: (hash) => { location.hash = hash; } }),
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => shellMenu(), singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
   reload: () => { if (state.me) void route(); },
 });
-let adminUI = null;
-let consoleUI = null, botsUI = null, chatUI = null, detailsUI = null, boardDispose = null;
+let adminUI = null, instanceAdminUI = null;
+let consoleUI = null, botsUI = null, topologyUI = null, chatUI = null, detailsUI = null, boardDispose = null;
+const deckNeedsLedger = createNeedLedger();
+function deckNeedsChanged(card) {
+  deckNeedsLedger.settle(card, state.me);
+  state.needs = deckNeedsLedger.apply(state.needs, state.me);
+  navigation();
+}
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
@@ -240,6 +253,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 async function signin(code = null) {
+  state.deck?.appearance?.stop();
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
   clearWorkbenchChat();
@@ -269,6 +283,7 @@ function currentBoard() {
 }
 function boardPreference() { return `cmmn.board.last.${state.me?.workspace || ""}`; }
 function closeCardPanel() {
+  if (state.deck?.on() && phone() && history.state?.deckProjectSettings) { history.back(); return; }
   detailsUI?.stop(); detailsUI = null;
   if (state.route.startsWith("#/card/")) location.hash = state.base;
   else root.querySelector("#card-panel").hidden = true;
@@ -298,7 +313,9 @@ function paletteUI() {
 function shortcutsView() { paletteUI().shortcuts(); }
 function shellMenu() {
   const board = currentBoard(), cards = boardCards().filter((card) => !card.board || card.board === board?.slug);
-  paletteUI().open({ can_admin: state.me?.can_admin === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
+  const deck = document.documentElement.dataset.ui === "deck", roster = state.deckRoster;
+  const bots = roster?.workspace === state.me?.workspace && roster?.actor === state.me?.actor ? roster.bots : [];
+  paletteUI().open({ deck, ...(deck ? { items: deckPaletteItems({ board, bots }) } : {}), can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
 }
 async function paletteCommand(item) {
   const action = item.action;
@@ -308,6 +325,7 @@ async function paletteCommand(item) {
     if (target && location.hash === target) void state.workbenchChat?.dock.open(); else if (target) location.hash = target;
   } else if (action === "new-board") openOnboarding();
   else if (action === "coordinator" || action === "logout") shellAction(action, item.board);
+  else if (action === "workspaces") openWorkspaces({ api, e, onError: showError });
   else if (action === "move-card" || action === "edit-card") { state.selected = item.number; openSelectedCard(action); }
   else if (action === "copy-card-link") {
     try { await navigator.clipboard.writeText(new URL(`${location.pathname}${item.href}`, location.origin).href); }
@@ -359,7 +377,7 @@ function shell() {
     if (layout.classList.contains("chat-open") || layout.classList.contains("ctx-pushed")) return;
     // Project settings are a page from 700 px up (10), never a dimmed sheet; on a phone they are the m13 sheet.
     const page = panel.querySelector("[data-project-settings]") && !matchMedia("(max-width:699px)").matches;
-    const open = !panel.hidden, modal = open && narrow.matches && !page;
+    const open = !panel.hidden, modal = open && (narrow.matches || (state.deck?.on() && state.route.startsWith("#/card/"))) && !page;
     root.querySelector("#details-btn")?.setAttribute("aria-expanded", String(open));
     if (open && !wasOpen) opener = document.activeElement;
     layout.classList.toggle("two", !open); layout.classList.toggle("panel-open", open);
@@ -375,7 +393,7 @@ function shell() {
   observer.observe(panel, { attributes:true, attributeFilter:["hidden"] });
   narrow.addEventListener("change", sync);
   panel.addEventListener("keydown", (event) => {
-    if (event.key !== "Tab" || !narrow.matches) return;
+    if (event.key !== "Tab" || !(narrow.matches || (state.deck?.on() && state.route.startsWith("#/card/")))) return;
     const items = [...panel.querySelectorAll('button:not(:disabled),a[href],input,textarea,select,[tabindex="0"]')].filter((el) => el.getClientRects().length);
     const index = items.indexOf(document.activeElement);
     if (!items.length) { event.preventDefault(); panel.focus(); }
@@ -392,27 +410,30 @@ function navigation() {
   if (!boardNav) return;
   const board = currentBoard();
   // Rules, Console, Settings, Decide and Projects are their own pages: they keep their heading on a phone.
-  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
+  const view = state.base === "#/needs" || state.base === "#/" ? "needs" : state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : state.base === "#/compute-map" ? "map" : state.base.startsWith("#/console") ? "console" : state.base.startsWith("#/space/") ? "space"
     : /^#\/board\/[^/?]+\/chat$|^#\/chat\//.test(state.base) ? "chat" : /^#\/board\/[^/?]+$/.test(state.base) ? "board" : "page";
   // The rail lists Bots and Memory; the phone bar keeps naming the project on every screen but the bots.
   const needs = state.needs.count || 0;
-  const rail = { can_admin: state.me.can_admin === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
+  const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", role: state.me.role || (state.me.can_admin === true ? "owner" : "member"), user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
   // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
   boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-  root.querySelector("#phone-bar").innerHTML = state.deck?.top() || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true });
+  root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
   root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
   root.querySelector(".shell")?.setAttribute("data-view", view);
+  state.deck?.appearance?.sync(state.base);
+  void state.deck?.shell?.sync();
   state.shellSync?.();
 }
-function showError(text) {
-  state.error = text;
+function showError(text, { drawer = false } = {}) {
+  state.error = drawer ? "" : text;
   const box = root.querySelector("#screen-error");
-  if (box) { box.hidden = !text; box.innerHTML = `<div class="message error">${e(text)}<button data-action="retry">Retry</button></div>`; }
+  if (box) { box.hidden = drawer || !text; box.innerHTML = drawer ? "" : `<div class="message error">${e(text)}<button data-action="retry">Retry</button></div>`; }
   const panel = root.querySelector("#card-panel");
   panel?.querySelector("[data-panel-error]")?.remove();
-  if (panel && !panel.hidden && text) panel.insertAdjacentHTML("afterbegin", `<div class="message error" role="alert" data-panel-error>${e(text)}</div>`);
+  const target = drawer ? panel?.querySelector(".ctx-body, form.assignment-removal") || panel : panel;
+  if (target && !panel.hidden && text) target.insertAdjacentHTML("afterbegin", `<div class="message${drawer ? "" : " error"}" role="alert" data-panel-error>${e(text)}</div>`);
 }
 function title(text, actions = "") {
   root.querySelector("#title").textContent = text;
@@ -465,17 +486,19 @@ function needsView() {
   if (!state.needsUI || !content.querySelector("[data-needs-mount]")) {
     state.needsUI?.stop();
     content.innerHTML = '<div id="digest-captions" class="digest-captions" role="region" aria-label="Spoken digest" hidden></div><div data-needs-mount></div>';
-    state.needsShown = "";
+    state.needsShown = ""; state.needsPanelClosed = false;
     state.needsUI = createNeeds({ mount: content.querySelector("[data-needs-mount]"), detailMount: panel, api, singleKeys: singleKeysEnabled,
       // Decline goes straight to the existing versioned route; approvals and answers wait as holds.
       onAction: (action, card, extra) => action === "need-reject" ? api(`/api/cards/${card.number}/approve`, { method: "POST", body: { approve: false, version: card.version, ...extra } }) : undefined,
-      onSelect(card) {
+      onSelect(card, { background = false } = {}) {
         state.selected = card.number;
+        if (!background) state.needsPanelClosed = false;
+        // A refresh updates the list and the highlight but never reopens a panel the user closed.
         // On a phone the first item is not opened over the list by itself.
-        if (!state.needsLoading || !matchMedia("(max-width:699px)").matches) panel.hidden = false;
+        if (!(background && state.needsPanelClosed) && (!state.needsLoading || !matchMedia("(max-width:699px)").matches)) panel.hidden = false;
         if (state.workbenchChat) mountWorkbenchChat();
       },
-      onClose() { closeCardPanel(); },
+      onClose() { state.needsPanelClosed = true; closeCardPanel(); },
       onAsk(card, about) {
         state.selected = card.number; mountWorkbenchChat();
         void state.workbenchChat?.dock.open({ from: document.activeElement, strip: askStrip(card, about) });
@@ -490,6 +513,8 @@ function needsView() {
   const ui = state.needsUI;
   // A card that left the queue (declined, answered) is not reopened by the refresh.
   const selected = state.githubCard ?? (needsCards().some((card) => card.number === state.selected) ? state.selected : undefined);
+  // An explicit jump to a card (GitHub return) is a pick, so it opens the panel again.
+  if (state.githubCard != null) state.needsPanelClosed = false;
   state.githubCard = null;
   void ui.show({ needs: state.needs, boards: state.boards, selected }).finally(() => { if (state.needsUI === ui) state.needsLoading = false; });
 }
@@ -508,7 +533,7 @@ function boardView() {
   const board = currentBoard();
   if (!board) { boardsView(); return; }
   const panelOpen = !root.querySelector("#card-panel").hidden;
-  title(board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn only-narrow" id="details-btn" data-action="details" aria-controls="card-panel" aria-expanded="${panelOpen}">Details</button><button class="btn ghost" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Settings"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg><span class="wl">Settings</span></button><button class="btn primary" data-action="new-card"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card <kbd>C</kbd></button>`);
+  title(state.deck?.on() ? "Board" : board.name || board.slug, state.deck?.on() ? "" : `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn only-narrow" id="details-btn" data-action="details" aria-controls="card-panel" aria-expanded="${panelOpen}">Details</button><button class="btn ghost" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Settings"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg><span class="wl">Settings</span></button><button class="btn primary" data-action="new-card"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card <kbd>C</kbd></button>`);
   // The redrawn header gets the chat control back without waiting for the next refresh.
   if (state.workbenchChat?.board.slug === board.slug) state.workbenchChat.dock.mount(root.querySelector("#head-actions"), { board, label: "Chat", unread: state.workbenchChat.unread });
   const content = root.querySelector("#content");
@@ -519,12 +544,12 @@ function boardView() {
   const messages = [...(state.chatBoard === board.slug ? state.chat : []), ...[...(state.chatTimes.get(board.slug)?.values() || [])].filter(Boolean)];
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
-  const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
+  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
-    const id = top.querySelector(".cid")?.textContent || "";
+    const id = top.querySelector(".cid")?.textContent || cardId(board, Number(top.closest("[data-card]").dataset.card));
     top.insertAdjacentHTML("beforeend", `<button type="button" class="iconbtn card-more" id="more-${e(id)}" data-action="card-menu" data-card="${e(top.closest("[data-card]").dataset.card)}" aria-label="Actions for ${e(id)}: move, edit"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button>`);
   });
   boardDispose = bindBoard(content, { api, board,
@@ -676,7 +701,7 @@ function releaseControl(card) {
 // Needs me draws on `#/needs`, and on `#/` for a hash the router does not recognise.
 const onNeeds = () => state.base === "#/needs" || state.base === "#/";
 // A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
-const panelForm = () => root.querySelector("#card-panel form.form-tile");
+const panelForm = () => root.querySelector("#card-panel form.form-tile, #card-panel .assignment-refusal");
 async function cardPanel(number, epoch, { keepForm = false } = {}) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
@@ -689,7 +714,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     const card = await api(`/api/cards/${number}`);
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
-    if (keepForm && !opening && panelForm()) return;
+    if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
     state.card = card;
     // A shared card link draws its own board behind the card, once.
     const rebase = state.rebase === number && card.board && state.base !== `#/board/${enc(card.board)}`;
@@ -699,16 +724,22 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     // A refresh of the open card reuses the component, so focus stays where the user left it.
     if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
-    const shown = detailsUI.show(card, { board, me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
+    const queued = Object.values(state.needs || {}).flatMap(items => Array.isArray(items) ? items : []).find(item => item.number === card.number && item.version === card.version);
+    const shown = detailsUI.show({ ...card, actions: card.actions || queued?.actions }, { board, bots: state.deckBots || [], me: state.me.actor, people: state.me.people, deck: state.deck?.on() === true, canRemove: state.me.can_admin === true, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
-    panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="panel-priority"], [data-action="panel-reviewer"], [data-action="handoff"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
+    panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="panel-priority"], [data-action="panel-reviewer"], [data-action="handoff"], [data-action="remove-assignment"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
     // Keep the existing versioned ask actions and call tree reachable on card routes.
     // Only an ask waiting on this person needs these versioned answer controls; Activity already lists the rest (m10).
     const asks = card.ask != null && card.ask_to === state.me.actor ? `<ol class="log">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") })}</ol>` : "";
     if (tab === "details") {
-      panel.querySelector(".ctx-body")?.insertAdjacentHTML("afterbegin", releaseControl(card));
-      panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `${asks}${callTree(card)}`);
+      const controls = panel.querySelector("[data-deck-card-controls]") || panel.querySelector(".ctx-body");
+      controls?.insertAdjacentHTML("afterbegin", releaseControl(card));
+      const activity = panel.querySelector(".ctx-body");
+      if (activity) {
+        const extra = `${asks}${callTree(card)}`;
+        activity.insertAdjacentHTML("beforeend", state.deck?.on() ? drawerCopy(extra, cardId(board, card.number)) : extra);
+      }
     }
     restore(saved);
     await shown;
@@ -763,8 +794,12 @@ async function openProjectSettings(action, b, { mountProject, settingsOptions })
   needs?.pause(true);
   panel.hidden = false;
   panel.innerHTML = '<section class="form-tile"><button type="button" class="close" data-action="close-panel" aria-label="Close project settings">×</button><div data-project-settings></div></section>';
+  if (state.deck?.on() && phone() && !history.state?.deckProjectSettings) {
+    history.pushState({ ...history.state, deckProjectSettings: true }, "", location.hash);
+  }
   await mountProject(panel.querySelector("[data-project-settings]"), { slug, api, e, settings: true, current: () => epoch === state.screen,
-    ...settingsOptions({ action, dataset: b.dataset, needs, panel, refresh: () => refresh({ background: true }) }) });
+    ...settingsOptions({ action, dataset: b.dataset, needs, panel, refresh: () => refresh({ background: true }) }),
+    ...(state.deck?.on() && phone() ? { onBack: closeCardPanel } : {}) });
 }
 // The no-answer error's restart link opens project settings in the chat's Details slot; Back returns to the link.
 async function openRestart(link, projects) {
@@ -791,10 +826,17 @@ function reviewForm() {
   const panel = root.querySelector("#card-panel"); panel.hidden = false;
   panel.innerHTML = `<form class="form-tile" data-form="review"><h2>Ask for a decision</h2><label>Question<textarea name="question" minlength="24" required></textarea></label><label>Context<textarea name="context" minlength="20" required>${e(state.card.status_line || state.card.body)}</textarea></label><label>Options (one per line)<textarea name="options" required></textarea></label><button class="blockbtn">Ask</button><button type="button" class="opt" data-action="cancel-form">Cancel</button></form>`;
 }
+function removeAssignmentForm(card) {
+  if (!canRemoveAssignment(card) || (state.deck?.on() && !state.me.can_admin)) return;
+  detailsUI?.stop(); detailsUI = null;
+  const panel = root.querySelector("#card-panel");
+  panel.innerHTML = state.deck?.on() ? deckAssignmentForm(card) : `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Remove assignment</h2><p>Remove the assignment from #${card.number} ${e(card.title)}?</p><p>${e(assignmentPickup(card))}</p><label>Reason (required)<textarea name="note" required></textarea></label><p class="set-note">The reason will be saved in the card's activity.</p><button class="btn confirm-removal" type="submit">Remove assignment</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></form>`;
+  panel.querySelector('textarea[name="note"]').focus();
+}
 function handoffForm(card, prefill = {}) {
   voice.stop();
   const panel = root.querySelector("#card-panel"); panel.hidden = false;
-  panel.innerHTML = `<form class="form-tile" data-form="handoff" data-card="${card.number}"${prefill.connectionsOnly ? ' data-connections-only="true"' : ""}><input type="hidden" name="version" value="${e(card.version)}"><h2>Hand off #${card.number}</h2><label>To<input name="to" list="handoff-recipients" value="${e(prefill.to || "")}"${prefill.connectionsOnly ? ' pattern="conn:.+" title="Use conn: followed by the agent name"' : ""} required></label><datalist id="handoff-recipients"><option value="orchestrator">This project's coordinator</option><option value="anyone">Return to the pool</option><option value="owner">Workspace owner</option></datalist><p class="set-note">Use orchestrator, anyone for the pool, owner, or an agent name.</p><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(card.status_line || card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="cancel-form">Cancel</button></form>`;
+  panel.innerHTML = `<form class="form-tile" data-form="handoff" data-card="${card.number}"${prefill.connectionsOnly ? ' data-connections-only="true"' : ""}><input type="hidden" name="version" value="${e(card.version)}"><h2>Hand off #${card.number}</h2><label>To<input name="to" list="handoff-recipients" value="${e(prefill.to || "")}"${prefill.connectionsOnly ? ' pattern="conn:.+" title="Use conn: followed by the agent name"' : ""} required></label><datalist id="handoff-recipients"><option value="coordinator">This project's Coworker</option><option value="anyone">Return to the pool</option><option value="owner">Workspace owner</option></datalist><p class="set-note">Use coordinator for this project's Coworker, anyone for the pool, owner, or an agent name.</p><label>Note<textarea name="note" required></textarea></label><label>Context<textarea name="context">${e(card.status_line || card.body)}</textarea></label><label>Options<input name="options"></label><button class="blockbtn">Hand off</button><button class="opt" type="button" data-action="cancel-form">Cancel</button></form>`;
   // On Needs me the panel holds the item's detail: it waits while the form is open.
   if (onNeeds()) state.needsUI?.pause(true);
 }
@@ -840,12 +882,15 @@ async function settingsView(epoch) {
   const saved = remember();
   const failed = (name, result) => message(`Could not load ${name}: ${result.reason?.message || "Request failed"}`, true);
   state.phonePushPending = phonePush.status === "fulfilled" && phonePush.value.test?.status === "pending";
-  content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : failed("Plan", plan)}${orchestration.status === "fulfilled" ? '<section class="settings-section"><h2>Agent orchestration</h2><div data-workspace-orchestration></div></section>' : failed("Agent orchestration", orchestration)}${voice.settings()}${chatSettings.status === "fulfilled" ? `<section class="settings-section"><h2>Chat</h2><p>${e(chatSettings.value.front.enabled && chatSettings.value.front.provider !== "none" ? `Answers by ${chatSettings.value.front.provider}/${chatSettings.value.front.model}` : chatSettings.value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(chatSettings.value.usage.used_today)} · Yours: ${e(chatSettings.value.usage.user_used_today)}</p>${chatSettings.value.usage.last_error ? `<p role="status">Last model error: ${e(chatSettings.value.usage.last_error)}</p>` : ""}</section>` : failed("Chat", chatSettings)}${connections.status === "fulfilled" ? agentsView(connections.value) : `<section class="settings-section"><h2>Agents</h2>${failed("Agents", connections)}</section>`}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section><section class="settings-section" id="tool-policy"><h2>Tool policy</h2><div data-tool-policy></div></section>${phonePush.status === "fulfilled" ? phonePushView(phonePush.value) : `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${failed("Phone notifications", phonePush)}</section>`}<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : failed("Webhooks", hooks)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
+  content.innerHTML = `<div class="settings">${plan.status === "fulfilled" ? planView(plan.value) : failed("Plan", plan)}${orchestration.status === "fulfilled" ? '<section class="settings-section"><h2>Coworker management</h2><div data-workspace-orchestration></div></section>' : failed("Coworker management", orchestration)}${voice.settings()}${chatSettings.status === "fulfilled" ? `<section class="settings-section"><h2>Chat</h2><p>${e(chatSettings.value.front.enabled && chatSettings.value.front.provider !== "none" ? `Answers by ${chatSettings.value.front.provider}/${chatSettings.value.front.model}` : chatSettings.value.front.enabled ? "Basic replies (no model)" : "Front replies off")}</p><p>Model answers today: ${e(chatSettings.value.usage.used_today)} · Yours: ${e(chatSettings.value.usage.user_used_today)}</p>${chatSettings.value.usage.last_error ? `<p role="status">Last model error: ${e(chatSettings.value.usage.last_error)}</p>` : ""}</section>` : failed("Chat", chatSettings)}${connections.status === "fulfilled" ? agentsView(connections.value) : `<section class="settings-section"><h2>Agents</h2>${failed("Agents", connections)}</section>`}<section class="settings-section" id="agent-schedules"><h2>Scheduled prompts</h2><div data-agent-schedules></div></section><section class="settings-section" id="tool-policy"><h2>Tool policy</h2><div data-tool-policy></div></section>${phonePush.status === "fulfilled" ? phonePushView(phonePush.value) : `<section class="settings-section" id="phone-push"><h2>Phone notifications</h2>${failed("Phone notifications", phonePush)}</section>`}<section class="settings-section"><h2>Webhooks</h2><div id="hook-secret"></div>${hooks.status === "fulfilled" ? (hooks.value.webhooks || []).map((h) => `<div class="setting-row"><span>${e(h.url)}<br><small>${e(h.id)}</small></span><button data-action="deliveries" data-hook="${e(h.id)}">Deliveries</button><button data-action="test-hook" data-hook="${e(h.id)}">Test</button><button data-action="remove-hook" data-hook="${e(h.id)}">Remove</button></div>`).join("") || message("No webhooks") : failed("Webhooks", hooks)}<form class="webhook-form" data-form="webhook"><input name="url" type="url" data-draft="webhook-url" aria-label="Webhook URL" required><input name="board" data-draft="webhook-board" aria-label="Board" placeholder="Board"><input name="waiting_on" data-draft="webhook-waiting" aria-label="Waiting on" placeholder="Waiting on"><select name="events" aria-label="Events" data-draft="webhook-events"><option value="*">All events</option><option value="review_needed">Review needed</option><option value="card_changed">Card changed</option><option value="waiting_on_me">Waiting on me</option></select><button class="blockbtn">Add</button></form><div id="deliveries"></div></section><section class="settings-section"><button class="opt" data-action="logout">Sign out</button></section></div>`;
   if (orchestration.status === "fulfilled") mountWorkspaceOrchestration(content.querySelector("[data-workspace-orchestration]"), {api, e, enabled: orchestration.value.enabled, current: () => epoch === state.screen});
   mountAgentSchedules(content.querySelector("[data-agent-schedules]"), {api, e, current: () => epoch === state.screen});
-  mountToolPolicy(content.querySelector("[data-tool-policy]"), {api, e, current: () => epoch === state.screen});
+  mountToolPolicy(content.querySelector("[data-tool-policy]"), {api, e, presentation: state.deck?.policyPresentation(), current: () => epoch === state.screen});
   state.deck?.settings(content);
   restore(saved);
+  void state.voiceReady?.then(() => {
+    if (epoch === state.screen && state.base === "#/settings" && state.deck?.on()) state.deck?.settings(content);
+  });
 }
 
 async function memoryView(epoch, refresh = false) {
@@ -993,7 +1038,7 @@ function mountWorkbenchChat() {
     service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
       phone() {
         const mount = root.querySelector("#phone-tabs");
-        if (mount) mount.innerHTML = renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
+        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
       },
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
@@ -1015,7 +1060,8 @@ function mountWorkbenchChat() {
 // The signed-in user's seen ids live on the device: clear them on sign-out and session expiry
 // even when no board service exists (Settings, Memory, …). Other users' ids stay.
 function clearWorkbenchChat() {
-  adminUI?.stop();
+  state.deck?.leave();
+  adminUI?.stop(); instanceAdminUI?.stop();
   botsUI?.stop();
   const user = state.me?.user || state.me?.actor?.replace(/^user:/, "");
   if (user) clearSeen(user);
@@ -1025,6 +1071,7 @@ function clearWorkbenchChat() {
   chatUI?.stop(); chatUI = null;
   if (typeof Event === "function") document.dispatchEvent?.(new Event("signout"));
 }
+function rememberDeckBots(bots) { state.deck?.shell?.roster(bots); state.deckRoster = { workspace: state.me?.workspace, actor: state.me?.actor, bots }; }
 function setBotsWaiting(total) {
   if (total === state.botsWaiting) return;
   state.botsWaiting = total;
@@ -1032,14 +1079,33 @@ function setBotsWaiting(total) {
 }
 function botsScreen() {
   // The roster the screen already loads also feeds the rail badge, so the screen adds no second poll.
-  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => setBotsWaiting(waitingTotal(bots)) });
-  botsUI.show(state.base.split("/")[2] || null);
+  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => { rememberDeckBots(bots); setBotsWaiting(waitingTotal(bots)); } });
+  const [path, query] = state.base.split("?");
+  const create = new URLSearchParams(query).get("new") === "1";
+  if (create) {
+    state.base = path; state.route = path;
+    history.replaceState(history.state, "", path);
+  }
+  const shown = botsUI.show(path.split("/")[2] || null);
+  if (create) void Promise.resolve(shown).then(() => botsUI.newBot());
   title("Bots");
 }
+// The map keeps itself current and stops itself when another screen replaces it.
+function topologyScreen() {
+  topologyUI ??= createTopologyMap({ mount: () => root.querySelector("#content"), api, workspace: () => state.me?.workspace || "", onStartWork: discoveryAction({ api, root: () => root.querySelector("#content") }) });
+  topologyUI.show();
+  title("Compute map");
+}
 function adminScreen() {
-  adminUI ??= createAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, runners: createRunnerBlock({ api, e }) });
+  adminUI ??= createAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, runners: createRunnerBlock({ api, e }), invites: createInviteBlock({ api, e }) });
   adminUI.show();
   title("Workspace administration");
+  navigation();
+}
+function instanceAdminScreen() {
+  instanceAdminUI ??= createInstanceAdmin({ mount: () => root.querySelector("#content"), api, e, current: () => state.me, denied: () => { if (state.me) state.me.can_manage_instance = false; navigation(); } });
+  instanceAdminUI.show();
+  title("Instance console");
   navigation();
 }
 function consoleScreen() {
@@ -1053,20 +1119,22 @@ function consoleScreen() {
 }
 async function refresh({ background = false, events = [] } = {}) {
   if (!state.me) return;
-  if (state.route === "#/admin") return;
+  if (["#/admin", "#/instance-admin"].includes(state.route)) return;
   const epoch = state.screen, request = ++state.refreshRequest;
   if (!background) state.renderPending = epoch;
   const current = () => epoch === state.screen && request === state.refreshRequest;
-  const read = (path) => api(path, state.base === "#/settings" ? { timeoutMs: 10000 } : {}).catch((error) => {
+  const read = (path, options = {}) => api(path, { ...options, ...(state.base === "#/settings" ? { timeoutMs: 10000 } : {}) }).catch((error) => {
     if (state.base === "#/settings") throw new Error(`Could not load ${path}: ${error.message}`);
     throw error;
   });
   try {
     // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
-    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), read("/api/needs-me"), read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
+    // The owner queue is not a prerequisite for a member's workspace screens.
+    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : null;
+    const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
-    state.boards = boards.boards; state.needs = needs;
-    if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
+    state.boards = boards.boards; state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
+    if (roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); }
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
@@ -1115,14 +1183,16 @@ async function refresh({ background = false, events = [] } = {}) {
       await memoryView(epoch, background);
     } else if (/^#\/chat(?:\/|$)/.test(state.base)) {
       boardView();
+    } else if (state.deck?.owns(state.base)) {
+      await state.deck.show(state.base, { background, epoch });
     } else if (/^#\/bots(?:\/|$)/.test(state.base)) {
       if (!background) botsScreen();
     } else if (/^#\/console(?:\?|$)/.test(state.base)) {
       if (!background) consoleScreen();
+    } else if (state.base === "#/compute-map") {
+      if (!background) topologyScreen();
     } else if (state.base === "#/settings") {
       if (!background || events.some((event) => event.kind.startsWith("webhook."))) await settingsView(epoch);
-    } else if (state.deck?.owns(state.base)) {
-      await state.deck.show(state.base, { background, epoch });
     } else if (state.base === "#/decide") {
       if (state.queue) queueApply(state.queue.ready ? { type: "sync", cards: decideQueue(state.needs) } : { type: "load", cards: decideQueue(state.needs) });
       queueNoteOffline();
@@ -1356,7 +1426,7 @@ async function route() {
   let last;
   try { last = localStorage.getItem(boardPreference()); } catch { /* The first readable board is the fallback. */ }
   // Bare #/chat names no project: open the default project's chat, never a slug read from the path.
-  const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last });
+  const resolved = hash === "#/chat" ? boardRoute({ boards: state.boards, last }).replace(/^#\/board\/[^/?]+$/, "$&/chat") : resolveRoute(hash, { boards: state.boards, last, deck: state.deck?.owns("#/compute") === true });
   if (resolved !== hash) { history.replaceState(history.state, "", resolved); hash = resolved; }
   if (/^#\/board\/[^/?]+(?:\/chat)?$/.test(hash)) {
     try { localStorage.setItem(boardPreference(), decodeURIComponent(hash.split("/")[2])); } catch { /* Optional preference. */ }
@@ -1368,17 +1438,19 @@ async function route() {
   if (direct) { state.base = boardRoute({ boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
   if (!/^#\/card\/[1-9]\d*$/.test(hash)) {
-    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|today|compute)$/.test(hash) ? hash : "#/");
+    state.base = start !== undefined ? "#/decide" : (/^#\/((?:board\/[^/?]+(?:\/chat)?|space\/[^/?]+)|start|needs|boards|rules|memory(?:\?.*)?|bots(?:\/[A-Za-z0-9_-]+)?(?:\?new=1)?|compute-map|chat(?:\/[^/?]+)?|console(?:\?agent=[^&#]+)?|settings|admin|instance-admin|today|compute)$/.test(hash) ? hash : "#/");
+    if (start === undefined && state.deck?.owns(hash)) state.base = hash;
     // Today and Compute exist in the Deck look only; without it they are an unknown address.
     if (/^#\/(?:today|compute)$/.test(state.base) && !state.deck?.owns(state.base)) state.base = "#/";
     state.card = null;
-  } else if (state.base === "#/admin") {
+  } else if (["#/admin", "#/instance-admin"].includes(state.base)) {
     state.base = boardRoute({ boards: state.boards, last });
   }
   if (state.base !== previousBase) state.workbenchChat?.dispose();
   if (previousBase === "#/admin") adminUI?.stop();
+  if (previousBase === "#/instance-admin") instanceAdminUI?.stop();
   if (previousBase.startsWith("#/console") && !state.base.startsWith("#/console")) consoleUI?.stop();
-  if (previousBase.startsWith("#/bots") && !state.base.startsWith("#/bots")) botsUI?.stop();
+  if (previousBase.startsWith("#/bots") && (!state.base.startsWith("#/bots") || state.deck?.owns(state.base))) botsUI?.stop();
   if (state.base !== previousBase) state.deck?.leave();
   if (previousBase === "#/decide" && state.base !== "#/decide") {
     queueFlush(true); queueStop(); state.queue = null; state.queueFocus = "";
@@ -1407,6 +1479,7 @@ async function route() {
   if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
   showError("");
   if (hash === "#/admin") { adminScreen(); return; }
+  if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
   await refresh();
 }
 // The current view's list first, so a write never sends a version left over from another view.
@@ -1415,14 +1488,15 @@ function findCard(number) {
   const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.children, state.linked, state.open, needsCards()] : [state.open, needsCards(), state.cards, state.children, state.linked];
   return lists.flat().find((c) => c.number === number);
 }
-async function mutate(key, action) {
+async function mutate(key, action, { serverReason = false, onError = null } = {}) {
   if (state.pending.has(key)) return;
   state.pending.add(key);
   root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = true; });
   try { await action(); await refresh(); }
   catch (error) {
-    if (error.status === 409) { await refresh(); showError("Card changed. Review it and try again."); }
-    else showError(error.message);
+    if (onError) onError(error);
+    else if (error.status === 409) { await refresh(); showError(serverReason ? error.message : "Card changed. Review it and try again.", { drawer: serverReason }); }
+    else showError(error.message, { drawer: serverReason });
   } finally {
     state.pending.delete(key);
     root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = false; });
@@ -1461,6 +1535,9 @@ async function move(number, status, extra = {}) {
   await mutate(`card-${number}`, () => api(`/api/cards/${number}`, { method: "PATCH", body: { version: card.version, status, ...extra } }));
 }
 root.addEventListener("input", (event) => {
+  const removal = event.target.closest('[data-form="remove-assignment"]');
+  if (removal && state.deck?.on()) removal.querySelector('[type="submit"]').disabled = !event.target.value.trim() || state.pending.has(`card-${removal.dataset.card}`);
+
   if (event.target.dataset.draft) {
     const key = event.target.dataset.draft;
     state.drafts.set(key, event.target.value);
@@ -1517,6 +1594,7 @@ root.addEventListener("click", async (event) => {
   }
   try {
     if (action === "shortcuts") shortcutsView();
+    else if (action === "switch-workspace" && state.deck?.on()) openWorkspaces({ api, e, onError: showError });
     else if (["palette", "switch-project", "switch-workspace"].includes(action)) shellMenu(action);
     else if (action === "cancel-card") cancelCard();
     else if (action === "card-menu") {
@@ -1589,6 +1667,7 @@ root.addEventListener("click", async (event) => {
     } else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
+      root.querySelector("#card-panel .assignment-refusal")?.remove();
       // Needs me redraws the item's detail; a card route reads the card again.
       const needs = onNeeds() ? state.needsUI : null;
       if (needs?.paused()) needs.pause(false); else await refresh();
@@ -1611,6 +1690,7 @@ root.addEventListener("click", async (event) => {
     } else if (action === "new-card") newCardForm();
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
+    else if (action === "remove-assignment") removeAssignmentForm(state.card);
     else if (action === "unblock") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: removeBlocker(state.card, Number(b.dataset.blocker)), version: state.card.version } }));
     else if (["archive", "restore", "carry-on", "unpin"].includes(action)) await mutate(`card-${state.card.number}`, async () => {
       const request = lifecycleRequest(state.card, action, { pin: b.dataset.pin });
@@ -1646,6 +1726,7 @@ root.addEventListener("submit", async (event) => {
   if (kind === "reply" && !payload.reply?.trim()) { showError("Enter a reply."); return; }
   const blockerNumbers = kind === "blockers" ? parseBlockerNumbers(payload.blockers) : null;
   if (kind === "blockers" && !blockerNumbers) { showError("Enter the card number that blocks this card."); return; }
+  if (kind === "remove-assignment" && !payload.note?.trim()) { showError("Enter a reason for removing the assignment.", { drawer: true }); return; }
   if (kind === "handoff" && (!payload.note?.trim() || !payload.to?.trim())) { showError("Enter a recipient and a note."); return; }
   if (kind === "handoff" && form.dataset.connectionsOnly === "true" && !/^conn:\S+$/.test(payload.to)) {
     showError("Choose an agent using conn: followed by its name.");
@@ -1664,10 +1745,19 @@ root.addEventListener("submit", async (event) => {
       location.assign(`/app/login?t=${enc(token)}`);
     } else if (kind === "agent") await createAgent(form);
     else if (kind === "email-login") {
-      const result = await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext } });
       let status = root.querySelector(".signin [role=status]");
       if (!status) { status = document.createElement("div"); status.className = "message"; status.setAttribute("role", "status"); form.after(status); }
-      status.textContent = result.message;
+      status.textContent = "Sending your sign-in link…";
+      form.setAttribute("aria-busy", "true");
+      if (submit) submit.textContent = "Sending…";
+      try {
+        await api("/app/auth/email", { method: "POST", body: { email: payload.email, next: payload.next || signinNext }, timeoutMs: 15000 });
+        status.textContent = "If this email can sign in, a link is on its way.";
+        if (submit) submit.textContent = "Send another link";
+      } catch (error) {
+        status.textContent = error.status === 429 ? signinMessage("throttled") : "Could not send the sign-in link. Check your connection, then retry.";
+        if (submit) submit.textContent = "Retry";
+      } finally { form.removeAttribute("aria-busy"); }
     } else if (kind === "reply") await decide(Number(form.dataset.card), { ...payload, then: payload.then || "return" }, form);
     else if (kind === "comment") await mutate(`card-${state.card.number}`, async () => {
       await api(`/api/cards/${state.card.number}/comments`, { method: "POST", body: payload });
@@ -1689,6 +1779,11 @@ root.addEventListener("submit", async (event) => {
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "review") await move(state.card.number, "review", { ...payload, options: payload.options.split("\n").map((v) => v.trim()).filter(Boolean) });
     else if (kind === "release-origin") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/approve`, { method: "POST", body: { approve: true, version: state.card.version, reason: payload.reason } }));
+    else if (kind === "remove-assignment") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { to: "anyone", note: payload.note, version: Number(payload.version) } }), { serverReason: true, onError: state.deck?.on() ? (error) => {
+      const panel = root.querySelector("#card-panel");
+      panel.innerHTML = assignmentRefusal(error);
+      panel.querySelector(".assignment-refusal").focus();
+    } : null });
     else if (kind === "handoff") await mutate(`card-${Number(form.dataset.card)}`, async () => {
       await api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { ...payload, version: Number(payload.version), options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } });
       if (onNeeds()) state.needsUI?.pause(false);
@@ -1858,9 +1953,14 @@ async function poll() {
   }
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) queueFlush(true); schedule(document.hidden ? 30000 : 0); });
-document.addEventListener("session-expired", () => { adminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
+document.addEventListener("session-expired", () => { adminUI?.stop(); instanceAdminUI?.stop(); state.needsUI?.stop(); state.needsUI = null; clearWorkbenchChat(); state.me = null; state.drafts.clear(); clearTimeout(timer); state.queue = null; state.error = ""; signin(); });
 window.addEventListener("hashchange", route);
-window.addEventListener("pagehide", () => { adminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
+window.addEventListener("popstate", () => {
+  if (state.deck?.on() && phone() && !history.state?.deckProjectSettings && root.querySelector("[data-project-settings]")) {
+    root.querySelector("#card-panel").hidden = true;
+  }
+});
+window.addEventListener("pagehide", () => { adminUI?.stop(); instanceAdminUI?.stop(); clearAgentSecret(root); queueFlush(true); speech.stop(); voice.stop(); });
 window.addEventListener("online", () => { state.pollFails = 0; queueNoteOffline(); if (state.me) schedule(0); });
 window.addEventListener("offline", queueNoteOffline);
 setInterval(() => {
@@ -1877,7 +1977,7 @@ async function boot() {
   try { state.me = await boundedRequest(api, "/api/me"); setPeople(state.me.people); }
   catch (error) { state.error = error.status === 401 ? "" : error.message; await signin(signinCode); return; }
   if (!state.me) return;
-  shell(); void voice.load();
+  shell(); state.voiceReady = Promise.resolve(voice.load());
   if (!state.me) return;
   let moved = false;
   const params = new URLSearchParams(location.search);

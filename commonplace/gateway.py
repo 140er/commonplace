@@ -41,6 +41,7 @@ from mempalace.tool_capabilities import classify_tool
 
 from . import (
     backfill_allowance,
+    db_busy,
     events,
     extensions,
     plans,
@@ -139,6 +140,19 @@ def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> 
     if data is not None:
         error["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": error}
+
+
+# JSON-RPC server-error range: a busy database is retryable, unlike -32603.
+BUSY_RPC_CODE = -32001
+_LABEL = re.compile(r"[A-Za-z0-9_.\-/]{1,64}")
+
+
+def _call_label(request) -> str:
+    """The tool (or method) name for a log line; never arguments or other user content."""
+    params = request.get("params") if isinstance(request, dict) else None
+    method = request.get("method") if isinstance(request, dict) else None
+    name = params.get("name") if isinstance(params, dict) and method == "tools/call" else method
+    return f"call={name}" if isinstance(name, str) and _LABEL.fullmatch(name) else "call=?"
 
 
 def _kg_argument_error(req_id, name, args):
@@ -1932,13 +1946,22 @@ def _host_name(authority: str) -> str:
 
 
 def _public_route(method: str, path: str) -> bool:
+    if path.startswith("/api/bridge/in/"):
+        return True  # chat-platform intake: the platform's signature is the credential
     if method == "GET":
         return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
             ("/app/", "/s/", "/.well-known/", "/skills/decks/")
         )
     return method == "POST" and (
         path.startswith("/app/auth/")
-        or path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+        or path
+        in (
+            "/oauth/register",
+            "/oauth/token",
+            "/oauth/revoke",
+            "/api/runner-enrollment/exchange",
+            "/api/runner-enrollment/recover",
+        )
     )
 
 
@@ -1962,16 +1985,25 @@ def _rest_tool(method, path):
         return {"POST": "card_start", "GET": "card_start_status"}.get(method)
     if len(parts) == 4 and parts[:2] == ["api", "card-starts"] and method == "POST":
         return {"cancel": "card_start_cancel", "resolve": "card_start_resolve"}.get(parts[3])
+    if parts == ["api", "topology", "proposals"] and method == "POST":
+        return "topology_propose"
     if parts == ["api", "spaces"]:
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 3 and parts[:2] == ["api", "spaces"] and method == "GET":
         return "board_list"
+    if len(parts) == 4 and parts[:2] == ["api", "spaces"]:
+        return {
+            "cards": {"GET": "task_list", "POST": "task_add"},
+            "chat": {"GET": "space_read", "POST": "space_post"},
+        }.get(parts[3], {}).get(method)
     if parts == ["api", "boards"]:
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 4 and parts[:2] == ["api", "boards"] and parts[3] == "cards":
         return {"GET": "task_list", "POST": "task_add"}.get(method)
     if parts == ["api", "needs-me"] and method == "GET":
         return "needs_me"
+    if parts == ["api", "costs"] and method == "GET":
+        return "costs_summary"
     if parts == ["api", "topology"] and method == "GET":
         return "topology_get"
     if parts == ["api", "topology", "route"] and method == "GET":
@@ -2005,9 +2037,17 @@ def _rest_tool(method, path):
     return None
 
 
-def _rest_tool_refusal(gateway, principal, tool, method, path):
+def _rest_tool_refusal(gateway, principal, tool, method, path, handler=None):
     """Why a connection's REST alias is refused: its own policy first, then the owner's."""
     if principal is None or principal.person:
+        return None
+    from . import person_actions
+
+    if (
+        handler is not None
+        and person_actions.chat_post_path(method, path)
+        and person_actions.chat_person(gateway, handler) is not None
+    ):
         return None
     if tool and not principal.policy.tool_visible(tool):
         return {"error": "tool not allowed for this connection"}
@@ -2247,6 +2287,9 @@ class Gateway:
         finally:
             stop.set()
             try:
+                # Database-polling workers go first, so none can settle a row
+                # or claim a job while the rest of the gateway is closing.
+                self._stop_db_workers()
                 if self.pause_server is not None:
                     self.pause_server.stop()
             finally:
@@ -2257,6 +2300,16 @@ class Gateway:
                     handoff.close()
             finally:
                 self.supervisor.close()
+
+    def _stop_db_workers(self) -> None:
+        """Stop the answer-hold and chat workers; one failing never skips the rest."""
+        for name in ("hold_worker", "chat_worker"):
+            worker = getattr(self, name, None)
+            try:
+                if worker is not None:
+                    worker.stop()
+            except Exception:
+                logger.exception("could not stop %s", name)
 
     def shutdown(self) -> None:
         """Stop a running ``serve`` (from another thread); it then cleans up."""
@@ -2348,7 +2401,14 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             MAX_REQUEST_BYTES
             if path == "/mcp"
             else HANDOFF_REQUEST_BYTES
-            if path in ("/api/handoff", "/api/import", "/api/capture")
+            if path
+            in (
+                "/api/handoff",
+                "/api/import",
+                "/api/capture",
+                "/api/memory/import/preview",
+                "/api/memory/import/confirm",
+            )
             else 1_920_000
             if path == "/api/voice/transcribe"
             else 65536
@@ -2371,7 +2431,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
-            or path == "/app/login"
+            or path in ("/app/login", "/app/join")
             or self.command == "POST"
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):
@@ -2397,7 +2457,16 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         if self.command == "GET" and path.startswith("/s/"):
             policies.append((ratelimit.SHORT_LINKS, ip))
         elif principal is None:
-            policies.append((ratelimit.ANONYMOUS, ip))
+            # Only shell reads use this budget. Credential routes keep BOTH
+            # their original anonymous and sensitive limits, including GETs.
+            shell = self.command == "GET" and (
+                path == "/app/auth/providers"
+                or path in ("/app", "/app/")
+                or path.startswith("/app/")
+                and not path.startswith("/app/auth/")
+                and path not in ("/app/login", "/app/join")
+            )
+            policies.append((ratelimit.APP_SHELL if shell else ratelimit.ANONYMOUS, ip))
         gateway = self.server.gateway
         retry = gateway.limiter.check(policies)
         if not retry:
@@ -2409,7 +2478,16 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 return False
             retry = wait if wait > 0 else retry
         self.close_connection = True
-        self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
+        if (
+            path.startswith("/app/")
+            and (ratelimit.CREDENTIALS, ip) in policies
+            and "text/html" in self.headers.get("Accept", "")
+        ):
+            from .web import signin_recovery
+
+            signin_recovery(self, "throttled", 429, {"Retry-After": str(retry)})
+        else:
+            self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
         return True
 
     def _backfill_allowance(self, principal, policies):
@@ -2439,6 +2517,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         self._response_started = False
         # The stdlib reuses this object for keepalive requests.
         self.__dict__.pop("_commonplace_principal", None)
+        self.__dict__.pop("_instance_context", None)
         try:
             self._handle()
         except (BrokenPipeError, ConnectionResetError):
@@ -2448,6 +2527,59 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             if not self._response_started:
                 self._send_json(500, {"error": "internal error"})
+
+    def _instance_admission(self, path, principal):
+        self._instance_charged = False
+        if not path.startswith("/api/instance-admin/") or principal is None:
+            return False
+        from . import instance_admin
+        from .web.admin import ReadContext
+
+        if self._rate_limit(path, principal):
+            return True
+        context = ReadContext(self.server.gateway.admin_clock)
+        self._instance_context = context
+        try:
+            allowed = instance_admin.flag(self.server.gateway, principal, context)
+        except Exception:
+            self.close_connection = True
+            self._send_json(503, {"error": "source_unavailable"})
+            return True
+        if not allowed:
+            self.close_connection = True
+            try:
+                instance_admin.audit(
+                    self.server.gateway,
+                    principal,
+                    context,
+                    "instance_admin.denied",
+                    decision="deny",
+                    reason="access_required",
+                )
+            except Exception:
+                logger.error("Instance denial audit unavailable")
+            self._send_json(403, {"error": instance_admin.DENIAL})
+            return True
+        self._instance_charged = True
+        return False
+
+    def _account_plan_admission(self, path, principal, request, parse_error):
+        if (
+            principal is None
+            or parse_error
+            or path.startswith("/api/instance-admin/")
+            or not plans.enabled()
+        ):
+            return False
+        account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
+        plan = plans.get_plan(self.server.gateway.db, account) if account else None
+        if self._plan_limit(path, principal, request, plan):
+            return True
+        if path == "/mcp" or path.startswith("/api/"):
+            delay = plans.load_delay(plan)
+            if delay:
+                sleep(delay)
+        return False
 
     def _handle(self):
         path = urlparse(self.path).path
@@ -2473,6 +2605,20 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
+        if self._instance_admission(path, principal):
+            return
+        from .runner import enrollment_api
+
+        if enrollment_api.preflight(self.server.gateway, self, path, principal):
+            return
+        if (
+            principal is not None
+            and not principal.person
+            and path.startswith("/api/card-starts/")
+            and path.endswith("/launch-output")
+        ):
+            self._send_json(404, {"error": "not found"})
+            return
         if (
             principal is not None
             and getattr(principal, "runner", None) == "machine"
@@ -2519,9 +2665,9 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                     request = json.loads(raw.decode("utf-8"))
                 except (ValueError, UnicodeError, RecursionError):
                     parse_error = (400, _rpc_error(None, -32700, "Parse error"))
-        if self._rate_limit(path, principal, request):
+        if not self._instance_charged and self._rate_limit(path, principal, request):
             return
-        refused = _rest_tool_refusal(self.server.gateway, principal, tool, self.command, path)
+        refused = _rest_tool_refusal(self.server.gateway, principal, tool, self.command, path, self)
         if refused is not None:
             self.close_connection = True
             self._send_json(403, refused)
@@ -2543,15 +2689,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             )
             self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
             return
-        if principal is not None and not parse_error and plans.enabled():
-            account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
-            plan = plans.get_plan(self.server.gateway.db, account) if account else None
-            if self._plan_limit(path, principal, request, plan):
-                return
-            if path == "/mcp" or path.startswith("/api/"):
-                delay = plans.load_delay(plan)
-                if delay:
-                    sleep(delay)
+        if self._account_plan_admission(path, principal, request, parse_error):
+            return
         if path == "/mcp":
             if self.command != "POST":
                 self.close_connection = True
@@ -2572,7 +2711,13 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         handler(self)
 
     def _plan_limit(self, path, principal, request, plan):
-        if path in ("/api/import", "/api/capture", "/api/settings/capture"):
+        if path in (
+            "/api/import",
+            "/api/capture",
+            "/api/settings/capture",
+            "/api/memory/import/preview",
+            "/api/memory/import/confirm",
+        ):
             # Ingest checks projected storage per thread inside the store
             # transaction, and permits no-op reimports even at the limit.
             return False
@@ -2612,9 +2757,20 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         try:
             response = self.server.gateway.mediator.handle(principal, request)
         except Exception as exc:
-            log_failure(logger, "gateway MCP request failed", exc)
-            self.close_connection = True
             req_id = request.get("id") if isinstance(request, dict) else None
+            log_failure(logger, f"gateway MCP request failed ({_call_label(request)})", exc)
+            if db_busy.is_busy(exc):
+                self._send_json(
+                    200,
+                    _rpc_error(
+                        req_id,
+                        BUSY_RPC_CODE,
+                        "The workspace database is busy right now; retry shortly",
+                        {"retryable": True, "retry_after_s": db_busy.RETRY_AFTER_S},
+                    ),
+                )
+                return
+            self.close_connection = True
             self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
             return
         if response is None:

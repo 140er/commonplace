@@ -34,6 +34,7 @@ MODULES = (
     "commonplace.memory_tools",
     "commonplace.skills",
     "commonplace.session",
+    "commonplace.account",
     "commonplace.webhooks",
     "commonplace.phone_push",
     "commonplace.oauth",
@@ -48,13 +49,19 @@ MODULES = (
     "commonplace.orch",
     "commonplace.console",
     "commonplace.chat",
+    "commonplace.compute",
     "commonplace.holds",
     "commonplace.agent_schedules",
+    "commonplace.snooze",
     "commonplace.routines",
     "commonplace.projects",
     "commonplace.tool_policy",
     "commonplace.bots",
+    "commonplace.chat_bridge",
+    "commonplace.meetings",
+    "commonplace.topology",
     "commonplace.topology.extension",
+    "commonplace.person_actions",
 )
 
 ALL_PROFILES = frozenset({"slim", "standard", "full"})

@@ -23,7 +23,7 @@ export function livePending(live, now = Date.now()) {
 /** `{ title, detail, alert }` for a live state, or null when there is nothing to say. */
 export function liveCopy(live, me) {
   if (!live?.message_id || live.state === "idle" || live.state === "answered") return null;
-  const name = live.agent || "the orchestrator", owner = me?.role === "owner";
+  const name = live.agent || "the Coworker", owner = me?.role === "owner";
   const ask = (ownerText, memberText) => owner ? ownerText : memberText;
   const sent = clock(live.at), seen = clock(live.seen_at);
   let title = "", detail = "";
@@ -59,7 +59,7 @@ export function liveHTML(live, me, e) {
 /** One short line for the dock header, or "" to keep the dock's own text. */
 export function liveLine(live) {
   if (!live?.message_id) return "";
-  if (live.state === "working") return "Orchestrator is working on your message";
+  if (live.state === "working") return "Coworker is working on your message";
   if (live.state === "delivered") return live.reason === "wake_pending" ? "Delivering your message…" : "Message delivered";
   if (live.state === "no_answer") return `Not answering since ${clock(live.at) || "earlier"}`;
   if (live.state === "no_agent") return "No agent connected";

@@ -1,0 +1,2 @@
+- **Promises:** User-visible role descriptions use Coworker; protocol names and saved identities remain compatible.
+- **Tests:** `tests/test_coworker_tool_copy.py` scans descriptions and prompts, checks the new default in a fresh workspace, and preserves a saved legacy seat through reads and token rotation.

@@ -14,18 +14,60 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.sessions import person_principal
 
-from . import jobs, predicate, registry, start_context
+from . import jobs, launch_output, predicate, registry, start_context
 
 MAX_BODY_BYTES = 4096
 BODY_KEYS = {
+    "resources": {"memory_available_mb", "cpu_free", "memory_floor_mb"},
+    "sessions/lease": set(),
+    "sessions/starting": {"lease_token"},
+    "sessions/result": {"lease_token", "outcome", "thread_id", "code"},
     "lease": set(),
     "renew": {"lease_token"},
     "starting": {"lease_token"},
-    "result": {"lease_token", "outcome", "thread_id", "code"},
+    "result": {"lease_token", "outcome", "thread_id", "code", "launch_output"},
 }
 
 
+def _install_manifest(gateway, h):
+    """A machine-self action on the existing authenticated prefix, never public."""
+    from . import enrollment, enrollment_api, install_receipts, runtime_status
+
+    principal = gateway.principal_for(h)
+    path = urlsplit(h.path).path
+    if enrollment_api.preflight(gateway, h, path, principal):
+        return
+    try:
+        query = parse_qs(urlsplit(h.path).query, keep_blank_values=True)
+        if path == runtime_status.PATH:
+            from commonplace.runner.enrollment_api import _body
+
+            if h.command != "POST" or query:
+                raise ValueError
+            body = _body(h)
+            if body is None:
+                return
+            payload = runtime_status.report(gateway, principal, body)
+        elif h.command != "GET" or set(query) != {"nonce"} or len(query["nonce"]) != 1:
+            raise ValueError
+        else:
+            payload = install_receipts.fetch(gateway, principal, query["nonce"][0])
+    except enrollment.Refused:
+        send_json(h, 404, {"error": "not found"})
+    except install_receipts.ApprovalRequired:
+        send_json(h, 409, {"error": "approval_required"})
+    except ValueError:
+        send_json(h, 400, {"error": "invalid receipt request"})
+    except Exception:
+        # Signing, audit and inbox failures never reflect remote or credential data.
+        send_json(h, 503, {"error": "receipt unavailable"})
+    else:
+        send_json(h, 200, payload)
+
+
 def _body(h, action):
+    if urlsplit(h.path).query:
+        raise HTTPError(400, "invalid query")
     media = (h.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
     if media != "application/json":
         raise HTTPError(415, "application/json required")
@@ -33,7 +75,8 @@ def _body(h, action):
         length = int(h.headers.get("Content-Length", "0"))
     except ValueError:
         raise HTTPError(400, "invalid content length") from None
-    if length < 0 or length > MAX_BODY_BYTES:
+    limit = 65_536 if action == "result" else MAX_BODY_BYTES
+    if length < 0 or length > limit:
         raise HTTPError(413, "request too large")
     try:
         value = json.loads(h.rfile.read(length).decode("utf-8"))
@@ -41,13 +84,18 @@ def _body(h, action):
         raise HTTPError(400, "invalid JSON") from None
     if not isinstance(value, dict) or value.keys() - BODY_KEYS[action]:
         raise HTTPError(400, "invalid request body")
-    required = set() if action == "lease" else {"lease_token"}
-    if action == "result":
+    if action == "resources":
+        from .headroom import validate
+
+        return validate(value)
+    required = set() if action in ("lease", "sessions/lease") else {"lease_token"}
+    if action in ("result", "sessions/result"):
         required.add("outcome")
     if required - value.keys():
         raise HTTPError(400, "missing required argument")
     for key, item in value.items():
-        if not isinstance(item, str) or not item or len(item) > 256:
+        limit = launch_output.MAX_CHARS if key == "launch_output" else 256
+        if not isinstance(item, str) or not item or len(item) > limit:
             raise HTTPError(400, "invalid " + key)
     return value
 
@@ -180,6 +228,18 @@ def _listing(store, machine, query):
     }
 
 
+def _dispatch(gateway, h, route):
+    from . import setup_api, setup_approvals
+
+    if urlsplit(h.path).path in setup_approvals.MACHINE_PATHS:
+        setup_api.machine_dispatch(gateway, h)
+        return
+    if urlsplit(h.path).path in ("/api/runner/install-manifest", "/api/runner/install-status"):
+        _install_manifest(gateway, h)
+    else:
+        route(h)
+
+
 def register(gateway):
     def route(h):
         try:
@@ -208,8 +268,40 @@ def register(gateway):
                 payload = _listing(store, machine, url.query)
             else:
                 body = _body(h, action)
-                if url.query:
-                    raise HTTPError(400, "invalid query")
+                if action == "resources":
+                    from . import capacity
+
+                    send_json(h, 200, capacity.report(store, machine, body))
+                    return
+                if action.startswith("sessions/"):
+                    from . import sessions
+
+                    if action == "sessions/lease":
+                        payload = sessions.lease(gateway, principal.workspace_id, machine["id"])
+                        if payload is None:
+                            h.send_response(204)
+                            h.send_header("Content-Length", "0")
+                            h.send_header("Cache-Control", "no-store")
+                            h.end_headers()
+                            return
+                    elif action == "sessions/starting":
+                        payload = {
+                            "proceed": sessions.starting(
+                                gateway, principal.workspace_id, machine["id"], body["lease_token"]
+                            )
+                        }
+                    else:
+                        payload = sessions.result(
+                            gateway,
+                            principal.workspace_id,
+                            machine["id"],
+                            body["lease_token"],
+                            body["outcome"],
+                            body.get("thread_id"),
+                            body.get("code"),
+                        )
+                    send_json(h, 200, payload)
+                    return
                 if action == "lease":
                     row = jobs.lease(store, machine)
                     if row is None:
@@ -251,6 +343,10 @@ def register(gateway):
                             launch = runner_bridge.launch_fields(conn, row)
                     # An invalid pinned config launches nothing, so it gets no card.
                     if row["config_version"] is None or launch:
+                        from . import capacity
+
+                        with store.connection() as conn:
+                            launch.update(capacity.lease_fields(conn, row))
                         launch.update(
                             start_context.lease_fields(gateway, machine, row, launch.get("message"))
                         )
@@ -274,4 +370,4 @@ def register(gateway):
             send_json(h, 400, {"error": str(exc)})
 
     for method in ("GET", "POST"):
-        gateway.add_prefix_route(method, "/api/runner/", route)
+        gateway.add_prefix_route(method, "/api/runner/", lambda h: _dispatch(gateway, h, route))

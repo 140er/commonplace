@@ -3,13 +3,14 @@
 import importlib
 
 from commonplace.bots import (  # noqa: F401  (tools registers the built-in tools)
+    learned_routes,
     routes,
     tools,
     updates,
 )
 
 # Tool modules added by later slices; each registers its tools and hydrators on import.
-TOOL_MODULES = ("tools_project", "tools_machines")
+TOOL_MODULES = ("tools_project", "tools_machines", "tools_learning")
 
 
 def _load_tools():
@@ -27,5 +28,6 @@ def install(gateway):
         return
     _load_tools()
     routes.install(gateway)
+    learned_routes.install(gateway)
     updates.install(gateway)
     gateway.bots_installed = True

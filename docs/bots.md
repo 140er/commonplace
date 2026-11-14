@@ -28,6 +28,49 @@ gateway's same-origin check. A bot id that is unknown or belongs to someone else
 | `GET /api/bots/<id>/memory` | `{memories:[{id,text,at}]}` |
 | `POST /api/bots/<id>/memory` | `{text}`, `{memory}` |
 | `DELETE /api/bots/<id>/memory/<mid>` | `{ok}` |
+| `GET /api/bots/<id>/access` | `{version, entries:[{kind,ref,mode,set_at}]}`: what a shared bot may reach (its owner, and members with a live share) |
+| `PUT /api/bots/<id>/access` | `{version, entries}`, `{version, entries}`: the owner replaces the list; web session only; `409 conflict` for a stale `version` |
+| `GET /api/bots/<id>/access/log?after=&limit=` | `{log}`: one row per change, ids and codes only |
+| `GET /api/bots/<id>/shares` | `{shares:[{user:{id,name},talk,see_shared,shared_at}]}`: the owner sees every live share, a member only their own |
+| `POST /api/bots/<id>/shares` | `{user, talk, see_shared}`, `{share}` (201 new, 200 same flags again): owner only, web session only, a current member other than the owner; `409 sharing_off`, `409 limit` |
+| `PATCH` / `DELETE /api/bots/<id>/shares/<user>` | `{talk?, see_shared?}` → `{share}`; `{ok}` (revoking again is a no-op); owner only, web session only |
+| `GET /api/bots/<id>/threads` | `{threads, own}`: the threads the caller reaches and the id of their own private thread (`null` for the owner, whose thread has no id) |
+| `POST /api/bots/<id>/threads` | `{visibility, title?}`, `{thread}`: opens the member's private thread (once, `200` when it exists) or a new shared thread (`201`; needs `talk`, a shared bot and fewer than 100 open shared threads, else `409 limit`) |
+| `PATCH /api/bots/<id>/threads/<tid>` | `{archived}`, `{thread}`: the person who opened it |
+| `GET /api/bots/shared` | `{bots:[{id,name,job,archived,frozen,frozen_reason,owner,members,access}]}`: every shared bot of the workspace for a workspace owner (web session); never a thread, message or note; anyone else gets 404 |
+| `POST /api/bots/<id>/disable` / `enable` | `{ok, frozen}`: a workspace owner freezes a shared bot for everyone and lifts it again (idempotent); `enable` on a bot whose owner left is `409 conflict` |
+| `POST /api/bots/<id>/adopt` | `{ok, owner}`: a workspace owner takes over a frozen shared custom bot whose owner left; any other bot, caller or session is 404 (`409 conflict` for a disabled one) |
+| `GET` / `PATCH /api/bots/settings` | `{sharing, can_configure}`; any member reads, a workspace owner changes it (web session only) |
+
+Messages, stop, confirm, read and memory also take `?thread=<id>` (memory takes `?own=1` for a
+member's own notes). Without it a request acts on the caller's own thread: the owner's original
+thread, or a member's private one.
+
+The learning memory (`docs/design/bot-learning-memory.md`, first slices: the store, the switches,
+forgetting and the extractor) adds person-session routes. They are off by default and
+answer 404 to an app token, an agent token or another person's id:
+
+| Route | Body, answer |
+|---|---|
+| `GET`, `PATCH /api/bots/<id>/learning` | `{mode?: off|ask|auto, pause?: 1..30 days or null}`, `{learning}` (mode, paused, `active`, counts) |
+| `GET /api/bots/<id>/learned`, `GET /api/learned` | `?scope=&state=&kind=&limit=&offset=` (limit at most 100), `{items, counts}`; `remember` notes appear as `kind` `note` |
+| `GET`, `PATCH`, `DELETE /api/learned/<id>` | edit `{text?, pinned?}` (a secret is 400 `refused`), `{item}`; delete is real and a second delete is 404 |
+| `POST /api/bots/<id>/learned/forget-all` | `{}`, `{forgotten, notes, floor}`; the bot ignores every message up to `floor` from then on |
+| `GET`, `PATCH /api/learning/settings` | `{enabled?, shared_enabled?}` (workspace owner), `{enabled, shared_enabled, can_configure}` |
+| `GET`, `PATCH /api/projects/<slug>/learning` | `{shared_enabled}` (workspace owner), `{board, shared_enabled, can_configure}` |
+
+Nothing is learned unless the owner turned learning on for the workspace and the person turned
+it on for that bot (`ask` or `auto`, not paused). After a finished turn the hub may then read the
+person's own recent messages with the chat model the owner configured and keep a few lasting
+preferences, instructions, facts and corrections. Each kept item is the person's own words, a
+verbatim span checked against the stored message and the secret guard; anything the model
+invents or rewrites is dropped. A repeated sentence is counted, new words for a known topic
+replace the old item, a sentence the person forgot is not learned again, and `ask` mode only
+proposes (proposals expire after 14 days). It uses no new service and no extra model call
+unless every switch allows it. Each later turn then reads the person's own items that match the
+new message and offers up to 8 of them to the model as quoted, labelled data ("learned"); the
+person's current message always wins over them. Nothing is used when a switch is off or the
+person paused. Showing the items in the thread and sharing come in later slices.
 
 A bot is `{id, name, job, instructions, kind, board, archived, last, unread, waiting, state}`.
 `kind` is `project`, `general` or `custom`. `last` is the newest message (`role`, `text`
@@ -187,13 +230,13 @@ plain sentence with what to do next.
 What the bot can do:
 
 - **Look.** `project_status` (counts by status, who is working, what waits and why, whether the
-  orchestrator is connected and woken), `list_work` (up to 20 tasks, filtered by status),
+  Coworker is connected and woken), `list_work` (up to 20 tasks, filtered by status),
   `work_detail` (one task with its latest notes and links) and `list_decisions` (the open
   questions waiting for you).
 - **File and order work.** `create_work` files your message as a new task, `prioritize_work`
   changes a task's priority (project owner only) or moves it before or after another task, and
   `comment_work` adds a comment.
-- **Steer.** `tell_orchestrator` passes your words to the project's orchestrator and says
+- **Steer.** `tell_orchestrator` passes your words to the project's Coworker and says
   honestly whether it is connected and woken, or will only see them when it next checks. New
   work goes through `create_work` only, never also forwarded. One message that does both uses
   the span arguments: one part is filed, another is forwarded.
@@ -255,7 +298,7 @@ empty list and a short reason.
 
 ## Updates between turns
 
-When something happens to work a bot filed, or the project's orchestrator answers a message a
+When something happens to work a bot filed, or the project's Coworker answers a message a
 bot forwarded, the person sees it in that bot's thread without asking: one short message with
 the role `event`, and the roster follows (`unread` counts it, `state` changes).
 
@@ -264,7 +307,7 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
 | A question for the person on a task the bot filed | `A question about “<title>” needs you.` | `decision` |
 | The task is ready for review | `“<title>” is ready for you to look at.` | `work` |
 | The task is done | `“<title>” is done.` | `work` |
-| The orchestrator replies to a post the bot forwarded | the reply, word for word | `orchestrator` |
+| The Coworker replies to a post the bot forwarded | the reply, word for word | `orchestrator` |
 
 - Only the bot that filed the task or forwarded the post gets the message. Other bots, and
   other people's bots, get nothing.
@@ -273,11 +316,11 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
 - Exactly once: a task posts when its status changes into one of the three above, so the
   same event twice, two events for one change, or events handled out of order add one
   message each, in order. A forwarded post is
-  answered by the first reply from the project's orchestrator after it (the rule project
+  answered by the first reply from the project's Coworker after it (the rule project
   chat uses); later replies are not attached to it.
 - A title is other people's text: it is redacted and shortened for the message and never
   interpreted. The `orchestrator` block lets a client label the message as the
-  orchestrator's own words; display redaction applies as for every message.
+  Coworker's own words; display redaction applies as for every message.
 - `state` on a bot is `needs_you` while a question waits for the person, else `working` while
   a task it filed is in progress, else `idle`.
 - Not covered: a start that fails to launch. The hub emits no event for it, and nothing here
@@ -293,7 +336,67 @@ the role `event`, and the roster follows (`unread` counts it, `state` changes).
   Each user message has one reply at most, and a repeated request id with the same text
   returns the stored message instead of a second one. Display text is redacted; the stored
   text is not.
-- A memory note is removed with a tombstone: it disappears from the list, the stored row stays.
+- A memory note is removed by blanking it: it disappears from the list, the row stays so ids keep
+  working, and its text is gone from the file.
+- Sharing a bot with other members (design: `docs/design/shared-team-bots.md`) is being built
+  in slices. The storage for it is in place and unused: a bot that is not shared works as
+  above. Sharing is off for every workspace until its owner turns it on, a share reaches
+  nothing until the bot's owner grants it something, and a member never reaches another
+  member's private thread.
+- What a shared bot may reach (slice S2): a turn of a shared bot acts with the bot's access
+  list, the talking member's own rights and the owner's rights, all intersected and read afresh
+  on every call. The list holds `project` entries (`read` or `write`), `machine` entries (a
+  machine id) and `tool` entries (a tool name, always needed for a tool other than `remember`,
+  `forget` and `my_access`); `wing` entries are refused (`unsupported_kind`) until a tool reads
+  wings. A `read` grant never lets the bot write. A project the asker cannot read is "can't
+  find that", one the asker reads but the bot may not use is refused with a fixed sentence that
+  names nothing. Only the bot's owner edits the list (`403 owner_only` for a member, 404 for
+  anyone else and for an app or agent token), only with something the owner reaches
+  themselves (`403 outside_your_scope`), by compare-and-set on `version`; each real change writes
+  one log row per entry and one control-database audit row (kind, ref and mode only). Members
+  read the list and the log. A bot that is not shared ignores the list. Machines and tools are
+  listed only within the list, and the runner's own rule still decides who may start an agent.
+- Sharing and members' private threads (slice S3): the owner of a custom bot shares it with
+  chosen workspace members (`talk`: open their own private thread and write in it; `see_shared`:
+  read shared threads, see below) and revokes at any time. Sharing is off
+  until a workspace owner switches it on (`PATCH /api/bots/settings`); while it is off a share
+  is refused and members get 404. A member sees the bot in their roster with its owner and
+  talks to it in their own private thread, which no one else reaches: not the bot's owner, not
+  a workspace owner, not another member (404 on every route). Revoking takes effect on the
+  next request and stops a turn in flight: no tool runs after it, and the stored reply is a
+  fixed sentence. A member's memory notes are theirs; the owner's notes are bot-level and every
+  turn reads them. A task a member's turn filed, or a post it forwarded, reports to that
+  member's thread. Each shared bot runs one turn per thread and at most four at once; a turn
+  counts against the talker's own daily budget.
+- Shared threads and the audience rule (slice S4): a member with `talk` opens a shared thread
+  (`visibility: shared`); the owner and every member with `see_shared` read it, a member with
+  `talk` alone only the ones they opened. A reader sees a thread from their own `history_from`
+  (the newest message when they were shared in; a new share starts a new one). A turn in a shared
+  thread reaches only what the bot's list, the asker, the owner and every person who reads that
+  thread may reach, computed from fresh rights on every call: a project one reader cannot read is
+  not offered, named, read or written there, and a model that names it gets the fixed sentence
+  "I can't use that in a shared thread." If a reader who cannot read what the turn used joins
+  while it runs, the stored reply is a fixed sentence instead of the model's text. The model reads
+  only the bot-level notes (never a member's own notes or learned items) and only messages every
+  reader may read. Messages carry their author; a task filed from a shared thread reports with
+  the fixed text "A task filed here changed." and a block each reader hydrates with their own
+  rights; a forwarded post's answer is not copied into a shared thread. A request id another
+  member used in the thread is theirs (`409 conflict`); a reader without `talk` gets `403
+  read_only`; only the asker stops their own turn.
+- Members and owners leaving (slice S5): when a member is removed from the workspace the hook
+  `lifecycle.member_removed` ends their live shares (`member_removed`) and freezes the bots they
+  own; a sweep on the bot roster and the workspace list does the same for a removal that skipped
+  the hook. Their messages, their private threads and the bot stay in the file, unreachable to
+  everyone, and re-adding them restores no share: the owner shares again, from a new
+  `history_from`. A frozen bot takes no turn and has no readers: members and apps get 404, a turn
+  in flight ends with the fixed `failed:revoked` sentence, and its owner (if re-added) cannot
+  talk, share or change its access list. A workspace owner lists every shared bot (name, owner,
+  members, access; no threads), may disable one (the same freeze, lifted with `enable`) and may
+  adopt one whose owner left: the adopter becomes the owner, the access list and the shares are
+  kept, the list is evaluated against the adopter's rights from then on (so it can only shrink),
+  and the old owner's original thread stays behind a floor, so the adopter never reads it
+  (messages are append-only). Nothing is deleted. An archived shared bot keeps its shares and
+  stays readable but takes no new turn, for its owner too.
 - Bots use the model the owner configured in chat settings. Without a usable model there is
   no canned answer.
 
@@ -310,6 +413,10 @@ scopes that you grant yourself:
   useless without `bots:chat` and is granted separately. Without it that route answers 403
   `scope_required` and nothing runs. Buttons on a question use the separate `cards:decide`
   scope described in the connections guide.
+- `bots:learned` additionally lets the app read what your bots learned
+  (`GET /api/learned` and `GET /api/bots/<id>/learned`), and nothing else: every change to a
+  learned item is refused (403 `read_only`). It needs `bots:chat`, is granted separately, and an
+  app without it gets 404 on those routes.
 
 **How to grant.** Any signed-in member can do it for their own app. Owners: Settings → Agents,
 **Allow using my bots** on the app's row (and **Allow confirming** if you want that too), or
@@ -318,7 +425,7 @@ An app that signs in with OAuth asks for the scopes and you tick the boxes on it
 form; an unticked box grants nothing. Members use the same PATCH for their own connection, or
 the authorization form.
 
-**What never qualifies.** Child agents, runner connections, project orchestrator seats, board
+**What never qualifies.** Child agents, runner connections, project Coworker seats, board
 coordinators, connections that belong to someone else, and revoked or expired connections. They
 are refused when granting and again on every request, even if a stored scope claims otherwise;
 they get the same 404 as any other token. Assigning an app as a board coordinator removes its
@@ -371,7 +478,7 @@ Send turns into **Stop**; stopping keeps what was already written.
 
 Inside the reply you may see:
 
-- a small grey line of **actions** ("Filed “Fix login”", "Told the orchestrator"); several actions
+- a small grey line of **actions** ("Filed “Fix login”", "Told the Coworker"); several actions
   share one line, and a refused one is shown in red;
 - a **work** block with the task's title and a status chip (Queued, Working, Needs you, Ready,
   Blocked, Done). Tap it to read the latest note and open its links;
@@ -379,7 +486,7 @@ Inside the reply you may see:
   tap is your own answer and goes straight to the task;
 - a **confirmation** for the few actions that need your tap before they run. Confirm runs what
   the line says; Cancel drops it;
-- a **message from the orchestrator**, labelled "Orchestrator", when the project's orchestrator
+- a **message from the Coworker**, labelled "Coworker", when the project's Coworker
   replies to something the bot forwarded (see [Updates between turns](#updates-between-turns));
 - a **setup** note when no chat model can answer yet. Workspace owners get a link to the settings;
   members are told to ask the owner.

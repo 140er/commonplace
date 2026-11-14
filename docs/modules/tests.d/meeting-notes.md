@@ -1,0 +1,3 @@
+- **Tests:**
+
+  - `tests/test_meetings_notes.py` covers notes and filing for meeting-join bots over the fake provider and a scripted model (see the `meetings` module block): off until configured, generation with evidence and the segment retention rules, what the server drops, a transcript full of instructions, the hosted-model and no-model refusals with bounded retries and the sweep, a stop while notes are made, the two-level transcript opt-in, edit and dismiss, keeping a note in memory and approving an action as a card (once, with provenance, refused cleanly), the access matrix and deleting a meeting.

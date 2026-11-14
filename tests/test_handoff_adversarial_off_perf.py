@@ -1,5 +1,6 @@
 """R3 regressions: disabled hooks, legacy compatibility and lossless handoff."""
 
+import ast
 import hashlib
 import http.client
 import inspect
@@ -423,63 +424,10 @@ def _token(local, policy, name="review"):
 # this branch's own history, so any clone of the branch can read it.
 DEVELOP_BASELINE = "c07bb354"
 
-# Optional arguments tools gained after the baseline: first the chat range on
-# saves and facts. Off mode must still match the baseline in everything else.
-_RANGE = {"source_thread", "source_seq_start", "source_seq_end"}
-# Then wings and sensitivity on facts.
-_FACT = {"wing", "sensitivity"}
-_FILTER = {"wings", "sensitivities"}
-ADDED_SINCE_BASELINE = {
-    "memory_save": {"source"},
-    "mempalace_add_drawer": _RANGE,
-    "mempalace_kg_add": _RANGE | _FACT | {"sensitivities"},
-    "mempalace_kg_supersede": _RANGE | _FACT | {"sensitivities"},
-    "mempalace_kg_invalidate": {"wing", "sensitivities"},
-    "mempalace_kg_query": _FILTER | {"search", "limit"},
-    "mempalace_search": {"include_facts"},
-    "mempalace_kg_timeline": _FILTER,
-}
-
-
-# KG tools that once needed every wing and are now wing-scoped, so a token
-# that reads every wing but not private ones may now see them; and KG tools
-# added since the baseline.
-WING_SCOPED_SINCE_BASELINE = {
-    # These reads now project the caller's readable wings.
-    "mempalace_find_tunnels",
-    "mempalace_follow_tunnels",
-    "mempalace_graph_stats",
-    "mempalace_kg_list_wings",
-    "mempalace_kg_stats",
-    "mempalace_list_hallways",
-    "mempalace_list_tunnels",
-    "mempalace_status",
-    "mempalace_traverse",
-    "mempalace_kg_query",
-    "mempalace_kg_timeline",
-    "mempalace_kg_invalidate",
-    "mempalace_kg_supersede",
-    # Added later: saving a fact with merge and supersede.
-    "mempalace_kg_save",
-    "fact_save",
-}
-TOOLS_ADDED_SINCE_BASELINE = {
-    "rules_publish",
-    "rules_get",
-    "rules_changed",
-    "session_start",
-    # Compute map read tools (not part of handoff).
-    "topology_get",
-    "topology_route",
-    # Orchestrator config, lease, journal and gate tools (not part of handoff).
-    *"""
-    orch_card_start orch_checkpoint orch_config_accept orch_config_diff orch_config_get
-    orch_config_propose orch_config_reject orch_config_render orch_config_write orch_exp_retire
-    orch_force_release orch_gate_open orch_gate_record orch_heartbeat orch_journal_intent
-    orch_journal_record orch_release orch_restore_ack orch_restore_status orch_resume
-    orch_void_step orch_reassign_step
-    """.split(),
-}
+# What tools gained after the baseline is derived, never listed: a tool that is
+# absent from the pinned tool list, or an argument absent from a pinned tool's
+# schema, is an addition and is dropped before comparing. Every pinned tool must
+# still match in name, description and everything its pinned schema declares.
 STARTUP_ADDED_SINCE_BASELINE = (
     "Commonplace is the single source of rules and memory.\n"
     "Automatically call session_start at session start, resume and after compaction, "
@@ -503,30 +451,41 @@ def _as_baseline(reply, baseline):
         and result.get("instructions") == STARTUP_ADDED_SINCE_BASELINE
     ):
         result.pop("instructions")
-    known = {t.get("name") for t in before.get("result", {}).get("tools", [])}
-    tools[:] = [
-        t
-        for t in tools
-        if t.get("name") in known
-        or t.get("name") not in WING_SCOPED_SINCE_BASELINE | TOOLS_ADDED_SINCE_BASELINE
-    ]
-    for tool in tools:
-        properties = tool.get("inputSchema", {}).get("properties", {})
-        for name in ADDED_SINCE_BASELINE.get(tool.get("name"), ()):
-            properties.pop(name, None)
+    pinned = {t.get("name"): t for t in before.get("result", {}).get("tools", [])}
+    if pinned:
+        tools[:] = [t for t in tools if t.get("name") in pinned]
+        for tool in tools:
+            declared = pinned[tool["name"]].get("inputSchema", {}).get("properties", {})
+            properties = tool.get("inputSchema", {}).get("properties", {})
+            for name in [name for name in properties if name not in declared]:
+                del properties[name]
     return status, body
 
 
-def test_baseline_filters_only_known_additions_when_missing():
+def test_baseline_drops_only_tools_missing_from_the_pinned_list():
     def reply(names):
         return 200, {"result": {"tools": [{"name": name} for name in names]}}
 
     baseline = reply(["existing", "rules_get"])
-    actual = reply(
-        ["existing", "rules_get", "rules_publish", "rules_changed", "session_start", "unexpected"]
-    )
-    assert _as_baseline(actual, baseline) == reply(["existing", "rules_get", "unexpected"])
-    assert _as_baseline(actual, baseline) != baseline
+    actual = reply(["existing", "rules_get", "rules_publish", "session_start", "unexpected"])
+    assert _as_baseline(actual, baseline) == baseline
+    assert _as_baseline(reply(["existing"]), baseline) != baseline
+
+
+def test_baseline_ignores_only_arguments_missing_from_the_pinned_schema():
+    def reply(properties, description="Saves."):
+        schema = {"properties": properties}
+        tool = {"name": "save", "description": description, "inputSchema": schema}
+        return 200, {"result": {"tools": [tool]}}
+
+    baseline = reply({"text": {"type": "string"}})
+    assert _as_baseline(reply({"text": {"type": "string"}, "extra": {}}), baseline) == baseline
+    for changed in (
+        reply({"text": {"type": "integer"}}),
+        reply({}),
+        reply({"text": {"type": "string"}}, description="Saves more."),
+    ):
+        assert _as_baseline(changed, baseline) != baseline
 
 
 def test_baseline_normalizes_only_exact_new_startup_guidance():
@@ -575,11 +534,25 @@ def legacy(tmp_path_factory):
     # Current rules checks import the read deadline: a leaf module (stdlib only), so
     # the pinned gateway, policy and handoff stay as-is.
     shutil.copy2(ROOT / "mempalace" / "deadline.py", snapshot / "mempalace" / "deadline.py")
+    # Current stores take their busy timeout and lock retry from a stdlib-only leaf module.
+    shutil.copy2(ROOT / "commonplace" / "db_busy.py", snapshot / "commonplace" / "db_busy.py")
     # Current board and rules stores create files through the admission gate.
     shutil.copy2(ROOT / "commonplace" / "admission.py", snapshot / "commonplace" / "admission.py")
     # Overlaid board tools use the current registry contract; handoff remains
     # absent from the baseline's enabled modules below.
     shutil.copy2(ROOT / "commonplace" / "extensions.py", snapshot / "commonplace" / "extensions.py")
+    # Current board tools import the Space tool alias table from policy. Add only
+    # that constant to the pinned policy: the pinned grants never consult it, so
+    # the legacy policy behaviour stays exactly as recorded.
+    current_policy = ast.parse((ROOT / "commonplace" / "policy.py").read_text())
+    aliases = next(
+        node
+        for node in current_policy.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "TOOL_ALIASES" for t in node.targets)
+    )
+    with (snapshot / "commonplace" / "policy.py").open("a") as pinned_policy:
+        pinned_policy.write("\n\n" + ast.unparse(aliases) + "\n")
     # Current board schemas need only the read-only orchestration setting probe.
     # Do not install current project routes into the pinned HTTP baseline.
     projects = snapshot / "commonplace" / "projects"

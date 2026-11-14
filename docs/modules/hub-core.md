@@ -1,9 +1,21 @@
 ## hub-core
 
-- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/index_stats.py`, `commonplace/control_db.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
+- **Paths:** `commonplace/__init__.py`, `commonplace/__main__.py`, `commonplace/gateway.py`, `commonplace/instance_admin.py`, `commonplace/index_stats.py`, `commonplace/control_db.py`, `commonplace/db_busy.py`, `commonplace/auth.py`, `commonplace/policy.py`, `commonplace/decide_grant.py`, `commonplace/person_actions.py`, `commonplace/person_events.py`, `commonplace/tokens.py`, `commonplace/extensions.py`, `commonplace/_http.py`, `commonplace/http_util.py`, `commonplace/urls.py`, `commonplace/ratelimit.py`, `commonplace/backfill_allowance.py`, `commonplace/workers.py`
 - **Owns:**
 
+  - The extension list installs `commonplace.compute`, which provides the Compute management and discovery routes.
+
+  - Dedicated session-admin management metadata services, namespace admission and bounded coordinated read audit appends.
+  - `ControlDB(path, compute_config=...)` accepts trusted Compute startup configuration; its transaction wrapper holds the compute coordinator lock across the whole transaction, and without configuration behavior is unchanged.
+
   - Canonical Space REST aliases mapped to existing board tool authority.
+  - Space tool names (`space_list`, `space_add`, `space_set`, `space_own_wing`) resolve to the board tools through `policy.TOOL_ALIASES`; a connection that lists either name of a pair holds both, so an alias never widens authority.
+  - Space cards and chat routes (`/api/spaces/<slug>/cards` and `/chat`) map to the existing task and chat tool gates.
+
+  - `extensions.MODULES` mounts `commonplace.topology` (its `install` is the proposal surface's), and `_rest_tool` maps `POST /api/topology/proposals` to `topology_propose`, so the route shares the tool's visibility gate.
+
+  - Trusted Compute startup configuration wraps central ControlDB authority access in the bounded cross-process coordinator, with persisted guards and durable epoch invalidation; no configuration leaves existing behavior unchanged.
+  - The gateway installs inert owner Compute management routes alongside chat; this extension setup neither loads credential custody nor starts remote execution.
 
   - The gateway (the only way into a workspace), the control database, principals, token policy, the extension seam and one memory worker per workspace.
 
@@ -25,9 +37,13 @@
 
 - **Promises:**
 
+  - Fresh session person/flag authority omits only the workspace-owner requirement; rate admission precedes denial audit; console reads bypass home-account quota only.
+
   - Diary reads probe entry topics through the worker and exclude topics naming unreadable threads before the worker counts or windows entries, pinned to the probe's store. A client `thread_scope` never reaches the worker. A probe validation error is returned as the answer, an over-limit probe answers that the agent has too many diary topics to check, paused or unavailable memory propagates as on other routes, and other probe faults are logged by class and answered with an explicit error; no read falls back to an unscoped count.
 
   - The write-side room check shares the handoff thread-reference check, including diary and checkpoint diary topics, so a room or topic naming an unreadable thread in any form is refused as not found.
+
+  - The same `mcp:` source-ID rule covers provenance fields that name a thread (fact sources, drawer metadata, `source_kept.thread`) and tunnel labels: a reader who cannot read every matching thread loses the field, or the tunnel for a label.
 
   - Write-side room checks (`_check_thread_room`, `_drawer_wings` and the checkpoint loop) share one reader per gateway call, and a checkpoint takes at most 500 items.
 
@@ -39,11 +55,17 @@
 
   - Tokens cannot be minted with private read for non-owner holders; PAT and durable-connection authentication cap loaded private/admin scopes to current ownership. Tunnel writes require readable endpoints and scrub outgoing results.
 
+  - `/app/join` (workspace invites) counts against the per-address credential rate limit, like `/app/login`.
+
   - Wildcard readers without private scope use existing input-authorized projections for overview, graph, KG, tunnels, hallways and drawer pages; unprojected whole-palace operations remain refused.
 
   - Instance-admin index figures use bounded read-only SQLite and a fixed 100-byte HNSW header; the figure reader never calls a worker or collection. Non-admin status keeps its existing shape. The paginated console shows unknown reasons without content or paths. `tests/test_index_stats_readonly.py` and `tests/test_admin_instance_ui.py` cover this boundary. Admin overview stays additive; 500 ms queries obey page deadlines. Missing pointers with generation siblings, closed WAL, busy stores and symlinks fail with stable reasons; non-admin sections stay 404. `tests/test_index_stats_r1.py` covers review regressions. Size figures (drawers, vectors, HNSW capacity) cover private wings and are shown only to a current owner of that workspace, else `private_scope`; `tests/test_index_stats_private_scope.py` covers this.
 
-  - Only the explicit worker-memory observation opt-out is added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
+  - Only the explicit worker-memory observation opt-out and `MALLOC_ARENA_MAX` are added to the worker environment allowlist; diagnostic data stays inside the existing per-workspace config directory.
+
+  - Every launched worker gets `MALLOC_ARENA_MAX=2` unless the operator sets a non-empty value, which caps the number of glibc malloc arenas its request threads use. This limits allocator retention under concurrent calls only; first-load memory of the index and model is unchanged.
+
+  - `MEMPALACE_EAGER_WARMUP` applies only to directly launched workers (stdio or a local server). Gateway-launched workers exclude it from their environment, even when set on the gateway or container. It remains outside `_PASSED_ENV`.
 
   - Consented private-chat drawer listings validate page arguments with the worker before listing imports, forwarding the normalized limit and offset unchanged.
 
@@ -70,6 +92,7 @@
   - KG provenance writes report the offending field and citation character limit before storage; hidden-reference refusals keep their existing replies and refused writes leave existing facts untouched.
 
   - Supported Space routes pass the existing non-person tool visibility gate.
+  - The space-named tools keep each board tool's scope, trust, owner and profile rules; Space cards and chat routes pass the matching tool gate before any handler runs.
   - Gateway installation registers project reports without resolving workspace directories; the webhook worker recovers existing sources on its first scan and drives independent monotonic deadlines without adding authority or holding database locks during report HTTP.
 
   - Authenticated wing lists and search fan-out share the complete authorized pair projection. Hidden-only wings affect neither wings_searched nor the fan-out denial count; internal consumers inherit the same listing.
@@ -93,6 +116,8 @@
   - **Browser GitHub connection:** Workspace creation accepts the caller transaction so GitHub ownership, user creation and personal workspace provisioning roll back together.
 
 - **How it fails:**
+
+  - Authority/source errors fail closed; authorized audit failure returns no metadata; denied bodies close before response.
 
   - `http_util.log_failure` logs the exception type and stack locations only; for sqlite3/sqlcipher3 errors it adds `sqlite_errorname`/`sqlite_errorcode` and the message only when it is one of SQLite's fixed texts (`SQLITE_MESSAGES`), never other exception text.
 
@@ -122,6 +147,10 @@
   - A worker that does not start returns an error, never another workspace's data; the control database is the single point of failure for sign-in.
 
 - **Tests:**
+
+  - `tests/test_instance_admin_read.py` covers genuine credentials, metadata isolation, fixed clocks, rate boundaries and read-only sources.
+
+  - Workspace settings retain identity, account limits and orchestration without a boards store; positive lifecycle and actor filters and non-session navigation refusals have regression coverage. Instance settings reject query filters and validation refusals carry no audit targets.
 
   - Private-chat null-limit, invalid-offset and invalid-date regressions assert real import-reader eligibility and pass-through listing arguments; plain literal readers compare hidden-present and hidden-absent pages.
 

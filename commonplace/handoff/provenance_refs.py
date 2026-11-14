@@ -250,7 +250,7 @@ def _named_threads(text):
     yield from ("mcp:" + text[match.end() :] for match in _SOURCE.finditer(text))
 
 
-def room_references(value):
+def room_references(value, parse=None):
     """Thread IDs and T3 source IDs a room, topic or link names.
 
     Every route that returns or writes a room or topic shares this check.
@@ -259,14 +259,16 @@ def room_references(value):
     forms, IDs next to letters or underscores, fullwidth spellings and
     encodings hidden behind normalisation all count. Returns None when the
     value cannot be decoded or is still changing after the round bound:
-    callers treat that as naming a thread nobody can prove readable.
+    callers treat that as naming a thread nobody can prove readable. ``parse``
+    replaces ``refs`` so a caller's per-response memo serves repeated values.
     """
+    parse = parse or refs
     if not isinstance(value, str):
         return ()
     texts = [value, unicodedata.normalize("NFKC", value)]
     current = value
     for _ in range(_NORMALISE_ROUNDS):
-        parsed = refs(current)
+        parsed = parse(current)
         if parsed is REFUSE:
             return None
         decoded = parsed.text or ""

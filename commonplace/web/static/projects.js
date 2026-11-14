@@ -132,7 +132,7 @@ function askConfirm(copy, e, { opener, fallback } = {}) {
 // `others`: other projects with a known assignment (orchestrator or card); null when unreadable.
 export function disconnectCopy(project, connection, { main = false, only = false, others = null } = {}, e) {
   const name = String(connection.name || "").replace(/^conn:/, "");
-  const who = main ? `${project.name} orchestrator` : name;
+  const who = main ? `${project.name} Coworker` : name;
   // Only known assignments are named: wing access elsewhere is not visible here, so no
   // exhaustive "no other project" claim is made, and the workspace-wide line always shows.
   const known = others === null ? "Its assignments in other projects could not be checked."
@@ -140,7 +140,7 @@ export function disconnectCopy(project, connection, { main = false, only = false
     : "No known assignments in other projects.";
   const scope = `<p class="scope" data-disconnect-scope><b>This revokes the connection “${e(name)}” for the whole workspace</b>, not only in ${e(project.name)}. ${known} Revoking it stops all of its access in every project of this workspace, including memory it can read there.</p>`;
   const lines = [
-    ...(main ? [`${e(project.name)} has <b>no orchestrator</b> until an agent connects. The next one you connect becomes it.`] : []),
+    ...(main ? [`${e(project.name)} has <b>no Coworker</b> until an agent connects. The next one you connect becomes it.`] : []),
     ...(main && only ? ["Chat still works: new requests wait, as before your first agent."] : []),
     "Cards, chat and memory stay exactly as they are.",
     `${e(who)}'s setup stops working. To use it again, connect it as a new agent.`,
@@ -182,7 +182,7 @@ export function mainHTML(project, e, { notAnswering = "" } = {}) {
   const live = main.connected && main.seen;
   const state = live ? `${PROJECT_COPY.connected} · ${main.status || PROJECT_COPY.statusPrivate} · reads chat, makes cards` : main.connected ? PROJECT_COPY.unused : PROJECT_COPY.disconnected;
   const initial = String(project.name || "?").trim().charAt(0).toUpperCase() || "?";
-  return `<div class="setting-row orch-row" data-project-main data-project-seat="${e(main.name)}"><span class="av" aria-hidden="true">${e(initial)}</span><span class="orch-text"><b>${e(project.name)} orchestrator</b>${live ? ' <span class="tag ok">Connected</span>' : ""}<small>${e(state)}</small></span>${project.can_configure && main.connectable ? `<button type="button" class="btn sm desktop-agent" data-project-connect>${e(main.connected ? "Reconnect…" : PROJECT_COPY.connect)}</button>` : ""}</div>${notAnswering ? `<p class="set-note" data-project-not-answering>${e(notAnswering)}</p>` : ""}`;
+  return `<div class="setting-row orch-row" data-project-main data-project-seat="${e(main.name)}"><span class="av" aria-hidden="true">${e(initial)}</span><span class="orch-text"><b>${e(project.name)} Coworker</b>${live ? ' <span class="tag ok">Connected</span>' : ""}<small>${e(state)}</small></span>${project.can_configure && main.connectable ? `<button type="button" class="btn sm desktop-agent" data-project-connect>${e(main.connected ? "Reconnect…" : PROJECT_COPY.connect)}</button>` : ""}</div>${notAnswering ? `<p class="set-note" data-project-not-answering>${e(notAnswering)}</p>` : ""}`;
 }
 
 const clockTime = (value) => {
@@ -212,7 +212,7 @@ export async function connectSetup(app, result) {
 export function connectResultHTML(result, e, { app = "claude-code" } = {}) {
   const board = result.setup?.webhook_add?.board || result.board;
   const events = result.setup?.webhook_add?.events || ["space_message", "card.moved"];
-  return `<section class="form-tile"><h2 id="project-connect-title">Agent connection</h2><p>A token for this project's orchestrator seat is ready. No agent is attached until one uses it. The token is shown once: copy it now.</p><ol class="dsteps" data-connect-steps><li data-connect-step="setup"><b>Copy the setup for your agent app</b><span class="d">It holds the MCP address and this token as a Bearer header, in the format the app reads.</span>${appSelect(app)}<button type="button" class="btn primary" data-project-copy-setup>Copy setup</button><details><summary>Show the setup to select it</summary><pre data-project-config></pre></details></li><li data-connect-step="paste"><b>Paste it where the app lists its MCP servers</b><span class="d">Some apps call them Tools or Connectors. Save the change.</span></li><li data-connect-step="start"><b>Start or restart the agent app</b><span class="d">The project shows the agent as connected once it uses the token.</span></li><li data-connect-step="webhook"><b>Optional: wake on messages and card moves</b><span class="d">Ask the agent to call webhook_add with events ${e(JSON.stringify(events))}${board ? ` and board ${e(board)}` : ""}.</span></li></ol><label>Token<input data-project-token value="${e(result.token)}" readonly autocomplete="off" spellcheck="false"></label><button type="button" class="opt" data-project-copy>Copy token</button><label>MCP URL<input value="${e(result.mcp_url)}" readonly></label>${result.warning ? `<p role="status">${e(result.warning)}</p>` : ""}<p role="status" data-project-copy-status></p><button type="button" class="blockbtn" data-project-dismiss>Close</button></section>`;
+  return `<section class="form-tile"><h2 id="project-connect-title">Agent connection</h2><p>A token for this project's Coworker seat is ready. No agent is attached until one uses it. The token is shown once: copy it now.</p><ol class="dsteps" data-connect-steps><li data-connect-step="setup"><b>Copy the setup for your agent app</b><span class="d">It holds the MCP address and this token as a Bearer header, in the format the app reads.</span>${appSelect(app)}<button type="button" class="btn primary" data-project-copy-setup>Copy setup</button><details><summary>Show the setup to select it</summary><pre data-project-config></pre></details></li><li data-connect-step="paste"><b>Paste it where the app lists its MCP servers</b><span class="d">Some apps call them Tools or Connectors. Save the change.</span></li><li data-connect-step="start"><b>Start or restart the agent app</b><span class="d">The project shows the agent as connected once it uses the token.</span></li><li data-connect-step="webhook"><b>Optional: wake on messages and card moves</b><span class="d">Ask the agent to call webhook_add with events ${e(JSON.stringify(events))}${board ? ` and board ${e(board)}` : ""}.</span></li></ol><label>Token<input data-project-token value="${e(result.token)}" readonly autocomplete="off" spellcheck="false"></label><button type="button" class="opt" data-project-copy>Copy token</button><label>MCP URL<input value="${e(result.mcp_url)}" readonly></label>${result.warning ? `<p role="status">${e(result.warning)}</p>` : ""}<p role="status" data-project-copy-status></p><button type="button" class="blockbtn" data-project-dismiss>Close</button></section>`;
 }
 
 const sameModel = (a, b) => a?.provider === b?.provider && a?.model === b?.model;
@@ -221,7 +221,7 @@ const modelValue = (choice) => choice ? `${choice.provider} ${choice.model}` : "
 const parseModel = (value) => { const at = value.indexOf(" "); return at < 1 ? null : { provider: value.slice(0, at), model: value.slice(at + 1) }; };
 
 // Each role picks from the workspace's list; the stored choice always stays an option and is shown as stored.
-export const MODEL_ROLE_LABELS = {main: "Orchestrator", worker: "Builder", reviewer: "Reviewer", gate: "Gate"};
+export const MODEL_ROLE_LABELS = {main: "Coworker", worker: "Builder", reviewer: "Reviewer", gate: "Gate"};
 
 function modelOptions(project, e, choice, empty) {
   const catalog = project.model_catalog || [];
@@ -338,13 +338,13 @@ export function showConnectResult(result, e, { api, path, project, current = () 
 }
 
 const reconnectCopy = (project, e) => project.main.source === "coordinator"
-  ? { title: "Replace the orchestrator?", body: `<p>Connect replaces ${e(project.main.name)} as this project's orchestrator.</p>`, action: "Connect" }
+  ? { title: "Replace the Coworker?", body: `<p>Connect replaces ${e(project.main.name)} as this project's Coworker.</p>`, action: "Connect" }
   : { title: "Reconnect this agent?", body: "<p>Its current token will stop working.</p>", action: "Reconnect" };
 
 // Plain text for the persistent status, including when a conflict dialog is dismissed.
 function connectConflict(payload = {}) {
   if (payload?.error === "shared_wing") return `${PROJECT_COPY.connectError} This project uses shared memory. Try connecting again and choose “${PROJECT_COPY.ownWing}” or “${PROJECT_COPY.allowShared}”.`;
-  if (payload?.error === "replaces current orchestrator") return `${PROJECT_COPY.connectError} The project already has an orchestrator. Try connecting again and confirm its replacement.`;
+  if (payload?.error === "replaces current orchestrator") return `${PROJECT_COPY.connectError} The project already has a Coworker. Try connecting again and confirm its replacement.`;
   return `${PROJECT_COPY.connectError} ${payload?.message || payload?.error || "Please try again."}`;
 }
 
@@ -373,7 +373,7 @@ async function requestConnect({ api, path, project, e, active, ask, onWing, onSt
           wingChanged = owned.changed;
         }
       } else if (error.status === 409 && error.payload?.error === "replaces current orchestrator" && !body.replace) {
-        const copy = { title: "Replace the orchestrator?", body: `<p>${wingChanged ? PROJECT_COPY.ownWingDone + " " : ""}Connect replaces the current orchestrator.</p>`, action: "Connect" };
+        const copy = { title: "Replace the Coworker?", body: `<p>${wingChanged ? PROJECT_COPY.ownWingDone + " " : ""}Connect replaces the current Coworker.</p>`, action: "Connect" };
         if (!await ask(copy)) return null;
         onStatus("");
         body.replace = true;
@@ -527,6 +527,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     }
   }
   host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>';
+  renderMain();
   if (settings) {
     installProjectStyles();
     bindSettingsNavigation(host, {slug, origin, onBack, current: active});
@@ -697,8 +698,8 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
   const scope = project.board;
   host.innerHTML = '<p role="status">Loading chat settings…</p>';
   let payload;
-  try { payload = await api(`/api/chat-settings?board=${encodeURIComponent(scope)}${owner ? "&probe=1" : ""}`); }
-  catch { if (active()) host.innerHTML = `<p role="alert">${CHAT_SAVE_ERROR}</p>`; return; }
+  try { payload = await api(`/api/chat-settings?board=${encodeURIComponent(scope)}${owner ? "&probe=1" : ""}`, {timeoutMs: 10000}); }
+  catch { if (active()) host.innerHTML = '<p role="alert">Could not load chat settings</p>'; return; }
   if (!active()) return;
   let front = payload.front || {provider: "none"};
   let selected = answerMode(front), busy = false, status = "", error = "";
@@ -714,11 +715,11 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
     const focusId = host.contains?.(globalThis.document?.activeElement) ? globalThis.document.activeElement.id : null;
     const models = [...new Set([...(payload.local_models || []), localModel].filter(Boolean))];
     const radio = (value, title, note, fields = "") => `<div class="radio ${selected === value ? "on" : ""}"><input type="radio" name="chat-answer-mode" id="chat-${value}" data-chat-mode="${value}" value="${value}" ${selected === value ? "checked" : ""} ${disabled()} ${value === "hosted" && globalThis.matchMedia?.("(max-width: 699px)").matches ? "disabled" : ""}><div><label for="chat-${value}"><b>${title}</b><small class="mode-note">${note}</small><small class="phone-note">${value === "basic" ? "a short receipt, no model" : value === "hosted" ? "set up on a computer" : (payload.local_reachable ? "reachable" : "not reachable") + " · nothing leaves this machine"}</small></label>${fields}</div></div>`;
-    host.innerHTML = `<p class="lead">Which model writes the quick reply you see in chat. The orchestrator still does the work.</p><details class="set-note"><summary>What quick replies are</summary>A short answer from this model, shown in chat before or beside the orchestrator's own answer. Quick replies are saved in chat and memory like every message, under their own name, “Quick reply · local model” or “Quick reply · hosted provider”, never under the orchestrator's name.</details>
+    host.innerHTML = `<p class="lead">Which model writes the quick reply you see in chat. The Coworker still does the work.</p><details class="set-note"><summary>What quick replies are</summary>A short answer from this model, shown in chat before or beside the Coworker's own answer. Quick replies are saved in chat and memory like every message, under their own name, “Quick reply · local model” or “Quick reply · hosted provider”, never under the Coworker's name.</details>
       ${front.inherited ? `<p class="set-note">${answerMode(front) === "hosted" ? "Hosted" : answerMode(front) === "local" ? "Local" : "Basic"} · set for the whole workspace${front.applies === false ? " · Off until you press Turn on" : ""}</p>` : ""}
       <fieldset class="radios"><legend class="sr">Chat answer mode</legend>
-      ${radio("basic", "Basic", "No model. Instead of an answer, a short receipt confirms your message reached the orchestrator.")}
-      ${radio("local", "Local model", `Runs on your machine. Nothing leaves it.${selected === "hosted" && answerMode(front) === "local" ? " Still in use until a hosted provider is turned on." : ""}`, selected === "local" ? `<div class="sub-fields"><label for="chat-local-model">Model</label><select id="chat-local-model" data-chat-local-model ${disabled()}><option value="">Choose a model…</option>${models.map(m => `<option value="${e(m)}" ${m === localModel ? "selected" : ""}>${e(m)}</option>`).join("")}</select><span>Status</span><span>${payload.local_reachable ? "Reachable" : "Not reachable"}</span></div>${payload.local_reachable === false ? '<p class="callout wait">Model not reachable. Check that your local model app is running, then try again. Your chat still reaches the orchestrator.</p>' : ""}` : "")}
+      ${radio("basic", "Basic", "No model. Instead of an answer, a short receipt confirms your message reached the Coworker.")}
+      ${radio("local", "Local model", `Runs on your machine. Nothing leaves it.${selected === "hosted" && answerMode(front) === "local" ? " Still in use until a hosted provider is turned on." : ""}`, selected === "local" ? `<div class="sub-fields"><label for="chat-local-model">Model</label><select id="chat-local-model" data-chat-local-model ${disabled()}><option value="">Choose a model…</option>${models.map(m => `<option value="${e(m)}" ${m === localModel ? "selected" : ""}>${e(m)}</option>`).join("")}</select><span>Status</span><span>${payload.local_reachable ? "Reachable" : "Not reachable"}</span></div>${payload.local_reachable === false ? '<p class="callout wait">Model not reachable. Check that your local model app is running, then try again. Your chat still reaches the Coworker.</p>' : ""}` : "")}
       ${radio("hosted", "Hosted provider", answerMode(front) === "hosted" && front.applies !== false ? "On. Chat messages go to the saved hosted provider. Changing it needs Turn on again." : "Off until you press Turn on. Sends chat messages to an outside AI service using a key your workspace owner saved.", selected === "hosted" ? `<div class="sub-fields"><label for="chat-provider">Provider</label><select id="chat-provider" data-chat-provider ${disabled()}><option value="">Choose a provider…</option>${options.map(o => `<option value="${e(o.provider)}" ${o.provider === provider ? "selected" : ""}>${e(o.provider)}</option>`).join("")}</select><label for="chat-key">Saved key</label><select id="chat-key" data-chat-key ${disabled()}><option value="">Choose a saved key…</option>${(option()?.keys || []).map((k, i) => `<option value="${i}" ${String(i) === key ? "selected" : ""}>${e(k.label)}</option>`).join("")}</select><label for="chat-hosted-model">Model</label><input id="chat-hosted-model" data-chat-hosted-model value="${e(model)}" maxlength="120" autocomplete="off" ${disabled()}>${provider === "openai_compatible" ? `<label for="chat-base">Provider address</label><select id="chat-base" data-chat-base ${disabled()}><option value="">Choose an address…</option>${(option()?.base_urls || []).map(url => `<option value="${e(url)}" ${url === base ? "selected" : ""}>${e(url)}</option>`).join("")}</select>` : ""}</div><div class="callout wait"><b>Your chat leaves this machine</b><p>Every chat message in ${e(project.name)} goes to the provider you choose, to write the quick reply. Cards, memory and other projects are not sent. Its replies are saved here labelled “Quick reply · hosted provider”. Nothing is sent until you press Turn on.</p>${!options.length ? '<p>No saved provider is available. Ask your workspace owner to set one up.</p>' : ""}<div class="acts"><button type="button" class="btn sm" data-chat-cancel ${disabled()}>Cancel</button><button type="button" class="btn primary sm" data-chat-turn-on ${disabled()} ${ready() ? "" : "disabled"}>Turn on</button></div></div>` : "")}
       </fieldset>${error ? `<p role="alert">${e(error)}</p>` : ""}<p role="status" data-chat-status>${e(status)}</p>`;
     host.querySelectorAll("[data-chat-mode]").forEach(input => {
@@ -780,7 +781,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
   const active = () => current() && host.isConnected;
   function render() {
     if (!active()) return;
-    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max agents working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 20 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div><p role="status" data-limit-status>${e(status)}</p>`;
+    host.innerHTML = `<div class="inline-row"><span id="project-max-agents">Max agents working at once</span><div class="stepper" role="group" aria-labelledby="project-max-agents"><button type="button" aria-label="One fewer" data-limit-step="-1" ${!project.can_configure || busy || value === null || value <= 1 ? "disabled" : ""}>−</button><output aria-live="polite" data-limit-value>${value === null ? "No limit" : value}</output><button type="button" aria-label="One more" data-limit-step="1" ${!project.can_configure || busy || value === 100 ? "disabled" : ""}>+</button></div><span class="set-note">Extra cards wait in Todo.</span>${project.can_configure && explicit !== null ? `<button type="button" class="btn ghost" data-limit-clear>${project.orchestration ? "Use default" : "Remove limit"}</button>` : ""}</div><p role="status" data-limit-status>${e(status)}</p>`;
     host.querySelectorAll("[data-limit-step]").forEach(button => {
       button.onclick = () => save(value === null ? 1 : value + Number(button.getAttribute("data-limit-step")));
     });
@@ -788,7 +789,7 @@ export function mountAgentLimit(host, { project, api, e, current = () => true, o
     if (clear) { clear.disabled = busy; clear.onclick = () => save(null); }
   }
   async function save(next) {
-    if (!active() || !project.can_configure || busy || (next !== null && (next < 1 || next > 20))) return;
+    if (!active() || !project.can_configure || busy || (next !== null && (next < 1 || next > 100))) return;
     busy = true; status = ""; render();
     try {
       const result = await api(`/api/projects/${encodeURIComponent(project.board)}/limits`, {method: "PUT", body: {max_agents: next}});
@@ -839,7 +840,7 @@ export function bindSettingsNavigation(host, {slug, origin, document: doc = docu
 }
 
 export function connectPhaseHTML(phase, project, e) {
-  if (phase === "done") return `<h2 id="project-connect-title">Orchestrator connected</h2><p>${e(project.name)} is ready.</p><p role="status">Delivered to the orchestrator</p><button type="button" class="btn primary" data-project-dismiss>Back to board</button>`;
+  if (phase === "done") return `<h2 id="project-connect-title">Coworker connected</h2><p>${e(project.name)} is ready.</p><p role="status">Delivered to the Coworker</p><button type="button" class="btn primary" data-project-dismiss>Back to board</button>`;
   if (phase === "failed") return '<h2 id="project-connect-title">The agent has not connected yet</h2><p role="alert">No response after 120 seconds. Check that the agent app is open and its MCP setup is saved.</p><button type="button" class="btn primary" data-project-retry>Try again</button><button type="button" class="btn" data-project-dismiss>Close</button>';
   return `<h2>Waiting for the agent</h2><p role="status">Start the agent on your computer. This view checks for its connection automatically.</p>`;
 }
@@ -897,17 +898,18 @@ function installProjectStyles() {
 
 export function projectSettingsHTML(project, e, {origin = "", restart = false} = {}) {
   const back = settingsOrigin(project.board, origin);
-  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Orchestrator</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div><div data-project-review></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec" data-project-models-section><summary>Agent models and escalation</summary><div data-project-models-host>${modelsHTML(project, e)}</div></details></div></div></section>`;
+  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Coworker</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div><div data-project-review></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec" data-project-models-section><summary>Agent models and escalation</summary><div data-project-models-host>${modelsHTML(project, e)}</div></details></div></div></section>`;
 }
 
 export async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {
   const active = () => current() && host.isConnected;
   let connections = [], cards = [], busy = false, error = "";
   const name = value => String(value || "").replace(/^conn:/, "");
+  host.innerHTML = '<p role="status">Loading agents…</p>';
   try {
     const results = await Promise.all([
-      project.can_configure ? api("/api/connections") : Promise.resolve({connections: []}),
-      api(`/api/boards/${encodeURIComponent(project.board)}/cards`),
+      project.can_configure ? api("/api/connections", {timeoutMs: 10000}) : Promise.resolve({connections: []}),
+      api(`/api/boards/${encodeURIComponent(project.board)}/cards`, {timeoutMs: 10000}),
     ]);
     connections = results[0].connections || [];
     cards = [...results[1].cards || [], ...results[1].linked || []];
@@ -918,7 +920,7 @@ export async function mountProjectAgents(host, {project, api, e, current, onUpda
     if (project.main.connected) assigned.add(name(project.main.name));
     const rows = connections.filter(c => !c.revoked_at && (!c.expires_at || Date.parse(c.expires_at) > Date.now()) && assigned.has(c.name));
     const main = name(project.main.name);
-    host.innerHTML = `<p class="set-note">Orchestrator and agents assigned to this project's cards.</p><table class="agents-t"><caption class="sr">Project agents</caption><thead><tr><th>Agent</th><th>Role</th><th>Last active</th><th>Actions</th></tr></thead><tbody>${project.main.connected && !rows.some(c => c.name === main) ? `<tr><td>${e(project.name)} orchestrator</td><td>Orchestrator</td><td>—</td><td>Manage in workspace Settings</td></tr>` : ""}${rows.map(c => `<tr><td>${e(c.name === main ? project.name + " orchestrator" : c.name)} (agent)</td><td>${c.name === main ? "Orchestrator" : "Works on cards"}</td><td>${e(lastActive(c.last_used_at))}</td><td>${project.can_configure ? `<button type="button" class="btn ghost sm desktop-agent" data-project-disconnect="${e(c.id)}" ${busy ? "disabled" : ""} aria-label="Disconnect ${e(c.name)}">Disconnect…</button>` : ""}</td></tr>`).join("")}</tbody></table>${!assigned.size ? '<p>No agents connected</p>' : ""}<p role="status">${e(error)}</p>`;
+    host.innerHTML = `<p class="set-note">Coworker and agents assigned to this project's cards.</p><table class="agents-t"><caption class="sr">Project agents</caption><thead><tr><th>Agent</th><th>Role</th><th>Last active</th><th>Actions</th></tr></thead><tbody>${project.main.connected && !rows.some(c => c.name === main) ? `<tr><td>${e(project.name)} Coworker</td><td>Coworker</td><td>—</td><td>Manage in workspace Settings</td></tr>` : ""}${rows.map(c => `<tr><td>${e(c.name === main ? project.name + " Coworker" : c.name)} (agent)</td><td>${c.name === main ? "Coworker" : "Works on cards"}</td><td>${e(lastActive(c.last_used_at))}</td><td>${project.can_configure ? `<button type="button" class="btn ghost sm desktop-agent" data-project-disconnect="${e(c.id)}" ${busy ? "disabled" : ""} aria-label="Disconnect ${e(c.name)}">Disconnect…</button>` : ""}</td></tr>`).join("")}</tbody></table>${!assigned.size ? '<p>No agents connected</p>' : ""}<p role="status">${e(error)}</p>`;
     host.querySelectorAll("[data-project-disconnect]").forEach(button => {
       button.onclick = async () => {
         if (busy || !active()) return;
@@ -964,7 +966,7 @@ export function mountWorkspaceOrchestration(host, {api, e, enabled, current = ()
   const active = () => current() && host.isConnected;
   function render() {
     if (!active()) return;
-    host.innerHTML = `<div class="orchestration-controls"><label><input type="checkbox" data-orchestration-enabled ${enabled ? "checked" : ""} ${busy ? "disabled" : ""}> Orchestrators manage agent starts</label><p>Only each project's orchestrator can request agent starts. Projects default to three agents at once. Turning this off removes trust and runner access granted to project seats.</p><p role="status">${e(status)}</p></div>`;
+    host.innerHTML = `<div class="orchestration-controls"><label><input type="checkbox" data-orchestration-enabled ${enabled ? "checked" : ""} ${busy ? "disabled" : ""}> Coworkers manage agent starts</label><p>Only each project's Coworker can request agent starts. Projects default to three agents at once. Turning this off removes trust and runner access granted to project seats.</p><p role="status">${e(status)}</p></div>`;
     host.querySelector("[data-orchestration-enabled]").onchange = async event => {
       const next = event.target.checked;
       if (busy || !active()) return;
@@ -972,7 +974,7 @@ export function mountWorkspaceOrchestration(host, {api, e, enabled, current = ()
       try {
         const result = await api("/api/settings/orchestration", {method: "PUT", body: {enabled: next}});
         if (active()) { enabled = result.enabled; status = "Saved"; }
-      } catch { if (active()) status = "Could not save orchestration settings"; }
+      } catch { if (active()) status = "Could not save Coworker management settings"; }
       finally { busy = false; render(); }
     };
   }
@@ -989,7 +991,7 @@ export function mountOrchestratorTrust(host, {project, api, e, current = () => t
   const machines = orchestration.machines || [];
   function render() {
     if (!active()) return;
-    host.innerHTML = `<details class="orchestration-controls"><summary>Orchestrator start permissions</summary><p>Trust lets this seat request starts on selected machines, read permitted project data and repository rules, release and approve cards, annotate cards and stamp trusted submissions. It can view start status and cancel its own starts. It cannot create boards or launch handoffs.</p>${machines.map(m => `<label><input type="checkbox" data-trust-machine value="${e(m.id)}" ${busy ? "disabled" : ""}> ${e(m.label)}</label>`).join("")}<p><label><input type="checkbox" data-trust-confirm ${busy ? "disabled" : ""}> I approve these permissions</label></p><button type="button" class="btn" data-trust-grant ${busy || !machines.length ? "disabled" : ""}>Trust and allow starts</button>${trusted ? `<button type="button" class="btn ghost" data-trust-remove ${busy ? "disabled" : ""}>Remove trust</button>` : ""}<p role="status">${e(status)}</p></details>`;
+    host.innerHTML = `<details class="orchestration-controls"><summary>Coworker start permissions</summary><p>Trust lets this seat request starts on selected machines, read permitted project data and repository rules, release and approve cards, annotate cards and stamp trusted submissions. It can view start status and cancel its own starts. It cannot create boards or launch handoffs.</p>${machines.map(m => `<label><input type="checkbox" data-trust-machine value="${e(m.id)}" ${busy ? "disabled" : ""}> ${e(m.label)}</label>`).join("")}<p><label><input type="checkbox" data-trust-confirm ${busy ? "disabled" : ""}> I approve these permissions</label></p><button type="button" class="btn" data-trust-grant ${busy || !machines.length ? "disabled" : ""}>Trust and allow starts</button>${trusted ? `<button type="button" class="btn ghost" data-trust-remove ${busy ? "disabled" : ""}>Remove trust</button>` : ""}<p role="status">${e(status)}</p></details>`;
     host.querySelector("[data-trust-grant]").onclick = () => {
       const selected = [...host.querySelectorAll("[data-trust-machine]:checked")].map(input => input.value);
       if (!host.querySelector("[data-trust-confirm]").checked || !selected.length) {
@@ -1007,7 +1009,7 @@ export function mountOrchestratorTrust(host, {project, api, e, current = () => t
     try {
       const result = await api(`/api/projects/${encodeURIComponent(project.board)}/orchestrator/trust`, {method: "POST", body});
       if (active()) { trusted = result.trusted; orchestration.trusted = trusted; status = "Saved"; }
-    } catch { if (active()) status = "Could not save orchestrator permissions"; }
+    } catch { if (active()) status = "Could not save Coworker permissions"; }
     finally { busy = false; render(); }
   }
   render();
@@ -1015,16 +1017,19 @@ export function mountOrchestratorTrust(host, {project, api, e, current = () => t
 
 export async function mountProjectReview(host, {project, api, e, current = () => true}) {
   if (!host) return;
-  if (!project.can_configure) { host.replaceChildren(); return; }
+  const deck = globalThis.document?.documentElement?.dataset?.ui === "deck";
   const active = () => current() && host.isConnected;
   const board = encodeURIComponent(project.board), base = `/api/orch/boards/${board}`;
-  let versions = [], waiting = [], changes = new Map(), status = "", busy = false;
+  let versions = [], waiting = [], changes = new Map(), status = "", busy = false, rejecting = null;
+  const identity = deck ? api("/api/me").catch(() => ({})) : Promise.resolve({});
+  let viewer = "", people = {};
   async function compare(version, accepted) {
-    if (!accepted) return (await api(`${base}/configs/${version.version}`)).body || "";
+    if (!accepted) return (await api(`${base}/configs/${version.version}`)).version?.body || "";
     return (await api(`${base}/diff?old=${accepted.version}&new=${version.version}`)).diff || "";
   }
   async function load() {
-    const [configs, cards] = await Promise.allSettled([api(`${base}/configs`), api(`/api/boards/${board}/cards`)]);
+    const [configs, cards, person] = await Promise.allSettled([api(`${base}/configs`), api(`/api/boards/${board}/cards`), identity]);
+    if (person.status === "fulfilled") { viewer = person.value.actor || ""; people = person.value.people || {}; }
     const notes = [];
     if (configs.status === "fulfilled") {
       versions = configs.value.versions || [];
@@ -1032,7 +1037,7 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
       const shown = await Promise.allSettled(proposed.map(v => compare(v, configs.value.accepted)));
       changes = new Map(proposed.map((v, i) => [v.version, shown[i].status === "fulfilled" ? shown[i].value : null]));
     } else notes.push("Could not load config versions");
-    if (cards.status === "fulfilled") waiting = (cards.value.cards || []).filter(c => c.awaiting_release && c.can_approve);
+    if (cards.status === "fulfilled") waiting = project.can_configure ? (cards.value.cards || []).filter(c => c.awaiting_release && c.can_approve) : [];
     else notes.push("Could not load cards waiting for release");
     status = notes.join(". ");
   }
@@ -1040,13 +1045,38 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
     if (!active()) return;
     const rows = versions.map(v => {
       const change = changes.get(v.version);
-      return `<li data-config-version="${e(v.version)}"><span>${e(v.ref)} · ${e(v.status)} · ${e(String(v.proposed_by || "").replace(/^conn:/, ""))}</span>${v.status === "proposed" ? `<details><summary>Changes</summary><pre data-config-diff>${e(change ?? "Could not load the changes")}</pre></details><button type="button" class="btn sm" data-config-accept="${e(v.version)}"${busy ? " disabled" : ""}>Accept</button>` : ""}</li>`;
+      const result = v.status.charAt(0).toUpperCase() + v.status.slice(1);
+      const actor = value => e(String(value || "").replace(/^conn:/, ""));
+      const namedActor = value => e(value && value === viewer ? "you" : people[value] || value || "");
+      const locked = busy || rejecting !== null ? " disabled" : "";
+      const confirm = rejecting === v.version ? `<div class="callout" role="group" aria-label="Reject Coworker config ${e(v.ref)}"><p>Reject Coworker config ${e(v.ref)}? The current config will stay in use. This version cannot be accepted after rejection.</p><div class="acts"><button type="button" class="btn sm" data-config-cancel-reject>Cancel</button><button type="button" class="btn sm danger" data-config-confirm-reject="${e(v.version)}">Reject version</button></div></div>` : "";
+      const label = deck ? `<span data-config-label>${e(v.ref)} · <span data-config-state="${e(v.status)}">${e(result)}</span></span><span data-config-people>Proposed by ${namedActor(v.proposed_by)}${v.decided_by ? ` · ${e(result)} by ${namedActor(v.decided_by)}` : ""}</span>` : `<span>${e(v.ref)} · ${e(result)} · Proposed by ${actor(v.proposed_by)}${v.decided_by ? ` · ${e(result)} by ${actor(v.decided_by)}` : ""}</span>`;
+      return `<li data-config-version="${e(v.version)}">${label}${v.status === "proposed" ? `<details><summary>Changes</summary><pre data-config-diff>${e(change ?? "Could not load the changes")}</pre></details>${project.can_configure ? `<button type="button" class="btn sm" data-config-accept="${e(v.version)}"${locked}>Accept</button> <button type="button" class="btn ghost sm" data-config-reject="${e(v.version)}"${locked}>Reject</button>${confirm}` : ""}` : ""}</li>`;
     }).join("");
     const cards = waiting.map(c => `<form data-project-release="${e(c.number)}"><span>#${e(c.number)} ${e(c.title)}</span><label>Reason<input name="reason" required maxlength="500"></label><button class="btn sm"${busy ? " disabled" : ""}>Release</button></form>`).join("");
-    host.innerHTML = `<h3>Config versions</h3>${rows ? `<ul data-config-versions>${rows}</ul>` : '<p class="set-note">No config versions yet.</p>'}<h3>Waiting for release</h3>${cards || '<p class="set-note">No cards are waiting for release.</p>'}<p role="status" data-project-review-status>${e(status)}</p>`;
+    const feedback = `<p role="status" data-project-review-status>${e(status)}</p>`;
+    host.innerHTML = `<h3>Coworker config versions</h3>${rows ? `<ul data-config-versions>${rows}</ul>` : '<p class="set-note">No config versions yet.</p>'}${deck ? feedback : ""}${project.can_configure ? `<h3>Waiting for release</h3>${cards || '<p class="set-note">No cards are waiting for release.</p>'}` : ""}${deck ? "" : feedback}`;
     host.querySelectorAll("[data-config-accept]").forEach(button => {
       const version = versions.find(v => String(v.version) === button.getAttribute("data-config-accept"));
-      button.onclick = () => act(() => api(`${base}/configs/${version.version}/accept`, {method: "POST", body: {sha256: version.sha256}}), `Accepted ${version.ref}`);
+      button.onclick = () => rejecting === null && decide(version, "accept");
+    });
+    host.querySelectorAll("[data-config-reject]").forEach(button => {
+      button.onclick = () => {
+        if (busy || !active() || rejecting !== null) return;
+        rejecting = Number(button.getAttribute("data-config-reject"));
+        render();
+        host.querySelector("[data-config-cancel-reject]")?.focus();
+      };
+    });
+    const cancel = host.querySelector("[data-config-cancel-reject]");
+    if (cancel) cancel.onclick = () => {
+      const version = rejecting;
+      rejecting = null; render();
+      host.querySelector(`[data-config-reject="${version}"]`)?.focus();
+    };
+    host.querySelectorAll("[data-config-confirm-reject]").forEach(button => {
+      const version = versions.find(v => String(v.version) === button.getAttribute("data-config-confirm-reject"));
+      button.onclick = () => rejecting === version.version && decide(version, "reject");
     });
     host.querySelectorAll("[data-project-release]").forEach(form => {
       const card = waiting.find(c => String(c.number) === form.getAttribute("data-project-release"));
@@ -1058,10 +1088,18 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
       };
     });
   }
+  function decide(version, action) {
+    if (!project.can_configure || version.status !== "proposed") return;
+    return act(async () => {
+      const result = await api(`${base}/configs/${version.version}/${action}`, {method: "POST", body: action === "accept" ? {sha256: version.sha256} : {}});
+      // Keep a completed decision visible even if the following refresh fails.
+      Object.assign(version, result.version && typeof result.version === "object" ? result.version : result);
+    }, `${action === "reject" ? "Rejected" : "Accepted"} ${version.ref}`);
+  }
   async function act(action, done) {
     if (busy || !active()) return;
-    busy = true; status = ""; render();
-    try { await action(); await load(); status = status || done; }
+    busy = true; rejecting = null; status = ""; render();
+    try { await action(); if (!active()) return; await load(); status = status || done; }
     catch (error) { status = error.message || "That did not work. Try again."; }
     finally { busy = false; render(); }
   }

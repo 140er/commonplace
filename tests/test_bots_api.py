@@ -285,7 +285,7 @@ def test_read_marks_the_thread_read(bots_hub):
         assert (status, reply_body["code"]) == (400, "invalid"), body
 
 
-def test_memory_add_list_and_remove_with_a_tombstone(bots_hub):
+def test_memory_add_list_and_remove_blanks_the_text(bots_hub):
     hub = bots_hub
     bot_id = hub.bots(hub.owner)["bots"][0]["id"]
     first = hub.post(hub.owner, f"/api/bots/{bot_id}/memory", {"text": "prefers short answers"})[1][
@@ -313,7 +313,7 @@ def test_memory_add_list_and_remove_with_a_tombstone(bots_hub):
         .execute("SELECT text,removed_at FROM bot_memory WHERE id=?", (second["id"],))
         .fetchone()
     )
-    assert stored["text"] == "lives on a boat" and stored["removed_at"]
+    assert stored["text"] == "" and stored["removed_at"]  # the row stays, the words do not
 
 
 def test_messages_are_redacted_on_display_but_stored_verbatim(bots_hub):

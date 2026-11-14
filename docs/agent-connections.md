@@ -91,14 +91,17 @@ signed-in member grants them, for their own top-level app connection only. The c
 
 > Also allow this app to confirm what a bot proposes (scope bots:confirm), the same as tapping a confirm button yourself. It needs bots:chat and you can stop it separately.
 
-- **PAT:** **Allow using my bots** and **Allow confirming** on the row in Settings → Agents, or
-  `PATCH /api/connections/<id>` with `{"bots_chat": true}` and `{"bots_confirm": true}`
-  (JSON booleans). Confirming without chat is refused with 409; withdrawing chat withdraws both.
-- **OAuth:** the client requests the scopes (`bots:confirm` only together with `bots:chat`); you
+> Also allow this app to read what your bots learned about you (scope bots:learned). It can only list those items, never change or delete them. It needs bots:chat and you can stop it separately.
+
+- **PAT:** **Allow using my bots**, **Allow confirming** and **Allow reading learned items** on the row in Settings → Agents, or
+  `PATCH /api/connections/<id>` with `{"bots_chat": true}`, `{"bots_confirm": true}` and
+  `{"bots_learned": true}` (JSON booleans). Confirming or reading learned items without chat is
+  refused with 409; withdrawing chat withdraws all three.
+- **OAuth:** the client requests the scopes (`bots:confirm` and `bots:learned` only together with `bots:chat`); you
   tick each box on the authorization form. Granting later needs a fresh consent; withdrawing is
   the same PATCH.
 
-Child agents, runner connections, orchestrator seats, board coordinators and other people's
+Child agents, runner connections, Coworker seats, board coordinators and other people's
 connections are refused when granting and on every request. Assigning a coordinator removes the
 grants, and the command line refuses them.
 
@@ -122,7 +125,7 @@ it the separate `cards:decide` scope. The consent text says:
 
 Only a workspace owner can grant it, only to their own top-level app
 connection. Agent machinery never holds it: child agents, runner connections and
-project orchestrator seats and board coordinators are refused when granting
+project Coworker seats and board coordinators are refused when granting
 (the button is not offered on their rows), and refused again when answering.
 Assigning a connection as a board coordinator removes its grant; unassigning it
 does not bring the grant back, even when the grant and the assignment happen at

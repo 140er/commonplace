@@ -8,9 +8,12 @@ from commonplace.boards._http import (
     require_principal,
     send_json,
 )
+from commonplace.boards.service import BoardService
+from commonplace.boards.store import require_visible, task_row
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.rules.enforce import RulesRefresh, rest_write
 
+from . import jobs
 from .start_options import start_options
 from .tools import dispatch
 
@@ -26,6 +29,27 @@ CONFLICTS = {
 }
 
 
+def _launch_output(ctx, job):
+    """People may inspect diagnostics only while the job's card remains readable."""
+    principal = ctx.principal
+    if not principal.person or getattr(principal, "runner", None) is not None:
+        raise HTTPError(404, "not found")
+    store = jobs.open_store(ctx.gateway, principal.workspace_id)
+    with store.connection() as conn:
+        row = conn.execute("SELECT * FROM runner_jobs WHERE id=?", (job,)).fetchone()
+    if row is None or not row["launch_output"]:
+        raise HTTPError(404, "not found")
+    service = BoardService(ctx)
+    try:
+        with service.store.connection() as conn:
+            card = task_row(conn, row["task_number"])
+            require_visible(card, principal)
+            service._board(conn, card["board"])
+    except ToolError:
+        raise HTTPError(404, "not found") from None
+    return {"job": row["id"], "reason": jobs.launch_reason(row)}
+
+
 def register(gateway):
     def route(handler):
         principal = require_principal(gateway, handler)
@@ -34,6 +58,14 @@ def register(gateway):
         ctx = ToolContext(principal, gateway)
         parts = path_parts(handler, "/api/")
         try:
+            if (
+                len(parts) == 3
+                and parts[0] == "card-starts"
+                and parts[2] == "launch-output"
+                and handler.command == "GET"
+            ):
+                send_json(handler, 200, _launch_output(ctx, parts[1]))
+                return
             if parts == ["card-starts"] and handler.command == "GET":
                 result = dispatch(ctx, "card_start_status", query(handler))
                 send_json(handler, 200, result)
@@ -82,3 +114,4 @@ def register(gateway):
     gateway.add_route("GET", "/api/card-starts", route)
     gateway.add_route("GET", "/api/card-starts/options", route)
     gateway.add_prefix_route("POST", "/api/card-starts/", route)
+    gateway.add_prefix_route("GET", "/api/card-starts/", route)

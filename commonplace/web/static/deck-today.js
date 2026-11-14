@@ -1,5 +1,6 @@
 // Deck home. Reads the person's bots; answers use the existing versioned decision route.
 import { elapsed } from './api.js';
+import { agentStatus } from './waiting.js';
 
 export const TITLE = 'Today';
 const enc = encodeURIComponent;
@@ -23,11 +24,16 @@ export function questionsFrom(pages) {
   return [...questions.values()];
 }
 
-export function summary(questions, bots, boards) {
-  const waiting = questions.length;
+function reportedWorking(bots, boards) {
   const projects = boards.filter((b) => Number.isSafeInteger(b.agents_working));
   const working = projects.length ? projects.reduce((n, b) => n + count(b.agents_working), 0) : bots.filter((b) => b.state === 'working').length;
   const noun = projects.length ? 'agent' : 'bot';
+  return { working, noun };
+}
+
+export function summary(questions, bots, boards) {
+  const waiting = questions.length;
+  const { working, noun } = reportedWorking(bots, boards);
   return `${waiting} thing${waiting === 1 ? '' : 's'} ${waiting === 1 ? 'waits' : 'wait'} on you. ${working} ${noun}${working === 1 ? ' is' : 's are'} working.`;
 }
 
@@ -44,8 +50,9 @@ export function questionHTML(q, { busy = new Set(), settled = new Map(), errors 
 
 export function workingHTML(bots, boards, e) {
   const working = bots.filter((b) => b.state === 'working');
-  const projects = boards.filter((b) => count(b.agents_working));
-  return `<h2>Working now <span>${working.length}</span></h2>${working.length || projects.length ? `<ul class="today-working">${working.map((bot) => `<li><a href="${e(thread(bot))}">${avatar(bot, e)}<span class="today-work-text"><b>${e(bot.name)}</b><span>${e(bot.last?.text || bot.job || '')}</span></span>${bot.last?.at ? `<time datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : ''}</a></li>`).join('')}</ul>${projects.length ? `<ul class="today-projects">${projects.map((b) => `<li><a href="#/board/${e(enc(b.slug))}"><b>${e(b.name || b.slug)}</b><span>${count(b.agents_working)} agent${b.agents_working === 1 ? '' : 's'} working</span></a></li>`).join('')}</ul>` : ''}` : '<p class="today-empty">No agents are working right now.</p>'}`;
+  const { working: total } = reportedWorking(bots, boards);
+  const projects = boards.filter((b) => count(b.agents_working) || agentStatus(b, { tasks: true }));
+  return `<h2>Working now <span>${total}</span></h2>${working.length || projects.length ? `<ul class="today-working">${working.map((bot) => `<li><a href="${e(thread(bot))}">${avatar(bot, e)}<span class="today-work-text"><b>${e(bot.name)}</b><span>${e(bot.last?.text || bot.job || '')}</span></span>${bot.last?.at ? `<time datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : ''}</a></li>`).join('')}</ul>${projects.length ? `<ul class="today-projects">${projects.map((b) => `<li><a href="#/board/${e(enc(b.slug))}"><b>${e(b.name || b.slug)}</b><span>${e(agentStatus(b, { tasks: true }) || `${count(b.agents_working)} agent${b.agents_working === 1 ? '' : 's'} working`)}</span></a></li>`).join('')}</ul>` : ''}` : '<p class="today-empty">No agents are working right now.</p>'}`;
 }
 
 const styles = `
@@ -139,7 +146,7 @@ export function mount(context) {
   // Scope the shell's header and content adjustments to this screen's lifetime too.
   const host = root.closest?.('.center') || root;
   host.classList.add('deck-today');
-  root.innerHTML = `<div class="today-view"><div class="today-scroll"><div class="today-column today-page"><header class="today-title"><h1>Today</h1><p data-today="summary">Loading…</p></header><div class="today-grid"><section class="today-stack" aria-label="Waiting on you" data-today="waiting"></section><section class="today-now" aria-label="Working now" data-today="working"></section></div></div></div><div class="today-dock"><div class="today-column"><form class="today-compose"><label class="today-to">To <select name="bot" aria-label="Bot to tell" disabled></select><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg></label><input name="text" aria-label="What do you need?" placeholder="What do you need?" maxlength="8000" autocomplete="off" required><button type="submit" class="today-send" aria-label="Send" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4"/></svg></button></form><p class="today-error" data-today="draft-error" role="alert" hidden></p></div></div></div>`;
+  root.innerHTML = `<div class="today-view"><div class="today-scroll"><div class="today-column today-page"><header class="today-title"><h1>Today</h1><p data-today="summary">Loading…</p></header><div class="today-grid"><section class="today-stack" aria-label="Waiting on you" data-today="waiting"></section><section class="today-now" aria-label="Working now" data-today="working"></section></div></div></div><div class="today-dock"><div class="today-column"><p class="today-empty" data-today="no-bots" hidden>No bots yet. <a class="btn" href="#/bots?new=1">New bot</a></p><form class="today-compose" hidden><label class="today-to">To <select name="bot" aria-label="Bot to tell" disabled></select><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 6 5 5 5-5"/></svg></label><input name="text" aria-label="What do you need?" placeholder="What do you need?" maxlength="8000" autocomplete="off" required><button type="submit" class="today-send" aria-label="Send" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4"/></svg></button></form><p class="today-error" data-today="draft-error" role="alert" hidden></p></div></div></div>`;
   const region = (name) => root.querySelector(`[data-today="${name}"]`);
   const form = root.querySelector('form'), picker = form.elements.bot;
   const s = { bots: [], questions: [], busy: new Set(), settled: new Map(), errors: new Map(), error: '', loaded: false };
@@ -161,6 +168,8 @@ export function mount(context) {
     }
     picker.disabled = !s.bots.length;
     form.querySelector('button').disabled = !s.bots.length;
+    form.hidden = !s.bots.length;
+    region('no-bots').hidden = !s.loaded || !!s.bots.length;
   }
   async function refresh(next = {}) {
     if (!active) return;

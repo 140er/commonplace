@@ -179,24 +179,24 @@ def _orchestrator(turn, board) -> dict:
         return {
             "state": "none",
             "wakeable": False,
-            "note": "No orchestrator is set for this project.",
+            "note": "No Coworker is set for this project.",
         }
     if view.connection_id is None:
         return {
             "state": "disconnected",
             "wakeable": False,
-            "note": "The orchestrator is not connected right now.",
+            "note": "The Coworker is not connected right now.",
         }
     if view.wakeable:
         return {
             "state": "connected",
             "wakeable": True,
-            "note": "The orchestrator is connected and is woken for new messages.",
+            "note": "The Coworker is connected and is woken for new messages.",
         }
     return {
         "state": "connected",
         "wakeable": False,
-        "note": "The orchestrator is connected but is not woken: it sees this when it next checks.",
+        "note": "The Coworker is connected but is not woken: it sees this when it next checks.",
     }
 
 
@@ -349,6 +349,23 @@ def _create_work_label(turn, args):
     return f"Filed “{_clip(title, 80)}”"
 
 
+def _create_work_chip(turn, args):
+    title, _ = _filing(turn, args)
+    return f"Create a task: “{_clip(title, 100)}”"
+
+
+def _words_of(turn, args) -> str:
+    return turn.words(args["text"]) if "text" in args else turn.message["text"]
+
+
+def _comment_chip(turn, args):
+    return f"Comment on work #{args['ref']}: “{_clip(_words_of(turn, args), 100)}”"
+
+
+def _tell_chip(turn, args):
+    return f"Pass this to the orchestrator: “{_clip(_words_of(turn, args), 100)}”"
+
+
 @_guarded
 def _create_work(turn, args):
     board = turn.board(args)
@@ -361,7 +378,9 @@ def _create_work(turn, args):
         except ToolError:
             note = "Filed without the priority: only the project owner can set it."
     card = turn.boards().task_add(title=title, body=body, board=board, status="todo", **extra)
-    turn.store().work_add(turn.bot["id"], turn.user_id, board, card["number"], turn.message["id"])
+    turn.store().work_add(
+        turn.bot["id"], turn.user_id, board, card["number"], turn.message["id"], turn.thread_id
+    )
     data = {"number": card["number"], "title": _clip(card["title"], 200)}
     data["status"] = _Words(turn)(card)[0]
     if note:
@@ -411,7 +430,9 @@ def _tell_orchestrator(turn, args):
     text = turn.words(args["text"]) if "text" in args else turn.message["text"]
     with front.skipping():  # the person already talks to this bot: no receipt, no fallback card
         posted = turn.boards().space_post(board, text)
-    turn.store().forward_add(turn.bot["id"], turn.user_id, board, posted["id"], turn.message["id"])
+    turn.store().forward_add(
+        turn.bot["id"], turn.user_id, board, posted["id"], turn.message["id"], turn.thread_id
+    )
     state = _orchestrator(turn, board)
     return Result(True, {"passed_on": True, **state})
 
@@ -556,8 +577,9 @@ def _static(text):
 register(
     Tool(
         name="project_status",
+        reach="project:read",
         description=(
-            "Task counts, who is working, what waits and why, and whether the orchestrator "
+            "Task counts, who is working, what waits and why, and whether the Coworker "
             "is connected and woken."
         ),
         schema=_schema(),
@@ -570,6 +592,7 @@ register(
 register(
     Tool(
         name="list_work",
+        reach="project:read",
         description=("List up to 20 tasks (open ones unless a status is given)."),
         schema=_schema({"status": {"type": "string", "enum": list(STATUSES)}}),
         kind="read",
@@ -581,6 +604,7 @@ register(
 register(
     Tool(
         name="work_detail",
+        reach="project:read",
         description="One task: status, latest notes, links.",
         schema=_schema({"ref": REF}, ["ref"]),
         kind="read",
@@ -592,6 +616,7 @@ register(
 register(
     Tool(
         name="create_work",
+        reach="project:write",
         description=(
             "File new work as a task, in the person's own words, only on a clear request. "
             "Without arguments the whole message is filed; `title` and `body` must be copied "
@@ -608,6 +633,7 @@ register(
         kind="routine",
         run=_create_work,
         label=_create_work_label,
+        chip=_create_work_chip,
         check=_check_filing,
         scope="project",
     )
@@ -615,6 +641,7 @@ register(
 register(
     Tool(
         name="prioritize_work",
+        reach="project:write",
         description=(
             "Change a task's priority (project owner only), or move it `before` or `after` "
             "another task in the same column."
@@ -626,12 +653,14 @@ register(
         kind="routine",
         run=_prioritize_work,
         label=lambda turn, args: f"Reordered work #{args['ref']}",
+        chip=lambda turn, args: f"Change the priority or position of work #{args['ref']}",
         scope="project",
     )
 )
 register(
     Tool(
         name="comment_work",
+        reach="project:write",
         description=(
             "Comment on a task with the person's own words: `text` copied verbatim from the "
             "message, or the whole message."
@@ -642,27 +671,31 @@ register(
         kind="routine",
         run=_comment_work,
         label=lambda turn, args: f"Commented on work #{args['ref']}",
+        chip=_comment_chip,
         scope="project",
     )
 )
 register(
     Tool(
         name="tell_orchestrator",
+        reach="project:write",
         description=(
-            "Pass the person's own words to the orchestrator to steer the work: `text` copied "
+            "Pass the person's own words to the Coworker to steer the work: `text` copied "
             "verbatim from the message, or the whole message. Not for new work (use "
             "create_work). Say honestly whether it is woken; it is passed on, not done."
         ),
         schema=_schema({"text": {"type": "string", "minLength": 1, "maxLength": 8000}}),
         kind="routine",
         run=_tell_orchestrator,
-        label=_static("Passed your message to the orchestrator"),
+        label=_static("Passed your message to the Coworker"),
+        chip=_tell_chip,
         scope="project",
     )
 )
 register(
     Tool(
         name="list_decisions",
+        reach="project:read",
         description="The open questions waiting for this person in the project.",
         schema=_schema(),
         kind="read",
@@ -674,6 +707,7 @@ register(
 register(
     Tool(
         name="answer_decision",
+        reach="project:write",
         description=(
             "Answer an open question with exactly one of `choice` (an offered option, as "
             "listed) or `reply` (copied verbatim from the message). Waits for the person's tap."
@@ -696,6 +730,7 @@ register(
 register(
     Tool(
         name="approve_work",
+        reach="project:write",
         description=(
             "Approve a task that waits for approval, or decline it (`approve` false). Waits "
             "for the person's tap."
@@ -711,6 +746,7 @@ register(
 register(
     Tool(
         name="create_project",
+        reach="wing:write",
         description=(
             "Create a new project; `name` copied verbatim from the message. Waits for the "
             "person's tap."

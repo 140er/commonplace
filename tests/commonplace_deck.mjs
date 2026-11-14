@@ -3,11 +3,59 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 
 const STATIC = new URL("../commonplace/web/static/", import.meta.url);
 const read = (name) => readFileSync(new URL(name, STATIC), "utf8");
 const deck = await import(new URL("deck.js", STATIC));
 const rail = await import(new URL("rail.js", STATIC));
+
+for (const [label, base, route, drawer] of [
+  ["board", "#/board/atlas", "#/board/atlas", false],
+  ["card", "#/board/atlas", "#/card/7", true],
+  ["project settings", "#/board/atlas", "#/board/atlas", true],
+  ["Needs me", "#/needs", "#/needs", false],
+  ["Memory", "#/memory", "#/memory", false],
+]) test(`phone ${label}: dock redraw preserves Deck and destinations take at most two taps`, () => {
+  const app = read("app.js"), mount = { innerHTML: "" };
+  const state = { base, route, needs: { count: 2 }, botsWaiting: 3,
+    deck: deck.createDeck({ storage: storage({ [deck.UI_KEY]: "deck" }), doc: doc() }) };
+  // Execute the actual dock callback that runs after navigation(), including background redraws.
+  const start = app.indexOf("      phone() {"), end = app.indexOf("      dispose() {", start);
+  assert.ok(start >= 0 && end > start);
+  const callback = app.slice(start, end).trim().replace(/,$/, "");
+  const context = { state, renderPhoneTabs: rail.renderPhoneTabs,
+    root: { querySelector: selector => selector === "#phone-tabs" ? mount : null } };
+  const closes = [];
+  if (drawer) {
+    Object.assign(context, { phone: () => true, detailsUI: null,
+      history: { state: label === "project settings" ? { deckProjectSettings: true } : null, back: () => closes.push("back") },
+      location: { set hash(value) { closes.push(value); } } });
+    const close = app.slice(app.indexOf("function closeCardPanel()"), app.indexOf("function openSelectedCard("));
+    runInNewContext(`${close}\ncloseCardPanel()`, context);
+    assert.deepEqual(closes, [label === "project settings" ? "back" : base]);
+  }
+  for (let refresh = 0; refresh < 2; refresh++) {
+    runInNewContext(`({${callback}}).phone()`, context);
+    assert.match(mount.innerHTML, /data-deck="tabs"/);
+    for (const destination of ["today", "bots", "compute", "settings"]) {
+      assert.match(mount.innerHTML, new RegExp(`href="#/${destination}"`));
+      assert.ok(closes.length + 1 <= 2, "close drawer, then choose a tab");
+    }
+    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>2<span/);
+  }
+  state.deck = undefined;
+  runInNewContext(`({${callback}}).phone()`, context);
+  assert.equal(mount.innerHTML, rail.renderPhoneTabs({ view: base === "#/memory" ? "memory" : "", botsWaiting: 3 }));
+});
+
+test("phone workspace tools include switching workspace and project settings stay discoverable", () => {
+  const tools = deck.toolsHTML();
+  for (const href of ["#/boards", "#/memory", "#/needs"]) assert.ok(tools.includes(`href="${href}"`));
+  assert.match(tools, /data-action="switch-workspace"/);
+  assert.match(deck.renderDeckTop({ board: { slug: "atlas", name: "Atlas" } }), /data-action="coordinator" data-board="atlas"/);
+  assert.doesNotMatch(deck.renderDeckTop(), /data-action="coordinator"/);
+});
 
 function storage(initial = {}) {
   const data = new Map(Object.entries(initial));
@@ -50,8 +98,8 @@ test("the bar offers Bots and Settings, and a Deck screen only once it is regist
   assert.match(bare, /href="#\/bots" data-nav="bots" aria-current="page"/);
   const full = deck.renderDeckBar({ hash: "#/today", needs: 3, screens: { today() {}, compute() {} } });
   assert.deepEqual([...full.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["today", "bots", "compute", "settings"]);
-  assert.match(full, /data-nav="today" aria-current="page">Today<span class="count need">3/);
-  assert.match(full, /class="deck-brand" href="#\/today"/);
+  assert.match(full, /data-nav="today" aria-current="page">[\s\S]*?Today<span class="count need">3/);
+  assert.match(full, /class="deck-brand" href="#\/"/);
   assert.equal(deck.deckHome({}), "#/bots");
   assert.equal(deck.deckHome({ today() {} }), "#/today");
   for (const [hash, section] of [["#/rules", "settings"], ["#/admin", "settings"], ["#/settings", "settings"], ["#/compute", "compute"], ["#/board/x", ""], ["#/memory?q=a", ""], ["", ""]]) assert.equal(deck.deckSection(hash), section, hash);
@@ -73,11 +121,11 @@ test("phone: a title bar and one tab per offered section", () => {
   assert.deepEqual([...tabs.matchAll(/href="#\/([a-z]+)"/g)].map((m) => m[1]), ["bots", "compute", "settings"]);
   assert.match(tabs, /data-count="3"/);
   assert.match(tabs, /data-nav="settings" aria-current="page"/);
-  assert.match(tabs, /Bots<span class="count need">2/);
-  assert.match(deck.renderDeckTabs({ needs: 2, botsWaiting: 5, screens: {} }), /Bots<span class="count need">5/);
-  assert.match(deck.renderDeckBar({ needs: 2, botsWaiting: 5, screens: {} }), /Bots<span class="count need">5/);
+  assert.doesNotMatch(tabs, /class="count /, 'no waiting badge moves to Bots when Today is absent');
+  assert.doesNotMatch(deck.renderDeckTabs({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
+  assert.doesNotMatch(deck.renderDeckBar({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
   assert.match(deck.renderDeckTop({ hash: "#/bots" }), /<b>Bots<\/b>/);
-  assert.match(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Commonplace<\/b>/);
+  assert.match(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Board<\/b>/);
   assert.match(deck.renderDeckTop(), /data-action="palette"/);
 });
 
@@ -151,9 +199,11 @@ test("Settings carries the workspace tools in the Deck look only, with Admin for
   };
   assert.deepEqual(make(false, { can_admin: true }).map(([where]) => where), ["beforeend"], "classic look: the Look switch only");
   const on = make(true, { can_admin: true });
-  assert.deepEqual(on.map(([where]) => where), ["afterbegin", "beforeend"]);
+  assert.deepEqual(on.map(([where]) => where), ["afterbegin", "afterbegin", "beforeend"]);
+  assert.match(on[1][1], /Notifications[\s\S]*Connections[\s\S]*Workspace/);
   assert.deepEqual([...on[0][1].matchAll(/href="(#\/[a-z]+)"/g)].map((m) => m[1]), ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]);
-  assert.match(on[0][1], /Needs me<span class="count need">3/);
+  assert.match(on[0][1], />Needs me<\/a>/);
+  assert.doesNotMatch(on[0][1], /class="count /, "counts belong to the action navigation only");
   for (const can_admin of [false, undefined, "true"]) assert.doesNotMatch(make(true, { can_admin })[0][1], /#\/admin/);
   assert.doesNotMatch(deck.toolsHTML(), /<style|style="/);
 });

@@ -39,19 +39,21 @@ def accepted_and_proposed(hub, fresh):
     return propose(hub, fresh, config_text(board="work", prompt="A changed prompt.", runner=False))
 
 
-async def with_settings(hub, fresh, check):
+async def with_settings(hub, fresh, check, look="classic"):
     from playwright.async_api import async_playwright
 
     name, value = fresh.cookie["Cookie"].split("=", 1)
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
         try:
-            context = await browser.new_context(viewport={"width": 1280, "height": 900})
+            context = await browser.new_context(
+                viewport={"width": 1280, "height": 800}, device_scale_factor=2
+            )
             await context.add_cookies(
                 [{"name": name, "value": value, "url": f"http://127.0.0.1:{hub.port}"}]
             )
             page = await context.new_page()
-            await page.goto(f"http://127.0.0.1:{hub.port}/app/#/board/work")
+            await page.goto(f"http://127.0.0.1:{hub.port}/app/?ui={look}#/board/work")
             await page.wait_for_selector(
                 '[data-action="coordinator"]', state="attached", timeout=15000
             )
@@ -66,9 +68,9 @@ async def with_settings(hub, fresh, check):
             await browser.close()
 
 
-def run(hub, fresh, check):
+def run(hub, fresh, check, look="classic"):
     pytest.importorskip("playwright.async_api", reason="optional browser regression dependency")
-    asyncio.run(with_settings(hub, fresh, check))
+    asyncio.run(with_settings(hub, fresh, check, look))
 
 
 async def present(page, selector):
@@ -98,6 +100,31 @@ def test_owner_accepts_a_config_version_after_reading_its_changes(hub, fresh):
     run(hub, fresh, check)
     status, reply = api(hub, fresh.cookie, "GET", "/api/orch/boards/work/configs")
     assert status == 200 and reply["accepted"]["version"] == version
+
+
+@pytest.mark.parametrize("look", ["classic", "deck"])
+def test_owner_confirms_rejection_and_sees_its_actor(hub, fresh, look):
+    proposed = accepted_and_proposed(hub, fresh)
+    version = proposed["version"]
+
+    async def check(page):
+        reject = f'[data-config-reject="{version}"]'
+        await page.wait_for_selector(reject)
+        await page.click(reject)
+        assert await page.locator(f'[data-config-accept="{version}"]').is_disabled()
+        assert "cannot be accepted" in await page.text_content("[data-project-review]")
+        await page.click("[data-config-cancel-reject]")
+        assert await page.locator(f'[data-config-accept="{version}"]').is_enabled()
+        await page.click(reject)
+        await page.click(f'[data-config-confirm-reject="{version}"]')
+        await page.wait_for_selector(reject, state="detached")
+        row = await page.text_content(f'[data-config-version="{version}"]')
+        assert ("Rejected by you" if look == "deck" else "Rejected by user:" + fresh.user) in row
+        assert await page.locator(f'[data-config-accept="{version}"]').count() == 0
+
+    run(hub, fresh, check, look)
+    status, reply = api(hub, fresh.cookie, "GET", "/api/orch/boards/work/configs")
+    assert status == 200 and reply["accepted"]["version"] != version
 
 
 @pytest.mark.parametrize("caller", ["agent-token", "member-session"])

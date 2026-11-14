@@ -620,7 +620,7 @@ def test_tell_orchestrator_says_when_nobody_is_connected(project_hub, fake):
     ask(hub, fake, "Please pause deploys", call("tell_orchestrator"))
     data = results(fake)[0]["data"]
     assert (data["passed_on"], data["state"], data["wakeable"]) == (True, "none", False)
-    assert "No orchestrator" in data["note"]
+    assert "No Coworker" in data["note"]
 
 
 def test_a_skipped_post_gets_no_receipt_relay_or_fallback_card(project_hub, monkeypatch):

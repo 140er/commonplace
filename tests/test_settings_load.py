@@ -94,7 +94,7 @@ const context = {
     assert.notEqual(value, undefined, `Unexpected request: ${url}`);
     return Promise.resolve({ status: 200, ok: true, json: async () => value });
   },
-  state: { me: { actor: 'user:reader' }, base: '#/settings', route: '#/settings', screen: 1, refreshRequest: 0 },
+  state: { me: { actor: 'user:reader', can_admin: true }, base: '#/settings', route: '#/settings', screen: 1, refreshRequest: 0 },
   root: { querySelector: selector => selector === '#content' ? content : null },
   remember: () => ({}), restore() {}, capture: () => () => {}, navigation() {}, title() {},
   showError(value) { screenError = value; },
@@ -146,7 +146,7 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
   if (failure === 'success') {
     blocked = false; saved = path === 'on';
     await context.refresh();
-    assert.match(html, /Agent orchestration/);
+    assert.match(html, /Coworker management/);
     assert.equal(/data-orchestration-enabled checked/.test(orchestrationHTML), saved);
     assert.equal(timers.size, 0, 'Successful reads clear every deadline');
     // Real save handler, followed by a fresh settings render, retains server state.
@@ -171,7 +171,7 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
   const label = {
     '/api/connections': 'Agents', '/api/webhooks': 'Webhooks', '/api/plan': 'Plan',
     '/api/phone-push': 'Phone notifications', '/api/chat-settings': 'Chat',
-    '/api/settings/orchestration': 'Agent orchestration',
+    '/api/settings/orchestration': 'Coworker management',
   }[path] || path;
   assert.match(visible, /Could not load|timed out|unavailable|Invalid JSON/, 'A failed read must surface an error');
   assert.ok(visible.includes(label), `Error must identify ${label}: ${visible}`);
@@ -183,7 +183,7 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
   }
   blocked = false;
   await context.clickRetry();
-  assert.match(html, /Agent orchestration/);
+  assert.match(html, /Coworker management/);
   assert.match(orchestrationHTML, /data-orchestration-enabled checked/, 'Retry renders the saved ON state');
   assert.doesNotMatch(html, /Could not load|timed out|unavailable|Invalid JSON/);
   assert.equal(screenError, '');

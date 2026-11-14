@@ -28,8 +28,6 @@ async def with_card(hub, fresh, number, check):
             page = await context.new_page()
             await page.goto(f"http://127.0.0.1:{hub.port}/app/#/card/{number}")
             await page.wait_for_selector(f'#card-panel [data-card="{number}"]', timeout=15000)
-            # Start only after the first refresh has settled; a redraw after that fails the test.
-            await page.wait_for_load_state("networkidle")
             await check(page)
         finally:
             await browser.close()
@@ -82,6 +80,37 @@ def test_owner_release_button_is_reflected_on_the_card(hub, fresh):
     assert raw(fresh.owner, number)["approved_by"] == f"user:{fresh.user}"
 
 
+def test_card_is_ready_while_an_unrelated_request_is_pending(hub, fresh, monkeypatch):
+    """A ready panel must work even when the page cannot reach network idle."""
+    playwright = pytest.importorskip("playwright.async_api")
+    original = playwright.BrowserContext.new_page
+    pending = []
+
+    async def new_page(context, *args, **kwargs):
+        page = await original(context, *args, **kwargs)
+        page.set_default_navigation_timeout(3000)
+
+        def hold(route):
+            pending.append(route)
+
+        await page.route("**/readiness-probe", hold)
+        await page.add_init_script(
+            "document.addEventListener('DOMContentLoaded', () => fetch('/readiness-probe'))"
+        )
+        return page
+
+    monkeypatch.setattr(playwright.BrowserContext, "new_page", new_page)
+    _, coordinator, number = released(hub, fresh)
+
+    async def check(page):
+        assert pending, "the unrelated request did not start"
+        await submit_handoff(page, "orchestrator")
+        await page.wait_for_selector(HANDOFF, state="detached", timeout=15000)
+
+    run(hub, fresh, number, check)
+    assert raw(fresh.owner, number)["assignee"] == coordinator.principal.actor
+
+
 def test_handoff_form_names_the_orchestrator_and_the_pool(hub, fresh):
     _, coordinator, number = released(hub, fresh)
 
@@ -92,7 +121,7 @@ def test_handoff_form_names_the_orchestrator_and_the_pool(hub, fresh):
             values = await page.eval_on_selector_all(
                 "#handoff-recipients option", "nodes => nodes.map(n => n.value)"
             )
-        assert {"orchestrator", "anyone"} <= set(values)
+        assert {"coordinator", "anyone"} <= set(values)
         await submit_handoff(page, "orchestrator")
         await page.wait_for_selector(HANDOFF, state="detached", timeout=15000)
 

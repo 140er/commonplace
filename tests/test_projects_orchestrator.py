@@ -18,7 +18,7 @@ def test_new_project_has_one_main_orchestrator(projects_hub):
     assert len(before) == 1  # Created by the event, not the lazy GET.
     assert body["main"] == {
         "role": "main",
-        "name": "orchestrator:alpha",
+        "name": "Coworker:alpha",
         "source": "seat",
         "connected": False,
         "status": None,
@@ -83,13 +83,13 @@ def test_connect_mints_scoped_token_once_and_sets_coordinator(projects_hub):
     assert status == 201  # RED
     assert all(r[0] == 201 for r in created)
     token, connection = body["token"], body["connection"]
-    assert body["mcp_url"].endswith("/mcp") and connection["name"] == "orchestrator:alpha"
+    assert body["mcp_url"].endswith("/mcp") and connection["name"] == "Coworker:alpha"
     assert body["board"] == "alpha" and body["wing"] == "alpha"
     assert body["setup"]["webhook_add"] == {
         "events": ["space_message", "card.moved"],
         "board": "alpha",
     }
-    assert h.coordinator("alpha") == "conn:orchestrator:alpha"
+    assert h.coordinator("alpha") == "conn:Coworker:alpha"
     principal = h.gateway.authenticate("Bearer " + token)
     assert principal.policy.trust == "standard" and principal.policy.tools == "standard"
     assert h.mcp(token, "space_read", board="alpha")[1]["ok"]
@@ -125,7 +125,7 @@ def test_connect_permissions_and_replace(projects_hub):
     assert h.request(h.owner, "PATCH", "/api/boards/work", {"coordinator": "conn:a1"})[0] == 200
     assert h.connect(h.owner, "work")[0] == 409
     assert h.connect(h.owner, "work", {"replace": True})[0] == 201
-    assert h.coordinator("work") == "conn:orchestrator:work"
+    assert h.coordinator("work") == "conn:Coworker:work"
     assert h.create_board(h.owner, "shared-board", wing="shared")[0] == 201
     code, shared = h.connect(h.owner, "shared-board")
     assert code == 409 and shared["error"] == "shared_wing"
@@ -156,7 +156,7 @@ def test_chat_reaches_connected_main_orchestrator(projects_hub):
         for r in page[1]["replies"]
         if r["message_id"] == posted[1]["id"] and r["kind"] == "receipt"
     )
-    assert receipt["code"] == "forwarded" and "orchestrator:work" in receipt["text"]
+    assert receipt["code"] == "forwarded" and "Coworker:work" in receipt["text"]
     response = h.request(token, "GET", f"/api/boards/work/chat?after={posted[1]['id'] - 1}")
     assert response[0] == 200 and response[1]["messages"][0]["text"] == text
     assert h.mcp(token, "space_read", board="work", after=posted[1]["id"] - 1)[1]["ok"]

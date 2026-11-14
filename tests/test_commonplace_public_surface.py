@@ -19,14 +19,26 @@ from commonplace.workers import WorkerSupervisor
 # A new registered route must be deliberately classified here. Prefix entries
 # include methods without an implemented action: authentication still runs first.
 EXACT = {
+    **{(method, "/api/compute"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/compute/discoveries"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/coworkers"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/github"): "authenticated",
     ("POST", "/api/github/connect"): "authenticated",
     ("POST", "/api/github/confirm"): "authenticated",
+    ("POST", "/api/github/merge-consent"): "authenticated",
+    ("POST", "/api/github/merge"): "authenticated",
     ("DELETE", "/api/github"): "authenticated",
     ("GET", "/api/settings/orchestration"): "authenticated",
     ("PUT", "/api/settings/orchestration"): "authenticated",
     ("GET", "/api/holds"): "authenticated",
     ("GET", "/api/topology"): "authenticated",
+    ("GET", "/api/costs"): "authenticated",
+    ("GET", "/api/settings/costs"): "authenticated",
+    ("PUT", "/api/settings/costs"): "authenticated",
+    **{(method, "/api/settings/budgets"): "authenticated" for method in ("GET", "PUT", "DELETE")},
+    ("GET", "/api/learned"): "authenticated",
+    ("GET", "/api/learning/settings"): "authenticated",
+    ("PATCH", "/api/learning/settings"): "authenticated",
     ("GET", "/api/topology/route"): "authenticated",
     ("POST", "/api/holds"): "authenticated",
     ("GET", "/.well-known/oauth-protected-resource"): "public",
@@ -42,6 +54,14 @@ EXACT = {
     ("GET", "/app/auth/email/verify"): "public",
     ("POST", "/app/auth/email/verify"): "public",
     ("POST", "/app/logout"): "authenticated",
+    ("GET", "/app/join"): "public",
+    ("POST", "/app/join"): "authenticated",
+    ("GET", "/api/invites"): "authenticated",
+    ("POST", "/api/invites"): "authenticated",
+    ("GET", "/api/workspaces"): "authenticated",
+    # Workspace creation requires the signed-in person's same-origin session.
+    ("POST", "/api/workspaces"): "authenticated",
+    ("POST", "/api/workspaces/switch"): "authenticated",
     ("GET", "/api/me"): "authenticated",
     ("GET", "/api/plan"): "authenticated",
     ("GET", "/api/events"): "authenticated",
@@ -51,6 +71,13 @@ EXACT = {
     ("PATCH", "/api/voice"): "authenticated",
     ("POST", "/api/voice/transcribe"): "authenticated",
     ("POST", "/api/facts"): "authenticated",
+    # Enrollment controls are unavailable until explicit owner opt-in.
+    ("GET", "/api/runners/install-settings"): "unavailable",
+    ("PUT", "/api/runners/install-settings"): "unavailable",
+    ("POST", "/api/runners/enrollments"): "unavailable",
+    # Code-authenticated, single-use bootstrap; recovery requires a bound-key challenge.
+    ("POST", "/api/runner-enrollment/exchange"): "bootstrap",
+    ("POST", "/api/runner-enrollment/recover"): "bootstrap",
     # Machine runner (commonplace/runner), inert until an owner attests.
     ("GET", "/api/runners"): "authenticated",
     ("POST", "/api/runners"): "authenticated",
@@ -61,6 +88,11 @@ EXACT = {
     ("GET", "/api/card-starts/options"): "authenticated",
     ("GET", "/api/agent-schedules"): "authenticated",
     ("POST", "/api/agent-schedules"): "authenticated",
+    ("GET", "/api/topology/node"): "authenticated",
+    ("GET", "/api/topology/discovery"): "authenticated",
+    ("POST", "/api/topology/discovery"): "authenticated",
+    ("POST", "/api/topology/add-machine"): "authenticated",
+    ("POST", "/api/topology/add-site"): "authenticated",
     ("GET", "/api/routines"): "authenticated",
     ("POST", "/api/routines"): "authenticated",
     ("GET", "/api/goals"): "authenticated",
@@ -68,6 +100,11 @@ EXACT = {
     ("POST", "/api/goals/card"): "authenticated",
     ("GET", "/api/bots"): "authenticated",
     ("POST", "/api/bots"): "authenticated",
+    ("GET", "/api/bots/shared"): "authenticated",
+    ("GET", "/api/bots/settings"): "authenticated",
+    ("PATCH", "/api/bots/settings"): "authenticated",
+    ("GET", "/api/meetings"): "authenticated",
+    ("POST", "/api/meetings"): "authenticated",
     ("GET", "/api/admin/instance/waitlist"): "authenticated",
     ("POST", "/api/admin/instance/waitlist"): "authenticated",
     **{
@@ -78,6 +115,9 @@ EXACT = {
     ("GET", "/api/imports"): "authenticated",
     ("GET", "/api/search-index"): "authenticated",
     ("POST", "/api/import"): "authenticated",
+    # File preview/confirmation require a signed-in person and existing import authority.
+    ("POST", "/api/memory/import/preview"): "authenticated",
+    ("POST", "/api/memory/import/confirm"): "authenticated",
     ("GET", "/api/capture"): "authenticated",
     ("POST", "/api/capture"): "authenticated",
     ("GET", "/api/settings/capture"): "authenticated",
@@ -94,19 +134,32 @@ EXACT = {
     ("POST", "/api/phone-push"): "authenticated",
     ("DELETE", "/api/phone-push"): "authenticated",
     ("POST", "/api/phone-push/test"): "authenticated",
+    ("GET", "/api/account"): "authenticated",
+    ("GET", "/api/account/export"): "authenticated",
+    ("POST", "/api/account/deletion"): "authenticated",
+    ("DELETE", "/api/account/deletion"): "authenticated",
     ("GET", "/api/console"): "authenticated",
     ("GET", "/api/console/stream"): "authenticated",
     ("GET", "/api/chat"): "authenticated",
     ("GET", "/api/chat-settings"): "authenticated",
     ("PUT", "/api/chat-settings"): "authenticated",
+    ("GET", "/api/topology/proposals"): "authenticated",
+    ("POST", "/api/topology/proposals"): "authenticated",
     ("GET", "/api/tool-policy"): "authenticated",
     ("POST", "/api/tool-policy"): "authenticated",
 }
 PREFIX = {
+    ("GET", "/api/runners/enrollments/"): "unavailable",
+    ("DELETE", "/api/runners/enrollments/"): "unavailable",
+    ("GET", "/api/instance-admin/"): "authenticated",
+    **{(method, "/api/compute/"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/compute/discoveries/"): "authenticated" for method in ("GET", "POST")},
+    **{(method, "/api/coworkers/"): "authenticated" for method in ("GET", "POST", "DELETE")},
     ("GET", "/api/admin/instance/"): "authenticated",
     ("GET", "/api/admin/workspaces/"): "authenticated",
     ("GET", "/api/task-types/connections/"): "authenticated",
     ("POST", "/api/task-types/connections/"): "authenticated",
+    ("POST", "/api/invites/"): "authenticated",
     ("POST", "/api/holds/"): "authenticated",
     ("POST", "/api/connections/"): "authenticated",
     ("DELETE", "/api/connections/"): "authenticated",
@@ -120,14 +173,30 @@ PREFIX = {
     ("POST", "/api/orch/"): "authenticated",
     ("POST", "/api/runner/chat/"): "authenticated",
     ("GET", "/api/agent-schedules/"): "authenticated",
+    ("GET", "/api/card-snooze/"): "authenticated",
+    ("POST", "/api/card-snooze/"): "authenticated",
     ("POST", "/api/agent-schedules/"): "authenticated",
     ("POST", "/api/card-starts/"): "authenticated",
+    ("GET", "/api/card-starts/"): "authenticated",
+    ("GET", "/api/topology/proposals/"): "authenticated",
+    ("POST", "/api/topology/proposals/"): "authenticated",
     **{
         (method, path): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
         for path in ("/api/skills/", "/api/skill-decks/", "/api/routines/", "/api/bots/")
     },
+    ("PUT", "/api/bots/"): "authenticated",
+    **{
+        (method, "/api/meetings/"): "authenticated"
+        for method in ("GET", "POST", "PATCH", "PUT", "DELETE")
+    },
     ("GET", "/skills/decks/"): "public",
+    **{
+        (method, prefix): "authenticated"
+        for method in ("GET", "POST", "PATCH", "DELETE")
+        for prefix in ("/api/bridge/installs/", "/api/bridge/links/", "/api/bridge/")
+    },
+    ("PUT", "/api/bridge/installs/"): "authenticated",
     **{
         (method, prefix): "authenticated"
         for method in ("GET", "POST", "PATCH", "DELETE")
@@ -152,7 +221,9 @@ PREFIX = {
     ("GET", "/app/static/"): "public",
     ("POST", "/api/console/agents/"): "authenticated",
     ("GET", "/api/chat/"): "authenticated",
-    **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT")},
+    **{(method, "/api/projects/"): "authenticated" for method in ("GET", "POST", "PUT", "PATCH")},
+    **{(method, "/api/learned/"): "authenticated" for method in ("GET", "PATCH", "DELETE")},
+    ("POST", "/api/learned/"): "authenticated",
 }
 BUILTIN = {
     ("GET", "/health"): "public",
@@ -260,7 +331,9 @@ def test_complete_installed_route_inventory(surface):
         }
         response = request(surface, method, concrete, headers=headers, body=b"{")
         status = hardened(response)
-        if auth == "authenticated":
+        if auth == "unavailable":
+            assert status == 404, (method, concrete, response)
+        elif auth == "authenticated":
             assert status == 401, (method, concrete, response)
         else:
             assert status != 401, (method, concrete, response)
@@ -276,6 +349,9 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("POST", "/api/cards/1/decide"),
         ("GET", "/api/needs-me"),
         ("GET", "/api/topology"),
+        ("GET", "/api/costs"),
+        ("GET", "/api/settings/costs"),
+        ("GET", "/api/settings/budgets"),
         ("GET", "/api/topology/route"),
         ("POST", "/api/memory"),
         ("GET", "/api/memory/search"),
@@ -331,6 +407,10 @@ def test_sessions_have_separate_600_request_budgets(surface):
     "method,path",
     [
         ("GET", "/app/login"),
+        ("GET", "/app/join"),
+        ("POST", "/app/auth/email"),
+        ("GET", "/app/auth/email/verify"),
+        ("POST", "/app/auth/email/verify"),
         ("POST", "/oauth/register"),
         ("POST", "/oauth/token"),
         ("POST", "/oauth/authorize"),
@@ -347,6 +427,23 @@ def test_sensitive_endpoint_ip_limit(surface, method, path):
     for _ in range(20):
         assert request(surface)[0] == 401
     assert request(surface)[0] == 429
+
+
+def test_cold_assets_cannot_exhaust_email_signin(surface):
+    # A cold module graph has more reads than the default anonymous allowance.
+    assets = sorted(web.STATIC.glob("*.js"))[: ratelimit.ANONYMOUS.capacity]
+    assert len(assets) == ratelimit.ANONYMOUS.capacity
+    for asset in assets:
+        assert request(surface, "GET", "/app/" + asset.name)[0] == 200
+    response = request(
+        surface,
+        "POST",
+        "/app/auth/email",
+        headers={"Content-Type": "application/json"},
+        body=json.dumps({"email": "reader@example.test", "next": "/app/"}),
+    )
+    assert response[0] == 202, response
+    assert json.loads(response[2])["message"] == "If this email can sign in, a link is on its way."
 
 
 def test_authenticated_requests_still_obey_sensitive_ip_limit(surface):
@@ -789,6 +886,10 @@ REST_TOOLS = [
     ("GET", "/api/spaces", "board_list"),
     ("POST", "/api/spaces", "board_add"),
     ("GET", "/api/spaces/work", "board_list"),
+    ("GET", "/api/spaces/work/cards", "task_list"),
+    ("POST", "/api/spaces/work/cards", "task_add"),
+    ("GET", "/api/spaces/work/chat", "space_read"),
+    ("POST", "/api/spaces/work/chat", "space_post"),
     ("GET", "/api/boards", "board_list"),
     ("POST", "/api/boards", "board_add"),
     ("GET", "/api/boards/work/cards", "task_list"),
@@ -799,6 +900,7 @@ REST_TOOLS = [
     ("POST", "/api/cards/1/handoff", "task_handoff"),
     ("POST", "/api/cards/1/decide", "decide"),
     ("GET", "/api/needs-me", "needs_me"),
+    ("GET", "/api/costs", "costs_summary"),
     ("GET", "/api/topology", "topology_get"),
     ("GET", "/api/topology/route", "topology_route"),
     ("GET", "/api/memory/search", "memory_search"),
@@ -1177,3 +1279,40 @@ def test_limits_default_and_come_from_environment(monkeypatch, make_surface):
     surface = make_surface()
     assert surface.gateway.write_limit == ratelimit.Limit("untrusted-writes", 10, 60)
     assert surface.gateway.backfill == ratelimit.Backfill(7, 9, 11, 13)
+
+
+def test_shell_reads_are_bounded_and_do_not_change_public_access(surface):
+    for _ in range(ratelimit.APP_SHELL.capacity):
+        assert request(surface, "GET", "/app/auth/providers")[0] == 200
+    assert request(surface, "GET", "/app/auth/providers")[0] == 429
+    assert request(surface, "GET", "/app/login")[0] == 302
+    assert request(surface, "GET", "/api/me")[0] == 401
+    assert request(surface, "GET", "/api/workspaces")[0] == 401
+    assert request(surface, "POST", "/app/app.js")[0] == 404
+
+
+def test_sensitive_paths_share_the_same_ip_budget_after_cold_reads(surface):
+    for _ in range(ratelimit.ANONYMOUS.capacity):
+        assert request(surface, "GET", "/app/app.js")[0] == 200
+    for _ in range(ratelimit.CREDENTIALS.capacity):
+        assert request(surface, "GET", "/app/login")[0] == 302
+    for method, path in [
+        ("GET", "/app/join"),
+        ("GET", "/app/auth/email/verify"),
+        ("POST", "/app/auth/email"),
+        ("POST", "/oauth/token"),
+    ]:
+        assert request(surface, method, path)[0] == 429
+
+
+@pytest.mark.parametrize("path", ["/app/login", "/app/join", "/app/auth/email/verify"])
+def test_throttled_browser_navigation_is_a_recovery_screen(surface, path):
+    for _ in range(ratelimit.CREDENTIALS.capacity):
+        request(surface, "GET", path)
+    status, headers, content = request(surface, "GET", path, headers={"Accept": "text/html"})
+    assert status == 429 and headers["Retry-After"] == "6"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"Too many sign-in attempts" in content
+    assert b'href="/app/?signin=throttled">Retry</a>' in content
+    assert b"Set-Cookie" not in content
+    assert "Set-Cookie" not in headers

@@ -34,12 +34,39 @@ permanently retires the key while preserving its history and linked job. Only
 queued/leased jobs are cancelled atomically with void; launched jobs are untouched.
 A new attempt needs a new key and ordinary admission.
 
+Merge policy: when the accepted config has ``[factory]`` with ``gate.required = true``, a
+new ``merge`` step needs a card whose newest unvoided gate on this board is ``gate_pass``
+(``factory_card_required``, ``factory_gate_required``). The checkpoint then carries
+``factory``: the policy, its summary lines and the board's gate counts. Without
+``[factory]`` neither applies.
+
 Checkpoint: derived from the journal, the jobs and the board, never stored: open steps,
 ``in_doubt``, ``needs_person``, holds, ``next``, jobs, gates, misses, the read-only card
 classes ``held`` / ``expired`` / ``not_held_by_caller`` and the unstarted todo cards.
 ``resume`` additionally heartbeats the caller's own held cards; it never claims a card.
 A role others report to (``parent`` in the config) also gets ``escalations``: the unsettled
 steps of its direct reports (``commonplace.orch.organigram``).
+
+Destinations: every step records its owning card, or a parked destination with the
+reason ``no_owning_card``. This is assigned on insert, before any result, including
+gate verdicts, next notes and job-derived results. Older steps migrate additively.
+Checkpoints expose each step's destination and a separate list of parked results.
+
+Fleet rules (board overrides in the accepted config's ``[fleet]`` table):
+
+- Repairs: the first ``gate_fail`` of a pull request opens its one repair and pins the
+  recording role as owner. Failed gates on later heads of that pull request, from any role,
+  join it (no second repair); ``gate_pass`` resolves it. A repair that has absorbed
+  ``repair_attempts`` failures is exhausted: parked with the reason ``repair_exhausted``,
+  and ``gate_open`` refuses that pull request (``repair_exhausted``) until the owner raises
+  the bound in the config.
+- Findings: a failed gate, or ``finding_report``, is routed to the role whose lease started
+  the card's latest unvoided runner start, while that lease is live. Otherwise it is parked
+  with a reason (``no_owning_card``, ``no_owning_session``, ``owner_session_gone``,
+  ``routing_off``). The owner reads it in its checkpoint and acknowledges it with
+  ``finding_ack`` (only the owner role, fenced).
+- Fresh agents: runner starts record why they started a fresh agent (``fresh_reason``);
+  see ``commonplace.orch.runner_bridge``.
 
 Clocks: every public function takes ``now`` (``"YYYY-MM-DDTHH:MM:SSZ"``); ``None`` means
 the current UTC time.
@@ -62,8 +89,9 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
 from commonplace.runner import jobs, registry
 from commonplace.runner.predicate import requester_ok
+from commonplace.snooze import store as snooze
 
-from . import store as orch_store
+from . import schema, store as orch_store
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +162,9 @@ SCHEMA_STATEMENTS = (
  code TEXT,
  detail TEXT,
  evidence TEXT,
+ destination_kind TEXT CHECK (destination_kind IN ('card','parked')),
+ destination_reason TEXT,
+ fresh_reason TEXT,
  job_id TEXT,
  created_epoch INTEGER NOT NULL,
  epoch INTEGER NOT NULL,
@@ -164,6 +195,36 @@ BEGIN SELECT RAISE(ABORT, 'orch_steps identity is immutable'); END""",
 )""",
     """CREATE UNIQUE INDEX IF NOT EXISTS orch_gates_one_attempt
  ON orch_gates(board, repo, pr, head) WHERE voided_at IS NULL""",
+    """CREATE TABLE IF NOT EXISTS orch_repairs (
+ id INTEGER PRIMARY KEY,
+ board TEXT NOT NULL,
+ repo TEXT NOT NULL,
+ pr INTEGER NOT NULL CHECK (pr >= 1),
+ card INTEGER,
+ owner_role TEXT NOT NULL,
+ failures INTEGER NOT NULL CHECK (failures >= 1),
+ last_head TEXT NOT NULL,
+ state TEXT NOT NULL CHECK (state IN ('open','resolved')),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS orch_repairs_one_open
+ ON orch_repairs(board, repo, pr) WHERE state='open'""",
+    """CREATE TABLE IF NOT EXISTS orch_findings (
+ id INTEGER PRIMARY KEY,
+ board TEXT NOT NULL,
+ card INTEGER,
+ reporter_role TEXT NOT NULL,
+ step_key TEXT NOT NULL,
+ source TEXT NOT NULL CHECK (source IN ('gate','review')),
+ detail TEXT NOT NULL,
+ owner_role TEXT,
+ state TEXT NOT NULL CHECK (state IN ('routed','parked','acked')),
+ reason TEXT,
+ created_at TEXT NOT NULL,
+ acked_at TEXT,
+ UNIQUE (board, reporter_role, step_key)
+)""",
     """CREATE TABLE IF NOT EXISTS orch_journal (
  id INTEGER PRIMARY KEY,
  board TEXT NOT NULL,
@@ -232,6 +293,39 @@ def ensure_schema(conn) -> None:
     """Create the durable tables (idempotent). Safe inside an open transaction."""
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(orch_steps)")}
+    if {"destination_kind", "destination_reason", "fresh_reason"} <= columns and conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='orch_steps_destination'"
+    ).fetchone():
+        return
+    # A savepoint also works when a fenced start already holds BEGIN IMMEDIATE.
+    # Serialize the column probe, additive migration and trigger installation so
+    # concurrent first opens cannot see or commit a partially migrated schema.
+    conn.execute("SAVEPOINT orch_destinations_schema")
+    try:
+        conn.execute("UPDATE orch_steps SET updated_at=updated_at WHERE 0")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(orch_steps)")}
+        for name, datatype in (
+            ("destination_kind", "TEXT CHECK (destination_kind IN ('card','parked'))"),
+            ("destination_reason", "TEXT"),
+            ("fresh_reason", "TEXT"),
+        ):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE orch_steps ADD COLUMN {name} {datatype}")
+        assignment = (
+            "destination_kind=CASE WHEN card IS NULL THEN 'parked' ELSE 'card' END, "
+            "destination_reason=CASE WHEN card IS NULL THEN 'no_owning_card' ELSE NULL END"
+        )
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS orch_steps_destination AFTER INSERT ON orch_steps "
+            "BEGIN UPDATE orch_steps SET " + assignment + " WHERE id=NEW.id; END"
+        )
+        conn.execute("UPDATE orch_steps SET " + assignment + " WHERE destination_kind IS NULL")
+        conn.execute("RELEASE orch_destinations_schema")
+    except BaseException:
+        conn.execute("ROLLBACK TO orch_destinations_schema")
+        conn.execute("RELEASE orch_destinations_schema")
+        raise
 
 
 def _int(value, name, *, minimum=1):
@@ -438,6 +532,7 @@ def insert_step_in(
     actor: str,
     now: str,
     job_id: str | None = None,
+    fresh_reason: str | None = None,
 ) -> dict:
     """fenced_start step 5: insert a ``runner_start`` step (state ``waiting``) with its
     immutable card and request hash. ``UNIQUE(board, role, step_key)`` raises
@@ -445,7 +540,7 @@ def insert_step_in(
     _check_step_key(step_key)
     conn.execute(
         "INSERT INTO orch_steps(board,role,step_key,kind,card,request_hash,state,job_id,"
-        "created_epoch,epoch,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "created_epoch,epoch,created_at,updated_at,fresh_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             board,
             role,
@@ -459,6 +554,7 @@ def insert_step_in(
             epoch,
             now,
             now,
+            fresh_reason,
         ),
     )
     _log(conn, board, role, step_key, epoch, "start", actor, now, state="waiting")
@@ -479,6 +575,15 @@ def link_job_in(conn, *, board: str, role: str, step_key: str, job_id: str, now:
 
 def step_public(row) -> dict:
     data = dict(row)
+    destination_kind = data.pop("destination_kind")
+    destination_reason = data.pop("destination_reason")
+    data["destination"] = (
+        {"kind": "card", "board": data["board"], "card": data["card"]}
+        if destination_kind == "card"
+        else {"kind": "parked", "reason": destination_reason}
+        if destination_kind == "parked"
+        else None
+    )
     evidence = data.pop("evidence")
     data["evidence"] = json.loads(evidence) if evidence else None
     data["voided"] = data["voided_at"] is not None
@@ -531,7 +636,7 @@ def _snapshot(ctx, st, board, role):
     if config is None or not config.has_runner:
         # No machine grants authority here: only the board's own trusted seat coordinates.
         if seat is None or seat[:2] != (board, role):
-            raise DurableError("not_configured", 409, "board has no orchestrator config")
+            raise DurableError("not_configured", 409, "board has no Coworker config")
         if not seat[2]:
             raise DurableError(
                 "not_allowed",
@@ -754,7 +859,7 @@ def journal_intent(
         _int(card, "card")
     elif kind == "card":
         raise DurableError("invalid_card", 400, "a card step needs a card")
-    st, _version = _holder(ctx, board, role)
+    st, version = _holder(ctx, board, role)
     if card is not None:
         _card_row(ctx, board, card)
     actor = _actor_ref(ctx.principal)
@@ -765,6 +870,9 @@ def journal_intent(
             if existing["kind"] == kind and existing["card"] == card:
                 return existing
             raise DurableError("step_exists", 409, "step key already used", step=existing)
+        if kind == "merge":
+            # _holder parsed this version already (``config_invalid`` otherwise).
+            _merge_guard(conn, version.config().factory if version else None, board, card)
         state = "done" if kind == "next" else "intent"
         conn.execute(
             "INSERT INTO orch_steps(board,role,step_key,kind,card,state,detail,created_epoch,"
@@ -773,6 +881,55 @@ def journal_intent(
         )
         _log(conn, board, role, step_key, epoch, "intent", actor, now, state=state)
         return step_in(conn, board=board, role=role, step_key=step_key)
+
+
+def _policy(version):
+    """The accepted config's ``[factory]`` policy for the read-only checkpoint, or ``None``
+    (also when the stored version does not parse: a read never fails on it)."""
+    if version is None:
+        return None
+    try:
+        return version.config().factory
+    except ValueError:
+        return None
+
+
+def _merge_guard(conn, policy, board, card):
+    """Refuse a new merge step the board's merge policy does not allow."""
+    if policy is None or not policy.gate_required:
+        return
+    if card is None:
+        raise DurableError(
+            "factory_card_required", 409, "the merge policy needs the card whose gate passed"
+        )
+    gate = conn.execute(
+        "SELECT g.* FROM orch_gates g JOIN orch_steps s "
+        "ON s.board=g.board AND s.role=g.role AND s.step_key=g.step_key "
+        "WHERE g.board=? AND s.card=? AND g.voided_at IS NULL ORDER BY g.id DESC LIMIT 1",
+        (board, card),
+    ).fetchone()
+    if gate is None or gate["state"] != "gate_pass":
+        raise DurableError(
+            "factory_gate_required",
+            409,
+            "the merge policy needs a passed gate on this card's newest gated head",
+            gate=None if gate is None else _gate_public(gate),
+        )
+
+
+def _factory_view(conn, version, board):
+    """Checkpoint ``factory`` entry: ``{}`` without a policy, so the key is absent."""
+    policy = _policy(version)
+    if policy is None:
+        return {}
+    counts = dict.fromkeys(("open", *GATE_STATES), 0)
+    for row in conn.execute(
+        "SELECT state, COUNT(*) AS n FROM orch_gates WHERE board=? AND voided_at IS NULL "
+        "GROUP BY state",
+        (board,),
+    ):
+        counts[row["state"]] = row["n"]
+    return {"factory": {"policy": policy.to_dict(), "summary": policy.summary(), "gates": counts}}
 
 
 def _parse_evidence(evidence):
@@ -942,6 +1099,212 @@ def journal_record(
         return step_in(conn, board=board, role=role, step_key=step_key)
 
 
+# ------------------------------------------------------------ fleet: repairs, findings
+
+
+def _repair_view(row, bound: int) -> dict:
+    """Public shape of a repair. ``state`` is ``exhausted`` for an open repair at its bound."""
+    data = dict(row)
+    exhausted = data["state"] == "open" and data["failures"] >= bound
+    data["state"] = "exhausted" if exhausted else data["state"]
+    data["bound"] = bound
+    data["destination"] = (
+        {"kind": "parked", "reason": "repair_exhausted"}
+        if exhausted
+        else {"kind": "card", "board": data["board"], "card": data["card"]}
+        if data["card"] is not None
+        else {"kind": "parked", "reason": "no_owning_card"}
+    )
+    return data
+
+
+def _open_repair(conn, board, repo, pr):
+    return conn.execute(
+        "SELECT * FROM orch_repairs WHERE board=? AND repo=? AND pr=? AND state='open'",
+        (board, repo, pr),
+    ).fetchone()
+
+
+def _repair_failed(conn, *, board, repo, pr, head, card, role, bound, now) -> dict:
+    """One failed gate of ``(repo, pr)``: open the pull request's repair, or join it."""
+    row = _open_repair(conn, board, repo, pr)
+    if row is None:
+        conn.execute(
+            "INSERT INTO orch_repairs(board,repo,pr,card,owner_role,failures,last_head,state,"
+            "created_at,updated_at) VALUES (?,?,?,?,?,1,?,'open',?,?)",
+            (board, repo, pr, card, role, head, now, now),
+        )
+    else:
+        conn.execute(
+            "UPDATE orch_repairs SET failures=failures+1, last_head=?, updated_at=?, "
+            "card=COALESCE(card, ?) WHERE id=?",
+            (head, now, card, row["id"]),
+        )
+    return _repair_view(_open_repair(conn, board, repo, pr), bound)
+
+
+def _repair_passed(conn, *, board, repo, pr, bound, now):
+    row = _open_repair(conn, board, repo, pr)
+    if row is None:
+        return None
+    conn.execute(
+        "UPDATE orch_repairs SET state='resolved', updated_at=? WHERE id=?", (now, row["id"])
+    )
+    return _repair_view(
+        conn.execute("SELECT * FROM orch_repairs WHERE id=?", (row["id"],)).fetchone(), bound
+    )
+
+
+def _finding_public(row) -> dict:
+    data = dict(row)
+    data["destination"] = (
+        {"kind": "session", "board": data["board"], "role": data["owner_role"]}
+        if data["state"] in ("routed", "acked")
+        else {"kind": "parked", "reason": data["reason"]}
+    )
+    return data
+
+
+def _finding_owner(conn, board, card):
+    """Role whose unvoided runner start of ``card`` is the latest: it owns the card's work."""
+    row = conn.execute(
+        "SELECT role FROM orch_steps WHERE board=? AND card=? AND kind='runner_start' "
+        "AND voided_at IS NULL ORDER BY id DESC LIMIT 1",
+        (board, card),
+    ).fetchone()
+    return row["role"] if row is not None else None
+
+
+def _route_finding(conn, *, board, card, reporter, step_key, source, detail, route, now) -> dict:
+    """Store one finding with its destination. The reporter never picks it: the owning
+    role is read from the journal and must hold a live lease, else the finding is parked."""
+    owner, reason = None, None
+    if card is None:
+        reason = "no_owning_card"
+    else:
+        owner = _finding_owner(conn, board, card)
+        if owner is None:
+            reason = "no_owning_session"
+        elif not route:
+            reason = "routing_off"
+        else:
+            lease = conn.execute(
+                "SELECT * FROM orch_leases WHERE board=? AND role=?", (board, owner)
+            ).fetchone()
+            if lease is None or not _lease_live(lease, now):
+                reason = "owner_session_gone"
+    conn.execute(
+        "INSERT INTO orch_findings(board,card,reporter_role,step_key,source,detail,owner_role,"
+        "state,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            board,
+            card,
+            reporter,
+            step_key,
+            source,
+            detail,
+            owner,
+            "parked" if reason else "routed",
+            reason,
+            now,
+        ),
+    )
+    return _finding_public(
+        conn.execute(
+            "SELECT * FROM orch_findings WHERE board=? AND reporter_role=? AND step_key=?",
+            (board, reporter, step_key),
+        ).fetchone()
+    )
+
+
+def finding_report(
+    ctx: ToolContext,
+    board: str,
+    role: str,
+    epoch: int,
+    token: str,
+    step_key: str,
+    *,
+    card: int,
+    detail: str,
+    now=None,
+) -> dict:
+    """Report a review finding about ``card``. It is routed to the role whose lease started
+    the card's work while that lease is live, and parked with a reason otherwise. A retry
+    with the same key returns the stored finding (a different card or text is
+    ``step_exists``). Returns ``{"finding"}`` (``destination``: session or parked)."""
+    now = _clock(now)
+    _check_step_key(step_key)
+    _int(card, "card")
+    detail = _text(detail, "detail")
+    if not detail:
+        raise DurableError("invalid_detail", 400, "a finding needs text")
+    st, version = _holder(ctx, board, role)
+    _card_row(ctx, board, card)
+    route = version.config().fleet_rules.route_findings
+    with st.transaction() as conn:
+        _fence(conn, board, role, epoch, token, now)
+        stored = conn.execute(
+            "SELECT * FROM orch_findings WHERE board=? AND reporter_role=? AND step_key=?",
+            (board, role, step_key),
+        ).fetchone()
+        if stored is not None:
+            if (stored["card"], stored["detail"], stored["source"]) == (card, detail, "review"):
+                return {"finding": _finding_public(stored)}
+            raise DurableError("step_exists", 409, "finding key already used")
+        found = _route_finding(
+            conn,
+            board=board,
+            card=card,
+            reporter=role,
+            step_key=step_key,
+            source="review",
+            detail=detail,
+            route=route,
+            now=now,
+        )
+        _log(conn, board, role, step_key, epoch, "finding", _actor_ref(ctx.principal), now)
+        return {"finding": found}
+
+
+def finding_ack(
+    ctx: ToolContext, board: str, role: str, epoch: int, token: str, finding: int, *, now=None
+) -> dict:
+    """The owning role acknowledges a finding routed (or parked) to it. Only the finding's
+    ``owner_role`` can; repeating returns the stored finding."""
+    now = _clock(now)
+    _int(finding, "finding")
+    st, _version = _holder(ctx, board, role)
+    with st.transaction() as conn:
+        _fence(conn, board, role, epoch, token, now)
+        row = conn.execute(
+            "SELECT * FROM orch_findings WHERE id=? AND board=?", (finding, board)
+        ).fetchone()
+        if row is None:
+            raise DurableError("finding_not_found", 404, "finding not found")
+        if row["owner_role"] != role:
+            raise DurableError("not_owner", 403, "only the owning role acknowledges a finding")
+        if row["state"] != "acked":
+            conn.execute(
+                "UPDATE orch_findings SET state='acked', acked_at=? WHERE id=?", (now, finding)
+            )
+            _log(
+                conn,
+                board,
+                role,
+                str(finding),
+                epoch,
+                "finding_ack",
+                _actor_ref(ctx.principal),
+                now,
+            )
+        return {
+            "finding": _finding_public(
+                conn.execute("SELECT * FROM orch_findings WHERE id=?", (finding,)).fetchone()
+            )
+        }
+
+
 # --------------------------------------------------------------------- gates API
 
 
@@ -957,6 +1320,24 @@ def _gate_public(row):
     data.pop("id", None)
     data["voided"] = data["voided_at"] is not None
     return data
+
+
+def _gate_result(conn, step, gate, bound):
+    """The reply of a recorded gate verdict: step, gate, and the repair and finding it fed."""
+    finding = conn.execute(
+        "SELECT * FROM orch_findings WHERE board=? AND reporter_role=? AND step_key=?",
+        (step["board"], step["role"], step["step_key"]),
+    ).fetchone()
+    repair = conn.execute(
+        "SELECT * FROM orch_repairs WHERE board=? AND repo=? AND pr=? ORDER BY id DESC LIMIT 1",
+        (step["board"], gate["repo"], gate["pr"]),
+    ).fetchone()
+    return {
+        "step": step,
+        "gate": _gate_public(gate),
+        "repair": None if repair is None else _repair_view(repair, bound),
+        "finding": None if finding is None else _finding_public(finding),
+    }
 
 
 def gate_open(
@@ -986,7 +1367,8 @@ def gate_open(
         raise DurableError("invalid_head", 400, "head must be a full lowercase commit sha")
     if card is not None:
         _int(card, "card")
-    st, _version = _holder(ctx, board, role)
+    st, version = _holder(ctx, board, role)
+    bound = version.config().fleet_rules.repair_attempts
     if card is not None:
         _card_row(ctx, board, card)
     actor = _actor_ref(ctx.principal)
@@ -1006,6 +1388,15 @@ def gate_open(
             ):
                 return {"step": existing, "gate": _gate_public(gate)}
             raise DurableError("step_exists", 409, "step key already used", step=existing)
+        repair = _open_repair(conn, board, repo, pr)
+        if repair is not None and repair["failures"] >= bound:
+            raise DurableError(
+                "repair_exhausted",
+                409,
+                "this pull request's repair used its attempts; the owner raises "
+                "fleet.repair_attempts or takes over",
+                repair=_repair_view(repair, bound),
+            )
         if gate is not None:
             raise DurableError(
                 "gate_exists",
@@ -1052,7 +1443,8 @@ def gate_record(
     now = _clock(now)
     _check_step_key(step_key)
     state = _verdict(verdict)
-    st, _version = _holder(ctx, board, role)
+    st, version = _holder(ctx, board, role)
+    fleet = version.config().fleet_rules
     actor = _actor_ref(ctx.principal)
     with st.transaction() as conn:
         _fence(conn, board, role, epoch, token, now)
@@ -1067,7 +1459,7 @@ def gate_record(
         ).fetchone()
         if gate["state"] != "open":
             if gate["state"] == state:
-                return {"step": step, "gate": _gate_public(gate)}
+                return _gate_result(conn, step, gate, fleet.repair_attempts)
             raise DurableError(
                 "gate_decided", 409, "gate verdict is final", gate=_gate_public(gate)
             )
@@ -1093,10 +1485,45 @@ def gate_record(
             ),
         )
         _log(conn, board, role, step_key, epoch, "gate_record", actor, now, code=state)
+        repair = finding = None
+        if state == "gate_fail":
+            repair = _repair_failed(
+                conn,
+                board=board,
+                repo=gate["repo"],
+                pr=gate["pr"],
+                head=gate["head"],
+                card=step["card"],
+                role=role,
+                bound=fleet.repair_attempts,
+                now=now,
+            )
+            finding = _route_finding(
+                conn,
+                board=board,
+                card=step["card"],
+                reporter=role,
+                step_key=step_key,
+                source="gate",
+                detail=f"{gate['repo']}#{gate['pr']}@{gate['head']}: gate failed",
+                route=fleet.route_findings,
+                now=now,
+            )
+        elif state == "gate_pass":
+            repair = _repair_passed(
+                conn,
+                board=board,
+                repo=gate["repo"],
+                pr=gate["pr"],
+                bound=fleet.repair_attempts,
+                now=now,
+            )
         gate = conn.execute("SELECT * FROM orch_gates WHERE id=?", (gate["id"],)).fetchone()
         return {
             "step": step_in(conn, board=board, role=role, step_key=step_key),
             "gate": _gate_public(gate),
+            "repair": repair,
+            "finding": finding,
         }
 
 
@@ -1258,8 +1685,10 @@ def unstarted_todo(ctx, st, board_row) -> list[dict]:
         cards = conn.execute(
             "SELECT t.id, t.title, t.priority, (SELECT e.created_at FROM task_events e "
             f"WHERE e.task_id=t.id AND {FIRING_EVENT} ORDER BY e.id DESC LIMIT 1) AS boundary "
-            "FROM tasks t WHERE t.board_id=? AND t.status='todo' ORDER BY t.priority, t.id",
-            (board_row["id"],),
+            "FROM tasks t WHERE t.board_id=? AND t.status='todo' AND NOT "
+            + snooze.snoozed_sql("t")
+            + " ORDER BY t.priority, t.id",
+            (board_row["id"], snooze.now_stamp()),
         ).fetchall()
     if not cards:
         return []
@@ -1426,9 +1855,48 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
             (board, MAX_LIST),
         ).fetchall()
         misses = _misses(conn, board)
+        factory_view = _factory_view(conn, version, board)
         escalations = _escalations(conn, version, board, role)
-    view = {"open": [], "in_doubt": [], "needs_person": [], "holds": [], "finished": []}
+        bound = (
+            schema.Fleet().repair_attempts
+            if version is None
+            else version.config().fleet_rules.repair_attempts
+        )
+        repairs = [
+            _repair_view(row, bound)
+            for row in conn.execute(
+                "SELECT * FROM orch_repairs WHERE board=? ORDER BY id DESC LIMIT ?",
+                (board, MAX_LIST),
+            )
+        ]
+        findings = [
+            _finding_public(row)
+            for row in conn.execute(
+                "SELECT * FROM orch_findings WHERE board=? AND state!='acked' "
+                "ORDER BY id DESC LIMIT ?",
+                (board, MAX_LIST),
+            )
+        ]
+        # Own query: ownerless parks can never be acknowledged and must not crowd a role's
+        # routed findings out of a board-wide window.
+        inbox_findings = [
+            _finding_public(row)
+            for row in conn.execute(
+                "SELECT * FROM orch_findings WHERE board=? AND owner_role=? AND state!='acked' "
+                "ORDER BY id DESC LIMIT ?",
+                (board, role, MAX_LIST),
+            )
+        ]
+    view = {
+        "open": [],
+        "in_doubt": [],
+        "needs_person": [],
+        "holds": [],
+        "finished": [],
+        "parked": [],
+    }
     next_note = None
+    next_step = None
     for row in steps:
         job_state = row["job_state"]
         data = dict(row)
@@ -1436,8 +1904,11 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         step = _derived(step_public(data), job_state)
         if step["voided"]:
             continue
+        if step["state"] in TERMINAL_STATES and (step["destination"] or {}).get("kind") == "parked":
+            view["parked"].append(step)
         if step["kind"] == "next":
             next_note = step["detail"]
+            next_step = step
             continue
         if step["state"] in OPEN_STATES:
             view["holds" if step["kind"] == "hold" else "open"].append(step)
@@ -1448,6 +1919,7 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
     for key in view:
         view[key] = view[key][-MAX_LIST:]
     view["finished"].reverse()
+    view["parked"].reverse()
     from commonplace.projects import orchestration, split
 
     inbox_note = {}
@@ -1477,13 +1949,18 @@ def _checkpoint(ctx, st, board_row, role, now, cards):
         "config": None
         if version is None
         else {"version": version.version, "sha256": version.sha256},
+        **factory_view,
         "restore_pending": bool(restore.flagged),
         **view,
         **({} if escalations is None else {"escalations": escalations}),
         "next": next_note,
+        "next_step": next_step,
         "jobs": [dict(row) for row in job_rows],
         "gates": [_gate_public(row) for row in gates],
         "misses": misses,
+        "repairs": repairs,
+        "findings": findings,
+        "inbox_findings": inbox_findings,
         "cards": cards,
         "unstarted": unstarted_todo(ctx, st, board_row)[:MAX_LIST],
     }

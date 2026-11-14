@@ -165,6 +165,10 @@ def cmd_workspace_add(args) -> int:
     return 0
 
 
+def _meetings(command, args) -> int:
+    return command(args, _db(args), _data_dir(args))
+
+
 def cmd_workspace_list(args) -> int:
     db = _db(args)
     for w in db.workspaces():
@@ -187,7 +191,7 @@ def cmd_token_add(args) -> int:
         raise ValueError("Imported history requires explicit browser reader consent")
     if "cards:decide" in (_csv(args.scopes) or []):
         raise ValueError("Answering Needs-me questions requires the owner's browser consent")
-    if {"bots:chat", "bots:confirm"} & set(_csv(args.scopes) or []):
+    if {"bots:chat", "bots:confirm", "bots:learned"} & set(_csv(args.scopes) or []):
         raise ValueError("Using bots from an app requires your own sign-in consent")
     defaults = client_defaults(args.client, getattr(args, "preset", None))
 
@@ -240,6 +244,17 @@ def cmd_token_revoke(args) -> int:
     db = _db(args)
     db.revoke(args.name, actor=_actor(db, args), workspace_ref=args.workspace)
     return 0
+
+
+def cmd_bridge(args) -> int:
+    from .chat_bridge import cli as bridge_cli
+
+    db = _db(args)
+    try:
+        run = bridge_cli.cmd_status if args.action == "status" else bridge_cli.cmd_disable
+        return run(args, db, _data_dir(args))
+    finally:
+        db.close()
 
 
 def cmd_audit(args) -> int:
@@ -1035,6 +1050,11 @@ def cmd_restore(args) -> int:
 
 
 def cmd_runner(args) -> int:
+    if args.action in ("install", "status", "uninstall", "sign-in", "_setup-service"):
+        from .runner import installer
+
+        return installer.run(args)
+
     if args.action == "chat":
         from .runner import chat_agent
 
@@ -1060,6 +1080,9 @@ def build_parser() -> argparse.ArgumentParser:
     _client_parsers(sub)
 
     runner = sub.add_parser("runner").add_subparsers(dest="action", required=True)
+    from .runner.install_cli import add_parsers as add_runner_install_parsers
+
+    add_runner_install_parsers(runner, cmd_runner)
     for action in ("check", "run", "chat"):
         s = runner.add_parser(action)
         s.add_argument("--config", required=True)
@@ -1074,6 +1097,12 @@ def build_parser() -> argparse.ArgumentParser:
     for flag in ("--input-tokens", "--output-tokens", "--cost-micros"):
         s.add_argument(flag, type=int)
     s.add_argument("--currency")
+    s.add_argument(
+        "--cost-unknown",
+        action="store_const",
+        const=True,
+        help="say the run's cost cannot be told (recorded as unknown, never as zero)",
+    )
     s.set_defaults(func=cmd_runner)
 
     s = sub.add_parser("init", help="create the control database and the first admin")
@@ -1190,6 +1219,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--by")
     s.set_defaults(func=cmd_token_revoke)
 
+    bridge = sub.add_parser("bridge", help="chat-platform installs: status and the kill switch")
+    bridge = bridge.add_subparsers(dest="action", required=True)
+    s = bridge.add_parser("status", help="list installs (no credentials are shown)")
+    s.add_argument("--workspace")
+    s.set_defaults(func=cmd_bridge, all=False)
+    s = bridge.add_parser("disable", help="switch installs off")
+    s.add_argument("--workspace")
+    s.add_argument("--all", action="store_true", help="every workspace on this hub")
+    s.set_defaults(func=cmd_bridge)
+
     s = sub.add_parser("audit")
     s.add_argument("--workspace")
     s.add_argument("--limit", type=int, default=50)
@@ -1252,6 +1291,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dest_dir")
     s.set_defaults(func=cmd_restore)
     orch_cli.add_parsers(sub)
+    from .meetings import cli as meetings_cli
+
+    meetings_cli.add_parsers(sub, _meetings)
+    from .runner import owner_cli
+
+    owner_cli.add_parsers(sub)
     from .evals.cli import add_parsers as add_eval_parsers
 
     add_eval_parsers(sub)
@@ -1322,7 +1367,15 @@ def main(argv=None) -> int:
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2
     except ValueError as exc:
-        if args.command not in {"login-link", "seed", "backup", "workspace", "doctor", "orch"}:
+        if args.command not in {
+            "login-link",
+            "seed",
+            "backup",
+            "workspace",
+            "doctor",
+            "orch",
+            "card-start",
+        }:
             raise
         print(f"commonplace: {exc}", file=sys.stderr)
         return 2

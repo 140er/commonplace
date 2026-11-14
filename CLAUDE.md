@@ -35,17 +35,47 @@ We welcome bug fixes, performance improvements, new language support, better ent
 
 We do not accept summarization of user content, cloud storage/sync features, telemetry or analytics, features requiring API keys for core memory, or shortcuts that bypass verbatim storage.
 
+## Testing and merging (batch merge rule)
+
+Tests must never be the bottleneck. Agents keep building while checks run; nobody idles waiting for a check.
+
+- **No full test suite, anywhere** (owner decision, 13 Nov): not as a merge gate, not before a release, not before a
+  deploy, not nightly. Do not run, request or wait for a full-suite run per PR, per batch or per release.
+- **Per PR (merge gate):** a PR into `develop` merges on a review/gate PASS plus the **affected tests** on the exact
+  head: the tests that import or name the changed modules, nearest first, plus lint, plus the repo-wide guard files
+  (`tests/test_eval_guards.py`, `tests/test_commonplace_public_surface.py`, `tests/test_docs_obligations.py`,
+  `tests/test_docs_fragments.py`). That is the whole per-PR test bill.
+- **Global changes** (dependency/lock files, `pyproject.toml`, `tests/conftest.py`, migrations) run the same: the
+  affected tests plus the guard files.
+- **Release:** a small smoke set on the `develop` tip, then snapshot and rollback image, health check and deploy, with
+  the backup and restore proof in the background. Breaks that show up in development are fixed when found (a fix PR on
+  gate PASS plus its narrow tests); bisect only when the culprit is unclear.
+- **Waiting is a bug.** A wave never waits for a check: start the next independent item while one runs. A timeout or
+  infrastructure error is not a verdict on the code (rerun once or report it), never a reason to stop other work.
+- **Your own runs:** only the few test files your change touches,
+  `uv run pytest <files> -q -p no:cacheprovider`. Never the whole suite on a shared machine.
+
+`develop` to `main` and deploys are separate, owner-approved steps; this rule does not cover them.
+
 ## Merging pull requests (batch lane)
 
 - A pull request into `develop` is merge-ready on its exact head when it has a gate PASS and a quick PR check subset PASS (affected or narrow tests plus smoke, about 2 minutes; never the full suite). Only a PASS result counts. SKIP, ERROR and TIMEOUT are not a pass.
 - The builder that owns the PR merges it: `gh pr merge <n> -R <owner>/<repo> --squash --match-head-commit <full sha>`.
-- No full-suite check per PR. The full suite runs per batch on `develop`, about every 5 merges or 60 minutes. If a batch is red, bisect it, open a revert or fix PR, and hold merges while `develop` is red.
+- No full-suite check per PR or per batch. If `develop` is found broken, fix forward with a PR (or revert the culprit); merges hold only while `develop` is known red.
 - The coordinator never merges. `develop` to `main` needs the owner's go.
 
 ## Host and test limits
 
 - At most 12 concurrent Claude agents/turns on the shared host across all orchestrators and their delegated children. Queue the rest; start no new child above the cap.
 - No raw pytest on the shared host: run tests only through the project's test runners so the slot cap holds; full batches prefer a dedicated runner.
+
+## Self-improvement and suggestions
+
+**Lessons.** After a task, a failure, or feedback from the owner, write the lesson down in one line: what happened, what to do differently, and the outcome that taught it (PR, commit, check result, or dated message). Keep it in your handoff or task notes, not in chat. When the same lesson shows up a second time, propose a small edit to the instruction file it belongs to (this file, a skill, or a prompt) as a PR or a staged diff next to the original. Never rewrite instructions silently and never edit a live instruction file directly. Keep each edit to a few lines, cite the outcomes that taught it, and do not merge your own instruction PR: it needs the owner's go.
+
+**Suggestion cards.** When you think the current way of working is bad, see a better one, or have a feature idea that would improve the user experience (in Commonplace or in the project you are working on), you may file one suggestion card: a Commonplace card, or a GitHub issue labeled `suggestion` where there is no board. State the problem, the proposal, the expected benefit and the cost. Never act on your own suggestion. Every card goes to the coordinator first as a decision request; the coordinator reviews it and brings it to the owner, and work starts only after the owner's yes. Keep cards rare and concrete: search open cards first (no duplicates) and do not poll for an answer.
+
+**Hard rules still win.** This loop cannot loosen them: no secrets in notes or edits, no merges without the owner, no bypassing gates, no full test suite, and lean usage (no extra long threads, no polling).
 
 ## Setup
 
@@ -56,11 +86,11 @@ uv sync --extra dev   # recommended; or: pip install -e ".[dev]"
 ## Commands
 
 ```bash
-# Run tests
-uv run pytest tests/ -v --ignore=tests/benchmarks
+# Run the tests your change touches (never the whole suite: see "No full test suite" above)
+uv run pytest <files> -v -p no:cacheprovider
 
-# Run tests with coverage
-uv run pytest tests/ -v --ignore=tests/benchmarks --cov=mempalace --cov-report=term-missing
+# Coverage of a touched area
+uv run pytest <files> -v --cov=mempalace --cov-report=term-missing
 
 # Lint
 uv run ruff check .

@@ -3,17 +3,26 @@
 - **Paths:** `commonplace/runner/`, `docs/runner.md`
 - **Owns:**
 
+  - `commonplace/runner/owner_cli.py`: the `commonplace card-start resolve` command, the data-directory owner's path to resolve an uncertain start through the same `jobs.resolve` and `runner.resolve` audit row as the `card_start_resolve` tool.
+
   - The run ledger: `run_ledger` in `runner.sqlite3` (`ledger.py`), the machine usage route `POST /api/runner/usage` (`ledger_api.py`) and the `runner report` client command (`report.py`).
 
-  - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes.
+  - `WORKER_TOOLS` includes `topology_propose` and `topology_discover_site`, so a worker can report its machine's own topology facts and the site routes it finds there. Each tool still needs the `topology` wing in the machine grant, and the worker policy is rebuilt with the tool whenever the grant's wings are patched.
+
+  - The runner guide links the owner Admin contact/grant projection and documents the Admin runner block that enrolls, attests and edits machines through the owner routes. The same block edits a machine's projects and maximum runtime mode with a partial `PATCH` (`{projects, max_runtime_mode}` plus `If-Match: <grant_version>`), so wings and topics stay untouched and the binding stays `owner_attested`; `tests/admin_runners_ui.mjs` covers render, save and the 409/400 paths and `tests/test_runner_owner.py` the server side.
+
+  - The runner agent writes the redacted launch output of every start to `<journal_dir>/<job_id>.launch.log` (0600), so a `launch_unknown` has a readable cause; the launch outcome never depends on the log.
 
 
   - Machine enrollment and grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
   - Machine enrollment, binding epoch migrations and immutable job epoch snapshots, grants, runner jobs in `runner.sqlite3`, the requester and machine routes, the local launch client and chat answers.
+  - The local launch client's memory guard: below the optional `min_free_memory_mb` (default 256, 0 disables) it fails a leased start `low_memory` before any launch; an unreadable probe never blocks.
 
   - `commonplace/runner/start_context.py`: the card context of a start. `assemble` is the one function that turns a card into launch text; its `SECTIONS` list is the priority order and the place to add a section. A card that points at a goal gets its own goal as an always-present line beside the title and the goals above it (nearest first) as the section after decisions.
 
 - **Promises:**
+
+  - `commonplace card-start resolve` resolves only an `uncertain` start, as `failed` (no thread) or `started` (a valid thread id), for a user who owns the workspace; it writes the `runner.resolve` audit row in the same transaction order as the tool, and any other input (not uncertain, unknown job or workspace, a non-owner, an invalid thread) is refused with exit 2 and changes nothing.
 
   - `GET /api/runners/wings` (owner only) returns the wings grant validation accepts; enroll and wing edits validate against the same fast index read, so neither waits on a drawer-by-drawer listing.
 
@@ -48,6 +57,8 @@
 
 - **How it fails:**
 
+  - `PATCH /api/runners/{id}` checks that the machine belongs to the caller's workspace before it reads any wing name, so a stranger gets the same 404 `machine not found` for a wing that exists, one that does not and a machine that does not exist; only the machine's own owner sees the wing validation (400).
+
   - A usage report for a run that has not started, or a second, different end status, answers 409; a job of another machine or any caller but an enabled machine answers 404; an invalid report answers 400 and changes nothing.
 
   - Absent optional runner stores remain absent for Admin; existing unreadable sources produce safe errors rather than fabricated usage.
@@ -75,6 +86,8 @@
   - The `tests/test_runner_` files, `tests/test_orch_runner.py`, `tests/test_orch_acceptance.py`.
 
   - `tests/test_card_start_defaults.py` covers the owner's card-only start, equal and differing explicit values, the options route, and the refusal of a member, an untrusted agent and a coordinator token with no job created; `tests/cardruns.mjs` the panel's Start control.
+  - `tests/test_runner_grant_refusal.py` covers the uniform 404 a stranger gets from the wing grant route whatever wing names the body carries, and the owner's own wing validation staying 400.
+
   - `tests/test_runner_wings.py` covers multi-wing starts, the ungranted-wing refusal, worker write bounds after enrollment and PATCH, and owner-only listing.
 
   - `tests/test_runner_start_context.py` covers the fields a start prompt must carry on plain and configured boards, the budget on a very large card, cut markers, whole-item cuts, the unchanged prompt of a small card, worker-only visibility and the runner's handling of the field.

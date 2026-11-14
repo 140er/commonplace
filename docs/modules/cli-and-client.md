@@ -11,6 +11,8 @@
 
 - **Promises:**
 
+  - The setup guide links the read-only instance console without implying workspace ownership grants management authority.
+
   - `eval preflight` is dispatched without the backup fence or data lock, so a stat-only report creates no lock file on a fresh data directory.
 
   - `commonplace eval` is registered by the parser and dispatched like other one-shot commands (backup fence, shared data lock); its module loads no scanner or store until an eval command runs.

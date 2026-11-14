@@ -70,11 +70,21 @@
 :root[data-ui="deck"] .rail[data-deck="bar"] .user-links a:hover, :root[data-ui="deck"] .rail[data-deck="bar"] .user-links button:hover { background: var(--accent-weak); }
 
 /* ---------- Phone: title bar and four tabs ---------- */
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell, :root[data-ui="deck"] .shell.two { display: grid; height: 100dvh; grid-template-rows: minmax(0, 1fr); }
+  :root[data-ui="deck"] .center { grid-row: 1; overflow: hidden; padding-bottom: calc(56px + max(14px, env(safe-area-inset-bottom))); }
+  :root[data-ui="deck"] #phone-tabs { position: fixed; inset: auto 0 0; z-index: 10; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs { display: grid; }
+  :root[data-ui="deck"] .m-top .iconbtn { min-width: 44px; min-height: 44px; }
+  :root[data-ui="deck"] .shell[data-view="needs"] #content { padding-inline: 16px; }
+  :root[data-ui="deck"] .shell .workbench-project :is(.project-top, .settings) { padding-inline: 16px; }
+}
 :root[data-ui="deck"] .m-top { border: 0; }
 :root[data-ui="deck"] .m-top .deck-brand { margin: 0 0 0 4px; font-size: 17px; }
 :root[data-ui="deck"] .m-tabs { border-top-color: var(--line); }
 :root[data-ui="deck"] .m-tabs[data-count="2"] { grid-template-columns: repeat(2, 1fr); }
 :root[data-ui="deck"] .m-tabs[data-count="3"] { grid-template-columns: repeat(3, 1fr); }
+:root[data-ui="deck"] .m-tabs[data-count="4"] { grid-template-columns: repeat(4, 1fr); }
 :root[data-ui="deck"] .m-tabs a { color: var(--text-3); font-weight: 500; }
 :root[data-ui="deck"] .m-tabs a[aria-current] { color: var(--text); }
 :root[data-ui="deck"] .m-tabs a[aria-current]::before { content: none; }
@@ -123,3 +133,163 @@
   /* A phone has no account menu, so Settings carries the workspace tools. */
   :root[data-ui="deck"] .deck-tools { display: block; }
 }
+
+:root[data-ui="deck"] .shell[data-view="board"] #content { padding: 0; gap: 0; }
+/* Waiting status describes project capacity; amber stays reserved for personal asks. */
+:root[data-ui="deck"] .workbench-board .why-strip { background: none; color: var(--text-2); padding: 0; }
+
+/* Shared card drawer and personal queue: the classic modules have their own light surfaces. */
+:root[data-ui="deck"] :is(.workbench-details, .needs-me, .needs-detail) { background: var(--surface); color: var(--text); }
+:root[data-ui="deck"] .workbench-details :is(dt, small, .body-text), :root[data-ui="deck"] .needs-me :is(.sub, .list-note, .empty) { color: var(--text-2); }
+:root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, select, textarea) { min-width: 0; max-width: 100%; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
+:root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, textarea)::placeholder { color: var(--text-2); opacity: 1; }
+:root[data-ui="deck"] .workbench-details .fields dd { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+:root[data-ui="deck"] .workbench-details .fields small { flex-basis: 100%; }
+:root[data-ui="deck"] .workbench-details .reply input { flex: 1; }
+/* The phone's classic context rule allows visible overflow. Deck keeps every field above the footer. */
+:root[data-ui="deck"] .shell .context .workbench-details .ctx-body { overflow: auto; }
+:root[data-ui="deck"] .workbench-details .ctx-body > * { flex-shrink: 0; }
+:root[data-ui="deck"] .workbench-details :is(.ctx-head, .ctx-foot) { flex-shrink: 0; }
+:root[data-ui="deck"] .workbench-details .ctx-foot { padding: 12px 16px; }
+:root[data-ui="deck"] .workbench-details .ctx-foot textarea { max-height: 120px; }
+:root[data-ui="deck"] .needs-me { height: auto; border-radius: 20px; overflow: hidden; }
+:root[data-ui="deck"] .needs-me .bar { border: 0; }
+/* Reuse the board's seg control, including its selected inversion and type. */
+:root[data-ui="deck"] .needs-me .seg { display: inline-flex; gap: 0; border: 1px solid var(--line-strong); border-radius: var(--r); overflow: hidden; background: var(--surface); }
+:root[data-ui="deck"] .needs-me .seg button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 0; background: none; color: var(--text-2); font-size: 13px; font-weight: 500; }
+:root[data-ui="deck"] .needs-me .seg button + button { border-left: 1px solid var(--line); }
+:root[data-ui="deck"] .needs-me .seg button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell #content:has(> [data-needs-mount]) { padding-inline: 16px; }
+  :root[data-ui="deck"] .needs-me .bar { padding: 12px 16px; }
+  :root[data-ui="deck"] .needs-me .seg { flex-wrap: nowrap; }
+  :root[data-ui="deck"] .needs-me .seg button { min-height: 44px; padding-inline: 8px; }
+  :root[data-ui="deck"] :is(.workbench-details, .needs-detail) :is(input, select, textarea) { min-height: 44px; }
+}
+
+/* Coworker config review keeps its evidence and decisions inside each version. */
+:root[data-ui="deck"] .workbench-project [data-config-versions] { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 12px; min-width: 0; }
+:root[data-ui="deck"] .workbench-project [data-config-version] { min-width: 0; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workbench-project [data-config-label] { display: block; color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.5; }
+:root[data-ui="deck"] .workbench-project [data-config-state] { color: var(--text-2); }
+:root[data-ui="deck"] .workbench-project [data-config-state="proposed"] { color: var(--wait); }
+:root[data-ui="deck"] .workbench-project [data-config-people] { display: block; color: var(--text-2); font-size: 13px; font-weight: 400; line-height: 1.5; }
+:root[data-ui="deck"] .workbench-project [data-config-diff] { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono, ui-monospace, monospace); font-size: 13px; line-height: 1.5; background: var(--well); padding: 12px; border-radius: 12px; box-sizing: border-box; min-width: 0; max-width: 100%; }
+:root[data-ui="deck"] .workbench-project [data-config-accept] { background: var(--text); color: var(--bg); border-radius: 999px; }
+:root[data-ui="deck"] .workbench-project [data-config-version] > .callout { background: var(--well); border: 0; border-radius: 12px; padding: 12px; }
+:root[data-ui="deck"] .workbench-project [data-config-version] > .callout p { margin: 0; }
+:root[data-ui="deck"] .workbench-project [data-config-version] > .callout .acts { margin-top: 12px; }
+:root[data-ui="deck"] .workbench-project [data-config-cancel-reject] { background: var(--accent-weak); border-radius: 999px; }
+:root[data-ui="deck"] .workbench-project [data-project-review-status] { margin: 8px 0 0; font-size: 13px; color: var(--text-2); }
+:root[data-ui="deck"] .workbench-project [data-project-review-status]:empty { display: none; }
+:root[data-ui="deck"] .workbench-project [data-project-review-status] + h3 { margin-top: 24px; }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .workbench-project .settings { padding-inline: 16px; }
+  :root[data-ui="deck"] .workbench-board .why-strip { margin-inline: 16px; }
+  :root[data-ui="deck"] .workbench-board :is(.board-tools, .col-jump, .board, .empty-strip) { padding-inline: 16px; }
+  :root[data-ui="deck"] .workbench-board .backlog { margin-inline: 16px; }
+  :root[data-ui="deck"] .shell[data-view="board"] .head { display: flex; flex-wrap: nowrap; align-items: center; gap: 12px; }
+  :root[data-ui="deck"] .shell[data-view="board"] #title { position: static; width: auto; height: auto; clip: auto; white-space: nowrap; }
+  :root[data-ui="deck"] .shell[data-view="board"] .head .right { flex: none; }
+  :root[data-ui="deck"] .shell[data-view="board"] .head .right > :not([data-action="new-card"]) { display: none; }
+}
+
+/* Memory import follows the same controls and spacing as the other forms. */
+:root[data-ui="deck"] .center:has(.memory-import) > #content { overflow-y: auto; }
+:root[data-ui="deck"] .memory-import { flex: 0 0 auto; width: 100%; }
+:root[data-ui="deck"] .memory-import form { display: block; }
+:root[data-ui="deck"] .memory-import .memory-import-intro { margin: 0 0 24px; }
+:root[data-ui="deck"] .memory-import-group { display: grid; gap: 8px; }
+:root[data-ui="deck"] .memory-import-group + .memory-import-group { margin-top: 24px; }
+:root[data-ui="deck"] .memory-import-group p { margin: 0; }
+:root[data-ui="deck"] .memory-import select { height: 44px; border: 0; border-radius: var(--r); background: var(--well); color: var(--text); box-shadow: none; }
+:root[data-ui="deck"] .memory-import select:focus-visible { outline: 2px solid var(--line-strong); outline-offset: 2px; }
+:root[data-ui="deck"] .memory-import-file { display: flex; align-items: center; gap: 12px; min-width: 0; }
+:root[data-ui="deck"] .memory-import-picker { position: relative; flex: none; border-radius: 22px; }
+:root[data-ui="deck"] .memory-import-picker .btn { height: 44px; border-radius: 22px; }
+:root[data-ui="deck"] .memory-import-picker input { position: absolute; inset: 0; width: 100%; height: 44px; padding: 0; opacity: 0; cursor: pointer; }
+:root[data-ui="deck"] .memory-import-picker:focus-within { outline: 2px solid var(--line-strong); outline-offset: 2px; }
+:root[data-ui="deck"] [data-import-filename] { min-width: 0; color: var(--text-3); overflow-wrap: anywhere; }
+:root[data-ui="deck"] .memory-import-actions { margin-top: 32px; }
+:root[data-ui="deck"] .memory-import-actions .ghost { padding-inline: 0; }
+:root[data-ui="deck"] .memory-import-progress { position: relative; }
+:root[data-ui="deck"] .memory-import-progress::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: 2px; background: var(--text); pointer-events: none; }
+:root[data-ui="deck"] .memory-import progress { display: block; height: 4px; border: 0; border-radius: 2px; outline: none; overflow: hidden; appearance: none; background: var(--well); color: var(--text); }
+:root[data-ui="deck"] .memory-import progress::-webkit-progress-bar { background: var(--well); border-radius: 2px; }
+:root[data-ui="deck"] .memory-import progress::-webkit-progress-value { background: var(--text); border-radius: 2px; }
+:root[data-ui="deck"] .memory-import progress::-moz-progress-bar { background: var(--text); border-radius: 2px; }
+:root[data-ui="deck"] .memory-import progress:indeterminate::-moz-progress-bar { background: transparent; }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .center:has(.memory-import) { padding-bottom: calc(57px + max(14px, env(safe-area-inset-bottom))); }
+  :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
+}
+
+/* Workspace creation stays on the shared Deck surfaces and controls. */
+:root[data-ui="deck"] .workspace-switch.sheet { background: var(--surface); border: 0; border-radius: 20px; }
+:root[data-ui="deck"] .workspace-switch input { background: var(--well); color: var(--text); border: 0; border-radius: 12px; box-shadow: none; caret-color: var(--text); }
+:root[data-ui="deck"] .workspace-switch .btn { border-radius: 999px; }
+:root[data-ui="deck"] .workspace-switch input:focus-visible, :root[data-ui="deck"] .workspace-switch .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+
+/* A workspace dialog owns its full content width; creation stays secondary in the list. */
+:root[data-ui="deck"] .workspace-switch.sheet { display: block; box-sizing: border-box; width: min(400px, calc(100% - 32px)); padding: 24px; }
+:root[data-ui="deck"] .workspace-switch .menu-body { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+:root[data-ui="deck"] .workspace-switch h2 { margin: 0; text-align: left; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workspace-switch .workspace-list { width: 100%; gap: 0; }
+:root[data-ui="deck"] .workspace-switch .workspace-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 16px; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 10px 0; text-align: left; background: none; color: var(--text); line-height: 1.4; }
+:root[data-ui="deck"] .workspace-switch .workspace-row[aria-current] { opacity: 1; cursor: default; }
+:root[data-ui="deck"] .workspace-switch .workspace-label { min-width: 0; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workspace-switch .workspace-role { color: var(--text-3); font-size: 13px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-create] { align-self: flex-start; background: var(--well); color: var(--text-2); }
+:root[data-ui="deck"] .workspace-switch .workspace-close-row { justify-content: flex-end; }
+:root[data-ui="deck"] .workspace-switch .btn { min-height: 44px; padding: 10px 16px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-name-error] { color: var(--text-2); font-size: 14px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-name-error]:empty { display: none; }
+:root[data-ui="deck"] .workspace-switch input[aria-invalid="true"] { outline: 1px solid var(--text-3); outline-offset: 0; }
+
+/* Assignment removal keeps the drawer controls and its confirmation in the same palette. */
+:root[data-ui="deck"] .assignment-removal { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; color: var(--text); }
+:root[data-ui="deck"] .assignment-removal p { color: var(--text-2); overflow-wrap: anywhere; }
+:root[data-ui="deck"] .assignment-removal.form-tile { width: 100%; padding: 24px 16px; background: var(--surface); box-shadow: none; }
+:root[data-ui="deck"] .assignment-removal h2 { font-size: 24px; line-height: 1.2; }
+:root[data-ui="deck"] .assignment-removal label { width: 100%; }
+:root[data-ui="deck"] .assignment-removal textarea { min-width: 0; width: 100%; padding: 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
+:root[data-ui="deck"] .assignment-removal .confirm-removal { background: var(--text); color: var(--bg); }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .assignment-removal .btn { min-height: 44px; }
+}
+:root[data-ui="deck"] .workbench-details .title-row h2 { flex-basis: 100%; font-size: 24px; line-height: 1.2; }
+
+:root[data-ui="deck"] .assignment-refusal { padding: 24px 16px; }
+:root[data-ui="deck"] .assignment-removal textarea { outline: none; box-shadow: none; }
+:root[data-ui="deck"] .assignment-removal textarea:focus-visible { outline: 2px solid var(--line-strong); outline-offset: 2px; }
+:root[data-ui="deck"] .assignment-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+:root[data-ui="deck"] .assignment-help { display: block; color: var(--text-2); }
+
+/* Settings shortcuts stay before the longer lists, on every screen size. */
+:root[data-ui="deck"] #deck-settings-nav { position: sticky; top: 0; z-index: 3; display: flex; flex: none; flex-wrap: nowrap; gap: 8px; max-width: 100%; overflow-x: auto; padding-block: 4px; background: var(--bg); scrollbar-width: thin; }
+:root[data-ui="deck"] #deck-settings-nav button { flex: none; white-space: nowrap; min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--well); color: var(--text); font: inherit; cursor: pointer; }
+:root[data-ui="deck"] #deck-settings-nav button[aria-current="location"] { background: var(--text); color: var(--bg); }
+:root[data-ui="deck"] .settings > *, :root[data-ui="deck"] .settings .setting-row > * { min-width: 0; }
+:root[data-ui="deck"] .settings-section { scroll-margin-top: 12px; overflow-wrap: anywhere; }
+:root[data-ui="deck"] #tool-policy [data-tool-policy-filter] { width: 100%; min-height: 44px; margin-top: 12px; }
+:root[data-ui="deck"] .deck-permission-group { margin-top: 24px; }
+:root[data-ui="deck"] .deck-permission-group h3 { margin: 0 0 8px; color: var(--text); font-size: 16px; font-weight: 600; }
+:root[data-ui="deck"] .deck-permission-group .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 16px; padding-block: 14px; }
+:root[data-ui="deck"] .deck-permission-label { display: contents; }
+:root[data-ui="deck"] .deck-permission-label small { display: block; color: var(--text-3); }
+:root[data-ui="deck"] .deck-permission-label summary { padding: 0; min-height: 0; line-height: 18px; color: var(--text-2); cursor: pointer; font-size: 12px; }
+:root[data-ui="deck"] .deck-permission-label code { display: block; color: var(--text-2); white-space: normal; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .settings .setting-row select { flex: 0 0 auto; max-width: 130px; min-height: 44px; }
+:root[data-ui="deck"] .settings :is(.agent-form, .webhook-form) { min-width: 0; }
+:root[data-ui="deck"] .settings :is(input, select, textarea) { max-width: 100%; }
+
+:root[data-ui="deck"] .deck-permission-meta { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: flex-start; flex-wrap: nowrap; gap: 0 8px; color: var(--text-3); font-size: 12px; line-height: 18px; }
+:root[data-ui="deck"] .deck-permission-meta summary { color: var(--text-3); }
+:root[data-ui="deck"] #tool-policy [data-tool-policy-status] { margin-top: 12px; color: var(--text-3); }
+:root[data-ui="deck"] .deck-permission-meta small { font-size: 12px; line-height: 18px; }
+
+:root[data-ui="deck"] .deck-permission-label > span { grid-column: 1; grid-row: 1; }
+:root[data-ui="deck"] .deck-permission-group .setting-row > select { grid-column: 2; grid-row: 1; }
+:root[data-ui="deck"] .deck-permission-meta small { flex: none; white-space: nowrap; }
+:root[data-ui="deck"] .deck-permission-meta details { min-width: 0; }
+:root[data-ui="deck"] .deck-tools { display: block; }

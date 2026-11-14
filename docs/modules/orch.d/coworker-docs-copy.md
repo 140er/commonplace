@@ -1,0 +1,1 @@
+- **Promises:** The setup guide calls the role Coworker and preserves schema IDs, role kinds, paths and the existing durable-role URL anchor.

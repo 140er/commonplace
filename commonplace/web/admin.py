@@ -236,7 +236,7 @@ def cursor_key(raw, workspace_id, section):
 @contextmanager
 def read_store(gateway, workspace_id, name, context):
     """Resolve the current generation and open an existing encrypted store only."""
-    from mempalace.sqlite_crypto import connect, row_factory
+    from mempalace.sqlite_crypto import connect, encryption_settings, row_factory
 
     context.remaining()
     path = Path(gateway.supervisor.workspace_dir(workspace_id)) / name
@@ -244,6 +244,14 @@ def read_store(gateway, workspace_id, name, context):
         yield None
         context.remaining()
         return
+    # A surviving WAL can supply page one even after the main file is damaged.
+    # Validate the existing source before SQLite can create or consult sidecars.
+    with path.open("rb") as source:
+        header = source.read(100)
+    if len(header) < 100 or (
+        encryption_settings(path) is None and header[:16] != b"SQLite format 3\x00"
+    ):
+        raise sqlite3.DatabaseError("Invalid metadata store header")
     conn = connect(
         path.resolve().as_uri() + "?mode=ro",
         uri=True,
@@ -590,6 +598,11 @@ def list_page(items, workspace_id, section, kind, after, key):
 
 
 def runtime(gateway, workspace_id, context, after):
+    labels = {
+        "orchestration": "Coworker management",
+        "orchestrators": "Coworkers",
+        "machines": "Machines",
+    }
     result = {}
     for source in ("orchestration", "orchestrators", "machines"):
         try:
@@ -625,7 +638,7 @@ def runtime(gateway, workspace_id, context, after):
             result[source] = {"state": "ready", **value}
         except Exception as exc:
             log_failure(LOG, "Admin runtime source unavailable", exc)
-            result[source] = {"state": "error", "error": f"{source.title()} unavailable; try again"}
+            result[source] = {"state": "error", "error": f"{labels[source]} unavailable; try again"}
     return result
 
 
@@ -842,11 +855,9 @@ def instance_authorized(gateway, principal, context):
     """Deny cheaply before the exact server user flag read, without app locks."""
     if principal is None or not principal.person or principal.role != "owner":
         return False
-    with read_control(gateway.db, context) as conn:
-        row = select(
-            conn, context, "SELECT is_admin FROM users WHERE id=?", (principal.user_id,)
-        ).fetchone()
-    return row is not None and row["is_admin"] == 1
+    from commonplace.instance_admin import stored_flag
+
+    return stored_flag(gateway, principal, context)
 
 
 def index_stats(gateway, context, principal, after=None):

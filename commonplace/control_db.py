@@ -34,6 +34,7 @@ from typing import Callable, Iterable, Optional
 
 from . import bots_grant, decide_grant, tokens
 from .admission import GATE
+from .db_busy import BUSY_TIMEOUT_S, begin_immediate
 from .decide_grant import DECIDE_SCOPE
 from .policy import Policy
 
@@ -243,7 +244,7 @@ _DECIDE_DEMOTE_TRIGGER = f"""
 
 
 class ControlDB:
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, compute_config=None):
         self.path = path
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
@@ -251,7 +252,9 @@ class ControlDB:
         self._close_lock = threading.Lock()
         self._closed = False
         self._pre_close: list[Callable[[], None]] = []
-        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._conn = sqlite3.connect(
+            path, timeout=BUSY_TIMEOUT_S, check_same_thread=False, isolation_level=None
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
@@ -306,6 +309,12 @@ class ControlDB:
             os.chmod(path, 0o600)
         except OSError:
             pass
+        # Explicit service startup configuration only. Ordinary constructors,
+        # requests and imports neither provision keys nor enable execution.
+        if compute_config is not None:
+            from .compute import _configure_control
+
+            _configure_control(self, compute_config)
 
     def add_pre_close_callback(self, callback: Callable[[], None]) -> None:
         """Register an owned resource to stop before SQLite closes."""
@@ -328,20 +337,32 @@ class ControlDB:
             with self._lock:
                 self._conn.close()
                 self._closed = True
+            coordinator = getattr(self, "_compute_coordinator", None)
+            if coordinator is not None and getattr(self, "_compute_shutdown_complete", True):
+                coordinator.close()
             self._pre_close.clear()
             if error is not None:
                 raise error
 
     def _tx(self):
         conn = self._conn
+        lock = self._lock
 
         class _Tx:
             def __enter__(self_inner):
-                conn.execute("BEGIN IMMEDIATE")
+                lock.__enter__()
+                try:
+                    begin_immediate(conn)
+                except BaseException:
+                    lock.__exit__(None, None, None)
+                    raise
                 return conn
 
             def __exit__(self_inner, exc_type, exc, tb):
-                conn.execute("ROLLBACK" if exc_type else "COMMIT")
+                try:
+                    conn.execute("ROLLBACK" if exc_type else "COMMIT")
+                finally:
+                    lock.__exit__(exc_type, exc, tb)
                 return False
 
         return _Tx()
@@ -789,11 +810,12 @@ class ControlDB:
                 auth=row["auth"],
             )
 
-    def set_connection_bots(self, ref, *, chat, confirm, actor, workspace_ref):
-        """Set ``bots:chat`` and ``bots:confirm`` on the signed-in person's own top-level app.
+    def set_connection_bots(self, ref, *, chat, confirm, actor, workspace_ref, learned=None):
+        """Set ``bots:chat``, ``bots:confirm`` and ``bots:learned`` on the person's own top-level app.
 
-        ``actor`` is the signed-in person's principal (any role). Confirming needs chat (asking for
-        it alone is refused); withdrawing chat withdraws both. Granting is for personal access tokens; OAuth clients
+        ``actor`` is the signed-in person's principal (any role). Confirming and reading learned
+        items need chat (asking for either alone is refused); withdrawing chat withdraws all.
+        ``learned=None`` leaves the learned scope as it is. Granting is for personal access tokens; OAuth clients
         gain the scopes only through consent. Withdrawing works for both and takes effect on
         the next request. Refusals carry a message safe to show the person.
         """
@@ -806,13 +828,20 @@ class ControlDB:
             if decide_grant.is_runner(self, row["id"]):
                 raise RunnerLinkedError()
             chat, confirm = bool(chat), bool(confirm)
-            if confirm and not chat:
-                raise ControlError(bots_grant.NEEDS_CHAT_TEXT)
             policy = json.loads(row["policy"])
             before = set(policy.get("scopes", ()))
+            if learned is None:
+                learned = bots_grant.LEARNED_SCOPE in before and chat
+            learned = bool(learned)
+            if (confirm or learned) and not chat:
+                raise ControlError(bots_grant.NEEDS_CHAT_TEXT)
             wanted = {
                 s
-                for s, on in ((bots_grant.CHAT_SCOPE, chat), (bots_grant.CONFIRM_SCOPE, confirm))
+                for s, on in (
+                    (bots_grant.CHAT_SCOPE, chat),
+                    (bots_grant.CONFIRM_SCOPE, confirm),
+                    (bots_grant.LEARNED_SCOPE, learned),
+                )
                 if on
             }
             added = wanted - before
@@ -1003,6 +1032,7 @@ class ControlDB:
         reason: str = "",
         wing: Optional[str] = None,
         target_ids: Iterable[str] = (),
+        recorded_at=None,
     ) -> int:
         """Append one entry and return its sequence number. Ids and decisions only."""
         ids = [str(t)[:200] for t in target_ids if t][:500]
@@ -1011,7 +1041,7 @@ class ControlDB:
                 "INSERT INTO audit_log(at, workspace_id, user_id, connection_id, auth, action, "
                 "tool, decision, reason, wing, target_ids) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    _iso(_now()),
+                    _iso(recorded_at if recorded_at is not None else _now()),
                     workspace_id,
                     user_id,
                     connection_id,
@@ -1027,8 +1057,8 @@ class ControlDB:
             return cursor.lastrowid
 
     def clear_decide(self, connection_id: str, *, reason: str, user_id=None) -> bool:
-        """Remove stored app-scope grants (cards:decide, bots:chat, bots:confirm); True when one
-        was removed (audited). Called when a connection turns into agent machinery or expires."""
+        """Remove stored app scopes and phone capabilities; True when one was removed
+        (audited). Called when a connection turns into agent machinery or expires."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, workspace_id, user_id, auth, policy FROM connections WHERE id=?",
@@ -1036,14 +1066,17 @@ class ControlDB:
             ).fetchone()
             if row is None:
                 return False
+            from commonplace import person_actions
+
+            revoked = person_actions.revoke(self, row, user_id=user_id)
             try:
                 policy = json.loads(row["policy"])
                 scopes = list(policy.get("scopes", ()))
             except (TypeError, ValueError, AttributeError):
-                return False
+                return revoked
             gone = {DECIDE_SCOPE, *bots_grant.SCOPES} & set(scopes)
             if not gone:
-                return False
+                return revoked
             policy["scopes"] = sorted(set(scopes) - gone)
             self._conn.execute(
                 "UPDATE connections SET policy=? WHERE id=?",
@@ -1064,6 +1097,27 @@ class ControlDB:
                     row, user_id or row["user_id"], bots_grant.AUDIT_REVOKE, scope, reason
                 )
             return True
+
+    def audit_bounded(self, context, **fields):
+        """Append through the coordinated writer with one remaining request budget."""
+        if not self._lock.acquire(timeout=context.remaining()):
+            raise TimeoutError()
+        try:
+            conn = self._conn
+            previous = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            try:
+                wait = int(context.remaining() * 1000)
+                conn.execute(f"PRAGMA busy_timeout={wait}")
+                conn.set_progress_handler(
+                    lambda: int(context.clock.monotonic() >= context.deadline), 100
+                )
+                self.audit(recorded_at=context.now, **fields)
+                context.remaining()
+            finally:
+                conn.set_progress_handler(None, 0)
+                conn.execute(f"PRAGMA busy_timeout={previous}")
+        finally:
+            self._lock.release()
 
     def audit_entries(self, workspace_ref: Optional[str] = None, limit: int = 100) -> list:
         sql = "SELECT * FROM audit_log"

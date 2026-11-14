@@ -233,15 +233,15 @@ test("stopped and failed replies carry one plain note; redaction markers become 
 test("an event with an orchestrator block carries an Orchestrator label and escaped text", () => {
   const ctx = { open: new Set(), busy: new Set() };
   const reply = ui.messageHTML({ id: 4, role: "event", text: `Done <img src=x onerror=alert(1)> [redacted:key]`, blocks: [{ type: "orchestrator" }], state: "ok" }, ctx, e);
-  assert.match(reply, /<p class="bm-from">Orchestrator<\/p>/);
+  assert.match(reply, /<p class="bm-from">Coworker<\/p>/);
   assert.doesNotMatch(reply, /<img/);
   assert.match(reply, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(reply, /<mark class="redacted">\[redacted:key\]<\/mark>/);
   assert.doesNotMatch(reply, /bb /, "the marker block draws nothing of its own");
   const plain = ui.messageHTML({ id: 5, role: "event", text: "“Fix” is done.", blocks: [{ type: "work", card: 1, title: "Fix", status: "done" }], state: "ok" }, ctx, e);
-  assert.doesNotMatch(plain, /Orchestrator/);
+  assert.doesNotMatch(plain, /Coworker/);
   const bot = ui.messageHTML({ id: 6, role: "bot", text: "hi", blocks: [{ type: "orchestrator" }], state: "ok" }, ctx, e);
-  assert.doesNotMatch(bot, /Orchestrator/, "only event messages are labelled");
+  assert.doesNotMatch(bot, /Coworker/, "only event messages are labelled");
 });
 
 test("server keys that match inherited object members get the default text, never a function or a throw", () => {
@@ -607,6 +607,17 @@ test("new bot sheet posts name, job and instructions, then opens the bot", async
   assert.equal(h.d.regions.sheet.innerHTML, "");
 });
 
+test("the Today creation entry opens the same sheet and ignores a stopped screen", async () => {
+  const h = harness({ bots: [] });
+  await h.controller.show(null);
+  await h.controller.newBot();
+  assert.match(h.d.regions.sheet.innerHTML, /New bot[^]*How to work/);
+  h.controller.stop();
+  const before = h.d.regions.sheet.innerHTML;
+  await h.controller.newBot();
+  assert.equal(h.d.regions.sheet.innerHTML, before);
+});
+
 test("memory sheet lists, adds and removes notes; rename and archive live in the same sheet", async () => {
   const h = harness();
   let notes = [{ id: 1, text: "Likes short answers", at: "x" }];
@@ -713,4 +724,165 @@ test("the stylesheet covers the three layouts, safe areas, tap targets, keyboard
   assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /min-height: 44px/);
   assert.doesNotMatch(css.replace(/rgba?\([^)]*\)/g, ""), /#[0-9a-fA-F]{3,8}\b/, "colours come from the tokens");
+});
+
+// ---------- what the bots learned: blocks, review sheet, taps ----------
+
+const ctxOf = (extra = {}) => ({ open: new Set(), busy: new Set(), editing: new Set(), ...extra });
+const proposal = (state = "open", extra = {}) => ({ type: "learn_proposal", id: "i1", state, item: { id: "i1", text: "Keep answers short.", scope: "person", kind: "preference", at: "2026-11-10", edited: false, ...extra } });
+const item = (id, group, extra = {}) => ({ id, group, kind: "preference", scope: group === "shared" ? "shared" : "person", text: `Words of ${id}`, text_by: "person", note: null, pinned: false, source: { bot_id: "b1", bot_name: "Atlas", message_id: 4, at: "2026-11-09T08:00:00Z" }, ...extra });
+
+test("a learn_proposal block shows Accept, Reject and Edit while open, Edit and Forget once kept, and nothing of a gone one", () => {
+  const open = ui.blocksHTML([proposal()], ctxOf(), e);
+  assert.match(open, /Keep answers short\./);
+  for (const what of ["accept", "reject", "edit"]) assert.match(open, new RegExp(`data-bots-action="learned" data-do="${what}" data-id="i1"`));
+  assert.doesNotMatch(open, /data-do="forget"/);
+  const kept = ui.blocksHTML([proposal("accepted", { edited: true })], ctxOf(), e);
+  assert.match(kept, /Kept · edited/);
+  assert.match(kept, /data-do="forget"/);
+  assert.doesNotMatch(kept, /data-do="accept"/);
+  const editing = ui.blocksHTML([proposal()], ctxOf({ editing: new Set(["i1"]) }), e);
+  assert.match(editing, /data-bots-form="learned-edit" data-id="i1"[^]*name="text"[^]*value="Keep answers short\."/);
+  assert.match(editing, /data-do="cancel"/);
+  const gone = ui.blocksHTML([{ type: "learn_proposal", gone: true }], ctxOf(), e);
+  assert.match(gone, /That item is gone\./);
+  assert.doesNotMatch(gone, /data-bots-action="learned"/);
+  const busy = ui.blocksHTML([proposal()], ctxOf({ busy: new Set(["l:i1"]) }), e);
+  assert.equal((busy.match(/ disabled/g) || []).length, 3);
+});
+
+test("a learned block says used or learned, lists the items with a Forget each, and gone shows nothing", () => {
+  const items = [{ id: "a", text: "I like tea.", scope: "person", kind: "fact", at: "2026-11-01" }, { id: "b", text: "Prices in euros.", scope: "person", kind: "instruction", at: "2026-11-02" }];
+  const used = ui.blocksHTML([{ type: "learned", how: "used", items }], ctxOf(), e);
+  assert.match(used, /Used: 2 items/);
+  assert.equal((used.match(/data-do="forget"/g) || []).length, 2);
+  const fresh = ui.blocksHTML([{ type: "learned", how: "learned", items: items.slice(0, 1) }], ctxOf(), e);
+  assert.match(fresh, /Learned: 1 item<\/p>/);
+  assert.match(fresh, /data-learned="a"/);
+  assert.match(ui.blocksHTML([{ type: "learned", gone: true }], ctxOf(), e), /That item is gone\./);
+  assert.match(ui.blocksHTML([{ type: "learned", items: [] }], ctxOf(), e), /That item is gone\./);
+  wording(ui.blocksHTML([proposal(), { type: "learned", how: "learned", items }], ctxOf(), e));
+});
+
+test("hostile learned text is escaped in blocks and in the review sheet", () => {
+  const html = ui.blocksHTML([proposal("open", { text: HOSTILE }), { type: "learned", how: "used", items: [{ id: HOSTILE, text: HOSTILE }] }], ctxOf(), e)
+    + ui.sheetHTML({ kind: "learned", items: [item(HOSTILE, "person", { text: HOSTILE, note: HOSTILE, source: { bot_id: HOSTILE, bot_name: HOSTILE, at: HOSTILE } })], loading: false, learning: { paused: false } }, { name: HOSTILE }, e);
+  assert.doesNotMatch(html, /<img/);
+  assert.ok(html.includes("&lt;img src=x onerror=alert(1)&gt;"));
+});
+
+test("the review sheet groups every item with its source, scope and the right taps per group", () => {
+  const items = [item("p1", "person", { pinned: true, text_by: "person_edit", note: "Bot said so" }), item("s1", "shared"), item("q1", "proposed"), item("e1", "earlier"), item("o1", "old"), item("n1", "person", { kind: "note" })];
+  const html = ui.sheetHTML({ kind: "learned", items, loading: false, learning: { paused: false }, editing: "p1", busy: false }, { name: "Atlas" }, e);
+  for (const [group, title] of [["proposed", "Waiting for your answer"], ["person", "What I know about you"], ["shared", "Shared with a project"], ["earlier", "Earlier versions"], ["old", "Not used lately"]]) assert.match(html, new RegExp(`data-group="${group}"[^]*<h3>${title}</h3>`));
+  assert.match(html, /preference · person · Atlas · 2026-11-09 · edited · pinned/);
+  assert.match(html, /Bot’s note: Bot said so/);
+  assert.match(html, /data-bots-form="learned-edit" data-id="p1"/);
+  const row = (id) => html.slice(html.indexOf(`data-learned="${id}"`)).split("</li>")[0];
+  assert.deepEqual([...row("q1").matchAll(/data-do="(\w+)"/g)].map((m) => m[1]), ["accept", "reject", "edit"]);
+  assert.deepEqual([...row("s1").matchAll(/data-do="(\w+)"/g)].map((m) => m[1]), ["forget"]);
+  assert.deepEqual([...row("n1").matchAll(/data-do="(\w+)"/g)].map((m) => m[1]), ["forget"]);
+  assert.deepEqual([...row("o1").matchAll(/data-do="(\w+)"/g)].map((m) => m[1]), ["edit", "pin", "forget"]);
+  assert.match(row("p1"), /data-do="unpin"/);
+  assert.match(row("q1"), /href="#\/bots\/b1"/);
+  assert.match(html, /Pause learning for 7 days/);
+  assert.match(ui.sheetHTML({ kind: "learned", items: [], loading: false, learning: { paused: true } }, { name: "Atlas" }, e), /Nothing learned yet\.[^]*Resume learning/);
+  assert.match(ui.sheetHTML({ kind: "learned", items: [], loading: true }, { name: "Atlas" }, e), /Loading…/);
+  wording(html);
+});
+
+test("accept, reject, forget and edit work from a thread block and the thread is read again", async () => {
+  const h = harness({ messages: [msg(1, "event", { blocks: [proposal()] })] });
+  await h.controller.show("b1");
+  assert.match(h.d.regions.messages.innerHTML, /data-do="accept" data-id="i1"/);
+  const reads = () => h.calls.filter((c) => c.path.startsWith("/api/bots/b1/messages")).length;
+  for (const [what, method, path, body] of [["accept", "POST", "/api/learned/i1/accept", {}], ["reject", "POST", "/api/learned/i1/reject", {}], ["forget", "DELETE", "/api/learned/i1", undefined], ["pin", "PATCH", "/api/learned/i1", { pinned: true }]]) {
+    h.state.extra[`${method} ${path}`] = async () => ({ ok: true });
+    const before = reads();
+    h.controller.click(el({ botsAction: "learned", do: what, id: "i1" }));
+    await settle();
+    const call = h.calls.filter((c) => c.path === path).at(-1);
+    assert.deepEqual([call.method, call.body], [method, body], what);
+    assert.ok(reads() > before, `${what} reloads the thread`);
+  }
+  // Edit: the block turns into a form; Save sends the new words; Cancel puts it back.
+  h.controller.click(el({ botsAction: "learned", do: "edit", id: "i1" }));
+  assert.match(h.d.regions.messages.innerHTML, /data-bots-form="learned-edit"/);
+  h.controller.click(el({ botsAction: "learned", do: "cancel", id: "i1" }));
+  assert.doesNotMatch(h.d.regions.messages.innerHTML, /data-bots-form="learned-edit"/);
+  h.controller.click(el({ botsAction: "learned", do: "edit", id: "i1" }));
+  h.state.extra["PATCH /api/learned/i1"] = async (body) => body;
+  await h.controller.submit(form({ botsForm: "learned-edit", id: "i1" }, { text: "  Keep it very short.  " }));
+  await settle();
+  assert.deepEqual(h.calls.filter((c) => c.path === "/api/learned/i1" && c.method === "PATCH").at(-1).body, { text: "Keep it very short." });
+  assert.doesNotMatch(h.d.regions.messages.innerHTML, /data-bots-form="learned-edit"/);
+  await h.controller.submit(form({ botsForm: "learned-edit", id: "i1" }, { text: "   " }));
+  assert.equal(h.calls.filter((c) => c.path === "/api/learned/i1" && c.method === "PATCH").length, 2, "empty words send nothing");
+});
+
+test("a failed tap shows the server's sentence and changes nothing else", async () => {
+  const h = harness({ messages: [msg(1, "event", { blocks: [proposal()] })] });
+  await h.controller.show("b1");
+  h.state.extra["POST /api/learned/i1/accept"] = async () => { throw Object.assign(new Error("That is not waiting for an answer."), { status: 409 }); };
+  h.controller.click(el({ botsAction: "learned", do: "accept", id: "i1" }));
+  await settle();
+  assert.match(h.d.regions.notice.innerHTML, /That is not waiting for an answer\./);
+  h.controller.click(el({ botsAction: "learned", do: "accept", id: "" }));
+  h.controller.click(el({ botsAction: "learned", do: "nonsense", id: "i1" }));
+  await settle();
+  assert.equal(h.calls.filter((c) => c.path.startsWith("/api/learned")).length, 1);
+});
+
+test("the review sheet opens from the bot sheet, loads the list and the setting, and acts on items", async () => {
+  const h = harness();
+  await h.controller.show("b1");
+  h.controller.click(el({ botsAction: "sheet" }));
+  await settle();
+  assert.match(h.d.regions.sheet.innerHTML, /data-bots-action="learned-sheet"/);
+  let items = [item("p1", "person"), item("q1", "proposed")];
+  h.state.extra["GET /api/learned?limit=100"] = async () => ({ items, counts: {} });
+  h.state.extra["GET /api/bots/b1/learning"] = async () => ({ learning: { mode: "auto", paused: false } });
+  h.controller.click(el({ botsAction: "learned-sheet" }));
+  await settle();
+  assert.match(h.d.regions.sheet.innerHTML, /What Atlas learned[^]*Words of q1[^]*Words of p1/);
+  // Accept the proposal: one POST, then the list is read again.
+  h.state.extra["POST /api/learned/q1/accept"] = async () => { items = [item("p1", "person"), item("q1", "person")]; return { item: items[1] }; };
+  h.controller.click(el({ botsAction: "learned", do: "accept", id: "q1" }));
+  await settle();
+  assert.doesNotMatch(h.d.regions.sheet.innerHTML, /data-group="proposed"/);
+  // Forget one.
+  h.state.extra["DELETE /api/learned/p1"] = async () => { items = [items[1]]; return { ok: true }; };
+  h.controller.click(el({ botsAction: "learned", do: "forget", id: "p1" }));
+  await settle();
+  assert.doesNotMatch(h.d.regions.sheet.innerHTML, /Words of p1/);
+  // Pause and resume are the per-bot setting.
+  h.state.extra["PATCH /api/bots/b1/learning"] = async () => ({ learning: {} });
+  h.controller.click(el({ botsAction: "learned-bot", do: "pause" }));
+  await settle();
+  assert.deepEqual(h.calls.filter((c) => c.path === "/api/bots/b1/learning" && c.method === "PATCH").at(-1).body, { pause: 7 });
+  h.controller.click(el({ botsAction: "learned-bot", do: "resume" }));
+  await settle();
+  assert.deepEqual(h.calls.filter((c) => c.path === "/api/bots/b1/learning" && c.method === "PATCH").at(-1).body, { pause: null });
+  // Forget everything needs a second tap.
+  h.state.extra["POST /api/bots/b1/learned/forget-all"] = async () => { items = []; return { forgotten: 1, notes: 0, floor: 3 }; };
+  h.controller.click(el({ botsAction: "learned-bot", do: "forget-all" }));
+  await settle();
+  assert.equal(h.calls.filter((c) => c.path === "/api/bots/b1/learned/forget-all").length, 0);
+  assert.match(h.d.regions.sheet.innerHTML, /Forget everything for good\?/);
+  h.controller.click(el({ botsAction: "learned-bot", do: "forget-all" }));
+  await settle();
+  assert.deepEqual(h.calls.filter((c) => c.path === "/api/bots/b1/learned/forget-all").map((c) => [c.method, c.body]), [["POST", {}]]);
+  assert.match(h.d.regions.sheet.innerHTML, /Nothing learned yet\./);
+  h.controller.click(el({ botsAction: "close" }));
+  assert.equal(h.d.regions.sheet.innerHTML, "");
+});
+
+test("the review sheet shows the server's sentence when the list cannot be read", async () => {
+  const h = harness();
+  await h.controller.show("b1");
+  h.state.extra["GET /api/learned?limit=100"] = async () => { throw new Error("Request failed (500)"); };
+  h.state.extra["GET /api/bots/b1/learning"] = async () => ({ learning: {} });
+  h.controller.click(el({ botsAction: "learned-sheet" }));
+  await settle();
+  assert.match(h.d.regions.sheet.innerHTML, /Request failed \(500\)/);
 });

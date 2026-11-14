@@ -3,6 +3,8 @@
 - **Paths:** `SYSTEM.md`, `MODULES.md`, `docs/modules/`, `docs/system/`
 - **Owns:**
 
+  - The dedicated metadata-only instance console authority and locked visibility/limit/membership boundaries.
+
   - OAuth consent documents the displayed single validated origin, canonical numeric hosts and actionable legacy validation errors.
 
   - The exact instance authority, packaged identity and opt-in receipt/mount residual contracts.
@@ -24,6 +26,8 @@
 
 
 - **Promises:**
+
+  - Navigation lookup failures preserve 200 with both instance flags false; protected endpoints remain fail-closed.
 
   - Thread-valued rooms and diary topics: one thread-ID definition and one room check cover link, mcp:, embedded, fullwidth and source-ID forms on every room- or topic-returning route and write, with the fail-closed residuals for hex-looking names, undecodable values and unchecked wing names.
 
@@ -112,7 +116,7 @@
 
   - A module file holds exactly one block named like the file, a `docs/system/` file starts with a `### ` heading, and `docs-check --print modules|system` shows the assembled documents.
 
-  - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary and unproven live OAuth behavior.
+  - **Browser GitHub connection:** Connection documentation records the default-off browser grant boundary, the separate per-person repo-scope merge consent (owner decision B) and unproven live OAuth behavior.
 
   - **Connection lifecycle proof:** Records overlap fencing, process recovery proof and the deferred account-deletion integration boundary.
 
@@ -123,6 +127,8 @@
   - **Independent scope evidence:** Keeps mandatory token evidence separate from optional response-header cross-checking in the proof record.
 
 - **How it fails:**
+
+  - Append-only read auditing grows without a retention bound; denial audit failure preserves refusal.
 
   - Documented graph ordering depends on actual snapshot schema rather than backend name alone.
 
@@ -173,6 +179,8 @@
   - A module file with no block, two blocks or a different block name, and a `docs/system/` file without a `### ` heading, fail `docs-check`.
 
 - **Tests:**
+
+  - Console authority, privacy, bounded reads, lifecycle and documentation obligations.
 
   - `tests/test_docs_fragments.py` merges two branches that each add a module block, a promise or test bullet or a system section in both orders without a conflict, shows the same scenario conflicting in the single-file layout, and covers fragment validation and obligations.
 

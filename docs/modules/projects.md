@@ -14,6 +14,8 @@
 
 - **Promises:**
 
+  - Ordinary project routes require a signed-in owner; the separately audited instance console currently exposes metadata reads only.
+
   - Orchestration settings reads wait at most one second for the shared control lock, then return the existing retryable `settings_unavailable` refusal without reading an unlocked connection.
   - The explicit Admin-only optional-input flag permits absent runner jobs/config without initialization while ordinary doing cards still count. Admission defaults retain strict runner input and shared accounting.
 
@@ -21,7 +23,7 @@
   - Connect recommends a board-scoped subscription to `space_message` and `card.moved`, retaining `card.created` with orchestration enabled, without creating or modifying webhooks.
   - Connect recommends a board-scoped subscription to `space_message` and `card.moved`, retaining `card.created` and adding `project.report` with orchestration enabled, without creating or modifying webhooks.
 
-  - The opt-in inbox excludes children and coordinator roots, exposes keyed children, and accepts first-wins split markers only from the coordinator or signed-in owner.
+  - The opt-in inbox excludes children and coordinator roots, exposes keyed children, and accepts first-wins split markers only from the board seat or owner, including the owner's authorized top-level connection.
 
   - Split marker task references are range-checked before SQLite binding and settings-read failures remain retryable.
   - Default-off project reports capture the current coordinator and activation/binding generations, baseline existing staleness, scan at most 100 cards and publish at most 100 rows per workspace pass, and retain receipt-backed event identity across crashes.
@@ -31,7 +33,7 @@
 
   - The seat-creation listener checks its event with the shared `events.is_stored` before acting.
 
-  - Only a signed-in owner changes models or limits; `max_agents` counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
+  - Only a signed-in owner changes models or limits; `max_agents` (1–100) counts distinct connection assignees with orchestration off; opt-in orchestration shares card/job admission accounting, default cap 3, owner-only settings and atomic seat trust; model resolution goes project, then workspace, then the runner default.
 
   - A project panel (`projects/panel.py`, `panel_routes.py`, format `commonplace.panel/1`, documented in `docs/project-panels.md`): a few highlight lines and http(s) action links per project, stored beside its board and read by anyone who can read the project. Setting or clearing it, over `PUT /api/projects/<slug>/panel`, needs the board-write authority and the rules check; the project view payload is unchanged.
 

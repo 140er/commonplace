@@ -1,25 +1,25 @@
 # Project chat
 
-Open **Chat** and choose a project to talk to its main orchestrator. Anyone who
+Open **Chat** and choose a project to talk to its main Coworker. Anyone who
 may post to that project's space chat may post here. The chat endpoints require
 a signed-in person session; agents continue to use `space_read` and `space_post`.
-The view shows the conversation, linked cards, permitted orchestrator status,
+The view shows the conversation, linked cards, permitted Coworker status,
 linked start jobs and the Decisions count. Private status stays private.
 
 Bots are the main way to talk to a project: you tell a bot what you want, and it
-files your words as work, passes them on to the orchestrator or answers your
+files your words as work, passes them on to the Coworker or answers your
 questions (see [bots](bots.md)). This chat stays as the shared channel between
-people, the orchestrator and agents; a bot forwards into it. A post a bot forwards
+people, the Coworker and agents; a bot forwards into it. A post a bot forwards
 for you gets no front receipt, model answer, runner relay or five-minute fallback
-card, because you are already talking to the bot; the orchestrator is woken exactly
+card, because you are already talking to the bot; the Coworker is woken exactly
 as for any other post.
 
 ## Basic, runner and model modes
 
 **Basic mode is the default** (`provider: "none"`). Each post gets an immediate,
-deterministic receipt describing routing, orchestrator availability and, for a
+deterministic receipt describing routing, Coworker availability and, for a
 work request, the card fallback. It makes no model request and is not a
-conversational model. Waking the orchestrator uses its existing `space_message`
+conversational model. Waking the Coworker uses its existing `space_message`
 webhook; without a matching hook it sees the message on its next check.
 
 **Runner mode is opt-in on your own enrolled machine.** With front answers
@@ -32,10 +32,10 @@ the basic receipt remains. See [runner setup](runner.md#chat-answers) for both
 config shapes, tools acknowledgements, egress and limits.
 
 The project's `main` model choice selects the runner's CLI and model; otherwise
-its local defaults apply. The relay steps aside for a main orchestrator that is
+its local defaults apply. The relay steps aside for a main Coworker that is
 connected, wakeable and used within 10 minutes, unless the machine opts into
 `relay_always: true`. An explicit server provider takes precedence with no
-runner fallback. A private runner answer never counts as an orchestrator claim;
+runner fallback. A private runner answer never counts as a Coworker claim;
 the existing card fallback still applies.
 
 **Model mode is opt-in per workspace.** An owner configures a provider and model;
@@ -44,19 +44,19 @@ the provider/model. There are no model tools or automatic provider fallbacks.
 If a model call fails or reaches a limit, the receipt remains; Settings shows
 usage and a `last_error` code. Provider error bodies are never shown.
 
-In all modes the person's original message reaches the orchestrator through
+In all modes the person's original message reaches the Coworker through
 space chat. The front agent does not do the work, start agents, assign or claim
 cards, or make decisions. Its only board action is the fallback below.
 
 ## Coordinator contract and card fallback
 
-Each project gets one main orchestrator seat automatically. Connect creates
-a token for the project's automatic orchestrator seat: a signed-in workspace
+Each project gets one main Coworker seat automatically. Connect creates
+a token for the project's automatic Coworker seat: a signed-in workspace
 owner uses **Connect agent** in the header and configures the agent with the
 token shown once. An existing coordinator remains main until replaced with
 confirmation. See [projects](projects.md) for token scope, renewal and model choices.
 
-The header shows the main orchestrator and its connection state; “Token
+The header shows the main Coworker and its connection state; “Token
 created · no agent has used it yet” means its credentials have not been used yet. If it is
 not connected or its connection is gone, receipts direct the owner to Connect
 and members to the workspace owner. Connect does not start the agent. Its
@@ -76,7 +76,7 @@ After `ACK_WAIT_S = 300` seconds (5 minutes), an unclaimed work request becomes
 one linked, unassigned `todo` card, filed with the poster's own permissions and
 attributed to them. Its body is the whole message verbatim; its title is the
 first non-blank line, trimmed and capped at 200 characters. A private notice
-links to the card. The same wait applies when there is no orchestrator or wake
+links to the card. The same wait applies when there is no Coworker or wake
 hook. Loss of the poster's access can prevent filing.
 
 The fallback is deduplicated per message, including event redelivery and restart
@@ -153,17 +153,17 @@ calls no model and no outside service for it.
 | `state` | `reason` | Meaning |
 | --- | --- | --- |
 | `idle` | | The caller has no recent message on this board. |
-| `delivered` | `wake_pending`, `wake_sent`, `wake_retrying`, `wake_none` | The message is stored and the orchestrator's wake hook was queued, answered 2xx, failed and is being retried, or does not exist (the agent sees the message on its next check). |
-| `working` | | The orchestrator read the message with `space_read`. |
+| `delivered` | `wake_pending`, `wake_sent`, `wake_retrying`, `wake_none` | The message is stored and the Coworker's wake hook was queued, answered 2xx, failed and is being retried, or does not exist (the agent sees the message on its next check). |
+| `working` | | The Coworker read the message with `space_read`. |
 | `answered` | | An agent posted in the chat after the message; `answer_id` is that message. |
-| `no_agent` | `none`, `gone` | The board has no orchestrator, or its connection is revoked or expired. |
-| `no_answer` | `not_picked_up`, `wake_failed`, `no_reply` | The orchestrator did not read the message within 60 seconds of being woken (5 minutes without a wake hook), every wake attempt failed, or it read the message and did not answer within 5 minutes. A later answer still ends this state. |
+| `no_agent` | `none`, `gone` | The board has no Coworker, or its connection is revoked or expired. |
+| `no_answer` | `not_picked_up`, `wake_failed`, `no_reply` | The Coworker did not read the message within 60 seconds of being woken (5 minutes without a wake hook), every wake attempt failed, or it read the message and did not answer within 5 minutes. A later answer still ends this state. |
 
-`agent` is the orchestrator's redacted name, `at` the message's time and
+`agent` is the Coworker's redacted name, `at` the message's time and
 `seen_at` the time of the read; `seen_at` is present only for a caller who may
 see that agent in the console (an owner, or the member who owns the
 connection). Each person sees the state of their own message only. A read
-counts when the board's current orchestrator connection reads past the
+counts when the board's current Coworker connection reads past the
 message; reads by people and by other agents do not. Only message ids, event
 ids and times are recorded for this, never message text.
 
@@ -175,7 +175,7 @@ their normal board permissions; they are not made private by those replies.
 
 When model mode is enabled, the configured provider receives redacted recent
 chat (including the new message), visible open-card titles/status/assignees,
-project and orchestrator names/status, the poster's linked start-job context and
+project and Coworker names/status, the poster's linked start-job context and
 the fixed front-agent prompt. This includes members' messages. Choosing a remote
 provider sends that context outside the server; a local endpoint can keep it
 local. Basic mode sends no context to a model provider.

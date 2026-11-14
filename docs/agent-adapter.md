@@ -84,8 +84,8 @@ The [machine runner](runner.md) is a way to *start* an agent, not a different wa
 
 - Machine enrolment, attestation, grants and the binding epoch (`/api/runners`).
 - Start jobs and their leases (`/api/runner/lease`, start, result), the launch message and the launch through the local thread launcher.
-- The worker token's fixed tool list and its per-card slot accounting under orchestration (other agents count as one agent per connection).
-- `orch_heartbeat`, which renews an orchestrator's role lease on a board. It is not a card heartbeat; an agent that only works on cards never calls it.
+- The worker token's fixed tool list and its per-card slot accounting under Coworker management (other agents count as one agent per connection).
+- `orch_heartbeat`, which renews a Coworker's role lease on a board. It is not a card heartbeat; an agent that only works on cards never calls it.
 
 Once started, a runner-launched agent follows the same four steps as every other agent: its first call is `task_take_next task=#n`.
 

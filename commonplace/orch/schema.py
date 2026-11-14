@@ -12,6 +12,7 @@ Public API (stable for the other orchestrator modules):
 - ``check_connections(config, known_names)`` (planner bindings vs workspace)
 - ``template(name)``, ``expand_prompt(text)``, ``role_instructions(config, role)``
 - ``render(config) -> str``
+- ``Config.factory``: the optional ``[factory]`` merge policy (``factory.Factory``)
 - ``diff(old, new) -> list[Change]`` and ``format_diff(changes) -> str``
 - ``experiment_violations(live, exp) -> list[str]`` and ``check_experiment(live, exp)``
 
@@ -32,7 +33,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from commonplace.redact import redact
@@ -41,6 +42,9 @@ try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
+
+if TYPE_CHECKING:
+    from .factory import Factory
 
 SCHEMA_ID = "commonplace.orchestrator/1"
 CONFIG_PATH = ".commonplace/orchestrator.toml"
@@ -64,7 +68,7 @@ MAX_ROLES = 16
 MAX_PROMPT_BYTES = 32 * 1024
 MAX_LAUNCH_CHARS = 120_000  # runner thread launch message limit
 SPAWN_RESERVE_CHARS = 1_024  # room kept for the runner's own SPAWN_MESSAGE
-MAX_AGENTS_RANGE = (1, 20)  # same bounds as project_limits.max_agents
+MAX_AGENTS_RANGE = (1, 100)  # same bounds as project_limits.MAX_AGENTS (a test pins both)
 MAX_WORKFLOWS = 32
 MAX_STEPS = 64
 MAX_STEP_CHARS = 500
@@ -72,6 +76,8 @@ MAX_SKILLS = 32
 MAX_MCPS = 16
 MAX_CONNECTIONS = 16
 MAX_TRIGGERS = 4
+FLEET_REPAIR_ATTEMPTS = (1, 10)
+FLEET_AGENT_CARDS = (1, 20)
 
 NAME = re.compile(r"[a-z0-9-]{1,32}")  # role, workflow and mcp names
 PROJECT = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")  # as commonplace.runner.registry.PROJECT
@@ -121,6 +127,7 @@ CODES = frozenset(
         "connection_id_shaped",
         "connection_unknown",
         "experiment_not_allowed",
+        "factory_contradiction",  # [factory] declares a merge policy that cannot hold
     }
 )
 
@@ -176,11 +183,27 @@ class Runner:
     machine: str
     project: str
     runtime_mode: str
+    session: bool = False  # opt-in persistent board session; off unless the config sets it
 
 
 @dataclass(frozen=True)
 class Trigger:
     on: str
+
+
+@dataclass(frozen=True)
+class Fleet:
+    """Per-board overrides of the fleet defaults; every field has the product default.
+
+    ``repair_attempts``: failed gates of one pull request that one repair absorbs before
+    it is parked. ``route_findings``: findings go to the session that owns the card.
+    ``reuse_agents``: a start is refused while a context-holding agent has capacity.
+    ``agent_cards``: unfinished cards one agent may carry."""
+
+    repair_attempts: int = 3
+    route_findings: bool = True
+    reuse_agents: bool = True
+    agent_cards: int = 2
 
 
 @dataclass(frozen=True)
@@ -195,7 +218,14 @@ class Config:
     mcps: Mapping[str, Mcp] = field(default_factory=dict)
     runner: Runner | None = None
     triggers: tuple[Trigger, ...] = ()
+    fleet: Fleet | None = None
     sha256: str | None = None
+    factory: Factory | None = None  # merge policy; ``None`` without ``[factory]``
+
+    @property
+    def fleet_rules(self) -> Fleet:
+        """The effective fleet rules: the ``[fleet]`` table, else the defaults."""
+        return self.fleet or Fleet()
 
     @property
     def has_runner(self) -> bool:
@@ -242,8 +272,14 @@ class Config:
             out["mcps"] = {name: _mcp_dict(self.mcps[name]) for name in sorted(self.mcps)}
         if self.runner is not None:
             out["runner"] = dataclasses.asdict(self.runner)
+            if not self.runner.session:
+                del out["runner"]["session"]
         if self.triggers:
             out["triggers"] = [{"on": t.on} for t in self.triggers]
+        if self.fleet is not None:
+            out["fleet"] = dataclasses.asdict(self.fleet)
+        if self.factory is not None:
+            out["factory"] = self.factory.to_dict()
         return out
 
 
@@ -259,7 +295,18 @@ class Change:
 
 TEMPLATE_DIR = Path(__file__).with_name("templates")
 
-_TOP_KEYS = ("schema", "project", "limits", "roles", "workflows", "mcps", "runner", "triggers")
+_TOP_KEYS = (
+    "schema",
+    "project",
+    "limits",
+    "roles",
+    "workflows",
+    "mcps",
+    "runner",
+    "triggers",
+    "fleet",
+    "factory",
+)
 _ROLE_KEYS = (
     "kind",
     "area",
@@ -274,6 +321,8 @@ _ROLE_KEYS = (
     "connections",
 )
 _RUNNER_KEYS = ("role", "machine", "project", "runtime_mode")
+_FLEET_KEYS = ("repair_attempts", "route_findings", "reuse_agents", "agent_cards")
+_RUNNER_OPTIONAL_KEYS = ("session",)
 _SAFE_KEY = re.compile(r"[A-Za-z0-9_-]{1,40}")
 _SECRET_KEY_NAME = re.compile(
     r"(?i)password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
@@ -328,6 +377,12 @@ def _int(value: object, path: str, low: int, high: int) -> int:
         raise ConfigError("wrong_type", path, "must be an integer")
     if not low <= value <= high:
         raise ConfigError("invalid_value", path, f"must be between {low} and {high}")
+    return value
+
+
+def _bool(value: object, path: str) -> bool:
+    if type(value) is not bool:
+        raise ConfigError("wrong_type", path, "must be true or false")
     return value
 
 
@@ -531,7 +586,7 @@ def _role(name: str, value: object, workflows: Mapping, mcps: Mapping) -> Role:
     if "area" in body:
         area = _str(body["area"], f"{path}.area", NAME)
         if kind != "sub-orchestrator":
-            raise ConfigError("area_kind", f"{path}.kind", "an area needs a sub-orchestrator")
+            raise ConfigError("area_kind", f"{path}.kind", "an area needs a subordinate Coworker")
         for required in ("parent", "topic"):
             if required not in body:
                 raise ConfigError("missing_key", f"{path}.{required}", "required for an area")
@@ -588,7 +643,7 @@ def _check_areas(roles: Mapping[str, Role]) -> None:
         raise ConfigError("too_many", "roles", "at most 8 areas")
     mains = [role for role in roles.values() if role.kind == "orchestrator"]
     if len(mains) != 1 or mains[0].parent is not None:
-        raise ConfigError("area_main", "roles", "areas need exactly one parentless orchestrator")
+        raise ConfigError("area_main", "roles", "areas need exactly one parentless Coworker")
     for role in areas:
         if role.parent != mains[0].name:
             raise ConfigError(
@@ -608,12 +663,16 @@ def _roles(value: object, workflows: Mapping, mcps: Mapping) -> dict[str, Role]:
 
 
 def _runner(value: object, roles: Mapping[str, Role]) -> Runner:
-    body = _table(value, "runner", _RUNNER_KEYS, _RUNNER_KEYS)
+    body = _table(value, "runner", _RUNNER_KEYS + _RUNNER_OPTIONAL_KEYS, _RUNNER_KEYS)
+    session = body.get("session", False)
+    if not isinstance(session, bool):
+        raise ConfigError("wrong_type", "runner.session", "must be true or false")
     runner = Runner(
         role=_str(body["role"], "runner.role", NAME),
         machine=_str(body["machine"], "runner.machine", MACHINE_ID),
         project=_str(body["project"], "runner.project", PROJECT),
         runtime_mode=_str(body["runtime_mode"], "runner.runtime_mode", choices=RUNTIME_MODES),
+        session=session,
     )
     role = roles.get(runner.role)
     if role is None:
@@ -655,6 +714,27 @@ def _triggers(value: object, runner: Runner | None) -> tuple[Trigger, ...]:
     if out and runner is None:
         raise ConfigError("trigger_without_runner", "triggers", "triggers need [runner]")
     return tuple(dict.fromkeys(out))
+
+
+def _fleet(value: object) -> Fleet | None:
+    if value is None:
+        return None
+    body = _table(value, "fleet", _FLEET_KEYS)
+    default = Fleet()
+    return Fleet(
+        repair_attempts=_int(
+            body.get("repair_attempts", default.repair_attempts),
+            "fleet.repair_attempts",
+            *FLEET_REPAIR_ATTEMPTS,
+        ),
+        route_findings=_bool(
+            body.get("route_findings", default.route_findings), "fleet.route_findings"
+        ),
+        reuse_agents=_bool(body.get("reuse_agents", default.reuse_agents), "fleet.reuse_agents"),
+        agent_cards=_int(
+            body.get("agent_cards", default.agent_cards), "fleet.agent_cards", *FLEET_AGENT_CARDS
+        ),
+    )
 
 
 # ---------------------------------------------------------------- public API
@@ -718,6 +798,11 @@ def validate(data: Mapping[str, Any]) -> Config:
     mcps = _mcps(doc.get("mcps", {}))
     roles = _roles(doc["roles"], workflows, mcps)
     runner = _runner(doc["runner"], roles) if "runner" in doc else None
+    policy = None
+    if "factory" in doc:
+        from . import factory  # imports this module's helpers
+
+        policy = factory.parse(doc["factory"])
     config = Config(
         schema=SCHEMA_ID,
         project=project,
@@ -727,6 +812,8 @@ def validate(data: Mapping[str, Any]) -> Config:
         mcps=mcps,
         runner=runner,
         triggers=_triggers(doc.get("triggers", []), runner),
+        fleet=_fleet(doc.get("fleet")),
+        factory=policy,
     )
     if runner is not None:
         limit = MAX_LAUNCH_CHARS - SPAWN_RESERVE_CHARS
@@ -818,7 +905,7 @@ def _role_lines(role: Role) -> list[str]:
 
 def render(config: Config) -> str:
     """Markdown bundle of the whole config for advisory sessions and ``orch render``."""
-    lines = [f"# Orchestrator config `{config.project}`", "", f"- schema: `{config.schema}`"]
+    lines = [f"# Coworker config `{config.project}`", "", f"- schema: `{config.schema}`"]
     if config.sha256:
         lines.append(f"- sha256: `{config.sha256}`")
     if config.max_agents is not None:
@@ -831,6 +918,13 @@ def render(config: Config) -> str:
         )
     if config.triggers:
         lines.append("- triggers: " + ", ".join(f"`{t.on}`" for t in config.triggers))
+    if config.fleet is not None:
+        f = config.fleet
+        lines.append(
+            f"- fleet: repair_attempts {f.repair_attempts}, route_findings "
+            f"{str(f.route_findings).lower()}, reuse_agents {str(f.reuse_agents).lower()}, "
+            f"agent_cards {f.agent_cards}"
+        )
     for role in config.roles.values():
         lines += ["", f"## Role `{role.name}` ({role.kind})", "", *_role_lines(role)]
         text = role_instructions(config, role.name)
@@ -841,6 +935,8 @@ def render(config: Config) -> str:
         for mcp in config.mcps.values():
             auth = f" (auth: `{mcp.secret_ref}`)" if mcp.secret_ref else ""
             lines.append(f"- `{mcp.name}`: {mcp.url}{auth}")
+    if config.factory is not None:
+        lines += ["", "## Merge policy", "", *(f"- {line}" for line in config.factory.summary())]
     return "\n".join(lines) + "\n"
 
 

@@ -3,13 +3,26 @@
 - **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
-  - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; the full suite runs per develop batch, never per PR.
+  - `docs/compute/execution-contract.md` documents default-denied script self-approval, task-required scope storage, durable denial and outcome auditing and held-handle sealed execution snapshots.
+  - The read-only instance console operator and API guide in `docs/instance-admin.md`.
+
+  - The instance console guide distinguishes workspace filters, path-bound targets, list pagination and the query-free operator settings endpoint.
+  - Compute control narrows and migrates permission UPDATE guards, releases closed helper tunnels and confirmed non-run reservations, and settles permit-bound discovery independently of publication. In-flight _fresh checks cover current authority and custody rather than the global claim epoch; stage 4 commits before exec. `compute/operator.py` requires existing guards before attaching and provides fenced controller execution/discovery and helper tunnel/passive recovery with private audit notes; no HTTP route. Regression and safety coverage: `tests/test_compute_control_regressions.py` and `tests/test_compute_control_settlement.py`.
+  - The coworker vertical-slice API/store/runtime contract, concurrent implementation ownership and three-adviser design decision record and isolated transport/custody and authenticated control/UI and durable execution/runner handoff and remaining fence/passive-inventory and authenticated admission-channel component ownership boundaries and isolated local-running instructions in `docs/compute/`.
+  - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
+
+  - The batch merge rule in `CLAUDE.md` (`AGENTS.md` links to it): affected tests and the repo-wide guard files per PR, no full test suite anywhere (owner decision, 13 Nov), a smoke set for a release, breaks fixed when found.
+
+  - The self-improvement rule in `CLAUDE.md` (`AGENTS.md` links to it): agents note lessons with the outcome that taught them, propose small instruction edits when a lesson repeats (never a silent rewrite or self-merge), and file suggestion cards (problem, proposal, benefit, cost) that go to the coordinator and the owner, with no work before the owner's yes.
+
+  - The agent guide states the batch merge lane: builders merge on a gate PASS plus a quick PR check subset PASS on the exact head; no full suite runs per PR, per batch or per release.
   - The project connection guide describes persistent conflict reasons and retry choices after consent dialogs close.
   - Memory sync documentation states the restricted-search refill bound, suppressed candidate counters and the restricted CLI-compatible route.
   - The project and orchestrator guides state that a role without a model raises one owner Needs me item and that Agent models are picked from the workspace's model list.
   - `docs/design/RULES.md` places the Rules entry in the account menu rather than the sidebar and phone tabs.
+  - `docs/design/chat-platform-bots.md` is the design note for chat-platform bots (Slack first, then Teams and Discord, behind one adapter interface): data model, permission and privacy rules, threats, replay behaviour and the slice plan. Nothing in it is built yet.
 
-  - The OAuth contract records the displayed callback origin, numeric-host tightening and required pre-deploy registration inventory.
+  - The OAuth contract records the displayed callback origin, numeric-host tightening, the required pre-deploy registration inventory and the one exact native redirect `cmmn://auth/callback`.
 
   - The rules write-check documentation lists the goals writes as checked (`docs/design/RULES.md`).
 
@@ -28,6 +41,8 @@
 
   - `docs/admin.md` also describes the owner runner block, which manages machines through `/api/runners`, not the GET-only Admin dispatcher.
 
+  - `docs/admin.md` describes the Admin invite block; `docs/invites.md` (module `invites`) is the contract it links to.
+
   - `docs/projects.md` names the split-start role: `main`, or the `[runner]` role when the config has no `main` role.
 
   - `docs/chat.md` lists the live delivery states of a chat message, their reasons and timing, and who sees the agent's read time.
@@ -39,6 +54,7 @@
 
   - Live-sync and capture instructions document the generic `agent-log` source for agents without a native transcript.
   - Public Space endpoint and error documentation alongside legacy board routes.
+  - `docs/spaces.md` and the API and contract tables document the Space routes, space-named tools and what is deferred.
   - `docs/design/RULES.md` documents the `rules_feedback` tool, its limits and its evidence routes.
 
   - `docs/boards/API.md` describes structured decision blocks: the `{label, detail, preview}` option shape, its bounds, and the `ask_blocks` card field; `docs/boards/schema.sql` lists the column.
@@ -55,6 +71,8 @@
 
   - `docs/recovery/encrypted-workspace.md` is the recovery runbook for encrypted workspaces (keyslot check, restore on a new host, lost server credential, credential replacement, cases without recovery); `docs/workspace-encryption.md` lists the open keyslot decisions and `docs/backups.md` links the runbook.
 
+  - Fact-first ranking and union-where RFCs: a restricted caller's fact counts and seed ranking, and the vector-disabled Chroma fallback's candidate window, come from readable content only; the cost of exact readable statistics is a known limit.
+
 - **Promises:**
   - Project documentation and the project routes table describe the four model roles and the owner-only escalation rule.
 
@@ -62,8 +80,12 @@
 
   - The handoff guide uses generic agent, provider and model placeholders and names the T3 home directory rather than a host-specific variable.
 
+  - Documents delivered GETs, exact authority, effective existing limits and future target-membership boundaries.
+
   - `docs/agent-connections.md` explains granting, using and withdrawing `cards:decide` for an owner's own app.
 
+  - The project guide describes independently loading settings sections, a usable
+    orchestrator card during pending reads and the bounded connection-wing fallback.
   - `docs/mvp/CONTRACT.md` documents the instance index figures contract and its unknown-reason codes.
 
   - `docs/agent-connections.md` also explains granting and withdrawing `bots:chat` and `bots:confirm` for a member's own app.
@@ -113,6 +135,8 @@
 
 - **How it fails:**
 
+  - Missing stores remain unknown; source/audit failures and ongoing audit capacity are explicit.
+
   - Safe errors and missing optional sources remain distinct from measured zeros; missing operational records remain unknown.
 
 
@@ -127,6 +151,8 @@
   - Broken commands in docs surface only when someone follows them.
 
 - **Tests:**
+
+  - Metadata console API and documentation obligation checks.
 
   - Admin API and lifecycle suites plus docs-check against the development merge base.
 

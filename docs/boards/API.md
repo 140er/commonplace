@@ -20,14 +20,20 @@ Card tools return short plain text, one fact per line. Chat tools return JSON wi
 | Tool | Arguments | Profiles |
 |---|---|---|
 | `board_list` | — | slim, standard, full |
-| `task_list` | `board?`, `status?`, `mine?` | slim, standard, full |
+| `space_list` | — | slim, standard, full; same operation as `board_list` |
+| `task_list` | `board?`, `status?`, `mine?`, `include_snoozed?` | slim, standard, full |
 | `task_show` | `task` | slim, standard, full |
 | `task_add` | `title`, `body?`, `board?`, `status?` (`backlog` \| `todo` \| `doing`), `assignee?`, `claim?` | slim, standard, full |
+| `task_snooze` | `task`, `until?`, `timezone?`, `after_card?` | slim, standard, full; owner or the card's assignee |
+| `task_unsnooze` | `task` | slim, standard, full; owner or the card's assignee |
 | `task_comment` | `task`, `text` | slim, standard, full |
 | `task_take_next` | `board?`, `task?` | slim, standard, full |
 | `task_heartbeat` | `task` | slim, standard, full |
 | `task_approve` | `task`, `approve?`, `version?`, `reason?`, `escalate?` | slim, standard, full |
 | `board_add` | `slug`, `name?`, `wing?`, `repo?` | all profiles; trusted tokens or signed-in users |
+| `space_add` | `slug`, `name?`, `wing?`, `repo?` | same operation and authority as `board_add` |
+| `space_set` | `space`, `coordinator` | same operation and authority as `board_set` |
+| `space_own_wing` | `space` | same operation and authority as `board_own_wing` |
 | `task_update` | `task`, `title?`, `body?`, `status?` (`backlog` \| `todo` \| `doing` \| `review` \| `done`), `before?`, `after?`, `link?`, `unlink?`, `lesson?`, `reason?` (review returns only), `person_reason?` (opening review only) | slim, standard, full |
 | `ask` | `question`, `options?`, `context?`, `board?`, `task?`, `person_reason?` | slim, standard, full |
 | `task_handoff` | `task`, `to`, `note`, `options?` | slim, standard, full |
@@ -66,6 +72,14 @@ Default: `todo`, `doing` and `review`. `mine=true` also includes pending proposa
 | `working` | `doing`, heartbeat (or last update) under 30 minutes old |
 | `idle` | everything else, including a `doing` card with a stale heartbeat |
 
+Snoozed cards are left out of this list unless `include_snoozed=true` (see `task_snooze`); the board view (`GET /api/boards/<slug>/cards`) still lists them with a `snoozed` object.
+
+### task_snooze
+
+`task_snooze task=#n until=<ISO date and time> timezone=<IANA name>` hides a `backlog` or `todo` card from work offers until that time; `task_snooze task=#n after_card=<m>` waits until card `#m` on the same board is done. Give exactly one of `until` and `after_card`. `until` is a wall time in `timezone` (`2026-11-12T09:00` with `Europe/Amsterdam`) or carries its own offset (`2026-11-12T09:00+01:00`, `...Z`); it must be in the future and at most 366 days away, and a wall time the clocks skip is refused. Only a workspace owner or the card's assignee may snooze or `task_unsnooze`; both are checked writes (`rules_seq`). Snoozing again replaces the earlier snooze. Free-text conditions are not supported.
+
+While snoozed the card is not offered as work: `task_list` skips it, `task_take_next` skips it and an explicit take is refused (`snoozed`), a move to `doing` and a runner start are refused (`snoozed`), the no-progress nudge does not count it, and its card view carries `snoozed: {until, timezone, after_card, by, at, text}` and, with Coworker management on, the waiting reason `snoozed` ("Snoozed until 2026-11-12 09:00 Europe/Amsterdam" or "Snoozed until #12 is done"), which takes precedence over every other reason. At the time (or when `#m` is done) it wakes by itself, once, also after a restart: the history gets "Snooze ended: ..." and a `card.woke` event is emitted (also for an unsnooze). Refusals carry `invalid_snooze`, `timezone_required`, `invalid_timezone`, `invalid_time`, `in_past`, `too_far`, `invalid_condition`, `self`, `other_board`, `condition_met`, `not_snoozable` or `not_snoozed`. Signed-in owners can also use `GET/POST /api/card-snooze/<n>` (body `{until, timezone}` or `{after_card}`) and `POST /api/card-snooze/<n>/cancel`.
+
 ### task_show
 
 Card, then the last 10 events, then links. Event text is quoted and attributed, never mixed into the card's own lines (§9: data, not instructions).
@@ -91,11 +105,11 @@ Unrestricted top-level cards start in `todo` and can start with `claim=true`, `s
 
 An owner-appointed independent board coordinator can deliberately release restricted origin with `task_approve(approve=true, reason=...)`, including while holding a doing card. It must remain live in this workspace with memory read/write, board-wing read/write and visible `space_read`, `space_post`, `task_approve` and `needs_me`; `decide` is not required. A creator and all its descendants are excluded even after promotion; independently appointed creator ancestors remain eligible. Unsafe lineage and unverified creator stamps fail closed for agent decisions and markers. Origin-only release requires a nonempty reason of at most 500 characters, changes neither holder nor lease, and preserves pending proposal/plan review. It grants no self-review, negative-decision or escalation right.
 
-When the board's coordinator is the project's connected orchestrator seat, a new card from a restricted creator without a parent is released as soon as it is created, as that seat, with the reason `Released automatically by the project orchestrator`. The same release rules apply: other coordinators, child proposals and cards the seat cannot release stay in backlog and show `Waiting for release` with who can release them.
+When the board's coordinator is the project's connected Coworker seat, a new card from a restricted creator without a parent is released as soon as it is created, as that seat, with the reason `Released automatically by the project Coworker`. The same release rules apply: other coordinators, child proposals and cards the seat cannot release stay in backlog and show `Waiting for release` with who can release them.
 
 Only a signed-in workspace owner has recovery fallback: an absent/non-live configured record or a verified independent record missing a required grant permits origin release. A live creator, descendant, unsafe lineage or an unverifiable creator stamp with a live configured record instead yields `origin_configuration` with `configure_coordinator` in Needs me. The owner may still release such a card explicitly with `task_approve`, as with any card awaiting release; moving a card releases it implicitly only with no live coordinator. Clearing a coordinator is board-wide and affects recovery for other cards too. Owner-role tokens have no person fallback. Owner recovery of pending proposals takes two actions, origin release then separate review. Agent and owner origin items use the approvals bucket with `need=release`, `approval_kind=origin` and `actions=["approve"]`; owner configuration uses `need=you` and no approve action. Explicit person-targeted reviews remain independently visible.
 
-When exactly one board is visible, `board` may be omitted. With several visible boards, pass its slug or repository explicitly; the server never silently chooses a different space. Agent assignees and handoff recipients must be active connections in this workspace with `memory:write` and visibility of the board. Connection names and IDs resolve to the same verified actor. A missing, revoked, expired or inaccessible recipient is refused before the card changes. `task_handoff` also accepts `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool. The owner and the live board coordinator may take over (`task_take_next task=#n`) or drop (status-only `task_update status=backlog`) a released todo reservation held by another connection. A workspace owner may move a released restricted-origin todo card directly to done. Signed-in members other than the owner cannot take over, drop or hand off a todo or doing card reserved for another actor.
+When exactly one board is visible, `board` may be omitted. With several visible boards, pass its slug or repository explicitly; the server never silently chooses a different space. Agent assignees and handoff recipients must be active connections in this workspace with `memory:write` and visibility of the board. Connection names and IDs resolve to the same verified actor. A missing, revoked, expired or inaccessible recipient is refused before the card changes. `task_handoff` also accepts `orchestrator` or `coordinator` for the board coordinator and `pool` or `anyone` for the unassigned pool. The owner and the live board coordinator may take over (`task_take_next task=#n`) or drop (status-only `task_update status=backlog`) a released todo reservation held by another connection. A workspace owner may move a released restricted-origin todo card directly to done. Signed-in members other than the owner cannot change the status of a todo or doing card reserved for another actor, or hand it off. This covers every different target status: backlog, todo, doing, done and review, including returning a doing card to todo. Restating its current status leaves its holder unchanged. The refusal points to the workspace owner; coordinator recovery is limited to released restricted-origin todo reservations.
 
 Connection ancestry uses the existing nullable `connections.parent_id` foreign key (`token add --parent <connection>`). Authentication exposes `parent_agent`; cards expose the creator's `agent_parent`. A parent's card assigned to its active direct child is immediately ready; `claim=true` starts that child's claim. Self-created child cards instead have `status=backlog`, `proposal_status=pending`, `proposed_to=<direct parent>`, and the child as assignee. These fields are server-stamped, not client inputs. Agents cannot claim, promote, complete, or hand off pending/rejected proposals. Nested proposals may be approved by their direct parent or owning top-level root, not an arbitrary intermediate ancestor. A root has no approval role solely from ancestry on an advisory plan review.
 
@@ -152,7 +166,7 @@ Claims and expiries use `BEGIN IMMEDIATE`, so concurrent agents never take the s
 
 ### Priority
 
-Every card carries `priority`: `urgent`, `high`, `normal` (the default) or `low`. The owner sets it from the card in the app or with `task_add` / `task_update`; connections cannot, and cards report `can_prioritize` for the caller. `task_list` (todo, backlog or any status), the board and `task_take_next` order by priority first, then board position, so an orchestrator reading the list top-down sees the most urgent work first. Each `task_list` / `task_show` line carries `priority:<name>`, and the orchestrator checkpoint's `unstarted` todo cards are listed in the same order with their `priority`.
+Every card carries `priority`: `urgent`, `high`, `normal` (the default) or `low`. The owner sets it from the card in the app or with `task_add` / `task_update`; connections cannot, and cards report `can_prioritize` for the caller. `task_list` (todo, backlog or any status), the board and `task_take_next` order by priority first, then board position, so a Coworker reading the list top-down sees the most urgent work first. Each `task_list` / `task_show` line carries `priority:<name>`, and the Coworker checkpoint's `unstarted` todo cards are listed in the same order with their `priority`.
 
 ### task_update
 
@@ -169,7 +183,7 @@ Only the holder of a `doing` card, or a person, may change it. Anyone else gets 
 - `link` / `unlink` take a drawer ID.
 - `callstack` takes the PR's call tree as printed by `python -m commonplace.callstack --base origin/develop` (or `null` to clear; `--card N --hub URL` uploads it directly). The web card shows its head commit, so a stale tree is visible. The server checks its shape and caps it at 64 KB; `task_show` returns it and the web card shows it next to the review. The agent that asked for review may still update this one field while the card waits on a person.
 - Any update by the holder renews the claim.
-- A new `review` requires `question` (at least 24 characters), at least two distinct `options`, and context (at least 20 characters) from `context`, `body`, or `status_line`. Original decision context is kept in `review_context` and the append-only opening event; supplying it never overwrites the progress line or body. `ask` and handoffs to a person enforce the same validation atomically. Missing details leave the card unchanged and explain that agents should stay in doing or ask their orchestrator. Gates and technical waits are not owner decisions. Decide shows the original status line and a body excerpt beside the question.
+- A new `review` requires `question` (at least 24 characters), at least two distinct `options`, and context (at least 20 characters) from `context`, `body`, or `status_line`. Original decision context is kept in `review_context` and the append-only opening event; supplying it never overwrites the progress line or body. `ask` and handoffs to a person enforce the same validation atomically. Missing details leave the card unchanged and explain that agents should stay in doing or ask their Coworker. Gates and technical waits are not owner decisions. Decide shows the original status line and a body excerpt beside the question.
 
 ```
 ok #142 done  lesson drawer_a01c
@@ -501,7 +515,7 @@ Creating a shared space requires trusted token identity, independently of whethe
 
 Board creation emits the `space_created` event with resource `space:<slug>` and
 data `{"board": "<slug>"}` after commit. It contains no chat text; wildcard
-webhook subscribers receive it too. Each project gets one main orchestrator
+webhook subscribers receive it too. Each project gets one main Coworker
 seat automatically, with a lazy repair on first view if needed. See
 [projects](../projects.md) for connection setup and lifecycle.
 
@@ -581,7 +595,7 @@ return 404. Only workspace owners may Connect, give a project its own wing, or w
 | GET | `/api/projects/<slug>` | `{board, name, main, models, escalation, memory, can_configure}` |
 | POST | `/api/projects/<slug>/orchestrator/connect` | `{}` or boolean `replace` / `allow_shared` flags; 201 for a new connection, 200 for rotation. |
 | POST | `/api/projects/<slug>/wing` | Exactly `{}`; returns the re-read project view plus the own-wing result below. |
-| PUT | `/api/projects/<slug>/models` | Optional `main` (orchestrator), `worker` (builder), `reviewer` and `gate` keys, each `{provider, model}` or `null` to clear; returns the project view. |
+| PUT | `/api/projects/<slug>/models` | Optional `main` (Coworker), `worker` (builder), `reviewer` and `gate` keys, each `{provider, model}` or `null` to clear; returns the project view. |
 | PUT | `/api/projects/<slug>/escalation` | Exactly `{rule}`: `{after_failures: 1–10 or null, labels: [≤10 labels], model: {provider, model}}` (at least one of failures or labels), or `null` to clear. The model must be in the workspace list (`unknown_model`, 400). Owner only; returns the project view with `escalation` (`null` when unset). |
 
 `main` contains `role`, `name`, `source` (`seat` or `coordinator`), `connected`,
@@ -591,7 +605,7 @@ Names are redacted and status follows the caller's visibility permissions.
 `models` contains `main` and `worker` choices, each `{provider, model}` or `null`.
 Choices store labels only; they do not invoke providers or change chat settings.
 
-Connect creates a token for the project's automatic orchestrator seat; it does
+Connect creates a token for the project's automatic Coworker seat; it does
 not attach or start an agent. It returns
 `{connection, token, mcp_url, board, wing, setup, warning?}`. The token
 appears only in this response. The standard-trust connection can read and write
@@ -662,7 +676,7 @@ are unchanged. The internal PR repository backfill does not add a card field.
 
 ## Opt-in blockers and waiting reasons
 
-When workspace orchestration is enabled, `task_add` accepts `blocked_by` and
+When workspace Coworker management is enabled, `task_add` accepts `blocked_by` and
 `task_update` replaces it; REST uses the same field on card POST/PATCH.
 The list contains at most 16 same-board card numbers. Empty removes all edges.
 Self edges, cross-board references, cycles and traversals over 200 nodes are
@@ -674,7 +688,7 @@ the card version and append an edit history row. Existing card ownership,
 visibility and optimistic-version rules still apply.
 
 Enabled card views include `waiting` (null or one reason). Precedence is
-`blocked_by`, `waits_on_person`, `claim_expired` (a `doing` card whose claim
+`snoozed` (the card is snoozed, see `task_snooze`; it refuses an explicit claim), `blocked_by`, `waits_on_person`, `claim_expired` (a `doing` card whose claim
 passed; the assignee is kept and its next update renews it), `plan_review` (the
 `plan` label asks for review), `not_released`, `no_agent` (a `todo` card while no
 live agent connection can write the board's wing), then `project_limit` for a new
@@ -700,22 +714,31 @@ card `PATCH` with the full `blocked_by` list and the card `version`. A refused l
 comes back as a `400` whose `error` is a plain sentence and whose `code` is
 `self`, `cycle`, `other_board`, `invalid_blockers` or `blocker_graph_too_large`;
 a card the caller cannot read gets the same `other_board` answer as a missing number.
-With orchestration off these fields and the `blocked_by` schema properties are absent,
+With Coworker management off these fields and the `blocked_by` schema properties are absent,
 and `blocked_by` is refused. `not_released` applies only to Todo/Backlog cards.
 
-`orchestrator_inbox(board)` and `card_split_done(task,state)` are coordinator or
-signed-in-owner tools available only with the switch on. Their REST equivalents
+`orchestrator_inbox(board)` and `card_split_done(task,state)` are board-seat or
+owner tools available only with the switch on. The owner may use a signed-in
+session or their own top-level PAT or OAuth connection with the required scope
+and board access. Worker credentials, child connections and other boards' seats
+cannot act for the owner. A persisted seat binding also authorizes its own board
+when the coordinator field is empty; an explicit replacement takes precedence.
+Marking requires board read/write access and clears only the split-stuck wait.
+Their REST equivalents
 are `GET /api/projects/<board>/orchestrator/inbox` and
 `POST /api/projects/<board>/orchestrator/split`. The POST body is exactly
 `{"task":N,"state":"split"}` or `{"task":N,"state":"kept"}`. The first marker
-wins; invalid input or a refused key inserts nothing. Database lock timeout
+wins, including a repeat from another authorized caller: it returns the original
+state, actor and time without another history entry or version change. Markers
+record who marked which root and its state in card history. Invalid input or a
+refused key inserts nothing. Database lock timeout
 returns bounded `409` with `{"error":"busy","code":"busy"}`.
 
 Split child keys remain attached to their original child when labels are edited.
 Removing or replacing a key is refused with `split_key_immutable`; adding split
 labels to roots or using a different parent is refused. The marker REST endpoint
 accepts only positive integer task numbers below the SQLite integer bound.
-Unreadable orchestration settings return `503 settings_unavailable`. Only actual
+Unreadable Coworker management settings return `503 settings_unavailable`. Only actual
 SQLite lock timeouts return `409 busy`; other database errors retain their failure.
 
 `card_split_done` is a checked write: MCP callers supply the served `rules_seq`
@@ -735,7 +758,7 @@ The existing board row is the Space. Board, Memory and Chat are views of that
 Space, with Board as the default view. Identity is the authenticated workspace and
 exact slug; no new identity object or identity migration is needed.
 List retains claim expiry; metadata is a plain active-row read without expiry,
-transactions, orchestration, seats, settings or credential creation.
+transactions, Coworker management, seats, settings or credential creation.
 `POST /api/spaces` creates through `board_add`, preserving board authorization,
 the transaction and the `space_created` event with `data.board`.
 Non-person callers must pass the existing board tool visibility gate. Checked
@@ -754,8 +777,33 @@ PATCH/DELETE and item POST/PATCH/DELETE are 405 `method_not_allowed` with
 An Idempotency-Key or include_deleted query is rejected with 400
 `unsupported_idempotency` or `unsupported_include_deleted`.
 
-Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
-new-user migration and desktop synchronization are deferred.
+#### Space cards and chat
+
+`GET`/`POST /api/spaces/<slug>/cards` and `GET`/`POST /api/spaces/<slug>/chat` are
+adapters over the board card and chat operations of one exact Space. They run the
+same service calls as `/api/boards/<slug>/cards` and `/chat`, so card payloads,
+authority, verbatim chat and rules freshness are unchanged. Differences are the
+canonical vocabulary and identity: the slug must match an active, readable Space
+exactly (a repo reference or a sole visible board is not accepted; otherwise 404
+`space_not_found`); chat reads name the Space as `space` instead of `board`; a body
+`space` or `board` must equal the path slug; a body `rules_seq`, an unknown field or
+invalid JSON is 400 `invalid_arguments`; freshness comes only from
+`Commonplace-Rules-Seq`. Non-person callers must pass the `task_list`/`task_add`
+or `space_read`/`space_post` tool gate. Other methods are 405 with `Allow: GET, POST`
+and other subpaths are 404 `not_found`.
+
+#### MCP names
+
+`space_list`, `space_add`, `space_set` and `space_own_wing` run the `board_list`,
+`board_add`, `board_set` and `board_own_wing` operations with a `space` argument; the
+board names remain. `space_read` and `space_post` accept `space` or the legacy
+`board`; naming two different spaces, or none, is refused. A connection that lists
+either name of a pair is granted both, so an alias never widens authority. Scope,
+trust, owner and profile rules, rules freshness and legacy output are unchanged.
+
+Rename, archive, versions/retries/tombstones, settings and Coworker adapters,
+the `space` argument on card tools, UI wording, new-user migration and desktop
+synchronization are deferred.
 
 Workspace owners can inspect members and connections through the separate
 [Admin GET API](../admin.md); board actions retain their existing authority.

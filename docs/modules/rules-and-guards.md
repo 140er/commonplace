@@ -4,7 +4,9 @@
 - **Owns:**
 
   - Canonical Space create in the checked REST write inventory.
+  - Canonical Space card and chat posts and the `space_add`, `space_set` and `space_own_wing` tools in the checked write inventory.
 
+  - `topology_propose` is a checked write, over MCP and as `POST /api/topology/proposals` in the REST write inventory; `topology_discover_site` is a checked write over MCP. Undoing a topology change is a signed-in owner's write and sits outside the inventory, like the card lifecycle routes.
   - `orch_reassign_step` in the checked write inventory.
 
   - The goals writes `goal_set` and `card_goal` in the checked MCP write inventory, because goals become agent card context.
@@ -50,6 +52,7 @@
 - **Tests:**
 
   - Route-aware checked REST harness and Space freshness contract tests.
+  - The checked REST harness enrolls the Space card and chat posts with header-only freshness, and the AST write inventory covers the Space dispatch functions.
 
   - `tests/test_rules_index.py` pins index completeness and size, keyed get with unknown keys, partial reads not serving, and unchanged defaults; `tests/spaces_surfaces.json` carries the new `rules_get` and `session_start` arguments.
 

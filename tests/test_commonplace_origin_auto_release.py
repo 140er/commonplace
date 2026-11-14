@@ -93,7 +93,7 @@ def test_card_says_who_releases_when_no_orchestrator_is_connected(hub, fresh):
     waiting = fresh.owner.task_show(card["number"])["waiting"]
     assert waiting["code"] == "not_released"
     assert waiting["text"] == (
-        "Waiting for release: no connected orchestrator can release it, so the workspace owner does"
+        "Waiting for release: no connected Coworker can release it, so the workspace owner does"
     )
 
 

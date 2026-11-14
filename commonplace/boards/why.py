@@ -6,6 +6,7 @@ the sentences exist only here."""
 from .display import _waiting_on_person
 
 CODES = (
+    "snoozed",
     "blocked_by",
     "waits_on_person",
     "claim_expired",
@@ -19,18 +20,20 @@ CODES = (
 # Who can release a restricted-origin card, by the board's release authority.
 RELEASE_DETAIL = {
     "coordinator": "the board coordinator releases it",
-    "owner": "no connected orchestrator can release it, so the workspace owner does",
+    "owner": "no connected Coworker can release it, so the workspace owner does",
     "blocked": "the board coordinator cannot release it; the workspace owner must change the coordinator first",
 }
 
 # Reasons that stop an explicit claim or start; the others only explain what the board shows.
-REFUSING = ("blocked_by", "waits_on_person", "plan_review", "not_released")
+REFUSING = ("snoozed", "blocked_by", "waits_on_person", "plan_review", "not_released")
 
 
 def text(reason: dict) -> str:
     code = reason["code"]
+    if code == "snoozed":
+        return "Snoozed until " + reason["label"]
     if code == "blocked_by":
-        return "Waiting on " + ", ".join(
+        return "Waiting for " + ", ".join(
             f"#{b['number']}: {b['title']}" for b in reason["blockers"]
         )
     if code == "waits_on_person":
@@ -47,7 +50,7 @@ def text(reason: dict) -> str:
     if code == "no_agent":
         return "No agent is connected to this project yet"
     if code == "project_limit":
-        return f"Waiting for a free slot: {reason['used']} of {reason['cap']}"
+        return f"Waiting for a free slot: {reason['used']} of {reason['cap']} agents busy"
     if code == "checks_pending":
         return "Waiting for checks to finish"
     raise ValueError("unknown waiting reason")
@@ -58,6 +61,7 @@ def waiting(
     *,
     blockers,
     released: bool,
+    snoozed: dict | None = None,
     usage,
     claim_expired: bool = False,
     plan_review: bool = False,
@@ -72,7 +76,14 @@ def waiting(
     if status == "done":
         return None
     open_work = status in ("todo", "backlog")
-    if blockers:
+    if snoozed and open_work:
+        reason = {
+            "code": "snoozed",
+            "until": snoozed["until"],
+            "after_card": snoozed["after_card"],
+            "label": snoozed["text"].removeprefix("Snoozed until "),
+        }
+    elif blockers:
         reason = {"code": "blocked_by", "blockers": list(blockers)}
     elif _waiting_on_person(row):
         reason = {"code": "waits_on_person"}
@@ -101,6 +112,41 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
+def summary_line(
+    summary: dict,
+    *,
+    used: int,
+    cap: int | None,
+    tasks: bool = False,
+    runner_capacity: int | None = None,
+) -> str:
+    """One compact status line, using the same reason counts as the card views."""
+    busy = _plural(used, "agent", "agents") + " busy"
+    if cap is not None:
+        capacity = f", runner capacity {runner_capacity}" if runner_capacity is not None else ""
+        busy += f" (limit {cap}{capacity})"
+    phrases = {
+        "project_limit": "for a free agent" if tasks else "for a free slot",
+        "blocked_by": "for another task" if tasks else "for another card",
+        "waits_on_person": "for a person",
+        "snoozed": "until its snooze ends",
+        "claim_expired": "for an update",
+        "plan_review": "for plan review",
+        "not_released": "for release",
+        "no_agent": "for an agent to connect",
+        "checks_pending": "for checks",
+    }
+    waits = []
+    for code, phrase in phrases.items():
+        if not (n := summary.get(code, 0)):
+            continue
+        one, many = ("task waits", "tasks wait") if tasks else ("card waits", "cards wait")
+        if tasks and waits:
+            one, many = "waits", "wait"
+        waits.append(f"{_plural(n, one, many)} {phrase}")
+    return busy + "." + (" " + ", ".join(waits) + "." if waits else "")
+
+
 def notes(summary: dict, *, used: int | None = None, cap: int | None = None) -> list[dict]:
     """Board-level sentences from a ``{code: count}`` summary: why cards wait and why few
     agents are working. Only codes with cards behind them appear, in ``CODES`` order."""
@@ -110,7 +156,9 @@ def notes(summary: dict, *, used: int | None = None, cap: int | None = None) -> 
         if not n:
             continue
         cards = _plural(n, "card", "cards")
-        if code == "blocked_by":
+        if code == "snoozed":
+            line = f"{cards} snoozed: they come back by themselves."
+        elif code == "blocked_by":
             line = f"{cards} wait for other cards to be Done."
         elif code == "waits_on_person":
             line = f"{cards} wait for a person to answer."

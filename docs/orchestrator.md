@@ -1,14 +1,18 @@
-# Orchestrator setup as code
+<a id="orchestrator-setup-as-code"></a>
 
-A board can carry one owner-approved orchestrator config: the roles that work
+# Coworker setup as code
+
+A board can carry one owner-approved Coworker config: the roles that work
 on it, their prompts, workflows, topics and models, the agent limit, the runner
 settings and the `todo` trigger. Commonplace's own runner (see
 [runner.md](runner.md)) launches the configured runner role with the pinned
 prompt, workflow and model and records the config version and model on every
 job. For other harnesses the rendered config is advisory.
 
-Nothing changes for a board until its owner accepts a live config with a
-`[runner]` table. Decisions, numbers and residuals are in `SYSTEM.md`.
+A board has no attached host until its owner accepts a live config with a
+`[runner]` table. Adding `session = true` to that table opts the board into a
+persistent board session, independently of `[[triggers]]` and the workspace
+splitting switch. Without it the board behaves as before: no session, no wake. Decisions, numbers and residuals are in `SYSTEM.md`.
 
 ## The config
 
@@ -23,7 +27,7 @@ with the standard library from Python 3.11 and with `tomli` on 3.10.
 schema = "commonplace.orchestrator/1"
 project = "example-shop"
 [limits]
-max_agents = 3                 # config-driven starts; min with the project limit
+max_agents = 3                 # 1-100; config-driven starts; min with the project limit
 [roles.main]
 kind = "orchestrator"
 harness = "t3"
@@ -59,6 +63,7 @@ role = "builder"
 machine = "mach_0123456789abcdef"
 project = "example"
 runtime_mode = "approval-required"
+session = true                 # optional, default false: opt in to a persistent board session
 [[triggers]]
 on = "card.todo"               # live channel only
 ```
@@ -79,6 +84,7 @@ most 16 roles, and a prompt is at most 32 KiB.
 | `runner.machine`, `runner.project`, `runner.runtime_mode` | **Enforced** through the machine's existing grant checks. |
 | `triggers` (`card.todo`, live), `limits.max_agents`, planner `connections` | **Enforced** (below). |
 | other roles, `skills`, `mcps` | **Advisory.** Rendered for sessions to read. |
+| `[factory]` (optional) | `gate.required` is **enforced** on new `merge` steps; checks and batch cadence are **declared** for agents and tools to read (see Merge policy). |
 
 ### Area preview slice 1, preview-only
 
@@ -95,7 +101,7 @@ writes refuse every area-bearing config, including experiment channels, with
 versions, cursors, leases, jobs and events. No area seats, tokens, subscriptions
 or runtime are created; activation belongs to a later slice.
 
-Model routing has four slots, `main` (orchestrator), `worker` (builder),
+Model routing has four slots, `main` (Coworker), `worker` (builder),
 `reviewer` and `gate`, set per project by the owner
 (`PUT /api/projects/<board>/models`) from the workspace's model list. A role the
 accepted config uses that has no model raises one owner item in Needs me; a start
@@ -115,10 +121,10 @@ and `model_reason` (`failed_rounds:<n>` or `label:<name>`), and the start
 reply carries `model_reason`. Without a rule nothing changes, and a role with no
 default model stays unmapped (`model_unresolved`) even when a rule exists. Which
 model escalation picked is a decision, not part of the request: a keyed retry
-(`request_key` or an orchestrator `step_key`) replays its stored job whether it ran
+(`request_key` or a Coworker `step_key`) replays its stored job whether it ran
 on the default or the escalation model and whether or not the rule still applies.
 The job records the digest of its request before escalation (default model
-included, `runner_jobs.request_base_hash`; an orchestrator step reaches it through
+included, `runner_jobs.request_base_hash`; a Coworker step reaches it through
 its job), and a retry replays only when its own pre-escalation digest equals it:
 a changed default model, config or other argument is a conflict
 (`request_conflict` / `step_conflict`) for an escalated job as for any other. The rule is
@@ -161,7 +167,7 @@ Agent tokens with an owner role are not the owner. The project's Connect seat
 
 | Path | Who | Lease | Cap |
 |---|---|---|---|
-| `orch_card_start(board, role, card, step_key, epoch, token, config_ref?)` | the lease holder | yes | yes |
+| `orch_card_start(board, role, card, step_key, epoch, token, config_ref?, fresh_reason?)` | the lease holder | yes | yes |
 | `card_start(…, config_ref?)` over MCP or `POST /api/card-starts` | the person owner only; anyone else gets `no: use orch_card_start` | no | yes |
 | trigger | the event's actor | no | yes |
 | `card_start_cancel` of a job that belongs to a step | the person owner only | – | – |
@@ -270,7 +276,7 @@ Inside it, in this order:
    with 4% of the budget used. The measured set is not exhaustive. Beyond the
    budget it
    refuses with `path_contract_too_large` (details `card`, `paths`,
-   `other_paths`, `budget`). `card_start` on a board without an orchestrator
+   `other_paths`, `budget`). `card_start` on a board without a Coworker
    config runs the same check before the job is inserted. Only runner starts
    and edits that add globs to a running card are checked: a card a connection
    takes by hand is not (and one `task_update` that adds globs and claims the
@@ -282,7 +288,10 @@ Inside it, in this order:
 4. **Cap.** Count distinct cards with a queued, leased, starting or uncertain
    job, with a job started within the last hour, or in `doing` with a
    connection assignee. Refuse at `min(max_agents, project limit)` with
-   `at_cap` when workspace orchestration is off, or `project_limit` when on.
+   `at_cap` when workspace Coworker management is off, or `project_limit` when on.
+   `max_agents` accepts 1 to 100. The effective number of concurrent starts is
+   also bounded by the machines: `max_in_flight`, one agent per project, and
+   the runner's memory guard (see [runner.md](runner.md)).
    Voided steps do not exempt their jobs from capacity accounting.
 5. **Insert** the step row and the runner job, with the existing guards: one
    active start per card, and a non-person start within 24 h is refused
@@ -298,7 +307,7 @@ checks and resolution. One active job per card blocks concurrent starts. After
 24 hours a non-person start may become eligible on a todo, unassigned card even
 if the earlier thread still runs. Capacity counts cards rather than threads;
 started jobs age out after one hour unless the doing/connection slot still
-counts (with orchestration on, the recent-start hold covers todo/doing cards
+counts (with Coworker management on, the recent-start hold covers todo/doing cards
 and ordinary connection slots also count). Neither rule proves completion.
 Triggers use independent `trig:<event>` keys, and owner `card_start` ignores
 step keys and the non-person 24-hour rule. A pending, unswept todo event can
@@ -307,13 +316,19 @@ and recent-start guards still apply. These are existing limits of admission.
 
 ## Triggers
 
-Only boards with an accepted live `[runner]` config are swept, on each wake-up
+Automatic per-card starts require an accepted live `[runner]` config with a `card.todo`
+trigger. Those boards are swept on each wake-up
 and on each runner lease. The sweep reads committed `task_events` after the
 board's cursor and fires when a card moves into `todo` from another status
 (`add`, `move`, `decide`), on the plan-approval row and on an origin release
 (`decide` with choice `release origin`), so a restricted-origin card that waited
 in `todo` starts once it is released. An event emission that failed after
 commit is still found.
+
+Without that trigger, a config that opted into a session (`session = true`)
+skips both the per-card event sweep and bounded split-root reconciliation: no
+automatic per-card starts or split retries are created. A config without
+`session = true` keeps its earlier sweep behaviour unchanged. The persistent board session still watches and continues independently.
 
 - **Cursor.** Accepting a config that adds `[runner]` commits the board's
   cursor as unset with a new generation; arming then sets it to the current
@@ -342,7 +357,7 @@ commit is still found.
   lists the board under `orchestrator_failing` until a sweep succeeds. Only
   the exception type is stored.
 - **Transient refusals are retried.** On a board without workspace
-  orchestration, a todo start refused as `at_cap`, `project_limit`, `busy`,
+  Coworker management, a todo start refused as `at_cap`, `project_limit`, `busy`,
   `settings_unavailable`, `config_changed`, `worker_unavailable` or
   `started_recently` is recorded as a miss, advances the cursor as before, and
   is started again by the sweep after 1, 5, 15, 30 and 60 minutes (same request
@@ -351,12 +366,81 @@ commit is still found.
   with a `retry_exhausted` miss. Any other refusal (a card that left `todo`,
   grants, the actor, an unresolved model, a pending restore) is final and not
   retried. The attempts live in `orch_start_retries` (`pending`, `started`,
-  `refused`, `exhausted`). With orchestration on, root cards keep the split
+  `refused`, `exhausted`). With Coworker management on, root cards keep the split
   reconciliation (three attempts at 10, 30 and 90 minutes). A card left in
   `exhausted` or `refused` stays in the checkpoint's unstarted list; move it to
   `todo` again to start it.
 
-## Durable orchestrator
+## Persistent board session
+
+The machine runner owns one session record per board in `runner_sessions`,
+separate from `runner_jobs` and from role leases. Its regular polling pass
+watches board state without a webhook or `card.todo` trigger. It launches the
+sole parentless Coworker role into the accepted runner's machine/project,
+with that role's topic, prompt, workflow and resolved model. It retains the
+returned thread ID and sends continuations to that same thread.
+
+A card is actionable unless it is done, has an unresolved `task_blockers`
+dependency, or has a person-directed ask. Blocked cards expose their dependency
+names or question in the project response. Backlog, unfinished split children,
+Doing and other Review cards still count; capacity limits are not blockers.
+When a host turn ends, the hub checks the entire board again. Actionable cards
+schedule continuation; otherwise the session becomes idle. A later new card or
+unblocked card wakes an idle session. A clear idle board causes no host calls
+and no model turns. Running threads are inspected without sending model input.
+
+`GET /api/projects/<board>` includes session state, reason and pending command.
+Only workspace owners receive the thread ID, actionable card numbers and
+blocker details; non-owner projections omit those fields. An absent
+accepted `[runner]` is `no_host`, with reason `no host attached`; a `[runner]`
+without `session = true` is `no_host` with reason `sessions not enabled`. No
+machine is chosen implicitly. `unavailable` reports withdrawn grants or changed config,
+binding or model instead of claiming the Coworker is running.
+
+Signed-in owners can POST `{}` to
+`/api/projects/<board>/orchestrator/stop` or `/resume`. Stop persists across
+polls and new cards until explicit resume. `stopping` means interruption is
+pending; `stopped` is distinct from idle. A stop racing a launch retains the
+in-flight acknowledgement so its thread can be interrupted. Neither an agent
+seat nor a worker token gains owner or requester authority.
+
+The machine-only `POST /api/runner/sessions/lease`, `/starting` and `/result`
+protocol leases one fenced command at a time. Fresh accepted config, its
+accepting owner's current requester identity, machine binding/epoch, grants,
+wing access and model selection are checked before host effects. Restore
+markers and flags refuse commands. Launches, continuations and stops have a
+local replay journal: ambiguous effects become `uncertain`, never automatically
+replayed or cleared by resume. Owner stop preserves the uncertainty marker,
+including for a subsequent resume. Config/binding/model changes also fail closed.
+
+A lease pass filters configs by the requesting machine before reading board
+cards, and skips unavailable boards individually. Archived or missing boards
+cannot starve another board or machine. If a board disappears before a command
+starts, the command closes without a host effect. If it disappears during a
+turn, the result is still acknowledged and the local journal is cleared. An
+observed finished/stopped thread becomes idle/stopped; a possibly running thread
+retains its binding and becomes uncertain. Prior uncertainty and owner stop
+remain durable. Status reports `unavailable` without thread or card details;
+control refuses an already missing board but acknowledges a stop committed
+before its disappearance. Storage failures still fail closed and retain results
+for retry. Invalid local session journals are
+quarantined. Session journal, transport or command failures are isolated from
+per-card leasing in the same runner pass.
+
+A local command refusal sends `sessions/result` with `outcome="refused"` and a
+known `code` while the command is still leased, before any host effect. The
+project session then reports `unavailable` and that reason. Refusals are fenced
+and journaled; they cannot replace an already-starting or uncertain result.
+
+Recovery/rebinding after ambiguity or changed configuration, runner service
+activation, richer owner UI, and coordination beyond the host's existing
+credential scope remain follow-up work. The runner must already be running;
+this feature does not enroll machines, activate a service, change credentials
+or grant access. Session commands do not reserve per-card worker slots.
+
+<a id="durable-orchestrator"></a>
+
+## Durable Coworker
 
 - **Lease.** One per `(board, role)`. `orch_resume` claims it when none is
   held, after release or expiry, or when the owner forces it. The token is
@@ -405,6 +489,17 @@ commit is still found.
   (stored, never acted on).
 - **Gates.** `gate_pass`, `gate_fail`, `gate_error`, `gate_budget`; one gate
   per `(board, repo, PR, head)` across roles unless the owner voids it.
+- **Result destinations.** Each journal step records a `destination` before
+  its effect: `{kind: "card", board, card}` when it has an owning card,
+  otherwise `{kind: "parked", reason: "no_owning_card"}`. This covers journal
+  completions, gate verdicts, `next` notes and runner-start results derived
+  from their jobs. The checkpoint includes destinations on steps and a
+  bounded `parked` list of finished results, including `next` notes. `next_step`
+  exposes the full latest note and its destination alongside the existing `next`
+  text. A park
+  records the missing ownership explicitly; it requires owner follow-up and
+  does not dispatch a message. Existing journal rows gain destination metadata
+  on first open without changing their content, evidence, state or history.
 - **External effects** are never re-issued by the hub. Before any re-issue the
   resume protocol checks the truth source: merge → PR state and head; gate →
   the PR's `Reviewed head:` and `Verdict:` lines, else `needs_person`; runner
@@ -432,10 +527,73 @@ commit is still found.
   Runner jobs carry `source: "runner"`. The list is derived on every read;
   the hub does not check that the thread exists.
 
+## Merge policy
+
+A config may carry one optional `[factory]` section: what guards a merge on
+this board. It is versioned, diffed and accepted with the rest of the config,
+so there is one place to read it and one owner approval to change it. An
+experiment cannot change it. A config without `[factory]` has no policy and
+the board behaves as it did before the section existed.
+
+```toml
+[factory.gate]
+required = true                # a merge step needs a passed gate
+name = "merge gate review"     # optional label
+[factory.checks.affected-tests]   # one table per check, named [a-z0-9-]{1,32}
+required = true                # default true
+scope = "affected"             # "affected" (default) or "full": the tests it runs
+pass = ["PASS"]                # the only outcomes that count
+never_pass = ["FALLBACK", "SUPERSEDED"]      # named so nobody argues later
+[factory.batch]
+branch = "develop"
+full_suite = "per-batch"       # "per-pr", "per-batch" or "off"
+on_red = "hold-merges"         # or "report"
+```
+
+The example is the policy this project ran on 11 November 2026: a pull request
+merges on a passed gate plus a green check of the affected tests on the same
+head; the full suite runs once per batch on the integration branch and a red
+batch holds further merges.
+
+What the schema refuses (`factory_contradiction` unless noted):
+
+- `timeout`, `skip`, `skipped` or `error` in `pass`, in any letter case. These
+  never count as a pass, and every summary names them.
+- The same outcome in `pass` and `never_pass`.
+- A policy that requires neither the gate nor any check.
+- `full_suite = "per-batch"` with a required check of `scope = "full"`, and
+  `full_suite = "per-pr"` without one.
+- `on_red` with `full_suite = "off"`.
+- Unknown keys, an empty `pass`, more than 16 checks or 16 outcomes per list
+  (the usual `unknown_key`, `invalid_value`, `too_many`).
+
+Where it is read:
+
+- **The journal.** With `gate.required = true`, a new `merge` step
+  (`orch_journal_intent`) needs a card, and the newest unvoided gate opened
+  for that card on this board must be `gate_pass`. Otherwise the step is
+  refused with `factory_card_required` or `factory_gate_required` (409; the
+  details carry the blocking gate) and nothing is written. A fail, error,
+  budget or still-open gate on a newer head blocks the merge of an older
+  passed head. A retry of a stored merge step still returns it.
+- **Agents.** `orch_config_get` returns `factory` (`policy`, `summary`) next
+  to the accepted version; `orch_checkpoint` and `orch_resume` carry `factory`
+  (`policy`, `summary`, `gates`) in the checkpoint; `orch_config_render` and
+  `commonplace orch render` end with a "Merge policy" list. The key is absent
+  when the accepted config has no `[factory]`.
+- **The app.** Project settings shows the summary lines under "Merge policy",
+  beside the accepted config version, with the board's gate counts.
+
+`gates` counts the board's unvoided gates by state (`open`, `gate_pass`,
+`gate_fail`, `gate_error`, `gate_budget`). Check outcomes are not reported to
+the hub, so the hub does not enforce `checks` or `batch`: the tool that runs a
+check reads them from the accepted version. `.commonplace/checks.toml` is a
+different file: the quick commands a repository runs before a push.
+
 ## Restore
 
 A restore made with `commonplace restore` leaves a marker. The first open of
-the orchestrator store by a surface, the CLI, a lease call or a start turns it
+the Coworker store by a surface, the CLI, a lease call or a start turns it
 into a flag in `runner.sqlite3` with a new incarnation, and every lease is
 dropped. The trigger sweep never converts the marker; it skips the workspace
 while one is pending. While the flag is set, lease claims, config-driven starts and the
@@ -494,3 +652,56 @@ project limit; model or harness routing for non-runner roles and more than two
 model slots; non-T3 runner harnesses, other triggers and experiment triggers;
 lease-fenced card moves and early handoff transfer; an owner UI; evaluations and
 replay of recorded runs.
+
+- **One bounded repair per failing check.** The checks the hub observes are
+  gates. The first `gate_fail` of a pull request opens its one repair and pins
+  the recording role as owner. Failed gates on later heads of that pull
+  request, from any role, join it; no second repair starts. `gate_pass`
+  resolves it. Work identity spans the successive heads of one pull request.
+  After `fleet.repair_attempts` failures (default 3) the repair is exhausted:
+  its destination is `{kind: "parked", reason: "repair_exhausted"}` and
+  `orch_gate_open` refuses that pull request (`repair_exhausted`) until the
+  owner raises the bound in the accepted config. The checkpoint lists
+  `repairs` with owner, failures, bound and state; `gate_record` returns the
+  `repair` it fed.
+- **Findings go to the owning session.** A failed gate and `orch_finding` (a
+  review finding about a card) are routed by the hub, never by the reporter, to
+  the role whose lease started the card's latest unvoided runner start, while
+  that lease is live. The finding is `routed` with destination
+  `{kind: "session", board, role}`; the owner reads it in its checkpoint
+  (`inbox_findings`) and acknowledges it with `orch_finding_ack` (only that
+  role, fenced). Otherwise it is `parked` with a reason: `no_owning_card`,
+  `no_owning_session`, `owner_session_gone` (lease released or expired) or
+  `routing_off`. Parked findings stay in the board-wide checkpoint `findings`
+  list. Those parked with an owner role (`owner_session_gone`, `routing_off`) also
+  appear in that role's `inbox_findings`, which is read on its own and not cut by
+  the board-wide list; `no_owning_card` and `no_owning_session` have no owner,
+  appear only in `findings` and cannot be acknowledged. Liveness is
+  the lease, the one session signal the hub has; a routed finding is delivered
+  to the checkpoint and proven received by the acknowledgement.
+- **No fresh agent while one with the context has capacity.** On `orch_card_start`
+  the context holder is the latest started agent (a started job with a thread)
+  of the card or its parent or children that is unfinished and started within
+  six hours. It has capacity while the unfinished cards it carries, plus this
+  one, stay within `fleet.agent_cards` (default 2). With a holder that has
+  capacity the start is refused (`agent_has_capacity`, details: `thread_id`,
+  `job`, `card`) unless the caller passes `fresh_reason`. Every new runner-start
+  step records `fresh_reason`: the caller's text, or `no_context_agent`,
+  `agent_full` or `reuse_off`; the checkpoint shows it. Person starts and
+  trigger starts are not subject to this rule and record no reason.
+
+The three rules are defaults of every board. A board overrides them in the
+accepted config's optional table:
+
+```toml
+[fleet]
+repair_attempts = 3    # 1-10 failed gates one repair absorbs
+route_findings = true  # false parks every finding as routing_off
+reuse_agents = true    # false never refuses a start; the reason is reuse_off
+agent_cards = 2        # 1-20 unfinished cards one agent may carry
+```
+
+Recorded destinations establish where a result belongs. Only an
+acknowledgement proves that a session received a finding, and only the runner's
+started job with a thread proves that an agent exists; the hub does not know
+whether that thread still has room beyond `fleet.agent_cards`.

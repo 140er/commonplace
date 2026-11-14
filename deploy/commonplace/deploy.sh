@@ -69,7 +69,7 @@ cleanup_backup_reference() {
 
 main() {
     local owner mode
-    local key value line config start before after result latest timestamp snap now rendered health execution
+    local key value line config start before after result latest timestamp snap now rendered health execution requested running
     local unit_timeout
     [[ $(id -u) == 0 ]] || die preflight 'must run as root'
     [[ $# == 0 && ! -v SKIP_BACKUP ]] || die usage 'deploy.sh accepts no arguments'
@@ -83,7 +83,7 @@ main() {
             [[ $line =~ ^[A-Z_][A-Z0-9_]*= ]] || continue
             key=${line%%=*}
             case $key in
-                DEPLOY_BACKUP_UNIT|DEPLOY_BACKUP_TIMEOUT|DEPLOY_BACKUP_CHECK_CMD|DEPLOY_BACKUP_LATEST_CMD|DEPLOY_BACKUP_MAX_AGE|APP_PORT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) ;;
+                DEPLOY_BACKUP_UNIT|DEPLOY_BACKUP_TIMEOUT|DEPLOY_BACKUP_CHECK_CMD|DEPLOY_BACKUP_LATEST_CMD|DEPLOY_BACKUP_MAX_AGE|APP_PORT|COMPOSE_FILE|COMPOSE_ENV_FILE|COMMONPLACE_BUILD_COMMIT|COMMONPLACE_SOURCE_DIR|COMMONPLACE_ENV_FILE|COMMONPLACE_DATA_DIR) ;;
                 *) continue ;;
             esac
             value=${line#*=}
@@ -196,10 +196,20 @@ main() {
     local -a compose=(docker compose -f "$COMPOSE_FILE" --env-file "$COMPOSE_ENV_FILE")
     rendered=$("${compose[@]}" config --format json 2>/dev/null) || die deploy 'compose config failed'
     jq --arg port "$APP_PORT" -e 'all(.services[] | .ports[]? | select(.published != null); .host_ip == "127.0.0.1" and (.published | tostring) == $port)' <<< "$rendered" >/dev/null 2>&1 || die deploy 'published ports must use loopback'
-    "${compose[@]}" up -d --build || die deploy 'compose up failed'
+    requested=${COMMONPLACE_BUILD_COMMIT:-}
+    [[ -z $requested || $requested =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || die release 'COMMONPLACE_BUILD_COMMIT must be a full lowercase commit'
+    "${compose[@]}" up -d --build --wait --wait-timeout 90 || die deploy 'compose up failed'
     "${compose[@]}" ps || die deploy 'compose ps failed'
     health=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$APP_PORT/healthz") || health=unavailable
     printf '[deploy] healthz: %s\n' "$health"
+    if [[ -z $requested ]]; then
+        printf '[deploy] release attestation: not requested\n'
+        return 0
+    fi
+    [[ $health == 200 ]] || die deploy 'health probe failed'
+    running=$("${compose[@]}" exec -T commonplace python -c "from importlib.resources import files; from urllib.request import urlopen; response = urlopen('http://127.0.0.1:8765/healthz', timeout=10); assert response.status == 200; print(files('commonplace.web').joinpath('_build_commit.txt').read_text(encoding='ascii').strip())") || die release 'cannot attest running package'
+    [[ $running == "$requested" ]] || die release 'running package differs from requested commit'
+    printf '[deploy] verified release: %s\n' "$running"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

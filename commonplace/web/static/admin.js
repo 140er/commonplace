@@ -1,7 +1,7 @@
 /** Read-first workspace administration, with independently bounded section loads. The one write is the owner's machine requester list. */
 const SECTIONS = {
   users: 'Users and workspaces', connections: 'Agents and connections',
-  runtime: 'Orchestrators and runners/machines', limits: 'Agent limits',
+  runtime: 'Coworkers and runners/machines', limits: 'Agent limits',
   stuck: 'Needs-me and stuck cards', deploy: 'Deployment and health', backups: 'Backups', 'index-stats': 'Memory index',
 };
 
@@ -27,7 +27,7 @@ export async function boundedRequest(api, path, { timers = globalThis, signal } 
   }
 }
 
-export function createAdmin({ mount, api, e, current, runners = null, timers = globalThis }) {
+export function createAdmin({ mount, api, e, current, runners = null, invites = null, timers = globalThis }) {
   let host = null, body = null, workspace = null, epoch = 0, live = false, instanceBlocked = false;
   const sections = new Map(), requests = new Map(), generations = new Map(), writing = new Set(), notes = new Map();
   const owner = () => current()?.can_admin === true;
@@ -46,10 +46,10 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
 
   function runtimeContent(data) {
     const flag = data.orchestration, agents = data.orchestrators, machines = data.machines;
-    let html = flag.state === 'ready' ? `<p>Orchestration ${flag.enabled ? 'enabled' : 'disabled'}</p>` : sourceError('runtime', 'Orchestration', flag);
-    html += '<h3>Orchestrators</h3><p>Activity records token use, not a running process.</p>';
-    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [r.name, r.coordinator || r.seat_name, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Orchestrators', agents);
-    if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Orchestrators', agents);
+    let html = flag.state === 'ready' ? `<p>Coworker management ${flag.enabled ? 'enabled' : 'disabled'}</p>` : sourceError('runtime', 'Coworker management', flag);
+    html += '<h3>Coworkers</h3><p>Activity records token use, not a running process.</p>';
+    html += agents.state === 'ready' ? `<p>${e(agents.count)} projects</p>` + (agents.items.length ? rows(['Project', 'Coordinator', 'Configuration', 'Connection', 'Activity', 'Last used', 'Wakeable'], agents.items.map(r => [r.name, r.coordinator || r.seat_name, ({coordinator:'Coordinator',seat:'Stored seat',not_configured:'Not configured'})[r.source], r.connected ? 'Connected' : 'Not connected', r.activity, r.last_used_at, r.wakeable ? 'Eligible for a wake' : 'No eligible subscription'])) : '<p>No projects configured.</p>') + moreButton('runtime', 'orchestrators', agents) : sourceError('runtime', 'Coworkers', agents);
+    if (agents.state === 'ready' && agents.error) html += sourceError('runtime', 'Coworkers', agents);
     html += '<h3>Registered machines</h3><p>Contact records activity, not runner liveness. Owner attestation is not verified.</p>';
     html += machines.state === 'ready' ? `<p>${e(machines.count)} machines</p>` + (machines.items.length ? rows(['Machine', 'State', 'Binding', 'Machine contact', 'Worker contact', 'Limits'], machines.items.map(r => [r.label, r.revoked_at ? 'revoked' : r.enabled ? 'enabled' : 'disabled', `${r.binding_state}; not verified`, `${contact(r.activity)} · ${r.machine_last_used_at || '—'}`, `${contact(r.worker_activity)} · ${r.worker_last_used_at || '—'}`, `${r.max_in_flight} in flight; ${r.max_starts_per_hour} starts/hour`])) : '<p>No registered machines.</p>') + moreButton('runtime', 'machines', machines) : sourceError('runtime', 'Machines', machines);
     if (machines.state === 'ready' && machines.error) html += sourceError('runtime', 'Machines', machines);
@@ -106,7 +106,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
 
   function limitsContent(data) {
     return '<p>Workspace concurrency cap: not configured. Project and machine limits apply separately.</p>' +
-      (data.projects.length ? rows(['Project', 'Configured', 'Accepted config', 'Effective', 'Used', 'Counting mode'], data.projects.map(r => [r.name, r.configured_max_agents ?? 'Unlimited', r.accepted_config_max_agents, r.effective_max_agents ?? 'Unlimited', r.used, ({orchestration_slots:'Orchestration slots',distinct_doing_agents:'Distinct doing agents'})[r.counting_mode]])) : '<p>No project limits configured.</p>') + moreButton('limits', 'projects', data.pagination?.projects) +
+      (data.projects.length ? rows(['Project', 'Configured', 'Accepted config', 'Effective', 'Used', 'Counting mode'], data.projects.map(r => [r.name, r.configured_max_agents ?? 'Unlimited', r.accepted_config_max_agents, r.effective_max_agents ?? 'Unlimited', r.used, ({orchestration_slots:'Coworker management slots',distinct_doing_agents:'Distinct doing agents'})[r.counting_mode]])) : '<p>No project limits configured.</p>') + moreButton('limits', 'projects', data.pagination?.projects) +
       '<h3>Machine grants</h3>' + (data.machines.length ? rows(['Machine', 'In flight', 'Starts/hour'], data.machines.map(r => [r.id, r.max_in_flight, r.max_starts_per_hour])) : '<p>No machine grants configured.</p>') + moreButton('limits', 'machines', data.pagination?.machines);
   }
 
@@ -177,7 +177,7 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
     host?.removeEventListener('click', click);
     globalThis.document?.removeEventListener('session-expired', stop);
     globalThis.document?.removeEventListener('signout', stop);
-    runners?.stop();
+    runners?.stop(); invites?.stop();
     if (host) host.innerHTML = '';
     body = null; workspace = null;
   }
@@ -281,10 +281,11 @@ export function createAdmin({ mount, api, e, current, runners = null, timers = g
     if (!owner()) { host.innerHTML = '<p role="status">a signed-in workspace owner is required</p>'; return; }
     workspace = current().workspace; live = true; instanceBlocked = false;
     // The runner block sits beside the refreshing sections so its form and one-time tokens survive their redraws.
-    if (runners) {
-      host.innerHTML = '<div data-admin-body></div><div data-admin-runners></div>';
+    if (runners || invites) {
+      host.innerHTML = '<div data-admin-body></div><div data-admin-invites></div><div data-admin-runners></div>';
       body = host.querySelector('[data-admin-body]');
-      runners.show(host.querySelector('[data-admin-runners]'));
+      invites?.show(host.querySelector('[data-admin-invites]'));
+      runners?.show(host.querySelector('[data-admin-runners]'));
     }
     for (const key of ['users', 'connections', 'runtime', 'limits', 'stuck', 'needs']) sections.set(key, { data: null, error: '', restricted: false });
     for (const key of ['deploy','health','backups','backup-online','backup-offline','index-stats']) sections.set(key, { data:null, error:instanceOwner() ? '' : 'Instance administrator access required', restricted:!instanceOwner() });

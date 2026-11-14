@@ -32,6 +32,7 @@ SCOPES = (
     "cards:decide",
     "bots:chat",
     "bots:confirm",
+    "bots:learned",
 )
 OAUTH_DEFAULT_SCOPES = ("memory:read", "memory:write")
 
@@ -100,8 +101,14 @@ def challenge(verifier: str) -> str:
 
 
 def ensure_schema(db) -> None:
+    from commonplace import person_actions
+    from commonplace.account import person_token
+
     with db._lock:
-        db._conn.executescript(SCHEMA)
+        db._conn.executescript(SCHEMA + person_actions.SCHEMA + person_token.SCHEMA)
+        columns = {r[1] for r in db._conn.execute("PRAGMA table_info(oauth_person_grants)")}
+        if "cursor_secret" not in columns:
+            db._conn.execute("ALTER TABLE oauth_person_grants ADD COLUMN cursor_secret TEXT")
 
 
 def client(db, client_id: str):
@@ -163,6 +170,12 @@ def _revoke(conn, connection_id):
     )
     conn.execute(
         "UPDATE oauth_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE connection_id = ?",
+        (now(), connection_id),
+    )
+    conn.execute("DELETE FROM account_delete_checks WHERE connection_id = ?", (connection_id,))
+    conn.execute(
+        "UPDATE account_delete_tokens SET revoked_at = COALESCE(revoked_at, ?) "
+        "WHERE connection_id = ?",
         (now(), connection_id),
     )
 
@@ -254,10 +267,11 @@ def _guess_client(client_row) -> str:
     return "other"
 
 
-def create_code(conn, client_row, principal, parameters) -> str:
+def create_code(conn, client_row, principal, parameters, *, person_capabilities=()) -> str:
     granted = set(parameters["scope"].split())
-    if granted & {"bots:chat", "bots:confirm"} and not (
-        principal.person and ("bots:confirm" not in granted or "bots:chat" in granted)
+    if granted & {"bots:chat", "bots:confirm", "bots:learned"} and not (
+        principal.person
+        and ("bots:chat" in granted or not granted & {"bots:confirm", "bots:learned"})
     ):
         # Consent already drops an unticked grant; never mint one for anything but a person.
         raise OAuthError("invalid_scope")
@@ -295,6 +309,13 @@ def create_code(conn, client_row, principal, parameters) -> str:
             principal.user_id,
             iso(),
         ),
+    )
+    from commonplace import person_actions
+
+    if person_capabilities and "memory:read" not in granted:
+        raise OAuthError("invalid_scope")
+    person_actions.record_grants(
+        conn, client_row, principal, cid, person_capabilities, now(), parameters["redirect_uri"]
     )
     code = secrets.token_urlsafe(32)
     conn.execute(

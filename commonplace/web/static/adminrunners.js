@@ -3,6 +3,8 @@ const MODES = ['approval-required', 'auto-accept-edits', 'auto', 'full-access'];
 const SETUP_NOTE = 'Setup: put the machine token in the environment variable the runner config names as token_env, and the worker token in the Commonplace MCP entry of the worker\'s provider instance. Set hub_url to this site\'s address, then run "python -m commonplace runner check --config <file>" before starting the runner. See docs/runner.md.';
 // The wing list is a separate read; the machine list never waits on it, and a failed read still lets the owner type a wing.
 const LIST_TIMEOUT_MS = 15000, WINGS_TIMEOUT_MS = 15000;
+const GRANT_NOTE = 'Projects and the maximum runtime mode do not reset the binding: the machine stays as attested. Changing wings or topics is separate and does.';
+const AUTO_WARNING = 'Warning: in auto and full-access mode the agents on this machine run without per-command approval. Only choose them for a machine you trust with every project listed.';
 const RESET_NOTE = 'Changing wings or topics resets this machine to unbound: queued and leased starts are cancelled and the machine must be attested again. Saving the same wings only refreshes the worker\'s access.';
 
 export const parseList = text => [...new Set(String(text || '').split(',').map(part => part.trim()).filter(Boolean))];
@@ -31,6 +33,11 @@ export function enrollBody(values) {
     max_runtime_mode: values.max_runtime_mode,
     max_in_flight: Number(values.max_in_flight),
   };
+}
+
+// A partial grant edit: no wings or topics key, so the server keeps the binding as attested.
+export function grantBody(values) {
+  return { projects: parseList(values.projects), max_runtime_mode: values.max_runtime_mode };
 }
 
 export function attestBody(values) {
@@ -80,10 +87,15 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
       <label>Provider instance id<input name="provider_instance_id" required value="${e(m.binding_provider_instance_id || '')}" autocomplete="off"></label>
       <label>Worker connection id<input name="worker_connection_id" required value="${e(m.worker_connection_id)}" autocomplete="off"></label>
       <button type="submit" class="btn">Attest</button></form>
+      <form class="agent-form" data-runner-form="grant" data-runner-id="${id}"><h4>Edit projects and runtime</h4>
+      <label>Projects (comma separated)<input name="projects" required value="${e(m.projects.join(', '))}" autocomplete="off"></label>
+      <label>Max runtime mode<select name="max_runtime_mode">${MODES.map(mode => `<option value="${e(mode)}"${mode === m.max_runtime_mode ? ' selected' : ''}>${e(mode)}</option>`).join('')}</select></label>
+      <p>${e(GRANT_NOTE)}</p><p role="note" data-runner-warning>${e(AUTO_WARNING)}</p><button type="submit" class="btn">Save projects and runtime</button></form>
       <form class="agent-form" data-runner-form="wings" data-runner-id="${id}"><h4>Edit wings</h4>${wingBoxes(m.wings)}
       <p>${e(RESET_NOTE)}</p><button type="submit" class="btn">Save wings</button></form>${revokeControl(m)}` : '';
     return `<article class="runner-machine" aria-label="${e(m.label)}"><h3>${e(m.label)}</h3>
       <p>${e(state)} · ${e(m.binding_state)}, not verified · ${e(m.max_runtime_mode)} · ${e(m.max_in_flight)} in flight</p>
+      ${m.lifecycle ? `<p role="status">${e(m.lifecycle.service)} · Host verification: ${e(m.lifecycle.host_verification)}</p>` : ''}
       <p>Projects: ${e(m.projects.join(', '))} · Topics: ${e(m.topics.join(', '))} · Wings: ${e(m.wings.join(', '))}</p>${forms}</article>`;
   };
   const renderList = resetForm => {
@@ -133,6 +145,15 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
         await api(`/api/runners/${encodeURIComponent(id)}/attest`, { method: 'POST', body: attestBody(values) });
         if (mine !== epoch) return;
         status('Attested. This is your statement; Commonplace does not verify it.');
+      } else if (kind === 'grant') {
+        const row = machines.find(m => m.machine_id === id);
+        if (!row) throw new Error('This machine is no longer listed. Reload to try again.');
+        const body = grantBody(values);
+        if (!body.projects.length) throw new Error('Name at least one project.');
+        // If-Match is the grant version this page read; a newer one means another edit came first (409).
+        await api(`/api/runners/${encodeURIComponent(id)}`, { method: 'PATCH', body, headers: { 'If-Match': String(row.grant_version) } });
+        if (mine !== epoch) return;
+        status('Projects and runtime mode saved. The attestation is unchanged.');
       } else if (kind === 'wings') {
         const chosen = chosenWings(values);
         if (!chosen.length) throw new Error('Choose at least one wing.');
@@ -142,7 +163,11 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
       }
       await load(kind === 'enroll');
     } catch (error) {
-      if (mine === epoch) status(error.message || 'Request failed', true);
+      if (mine !== epoch) return;
+      const conflict = kind === 'grant' && error.status === 409;
+      status(`${error.message || 'Request failed'}${conflict ? ' The list was reloaded; check the values and save again.' : ''}`, true);
+      // A conflict means this page's grant version is old; reload so the next save uses the current one.
+      if (conflict) await load();
     } finally {
       busy = false;
     }

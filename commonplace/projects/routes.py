@@ -58,6 +58,13 @@ def _view(gateway, principal, board):
         "escalation": rule.public() if rule is not None else None,
         "can_configure": principal.person and principal.role == "owner",
     }
+    from commonplace.runner import sessions
+
+    result["session"] = sessions.status(gateway, principal.workspace_id, board["slug"])
+    if not result["can_configure"]:
+        result["session"] = {
+            k: v for k, v in result["session"].items() if k in ("state", "reason", "pending")
+        }
     if orchestration.enabled(gateway.db, principal.workspace_id):
         seat = seats.ensure_main(gateway.db, principal.workspace_id, board["slug"])
         live = seats.active_connection(gateway.db, principal.workspace_id, seat.connection_id)
@@ -84,7 +91,7 @@ def orchestration_route(gateway, h):
     if principal is None:
         return
     if h.command != "GET" and principal.role != "owner":
-        send_json(h, 403, {"error": "Only workspace owners can configure orchestration"})
+        send_json(h, 403, {"error": "Only workspace owners can configure Coworker management"})
         return
     try:
         if h.command == "GET":
@@ -95,13 +102,13 @@ def orchestration_route(gateway, h):
             except ValueError:
                 return
             if set(body) != {"enabled"}:
-                raise ValueError("Invalid orchestration settings")
+                raise ValueError("Invalid Coworker management settings")
             payload = orchestration.set_enabled(gateway.db, principal, body["enabled"])
     except orchestration.AdmissionRefused as exc:
         send_json(h, exc.status, {"error": exc.code})
         return
     except ValueError:
-        send_json(h, 400, {"error": "Invalid orchestration settings"})
+        send_json(h, 400, {"error": "Invalid Coworker management settings"})
         return
     send_json(h, 200, payload)
 
@@ -160,6 +167,8 @@ def _project_action(method, parts):
     if len(parts) == 1 and method == "GET":
         return "view"
     routes = {
+        ("POST", ("orchestrator", "stop")): "stop",
+        ("POST", ("orchestrator", "resume")): "resume",
         ("POST", ("orchestrator", "connect")): "connect",
         ("POST", ("orchestrator", "trust")): "trust",
         ("GET", ("orchestrator", "inbox")): "inbox",
@@ -176,8 +185,16 @@ def _project_action(method, parts):
 
 
 def _valid_project_body(h, action, body):
-    if action == "wing" and (not isinstance(body, dict) or body):
-        send_json(h, 400, {"error": "Own-wing body must be exactly {}"})
+    if action in ("wing", "stop", "resume") and (not isinstance(body, dict) or body):
+        send_json(
+            h,
+            400,
+            {
+                "error": "Own-wing body must be exactly {}"
+                if action == "wing"
+                else "Session control body must be exactly {}"
+            },
+        )
         return False
     if action == "escalation" and (not isinstance(body, dict) or set(body) != {"rule"}):
         send_json(h, 400, {"error": "Invalid escalation rule"})
@@ -195,6 +212,10 @@ def _valid_project_body(h, action, body):
 def _project_result(gateway, principal, service, board, action, body):
     slug = board["slug"]
     seats.ensure_main(gateway.db, principal.workspace_id, slug)
+    if action in ("stop", "resume"):
+        from commonplace.runner import sessions
+
+        return 200, sessions.control(gateway, principal, slug, action)
     if action == "connect":
         return connect.connect(
             gateway,
@@ -290,6 +311,13 @@ def _route(gateway, h):
     if action in ("panel_view", "panel_set"):
         panel_routes.handle(gateway, h, parts, action)
         return
+    if (parts[1:] == ["learning"] and h.command in ("GET", "PATCH")) or (
+        parts[1:] == ["learned"] and h.command == "GET"
+    ):
+        from commonplace.bots import learned_routes
+
+        learned_routes.project_route(gateway, h, parts[0], parts[1:])
+        return
     splitting = action in ("inbox", "split")
     principal = require_principal(gateway, h) if splitting else _person(gateway, h)
     if principal is None:
@@ -305,5 +333,5 @@ def install(gateway) -> None:
         gateway.add_route(
             method, "/api/settings/orchestration", lambda h: orchestration_route(gateway, h)
         )
-    for method in ("GET", "POST", "PUT"):
+    for method in ("GET", "POST", "PUT", "PATCH"):
         gateway.add_prefix_route(method, "/api/projects/", lambda h: _route(gateway, h))

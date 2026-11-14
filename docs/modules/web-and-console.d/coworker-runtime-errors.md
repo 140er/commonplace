@@ -1,0 +1,2 @@
+- **Promises:** Runtime source errors use Coworker display labels without renaming response keys or pagination sources.
+- **Tests:** `tests/test_coworker_tool_copy.py::test_runtime_failure_copy_uses_display_names` forces every source to fail and verifies the safe displayed names.

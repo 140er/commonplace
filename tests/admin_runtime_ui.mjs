@@ -39,7 +39,7 @@ try {
     assert.match(html,/Activity records token use, not a running process/);
     assert.match(html,/Coordinator/);assert.match(html,/Stored seat/);assert.match(html,/Not configured/);
     assert.doesNotMatch(host.innerHTML,/distinct_doing_agents|orchestration_slots|not_configured/);
-    assert.match(host.innerHTML,/Distinct doing agents/);assert.match(host.innerHTML,/Orchestration slots/);
+    assert.match(host.innerHTML,/Distinct doing agents/);assert.match(host.innerHTML,/Coworker management slots/);
   } else if(process.argv[2]==='requesters') {
     const machines=(requesters)=>({state:'ready',count:2,has_more:false,requester_candidates:[{id:'conn_a',name:'planner <a>'},{id:'conn_b',name:'planner-b'}],items:[{id:'mach_1',label:'<Machine>',enabled:true,binding_state:'unbound',max_in_flight:1,max_starts_per_hour:2,grant_version:7,requesters},{id:'mach_2',label:'Gone',enabled:false,revoked_at:'2026-01-01T00:00:00Z',binding_state:'unbound',requesters:[]}]});
     const payload=requesters=>({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0},machines:machines(requesters)});
@@ -135,7 +135,7 @@ try {
   } else {
     find('runtime').resolve({workspace_id:'ws-one',orchestration:{state:'ready',enabled:true},orchestrators:{state:'ready',items:[],count:0,has_more:false},machines:{state:'error',error:'Machines unavailable; try again'}});
     find('stuck').resolve(stuck([card(1)],true));await flush();
-    assert.match(section(host.innerHTML,'runtime'),/Orchestration enabled/);
+    assert.match(section(host.innerHTML,'runtime'),/Coworker management enabled/);
     assert.match(section(host.innerHTML,'runtime'),/Machines unavailable/);
     assert.match(section(host.innerHTML,'runtime'),/Retry/);
     assert.match(section(host.innerHTML,'stuck'),/Load more/);

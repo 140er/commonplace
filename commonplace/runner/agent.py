@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import os
 import re
 import stat
@@ -16,8 +17,11 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from ..client import ClientError, _endpoint
 from ..handoff.hook import _atomic_text, _NoRedirect
+from ..http_util import log_failure
 from ..mailer import _loopback
-from . import grant_scope
+from . import grant_scope, launch_output
+
+logger = logging.getLogger(__name__)
 
 WORKSPACE_STRATEGY = {"type": "root"}  # UNVERIFIED until D2
 SPAWN_MESSAGE = (
@@ -60,6 +64,8 @@ _CONFIG_KEYS = {
     "binding_acks",
     "projects",
 }
+_OPTIONAL_CONFIG_KEYS = {"min_free_memory_mb"}
+DEFAULT_MIN_FREE_MEMORY_MB = 256  # headroom below which this machine refuses a start
 _PROJECT_KEYS = {"project_id", "shared_checkout_ack", "runtime_ceiling", "runtime_ack"}
 
 
@@ -118,7 +124,14 @@ def _read(config_path) -> dict:
 
 def _load(config_path):
     config = _read(config_path)
-    _require(isinstance(config, dict) and config.keys() - {"chat"} == _CONFIG_KEYS)
+    _require(isinstance(config, dict))
+    keys = config.keys() - {"chat"}
+    _require(_CONFIG_KEYS <= keys <= _CONFIG_KEYS | _OPTIONAL_CONFIG_KEYS)
+    config.setdefault("min_free_memory_mb", DEFAULT_MIN_FREE_MEMORY_MB)
+    _require(
+        type(config["min_free_memory_mb"]) is int and 0 <= config["min_free_memory_mb"] <= 1 << 20,
+        "invalid min_free_memory_mb",
+    )
     _url(config["hub_url"])
     _url(config["t3_mcp_endpoint"])
     for key in ("token_env", "t3_grant_env"):
@@ -224,12 +237,37 @@ def _launch_text(job):
     return message + tail, {"instanceId": model["instanceId"], "model": model["model"]}
 
 
+def _available_memory_mb(meminfo_path="/proc/meminfo"):
+    """Memory this machine can give a new process without swapping, or None when unknown."""
+    try:
+        with open(meminfo_path, encoding="ascii") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _memory_code(config):
+    """``low_memory`` when free memory is known and under the configured headroom.
+
+    An unreadable probe never blocks a start: the guard only refuses on evidence."""
+    floor = config.get("min_free_memory_mb", DEFAULT_MIN_FREE_MEMORY_MB)
+    available = _available_memory_mb() if floor else None
+    return "low_memory" if available is not None and available < floor else None
+
+
 def _job_code(config, job):
     try:
         validate_job(job)
         _launch_text(job)
     except ValueError:
         return "job_invalid"
+    return _local_grant_code(config, job)
+
+
+def _local_grant_code(config, job):
     project = job.get("project")
     if not isinstance(project, str) or project not in config["projects"]:
         return "project_not_configured"
@@ -244,7 +282,7 @@ def _job_code(config, job):
         return "mode_not_allowed"
     if not Path(config["t3_executable"][0]).is_file():
         return "t3_missing"
-    return None
+    return _memory_code(config)
 
 
 class _HubError(Exception):
@@ -291,14 +329,18 @@ class _Hub:
                 if status == 204:
                     result = None
                 else:
-                    limit = _MAX_LEASE_BYTES if route == "lease" else _MAX_REPLY_BYTES
+                    limit = (
+                        _MAX_LEASE_BYTES
+                        if route in ("lease", "sessions/lease")
+                        else _MAX_REPLY_BYTES
+                    )
                     raw = response.read(limit + 1)
                     if len(raw) > limit:
                         raise ValueError
                     result = json.loads(raw)
                     if not isinstance(result, dict):
                         raise ValueError
-                    if route == "lease" and (
+                    if route in ("lease", "sessions/lease") and (
                         not isinstance(result.get("lease_token"), str) or not result["lease_token"]
                     ):
                         raise ValueError
@@ -311,7 +353,9 @@ class _Hub:
                 else "refused"
                 if status == 404
                 else "fenced"
-                if status == 409 and route in {"starting", "result", "answer", "fail"}
+                if status == 409
+                and route
+                in {"starting", "result", "answer", "fail", "sessions/starting", "sessions/result"}
                 else "transient"
             )
         except (
@@ -374,13 +418,37 @@ def _spawn(config, job, env, secrets):
             [*config["t3_executable"], "acp-mcp-call", "t3_thread_launch", json.dumps(launch)],
             env=env,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             timeout=config["t3_timeout_seconds"],
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return {"outcome": "uncertain", "code": "launch_unknown"}
-    return _parse_launch(result, secrets)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        output = launch_output.captured(
+            f"launch not completed: {type(exc).__name__}",
+            getattr(exc, "stdout", None),
+            getattr(exc, "stderr", None),
+            secrets,
+        )
+        _launch_log(config, job, output)
+        return {"outcome": "uncertain", "code": "launch_unknown", "launch_output": output}
+    output = launch_output.captured(
+        f"exit {result.returncode}", result.stdout, result.stderr, secrets
+    )
+    _launch_log(config, job, output)
+    parsed = _parse_launch(result, secrets)
+    if parsed["outcome"] == "uncertain":
+        parsed["launch_output"] = output
+    return parsed
+
+
+def _launch_log(config, job, text):
+    """Write only sanitized output; journal replay still reads only *.json."""
+    try:
+        _atomic_text(
+            Path(config["journal_dir"]).expanduser() / (job["job_id"] + ".launch.log"), text
+        )
+    except OSError:
+        pass  # the launch outcome never depends on its log
 
 
 def _save(path, entry):
@@ -389,7 +457,9 @@ def _save(path, entry):
 
 def _deliver(hub, path, entry, replay=False):
     body = {
-        key: entry[key] for key in ("lease_token", "outcome", "thread_id", "code") if key in entry
+        key: entry[key]
+        for key in ("lease_token", "outcome", "thread_id", "code", "launch_output")
+        if key in entry
     }
     if body["outcome"] == "spawning":
         body.update(outcome="uncertain", code="restart_unknown")
@@ -410,6 +480,12 @@ def _start(hub, config, job, journal, env, secrets):
     code = _job_code(config, job)
     if code:
         # Invalid ids must never become local paths. The fence identifies the job.
+        hub.post("result", {"lease_token": job["lease_token"], "outcome": "failed", "code": code})
+        return
+    from . import headroom
+
+    code = headroom.reserve(config, journal, job["job_id"]) if headroom.required(job) else None
+    if code:
         hub.post("result", {"lease_token": job["lease_token"], "outcome": "failed", "code": code})
         return
     for attempt in range(2):
@@ -446,6 +522,8 @@ def _run(config, once):
     while True:
         try:
             for path in sorted(journal.glob("*.json")):
+                if path.name == "session-command.json":
+                    continue
                 try:
                     entry = json.loads(path.read_text(encoding="utf-8"))
                     if (
@@ -461,9 +539,27 @@ def _run(config, once):
                     print("runner: invalid journal quarantined", file=sys.stderr)
                     continue
                 _deliver(hub, path, entry, replay=True)
+            from . import headroom, session_agent
+
+            try:
+                hub.post("resources", headroom.snapshot(config))
+            except _HubError as exc:
+                if exc.kind == "credential":
+                    raise
+                exc.report()  # Optional reporting must not gate legacy launches.
+
+            session_error = None
+            try:
+                session_agent.tick(hub, config, journal, env, (token, grant))
+            except _HubError as exc:
+                session_error = exc
+            except Exception as exc:
+                log_failure(logger, "orchestrator session pass failed", exc)
             job = hub.post("lease", {})
             if job is not None:
                 _start(hub, config, job, journal, env, (token, grant))
+            if session_error is not None:
+                session_error.report()
         except _HubError as exc:
             exc.report()
             if exc.kind == "credential":
@@ -497,6 +593,17 @@ def check(config_path) -> int:
 
     try:
         config = _read(config_path)
+        if isinstance(config, dict) and config.get("mode") == "setup-only":
+            from . import installer
+
+            path = Path(config_path).expanduser().absolute()
+            _require(path.name == "config.json" and path.parent.name == installer.STATE)
+            try:
+                installer.Installer(path.parent.parent, host=object()).sync_receipts()
+            except installer.InstallError:
+                raise _ConfigError("approved binding unavailable; owner review required") from None
+            print("runner: approved acknowledgements fetched; setup-only; execution disabled")
+            return 0
         chat_only = isinstance(config, dict) and config.keys() == chat_agent.CONFIG_KEYS
         config = chat_agent.load(config_path) if chat_only else _load(config_path)
         chat_lines = chat_agent.check_lines(config) if "chat" in config else []

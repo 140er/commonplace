@@ -32,7 +32,7 @@ SCOPE_TEXT = (
 )
 OWNER_ONLY_TEXT = "Only the workspace owner can let an app answer Needs-me questions."
 TOP_LEVEL_TEXT = "Only a top-level connection of the workspace owner can answer Needs-me questions."
-AGENT_TEXT = "Agent, runner and orchestrator connections cannot answer Needs-me questions."
+AGENT_TEXT = "Agent, runner and Coworker connections cannot answer Needs-me questions."
 INACTIVE_TEXT = "Only an active connection can change; this one is revoked or expired."
 NOT_YOURS_TEXT = (
     "This connection belongs to another member. Only your own apps can answer your "
