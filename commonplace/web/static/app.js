@@ -26,13 +26,14 @@ import { createChat } from "./chat.js";
 import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
-import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, roveTo } from "./board.js";
+import { boardView as renderBoard, bindBoard, cardId, cardColumn, chatTag, loadChatTimes, roveTo } from "./board.js";
 import { drawerCopy } from "./deck-board.js";
 import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
 import { boardRoute, resolveRoute } from "./routes.js";
+import { showLoading } from "./loading.js";
 import { createNeeds } from "./needs.js";
 import { createMemory } from "./memory.js";
 import { createPalette } from "./palette.js";
@@ -78,7 +79,7 @@ const state = {
   selected: null, backlog: false, drafts: new Map(), pending: new Set(), seq: 0, eventEpoch: "", panelRequest: 0, refreshRequest: 0,
   screen: 0, renderPending: null, error: "", pollError: false, loading: false,
   chat: [], linked: [], chatBoard: null, chatCursor: 0, spaceTab: "chat", chatTasks: new Map(),
-  chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
+  boardColumn: null, justAdded: null, chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
   toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, botsWaiting: 0, chatTimes: new Map(),
   phonePushPending: false, underChat: null, fromChat: null, detailsSheet: false, rebase: null,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
@@ -538,14 +539,15 @@ function boardView() {
   if (state.workbenchChat?.board.slug === board.slug) state.workbenchChat.dock.mount(root.querySelector("#head-actions"), { board, label: "Chat", unread: state.workbenchChat.unread });
   const content = root.querySelector("#content");
   // Keep the active phone column and a parked-card disclosure through polling.
-  const column = content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
+  const column = state.boardColumn || content.querySelector('[data-board-column][aria-pressed="true"]')?.dataset.boardColumn || "todo";
+  state.boardColumn = null;
   const backlog = content.querySelector(".backlog")?.open, doneAll = Boolean(content.querySelector("#col-done[data-all]"));
   boardDispose?.();
   const messages = [...(state.chatBoard === board.slug ? state.chat : []), ...[...(state.chatTimes.get(board.slug)?.values() || [])].filter(Boolean)];
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
   const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
@@ -554,15 +556,28 @@ function boardView() {
   });
   boardDispose = bindBoard(content, { api, board, me: state.me.actor,
     onFilter(filter) { const saved = remember(); state.boardFilter = filter; boardView(); restore(saved); },
-    onAdded(card) { state.addingCard = false; state.drafts.delete("board-title"); state.drafts.delete("board-body"); state.drafts.delete("board-assignee"); state.drafts.delete("board-label"); location.hash = `#/card/${card.number}`; },
-    onSelect(number) { state.selected = number; markOpenCard(); },
-    onOpen(number) { state.selected = number; location.hash = `#/card/${number}`; },
+    onAdded: cardAdded,
+    onSelect(number) { state.selected = number; state.justAdded = null; markOpenCard(); },
+    onOpen(number) { state.selected = number; state.justAdded = null; location.hash = `#/card/${number}`; },
     onCancel() { cancelCard(); },
   });
   content.querySelectorAll("[data-board-add] [name]").forEach((input) => { input.dataset.draft = `board-${input.name}`; });
   markOpenCard();
   void fillChatTimes(board);
   void mountProjectPanel(content, { slug: board.slug, api, current: () => currentBoard()?.slug === board.slug });
+}
+// The form closes and the new card shows at once, selected, in the column it landed in: the read behind the card route can take seconds.
+function cardAdded(card) {
+  state.addingCard = false;
+  ["title", "body", "assignee", "label"].forEach((name) => state.drafts.delete(`board-${name}`));
+  state.cards = [...(state.cards || []).filter((item) => item.number !== card.number), card];
+  state.selected = card.number; state.boardFilter = "all"; state.justAdded = card.number;
+  state.boardColumn = cardColumn(card, state.me.actor, state.deck?.on() === true);
+  boardView();
+  const shown = root.querySelector(`.workbench-board .card[data-card="${card.number}"]`);
+  shown?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  shown?.focus?.({ preventScroll: true });
+  location.hash = `#/card/${card.number}`;
 }
 function markOpenCard() {
   root.querySelectorAll(".workbench-board .card[data-card]").forEach((card) => {
@@ -707,7 +722,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
   panel.hidden = false;
   const opening = state.card?.number !== number;
   const tab = opening ? "details" : panel.querySelector('[data-details-tab][aria-selected="true"]')?.dataset.detailsTab || "details";
-  if (opening) panel.innerHTML = message("Loading card…");
+  if (opening) showLoading(panel, "Loading card…");
   const request = ++state.panelRequest;
   const chatOrigin = state.chatDetail?.number === number ? state.chatDetail.row : null;
   try {
@@ -1416,7 +1431,8 @@ async function route() {
   if (hash === "#/" && state.deck?.on()) { hash = state.deck.home(); history.replaceState(history.state, "", hash); }
   // A shared card link (first screen of the visit) needs a screen behind the card.
   const direct = state.screen === 0 && /^#\/card\/[1-9]\d*$/.test(hash);
-  if (hash === "#/" || hash === "#/chat" || direct) {
+  // In the Deck look "#/" is its own Home screen: the logo draws it without waiting for the project list.
+  if ((hash === "#/" && state.deck?.on() !== true) || hash === "#/chat" || direct) {
     const result = await api("/api/boards");
     if (!state.me) return;
     state.boards = result.boards;
@@ -1432,6 +1448,7 @@ async function route() {
   if (hash !== state.route) clearAgentSecret(root);
   if (hash !== state.route) voice.stop();
   const previousBase = state.base, previousRoute = state.route;
+  if (!hash.startsWith("#/card/")) state.justAdded = null;
   state.screen++; state.route = hash; state.underChat = null; state.fromChat = null;
   if (direct) { state.base = boardRoute({ boards: state.boards, last }); state.rebase = Number(hash.slice(7)); }
   const start = decideStart(hash);
@@ -1472,9 +1489,12 @@ async function route() {
   if (state.base !== "#/" && state.base !== "#/needs") speech.stop();
   if (!hash.startsWith("#/card/")) { detailsUI?.stop(); detailsUI = null; state.panelRequest++; }
   root.querySelector("#shell-dialog")?.close();
-  root.querySelector("#card-panel").hidden = !hash.startsWith("#/card/");
+  // Until the named card's read arrives the panel says so, never what it held before (another card, a Needs me detail) with live buttons.
+  const cardPanelHost = root.querySelector("#card-panel");
+  cardPanelHost.hidden = !hash.startsWith("#/card/");
+  if (!cardPanelHost.hidden && state.card?.number !== Number(hash.slice(7))) { detailsUI?.stop(); detailsUI = null; showLoading(cardPanelHost, "Loading card…"); }
   markOpenCard();
-  if (!root.querySelector("#content").children.length || state.base !== previousBase) root.querySelector("#content").innerHTML = message("Loading…");
+  if (!root.querySelector("#content").children.length || state.base !== previousBase) showLoading(root.querySelector("#content"), "Loading…");
   showError("");
   if (hash === "#/admin") { adminScreen(); return; }
   if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
@@ -1867,6 +1887,14 @@ function workbenchKey(event) {
   else return false;
   event.preventDefault(); return true;
 }
+// Escape inside a field of the open card closes the card too. Typed text is kept: the first Escape only leaves the field.
+function escapeInPanel(event, field, panelOpen) {
+  if (!panelOpen || !field?.closest?.("#card-panel")) return false;
+  event.preventDefault();
+  const typed = field.matches?.("input,textarea") ? field.value.trim() : field.isContentEditable ? field.textContent.trim() : "";
+  if (typed) field.blur(); else closeCardPanel();
+  return true;
+}
 document.addEventListener("keydown", (event) => {
   if (event.defaultPrevented) return;
   if (["/", "]", "Escape", "Tab"].includes(event.key) && root.querySelector(".shell.chat-open, .shell.ctx-pushed")) return;
@@ -1877,9 +1905,11 @@ document.addEventListener("keydown", (event) => {
   // Project dialogs sit on document.body and keep their own keys; no board shortcut runs behind them.
   if (document.querySelector?.("dialog[open]")) return;
   const typing = event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]");
-  if (event.altKey || event.ctrlKey || event.metaKey || typing) return;
+  if (event.altKey || event.ctrlKey || event.metaKey) return;
   const panel = root.querySelector("#card-panel");
   const panelOpen = panel && !panel.hidden;
+  if (event.key === "Escape" && escapeInPanel(event, typing, panelOpen)) return;
+  if (typing) return;
   if (event.key === "Escape") {
     if (panelOpen) { event.preventDefault(); closeCardPanel(); return; }
     if (state.base === "#/decide") { location.hash = "#/"; return; }

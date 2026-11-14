@@ -13,6 +13,7 @@ import pytest
     [
         "escaping",
         "presentation",
+        "advanced",
         "payloads",
         "enrollment",
         "scopes",
