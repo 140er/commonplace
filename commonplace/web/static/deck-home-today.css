@@ -110,6 +110,12 @@
 :root[data-ui="deck"] .bt-activity header { padding: 14px 18px 10px; }
 :root[data-ui="deck"] .bt-activity ol { padding: 0; list-style: none; }
 :root[data-ui="deck"] .bt-activity li { display: flex; gap: 12px; padding: 10px 18px; border-top: 1px solid var(--line); color: var(--ink2); font-size: 12.5px; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .bt-activity details { flex: 1; min-width: 0; }
+:root[data-ui="deck"] .bt-activity summary { cursor: pointer; min-height: 24px; }
+:root[data-ui="deck"] .bt-activity summary::marker { color: var(--ink3); }
+:root[data-ui="deck"] .bt-activity summary:focus-visible { outline: 1px solid var(--ink3); outline-offset: 3px; }
+:root[data-ui="deck"] .bt-activity .bt-group-items { padding: 0; margin: 8px 0 0 16px; list-style: disc; }
+:root[data-ui="deck"] .bt-activity .bt-group-items li { display: list-item; padding: 4px 0; border: 0; }
 :root[data-ui="deck"] .bt-new-activity { animation: bt-activity 4s ease-out both; }
 :root[data-ui="deck"] .bt-reply { padding: 20px; max-width: min(480px, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line2); border-radius: var(--radius-dialog); background: var(--card); color: var(--ink); }
 :root[data-ui="deck"] .bt-reply::backdrop { background: var(--ground); opacity: .7; }
@@ -157,6 +163,7 @@
   :root[data-ui="deck"] .bt-bots { margin-top: 26px; }
   :root[data-ui="deck"] .bt-bots a { padding: 8px 14px; }
   :root[data-ui="deck"] .bt-activity { margin-top: 0; }
+  :root[data-ui="deck"] .bt-activity summary { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   :root[data-ui="deck"] :is(.bt-dot, .bt-new-activity) { animation: none; }

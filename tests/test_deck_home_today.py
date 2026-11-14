@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("harness", ["deck_home_today.mjs", "deck_home_today_routes.mjs"])
+@pytest.mark.parametrize(
+    "harness", ["deck_home_today.mjs", "deck_home_today_routes.mjs", "deck_home_activity.mjs"]
+)
 def test_home_today(harness):
     node = shutil.which("node")
     assert node, "Node is required for the Home and Today checks"
