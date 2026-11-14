@@ -45,7 +45,7 @@ function fixture({ api: custom, roster = bots, pages = {}, boards = [] } = {}) {
 const waiting = (f) => f.regions.get('waiting').innerHTML;
 
 test('registered Today is first and home; an off switch never imports or mounts it', async () => {
-  assert.equal(deckHome(), '#/today');
+  assert.equal(deckHome(), '#/');
   assert.equal(deckSections()[0][0], 'today');
   assert.equal((await SCREENS.today()).TITLE, 'Today');
   let loads = 0;

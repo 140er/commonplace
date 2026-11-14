@@ -37,6 +37,7 @@ import { createPalette } from "./palette.js";
 import { mountOnboarding } from "./onboarding.js";
 import { createCardMenu } from "./cardmenu.js";
 import { applyDeck, createDeck } from "./deck.js";
+import { createNeedLedger } from "./deck-home-today.js";
 // Shell layout rules. The CSP (style-src 'self') refuses inline style elements, so they live in a constructed sheet.
 const shellStyles = `
     .shell #content { flex:1; min-height:0; overflow:auto; }
@@ -82,11 +83,17 @@ const state = {
 // The opt-in Deck look: its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
-  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, go: (hash) => { location.hash = hash; } }),
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, go: (hash) => { location.hash = hash; }, openPalette: () => shellMenu(), singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
   reload: () => { if (state.me) void route(); },
 });
 let adminUI = null, instanceAdminUI = null;
 let consoleUI = null, botsUI = null, topologyUI = null, chatUI = null, detailsUI = null, boardDispose = null;
+const deckNeedsLedger = createNeedLedger();
+function deckNeedsChanged(card) {
+  deckNeedsLedger.settle(card, state.me);
+  state.needs = deckNeedsLedger.apply(state.needs, state.me);
+  navigation();
+}
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const enc = encodeURIComponent;
 const data = (form) => Object.fromEntries(new FormData(form));
@@ -1103,7 +1110,7 @@ async function refresh({ background = false, events = [] } = {}) {
     const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : null;
     const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
-    state.boards = boards.boards; state.needs = needs || { count: 0 };
+    state.boards = boards.boards; state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
     if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
