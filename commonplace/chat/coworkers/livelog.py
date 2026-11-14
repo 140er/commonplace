@@ -15,6 +15,7 @@ import sqlite3
 import threading
 import unicodedata
 from collections import deque
+from contextlib import contextmanager
 from html import unescape
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import send_json
 
 from . import steps, task_progress
+from ._util import numeric
 from .store import StoreError
 
 MAX_LINES = 200
@@ -272,16 +274,42 @@ def page(snapshot, workspace_id, conversation_id, cursor=None, limit=MAX_LINES):
     }
 
 
-def handle(gateway, h, principal, session, store, conversation_id, params):
+@contextmanager
+def _admitted(gateway, principal):
+    """One rate budget and reader pool for detail, tail and stream projections."""
     reads = _reads(gateway)
     if reads.limiter.check([(READ_LIMIT, principal.workspace_id + ":" + principal.user_id)]):
         raise StoreError("rate_limited", 429)
     if not reads.slots.acquire(blocking=False):
         raise StoreError("live_log_busy", 429)
     try:
-        data = snapshot(store, principal, conversation_id, sessions._hash(session))
-        from .routes import _numeric
+        yield
+    finally:
+        reads.slots.release()
 
+
+def detail(gateway, principal, session, store, conversation_id):
+    try:
+        with _admitted(gateway, principal):
+            data = snapshot(store, principal, conversation_id, sessions._hash(session))
+            return {"working_on": data["working_on"]}
+    except StoreError as exc:
+        if exc.status != 429 or exc.code not in {"rate_limited", "live_log_busy"}:
+            raise
+    # A missing live projection never broadens the existing detail authority.
+    # Recheck the viewer/session and project without reading runner sources.
+    with store._transaction() as conn:
+        store._authority.job(
+            {"user_id": principal.user_id, "session_hash": sessions._hash(session)}
+        )
+        conversation = store._conversation(conn, principal.user_id, conversation_id)
+        _board(store._authority, principal.user_id, conversation["board"])
+    return {"limited": True}
+
+
+def handle(gateway, h, principal, session, store, conversation_id, params):
+    with _admitted(gateway, principal):
+        data = snapshot(store, principal, conversation_id, sessions._hash(session))
         return send_json(
             h,
             200,
@@ -290,8 +318,6 @@ def handle(gateway, h, principal, session, store, conversation_id, params):
                 principal.workspace_id,
                 conversation_id,
                 params.get("cursor"),
-                _numeric(params.get("limit", str(MAX_LINES))),
+                numeric(params.get("limit", str(MAX_LINES))),
             ),
         )
-    finally:
-        reads.slots.release()
