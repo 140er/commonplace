@@ -58,7 +58,7 @@ test('query restoration is scoped to person and workspace and editing clears the
     assert.equal(queryHistory({}, storage).read(), '');
     assert.equal(queryHistory(me, { getItem() { throw Error(); } }).read(), '');
     const node = mount(true), paths = [];
-    const ui = createMemory({ mount: node, boards: [board], me, api: async path => { paths.push(path); return { results: [] }; } });
+    const ui = createMemory({ mount: node, boards: [board], me, api: async path => { if (path !== '/api/memory/rooms') paths.push(path); return { results: [] }; } });
     await tick();
     assert.ok(node.innerHTML.includes('Kept from last time')); assert.equal(paths.length, 2);
     node.listeners.get('input')({ target: { name: 'query', value: 'edited' } });

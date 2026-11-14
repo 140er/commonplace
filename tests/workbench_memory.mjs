@@ -211,6 +211,7 @@ const cases = {
   async typed_query() {
     const mount = node(), paths = [];
     const control = memory.createMemory({ mount, boards: [board], api: async (path) => {
+      if (path === '/api/memory/rooms') return { rooms: [] };
       paths.push(path);
       return { results: [{ ...row, text: 'rate limit matching source' }] };
     } });

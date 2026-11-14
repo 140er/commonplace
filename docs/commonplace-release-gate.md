@@ -38,9 +38,9 @@ panel (a reason is required); only then can the agent claim it. It checks an
 actual owner question with two options, rejects the proposing agent's attempt
 to bypass that decision, and answers through the browser before completion.
 Memory: the agent saves and searches exact words; agent notes land in the inbox
-wing, which the Memory page does not list, so the owner reads them back through
-the signed-in search request and the Memory page is checked with a note the owner
-saves in the project's own wing.
+wing, which the Memory page lists as its Agent notes room, so the owner reads the
+agent's note back verbatim on the Memory page and through the signed-in search
+request, and the page also shows a note the owner saves in the project's own wing.
 The Rules page must show a summary, expand the exact full text, accept the
 proposal, and supply it to a new agent session.
 
