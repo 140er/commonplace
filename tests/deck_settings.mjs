@@ -68,7 +68,7 @@ test('permission labels ignore prototype members and use notification outcomes',
   assert.equal(permissionLabel({name:'toString'}), 'ToString');
   const expected = {webhook_add:'Send notifications to another app', webhook_list:'See where notifications are sent', webhook_remove:'Stop sending to an app', webhook_test:'Send a test notification'};
   for (const [name,label] of Object.entries(expected)) assert.equal(permissionLabel({name}),label);
-  assert.equal(ui(true).policyPresentation().introduction(10), 'Choose what Bots may do without asking. Ask first puts the action in Needs me. Off refuses it. This does not limit what you do yourself.');
+  assert.equal(ui(true).policyPresentation().introduction(10), 'Allow runs without asking. Ask puts the action in Needs me. Deny refuses it. Each bot’s own permissions still apply.');
 });
 test('notification guidance distinguishes the owner and tolerates a missing connection heading', () => {
   for (const owner of [false,true]) {

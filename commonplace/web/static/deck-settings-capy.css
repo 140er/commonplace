@@ -1,0 +1,65 @@
+/* Slice G: desktop 620 + 20 + 360 at a 1000px content measure; phone keeps 16px gutters. */
+:root[data-ui="deck"] .shell #content:has(> .capy-settings) { padding: 8px var(--page-side) 28px; min-height: 0; }
+:root[data-ui="deck"] .settings.capy-settings { flex: 1; min-height: 0; overflow: auto; gap: 20px; align-items: start; padding-bottom: 20px; }
+:root[data-ui="deck"] .capy-settings .deck-settings-main { gap: 14px; }
+:root[data-ui="deck"] .capy-settings .settings-section { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
+:root[data-ui="deck"] .capy-settings .settings-section h2 { margin: 0 0 4px; color: var(--ink); font-size: 15px; font-weight: 600; line-height: 22px; }
+:root[data-ui="deck"] .capy-settings .settings-section > p { color: var(--ink3); font-size: 13.5px; line-height: 1.5; margin: 0 0 12px; }
+:root[data-ui="deck"] .capy-settings :is(.capy-setting-note, .capy-sharing-switch) { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 14px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+:root[data-ui="deck"] .capy-setting-note { flex-direction: column; align-items: start !important; gap: 2px !important; }
+:root[data-ui="deck"] .capy-setting-note b { font-weight: 500; }
+:root[data-ui="deck"] .capy-settings small { color: var(--ink3); font-size: 12.5px; line-height: 1.5; }
+:root[data-ui="deck"] .capy-sharing-switch small { display: block; margin-top: 2px; }
+:root[data-ui="deck"] .capy-sharing-switch input { flex: none; width: 34px; height: 20px; accent-color: var(--violet); }
+:root[data-ui="deck"] .capy-settings-link { display: inline-flex; align-items: center; min-height: 44px; margin-top: 4px; color: var(--ink2); font-size: 12.5px; }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav { position: static; background: transparent; flex-wrap: wrap; overflow: visible; }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav button { background: var(--s2); color: var(--ink2); border-radius: var(--radius-control); }
+:root[data-ui="deck"] .capy-settings #deck-settings-nav button[aria-current] { background: var(--s3); color: var(--ink); }
+:root[data-ui="deck"] .capy-settings .deck-permission-group { margin-top: 18px; }
+:root[data-ui="deck"] .capy-settings .deck-permission-group h3 { font-size: 13.5px; color: var(--ink2); font-weight: 600; }
+:root[data-ui="deck"] .capy-settings .deck-permission-group .setting-row { padding-block: 14px; gap: 2px 12px; align-items: center; border-bottom: 1px solid var(--line); }
+:root[data-ui="deck"] .capy-settings .deck-permission-group .setting-row:last-child { border-bottom: 0; }
+:root[data-ui="deck"] .capy-settings .deck-permission-label > span { font-size: 13.5px; }
+:root[data-ui="deck"] .capy-policy { grid-column: 2; grid-row: 1; display: flex; align-items: center; padding: 3px; border-radius: var(--radius-control); background: var(--s2); }
+:root[data-ui="deck"] .capy-policy select[hidden] { display: none; }
+:root[data-ui="deck"] .capy-policy button { min-height: 28px; min-width: 44px; padding: 0 10px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink3); font: inherit; font-size: 12.5px; cursor: pointer; }
+:root[data-ui="deck"] .capy-policy button[aria-pressed="true"] { color: var(--ink); background: var(--s3); }
+:root[data-ui="deck"] .capy-policy button[data-policy-state="deny"] { color: var(--red); }
+:root[data-ui="deck"] .capy-policy button:disabled { cursor: default; opacity: .6; }
+:root[data-ui="deck"] .capy-policy button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+:root[data-ui="deck"] .capy-settings .deck-permission-meta { flex-wrap: wrap; }
+:root[data-ui="deck"] .capy-settings .deck-permission-meta summary { display: inline-flex; align-items: center; min-height: 24px; }
+:root[data-ui="deck"] .capy-settings :is(input:not([type=checkbox]), select, textarea) { border-radius: var(--radius-control); background: var(--s2); }
+:root[data-ui="deck"] .capy-scope { display: inline-block; color: var(--ink2); }
+:root[data-ui="deck"] .capy-scope code { color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .capy-settings .deck-appearance { top: 0; }
+@media (max-width: 1099px) {
+  :root[data-ui="deck"] .settings.capy-settings { grid-template-columns: minmax(0,1fr); }
+  :root[data-ui="deck"] .capy-settings .deck-appearance { position: static; }
+}
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell #content:has(> .capy-settings) { padding-inline: 16px; }
+  :root[data-ui="deck"] .capy-settings .settings-section { padding: 16px; }
+  :root[data-ui="deck"] .capy-settings .deck-permission-group .setting-row { grid-template-columns: minmax(0,1fr); gap: 6px; }
+  :root[data-ui="deck"] .capy-policy { grid-column: 1; grid-row: 3; justify-self: start; }
+  :root[data-ui="deck"] .capy-policy button { min-height: 44px; min-width: 52px; }
+  :root[data-ui="deck"] .capy-settings :is(button, select, input:not([type=checkbox]), summary) { min-height: 44px; }
+  :root[data-ui="deck"] .capy-settings .deck-permission-meta summary { min-height: 44px; }
+  :root[data-ui="deck"] .capy-settings .capy-sharing-switch { min-height: 44px; }
+}
+:root[data-ui="deck"] .settings.capy-settings { width: 100%; max-width: 1000px; margin-inline: auto; }
+:root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { padding: 36px max(40px, calc((100% - 1000px) / 2)) 16px; }
+:root[data-ui="deck"] .capy-settings :is(.capy-setting-note, .capy-sharing-switch) { padding-block: 8px; }
+@media (min-width: 700px) {
+  :root[data-ui="deck"] .capy-settings .capy-setting-note { flex-direction: row; align-items: baseline !important; gap: 12px !important; }
+  :root[data-ui="deck"] .capy-setting-note b { flex: 0 0 190px; }
+}
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { display: none; }
+}
+:root[data-ui="deck"] .capy-sharing-switch input { appearance: none; position: relative; min-height: 20px; padding: 0; border: 0; border-radius: 999px; background: var(--s3); cursor: pointer; }
+:root[data-ui="deck"] .capy-sharing-switch input::before { content: ""; position: absolute; width: 14px; height: 14px; top: 3px; left: 3px; border-radius: 50%; background: var(--ink); }
+:root[data-ui="deck"] .capy-sharing-switch input:checked { background: var(--violet); }
+:root[data-ui="deck"] .capy-sharing-switch input:checked::before { transform: translateX(14px); }
+:root[data-ui="deck"] .capy-sharing-switch input:focus-visible { outline: 2px solid var(--violet); outline-offset: 3px; }
+:root[data-ui="deck"] .capy-sharing-switch input:disabled { opacity: .6; cursor: default; }

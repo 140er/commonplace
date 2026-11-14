@@ -51,6 +51,7 @@ export function mountToolPolicy(host, { api, e, current = () => true, presentati
       try { data = await saveMode(api, select.dataset.toolPolicyMode, select.value); status = ""; } catch (error) { status = error.message || "Request failed"; }
       render();
     };
+    presentation?.bind?.(host, data);
   }
   load();
 }
