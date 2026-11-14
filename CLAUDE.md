@@ -45,6 +45,8 @@ Tests must never be the bottleneck. Agents keep building while checks run; nobod
   head: the tests that import or name the changed modules, nearest first, plus lint, plus the repo-wide guard files
   (`tests/test_eval_guards.py`, `tests/test_commonplace_public_surface.py`, `tests/test_docs_obligations.py`,
   `tests/test_docs_fragments.py`). That is the whole per-PR test bill.
+- **Release PRs (`develop` into `main`)** follow the same rule: gate PASS, the affected tests, and the fresh-user release
+  journey (`docs/commonplace-release-gate.md`) on the exact head. Never a full suite, and the owner's go still decides the merge.
 - **Global changes** (dependency/lock files, `pyproject.toml`, `tests/conftest.py`, migrations) run the same: the
   affected tests plus the guard files.
 - **Release:** a small smoke set on the `develop` tip, then snapshot and rollback image, health check and deploy, with
