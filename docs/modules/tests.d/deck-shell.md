@@ -10,3 +10,5 @@
   targets atomically so a replaced board cannot yield empty computed gutters.
   Rail browser cases also cover workspace creation access and the Coworker
   panels with composer-aware phone chrome after integration.
+  The workspace creation browser check expects the shared Capy surface colour
+  after the Appearance and shell integrations.
