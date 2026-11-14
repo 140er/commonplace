@@ -93,7 +93,7 @@ async def consent_and_agents(hub):
                 assert status == 201, name
 
             # Agents settings: the OAuth client shows the grant and a way to stop it.
-            await page.goto(base + "/app/#/settings")
+            await page.goto(base + "/app/?ui=classic#/settings")
             section = page.locator(".agents-settings")
             await expect(section).to_be_visible(timeout=15000)
             allow = "Allow answering Needs-me"

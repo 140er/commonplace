@@ -58,7 +58,7 @@ test('registered Today is first and home; an off switch never imports or mounts 
   assert.equal(deckSections()[0][0], 'today');
   assert.equal((await SCREENS.today()).TITLE, 'Today');
   let loads = 0;
-  const ui = createDeck({ screens: { today: () => { loads++; } }, storage: { getItem: () => null }, doc: {} });
+  const ui = createDeck({ screens: { today: () => { loads++; } }, storage: { getItem: () => 'classic' }, doc: {} });
   assert.equal(ui.owns('#/today'), false);
   assert.equal(loads, 0);
   const app = readFileSync(new URL('../commonplace/web/static/app.js', import.meta.url), 'utf8');

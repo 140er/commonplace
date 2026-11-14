@@ -82,7 +82,7 @@ const state = {
   phonePushPending: false, underChat: null, fromChat: null, detailsSheet: false, rebase: null,
   queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
 };
-// The opt-in Deck look: its bar, its own screens and the Look switch in Settings (deck.js).
+// The Deck look (the default; classic is the explicit opt-out): its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
   context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: (input) => voice.start(input || root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; }, openPalette: () => shellMenu(), singleKeys: () => singleKeysEnabled(), onNeedsChanged: deckNeedsChanged }),
