@@ -123,6 +123,12 @@ RULES = {
     "runner_setup_requests": Rule(
         workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
     ),
+    "runner_browser_requests": Rule(
+        workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
+    ),
+    "runner_host_grants": Rule(
+        workspace=_W, parent=("request_id", "runner_browser_requests", "id")
+    ),
     "runner_installations": Rule(
         workspace=_W, parent=("enrollment_id", "runner_enrollments", "id")
     ),
@@ -154,6 +160,7 @@ RULES = {
         user=("accepted_by",), workspace=_W, email=("email",), sent=("created_by",)
     ),
     "workspace_voice": Rule(workspace=_W),
+    "workspace_creations": Rule(user=_U, workspace=_W),
     "workspaces": Rule(user=("personal_of",), workspace=("id",)),
 }
 

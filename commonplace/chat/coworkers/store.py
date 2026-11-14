@@ -316,16 +316,21 @@ class Store:
             )
             return self._bot(conn.execute("SELECT * FROM bots WHERE id=?", (bot_id,)).fetchone())
 
-    def list_conversations(self, user_id):
+    def list_conversations(self, user_id, *, owns=False):
         with self._transaction() as conn:
             self._user(user_id)
-            return [
+            views = [
                 self._conversation_view(conn, r)
                 for r in conn.execute(
                     "SELECT c.* FROM conversations c JOIN members m ON m.conversation_id=c.id WHERE m.user_id=? ORDER BY c.created_at DESC,c.id LIMIT ?",
                     (user_id, MAX_CONVERSATIONS),
                 )
             ]
+            if owns:
+                from .owns import project
+
+                return project(self._authority, conn, user_id, views)
+            return views
 
     def create_conversation(
         self,
@@ -389,9 +394,14 @@ class Store:
                 ).fetchone(),
             )
 
-    def get_conversation(self, user_id, conversation_id):
+    def get_conversation(self, user_id, conversation_id, *, owns=False):
         with self._transaction() as conn:
-            return self._conversation_view(conn, self._conversation(conn, user_id, conversation_id))
+            view = self._conversation_view(conn, self._conversation(conn, user_id, conversation_id))
+            if owns:
+                from .owns import project
+
+                return project(self._authority, conn, user_id, [view])[0]
+            return view
 
     def list_messages(self, user_id, conversation_id, after=0, limit=100, *, before=None):
         _number(after, zero=True)
