@@ -1,18 +1,27 @@
 import { activityEvent, groupActivity, activityHTML } from './deck-home-activity.js';
 export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
-import { addStyles, placeMenu, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone } from './deck-home-today.js';
+import { addStyles, placeMenu, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone, needsMeCount } from './deck-home-today.js';
+import { previewText } from './needs-me.js';
 
 export const TITLE = 'Today';
 const enc = encodeURIComponent;
 
 
-export function cardHTML(card, bots, { busy, errors, held, exiting }, escape = e) {
+// One card: a plain title, a short preview, the main action beside Hold and Reply. The stored words stay whole
+// behind "Show full text"; only the display is shortened.
+/** The line under the Today heading. The number is the shared needs-me count, the same one Home, the badges and the Board use. */
+export const summaryLine = (needs, date = new Date()) => `${date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })} · ${needsMeCount(needs)} waiting on you`;
+
+export function cardHTML(card, bots, { busy, errors, held, exiting, open = new Set() }, escape = e) {
   const bot = bots.find(bot => bot.board && bot.board === card.board);
   const name = bot?.name || card.bot_name;
   const fact = card.fact || card.bot_reason;
   const waiting = (card.actions || []).some(action => ['approve', 'answer', 'accept', 'reject'].includes(action));
-  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(displayText(name))}</b>` : ''}${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(displayText(card.display_title || card.title))}</h2>${card.body || card.ask ? `<p class="bt-body">${escape(displayText(card.display_body || card.body || card.ask))}</p>` : ''}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${actionRow(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
+  const words = card.body || card.ask || '';
+  const preview = previewText(displayText(card.display_body || words));
+  const full = words && words !== preview ? `<details class="bt-full" data-bt-full="${card.number}"${open.has(card.number) ? ' open' : ''}><summary>Show full text</summary><p class="bt-full-text">${escape(words)}</p></details>` : '';
+  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(displayText(name))}</b>` : ''}${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(displayText(card.display_title || card.title))}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${actionRow(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
 }
 export function botsHTML(bots, escape = e) {
   return `<section class="bt-bots"><header><h2>Your bots</h2><span>Latest from each</span></header><ul>${bots.map(bot => `<li><a href="#/bots/${enc(bot.id)}">${avatar(bot, escape)}<span class="bt-bot-copy"><b>${escape(displayText(bot.name))}${bot.state ? ` <i class="bt-dot" data-tone="${stateTone(bot.state)}" aria-label="${escape(stateName(bot.state))}"></i>` : ''}</b>${bot.last?.text ? `<span>${escape(displayText(bot.last.text))}</span>` : ''}</span>${timeHTML(bot.last?.at, escape)}</a></li>`).join('')}</ul>${bots.length ? '' : '<p class="bt-empty">No bots yet. <a href="#/bots?new=1">New bot</a></p>'}</section>`;
@@ -26,7 +35,7 @@ export function mount(context) {
   const region = name => root.querySelector(`[data-bt="${name}"]`);
   const dialog = root.querySelector('dialog'), form = dialog.querySelector('form');
   let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', focused = null, needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
-  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set();
+  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set(), openFull = new Set();
   function cards() {
     const list = needsCards(needs).filter(card => !settled.has(stamp(card)));
     for (const { card, index } of [...leaving.values()].sort((a, b) => a.index - b.index)) if (!list.some(item => item.number === card.number)) list.splice(Math.min(index, list.length), 0, card);
@@ -39,9 +48,8 @@ export function mount(context) {
   function paint() {
     if (!active) return;
     const list = cards(), old = doc?.activeElement?.closest?.('[data-bt-card]'), mark = old?.dataset.btCard;
-    const count = Number.isSafeInteger(needs.count) ? needs.count : list.length;
-    region('summary').textContent = `${new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })} · ${count} waiting on you`;
-    region('cards').innerHTML = list.length ? list.map(card => cardHTML(card, bots, { busy, errors, held, exiting })).join('') : `<p class="bt-empty" role="status">${loaded ? 'Nothing is waiting on you' : 'Loading…'}</p>`;
+    region('summary').textContent = summaryLine(needs);
+    region('cards').innerHTML = list.length ? list.map(card => cardHTML(card, bots, { busy, errors, held, exiting, open: openFull })).join('') : `<p class="bt-empty" role="status">${loaded ? 'Nothing is waiting on you' : 'Loading…'}</p>`;
     for (const card of list.filter(card => exiting.has(stamp(card)))) {
       const node = root.querySelector(`[data-bt-card="${card.number}"]`);
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');
@@ -147,7 +155,8 @@ export function mount(context) {
     const choice = current.ask_options?.[Number(form.elements.choice.value)];
     void act(current, 'reply', { submit: true, reply: form.elements.reply.value, ...(form.elements.choice.value !== '' ? { choice } : {}) });
   }
-  function onGroupToggle(event) { const group = event.target; if (group.matches?.('.bt-more') && group.open) placeMenu(group.querySelector('[role="menu"]'), doc?.defaultView || globalThis);  if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
+  function onGroupToggle(event) { const group = event.target; if (group.matches?.('.bt-more') && group.open) placeMenu(group.querySelector('[role="menu"]'), doc?.defaultView || globalThis);  if (group.matches?.('.bt-full')) { const number = Number(group.dataset.btFull); if (group.open) openFull.add(number); else openFull.delete(number); return; }
+    if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
   root.addEventListener('toggle', onGroupToggle, true);
   root.addEventListener('click', onClick); form.addEventListener('submit', onSubmit); doc?.addEventListener('keydown', onKey, true);
   paint(); void refresh();

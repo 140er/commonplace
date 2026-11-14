@@ -45,8 +45,9 @@
 :root[data-ui="deck"] .bh-toolbar .bh-send > svg { display: block; flex: none; margin: 0; }
 :root[data-ui="deck"] .bh-toolbar .bh-send:disabled { background: var(--violet); color: white; opacity: .4; }
 :root[data-ui="deck"] .bh-hint { display: flex; justify-content: center; margin-top: 18px; color: var(--ink3); font-size: 12.5px; }
-:root[data-ui="deck"] .bh-hint a { display: flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; min-height: 24px; }
-:root[data-ui="deck"] .bh-hint a:hover { color: var(--ink2); }
+:root[data-ui="deck"] .bh-hint a { display: flex; align-items: center; gap: 8px; color: var(--ink); text-decoration: none; min-height: 36px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 999px; background: var(--s2); font-size: 14px; font-weight: 500; }
+:root[data-ui="deck"] .bh-hint a:hover { background: var(--s3); }
+:root[data-ui="deck"] .bh-hint .bt-dot { width: 9px; height: 9px; }
 :root[data-ui="deck"] .bh-error { margin-top: 10px; text-align: center; }
 :root[data-ui="deck"] .bh-runs { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
 :root[data-ui="deck"] .bh-runs:empty { display: none; }
@@ -79,6 +80,11 @@
 :root[data-ui="deck"] .bt-card.bt-exiting { transform: translateX(24px); opacity: 0; pointer-events: none; }
 :root[data-ui="deck"] .bt-card h2 { font-size: 15px; font-weight: 600; line-height: 21px; margin-top: 8px; }
 :root[data-ui="deck"] .bt-body { color: var(--ink2); margin-top: 5px; }
+:root[data-ui="deck"] .bt-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+:root[data-ui="deck"] .bt-full { margin-top: 6px; }
+:root[data-ui="deck"] .bt-full summary { display: inline-flex; align-items: center; min-height: 28px; color: var(--ink2); font-size: 12.5px; cursor: pointer; }
+:root[data-ui="deck"] .bt-full summary:focus-visible { outline: 1px solid var(--ink3); outline-offset: 3px; }
+:root[data-ui="deck"] .bt-full-text { margin-top: 6px; color: var(--ink2); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 50vh; overflow: auto; }
 :root[data-ui="deck"] .bt-fact { color: var(--ink3); font-size: 12.5px; margin-top: 5px; }
 :root[data-ui="deck"] .bt-actions { display: flex; align-items: center; gap: 6px; margin-top: 14px; }
 :root[data-ui="deck"] .bt-actions button { min-height: 32px; padding: 0 12px; background: transparent; font-weight: 500; }
@@ -154,7 +160,6 @@
   :root[data-ui="deck"] .bt-title h1 { display: none; }
   :root[data-ui="deck"] .bt-title p { margin-top: 4px; }
   :root[data-ui="deck"] .bt-card { padding: 14px; }
-  :root[data-ui="deck"] .bt-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   :root[data-ui="deck"] :is(.bt-fact, .bt-keys) { display: none; }
   :root[data-ui="deck"] .bt-actions { flex-wrap: nowrap; margin-top: 12px; }
   :root[data-ui="deck"] .bt-actions .bt-approve { flex: 1; min-width: 0; }

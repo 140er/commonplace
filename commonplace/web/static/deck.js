@@ -10,6 +10,7 @@ import { arrangeCapySettings, capyPolicyPresentation } from './deck-settings-cap
 import { createDeckAppearance } from './deck-appearance.js';
 import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, renderShellMore, createDeckShell } from './deck-shell.js';
 import { arrangeSettings, selectSettings } from './deck-settings.js';
+import { needsMeCount } from './needs-me.js';
 
 export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
@@ -99,7 +100,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     if (!box) return;
     if (deckOn(storage) && !box.querySelector('#deck-tools')) {
       const { me, needs } = context() || {};
-      box.insertAdjacentHTML('afterbegin', toolsHTML({ needs: needs?.count, can_admin: me?.can_admin }));
+      box.insertAdjacentHTML('afterbegin', toolsHTML({ needs: needsMeCount(needs), can_admin: me?.can_admin }));
     }
     if (deckOn(storage)) arrangeSettings(box, { owner: context()?.me?.role === 'owner' });
     if (!box.querySelector('#look')) box.insertAdjacentHTML('beforeend', lookHTML(deckOn(storage)));
