@@ -108,7 +108,7 @@ export function renderShellTop(options) {
 }
 // The phone has no rail, so every destination the rail and account menu offer lives in this sheet (rendered beside the tabs).
 // Any click inside it (a link, a button or the scrim) closes it; the shell's click handler does the work.
-export const renderShellMore = options => `<div class="deck-more" id="deck-more" role="dialog" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? '' : ' hidden'}><div class="deck-more-panel"><a href="#/board">${icon('board')}Board</a><a href="#/memory">${icon('memory')}Memory</a>${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
+export const renderShellMore = options => `<div class="deck-more" id="deck-more" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? ' role="dialog"' : ' hidden'}><div class="deck-more-panel"><a href="#/board">${icon('board')}Board</a><a href="#/memory">${icon('memory')}Memory</a>${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
 export function renderShellTabs(options) {
   const { sections, section, hash } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
   const more = !section && !['#/', '#/home'].includes(hash);
@@ -124,6 +124,14 @@ export function createDeckShell({ root, api, context, on }) {
   // The sheet stays open across the shell's refreshes, and closes when the route changes.
   let moreAt = null;
   const hashNow = () => globalThis.location?.hash || '';
+  // role="dialog" is present only while the sheet is open, so a closed sheet is never mistaken for a dialog.
+  function showMore(sheet, open) {
+    moreAt = open ? hashNow() : null;
+    sheet.hidden = !open;
+    if (open) sheet.setAttribute('role', 'dialog'); else sheet.removeAttribute('role');
+    root.querySelector('.deck-tab-more')?.setAttribute('aria-expanded', String(open));
+    if (open) sheet.querySelector('a, button')?.focus();
+  }
   const moreOpen = () => moreAt !== null && moreAt === hashNow();
   const options = () => ({ bots, directory, closed, hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen() });
   function chrome() {
@@ -179,15 +187,9 @@ export function createDeckShell({ root, api, context, on }) {
   root?.addEventListener?.('click', event => {
     const action = event.target?.closest?.('[data-deck-shell-action]')?.dataset.deckShellAction;
     if (!action || !on()) return;
-    const sheet = root.querySelector('#phone-tabs .deck-more'), opener = root.querySelector('.deck-tab-more');
-    if (action === 'more' && sheet) {
-      event.preventDefault();
-      const open = sheet.hidden;
-      moreAt = open ? hashNow() : null;
-      sheet.hidden = !open; opener?.setAttribute('aria-expanded', String(open));
-      if (open) sheet.querySelector('a, button')?.focus();
-    }
-    if (action === 'more-close' && sheet) { moreAt = null; sheet.hidden = true; opener?.setAttribute('aria-expanded', 'false'); }
+    const sheet = root.querySelector('#phone-tabs .deck-more');
+    if (action === 'more' && sheet) { event.preventDefault(); showMore(sheet, sheet.hidden); }
+    if (action === 'more-close' && sheet) showMore(sheet, false);
     if (action === 'retry') { event.preventDefault(); void sync(); }
     if (action === 'new-thread' && globalThis.location?.hash === '#/') {
       event.preventDefault(); root.querySelector('#content textarea, #content input')?.focus();
@@ -201,7 +203,7 @@ export function createDeckShell({ root, api, context, on }) {
   root?.addEventListener?.('keydown', event => {
     const sheet = root.querySelector('#phone-tabs .deck-more');
     if (event.key !== 'Escape' || !sheet || sheet.hidden) return;
-    moreAt = null; sheet.hidden = true; const opener = root.querySelector('.deck-tab-more'); opener?.setAttribute('aria-expanded', 'false'); opener?.focus();
+    showMore(sheet, false); root.querySelector('.deck-tab-more')?.focus();
   });
   root?.ownerDocument?.addEventListener?.('signout', () => { reset(); paint(); });
   return { options, sync, reset, roster(value) { identify(); bots = rows(value); paint(); } };

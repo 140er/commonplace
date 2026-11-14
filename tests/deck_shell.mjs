@@ -164,7 +164,8 @@ const sheetLinks = html => [...html.matchAll(/<a href="([^"]+)"/g)].map(m => m[1
 test('phone: every rail and account destination is reachable from the More sheet with its count', () => {
   const tabs = renderDeckTabs({ hash: '#/today', needs: 3 }), sheet = renderDeckMore({ hash: '#/today', needs: 3, can_admin: true, can_manage_instance: true });
   assert.match(tabs, /<button[^>]*class="deck-tab-more"[^>]*aria-expanded="false"[^>]*aria-controls="deck-more"[^>]*>[\s\S]*?More<\/button>/);
-  assert.match(sheet, /<div class="deck-more" id="deck-more" role="dialog" aria-label="More"[^>]* hidden>/);
+  assert.match(sheet, /<div class="deck-more" id="deck-more" aria-label="More"[^>]* hidden>/);
+  assert.doesNotMatch(sheet, /role="dialog"/, 'a closed sheet is not announced as a dialog');
   const bar = renderDeckBar({ hash: '#/today', can_admin: true, can_manage_instance: true });
   const railTools = ['#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/rules', '#/admin', '#/instance-admin'];
   for (const href of railTools) assert.ok(bar.includes(`href="${href}"`), `rail offers ${href}`);
@@ -181,15 +182,15 @@ test('phone: every rail and account destination is reachable from the More sheet
 test('the More button opens and closes the sheet, any tap inside closes it, Escape returns focus', async () => {
   const { createDeckShell } = await import('../commonplace/web/static/deck-shell.js');
   const attrs = {}, focused = [];
-  const sheet = { hidden: true, querySelector: () => ({ focus: () => focused.push('first') }) };
+  const sheet = { hidden: true, querySelector: () => ({ focus: () => focused.push('first') }), setAttribute(key, value) { attrs.role = value; }, removeAttribute(key) { delete attrs[key]; } };
   const opener = { setAttribute: (key, value) => { attrs[key] = value; }, focus: () => focused.push('opener') };
   const nodes = { '#phone-tabs .deck-more': sheet, '.deck-tab-more': opener }, events = {};
   const shell = createDeckShell({ root: { querySelector: key => nodes[key], addEventListener: (name, cb) => { events[name] = cb; } }, context: () => ({}), on: () => true });
   const tap = action => events.click({ target: { closest: () => ({ dataset: { deckShellAction: action } }) }, preventDefault() {} });
   tap('more');
-  assert.equal(sheet.hidden, false); assert.equal(attrs['aria-expanded'], 'true'); assert.deepEqual(focused, ['first']);
+  assert.equal(sheet.hidden, false); assert.equal(attrs.role, 'dialog'); assert.equal(attrs['aria-expanded'], 'true'); assert.deepEqual(focused, ['first']);
   tap('more-close');
-  assert.equal(sheet.hidden, true); assert.equal(attrs['aria-expanded'], 'false');
+  assert.equal(sheet.hidden, true); assert.equal(attrs.role, undefined); assert.equal(attrs['aria-expanded'], 'false');
   tap('more'); events.keydown({ key: 'Escape' });
   assert.equal(sheet.hidden, true); assert.equal(focused.at(-1), 'opener');
   tap('more'); events.keydown({ key: 'a' }); assert.equal(sheet.hidden, false);
@@ -199,6 +200,7 @@ test('the More button opens and closes the sheet, any tap inside closes it, Esca
   assert.equal(shell.options().moreOpen, false, 'a route change closes it');
   delete globalThis.location;
   assert.doesNotMatch(renderDeckMore({ moreOpen: true }), /id="deck-more"[^>]* hidden/);
+  assert.match(renderDeckMore({ moreOpen: true }), /id="deck-more"[^>]* role="dialog"/);
   assert.match(renderDeckTabs({ moreOpen: true }), /aria-expanded="true"/);
 });
 
