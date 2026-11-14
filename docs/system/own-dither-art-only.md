@@ -5,3 +5,4 @@
 - The art is decorative: each piece sits in an `aria-hidden` element, holds no text, never animates, takes the surrounding text colour and is small (each piece under 4 KB, all together under 20 KB). The words beside it stay the accessible content.
 - Rule for later slices: new art starts from a source image of ours added to `design/capy-art/`, never from a library item or an image we do not own. Anything from outside the repo is reference only.
 - Not changed: copy, layout, routes, or any data the empty states read.
+- Slice two adds seven more sprites from the same mark (page title row, section line, rail, four import steps); the generator and rule are unchanged.

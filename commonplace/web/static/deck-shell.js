@@ -1,6 +1,7 @@
 // Capy shell: pure markup plus one refresh tied to the shell's existing refresh cycle.
 import { escape as e, elapsed } from './api.js';
 import { botPage } from './routes.js';
+import { artHTML } from './deck-art.js';
 
 export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
@@ -85,7 +86,7 @@ export function shellTrees(options = {}) {
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
       return `<li><a class="deck-tree-row" href="${href}"${current(hash === href)}><span class="deck-tree-name">${e(title)}</span>${stateHTML(worker)}</a></li>`;
     }).join('')}</ul></div>`;
-  }).join('')}${group ? '</details>' : ''}`).join('') || '<p class="deck-rail-empty">No bots yet</p>';
+  }).join('')}${group ? '</details>' : ''}`).join('') || `<p class="deck-rail-empty">${artHTML('rail')}No bots yet</p>`;
 }
 export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');

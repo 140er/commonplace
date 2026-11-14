@@ -1,5 +1,6 @@
 import { api as request, escape as e } from "./api.js";
 import { importConsent } from "./deck-memory.js";
+import { artHTML } from "./deck-art.js";
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const formats = [
@@ -13,6 +14,8 @@ const formats = [
   ["native-memory", "file", "Memory text (.md or .txt)"],
 ];
 const scopeLabel = (scope) => scope === "private" ? "Your private imported history" : "Workspace conversations";
+// One small dithered cue beside the Deck title for each step; the title and every word below it stay as they are.
+const stepArt = { choose: "step-choose", preview: "step-preview", reading: "step-progress", previewing: "step-progress", importing: "step-progress", report: "step-report" };
 const plainError = (error) => String(error || "").replace(/(?:you can )?retry safely\.?/gi, "Nothing was saved twice. Try again.");
 
 export function renderImport(state, me = {}, look = "classic") {
@@ -22,7 +25,7 @@ export function renderImport(state, me = {}, look = "classic") {
   const busy = ["reading", "previewing", "importing"].includes(phase);
   const summary = preview ? `<dl class="memory-import-summary"><div><dt>File</dt><dd>${e(state.filename)}</dd></div><div><dt>Source</dt><dd>${e(state.sourceLabel || formats.find(([source, format]) => source === state.source && format === state.format)?.[2] || preview.source)}</dd></div><div><dt>${deck ? "Save into" : "Destination"}</dt><dd>${e(scopeLabel(preview.scope))}</dd></div>${deck && phase === "report" ? "" : `<div><dt>Count</dt><dd>${preview.total} file · ${preview.messages} ${preview.source === "grok-bot" ? (preview.messages === 1 ? "fact" : "facts") : (preview.messages === 1 ? "message" : "messages")}</dd></div><div><dt>Size</dt><dd>${preview.source_bytes.toLocaleString()} bytes</dd></div>`}</dl>` : "";
   return `<section class="memory-import" aria-labelledby="memory-import-title" aria-busy="${busy}">
-    <header><h1 id="memory-import-title" tabindex="-1">${heading}</h1></header>
+    <header><h1 id="memory-import-title" tabindex="-1">${heading}</h1>${deck ? artHTML(stepArt[phase]) : ""}</header>
     ${phase === "choose" ? (deck ? `<p class="memory-import-intro">Bring in old chats. Each message is saved with your exact words.</p><p class="memory-import-hint">Each memory is marked with the file it came from.</p><form data-import-choose>
       <div class="memory-import-group"><label for="import-format">Where it comes from</label><select id="import-format" name="format">${formats.map(([source, , label], index) => source === "native-memory" && me.can_admin !== true ? "" : `<option value="${index}">${e(label)}</option>`).join("")}</select></div>
       <div class="memory-import-group"><label for="import-scope">Save into</label><select id="import-scope" name="scope" aria-describedby="import-scope-hint"><option value="threads">Workspace conversations</option>${me.can_admin === true ? '<option value="private">Your private imported history</option>' : ""}</select><p id="import-scope-hint" class="memory-import-hint">Everyone who can read this workspace's conversations will see these. For private history, import in your personal workspace.</p></div>
