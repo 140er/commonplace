@@ -216,7 +216,34 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
 def test_member_settings_keep_mutation_controls_disabled(browser):
     context, page = open_settings(browser, 390, role="member")
     try:
+        page.route(
+            "**/api/connections",
+            lambda route: route.fulfill(
+                json={
+                    "connections": [
+                        {
+                            "id": "personal-app",
+                            "name": "My app",
+                            "client": "generic",
+                            "auth": "pat",
+                            "bots_chat": True,
+                            "bots_confirm": True,
+                            "bots_learned": True,
+                        }
+                    ],
+                    "wings": [],
+                }
+            ),
+        )
+        page.reload()
         page.wait_for_selector("[data-capy-sharing] input")
+        grants = page.locator('[data-action="agent-bots"]')
+        assert grants.count() == 3
+        for scope in ["chat", "confirm", "learned"]:
+            assert page.locator(
+                f'[data-action="agent-bots"][data-bots-{scope}="false"]'
+            ).is_enabled()
+        assert page.locator('[data-action="agent-revoke"]').is_disabled()
         assert (
             page.locator(".capy-settings-subtitle").inner_text()
             == "For the Example workspace. Only the owner can change these."
