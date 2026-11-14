@@ -253,8 +253,43 @@
 :root[data-ui="deck"] .assignment-removal h2 { font-size: 24px; line-height: 1.2; }
 :root[data-ui="deck"] .assignment-removal label { width: 100%; }
 :root[data-ui="deck"] .assignment-removal textarea { min-width: 0; width: 100%; padding: 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
-:root[data-ui="deck"] .assignment-removal .confirm-removal { background: var(--block); color: var(--bg); }
+:root[data-ui="deck"] .assignment-removal .confirm-removal { background: var(--text); color: var(--bg); }
 @media (max-width: 699px) {
   :root[data-ui="deck"] .assignment-removal .btn { min-height: 44px; }
 }
 :root[data-ui="deck"] .workbench-details .title-row h2 { flex-basis: 100%; font-size: 24px; line-height: 1.2; }
+
+:root[data-ui="deck"] .assignment-refusal { padding: 24px 16px; }
+:root[data-ui="deck"] .assignment-removal textarea { outline: none; box-shadow: none; }
+:root[data-ui="deck"] .assignment-removal textarea:focus-visible { outline: 2px solid var(--line-strong); outline-offset: 2px; }
+:root[data-ui="deck"] .assignment-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+:root[data-ui="deck"] .assignment-help { display: block; color: var(--text-2); }
+
+/* Settings shortcuts stay before the longer lists, on every screen size. */
+:root[data-ui="deck"] #deck-settings-nav { position: sticky; top: 0; z-index: 3; display: flex; flex: none; flex-wrap: nowrap; gap: 8px; max-width: 100%; overflow-x: auto; padding-block: 4px; background: var(--bg); scrollbar-width: thin; }
+:root[data-ui="deck"] #deck-settings-nav button { flex: none; white-space: nowrap; min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--well); color: var(--text); font: inherit; cursor: pointer; }
+:root[data-ui="deck"] #deck-settings-nav button[aria-current="location"] { background: var(--text); color: var(--bg); }
+:root[data-ui="deck"] .settings > *, :root[data-ui="deck"] .settings .setting-row > * { min-width: 0; }
+:root[data-ui="deck"] .settings-section { scroll-margin-top: 12px; overflow-wrap: anywhere; }
+:root[data-ui="deck"] #tool-policy [data-tool-policy-filter] { width: 100%; min-height: 44px; margin-top: 12px; }
+:root[data-ui="deck"] .deck-permission-group { margin-top: 24px; }
+:root[data-ui="deck"] .deck-permission-group h3 { margin: 0 0 8px; color: var(--text); font-size: 16px; font-weight: 600; }
+:root[data-ui="deck"] .deck-permission-group .setting-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 16px; padding-block: 14px; }
+:root[data-ui="deck"] .deck-permission-label { display: contents; }
+:root[data-ui="deck"] .deck-permission-label small { display: block; color: var(--text-3); }
+:root[data-ui="deck"] .deck-permission-label summary { padding: 0; min-height: 0; line-height: 18px; color: var(--text-2); cursor: pointer; font-size: 12px; }
+:root[data-ui="deck"] .deck-permission-label code { display: block; color: var(--text-2); white-space: normal; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .settings .setting-row select { flex: 0 0 auto; max-width: 130px; min-height: 44px; }
+:root[data-ui="deck"] .settings :is(.agent-form, .webhook-form) { min-width: 0; }
+:root[data-ui="deck"] .settings :is(input, select, textarea) { max-width: 100%; }
+
+:root[data-ui="deck"] .deck-permission-meta { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: flex-start; flex-wrap: nowrap; gap: 0 8px; color: var(--text-3); font-size: 12px; line-height: 18px; }
+:root[data-ui="deck"] .deck-permission-meta summary { color: var(--text-3); }
+:root[data-ui="deck"] #tool-policy [data-tool-policy-status] { margin-top: 12px; color: var(--text-3); }
+:root[data-ui="deck"] .deck-permission-meta small { font-size: 12px; line-height: 18px; }
+
+:root[data-ui="deck"] .deck-permission-label > span { grid-column: 1; grid-row: 1; }
+:root[data-ui="deck"] .deck-permission-group .setting-row > select { grid-column: 2; grid-row: 1; }
+:root[data-ui="deck"] .deck-permission-meta small { flex: none; white-space: nowrap; }
+:root[data-ui="deck"] .deck-permission-meta details { min-width: 0; }
+:root[data-ui="deck"] .deck-tools { display: block; }

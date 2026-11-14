@@ -371,6 +371,7 @@ def lease(gateway, ws, machine_id):
                 )
                 return {
                     "job_id": row["id"],
+                    **({"max_agents": config.max_agents} if config.max_agents > 20 else {}),
                     "board_slug": name,
                     "project": row["project"],
                     "topic": row["topic"],

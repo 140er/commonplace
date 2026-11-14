@@ -447,6 +447,9 @@ def purge(gateway, user_id: str) -> dict:
             (json.dumps(doomed), user_id),
         )
     _announce(gateway, announce)
+    from commonplace.chat.coworkers.unread import purge_account
+
+    purge_account(gateway, user_id)
     for workspace_id in doomed:
         # Checked again right before the files go: someone may have joined since.
         with db._lock:
