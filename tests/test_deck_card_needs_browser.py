@@ -140,6 +140,11 @@ CONTRAST = r"""selector => {
 
 def assert_contrast(page, selector):
     pairs = page.evaluate(CONTRAST, selector)
+    for _ in range(30):  # a panel that is still fading in has no visible text yet
+        if pairs:
+            break
+        page.wait_for_timeout(100)
+        pairs = page.evaluate(CONTRAST, selector)
     assert pairs
     failures = [pair for pair in pairs if pair["ratio"] < 4.5]
     assert not failures, f"Low contrast text/background pairs: {failures}"
