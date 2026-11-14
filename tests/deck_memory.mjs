@@ -179,3 +179,9 @@ test('phone import dialog is a 16px-gutter sheet that ends on the tab bar with 2
   assert.match(css, /\.deck-memory-dialog \.memory-import h1 \{[^}]*font-size: 17px/);
   assert.match(css, /\.deck-memory-dialog \{ width: min\(540px, calc\(100vw - 32px\)\)[^}]*padding: 20px/);
 });
+test('phone page headings hide in the Deck shell but a dialog title stays visible', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
+  const hide = css.match(/:root\[data-ui="deck"\] \.shell \.center h1([^{]*)\{\s*display: none;/);
+  assert.ok(hide, 'the phone shell still hides page headings');
+  assert.equal(hide[1].trim(), ':not(dialog h1)');
+});

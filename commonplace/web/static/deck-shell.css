@@ -101,7 +101,8 @@
   :root[data-ui="deck"] .m-tabs .count { position: absolute; top: 0; right: calc(50% - 22px); }
   :root[data-ui="deck"] .deck-tab-mic { display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 0; border-radius: 15px; background: var(--violet); color: var(--ink); }
   :root[data-ui="deck"] .deck-tab-mic .i { width: 22px; height: 22px; }
-  :root[data-ui="deck"] .shell .center h1 { display: none; }
+  /* The phone head carries the page title, so page headings hide; a dialog title is its only title and stays. */
+  :root[data-ui="deck"] .shell .center h1:not(dialog h1) { display: none; }
   :root[data-ui="deck"] .shell .head:has(#head-actions:empty) { display: none; }
 }
 @keyframes deck-shell-busy { 50% { opacity: .4; } }
