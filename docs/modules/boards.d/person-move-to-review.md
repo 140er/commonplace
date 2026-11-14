@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - A signed-in person's `PATCH /api/cards/<n>` to `review` with no question, options, context or person reason is a plain move: the card lands in Review with the ask text "Moved to review.", review kind `moved`, no recipient and no return address. It never needs the person's own decision, so `need` is not `you` for it. A PATCH that does carry a question still opens a decision as before, and an agent's move to Review is unchanged.
+  - A signed-in person's `PATCH /api/cards/<n>` to `review` with no question, options, context or person reason is a plain move: the card lands in Review with the ask text "Moved to review.", review kind `moved`, no recipient and no return address. It never needs the person's own decision, so `need` is not `you` for it and the owner queue (`needs_me`) does not list it, which keeps the Deck's In review column and Needs you column apart. A PATCH that does carry a question still opens a decision as before, and an agent's move to Review is unchanged.
   - A person may move a card they put in Review (kind `moved`) on to todo, doing or done. A review that holds an agent's question still has to be answered with decide.
 - **Promises:**
 
@@ -12,4 +12,4 @@
   - Todo to done and backlog to doing or review stay refused for a person, with the plain reasons from the done-move explanations.
 - **Tests:**
 
-  - `tests/test_commonplace_card_move.py` covers the plain Review move, moving on from it, the unchanged decision paths and the three kinds of 409.
+  - `tests/test_commonplace_card_move.py` covers the plain Review move, its absence from the owner queue, moving on from it, the unchanged decision paths and the three kinds of 409.

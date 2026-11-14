@@ -1,6 +1,6 @@
 import { escape as e, actor, elapsed } from './api.js';
 import { whyStrip, waitingText } from './waiting.js';
-import { deckBoardView, bindDeckBoard, boardGroup } from './deck-board.js';
+import { deckBoardView, bindDeckBoard, boardGroup, addedNotice } from './deck-board.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
 const ITEM = '.card[data-card]';
@@ -236,7 +236,7 @@ export function bindBoard(root, { api, board, me = '', onAdded = () => {}, onFil
     const form = event.target, button = form.querySelector('[type="submit"]'), status = form.querySelector('[data-add-status]');
     if (button.disabled) return;
     button.disabled = true;
-    try { const card = await submitCard({ api, board, me, values:Object.fromEntries(new FormData(form)) }); status.textContent = `Card ${cardId(board, card.number)} added to Todo`; onAdded(card); }
+    try { const card = await submitCard({ api, board, me, values:Object.fromEntries(new FormData(form)) }); status.textContent = globalThis.document?.documentElement?.dataset?.ui === 'deck' ? addedNotice(card, me) : `Card ${cardId(board, card.number)} added to Todo`; onAdded(card); }
     catch { status.textContent = 'Could not add card. Your words are kept here. Try again.'; }
     finally { button.disabled = false; }
   };

@@ -182,7 +182,7 @@ const cases = {
       assert.deepEqual(doing.map((o) => [o.disabled, o.current]), [[true, true], [false, false], [false, false]]);
       assert.deepEqual(doing.map((o) => o.status), ['doing', 'review', 'done']);
       const todo = names({ ...card, status:'todo' });
-      assert.deepEqual(todo.map((o) => [o.name, o.disabled, o.note]), [['Active', false, 'Start it'], ['In review', false, ''], ['Shipped', true, 'Move it to Active first.']]);
+      assert.deepEqual(todo.map((o) => [o.name, o.disabled, o.note]), [['Active', false, 'Marks it as started'], ['In review', false, ''], ['Shipped', true, 'Move it to Active first.']]);
       const done = names({ ...card, status:'done' });
       assert.deepEqual(done.map((o) => [o.name, o.status, o.disabled]), [['Active', 'todo', false], ['In review', 'review', true], ['Shipped', 'done', true]]);
       // A question an agent asked is answered, not moved past.
@@ -194,6 +194,44 @@ const cases = {
       const f = fixture(); f.controller.show({ ...card, status:'done' }, { board, me:'user:me' });
       return f.click('menuMove', 'todo').then(() => assert.deepEqual(f.calls.at(-1), ['/api/cards/21', { method:'PATCH', body:{ status:'todo', version:4 } }]));
     } finally { delete globalThis.document; }
+  },
+  async notices() {
+    // After a move the words and the column come from the card the server answered with, never from a queue read before.
+    const { moveNotice } = await import(new URL('../commonplace/web/static/cardmove.js', import.meta.url));
+    const { setNeedsQueue } = await import(new URL('../commonplace/web/static/needs-me.js', import.meta.url));
+    const me = 'user:me';
+    setNeedsQueue({ asks: [{ number: 21 }], done_review: [], approvals: [] }); // stale: still lists the card
+    try {
+      const moved = { ...card, status:'review', review_kind:'moved', ask:'Moved to review.', ask_to:null, need:'idle' };
+      assert.equal(moveNotice(moved, me, 'review'), 'Moved to In review.');
+      assert.equal(moveNotice({ ...card, status:'doing', need:'working' }, me, 'doing'), 'Moved to Active.');
+      assert.equal(moveNotice({ ...card, status:'todo', need:'idle' }, me, 'todo'), 'Moved to Active.');
+      assert.equal(moveNotice({ ...card, status:'done' }, me, 'done'), 'Moved to Shipped.');
+      // The server says it needs the person: that is said, and it is not claimed to be what was asked.
+      assert.equal(moveNotice({ ...card, status:'review', need:'you', ask:'Ship it?', ask_to:me, review_kind:'decision' }, me, 'review'), 'Moved. It now shows in Needs you, not In review.');
+    } finally { setNeedsQueue(null); }
+    // The entry that moves a todo card to Active says what it does, not that a run starts.
+    globalThis.document = { documentElement:{ dataset:{ ui:'deck' } } };
+    try {
+      const html = menu.renderCardMenu({ ...card, status:'todo' }, { board, me });
+      assert.match(html, /Marks it as started/); assert.doesNotMatch(html, /Start it/);
+      assert.match(menu.renderCardMenu({ ...card, status:'todo', task_type:'build', assignee:'conn:builder' }, { board, me }), /Starts its assigned work/);
+    } finally { delete globalThis.document; }
+  },
+  async closesAtOnce() {
+    // The menu is gone the moment the server answers; the board refresh that follows does not hold it open.
+    let release; const refreshing = new Promise((done) => { release = done; });
+    const f = fixture({ onChange:() => refreshing });
+    const pending = f.click('menuMove', 'review');
+    await new Promise((done) => setTimeout(done, 0));
+    assert.equal(f.changes.length, 1, 'the board refresh has started');
+    assert.equal(f.mount.innerHTML, '', 'the menu is already closed while the refresh runs');
+    assert.equal(f.changes[0].status, 'review');
+    release(); await pending;
+    assert.equal(f.doc.activeElement, f.opener, 'focus returns to the actions button after the refresh');
+    // A refresh that fails does not bring a false error into a menu that is gone.
+    const failing = fixture({ onChange:async () => { throw new Error('refresh failed'); } });
+    await failing.click('menuMove', 'done'); assert.equal(failing.mount.innerHTML, '');
   },
   async proposal() {
     const f = fixture(); f.controller.show({ ...card, proposal_status:'pending', status:'backlog' }, { board });

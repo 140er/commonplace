@@ -8,9 +8,10 @@ const awaitsYou = (card, me) => card.status !== 'done' && (card.need === 'you' |
   (card.status === 'review' && !!card.ask && !!me && card.ask_to === me && card.review_kind !== 'completion'));
 // "Needs you" means the owner queue lists the card, the same list Today, Home and the badges count.
 export const needsOwner = (card, me, needs) => card.status !== 'done' && (inNeedsQueue(card, needs) ?? awaitsYou(card, me));
-export function stateWord(card, me) {
+// `needs` is the owner queue to group by; pass null to read only what the card itself says (a server answer).
+export function stateWord(card, me, needs) {
   if (card.status === 'done') return 'Live';
-  if (needsOwner(card, me)) return 'Needs you';
+  if (needsOwner(card, me, needs)) return 'Needs you';
   if (card.need === 'checks' || card.checks === 'pending') return 'Checking';
   if (card.status === 'review') return 'In review';
   if (card.status === 'doing' || card.need === 'working') return 'Building';
@@ -27,17 +28,18 @@ export function cardBot(card, { board = {}, bots = [] } = {}) {
 const botName = (card, options) => boardCopy(cardBot(card, options)?.name || card.bot?.name || '') || 'No bot assigned';
 const avatar = name => `<span class="deck-board-avatar" aria-hidden="true">${e(Array.from(name)[0] || '?')}</span>`;
 const dot = tone => `<i class="deck-board-dot ${tone}" aria-hidden="true"></i>`;
-export const boardGroup = (card, me) => needsOwner(card, me) ? 'todo' : card.status === 'done' ? 'done' : card.status === 'review' ? 'review' : 'doing';
+export const boardGroup = (card, me, needs) => needsOwner(card, me, needs) ? 'todo' : card.status === 'done' ? 'done' : card.status === 'review' ? 'review' : 'doing';
 const columns = [['todo', 'Needs you', 'waiting'], ['doing', 'Active', 'busy'], ['review', 'In review', 'idle'], ['done', 'Shipped', 'live']];
 function cardHTML(card, options, first) {
   const selected = options.selected === card.number, name = botName(card, options);
   return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(boardCopy(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(boardCopy(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span></div></article>`;
 }
-// Just after Add card: say which column holds the new card (the Deck has no Todo column), else the usual intro.
+// Just after Add card: say which column holds the new card and the state the server gave it (the Deck has no
+// Todo column), read from the card itself so a queue that has not caught up cannot name another place; else the usual intro.
+export const addedNotice = (card, me) => `Added “${boardCopy(card.title)}” to ${columns.find(([status]) => status === boardGroup(card, me, null))[1]} (${stateWord(card, me, null)}).`;
 function boardNotice(cards, columns, { added, me }) {
   const card = added == null ? null : cards.find(item => item.number === added);
-  const column = card && columns.find(([status]) => status === boardGroup(card, me));
-  return column ? `<p class="deck-board-intro" role="status" data-board-added>Added “${e(boardCopy(card.title))}” to ${column[1]}.</p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>';
+  return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>';
 }
 export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = true, column = 'todo', ...options }) {
   const backlog = cards.filter(card => card.status === 'backlog' && !needsOwner(card, options.me));
