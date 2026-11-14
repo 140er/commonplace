@@ -33,8 +33,11 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
     from playwright.sync_api import expect
 
     h = chat_hub
+    with h.db._lock:
+        h.db._conn.execute("UPDATE users SET name = ? WHERE id = ?", ("Memory writer", h.admin))
+        h.db._conn.commit()
     owner = service(h, h.person(h.admin))
-    owner.board_add(slug="private-work", wing="private")
+    owner.board_add(slug="private-work", name="Private notes", wing="private")
     quote = "Exact words stay here.\nThe second line stays too."
     owner.space_post("work", quote)
     owner.space_post("work", "Exact words can be searched again.")
@@ -73,10 +76,18 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         if role == "member":
             expect(page.locator(".memory-results")).not_to_contain_text("private history")
             expect(page.locator('[data-memory-room="private-work"]')).to_have_count(0)
+        expected_count = "3" if role == "owner" else "2"
+        expect(page.locator('[data-memory-room=""] .memory-room-count')).to_have_text(
+            expected_count
+        )
+        expect(page.locator('[data-memory-room="work"] .memory-room-count')).to_have_text("2")
         page.locator('[data-memory-room="work"]').click()
         expect(page.locator('[data-memory-room="work"]')).to_have_attribute("aria-pressed", "true")
         expect(page.locator(".memory-results")).not_to_contain_text("private history")
         expect(query).to_have_value("Exact words")
+        expect(page.locator('[data-memory-room=""] .memory-room-count')).to_have_text(
+            expected_count
+        )
         page.reload()
         expect(page.get_by_text("Kept from last time", exact=True)).to_be_visible()
         expect(query).to_have_value("Exact words")
@@ -85,6 +96,17 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         expect(page.get_by_text("Kept from last time", exact=True)).to_have_count(0)
         query.press("Enter")
         expect(page.locator(".memory-results")).to_have_attribute("aria-busy", "false")
+        expect(page.locator(".memory-results .memory-saver").first).to_have_text(
+            "you" if role == "owner" else "Memory writer"
+        )
+        expect(page.locator(".search-big button")).to_have_count(0)
+        assert query.locator("..").bounding_box()["height"] == 44
+        page.locator(".memory-rooms").evaluate("el => el.scrollLeft = 0")
+        query.evaluate("el => el.blur()")
+        assert (
+            query.locator("..").evaluate("el => getComputedStyle(el).outlineColor")
+            != "rgb(157, 92, 255)"
+        )
         shot("memory")
         if size[0] == 390:
             expect(page.locator(".m-top .deck-brand b")).to_have_text("Memory")
@@ -93,6 +115,19 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
             )
             assert min(metrics) >= 44
             assert query.bounding_box()["height"] >= 44
+            assert query.bounding_box()["y"] < page.locator(".memory-results").bounding_box()["y"]
+            assert (
+                page.get_by_role("button", name="Import memory files", exact=True).bounding_box()[
+                    "y"
+                ]
+                >= page.locator(".memory-results").bounding_box()["y"]
+            )
+            assert (
+                page.locator(".memory-filters summary").evaluate(
+                    "el => getComputedStyle(el).display"
+                )
+                == "list-item"
+            )
             assert page.locator(".deck-memory").bounding_box()["x"] == 16
         page.locator('[data-memory-result="0"]').click()
         expect(page.locator(".memory-source-details")).to_be_visible()
@@ -101,7 +136,7 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         page.get_by_role("button", name="Import memory files", exact=True).click()
         dialog = page.get_by_role("dialog", name="Import memory files")
         expect(dialog).to_be_visible()
-        expect(dialog).to_contain_text("Mark each memory with the file it came from.")
+        expect(dialog).to_contain_text("Each memory is marked with the file it came from.")
         if role == "member":
             expect(dialog.locator('option[value="private"]')).to_have_count(0)
         shot("import")
@@ -109,25 +144,37 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         expect(dialog).to_have_count(0)
         expect(page.get_by_role("button", name="Import memory files", exact=True)).to_be_focused()
         page.get_by_role("button", name="Import memory files", exact=True).click()
-        page.locator('[name="format"]').select_option("2")
+        page.locator('[name="format"]').select_option("0")
         page.locator('[name="file"]').set_input_files(
             {
                 "name": "conversation.json",
                 "mimeType": "application/json",
-                "buffer": file_body()["transcript"].encode(),
+                "buffer": file_body("chatgpt")["transcript"].encode(),
             }
         )
         page.get_by_role("button", name="Preview file", exact=True).click()
         confirm = page.locator('[data-import-action="confirm"]')
         expect(confirm).to_be_visible()
         expect(confirm).to_be_disabled()
+        expect(page.locator(".memory-import-summary")).to_contain_text(
+            "ChatGPT conversation (.json)"
+        )
+        assert page.locator(".memory-import-actions button").all_text_contents() == [
+            "Choose another file",
+            "Cancel",
+            "Import",
+        ]
+        assert confirm.evaluate("el => getComputedStyle(el).opacity") == "1"
         consent = page.get_by_role("checkbox", name="I own this export and agree to import it.")
+        assert consent.bounding_box()["width"] == 20
+        assert consent.evaluate("el => getComputedStyle(el).borderRadius") == "6px"
         consent.check()
         expect(confirm).to_be_enabled()
         consent.uncheck()
         expect(confirm).to_be_disabled()
         shot("preview")
         consent.check()
+        shot("consent")
         confirm.click()
         expect(page.locator(".memory-import")).to_contain_text("Import complete.")
         page.get_by_role("button", name="Done", exact=True).click()

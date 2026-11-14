@@ -17,3 +17,11 @@ report stages. Confirmation additionally requires the explicit ownership
 checkbox after preview; selecting a new file clears that consent. The upload
 bytes, supported formats, destination permissions, preview binding and retry
 semantics remain unchanged. Classic rendering and import behavior are retained.
+
+Room counts are derived from the matches already returned by the existing scoped
+search. Known counts may be retained while changing rooms within that same query
+and source/author/time filter; new queries do not reuse those counts. This adds no
+new search or permission path. The viewer sees “you” as their saver name, and
+missing room display names are presented as readable words instead of raw slugs.
+The import preview retains the label picked in the chooser, independently of the
+parser’s canonical source field. Consent and confirmation payloads are unchanged.

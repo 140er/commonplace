@@ -1,7 +1,7 @@
 import { api as request, escape as e, actor } from "./api.js";
 import { cardId, isBlocked } from "./board.js";
 import { createMemoryImport } from "./memory-import.js";
-import { renderDeckMemory, savedLine, memoryRoom, memoryDetails, queryHistory, memoryStyles } from "./deck-memory.js";
+import { renderDeckMemory, savedMarkup, rememberRoomCounts, memoryRoom, memoryDetails, queryHistory, memoryStyles } from "./deck-memory.js";
 
 const enc = encodeURIComponent;
 const exact = (value) => e(value).replaceAll("\r", "&#13;");
@@ -158,10 +158,10 @@ export function renderMemoryPanel({ result, destination, source, cards = [], me,
   const thread = neighbours.length ? neighbours : [{ ...result, hit: true }];
   const message = (row) => row.hit ? result : { ...row, author: memoryAuthor(row, source || destination) };
   const linkCards = cards.filter((card) => card.board === destination?.slug && !card.restricted);
-  return `<section class="memory-panel" aria-label="Memory source"><header class="ctx-head"><h2>Memory</h2><button class="btn ghost" data-memory-action="hide">Hide <kbd>]</kbd></button></header><div class="ctx-body"><div class="detail-h"><span class="verbatim">Exact words, as saved.${["chat", "reply"].includes(result.kind) ? " Shown with the messages around it." : ""}</span><div class="src"><b>${e(deck ? savedLine(result, { people, boards }) : result.sourceLabel)}</b>${deck ? "" : `<time>${e(result.at)}</time>`}</div></div>
+  return `<section class="memory-panel" aria-label="Memory source"><header class="ctx-head"><h2>Memory</h2><button class="btn ghost" data-memory-action="hide">Hide <kbd>]</kbd></button></header><div class="ctx-body"><div class="detail-h"><span class="verbatim">Exact words, as saved.${["chat", "reply"].includes(result.kind) ? " Shown with the messages around it." : ""}</span><div class="src">${deck ? savedMarkup(result, { people, boards, viewer: me }) : `<b>${e(result.sourceLabel)}</b>`}${deck ? "" : `<time>${e(result.at)}</time>`}</div></div>
     ${deck ? memoryDetails(result) : ""}
     ${loading ? '<p role="status">Loading source…</p>' : ""}${panelError ? `<p role="alert">${e(panelError)}</p><button class="btn" data-memory-action="source-retry">Try again</button>` : ""}
-    <div class="thread">${thread.map((row) => { const msg = message(row); return `<article class="msg ${row.hit ? "hit" : "ctxmsg"}"><div class="msg-h"><b>${e(deck ? savedLine(msg, { people, boards }) : msg.author)}</b>${deck ? "" : stamp(msg)}</div><p class="msg-b">${exact(msg.text)}</p></article>`; }).join("")}</div>
+    <div class="thread">${thread.map((row) => { const msg = message(row); return `<article class="msg ${row.hit ? "hit" : "ctxmsg"}"><div class="msg-h">${deck ? savedMarkup(msg, { people, boards, viewer: me }) : `<b>${e(msg.author)}</b>`}${deck ? "" : stamp(msg)}</div><p class="msg-b">${exact(msg.text)}</p></article>`; }).join("")}</div>
     ${actions.post.map((card) => `<div class="callout wait"><h3>This may answer blocked card ${e(label(card))}</h3><p>Post this message, word for word, as a comment on ${e(label(card))} in ${e(name(destination))}:</p><p class="quote">${exact(result.text)}</p><p>The comment is saved on the card. The request stays open until it is answered or closed.</p><button class="btn primary" data-memory-post="${card.number}">Post on ${e(label(card))}</button></div>`).join("")}
     ${linking && actions.link ? `<form data-memory-link><label>Link note to a card in ${e(name(destination))}<select name="card" required>${linkCards.map((card) => `<option value="${card.number}">${e(deck ? label(card) : `${label(card)} · ${card.title}`)}</option>`).join("")}</select></label><button class="btn"${linkCards.length ? "" : " disabled"}>Link note</button></form>` : ""}
     ${notice ? `<p role="status">${e(notice)}</p>` : ""}</div><footer class="memory-panel-actions">${actions.quote ? `<p class="memory-destination">Message to ${e(name(destination))} chat</p><button class="btn sm" id="open-in-chat" data-memory-action="chat"${loading || panelError ? " disabled" : ""} aria-controls="chat" aria-expanded="${Boolean(chatOpen)}">Open in chat, ask about it <kbd>↵</kbd></button>` : ""}<button class="btn sm" data-memory-action="copy" aria-keyshortcuts="Y">Copy exact words <kbd>Y</kbd></button>${actions.link ? '<button class="btn sm" data-memory-action="link" aria-keyshortcuts="L">Link to card <kbd>L</kbd></button>' : ""}</footer></section>`;
@@ -175,7 +175,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   const history = queryHistory(me, storage);
   const saved = look === "deck" ? history.read() : "";
   if (look === "deck") memoryStyles(mount.ownerDocument);
-  const state = { look, boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
+  const state = { look, viewer: typeof me === "string" ? me : me.actor, boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
   let searchEpoch = 0, sourceEpoch = 0, stopped = false, writing = false, returnKey = "";
   let importer = null, importDialog = null;
   const person = typeof me === "string" ? me : me.actor;
@@ -191,6 +191,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
         : focused.name && ["query", "project", "source", "from", "when", "card"].includes(focused.name) ? `[name="${focused.name}"]` : null;
       if (selector) { const owner = panel?.contains(focused) ? panel : mount; restore = () => owner.querySelector(selector)?.focus(); }
     }
+    if (look === "deck") state.filtersOpen = mount.querySelector(".memory-filters")?.open ?? state.filtersOpen;
     mount.innerHTML = renderMemory(state);
     if (panel) {
       panel.hidden = !state.selected;
@@ -211,6 +212,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     try {
       const page = await searchMemory({ api, boards: state.boards, ...filters, query: filters.query || "", since: filters.when ? new Date(Date.now() - Number(filters.when) * 86400000).toISOString() : "" });
       if (stopped || epoch !== searchEpoch) return;
+      if (look === "deck") rememberRoomCounts(state, page.results, filters);
       Object.assign(state, page, { completedQuery: filters.query, searched: true });
     } catch (error) {
       if (stopped || epoch !== searchEpoch) return;
