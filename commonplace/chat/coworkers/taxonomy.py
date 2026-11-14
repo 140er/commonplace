@@ -60,7 +60,7 @@ def _visible(store, bots):
     return [b for b in bots if b["connection_id"] is None or b["connection_id"] in visible]
 
 
-def directory(store, user_id):
+def directory(store, user_id, *, owns=False):
     """Two bounded queries, including one batched audience/unread/job lookup.
 
     Counts and job summaries never include a conversation of another person.
@@ -145,7 +145,12 @@ def directory(store, user_id):
                 summary=_summary(item["coworkers"]),
                 coworker_count=len(item["coworkers"]),
             )
-        return {"bots": list(bots.values()), "conversations": list(conversations.values())}
+        views = list(conversations.values())
+        if owns:
+            from .owns import project
+
+            views = project(store._authority, conn, user_id, views)
+        return {"bots": list(bots.values()), "conversations": views}
 
 
 def set_section(store, user_id, bot_id, section):

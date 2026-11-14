@@ -15,6 +15,7 @@ from commonplace.bots.store import open_bots
 from commonplace.chat.coworkers import taxonomy
 from commonplace.chat.coworkers.store import Store, StoreError, open_store
 from tests.test_coworker_api import api as api
+from tests.test_coworker_owns import owned as owned
 
 
 @pytest.fixture
@@ -58,6 +59,26 @@ def test_additive_fields_and_default_section_preserve_persona_fields(api):
     }
     assert row["coworkers"] == []
     assert directory(api)["team_bots"] == []
+
+
+def test_conversation_list_keeps_owned_paths_with_taxonomy_and_unread(owned):
+    api = owned.api
+    cid = owned.conversation()
+    owned.card(["src/api/**"])
+    assert (
+        api.request("POST", f"/bots/{owned.bot['id']}/section", {"section": "Research"})[0] == 200
+    )
+    reply(api, cid)
+    view = conversations(api)[cid]
+    assert (view["section"], view["unread"], view["state"]) == ("Research", 1, "live")
+    assert view["owns"] == {
+        "availability": "available",
+        "paths": [
+            {"path": "src/api/**", "locked": False, "shared_lock": False, "lock_owner": None}
+        ],
+        "truncated": False,
+    }
+    assert conversations(api, user=api.member) == {}
 
 
 def test_section_owner_only_sanitized_clearable_and_audited_without_name(api):

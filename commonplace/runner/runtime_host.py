@@ -110,7 +110,7 @@ class LiveRuntimeHost:
         except Exception:
             raise InstallError("runtime download unavailable") from None
 
-    def probe(self, name, release, raw, home):
+    def probe(self, name, release, raw, home, *, sign_in=False):
         if digest(raw) != release["sha256"] or not raw or len(raw) > MAX_ARTIFACT:
             raise InstallError("runtime integrity verification failed")
         if release["format"] == "native" and not raw.startswith(b"\x7fELF"):
@@ -135,7 +135,13 @@ class LiveRuntimeHost:
                     pass_fds=(fd,),
                     umask=0o077,
                     cwd=home,
-                    env={"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": str(home), "NO_COLOR": "1"},
+                    env={
+                        "PATH": "/usr/bin:/bin",
+                        "LANG": "C",
+                        "HOME": str(home),
+                        "NO_COLOR": "1",
+                        "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+                    },
                 )
                 if len(result.stdout) + len(result.stderr) > 65536:
                     raise ValueError
@@ -160,11 +166,31 @@ class LiveRuntimeHost:
             if code or "status" not in auth_help.split():
                 return {"availability": "unsupported", "login": "unknown"}
             if name == "claude":
+                if sign_in:
+                    # The owner owns this terminal exchange. No capture, relay,
+                    # inherited credentials, browser launch or hub input.
+                    subprocess.run(
+                        [*command, "auth", "login", "--claudeai"],
+                        check=True,
+                        timeout=300,
+                        pass_fds=(fd,),
+                        umask=0o077,
+                        cwd=home,
+                        env={
+                            "PATH": "/usr/bin:/bin",
+                            "LANG": "C",
+                            "HOME": str(home),
+                            "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+                            "BROWSER": "/bin/false",
+                        },
+                    )
                 code, status_text = run(["auth", "status", "--json"])
                 status = json.loads(status_text)
                 login = (
                     "unverified"
-                    if status.get("loggedIn") is True
+                    if code == 0
+                    and status.get("loggedIn") is True
+                    and status.get("authMethod") == "claude.ai"
                     else "logged-out"
                     if status.get("loggedIn") is False
                     else "unknown"
