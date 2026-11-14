@@ -226,14 +226,16 @@ export function createNodePanel({ section, api, model, interval = 5000, own = nu
   async function load() {
     const mine = run, target = key;
     if (!target) return;
-    // A device the host describes itself has nothing to read from the topology.
-    if (own?.(target)) { loading = false; paint(); return; }
-    const [read, route] = await Promise.allSettled([api(`${NODE_PATH}?key=${encodeURIComponent(target)}`), api(`${ROUTE_PATH}?target=${encodeURIComponent(target)}`)]);
+    // A device the host describes itself in every tab has nothing to read from the topology; one it describes in
+    // some tabs only is still read for the rest, and its route is read only when the host does not describe Config.
+    const mineOwn = own?.(target);
+    if (mineOwn && TABS.every((item) => mineOwn[item.id] !== undefined)) { loading = false; paint(); return; }
+    const [read, route] = await Promise.allSettled([api(`${NODE_PATH}?key=${encodeURIComponent(target)}`), mineOwn?.config !== undefined ? Promise.resolve(null) : api(`${ROUTE_PATH}?target=${encodeURIComponent(target)}`)]);
     if (mine !== run || target !== key) return;
     loading = false;
     if (read.status === "fulfilled") { detail = detailModel(read.value); failure = ""; }
     else failure = read.reason?.status === 403 ? DETAIL_COPY.refused : detail ? "" : DETAIL_COPY.failed;
-    if (route.status === "fulfilled") { answer = route.value; routeFailure = ""; }
+    if (route.status === "fulfilled") { if (route.value) { answer = route.value; routeFailure = ""; } }
     else if (!answer) routeFailure = route.reason?.status === 403 ? DETAIL_COPY.routeRefused : DETAIL_COPY.routeOff;
     paint();
   }
