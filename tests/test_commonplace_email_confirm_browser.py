@@ -197,7 +197,7 @@ async def _confirm_in_chromium(client, proxied, origin, link, token, requests, b
             # This is the first post-click assertion: base must fail as 403/null.
             assert successful, f"confirmation POST status={response.status}, Origin={post_origin}"
             await page.wait_for_url(origin + "/app/**")
-            await page.locator(".app").wait_for()
+            await page.locator(".shell").wait_for()
 
             # Only the confirmation document's requests retain this exact policy.
             for method, path, headers, _, _ in pre_post:

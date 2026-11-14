@@ -42,7 +42,8 @@ def test_typed_memory_search_and_filters(chat_hub, look, size, role):
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"{origin}/app/?ui={look}#/memory")
-            query = page.get_by_role("searchbox", name="Search memory")
+            label = "Search saved memory" if look == "deck" else "Search memory"
+            query = page.get_by_role("searchbox", name=label)
             query.fill("rate limit")
             query.press("Enter")
             results = page.locator(".memory-results")
@@ -54,6 +55,9 @@ def test_typed_memory_search_and_filters(chat_hub, look, size, role):
                 expect(results).to_contain_text("private matching source")
             else:
                 expect(results).not_to_contain_text("private matching source")
+            if look == "deck":
+                # The Deck keeps the typed filters behind "More filters".
+                page.get_by_text("More filters", exact=True).click()
             for field, option in (
                 ("project", "work"),
                 ("source", "chat"),
