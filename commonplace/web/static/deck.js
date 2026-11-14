@@ -3,6 +3,7 @@
 // On: the shell draws a top bar instead of the rail (Today, Bots, Compute, Settings), the phone gets the same
 // four tabs, and deck.css re-tokens every screen (true black, lightness for elevation, amber
 // only for what waits on you). Screens that exist only in Deck register in SCREENS.
+import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
 import { createDeckAppearance } from './deck-appearance.js';
 import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, createDeckShell } from './deck-shell.js';

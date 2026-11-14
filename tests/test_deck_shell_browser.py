@@ -46,6 +46,11 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                     page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
                     await page.goto(url + "#/today")
                     await page.wait_for_selector('[data-deck-folder="Bots"]', state="attached")
+                    await page.wait_for_function(
+                        "getComputedStyle(document.querySelector('[data-deck=bar]')).backgroundColor === 'rgb(17, 16, 21)'"
+                        if width >= 700
+                        else "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
+                    )
                     await page.evaluate("document.fonts.ready")
                     assert await page.evaluate("document.documentElement.scrollWidth") == width
                     if width >= 700:
