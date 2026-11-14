@@ -85,5 +85,3 @@
   - `tests/test_orch_trigger_stall.py` covers a split start without a `main` role (including the live v3 config shape), unplannable starts as misses, a released todo card starting, and the failing-sweep owner alert.
 
   - `tests/test_orch_start_retry.py` covers a retried `at_cap` start with its exact backoff, repeated refusals recorded as misses, the bounded `retry_exhausted` end, a permanent refusal never retried, a retry that is refused permanently, and a settled retry not counted twice.
-
-  - Configured boards expose `runner_capacity` and `effective_start_limit` alongside the project cap. The summary says “limit N, runner capacity M”; the effective start ceiling is their minimum. An accepted runner config pins one machine, so unrelated runners do not inflate its capacity.

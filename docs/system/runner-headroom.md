@@ -1,0 +1,5 @@
+### Resource headroom bounds starts independently of project limits
+
+- A project limit up to 100 never expands a machine grant. Card leases also respect the machine's concurrent-start ceiling, remaining hourly allowance and fresh numeric resource report. An accepted runner config selects one machine; board summaries show that runner's capacity alongside the project limit and expose the minimum as the effective start ceiling.
+- Local card launches and Coworker session launches or continuations probe resources again before spawning. The private machine journal atomically reserves 512 MiB and one CPU core per launch for 120 seconds, including uncertain outcomes, so startup bursts cannot repeatedly spend the same headroom. Clients on one machine must share its journal.
+- Unknown probes and legacy clients without reports retain existing behavior. Reports expire after ten minutes and then block new card leases until refreshed. These admission checks reduce startup overload risk; they cannot guarantee protection from later process memory growth. Accepted live configs remain owner-controlled.
