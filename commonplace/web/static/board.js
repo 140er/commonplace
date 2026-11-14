@@ -1,5 +1,6 @@
 import { escape as e, actor, elapsed } from './api.js';
 import { whyStrip, waitingText } from './waiting.js';
+import { deckBoardView, bindDeckBoard } from './deck-board.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
 const ITEM = '.card[data-card]';
@@ -196,10 +197,11 @@ export function roveTo(card) {
   reveal(card);
   card.closest('.cards')?.querySelectorAll(ITEM).forEach((item) => { item.tabIndex = item === card ? 0 : -1; });
 }
-export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, people = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
+export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, people = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
   const options = { board, me, selected, messages, deck }, visible = filterCards(cards, filter, me).map((c, i) => [c, i]).sort(([a, i], [b, j]) => prioRank(a) - prioRank(b) || i - j).map(([c]) => c);
   const backlog = visible.filter((c) => c.status === 'backlog'), count = (s) => visible.filter((c) => c.status === s).length;
   const form = adding ? addCardForm({ people, sheet, canPrioritize }) : '';
+  if (deck) return deckBoardView({ ...options, bots, cards: visible, filter, form, sheet, column });
   const steps = !cards.length ? `<section class="empty-strip" aria-label="Get started"><ol class="steps"><li class="is-next"><span class="num" aria-hidden="true">1</span><div><h2>Add your first card</h2><p>A card is one piece of work. Write it like a to-do.</p><button class="btn primary" data-action="new-card">${icon(PLUS)}Add card</button></div></li><li><span class="num" aria-hidden="true">2</span><div><h2>Connect an agent</h2><p>An agent is an AI helper that works on cards. The first one becomes the Coworker.</p><button class="btn" data-action="connect-agent">Connect an agent</button></div></li><li><span class="num" aria-hidden="true">3</span><div><h2>Ask for something</h2><p>Write in chat. The Coworker turns requests into cards.</p><button class="btn" data-action="open-chat">Write in chat <kbd>/</kbd></button></div></li></ol></section>` : '';
   return `<div class="workbench-board">${steps}${whyStrip(board)}<div class="board-tools"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div></div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
     // The selected card is never one of the hidden Done cards: its column opens instead.
@@ -252,6 +254,7 @@ export function bindBoard(root, { api, board, onAdded = () => {}, onFilter = () 
     if (!next) return;
     event.preventDefault(); roveTo(next); next.focus(); onSelect(Number(next.dataset.card));
   };
+  const stopDeckBoard = bindDeckBoard(root);
   root.addEventListener('click', click); root.addEventListener('submit', submit); root.addEventListener('keydown', keydown);
-  return () => { root.removeEventListener('click', click); root.removeEventListener('submit', submit); root.removeEventListener('keydown', keydown); };
+  return () => { stopDeckBoard(); root.removeEventListener('click', click); root.removeEventListener('submit', submit); root.removeEventListener('keydown', keydown); };
 }
