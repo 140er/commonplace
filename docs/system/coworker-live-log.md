@@ -1,5 +1,7 @@
 ### Coworker live log and working-on steps
 
+The detail retains the conversation's owned-path projection alongside live steps. Ownership lists keep their existing unavailable/empty projection when a project cannot be read. The combined detail requires current project and bot access, returning 404 on unreadable or archived projects or revoked bindings; empty ownership data does not authorize live output or steps.
+
 `commonplace/chat/coworkers/livelog.py` projects existing per-job launch output; `steps.py` projects conversation and run-ledger states. Routes contain only dispatch hooks. There is no new database, file tail, model call or migration.
 
 #### API contract
