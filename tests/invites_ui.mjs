@@ -146,7 +146,7 @@ for (const days of ['0', '31', '1.5', '', 'x']) assert.throws(() => inviteBody({
     className: '', innerHTML: '', attrs: {},
     setAttribute(k, v) { this.attrs[k] = v; },
     addEventListener(kind, fn) { listener[kind] = fn; },
-    querySelector() { return this.error ??= { textContent: '' }; },
+    querySelector(selector) { return selector === '[data-workspace-error]' ? (this.error ??= { textContent: '' }) : { textContent: '' }; },
     showModal() { this.open = true; }, close() { closed++; }, remove() { removed++; },
   };
   const doc = { querySelector: () => null, createElement: () => dialog, body: { append(node) { doc.appended = node; } } };

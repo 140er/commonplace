@@ -226,3 +226,22 @@ def test_session_start_time_is_only_known_for_a_live_session(site):
     assert sessions.session_created_at(site.db, session) is None
     assert sessions.session_created_at(site.db, "unknown") is None
     assert sessions.session_created_at(site.db, None) is None
+
+
+def test_workspace_creation_requests_export_only_to_their_person(site):
+    with site.db._lock:
+        site.db._conn.execute(
+            "INSERT INTO workspace_creations(user_id, request_id, workspace_id, created_at) "
+            "VALUES (?,?,?,?)",
+            (site.alice, "creation-request", site.alice_home, "2026-01-01T00:00:00Z"),
+        )
+    own = site.export(site.alice, site.alice_home)
+    assert own.rows("account/workspace_creations.ndjson") == [
+        {
+            "user_id": site.alice,
+            "request_id": "creation-request",
+            "workspace_id": site.alice_home,
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+    assert "creation-request" not in site.export(site.bob, site.bob_home).text()
