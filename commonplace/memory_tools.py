@@ -773,7 +773,11 @@ def install(gateway):
                 # Additive: set only while the memory worker is warming up.
                 send_json(h, 200, {"results": results, **({"warming_up": True} if warming else {})})
             elif h.command == "GET" and parts == ["rooms"]:
-                send_json(h, 200, {"rooms": note_rooms(principal)})
+                rooms = note_rooms(principal)
+                if not principal.policy.refusal("memory_search"):
+                    # The Memory page asks for its rooms before it searches.
+                    gateway.warm_memory(principal.workspace_id)
+                send_json(h, 200, {"rooms": rooms})
             elif h.command == "GET" and parts == ["map"]:
                 params = query(h)
                 send_json(h, 200, memory_map(ctx, params.get("limit"), params.get("theme")))
