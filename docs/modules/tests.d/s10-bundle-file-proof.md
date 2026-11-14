@@ -1,0 +1,4 @@
+- **Owns:** `test_card253_s10.py` states what the outgoing source-bundle projection keeps for a readable parent once plain file citations need exact local proof (#261).
+- **Promises:** A readable thread bundle keeps its source thread and range. A plain source file or search source path that no complete local match proves is omitted, with its display basename, and the rest of the stored hit is returned unchanged.
+- **How it fails:** A test that expects the unproved file citation or the placeholder search path to survive fails on the omission instead of exercising the bundle behaviour it names.
+- **Tests:** `test_card253_s10_readable_guard` covers the drawer read for member and owner; `test_card253_s10_r1_private_parent[search_text_unchanged-*]` compares gateway search with the worker hit minus the unproved citation.
