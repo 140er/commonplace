@@ -1,4 +1,5 @@
 import { escape as e } from './api.js';
+import { drawerCopy } from './deck-board.js';
 
 // After Done: Archive and restore, a carry-on follow-up and the Pocket of pinned facts.
 // The server decides who may act (the can_* flags); archiving hides a card, it never deletes it.
@@ -52,7 +53,8 @@ export function lifecycleRequest(card, action, extra = {}) {
 export function placeLifecycle(mount, card) {
   const body = mount.querySelector('.ctx-body');
   if (!body || mount.querySelector('[data-details-lifecycle]')) return;
-  const html = lifecycleSection(card);
+  const raw = lifecycleSection(card);
+  const html = globalThis.document?.documentElement?.dataset?.ui === 'deck' ? drawerCopy(raw.replace(/>#[0-9]+</g, '>Related work<')) : raw;
   if (!html) return;
   const description = body.querySelector('[data-details-description]');
   if (description) description.insertAdjacentHTML('beforebegin', html);

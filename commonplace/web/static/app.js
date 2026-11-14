@@ -26,6 +26,7 @@ import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, roveTo } from "./board.js";
+import { drawerCopy } from "./deck-board.js";
 import { createDetails, canRemoveAssignment, assignmentPickup } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
@@ -366,7 +367,7 @@ function shell() {
     if (layout.classList.contains("chat-open") || layout.classList.contains("ctx-pushed")) return;
     // Project settings are a page from 700 px up (10), never a dimmed sheet; on a phone they are the m13 sheet.
     const page = panel.querySelector("[data-project-settings]") && !matchMedia("(max-width:699px)").matches;
-    const open = !panel.hidden, modal = open && narrow.matches && !page;
+    const open = !panel.hidden, modal = open && (narrow.matches || state.deck?.on()) && !page;
     root.querySelector("#details-btn")?.setAttribute("aria-expanded", String(open));
     if (open && !wasOpen) opener = document.activeElement;
     layout.classList.toggle("two", !open); layout.classList.toggle("panel-open", open);
@@ -382,7 +383,7 @@ function shell() {
   observer.observe(panel, { attributes:true, attributeFilter:["hidden"] });
   narrow.addEventListener("change", sync);
   panel.addEventListener("keydown", (event) => {
-    if (event.key !== "Tab" || !narrow.matches) return;
+    if (event.key !== "Tab" || !(narrow.matches || state.deck?.on())) return;
     const items = [...panel.querySelectorAll('button:not(:disabled),a[href],input,textarea,select,[tabindex="0"]')].filter((el) => el.getClientRects().length);
     const index = items.indexOf(document.activeElement);
     if (!items.length) { event.preventDefault(); panel.focus(); }
@@ -521,7 +522,7 @@ function boardView() {
   const board = currentBoard();
   if (!board) { boardsView(); return; }
   const panelOpen = !root.querySelector("#card-panel").hidden;
-  title(board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn only-narrow" id="details-btn" data-action="details" aria-controls="card-panel" aria-expanded="${panelOpen}">Details</button><button class="btn ghost" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Settings"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg><span class="wl">Settings</span></button><button class="btn primary" data-action="new-card"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card <kbd>C</kbd></button>`);
+  title(state.deck?.on() ? "Board" : board.name || board.slug, `<button id="chat-toggle" class="chat-toggle" aria-controls="chat" aria-expanded="false">Chat</button><button class="btn only-narrow" id="details-btn" data-action="details" aria-controls="card-panel" aria-expanded="${panelOpen}">Details</button><button class="btn ghost" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Settings"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/></svg><span class="wl">Settings</span></button><button class="btn primary" data-action="new-card"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add card <kbd>C</kbd></button>`);
   // The redrawn header gets the chat control back without waiting for the next refresh.
   if (state.workbenchChat?.board.slug === board.slug) state.workbenchChat.dock.mount(root.querySelector("#head-actions"), { board, label: "Chat", unread: state.workbenchChat.unread });
   const content = root.querySelector("#content");
@@ -532,12 +533,12 @@ function boardView() {
   const messages = [...(state.chatBoard === board.slug ? state.chat : []), ...[...(state.chatTimes.get(board.slug)?.values() || [])].filter(Boolean)];
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
-  const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
+  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
-    const id = top.querySelector(".cid")?.textContent || "";
+    const id = top.querySelector(".cid")?.textContent || cardId(board, Number(top.closest("[data-card]").dataset.card));
     top.insertAdjacentHTML("beforeend", `<button type="button" class="iconbtn card-more" id="more-${e(id)}" data-action="card-menu" data-card="${e(top.closest("[data-card]").dataset.card)}" aria-label="Actions for ${e(id)}: move, edit"><svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg></button>`);
   });
   boardDispose = bindBoard(content, { api, board,
@@ -712,7 +713,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     // A refresh of the open card reuses the component, so focus stays where the user left it.
     if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
-    const shown = detailsUI.show(card, { board, me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
+    const shown = detailsUI.show(card, { board, bots: state.deckBots || [], me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
     panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="panel-priority"], [data-action="panel-reviewer"], [data-action="handoff"], [data-action="remove-assignment"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
@@ -720,8 +721,10 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     // Only an ask waiting on this person needs these versioned answer controls; Activity already lists the rest (m10).
     const asks = card.ask != null && card.ask_to === state.me.actor ? `<ol class="log">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") })}</ol>` : "";
     if (tab === "details") {
-      panel.querySelector(".ctx-body")?.insertAdjacentHTML("afterbegin", releaseControl(card));
-      panel.querySelector(".ctx-body")?.insertAdjacentHTML("beforeend", `${asks}${callTree(card)}`);
+      const controls = panel.querySelector("[data-deck-card-controls]") || panel.querySelector(".ctx-body");
+      controls?.insertAdjacentHTML("afterbegin", releaseControl(card));
+      const extra = `${asks}${callTree(card)}`;
+      controls?.insertAdjacentHTML("beforeend", state.deck?.on() ? drawerCopy(extra, cardId(board, card.number)) : extra);
     }
     restore(saved);
     await shown;
@@ -1112,7 +1115,7 @@ async function refresh({ background = false, events = [] } = {}) {
     const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs || { count: 0 };
-    if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
+    if (roster?.bots) { state.botsWaiting = waitingTotal(roster.bots); state.deckBots = roster.bots; }
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);

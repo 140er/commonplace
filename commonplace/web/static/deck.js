@@ -78,7 +78,7 @@ export function renderDeckBar({ workspace = 'Commonplace', user = '', needs = 0,
   </nav>`;
 }
 export function renderDeckTop({ hash = here(), board = null } = {}) {
-  const section = deckSection(hash), label = SECTIONS.find(([id]) => id === section)?.[1] || 'Commonplace';
+  const section = deckSection(hash), label = SECTIONS.find(([id]) => id === section)?.[1] || (board?.slug ? 'Board' : 'Commonplace');
   return `<header class="m-top" data-deck="top"><span class="deck-brand">${brand}<b>${label}</b></span><span class="spacer"></span>${board?.slug ? `<button class="iconbtn" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Project settings">${icon('settings')}</button>` : ''}<button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button></header>`;
 }
 export function renderDeckTabs({ needs = 0, botsWaiting = 0, hash = here(), screens = SCREENS } = {}) {
