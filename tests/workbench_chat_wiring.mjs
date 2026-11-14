@@ -88,7 +88,7 @@ if (which === 'board_header') {
   assert.ok(html.indexOf('/app/chatdock.css') > html.indexOf('/app/workbench.css'));
   assert.match(html, /href="\/app\/chat.css"/);
 } else if (which === 'anchors') {
-  for (const [start,end] of [['function remember()', 'async function signin('], ['function navigation()', 'function showError'], ['function title(', 'function decision('], ['function needsView()', 'function boardView()'], ['function spaceView()', 'function boardsView()'], ['async function hydrateSpaceTasks()', 'function mergeChat('], ['function reviewForm()', 'function handoffForm('], ['function handoffForm(', 'async function settingsView('], ['async function approveProposal(', 'function clearDecisionDraft('], ['async function sendDecide(', 'async function route()']]) source(start,end);
+  for (const [start,end] of [['function remember()', 'async function signin('], ['function navigation()', 'function showError'], ['function title(', 'function decision('], ['function needsView()', 'function boardView()'], ['function spaceView()', 'function boardsView()'], ['async function hydrateSpaceTasks()', 'function mergeChat('], ['function handoffForm(', 'async function settingsView('], ['async function approveProposal(', 'function clearDecisionDraft('], ['async function sendDecide(', 'async function route()']]) source(start,end);
 } else if (which === 'board_guards') {
   run(source('function boardView()', 'function markOpenCard()') + '\nboardView();');
   assert.match(titleActions, /data-action="coordinator"/);

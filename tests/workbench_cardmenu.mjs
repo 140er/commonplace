@@ -58,7 +58,6 @@ function fixture(options = {}) {
     onChange:async (value) => { changes.push(value); await options.onChange?.(value); },
     clipboard:{ writeText:async (text) => { copies.push(text); if (options.copyError) throw new Error('denied'); } },
     href:() => 'https://example.test/app/?signin=temporary#/board/atlas',
-    onReview:options.onReview,
   });
   for (const key of ['show', 'close', 'stop']) assert.equal(typeof controller[key], 'function', `${key} missing`);
   controller.show(card, { board, from:opener });
@@ -146,10 +145,55 @@ const cases = {
     await refresh.click('menuMove', 'done'); assert.equal(refresh.doc.activeElement, refresh.targets.get('more-A-21'));
   },
   async review() {
-    const reviews = [], f = fixture({ onReview:(value) => reviews.push(value) });
-    await f.click('menuMove', 'review'); assert.equal(f.calls.length, 0); assert.equal(reviews.length, 1); assert.deepEqual(reviews[0], card);
-    assert.equal(f.mount.innerHTML, '');
-    const unavailable = fixture(); await unavailable.click('menuMove', 'review'); assert.equal(unavailable.calls.length, 0); assert.match(unavailable.dialog.alert.textContent, /request a review/);
+    // A person's move to Review is a plain move: no question form, one PATCH with the version shown.
+    const f = fixture();
+    await f.click('menuMove', 'review');
+    assert.deepEqual(f.calls, [['/api/cards/21', { method:'PATCH', body:{ status:'review', version:4 } }]]);
+    assert.equal(f.changes.length, 1); assert.equal(f.mount.innerHTML, '');
+  },
+  async stale() {
+    // A second tap whose version is stale: the card is already there, so the move counts as done.
+    const there = fixture({ api:async () => { throw Object.assign(new Error('card changed'), { status:409, payload:{ error:'card changed', current:{ ...card, status:'review', version:5 } } }); } });
+    await there.click('menuMove', 'review'); assert.equal(there.calls.length, 1); assert.equal(there.changes.length, 1); assert.equal(there.changes[0].status, 'review');
+    // Only another field changed (a heartbeat): sent once more with the current version.
+    let n = 0;
+    const retry = fixture({ api:async (url, options) => { if (n++ === 0) throw Object.assign(new Error('card changed'), { status:409, payload:{ current:{ ...card, version:9 } } }); return { ...card, ...options.body }; } });
+    await retry.click('menuMove', 'review');
+    assert.deepEqual(retry.calls.map((call) => call[1].body.version), [4, 9]); assert.equal(retry.changes.length, 1);
+    // Changed to something else meanwhile: said in words, nothing is forced, the menu stays open.
+    const other = fixture({ api:async () => { throw Object.assign(new Error('card changed'), { status:409, payload:{ current:{ ...card, status:'done', version:7 } } }); } });
+    await other.click('menuMove', 'review');
+    assert.equal(other.calls.length, 1); assert.equal(other.changes.length, 0); assert.equal(other.dialog.open, true);
+    assert.match(other.dialog.alert.textContent, /Someone else already changed this card/);
+    // A legitimate refusal says its own reason; a busy workspace says so.
+    const refused = fixture({ api:async () => { throw Object.assign(new Error('#21 is blocked by #3'), { status:409, payload:{ error:'#21 is blocked by #3', code:'blocked_by' } }); } });
+    await refused.click('menuMove', 'review'); assert.equal(refused.dialog.alert.textContent, '#21 is blocked by #3');
+    const busy = fixture({ api:async () => { throw Object.assign(new Error('busy'), { status:409, payload:{ error:'busy', code:'busy' } }); } });
+    await busy.click('menuMove', 'review'); assert.match(busy.dialog.alert.textContent, /busy for a moment/);
+  },
+  deck() {
+    // The Deck names destinations the way its board columns do and never lists Needs you.
+    globalThis.document = { documentElement:{ dataset:{ ui:'deck' } } };
+    try {
+      const names = (value) => [...menu.renderCardMenu(value, { board, me:'user:me' }).matchAll(/data-menu-move="([^"]+)"([^>]*)>.*?<\/svg>([^<]*)(?:<span class="sub">([^<]*)<\/span>)?/g)]
+        .map(([, status, attrs, name, note]) => ({ status, name, note: note || '', disabled: /disabled/.test(attrs), current: /aria-current/.test(attrs) }));
+      const doing = names({ ...card, status:'doing' });
+      assert.deepEqual(doing.map((o) => o.name), ['Active', 'In review', 'Shipped']);
+      assert.deepEqual(doing.map((o) => [o.disabled, o.current]), [[true, true], [false, false], [false, false]]);
+      assert.deepEqual(doing.map((o) => o.status), ['doing', 'review', 'done']);
+      const todo = names({ ...card, status:'todo' });
+      assert.deepEqual(todo.map((o) => [o.name, o.disabled, o.note]), [['Active', false, 'Start it'], ['In review', false, ''], ['Shipped', true, 'Move it to Active first.']]);
+      const done = names({ ...card, status:'done' });
+      assert.deepEqual(done.map((o) => [o.name, o.status, o.disabled]), [['Active', 'todo', false], ['In review', 'review', true], ['Shipped', 'done', true]]);
+      // A question an agent asked is answered, not moved past.
+      const asked = names({ ...card, status:'review', review_kind:'decision', ask:'Ship it?' });
+      assert.ok(asked.every((o) => o.disabled) && /Answer its question first/.test(asked[0].note));
+      const own = names({ ...card, status:'review', review_kind:'moved', ask:'Moved to review.' });
+      assert.deepEqual(own.map((o) => [o.name, o.disabled]), [['Active', false], ['In review', true], ['Shipped', false]]);
+      assert.ok(menu.renderCardMenu(card, { board, me:'user:me' }).includes('Move to…'));
+      const f = fixture(); f.controller.show({ ...card, status:'done' }, { board, me:'user:me' });
+      return f.click('menuMove', 'todo').then(() => assert.deepEqual(f.calls.at(-1), ['/api/cards/21', { method:'PATCH', body:{ status:'todo', version:4 } }]));
+    } finally { delete globalThis.document; }
   },
   async proposal() {
     const f = fixture(); f.controller.show({ ...card, proposal_status:'pending', status:'backlog' }, { board });

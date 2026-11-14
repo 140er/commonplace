@@ -114,6 +114,14 @@ test('drawer progress is a truthful tree, Reply is opt-in and the close control 
   assert.match(memory, /Saved words/);
 });
 
+test('the drawer always offers Move to…, for a card waiting on the person and for any other', () => {
+  for (const card of [{...base,need:'you',ask_to:'user:owner',ask_options:['Approve','Hold']}, {...base,status:'doing',need:'working'}]) {
+    const html = renderDetails(card, options);
+    assert.match(html, new RegExp(`<button class="btn" data-action="card-menu" data-card="${card.number}" aria-haspopup="dialog">Move to…</button>`));
+    assert.ok(visible(html).includes('Move to…'));
+  }
+});
+
 test('drawer treats replacement tokens as literal card text and decision values', () => {
   for (const text of ['$&', '$`', "$'", '$$', "$& $` $' $$"]) {
     const card = {...base,title:`Title ${text}`,summary:`Summary ${text}`,body:`Body ${text}`,coworker:{name:`Coworker ${text}`},need:'you',ask_to:'user:owner',ask_options:[`Approve ${text}`,`Hold ${text}`]};

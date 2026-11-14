@@ -58,14 +58,15 @@ export function drawerSummary(card, options = {}) {
 }
 export function drawerActions(card, me) {
   const reply = '<button class="btn ghost" data-deck-reply-toggle aria-expanded="false" aria-controls="deck-card-reply">Reply</button>';
-  if (!needsOwner(card, me)) return `<div class="deck-card-actions">${reply}</div>`;
+  const move = `<button class="btn" data-action="card-menu" data-card="${e(card.number)}" aria-haspopup="dialog">Move to…</button>`;
+  if (!needsOwner(card, me)) return `<div class="deck-card-actions">${move}${reply}</div>`;
   const choices = card.ask_to === me ? card.ask_options || [] : [];
   const affirmative = choices.find(choice => /^(approve|accept|yes|ship|go ahead)(?:\b|$)/i.test(choice));
   const hold = choices.find(choice => /^(hold|wait|later)(?:\b|$)/i.test(choice));
   const decision = (choice, label, primary = false) => `<button class="btn${primary ? ' primary' : ''}" data-action="decide" data-card="${e(card.number)}" data-choice="${e(choice)}">${label}</button>`;
   const approve = card.awaiting_release && card.can_approve ? '<button class="btn primary" data-deck-release>Approve</button>' : affirmative ? decision(affirmative,'Approve',true) : !card.awaiting_release && ((card.actions || []).includes('approve') || card.proposal_status === 'pending') ? `<button class="btn primary" data-action="need-approve" data-card="${e(card.number)}" data-version="${e(card.version)}">Approve</button>` : '';
   // Without a server-provided Hold choice, leave this decision waiting and close the sheet.
-  return `<div class="deck-card-actions" data-version="${e(card.version)}">${approve}${hold ? decision(hold,'Hold') : '<button class="btn" data-action="close-panel" title="Keep this waiting for your decision">Hold</button>'}${reply}</div>`;
+  return `<div class="deck-card-actions" data-version="${e(card.version)}">${approve}${hold ? decision(hold,'Hold') : '<button class="btn" data-action="close-panel" title="Keep this waiting for your decision">Hold</button>'}${move}${reply}</div>`;
 }
 // Clean only text nodes. Links, IDs, exact decision values and mutation versions remain untouched.
 export const drawerCopy = (html, id = '') => html.replace(/(^|>)([^<]+)(?=<|$)/g, (_all, prefix, text) => /^\s*$/.test(text) ? prefix + text : prefix + boardCopy(id ? text.replaceAll(e(id), 'this card') : text).replace(/Needs me|Needs a decision/g, 'Needs you'));

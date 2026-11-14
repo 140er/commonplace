@@ -18,6 +18,8 @@ REDS = [
     "failure",
     "race",
     "review",
+    "stale",
+    "deck",
     "proposal",
 ]
 
@@ -39,4 +41,5 @@ def test_guard_versioned_card_route():
     source = (STATIC / "app.js").read_text()
     assert 'api(`/api/cards/${number}`, { method: "PATCH"' in source
     assert "version: card.version, status" in source
-    assert 'if (status === "review") reviewForm()' in source
+    assert "reviewForm" not in source
+    assert "putMove(api, card, status" in source
