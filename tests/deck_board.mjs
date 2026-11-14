@@ -73,6 +73,7 @@ test('recorded plan approvals and origin release retain their existing authority
   const origin=renderDetails({...base,need:'you',awaiting_release:true,can_approve:true},options);
   assert.match(origin,/data-deck-release>Approve</);
   assert.doesNotMatch(origin,/data-action="need-approve"/,'origin release still requires its reason form');
+  assert.doesNotMatch(renderDetails({...base,need:'you',awaiting_release:true,can_approve:false,proposal_status:'pending'},options),/data-action="need-approve"|data-deck-release/);
   const unoffered=renderDetails({...base,need:'you',actions:[]},options);
   assert.doesNotMatch(unoffered,/data-action="need-approve"/);
 });

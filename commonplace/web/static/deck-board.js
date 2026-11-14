@@ -56,7 +56,7 @@ export function drawerActions(card, me) {
   const affirmative = choices.find(choice => /^(approve|accept|yes|ship|go ahead)(?:\b|$)/i.test(choice));
   const hold = choices.find(choice => /^(hold|wait|later)(?:\b|$)/i.test(choice));
   const decision = (choice, label, primary = false) => `<button class="btn${primary ? ' primary' : ''}" data-action="decide" data-card="${e(card.number)}" data-choice="${e(choice)}">${label}</button>`;
-  const approve = card.awaiting_release && card.can_approve ? '<button class="btn primary" data-deck-release>Approve</button>' : affirmative ? decision(affirmative,'Approve',true) : (card.actions || []).includes('approve') || card.proposal_status === 'pending' ? `<button class="btn primary" data-action="need-approve" data-card="${e(card.number)}" data-version="${e(card.version)}">Approve</button>` : '';
+  const approve = card.awaiting_release && card.can_approve ? '<button class="btn primary" data-deck-release>Approve</button>' : affirmative ? decision(affirmative,'Approve',true) : !card.awaiting_release && ((card.actions || []).includes('approve') || card.proposal_status === 'pending') ? `<button class="btn primary" data-action="need-approve" data-card="${e(card.number)}" data-version="${e(card.version)}">Approve</button>` : '';
   // Without a server-provided Hold choice, leave this decision waiting and close the sheet.
   return `<div class="deck-card-actions" data-version="${e(card.version)}">${approve}${hold ? decision(hold,'Hold') : '<button class="btn" data-action="close-panel" title="Keep this waiting for your decision">Hold</button>'}</div>`;
 }
