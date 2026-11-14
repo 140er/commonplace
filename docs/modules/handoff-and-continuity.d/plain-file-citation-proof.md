@@ -4,7 +4,7 @@
 
   - Search authorizes source_path before its basename; both citations share one union outcome and failed media proof also drops asset aliases. Empty decoded identities omit their citation before any worker call.
 
-  - The gateway strips closet_preview from search results, including readable closets; local search remains unchanged.
+  - The gateway strips closet_preview from search results for every caller except an unrestricted trusted person owner session, which keeps it; API tokens and scoped tokens never receive it; local search remains unchanged.
 
   - Batch drawer responses reuse the response-local scrubber through one helper without changing input order or error counts; association proofs are memoized per response.
 
