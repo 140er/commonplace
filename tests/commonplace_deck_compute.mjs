@@ -516,11 +516,12 @@ function fakeRoot({ tabs = false, nextSibling = true } = {}) {
   const event = data => ({ target: { closest(selector) { return Object.keys(data).some(k => selector === `[data-${k.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}]`) ? { dataset: data } : null; } } });
   return { root, doc, regions, handlers, classes, panels, header, phoneBar, phoneTabs, workspaceTabs, parent, sibling, click: data => handlers.get('click')(event(data)) };
 }
-function harness({ tabs = false, nextSibling = true, bots = [{ id: 'general', kind: 'general' }], rows = machines, topology = EMPTY, error = null } = {}) {
+function harness({ tabs = false, nextSibling = true, bots = [{ id: 'general', kind: 'general' }], rows = machines, topology = EMPTY, error = null, node = null } = {}) {
   const f = fakeRoot({ tabs, nextSibling }), calls = [], nav = [], data = { rows, bots, error, topology };
   const api = async (path, options) => {
     calls.push([path, options]);
     if (path === '/api/topology') { if (data.topology instanceof Error) throw data.topology; return data.topology; }
+    if (path.startsWith('/api/topology/node') && node) return node(decodeURIComponent(path.split('key=')[1]));
     if (path.startsWith('/api/topology/')) throw Object.assign(new Error('not wired'), { status: 404 });
     assert.ok(['/api/runners', '/api/bots'].includes(path), path);
     if (path === '/api/runners') { if (data.error) throw data.error; return { machines: data.rows }; }
@@ -795,4 +796,106 @@ test('stop restores moved workspace tabs before their original sibling or at the
     assert.equal(f.workspaceTabs.parentNode, f.parent);
     assert.deepEqual(f.parent.children, nextSibling && !removeSibling ? [f.workspaceTabs, f.sibling] : [f.workspaceTabs]);
   }
+});
+
+// ---------- what is running: the status line and the job list ----------
+
+const work = await import(new URL('deck-compute-work.js', STATIC));
+// Half a minute past the whole minutes, so the wording does not depend on how long the test took.
+const minutesAgo = n => new Date(Date.now() - (n * 60 + 30) * 1000).toISOString();
+const run = (job, state, card, minutes, extra = {}) => ({ job, state, board: 'atlas', card, project: 'atlas-app', topic: 'build', thread_id: null, updated_at: minutesAgo(minutes), started_at: null, log_ref: null, ...extra });
+const agentsOf = (label, runs, connections = null) => ({ applicable: true, machine: { id: label.toLowerCase(), label, enabled: true, revoked: false }, connections, runs, coordinators: [] });
+// The shared topology fixture with two of its machines recorded as enrolled runners.
+const runnerTopology = () => { const t = fixture(); for (const key of ['maple', 'birch']) t.nodes.find(n => n.key === key).values.runner_id = key; return t; };
+const workBots = [{ id: 'general', kind: 'general' }, { id: 'atlas-bot', kind: 'project', name: 'Atlas bot', board: 'atlas' }];
+const status = f => f.regions.get('status').textContent;
+const jobs = f => f.regions.get('jobs').innerHTML;
+
+test('a run is running, waiting or stuck from its state and age only', () => {
+  const now = Date.now();
+  assert.equal(work.runKind(run('a', 'started', 1, 5), now), 'running');
+  assert.equal(work.runKind(run('a', 'queued', 1, 5), now), 'waiting');
+  assert.equal(work.runKind(run('a', 'leased', 1, 5), now), 'waiting');
+  assert.equal(work.runKind(run('a', 'starting', 1, 5), now), 'waiting');
+  assert.equal(work.runKind(run('a', 'uncertain', 1, 0), now), 'stuck', 'an unknown outcome is stuck at once');
+  assert.equal(work.runKind(run('a', 'queued', 1, 29), now), 'waiting');
+  assert.equal(work.runKind(run('a', 'queued', 1, 31), now), 'stuck', 'a start nobody picked up for half an hour');
+  assert.equal(work.runKind(run('a', 'started', 1, 600), now), 'running', 'a started run is never stuck by age alone');
+  assert.equal(work.runKind(run('a', 'failed', 1, 5), now), null);
+});
+
+test('status line from counts: busy, idle, stuck, unknown and partial', () => {
+  const now = Date.now(), model = reads => work.workModel(reads, now);
+  const busy = model([{ ok: true, agents: agentsOf('Maple', [run('1', 'started', 11, 2), run('2', 'started', 12, 9), run('3', 'queued', 13, 1)]) }]);
+  assert.equal(work.statusText(busy, now), '2 running, 1 waiting, 0 stuck. Nothing is stuck. Last activity 1 minute ago.');
+  const idle = model([{ ok: true, agents: agentsOf('Maple', [], [{ kind: 'machine', last_used_at: minutesAgo(1) }, { kind: 'worker', last_used_at: minutesAgo(125) }]) }]);
+  assert.equal(work.statusText(idle, now), '0 running, 0 waiting, 0 stuck. Nothing is running and nothing is stuck. Last activity 2 hours ago.', 'a machine poll is not activity; the worker connection is');
+  assert.equal(work.statusText(model([{ ok: true, agents: agentsOf('Maple', []) }]), now), '0 running, 0 waiting, 0 stuck. Nothing is running and nothing is stuck. No activity recorded yet.');
+  const stuck = model([{ ok: true, agents: agentsOf('Maple', [run('1', 'uncertain', 11, 3), run('2', 'queued', 12, 45), run('3', 'started', 13, 4)]) }]);
+  assert.equal(work.statusText(stuck, now), '1 running, 0 waiting, 2 stuck. Look at the flagged jobs below. Last activity 3 minutes ago.');
+  assert.deepEqual(stuck.jobs.map(j => j.job), ['1', '2', '3'], 'stuck first, then running');
+  assert.equal(work.statusText(model([]), now), 'Running work is not reported for these machines yet, so it cannot be counted here.');
+  assert.equal(work.statusText(model([{ ok: false }]), now), 'Running work is not reported for these machines yet, so it cannot be counted here.');
+  assert.equal(work.statusText(model([{ ok: true, agents: { applicable: false, reason: 'not_a_runner' } }]), now).startsWith('Running work is not reported'), true);
+  const partial = model([{ ok: true, agents: agentsOf('Maple', [run('1', 'started', 11, 2)]) }, { ok: false }]);
+  assert.match(work.statusText(partial, now), /^1 running, 0 waiting, 0 stuck\. Nothing is stuck\. Last activity 2 minutes ago\. Some machines could not be read\.$/);
+});
+
+test('Compute opens with the status line and the running jobs, each linking to its card and naming its bot', async () => {
+  const agents = { maple: agentsOf('Maple', [run('j1', 'started', 11, 2), run('j2', 'queued', 12, 1)]), birch: agentsOf('Birch', [run('j3', 'started', 13, 7, { board: 'orchard', project: 'orchard-site' })]) };
+  const f = harness({ topology: runnerTopology(), bots: workBots, node: key => ({ agents: agents[key] || { applicable: false, reason: 'not_a_runner' } }) }); await flush();
+  assert.equal(status(f), '2 running, 1 waiting, 0 stuck. Nothing is stuck. Last activity 1 minute ago.');
+  const list = jobs(f);
+  assert.match(list, /data-job="j1"[^>]*>\s*<a href="#\/card\/11">Card #11<\/a> · <span class="dc-job-bot">Atlas bot<\/span> · on Maple · <span class="dc-job-state">Running<\/span> · updated 2 minutes ago/);
+  assert.match(list, /data-job="j2"[^>]*><a href="#\/card\/12">Card #12<\/a> · <span class="dc-job-bot">Atlas bot<\/span> · on Maple · <span class="dc-job-state">Waiting for the machine to pick it up/);
+  assert.match(list, /data-job="j3"[^>]*><a href="#\/card\/13">Card #13<\/a> · <span class="dc-job-bot">orchard-site<\/span> · on Birch/, 'a board without a bot falls back to its project');
+  assert.equal((list.match(/<li class="dc-job"/g) || []).length, 3);
+  assert.ok(f.calls.some(c => c[0] === '/api/topology/node?key=maple') && f.calls.some(c => c[0] === '/api/topology/node?key=birch'));
+  assert.ok(!f.calls.some(c => c[0].startsWith('/api/topology/node?key=studio-mac')), 'only machines recorded as runners are asked');
+  // A refresh reads again and repaints.
+  agents.maple = agentsOf('Maple', []); await f.ui.refresh(); await flush();
+  assert.equal(status(f), '1 running, 0 waiting, 0 stuck. Nothing is stuck. Last activity 7 minutes ago.');
+  assert.doesNotMatch(jobs(f), /data-job="j1"/);
+  f.ui.stop();
+});
+
+test('idle: nothing running is said in plain words and the list is a single sentence', async () => {
+  const f = harness({ topology: runnerTopology(), bots: workBots, node: key => ({ agents: agentsOf(key, [], [{ kind: 'worker', last_used_at: minutesAgo(180) }]) }) }); await flush();
+  assert.equal(status(f), '0 running, 0 waiting, 0 stuck. Nothing is running and nothing is stuck. Last activity 3 hours ago.');
+  assert.equal(jobs(f), '<li class="dc-job-empty">No jobs are running.</li>');
+  f.ui.stop();
+});
+
+test('stuck jobs are flagged with a next step that leads to the card', async () => {
+  const agents = agentsOf('Maple', [run('u1', 'uncertain', 21, 4), run('q1', 'queued', 22, 50), run('ok', 'started', 23, 2)]);
+  const f = harness({ topology: runnerTopology(), bots: workBots, node: key => ({ agents: key === 'maple' ? agents : agentsOf('Birch', []) }) }); await flush();
+  assert.equal(status(f), '1 running, 0 waiting, 2 stuck. Look at the flagged jobs below. Last activity 2 minutes ago.');
+  const list = jobs(f), rows = list.split('<li ').slice(1);
+  assert.deepEqual(rows.map(r => /data-job="([^"]+)"/.exec(r)[1]), ['u1', 'q1', 'ok'], 'stuck jobs come first');
+  assert.match(rows[0], /data-kind="stuck"[\s\S]*<strong>Stuck\.<\/strong> It is not clear whether it started\. Next step: check the machine, then <a href="#\/card\/21">open the card<\/a> and mark it as started or failed\./);
+  assert.match(rows[1], /data-kind="stuck"[\s\S]*The machine has not picked it up\. It has waited 50 minutes\. Next step: check that the machine is on, or <a href="#\/card\/22">open the card<\/a> and cancel the start\./);
+  assert.doesNotMatch(rows[2], /dc-stuck/);
+  f.ui.stop();
+});
+
+test('the enrollment fallback and unreadable machines say work cannot be counted, never invent zero', async () => {
+  const f = harness(); await flush();
+  assert.equal(status(f), 'Running work is not reported for these machines yet, so it cannot be counted here.');
+  assert.equal(jobs(f), '');
+  assert.ok(!f.calls.some(c => c[0].startsWith('/api/topology/node')), 'the runners fallback has no node to read');
+  f.ui.stop();
+  const g = harness({ topology: runnerTopology(), bots: workBots }); await flush();
+  assert.equal(status(g), 'Running work is not reported for these machines yet, so it cannot be counted here.', 'every node read failed');
+  g.ui.stop();
+  const h = harness({ topology: runnerTopology(), bots: workBots, node: key => { if (key === 'birch') throw Object.assign(new Error('boom'), { status: 500 }); return { agents: agentsOf('Maple', [run('j1', 'started', 11, 2)]) }; } }); await flush();
+  assert.match(status(h), /^1 running, 0 waiting, 0 stuck\..*Some machines could not be read\.$/);
+  h.ui.stop();
+});
+
+test('job strings from the server stay inert', async () => {
+  const attack = '<img src=x onerror="alert(1)">';
+  const f = harness({ topology: runnerTopology(), bots: [{ id: 'x', name: attack, board: 'atlas' }], node: key => ({ agents: key === 'maple' ? agentsOf(attack, [run('j"1', 'started', 11, 2, { card: attack })]) : { applicable: false } }) }); await flush();
+  assert.doesNotMatch(jobs(f), /<img|onerror="alert/);
+  assert.match(jobs(f), /&lt;img/);
+  f.ui.stop();
 });

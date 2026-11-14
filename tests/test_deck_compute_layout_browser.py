@@ -70,6 +70,8 @@ def test_compute_phone_has_16px_gutters_and_no_horizontal_overflow(route):
             if route == "#/compute":
                 page.wait_for_selector(".topo-bundle-count")
             else:
+                page.wait_for_selector("[data-compute-advanced]")
+                page.locator("[data-compute-advanced] > summary").click()
                 page.wait_for_selector(".compute-inventory")
             metrics = page.evaluate("""() => {
               const selectors = document.querySelector('.deck-compute')
