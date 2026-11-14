@@ -195,7 +195,7 @@ function bootFixture() {
   let resolveStatus;
   const pendingStatus = new Promise((resolve) => { resolveStatus = resolve; });
   const context = {
-    document, state, Event, boundedRequest, adminUI: null, timer: null, clearTimeout() {},
+    document, state, Event, boundedRequest, adminUI: null, instanceAdminUI: null, timer: null, clearTimeout() {},
     fetch: async (path) => path === "/api/voice" ? pendingStatus : { ok: true, status: 200, json: async () => ({ people: {} }) },
     shell() { calls.push("shell"); },
     async route() { calls.push("route"); },
@@ -242,3 +242,17 @@ await expiredAtRoute.boot(); assert.deepEqual(expiredAtRoute.calls, ["shell", "r
 assert.match(app, /voice\.settings\(\)/);
 assert.doesNotMatch(app, /voice\.settings\(connections/);
 console.log("voice picker, PCM, capture, settings and sign-in lifecycle passed");
+
+// A shell mic uses the same default-off capture path as composer microphones.
+const shellVoice = fixture();
+await shellVoice.voice.start(shellVoice.input);
+assert.match(shellVoice.errors.at(-1), /Enable voice input/);
+assert.equal(shellVoice.requests.length, 0);
+await shellVoice.voice.load();
+await shellVoice.voice.start(null);
+assert.match(shellVoice.errors.at(-1), /Open a conversation/);
+await shellVoice.voice.start(shellVoice.input);
+assert.equal(shellVoice.input.dataset.deckVoiceInput, '');
+assert.equal(shellVoice.control.dataset.state, 'recording');
+shellVoice.voice.stop();
+assert.equal(shellVoice.stopped, 1);

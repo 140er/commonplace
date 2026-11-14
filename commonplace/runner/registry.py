@@ -23,6 +23,8 @@ WORKER_TOOLS = (
     "task_heartbeat",
     "task_handoff",
     "ask",
+    "topology_propose",
+    "topology_discover_site",
 )
 GRANT_KEYS = {
     "label",
@@ -105,7 +107,7 @@ def _strings(value, key, limit, pattern=None):
     return list(dict.fromkeys(value))
 
 
-def _grant(db, owner, grant, *, initial=False):
+def _grant(db, owner, grant, *, initial=False, held=()):
     if not isinstance(grant, dict) or set(grant) - (
         GRANT_KEYS | (set() if initial else {"enabled"})
     ):
@@ -150,7 +152,8 @@ def _grant(db, owner, grant, *, initial=False):
         refs = data["requesters"]
         if not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs):
             raise ValueError("invalid requesters")
-        for ref in refs:
+        # Entries the machine already holds stay even if they have lapsed; only additions are vetted.
+        for ref in (ref for ref in refs if ref not in held):
             p = db.authenticate_connection(ref)
             linked = db._conn.execute(
                 "SELECT 1 FROM runner_connections WHERE connection_id=?", (ref,)
@@ -168,16 +171,18 @@ def _grant(db, owner, grant, *, initial=False):
 
 
 def _worker_policy(wings):
+    """Read and write exactly the granted wings; the first is the default write wing."""
     return Policy.build(
         tools=WORKER_TOOLS,
         scopes=("memory:read", "memory:write"),
         read_wings=wings,
+        write_wings=wings,
         write_wing=wings[0],
         trust="standard",
     )
 
 
-def _audit(db, owner, action, machine_id, *, reset=False):
+def _audit(db, owner, action, machine_id, *, reset=False, also=()):
     db.audit(
         action=f"runner.{action}",
         decision="ok",
@@ -186,7 +191,7 @@ def _audit(db, owner, action, machine_id, *, reset=False):
         connection_id=owner.connection_id,
         auth=owner.auth,
         reason="binding_reset" if reset else "",
-        target_ids=(machine_id,),
+        target_ids=(machine_id, *also),
     )
 
 
@@ -203,54 +208,61 @@ def _write(db, machine_id, data):
 
 def enroll(db, owner, grant):
     _owner(owner)
-    with db._lock, db._tx() as conn:
-        data = _grant(db, owner, grant, initial=True)
-        mid = control_db._new_id("mach")
-        now = control_db._iso(control_db._now())
-        credentials = {}
-        for kind, policy in (
+    with db._lock, db._tx():
+        return enroll_in(db, owner, grant)
+
+
+def enroll_in(db, owner, grant):
+    """Enroll in an existing control transaction, including credentials and audit."""
+    _owner(owner)
+    conn = db._conn
+    data = _grant(db, owner, grant, initial=True)
+    mid = control_db._new_id("mach")
+    now = control_db._iso(control_db._now())
+    credentials = {}
+    for kind, policy in (
+        (
+            "machine",
+            Policy.build(profile="slim", tools=[], scopes=[], read_wings=[], trust="standard"),
+        ),
+        ("worker", _worker_policy(data["wings"])),
+    ):
+        cid, token = db.create_token(
+            workspace_ref=owner.workspace_id,
+            user_ref=owner.user_id,
+            actor=owner.user_id,
+            name=f"runner-{kind}:{mid}",
+            client="commonplace-runner",
+            policy=policy,
+            expires_days=90,
+        )
+        control_db.link_runner(conn, cid, mid, kind)
+        credentials[f"{kind}_connection_id"] = cid
+        credentials[f"{kind}_token"] = token
+    try:
+        conn.execute(
+            "INSERT INTO runner_machines(id, workspace_id, label, machine_connection_id, worker_connection_id, projects, topics, wings, enrolled_by, updated_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                "machine",
-                Policy.build(profile="slim", tools=[], scopes=[], read_wings=[], trust="standard"),
+                mid,
+                owner.workspace_id,
+                data.pop("label"),
+                credentials["machine_connection_id"],
+                credentials["worker_connection_id"],
+                json.dumps(data.pop("projects")),
+                json.dumps(data.pop("topics")),
+                json.dumps(data.pop("wings")),
+                owner.user_id,
+                owner.user_id,
+                now,
+                now,
             ),
-            ("worker", _worker_policy(data["wings"])),
-        ):
-            cid, token = db.create_token(
-                workspace_ref=owner.workspace_id,
-                user_ref=owner.user_id,
-                actor=owner.user_id,
-                name=f"runner-{kind}:{mid}",
-                client="commonplace-runner",
-                policy=policy,
-                expires_days=90,
-            )
-            control_db.link_runner(conn, cid, mid, kind)
-            credentials[f"{kind}_connection_id"] = cid
-            credentials[f"{kind}_token"] = token
-        try:
-            conn.execute(
-                "INSERT INTO runner_machines(id, workspace_id, label, machine_connection_id, worker_connection_id, projects, topics, wings, enrolled_by, updated_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    mid,
-                    owner.workspace_id,
-                    data.pop("label"),
-                    credentials["machine_connection_id"],
-                    credentials["worker_connection_id"],
-                    json.dumps(data.pop("projects")),
-                    json.dumps(data.pop("topics")),
-                    json.dumps(data.pop("wings")),
-                    owner.user_id,
-                    owner.user_id,
-                    now,
-                    now,
-                ),
-            )
-        except sqlite3.IntegrityError:
-            raise Conflict("an active machine already uses this label") from None
-        if data:
-            _write(db, mid, data)
-        _audit(db, owner, "enroll", mid)
-        return {"machine_id": mid, **credentials, "binding_state": "unbound"}
+        )
+    except sqlite3.IntegrityError:
+        raise Conflict("an active machine already uses this label") from None
+    if data:
+        _write(db, mid, data)
+    _audit(db, owner, "enroll", mid)
+    return {"machine_id": mid, **credentials, "binding_state": "unbound"}
 
 
 def get_machine(db, ws, ref):
@@ -280,22 +292,44 @@ def _active(db, owner, machine_id):
     return row
 
 
-def patch(db, owner, machine_id, grant):
+def require_active(db, owner, machine_id):
+    """Refuse a machine outside the owner's workspace the same way whatever else was sent."""
+    _owner(owner)
+    return _active(db, owner, machine_id)
+
+
+def _expect(row, version):
+    """An owner who read the machine at an older grant version must reload, not overwrite."""
+    if version is not None and row["grant_version"] != version:
+        raise Conflict("the machine changed since it was read; reload and try again")
+
+
+def patch(db, owner, machine_id, grant, *, version=None):
     _owner(owner)
     with db._lock, db._tx():
-        return patch_in(db, owner, machine_id, grant)
+        return patch_in(db, owner, machine_id, grant, version=version)
 
 
-def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
-    """Patch inside the caller's control transaction; removal preserves stale peers."""
+def patch_in(
+    db, owner, machine_id, grant, *, remove_requester=None, version=None, audit=("patch", ())
+):
+    """Patch inside the caller's control transaction; removal preserves stale peers.
+
+    ``version`` is the grant version the caller read; a different stored version is a Conflict."""
     _owner(owner)
     row = (
         _active(db, owner, machine_id)
         if remove_requester is None
         else get_machine(db, owner.workspace_id, machine_id)
     )
+    _expect(row, version)
+    if isinstance(grant, dict) and grant.get("enabled") is True:
+        from . import install_receipts
+
+        if install_receipts.installation(db, owner.workspace_id, row["id"]) is not None:
+            raise Conflict("installation_setup_only")
     if remove_requester is None:
-        data = _grant(db, owner, grant)
+        data = _grant(db, owner, grant, held=json.loads(row["requesters"]))
     else:
         data = {
             "requesters": [ref for ref in json.loads(row["requesters"]) if ref != remove_requester]
@@ -312,16 +346,75 @@ def patch_in(db, owner, machine_id, grant, *, remove_requester=None):
         updated_at=control_db._iso(control_db._now()),
     )
     _write(db, row["id"], data)
+    from . import setup_approvals
+
+    setup_approvals.invalidate_in(db, row["id"])
     if reset:
         db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
-    _audit(db, owner, "patch", row["id"], reset=reset)
+    _audit(db, owner, audit[0], row["id"], reset=reset, also=audit[1])
     return get_machine(db, owner.workspace_id, row["id"])
+
+
+def add_requester(db, owner, machine_id, ref, *, version):
+    """Add one requester to the stored list, vetting only that id.
+
+    ``version`` is the grant version the caller read (a stale one is a Conflict, so a page
+    that predates another owner's removal cannot give the requester back). Returns the
+    machine row and whether the list changed; adding a held requester changes nothing."""
+    _owner(owner)
+    with db._lock, db._tx():
+        row = _active(db, owner, machine_id)
+        _expect(row, version)
+        held = json.loads(row["requesters"])
+        if ref in held:
+            return row, False
+        row = patch_in(
+            db,
+            owner,
+            machine_id,
+            {"requesters": [*held, ref]},
+            audit=("requester_add", (ref,)),
+        )
+        return row, True
+
+
+def remove_requester(db, owner, machine_id, ref, *, version):
+    """Remove one requester from the stored list, never touching the others.
+
+    Same version rule and return value as ``add_requester``."""
+    _owner(owner)
+    with db._lock, db._tx():
+        row = _active(db, owner, machine_id)
+        _expect(row, version)
+        if ref not in json.loads(row["requesters"]):
+            return row, False
+        row = patch_in(
+            db,
+            owner,
+            machine_id,
+            {},
+            remove_requester=ref,
+            audit=("requester_remove", (ref,)),
+        )
+        return row, True
 
 
 def attest(db, owner, machine_id, binding):
     _owner(owner)
     with db._lock, db._tx():
         row = _active(db, owner, machine_id)
+        if isinstance(binding, dict) and "setup_attestation" in binding:
+            from . import setup_approvals
+
+            if "install_settings" in binding:
+                raise ValueError("review settings before final confirmation")
+            setup_approvals.attest_in(db, owner, row, binding["setup_attestation"])
+            binding = {k: v for k, v in binding.items() if k != "setup_attestation"}
+        settings = binding.get("install_settings") if isinstance(binding, dict) else None
+        if isinstance(binding, dict) and "install_settings" in binding:
+            binding = {k: v for k, v in binding.items() if k != "install_settings"}
+            if settings is None:
+                raise ValueError("invalid installation settings")
         if not isinstance(binding, dict) or set(binding) != {
             "topics",
             "provider_instance_id",
@@ -358,6 +451,12 @@ def attest(db, owner, machine_id, binding):
             ),
         )
         _audit(db, owner, "attest", row["id"])
+        if settings is not None:
+            from . import install_receipts
+
+            install_receipts.approve_in(
+                db, owner, get_machine(db, owner.workspace_id, row["id"]), settings
+            )
         return {
             "binding_state": "owner_attested",
             "verified": False,
@@ -401,29 +500,38 @@ def rotate(db, owner, machine_id, kind="worker"):
 def revoke(db, owner, machine_id):
     _owner(owner)
     with db._lock, db._tx():
-        row = _active(db, owner, machine_id)
-        for kind in ("machine", "worker"):
-            db.revoke(
-                row[f"{kind}_connection_id"],
-                actor=owner.user_id,
-                workspace_ref=owner.workspace_id,
-                _runner_owned=True,
-            )
-        now = control_db._iso(control_db._now())
-        _write(
-            db,
-            row["id"],
-            dict(
-                revoked_at=now,
-                enabled=0,
-                grant_version=row["grant_version"] + 1,
-                updated_by=owner.user_id,
-                updated_at=now,
-            ),
+        return revoke_in(db, owner, machine_id)
+
+
+def revoke_in(db, owner, machine_id):
+    """Use inside an existing control transaction, including enrollment refusal."""
+    _owner(owner)
+    row = _active(db, owner, machine_id)
+    for kind in ("machine", "worker"):
+        db.revoke(
+            row[f"{kind}_connection_id"],
+            actor=owner.user_id,
+            workspace_ref=owner.workspace_id,
+            _runner_owned=True,
         )
-        db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
-        _audit(db, owner, "revoke", row["id"], reset=True)
-        return {"ok": True}
+    now = control_db._iso(control_db._now())
+    _write(
+        db,
+        row["id"],
+        dict(
+            revoked_at=now,
+            enabled=0,
+            grant_version=row["grant_version"] + 1,
+            updated_by=owner.user_id,
+            updated_at=now,
+        ),
+    )
+    db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
+    _audit(db, owner, "revoke", row["id"], reset=True)
+    from . import enrollment
+
+    enrollment.revoke_machine_in(db, owner, row["id"])
+    return {"ok": True}
 
 
 def worker_principal(db, machine):

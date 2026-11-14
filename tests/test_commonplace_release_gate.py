@@ -368,3 +368,14 @@ def test_grant_import_check_uses_public_routes_and_detects_regressions(monkeypat
             assert "accepted=1" in detail and "404" in detail
             assert len(reads) == 2
             assert reads[0] == reads[1]
+
+
+def test_throwaway_instance_closes_supervisor_and_handoff_on_exit():
+    """stop_all alone let handoff jobs restart real memory workers after the test."""
+    with throwaway_instance() as instance:
+        gateway = instance.gateway
+        assert gateway.handoff.service is not None
+        assert not gateway.supervisor._closed
+        assert not gateway.handoff.service._background_closed
+    assert gateway.supervisor._closed and not gateway.supervisor._workers
+    assert gateway.handoff.service._background_closed

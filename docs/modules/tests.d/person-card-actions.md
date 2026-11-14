@@ -1,0 +1,6 @@
+- **Owns:**
+
+  - `tests/test_commonplace_person_actions.py` tests native PKCE consented capabilities with unchanged OAuth scopes, owner/member web authority, person/workspace/client binding, machinery refusal, live revocation, default-off visibility, concurrent card idempotency and audit rollback.
+  - `tests/test_commonplace_person_chat.py` tests the three phone chat routes, person-message semantics, normal connection behavior, unchanged rate limits, phone-only list fields, shared web activity classification, plain redacted previews, unreadable project/private conversation isolation and constant query count with 50 projects. Existing public-surface and web snapshot pins remain unchanged.
+  - Checked-write regressions inject acceptance and refusal for phone chat, decide and approve, verifying the person context, no board operation on refusal, one client-attributed REST audit row and unchanged mutation rollback. The unchanged AST inventory test in `tests/test_commonplace_rules_enforce.py` pins the chat dispatch to its existing checked route.
+  - Preview regressions cover markup-split, entity-split and cutoff-straddling synthetic credentials in shared messages and private replies, including whole redaction markers. The web renderer harness pins literal escaping. Malformed-policy cases verify stored phone grants are revoked and audited before policy parsing.

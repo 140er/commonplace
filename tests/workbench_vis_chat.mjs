@@ -118,7 +118,7 @@ test("a connected orchestrator reads 'Orchestrator connected'", async (t) => {
   const lines = [];
   p.controller.watchHeader((text) => lines.push(text));
   await p.controller.show("atlas", { name: "Atlas" }); await settle();
-  assert.equal(lines.at(-1), "Orchestrator connected");
+  assert.equal(lines.at(-1), "Coworker connected");
   p.controller.destroy();
 });
 

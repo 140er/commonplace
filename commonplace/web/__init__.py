@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import threading
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -13,6 +15,7 @@ from commonplace.http_util import log_failure, query, require_principal, send_js
 LOG = logging.getLogger(__name__)
 
 STATIC = Path(__file__).parent / "static"
+CONNECTION_WINGS_TIMEOUT_S = 1.0
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; "
     "img-src 'self'; font-src 'self'; connect-src 'self'; "
@@ -32,6 +35,35 @@ def _response(h, status, body=b"", content_type="text/plain; charset=utf-8", hea
         h.send_header(name, value)
     h.end_headers()
     h.wfile.write(body)
+
+
+def signin_recovery(h, state, status, headers=None):
+    """A token-free recovery document for navigations that cannot reach the SPA."""
+    title, message = {
+        "expired": (
+            "Get a new link",
+            "This sign-in link is invalid or expired. Links work once and for 15 minutes. Request a new link to continue.",
+        ),
+        "throttled": (
+            "Try again shortly",
+            "Too many sign-in attempts. Wait a moment, then retry. Your email and workspace are safe.",
+        ),
+        "sent": (
+            "Check your email",
+            "If this email can sign in, a link is on its way. Check your inbox and spam folder.",
+        ),
+    }[state]
+    destination = "/app/" if state == "sent" else f"/app/?signin={state}"
+    body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} - Commonplace</title><link rel="stylesheet" href="/app/app.css">
+<link rel="stylesheet" href="/app/ui.css"><link rel="stylesheet" href="/app/workbench.css">
+<link rel="stylesheet" href="/app/signin-recovery.css"></head><body>
+<main class="signin-recovery"><a class="brand-home" href="/app/">Commonplace</a>
+<h1>{title}</h1><p role="status">{message}</p>
+<a class="btn primary" href="{destination}">Retry</a>
+</main></body></html>""".encode()
+    _response(h, status, body, "text/html; charset=utf-8", headers)
 
 
 def _static(h):
@@ -65,7 +97,53 @@ def _static(h):
     _response(h, 200, target.read_bytes(), mime)
 
 
+def _connection_wings(gateway, principal, slot):
+    """Bound an optional read even if worker startup or queueing blocks."""
+    from commonplace.extensions import ToolError
+    from commonplace.rules.checks import deadline
+
+    from .agents import grantable_wings
+
+    if not slot.acquire(blocking=False):
+        raise ToolError("Memory wing listing is busy")
+    result = Future()
+
+    def list_wings():
+        try:
+            # Also bound the worker transport, not just the HTTP caller's wait.
+            with deadline(CONNECTION_WINGS_TIMEOUT_S):
+                wings = grantable_wings(gateway, principal)
+            result.set_result(wings)
+        except Exception as exc:
+            result.set_exception(exc)
+        finally:
+            slot.release()
+
+    try:
+        threading.Thread(target=list_wings, daemon=True).start()
+    except Exception:
+        slot.release()
+        raise
+    try:
+        return result.result(timeout=CONNECTION_WINGS_TIMEOUT_S)
+    except (FutureTimeoutError, TimeoutError):
+        raise ToolError("Memory wing listing timed out") from None
+
+
+def _phone_feed(gateway, h, principal):
+    from commonplace import person_actions
+
+    if principal.person or not person_actions.enabled():
+        return False
+    from commonplace import person_events
+
+    return person_events.handle(gateway, h)
+
+
 def install(gateway):
+    # A timed-out read may still be unwinding; never queue more optional reads.
+    connection_wings_slot = threading.BoundedSemaphore()
+
     def login(h):
         token = query(h).get("t", "")
         if not token:
@@ -96,26 +174,31 @@ def install(gateway):
     def me(h):
         principal = require_principal(gateway, h)
         if principal is not None:
+            from commonplace.instance_admin import flag
+
             from . import admin
 
             try:
-                can_instance = admin.instance_authorized(
-                    gateway, principal, admin.ReadContext(gateway.admin_clock)
-                )
+                context = admin.ReadContext(gateway.admin_clock)
+                can_instance = admin.instance_authorized(gateway, principal, context)
+                can_manage = flag(gateway, principal, context)
             except Exception as exc:
                 log_failure(LOG, "Admin capability unavailable", exc)
                 can_instance = False
+                can_manage = False
             send_json(
                 h,
                 200,
                 {
                     "can_admin": principal.person and principal.role == "owner",
                     "can_admin_instance": can_instance,
+                    "can_manage_instance": can_manage,
                     "user": principal.user_id,
                     "email": principal.user_email,
                     "workspace": principal.workspace_id,
                     "workspace_name": gateway.db.workspace(principal.workspace_id)["name"],
                     "actor": principal.actor,
+                    "connection_id": principal.connection_id if principal.auth == "oauth" else None,
                     "people": _people(gateway.db, principal.workspace_id),
                 },
             )
@@ -155,7 +238,7 @@ def install(gateway):
 
     def feed(h):
         principal = require_principal(gateway, h)
-        if principal is None:
+        if principal is None or _phone_feed(gateway, h, principal):
             return
         if query(h).get("feed") == "sync":
             sync_feed.handle(gateway, h, principal)
@@ -200,41 +283,45 @@ def install(gateway):
         if principal.role != "owner":
             send_json(h, 403, {"error": "Owner access required"})
             return
+        from commonplace import bots_grant, decide_grant
         from commonplace.extensions import ToolError
-        from commonplace.policy import canonical_wing, is_private_wing
 
-        from .agents import connection_view
+        from .agents import connection_view, decide_view
 
         rows = gateway.db.connections(principal.workspace_id)
+        view = decide_view(gateway, principal)
         try:
-            known = gateway.call_memory_tool(principal, "mempalace_list_wings", {}).get("wings", {})
+            wings = _connection_wings(gateway, principal, connection_wings_slot)
         except ToolError:
             # Connection management remains available while memory is offline.
-            known = {}
-        wings = sorted(
-            {
-                canonical_wing(wing)
-                for wing in known
-                if not is_private_wing(wing)
-                and principal.policy.can_read_wing(wing)
-                and not any(c in wing for c in "*?[]")
-            }
-        )
+            wings = []
         send_json(
             h,
             200,
             {
-                "connections": [connection_view(row) for row in rows],
+                "connections": [connection_view(row, **view) for row in rows],
+                "decide_consent": decide_grant.SCOPE_TEXT,
+                "bots_consent": {
+                    "chat": bots_grant.CHAT_TEXT,
+                    "confirm": bots_grant.CONFIRM_TEXT,
+                    "learned": bots_grant.LEARNED_TEXT,
+                },
                 "wings": wings,
                 "mcp_url": urls.AGENT_URL + "/mcp",
             },
         )
 
-    from . import admin, agents, task_types
+    from .. import capacity
+    from ..topology import node_panel as topology_node
+    from . import admin, agents, goals, invites, task_types
 
     admin.install(gateway)
+    capacity.install(gateway)
+    invites.install(gateway)
     agents.install(gateway)
     task_types.install(gateway)
+    goals.install(gateway)
+    topology_node.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)
     gateway.add_route("POST", "/app/logout", logout)
@@ -242,6 +329,9 @@ def install(gateway):
     gateway.add_route("GET", "/api/plan", plan)
     gateway.add_route("GET", "/api/events", feed)
     gateway.add_route("GET", "/api/connections", connections)
+    from . import instance_admin
+
+    instance_admin.install(gateway)
     gateway.add_prefix_route("GET", "/app/", _static)
 
 

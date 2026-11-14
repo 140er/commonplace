@@ -10,7 +10,7 @@ from commonplace.control_db import ControlError, RunnerLinkedError
 from commonplace.extensions import ToolContext
 from commonplace.http_util import log_failure
 from commonplace.policy import Policy
-from commonplace.projects.types import SEAT_CLIENT, SEAT_PREFIX, MainView, Seat
+from commonplace.projects.types import DEFAULT_SEAT_PREFIX, SEAT_CLIENT, SEAT_PREFIX, MainView, Seat
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def ensure_main(db, workspace_id: str, board: str) -> Seat:
             "INSERT OR IGNORE INTO project_orchestrators "
             "(workspace_id, board, role, name, connection_id, created_at, updated_at) "
             "VALUES (?, ?, 'main', ?, NULL, ?, ?)",
-            (workspace_id, board, SEAT_PREFIX + board, now, now),
+            (workspace_id, board, DEFAULT_SEAT_PREFIX + board, now, now),
         )
         row = db._conn.execute(
             "SELECT * FROM project_orchestrators WHERE workspace_id=? AND board=? AND role='main'",
@@ -85,12 +85,8 @@ def on_event(gateway, event: dict) -> None:
         if event.get("kind") != "space_created":
             return
         db = gateway.db
-        with db._lock:
-            stored = db._conn.execute(
-                "SELECT * FROM events WHERE seq=?", (event.get("seq"),)
-            ).fetchone()
-            if stored is None or events._row(stored) != event:
-                return
+        if not events.is_stored(db, event):
+            return
         ensure_main(db, event["workspace_id"], event["data"]["board"])
     except Exception as exc:
         log_failure(logger, "project seat event failed", exc)
@@ -102,6 +98,20 @@ def install_listener(gateway) -> None:
     gateway.projects_listener = functools.partial(on_event, gateway)
     events.add_listener(gateway.projects_listener)
     gateway.db.add_pre_close_callback(lambda: events.remove_listener(gateway.projects_listener))
+
+
+def held_by(db, workspace_id, connection_id) -> tuple[str, str] | None:
+    """``(board, role)`` of the seat this connection holds, or ``None``."""
+    with db._lock:
+        if not db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='project_orchestrators'"
+        ).fetchone():
+            return None
+        row = db._conn.execute(
+            "SELECT board, role FROM project_orchestrators WHERE workspace_id=? AND connection_id=?",
+            (workspace_id, connection_id),
+        ).fetchone()
+    return (row["board"], row["role"]) if row is not None else None
 
 
 def active_connection(db, workspace_id, ref):
@@ -121,11 +131,14 @@ def reconcile(db, workspace_id, slug, wing, actor):
     """Revoke mismatched seats, including ones orphaned by an interrupted write."""
     revoked, runner_linked = [], []
     detached = False
-    prefix = SEAT_PREFIX + slug
+    prefixes = (SEAT_PREFIX + slug, DEFAULT_SEAT_PREFIX + slug)
     with db._lock:
         for row in db.connections(workspace_id):
             if row["client"] != SEAT_CLIENT or not (
-                row["name"] == prefix or row["name"].startswith(prefix + ":")
+                any(
+                    row["name"] == prefix or row["name"].startswith(prefix + ":")
+                    for prefix in prefixes
+                )
             ):
                 continue
             if active_connection(db, workspace_id, row["id"]) is not None:

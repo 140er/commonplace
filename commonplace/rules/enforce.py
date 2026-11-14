@@ -13,20 +13,22 @@ from .store import rules_sequence
 
 CHECKED_WRITES = frozenset(
     "task_add task_update task_comment task_take_next task_handoff ask space_post "
-    "board_own_wing board_add memory_save memory_link fact_save handoff_start decide board_set rules_publish "
-    "task_approve card_split_done facts_import card_start card_start_cancel card_start_resolve "
+    "board_own_wing board_add space_add space_set space_own_wing memory_save memory_link fact_save handoff_start decide board_set rules_publish "
+    "task_approve task_snooze task_unsnooze card_split_done facts_import card_start card_start_cancel card_start_resolve "
     "orch_config_propose orch_config_accept orch_config_write orch_config_reject "
     "orch_exp_retire orch_restore_ack orch_resume orch_force_release orch_card_start "
     "orch_journal_intent orch_journal_record orch_gate_open orch_gate_record "
-    "orch_void_step".split()
+    "orch_finding orch_finding_ack orch_void_step orch_reassign_step goal_set card_goal "
+    "topology_propose topology_discover_site".split()
 )
 
 # Explicit names make a newly exposed write fail the public-surface contract.
 EXEMPT_WRITES = {
+    "rules_feedback": "Evidence about a rule is a report, not an instruction; it never changes work or rules.",
     "task_heartbeat": "Mechanical claim renewal does not change the work or its instructions.",
     **dict.fromkeys(
         "orch_heartbeat orch_release".split(),
-        "Mechanical orchestrator lease renewal and release.",
+        "Mechanical Coworker lease renewal and release.",
     ),
     **dict.fromkeys(
         "webhook_add webhook_remove webhook_test".split(),
@@ -67,7 +69,10 @@ REST_ROUTES = (
     RestRoute(
         "projects.routes", "POST", "/api/projects/<slug>/orchestrator/split", "card_split_done"
     ),
+    RestRoute("projects.panel_routes", "PUT", "/api/projects/<slug>/panel", "project_panel_set"),
     RestRoute("boards.rest", "POST", "/api/spaces", "board_add"),
+    RestRoute("boards.rest", "POST", "/api/spaces/<slug>/cards", "task_add"),
+    RestRoute("boards.rest", "POST", "/api/spaces/<slug>/chat", "space_post"),
     RestRoute("boards.rest", "PATCH", "/api/cards/<n>", "task_update"),
     RestRoute("boards.rest", "POST", "/api/cards/<n>/comments", "task_comment"),
     RestRoute("boards.rest", "POST", "/api/cards/<n>/handoff", "task_handoff"),
@@ -84,7 +89,15 @@ REST_ROUTES = (
     RestRoute("boards.rest", "POST", "/api/boards/<slug>/cards", "task_add"),
     RestRoute("boards.rest", "POST", "/api/boards", "board_add"),
     RestRoute("boards.rest", "PATCH", "/api/boards/<slug>", "board_set"),
-    RestRoute("boards.rest", "POST", "/api/boards/<slug>/chat", "space_post"),
+    RestRoute(
+        "boards.rest",
+        "POST",
+        "/api/boards/<slug>/chat",
+        "space_post",
+        "checked",
+        "Both connection replies and consented person messages use the checked write path.",
+    ),
+    RestRoute("topology.proposal_api", "POST", "/api/topology/proposals", "topology_propose"),
     RestRoute("memory_tools", "POST", "/api/memory", "memory_save"),
     RestRoute("memory_tools", "POST", "/api/facts", "fact_save"),
     RestRoute("handoff.api", "POST", "/api/handoffs/<id>/relaunch", "relaunch"),
@@ -123,6 +136,67 @@ REST_ROUTES = (
         "webhook_test",
         "exempt",
         "Outbound automation",
+    ),
+)
+
+# Setup has its own person/key authority rather than a connection instruction
+# write. Keep every shape explicit; the dedicated consent tests prove each gate.
+RUNNER_SETUP_ROUTES = (
+    RestRoute(
+        "runner.enrollment_api",
+        "POST",
+        "/api/runner-enrollment/recover",
+        "",
+        "exempt",
+        "Recovery challenge or replay-fenced enrolled-key lifecycle; after revoke only stop and acknowledgement, never approval",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runners/<machine>/setup-requests/<request>/refuse",
+        "",
+        "exempt",
+        "Enrollment owner person session only; fingerprint-bound enrollment revocation",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runners/<machine>/setup-requests/<request>/decide",
+        "",
+        "exempt",
+        "Enrollment owner person session only",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runners/<machine>/setup-requests/<request>/device",
+        "",
+        "exempt",
+        "Enrollment owner person session; one-time device code display",
+    ),
+    RestRoute(
+        "runner.owner_api",
+        "POST",
+        "/api/runners/<machine>/attest",
+        "",
+        "exempt",
+        "Owner person attestation; final fingerprint and prerequisite checks",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runner/setup-requests",
+        "",
+        "exempt",
+        "Bound machine signed login facts, never approval",
+    ),
+    RestRoute(
+        "runner.setup_api",
+        "POST",
+        "/api/runner/secret-delivery",
+        "",
+        "exempt",
+        "Bound machine proof fetch/ack of its approved encrypted delivery",
     ),
 )
 
@@ -242,7 +316,7 @@ def audit(db, principal, tool, decision, reason="", *, transport="mcp", **kwargs
     if reason.startswith("rules_seq ") or transport == "rest":
         reason += ("; " if reason else "") + "transport=" + transport
     with db._lock:
-        db.audit(
+        seq = db.audit(
             action="tool.call",
             decision=decision,
             workspace_id=principal.workspace_id,
@@ -254,7 +328,7 @@ def audit(db, principal, tool, decision, reason="", *, transport="mcp", **kwargs
             **kwargs,
         )
         if not reason.startswith("rules_seq unchecked"):
-            return
+            return seq
         since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         count = db._conn.execute(
             "SELECT count(*) FROM audit_log WHERE workspace_id=? AND connection_id=? "
@@ -279,6 +353,7 @@ def audit(db, principal, tool, decision, reason="", *, transport="mcp", **kwargs
             event = None
     if event is not None:
         events.notify(event)
+    return seq
 
 
 class RulesRefresh(Exception):
@@ -287,26 +362,47 @@ class RulesRefresh(Exception):
         super().__init__(text)
 
 
+@dataclass
+class RestWriteAudit:
+    seq: int | None = None
+
+
 @contextmanager
-def rest_write(ctx, handler, tool, body):
+def rest_write(ctx, handler, tool, body, *, audit_principal=None, audit_reason="", target_ids=None):
+    """Check the operation's principal; optional attribution never changes its authority."""
     body.pop("rules_seq", None)
     exempt = tool in EXEMPT_WRITES or (
         tool == "task_update" and body.keys() == {"version", "callstack"}
     )
     outcome = Check() if exempt else check(ctx, tool, handler.headers.get("Commonplace-Rules-Seq"))
+    principal = ctx.principal if audit_principal is None else audit_principal
+    reason = "; ".join(part for part in (outcome.reason, audit_reason) if part)
+
+    def record(decision):
+        return audit(
+            ctx.db,
+            principal,
+            tool,
+            decision,
+            reason,
+            transport="rest",
+            **({"target_ids": target_ids} if target_ids is not None else {}),
+        )
+
     if outcome.denied:
-        audit(ctx.db, ctx.principal, tool, "deny", outcome.reason, transport="rest")
+        record("deny")
         raise RulesRefresh(outcome.notice)
     if outcome.notice:
         handler._rules_notice = outcome.notice
     completed = False
+    logged = RestWriteAudit()
     try:
-        yield
+        yield logged
     except Exception:
-        audit(ctx.db, ctx.principal, tool, "deny", outcome.reason, transport="rest")
+        record("deny")
         raise
     else:
-        audit(ctx.db, ctx.principal, tool, "ok", outcome.reason, transport="rest")
+        logged.seq = record("ok")
         completed = True
     finally:
         if not completed:

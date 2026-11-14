@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from commonplace.backup import RESTORE_MARKER
+from commonplace.db_busy import BUSY_TIMEOUT_S, begin_immediate
 from commonplace.extensions import ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
@@ -496,7 +497,7 @@ class Store:
     @contextmanager
     def connection(self) -> Iterator:
         """Autocommit connection (``isolation_level=None``), Row factory, 10 s busy wait."""
-        conn = connect(self.path, timeout=10, isolation_level=None)
+        conn = connect(self.path, timeout=BUSY_TIMEOUT_S, isolation_level=None)
         conn.row_factory = row_factory
         try:
             yield conn
@@ -507,7 +508,7 @@ class Store:
     def transaction(self) -> Iterator:
         """``BEGIN IMMEDIATE`` ... COMMIT, rollback on any exception."""
         with self.connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             try:
                 yield conn
                 conn.commit()

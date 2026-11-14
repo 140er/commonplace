@@ -1,0 +1,6 @@
+### Bot learning, review (slice S5 built)
+
+- A person sees everything their bots learned in one list: the words, where and when they said them, which bot, whether it is theirs or shared, and whether it is waiting for an answer, replaced by a newer one, or not used lately. They can accept or reject a proposal, edit the words, pin, forget one item, pause learning for a week, or forget everything a bot learned, from that list and from the bot's thread.
+- In ask mode a proposal appears in the thread with Accept, Reject and Edit; in auto mode a "Learned" line appears with a Forget. Rejecting or forgetting deletes it for good and the same sentence is not learned again.
+- A bot can list what it learned, offer to forget one item or everything (the person must tap to confirm, nothing is deleted before that) and pause learning; it cannot turn learning on, change a mode, edit words or see another person's items. These tools exist only once the workspace owner turned learning on.
+- An app of the person's own can be allowed to read the list (never change it) with the `bots:learned` permission, which needs the chat permission and is granted and withdrawn separately; agents and other tokens see nothing of it.
