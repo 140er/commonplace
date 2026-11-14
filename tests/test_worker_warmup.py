@@ -139,6 +139,57 @@ def test_status_payload_reports_the_warmup_state(monkeypatch):
     assert mcp_server._http_status_payload(httpd)["warmup"] == {"state": "running"}
 
 
+class _SkewedClock:
+    """``time`` with a monotonic clock a test can move; everything else is real."""
+
+    def __init__(self):
+        self.now = 1_000.0
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+def test_searches_spaced_apart_through_the_tool_do_not_repeat_the_capacity_probe(
+    monkeypatch, config, kg, seeded_collection
+):
+    """The card's symptom: every search more than 10 s after the last paid the probe again.
+
+    The first search's own collection open writes to the database, so the verdict
+    it recorded is invalid once; after that an untouched palace stays probed no
+    matter how long the gaps are.
+    """
+    from _mcp_server_helpers import _patch_mcp_server
+
+    from mempalace.backends import chroma as chroma_mod
+
+    _patch_mcp_server(monkeypatch, config, kg)
+    clock = _SkewedClock()
+    monkeypatch.setattr(chroma_mod, "time", clock)
+    runs: list = []
+    real = chroma_mod._hnsw_capacity_status_uncached
+
+    def counting(*args, **kwargs):
+        runs.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(chroma_mod, "_hnsw_capacity_status_uncached", counting)
+
+    def search():
+        found = mcp_server.tool_search("authentication tokens", include_facts=False)
+        assert found["results"], found
+
+    search()
+    search()
+    settled = len(runs)
+    for gap in (11.0, 120.0, 3_600.0):
+        clock.now += gap
+        search()
+    assert len(runs) == settled, "a search spaced apart re-ran the capacity probe"
+
+
 def _statusz(worker):
     identity = {
         "user": "u",
