@@ -2,6 +2,19 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { B4, B8, RAMPS, valuePass, rampFor, quantize, StageDither } from '../commonplace/web/static/deck-dither.js';
 import { appearanceStore, appearanceHTML, DEFAULTS } from '../commonplace/web/static/deck-appearance.js';
+import * as appearance from '../commonplace/web/static/deck-appearance.js';
+
+test('Appearance starts at 60% vignette and miniature dots stay at 2px independently of the page', () => {
+  assert.equal(DEFAULTS.vignette, .6);
+  for (const dot of [3, 4, 5, 6, 7]) {
+    for (const scene of ['capy-cyber', 'palace-gate', 'nebula-quiet']) {
+      const opts = appearance.previewOptions({ ...DEFAULTS, dot }, scene);
+      assert.equal(opts.dot, 2); assert.equal(opts.dim, 0); assert.equal(opts.scene, scene);
+      assert.equal(opts.twinkle, false);
+    }
+  }
+  assert.match(appearanceHTML(DEFAULTS), /class="appearance-send"/);
+});
 
 test('ordered thresholds, fixed value inputs and hue boundaries match the reference', () => {
   assert.equal(B4.length, 16); assert.equal(B8.length, 64);

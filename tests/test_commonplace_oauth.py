@@ -1185,3 +1185,22 @@ def test_https_registration_still_gets_an_origin_csp(client):
     status, headers, _ = client.request("GET", client.authorize_path(cid))
     assert status == 200
     assert "form-action 'self' https://client.example;" in headers["Content-Security-Policy"]
+
+
+def test_me_tells_an_oauth_client_its_own_connection_id(client):
+    cid = client.register()
+    pair = client.grant(cid)
+    principal = client.hub.gateway.authenticate("Bearer " + pair["access_token"])
+    status, _, text = client.request(
+        "GET", "/api/me", cookies=False, headers={"Authorization": "Bearer " + pair["access_token"]}
+    )
+    assert status == 200, text
+    shown = json.loads(text)["connection_id"]
+    assert re.fullmatch(r"conn_[a-f0-9]{16}", shown) and shown == principal.connection_id
+
+
+def test_me_has_no_connection_id_for_a_person_session(client):
+    client.login()
+    status, _, text = client.request("GET", "/api/me")
+    assert status == 200, text
+    assert json.loads(text)["connection_id"] is None
