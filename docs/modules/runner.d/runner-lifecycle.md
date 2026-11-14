@@ -4,7 +4,7 @@
 
 - **Promises:**
 
-  - Only the enrolled key can renew setup or acknowledge stop. Revocation invalidates every authority before requesting termination. The supervisor stops owned processes on denial or loss; a stop acknowledgement follows confirmed termination. Issuer signatures require an independently configured pin and exact current scope. Execution stays disabled until compatible live issuer and provider proofs exist.
+  - Only the enrolled key can renew setup or acknowledge stop. Revocation invalidates every authority before requesting termination. The supervisor stops owned processes on denial or loss; the owner's terminal sign-in has a bound scope and stops before cleanup. A stop acknowledgement follows confirmed termination. Issuer signatures require an independently configured pin and exact current scope. Execution stays disabled until compatible live issuer and provider proofs exist.
 
 - **How it fails:**
 

@@ -19,6 +19,9 @@ their own session. Its post-stop helper checks that the main process is gone,
 clears local credential files and approved caches, removes dedicated provider
 credentials, and signs a termination acknowledgement. Unrelated processes and
 services are outside that control group. The installer preserves existing linger.
+The owner's terminal sign-in runs in a separate owned scope bound to the setup
+unit. Its stop ordering terminates that scope before credential cleanup, including
+children that created another session. Direct calls outside that scope are refused.
 
 The owner sees **Revoked; stop unconfirmed** until that acknowledgement arrives,
 then **Stopped**. An offline machine is never called stopped merely because its

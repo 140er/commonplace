@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from commonplace import control_db, sessions
 from commonplace.runner import enrollment, enrollment_api, install_receipts, installer, registry
-from tests.test_runner_setup_approvals import consented, finish, ready, setup  # noqa: F401
+from tests.test_runner_setup_approvals import consented, finish, manual, ready, setup  # noqa: F401
 
 
 def pulse(s, sequence=1, action="pulse", host_status=None):
@@ -213,6 +213,24 @@ def test_tokens_cannot_use_the_post_revocation_channel(consented):
     s = consented
     for principal in (s.principal, s.owner):
         assert request(s, pulse(s), principal=principal)[0] == 404
+
+
+def test_terminal_cli_is_supervised_with_its_own_unit_scope(manual, monkeypatch):
+    s = manual
+    real = s.runtime_host.probe
+
+    def terminal(name, release, raw, home, **options):
+        if options.get("sign_in"):
+            s.runtime_host.facts[name] = {"availability": "present", "login": "unverified"}
+        return real(name, release, raw, home)
+
+    monkeypatch.setattr(s.runtime_host, "probe", terminal)
+    assert s.local.sign_in("claude") == 0
+    assert "terminal-scope" in s.host.commands, (
+        "revocation must terminate the owner's pending CLI too"
+    )
+    with pytest.raises(installer.InstallError, match="supervised terminal sign-in is required"):
+        s.local.sign_in("claude", supervised=True)
 
 
 def test_unrequested_stop_ack_and_foreign_identity_are_refused(consented):

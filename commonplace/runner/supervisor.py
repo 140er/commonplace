@@ -220,6 +220,7 @@ def command(home, action):
 
 
 def serve(home):
+    from .install_host import LiveHost
     from .installer import Installer
 
     install = Installer(home, host=object())
@@ -227,7 +228,12 @@ def serve(home):
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    return supervise(command(install.fs.home, "_setup-sync"), channel.exchange, stop=stop)
+    result = supervise(command(install.fs.home, "_setup-sync"), channel.exchange, stop=stop)
+    # Queue a real stop job before exiting. It orders the bound terminal scope
+    # before this unit's post-stop cleanup, including on network loss.
+    LiveHost().request_stop()
+    stop.wait(1.5)
+    return result
 
 
 def stopped(home, *, transport=None, host=None):
@@ -241,9 +247,9 @@ def stopped(home, *, transport=None, host=None):
     from .installer import Installer
 
     host = host if host is not None else LiveHost()
-    if not host.termination_confirmed():
-        raise InstallError("service stop unconfirmed")
     install = Installer(home, host=host, transport=transport)
+    if not install.load() or not host.termination_confirmed(install.journal["installation_id"]):
+        raise InstallError("service stop unconfirmed")
     prepare(install)
     with install.locked():
         install.load()
@@ -283,6 +289,10 @@ def stopped(home, *, transport=None, host=None):
 
 if __name__ == "__main__":
     try:
+        if len(sys.argv) == 4 and sys.argv[1] == "_setup-sign-in" and sys.argv[3] == "claude":
+            from .installer import Installer
+
+            raise SystemExit(Installer(sys.argv[2]).sign_in("claude", supervised=True))
         if len(sys.argv) != 3:
             raise ValueError
         if sys.argv[1] == "_setup-stopped":

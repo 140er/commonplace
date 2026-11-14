@@ -188,7 +188,7 @@ def exchange(gateway, data):
 def owner_view(db, row):
     with db._lock:
         row = registry.get_machine(db, row["workspace_id"], row["id"])
-        if not enrollment.enabled(db, row["workspace_id"]):
+        if row is None or not enrollment.enabled(db, row["workspace_id"]):
             return {}
         item = db._conn.execute(
             "SELECT * FROM runner_lifecycle WHERE workspace_id=? AND machine_id=?",

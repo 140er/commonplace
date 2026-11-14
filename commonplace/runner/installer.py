@@ -662,11 +662,23 @@ class Installer:
         self.out("installation phase: " + phase + "; execution disabled")
         return 0
 
-    def sign_in(self, provider):
+    def sign_in(self, provider, *, supervised=False):
         from .runtime_install import HOME, Runtime
 
         if provider != "claude":
             raise InstallError("unsupported terminal sign-in")
+        if not self.load() or self.journal["phase"] != "installed":
+            raise InstallError("installation incomplete")
+        if not supervised:
+            from .supervisor import command
+
+            return self.host.terminal(
+                [*command(self.fs.home, "_setup-sign-in"), provider],
+                self.journal["installation_id"],
+                run=lambda: self.sign_in(provider, supervised=True),
+            )
+        if not self.host.owns_terminal(self.journal["installation_id"]):
+            raise InstallError("supervised terminal sign-in is required")
         self.sync_receipts()  # Live authority and signed scope before the terminal step.
         with self.locked():
             self.load()
@@ -831,6 +843,8 @@ def run(args, *, host=None, transport=None, code_source=None):
             from .supervisor import stopped
 
             return stopped(args.home)
+        if args.action == "_setup-sign-in":
+            return Installer(args.home, host, transport).sign_in(args.provider, supervised=True)
         if args.action == "stop":
             from .supervisor import Channel, bounded, stopped
 
