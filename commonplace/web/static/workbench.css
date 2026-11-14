@@ -279,7 +279,7 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 .workbench-details .pocket-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 
 /* File import stays within the Memory screen and the existing surface tokens. */
-.memory-import-entry { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.memory-import-entry { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 16px; }
 .memory-import { max-width: 680px; margin: 0 auto; padding: 24px; background: var(--surface); border-radius: var(--r); }
 .center:has(.memory-import) > .head { display: none; }
 .memory-import h1 { font-size: 24px; line-height: 1.25; margin: 0 0 24px; }

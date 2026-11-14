@@ -32,6 +32,7 @@
 :root[data-ui="deck"] .memory-filterbar { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; }
 :root[data-ui="deck"] .memory-chip-scroll { display: contents; }
 :root[data-ui="deck"] .memory-room-count { color: var(--ink3); font-weight: 400; }
+:root[data-ui="deck"] .memory-map-launch { margin-left: auto; }
 :root[data-ui="deck"] .memory-import-launch { position: absolute; top: 18px; right: 0; display: inline-flex; align-items: center; gap: 8px; }
 :root[data-ui="deck"] .memory-filters { flex: none; color: var(--ink3); font-size: 12.5px; }
 :root[data-ui="deck"] .memory-filters summary { display: list-item; list-style-position: inside; white-space: nowrap; cursor: pointer; width: fit-content; min-height: 32px; padding: 6px 10px; border-radius: var(--radius-control); background: var(--card); box-sizing: border-box; }
@@ -72,6 +73,7 @@
 @media (max-width: 699px) {
   :root[data-ui="deck"] .center:has(.deck-memory) > #content { padding: 16px 16px 32px; }
   :root[data-ui="deck"] .memory-heading { display: none; }
+  :root[data-ui="deck"] .memory-map-launch { min-height: 44px; margin: 8px 0 0; }
   :root[data-ui="deck"] .memory-import-launch { position: static; align-self: flex-start; min-height: 44px; margin-top: 16px; }
   :root[data-ui="deck"] .memory-rooms button, :root[data-ui="deck"] .memory-filters summary { min-height: 44px; }
   :root[data-ui="deck"] .memory-filterbar { display: block; }
