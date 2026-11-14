@@ -21,6 +21,7 @@ import hashlib
 import re
 import secrets
 import sqlite3
+import uuid
 from datetime import timedelta
 from typing import Optional
 
@@ -49,7 +50,71 @@ CREATE TABLE IF NOT EXISTS workspace_invites (
 );
 CREATE INDEX IF NOT EXISTS idx_workspace_invites_workspace
     ON workspace_invites(workspace_id, created_at);
+CREATE TABLE IF NOT EXISTS workspace_creations (
+    user_id TEXT NOT NULL REFERENCES users(id),
+    request_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(user_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_creations_rate
+    ON workspace_creations(user_id, created_at);
 """
+
+
+class WorkspaceCreationError(ControlError):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def create_workspace(db, user_id, *, name, request_id):
+    """Reuse signup provisioning, atomically remembering a person's request."""
+    from mempalace.config import sanitize_name
+
+    from . import plans
+    from .social.accounts import signup_enabled
+
+    name = sanitize_name(name, "Workspace name")
+    if not isinstance(request_id, str) or len(request_id) != 36:
+        raise ValueError("Use a valid workspace request id.")
+    try:
+        request_id = str(uuid.UUID(request_id))
+    except ValueError:
+        raise ValueError("Use a valid workspace request id.") from None
+    with db._lock, db._tx() as conn:
+        previous = conn.execute(
+            "SELECT w.id, w.name FROM workspace_creations c "
+            "JOIN workspaces w ON w.id = c.workspace_id "
+            "WHERE c.user_id = ? AND c.request_id = ?",
+            (user_id, request_id),
+        ).fetchone()
+        if previous:
+            if previous["name"] != name:
+                raise WorkspaceCreationError(409, "This request was already used for another name.")
+            return {"id": previous["id"], "name": previous["name"], "role": "owner"}, False
+        if not signup_enabled():
+            raise WorkspaceCreationError(403, "This instance is closed to new workspaces.")
+        now = _now()
+        recent = conn.execute(
+            "SELECT count(*) FROM workspace_creations WHERE user_id = ? AND created_at > ?",
+            (user_id, _iso(now - timedelta(hours=1))),
+        ).fetchone()[0]
+        if recent >= 5:
+            raise WorkspaceCreationError(
+                429, "You have created five workspaces recently. Try again in an hour."
+            )
+        workspace = db.create_workspace(name, user_id, personal=True, conn=conn)
+        try:
+            plans.assign_signup_plan(db, user_id, workspace, via="workspace", conn=conn)
+        except plans.LimitReached as exc:
+            raise WorkspaceCreationError(403, str(exc)) from None
+        conn.execute(
+            "INSERT INTO workspace_creations(user_id, request_id, workspace_id, created_at) "
+            "VALUES (?,?,?,?)",
+            (user_id, request_id, workspace, _iso(now)),
+        )
+        return {"id": workspace, "name": name, "role": "owner"}, True
 
 
 class InviteError(ControlError):
