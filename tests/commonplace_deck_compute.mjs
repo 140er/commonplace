@@ -606,15 +606,16 @@ test('selecting a runner node opens exactly one detail view with its Config from
   const pick = tab => panel.handlers.click({ target: { closest: () => ({ dataset: { tdTab: tab } }) } });
   pick('config');
   for (const word of ['atlas', 'project', 'approval-required', 'Attested by the owner, not verified']) assert.ok(f.detail().includes(word), word);
-  pick('agents'); assert.match(f.detail(), /Running work is not reported/);
   pick('sites'); assert.match(f.detail(), /No sites are recorded/);
-  assert.ok(!f.calls.some(c => c[0].startsWith('/api/topology/node')), 'a runner is described by its row, not read from the topology');
+  assert.ok(f.calls.some(c => c[0] === '/api/topology/node?key=build'), 'a runner machine is read from the node route for its runs');
   f.choose('studio'); await flush();
   assert.equal(f.panels.length, 1);
   assert.match(f.detail(), /Studio machine/);
   pick('config'); assert.match(f.detail(), /Not attested, not verified/);
   f.choose('commonplace-hub'); await flush();
   pick('config'); assert.match(f.detail(), /No machine configuration is recorded for the hub/);
+  pick('agents'); assert.match(f.detail(), /Running work is not reported for the hub/);
+  assert.ok(!f.calls.some(c => c[0].includes('key=commonplace-hub')), 'the hub is no runner machine and is not read');
   f.ui.stop();
 });
 
@@ -649,7 +650,7 @@ test('real screen: title, shell header handling, cleanup', async () => {
   assert.equal(f.header.hidden, true); assert.equal(f.phoneBar.hidden, true); assert.equal(f.phoneTabs.style.position, 'fixed');
   f.ui.stop(); f.ui.stop();
   assert.equal(f.handlers.size, 0); assert.equal(f.header.hidden, false); assert.equal(f.classes.size, 0);
-  assert.ok(f.calls.at(-1)[1].signal.aborted); assert.equal(f.phoneBar.hidden, false); assert.equal(f.phoneTabs.style.position, '');
+  assert.ok(f.calls.filter(c => c[1]).at(-1)[1].signal.aborted); assert.equal(f.phoneBar.hidden, false); assert.equal(f.phoneTabs.style.position, '');
   assert.equal(f.root.html, '');
 });
 
@@ -684,7 +685,7 @@ test('one-click handoffs store the draft and navigate; never send a message', as
     f.click({ computeAction: 'map' });
     assert.deepEqual(saved, [['cmmn.deck.draft', { bot: 'general', text: 'Map my machines and sites.' }]]);
     assert.deepEqual(f.nav, ['#/bots/general']);
-    assert.deepEqual(f.calls.map(c => c[0]), ['/api/topology', '/api/runners', '/api/bots']);
+    assert.deepEqual(f.calls.map(c => c[0]).filter(path => !path.startsWith('/api/topology/node')), ['/api/topology', '/api/runners', '/api/bots']);
     f.ui.stop();
   } finally { globalThis.sessionStorage = previous; }
 });
@@ -702,7 +703,7 @@ test('escaped server strings stay inert in the canvas and in the configuration',
 
 test('late refresh and late stopped responses cannot replace the current screen', async () => {
   const f = fakeRoot(), pending = [];
-  const api = (path, options) => path === '/api/bots' ? Promise.resolve({ bots: [] }) : path === '/api/topology' ? Promise.resolve(EMPTY) : new Promise(resolve => pending.push(resolve));
+  const api = (path, options) => path === '/api/bots' ? Promise.resolve({ bots: [] }) : path === '/api/topology' ? Promise.resolve(EMPTY) : path.startsWith('/api/topology/node') ? Promise.reject(Object.assign(new Error('not wired'), { status: 404 })) : new Promise(resolve => pending.push(resolve));
   const ui = compute.mount({ root: f.root, api, e });
   await flush();
   const next = ui.refresh(); await flush();
@@ -834,8 +835,9 @@ test('status line from counts: busy, idle, stuck, unknown and partial', () => {
   const stuck = model([{ ok: true, agents: agentsOf('Maple', [run('1', 'uncertain', 11, 3), run('2', 'queued', 12, 45), run('3', 'started', 13, 4)]) }]);
   assert.equal(work.statusText(stuck, now), '1 running, 0 waiting, 2 stuck. Look at the flagged jobs below. Last activity 3 minutes ago.');
   assert.deepEqual(stuck.jobs.map(j => j.job), ['1', '2', '3'], 'stuck first, then running');
-  assert.equal(work.statusText(model([]), now), 'Running work is not reported for these machines yet, so it cannot be counted here.');
-  assert.equal(work.statusText(model([{ ok: false }]), now), 'Running work is not reported for these machines yet, so it cannot be counted here.');
+  assert.match(work.statusText(model([]), now), /^No enrolled runner machine is known here/, 'no machine asked: nothing to say about the route');
+  assert.match(work.statusText(model([{ ok: false }]), now), /^Running work could not be read just now\./, 'a failed read is not the route saying it cannot report');
+  assert.doesNotMatch(work.statusText(model([{ ok: false }, { ok: false }]), now), /not reported/);
   assert.equal(work.statusText(model([{ ok: true, agents: { applicable: false, reason: 'not_a_runner' } }]), now).startsWith('Running work is not reported'), true);
   const partial = model([{ ok: true, agents: agentsOf('Maple', [run('1', 'started', 11, 2)]) }, { ok: false }]);
   assert.match(work.statusText(partial, now), /^1 running, 0 waiting, 0 stuck\. Nothing is stuck\. Last activity 2 minutes ago\. Some machines could not be read\.$/);
@@ -853,7 +855,13 @@ test('Compute opens with the status line and the running jobs, each linking to i
   assert.ok(f.calls.some(c => c[0] === '/api/topology/node?key=maple') && f.calls.some(c => c[0] === '/api/topology/node?key=birch'));
   assert.ok(!f.calls.some(c => c[0].startsWith('/api/topology/node?key=studio-mac')), 'only machines recorded as runners are asked');
   // A refresh reads again and repaints.
-  agents.maple = agentsOf('Maple', []); await f.ui.refresh(); await flush();
+  agents.maple = agentsOf('Maple', []);
+  const nodeReads = () => f.calls.filter(c => c[0].startsWith('/api/topology/node') && c[1]?.timeoutMs === 15000).length, before = nodeReads();
+  await f.ui.refresh(); await flush();
+  assert.equal(nodeReads(), before, 'a refresh right after a read is served from what was just read');
+  const real = Date.now; Date.now = () => real() + work.CACHE_MS + 1000;
+  try { await f.ui.refresh(); await flush(); } finally { Date.now = real; }
+  assert.equal(nodeReads(), before + 2, 'after the window it reads the machines again');
   assert.equal(status(f), '1 running, 0 waiting, 0 stuck. Nothing is stuck. Last activity 7 minutes ago.');
   assert.doesNotMatch(jobs(f), /data-job="j1"/);
   f.ui.stop();
@@ -878,15 +886,17 @@ test('stuck jobs are flagged with a next step that leads to the card', async () 
   f.ui.stop();
 });
 
-test('the enrollment fallback and unreadable machines say work cannot be counted, never invent zero', async () => {
+test('unreadable machines say they could not be read; only the route itself says work is not reported', async () => {
   const f = harness(); await flush();
-  assert.equal(status(f), 'Running work is not reported for these machines yet, so it cannot be counted here.');
-  assert.equal(jobs(f), '');
-  assert.ok(!f.calls.some(c => c[0].startsWith('/api/topology/node')), 'the runners fallback has no node to read');
+  assert.match(status(f), /^Running work could not be read just now\./, 'every node read failed (nothing is wired in this harness)');
+  assert.doesNotMatch(status(f), /not reported/);
   f.ui.stop();
   const g = harness({ topology: runnerTopology(), bots: workBots }); await flush();
-  assert.equal(status(g), 'Running work is not reported for these machines yet, so it cannot be counted here.', 'every node read failed');
+  assert.match(status(g), /^Running work could not be read just now\./, 'every node read failed');
   g.ui.stop();
+  const n = harness({ topology: runnerTopology(), bots: workBots, node: () => ({ agents: { applicable: false, reason: 'not_a_runner' } }) }); await flush();
+  assert.equal(status(n), 'Running work is not reported for these machines yet, so it cannot be counted here.', 'the route itself says it cannot report');
+  n.ui.stop();
   const h = harness({ topology: runnerTopology(), bots: workBots, node: key => { if (key === 'birch') throw Object.assign(new Error('boom'), { status: 500 }); return { agents: agentsOf('Maple', [run('j1', 'started', 11, 2)]) }; } }); await flush();
   assert.match(status(h), /^1 running, 0 waiting, 0 stuck\..*Some machines could not be read\.$/);
   h.ui.stop();
@@ -898,4 +908,108 @@ test('job strings from the server stay inert', async () => {
   assert.doesNotMatch(jobs(f), /<img|onerror="alert/);
   assert.match(jobs(f), /&lt;img/);
   f.ui.stop();
+});
+
+// ---------- the runners fallback (no machine on the map): what is running comes from the node route ----------
+
+const fallbackAgents = () => ({
+  build: agentsOf('Build box', [run('j1', 'started', 11, 2), run('j2', 'queued', 12, 1), run('j3', 'uncertain', 13, 4)], [{ kind: 'worker', last_used_at: minutesAgo(1) }]),
+  studio: agentsOf('Studio machine', []),
+  old: agentsOf('Old tower', [run('j4', 'started', 14, 9, { board: 'orchard', project: 'orchard-site' })]),
+});
+// A selection reads the node after a zero-delay timer, which a run of immediates does not wait for.
+const settle = async () => { await flush(); await new Promise(resolve => setTimeout(resolve, 20)); await flush(); };
+const nodeCalls = (f, only = null) => f.calls.filter(c => c[0].startsWith('/api/topology/node') && (only === null || (c[1]?.timeoutMs === 15000) === only)).map(c => decodeURIComponent(c[0].split('key=')[1]));
+
+test('runner-only topology (no machine on the map): counts and the job list come from the node route of each runner', async () => {
+  const agents = fallbackAgents();
+  const f = harness({ bots: workBots, node: key => ({ agents: agents[key] || { applicable: false, reason: 'machine_not_found' } }) }); await flush();
+  assert.deepEqual(f.nodes().sort(), ['build', 'commonplace-hub', 'old', 'studio'], 'the map holds no node of its own, only the runners');
+  assert.equal(f.regions.get('summary').textContent, '1 of 3 machines ready.');
+  assert.equal(status(f), '2 running, 1 waiting, 1 stuck. Look at the flagged jobs below. Last activity 1 minute ago.');
+  assert.deepEqual(nodeCalls(f, true).sort(), ['build', 'old', 'studio'], 'every enrolled machine is asked once; the revoked one and the hub are not');
+  const list = jobs(f);
+  assert.deepEqual(list.split('<li ').slice(1).map(r => /data-job="([^"]+)"/.exec(r)[1]), ['j3', 'j1', 'j4', 'j2'], 'the same list as the map path: stuck first, then running, then waiting');
+  assert.match(list, /data-job="j1"[^>]*><a href="#\/card\/11">Card #11<\/a> · <span class="dc-job-bot">Atlas bot<\/span> · on Build box · <span class="dc-job-state">Running<\/span>/);
+  assert.match(list, /data-job="j4"[^>]*><a href="#\/card\/14">Card #14<\/a> · <span class="dc-job-bot">orchard-site<\/span> · on Old tower/);
+  assert.match(list, /data-kind="stuck"[\s\S]*It is not clear whether it started/);
+  assert.doesNotMatch(status(f), /not reported/);
+  f.ui.stop();
+});
+
+test('runner-only topology: an idle fleet reads as zero, not as unknown', async () => {
+  const f = harness({ bots: workBots, node: key => ({ agents: agentsOf(key, []) }) }); await flush();
+  assert.equal(status(f), '0 running, 0 waiting, 0 stuck. Nothing is running and nothing is stuck. No activity recorded yet.');
+  assert.equal(jobs(f), '<li class="dc-job-empty">No jobs are running.</li>');
+  f.ui.stop();
+});
+
+test('runner-only topology: one machine that cannot be read leaves the others counted, and the line says so', async () => {
+  const agents = fallbackAgents();
+  const f = harness({ bots: workBots, node: key => { if (key === 'old') throw Object.assign(new Error('boom'), { status: 500 }); return { agents: agents[key] }; } }); await flush();
+  assert.match(status(f), /^1 running, 1 waiting, 1 stuck\..*Some machines could not be read\.$/);
+  f.ui.stop();
+});
+
+test('clicking a runner requests its node route and shows its runs in the panel, outside the collapsed details', async () => {
+  const agents = fallbackAgents();
+  const f = harness({ bots: workBots, node: key => ({ agents: agents[key] }) }); await flush();
+  const before = nodeCalls(f, false).length;
+  f.choose('old'); await settle();
+  assert.ok(nodeCalls(f, false).includes('old'), 'the panel asked the node route for the clicked runner');
+  assert.ok(nodeCalls(f, false).length > before);
+  assert.ok(!f.calls.some(c => c[0].startsWith('/api/topology/route') && c[0].includes('old')), 'no route read for a machine the screen describes itself');
+  const html = f.detail(), summary = html.slice(0, html.indexOf('<details'));
+  assert.match(summary, /data-machine-work/);
+  assert.match(summary, /<h3>On this machine<\/h3>/);
+  assert.match(summary, /1 running, 0 waiting, 0 stuck\./);
+  assert.match(summary, /data-job="j4"[^>]*><a href="#\/card\/14">Card #14<\/a>/);
+  assert.doesNotMatch(summary, /data-job="j1"/, 'only this machine\'s runs');
+  // The Agents tab holds the same runs, from the same read.
+  f.panels.at(-1).handlers.click({ target: { closest: () => ({ dataset: { tdTab: 'agents' } }) } });
+  assert.match(f.detail(), /data-run="j4"/);
+  assert.doesNotMatch(f.detail(), /Running work is not reported/);
+  // The row's own facts stay in Config.
+  f.panels.at(-1).handlers.click({ target: { closest: () => ({ dataset: { tdTab: 'config' } }) } });
+  assert.match(f.detail(), /Attested by the owner, not verified/);
+  f.ui.stop();
+});
+
+test('clicking a runner whose node cannot be read says the details could not be loaded, never "no runs"', async () => {
+  const f = harness({ bots: workBots }); await flush();
+  f.choose('studio'); await settle();
+  f.panels.at(-1).handlers.click({ target: { closest: () => ({ dataset: { tdTab: 'agents' } }) } });
+  assert.match(f.detail(), /could not be loaded/);
+  assert.doesNotMatch(f.detail(), /data-machine-work|No runs are queued/);
+  f.ui.stop();
+});
+
+test('many runners: the work reads are batched and kept for a moment, so refreshing does not storm the route', async () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, label: `Machine ${i}`, enabled: true, binding_state: 'owner_attested' }));
+  const f = harness({ rows: many, bots: workBots, node: key => ({ agents: agentsOf(key, []) }) }); await flush();
+  assert.equal(nodeCalls(f, true).length, work.MAX_MACHINES, 'at most MAX_MACHINES machines are read');
+  assert.equal(new Set(nodeCalls(f, true)).size, work.MAX_MACHINES);
+  for (let i = 0; i < 3; i++) { await f.ui.refresh(); await flush(); }
+  assert.equal(nodeCalls(f, true).length, work.MAX_MACHINES, 'refreshes inside the window reuse the reads');
+  f.ui.stop();
+});
+
+test('the work reader sends a batch at a time, keeps what worked, retries what failed, and passes an abort on', async () => {
+  let clock = 0, active = 0, peak = 0, calls = [];
+  const read = work.createWorkReader({ size: 3, ttl: 1000, now: () => clock });
+  const fetch = key => { calls.push(key); active++; peak = Math.max(peak, active); return new Promise(resolve => setTimeout(() => { active--; resolve({ agents: { applicable: true, key } }); }, 1)); };
+  const keys = Array.from({ length: 8 }, (_, i) => `k${i}`);
+  const first = await read(keys, fetch);
+  assert.equal(peak, 3, 'never more than a batch in flight');
+  assert.deepEqual(first.map(r => r.agents.key), keys, 'answers come back in the order asked');
+  calls = []; clock = 999; await read(keys, fetch);
+  assert.deepEqual(calls, [], 'inside the window nothing is asked again');
+  clock = 1001; await read(keys.slice(0, 2), fetch);
+  assert.deepEqual(calls.sort(), ['k0', 'k1'], 'after the window it asks again, and only for the machines still on the page');
+  calls = []; clock = 5000;
+  const failing = await read(['x'], () => { calls.push('x'); return Promise.reject(Object.assign(new Error('no'), { status: 500 })); });
+  assert.deepEqual(failing, [{ ok: false }]);
+  await read(['x'], () => { calls.push('x'); return Promise.reject(new Error('no')); });
+  assert.deepEqual(calls, ['x', 'x'], 'a failure is not kept');
+  await assert.rejects(read(['y'], () => Promise.reject(new Error('aborted')), () => true), /aborted/);
 });

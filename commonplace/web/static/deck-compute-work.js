@@ -10,6 +10,9 @@ import { STATE_WORDS } from './cardruns.js';
 export const STUCK_AFTER_MS = 30 * 60 * 1000;
 /** At most this many machines are read for the status line. */
 export const MAX_MACHINES = 20;
+/** Machines are read this many at a time, and a read that worked is reused for this long. */
+export const BATCH_SIZE = 4;
+export const CACHE_MS = 10 * 1000;
 const WAITING = new Set(['queued', 'leased', 'starting']);
 const ORDER = { stuck: 0, running: 1, waiting: 2 };
 const KIND_WORDS = { running: 'Running', waiting: 'Waiting', stuck: 'Stuck' };
@@ -32,6 +35,36 @@ export function runnerNodes(payload) {
     .map(node => node.key).slice(0, MAX_MACHINES);
 }
 
+/** The ids of the enrolled runner machines the enrollment list holds (the screen's fallback when the map has no node). */
+export function runnerIds(rows) {
+  return (Array.isArray(rows) ? rows : []).map(row => row?.id).filter(id => typeof id === 'string' && id).slice(0, MAX_MACHINES);
+}
+
+/**
+ * Reads the agents part of machines' node reads in batches of `size`, so a page of many machines never sends them all
+ * at once, and reuses a read that worked for `ttl` ms, so a quick refresh asks again only for what is missing.
+ * `read(keys, fetch, aborted)`: `fetch(key)` resolves to the node read; a read that fails is reported as `{ ok: false }` and is not kept, except
+ * that an abort is re-thrown. `now` is a clock in ms.
+ */
+export function createWorkReader({ size = BATCH_SIZE, ttl = CACHE_MS, now = () => Date.now() } = {}) {
+  const kept = new Map();
+  return async function read(keys, fetch, aborted = () => false) {
+    const out = new Map(), wanted = [];
+    for (const key of keys) {
+      const hit = kept.get(key);
+      if (hit && now() - hit.at < ttl) out.set(key, hit.read); else wanted.push(key);
+    }
+    for (let at = 0; at < wanted.length; at += size) {
+      await Promise.all(wanted.slice(at, at + size).map(key => Promise.resolve().then(() => fetch(key)).then(result => {
+        const read = { ok: true, agents: result?.agents };
+        kept.set(key, { at: now(), read }); out.set(key, read);
+      }, error => { if (aborted()) throw error; kept.delete(key); out.set(key, { ok: false }); })));
+    }
+    for (const key of [...kept.keys()]) if (!keys.includes(key) || now() - kept.get(key).at >= ttl) kept.delete(key);
+    return keys.map(key => out.get(key));
+  };
+}
+
 /**
  * `reads` is one entry per machine: `{ ok, agents }` where `agents` is the `agents` object of the node read.
  * `known` is false when no machine could be read; `partial` when some could not.
@@ -52,7 +85,7 @@ export function workModel(reads, now = Date.now()) {
   for (const job of jobs) if (job.at !== null) last = Math.max(last ?? 0, job.at);
   jobs.sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || (b.at ?? 0) - (a.at ?? 0));
   const count = kind => jobs.filter(job => job.kind === kind).length;
-  return { known: good.length > 0, partial: good.length < reads.length, jobs, running: count('running'), waiting: count('waiting'), stuck: count('stuck'), last };
+  return { known: good.length > 0, asked: reads.length, unread: reads.filter(read => !read?.ok).length, partial: good.length < reads.length, jobs, running: count('running'), waiting: count('waiting'), stuck: count('stuck'), last };
 }
 
 const minutes = ms => Math.max(0, Math.floor(ms / 60000));
@@ -63,9 +96,13 @@ export function agoWords(at, now = Date.now()) {
   return m < 1 ? 'just now' : m < 60 ? unit(m, 'minute') : m < 1440 ? unit(Math.floor(m / 60), 'hour') : unit(Math.floor(m / 1440), 'day');
 }
 
-/** The one plain status line. */
+/** The one plain status line. "Not reported" is only said when a machine's own read says it cannot report. */
 export function statusText(model, now = Date.now()) {
-  if (!model?.known) return 'Running work is not reported for these machines yet, so it cannot be counted here.';
+  if (!model?.known) {
+    if (!model?.asked) return 'No enrolled runner machine is known here, so there is no running work to count.';
+    if (model.unread === model.asked) return 'Running work could not be read just now. It is read again on the next refresh.';
+    return 'Running work is not reported for these machines yet, so it cannot be counted here.';
+  }
   const { running, waiting, stuck } = model;
   const parts = [`${running} running, ${waiting} waiting, ${stuck} stuck.`];
   if (stuck) parts.push('Look at the flagged jobs below.');

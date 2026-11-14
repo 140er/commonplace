@@ -425,3 +425,18 @@ test("screen: the real canvas still selects and the panel follows its select eve
   s.choose(undefined);
   assert.equal(view.key, null);
 });
+
+test("screen: a device the host describes in some tabs is still read for the others, and one described in every tab is not read", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const note = (text) => `<p class="td-empty">${text}</p>`;
+  const own = (key) => key === "maple" ? { physical: note("host physical"), config: note("host config"), sites: note("host sites") } : key === "birch" ? { physical: note("a"), config: note("b"), agents: note("c"), sites: note("d") } : null;
+  const s = open({ own });
+  s.choose("maple"); t.mock.timers.tick(0); await settle();
+  assert.deepEqual(s.api.calls, ["/api/topology/node?key=maple"], "the node is read for the Agents tab; the route is not, since the host describes Config");
+  assert.match(s.html(), /host physical/);
+  s.click({ tdTab: "agents" });
+  assert.match(s.html(), /data-machine/, "the Agents tab is the node read's own");
+  s.choose("birch"); t.mock.timers.tick(0); await settle();
+  assert.deepEqual(s.api.calls, ["/api/topology/node?key=maple"], "a device described in every tab reads nothing");
+  assert.match(s.html(), /a/);
+});

@@ -4,7 +4,7 @@ import { discoveryAction } from './map-discovery.js';
 import { addAction } from './map-add.js';
 import { ENROLL_ROUTE, computePanel, addMachineHTML, watchComputeMotion, computeStyles, phoneTree, computeLinkPanel, summaryStatesHTML, mountComputeTopAction } from './deck-compute-capy.js';
 
-import { runnerNodes, workModel, statusText, jobsHTML } from './deck-compute-work.js';
+import { runnerNodes, runnerIds, workModel, statusText, jobsHTML, createWorkReader } from './deck-compute-work.js';
 import { computePresentation, computeFrame, routePreference } from './deck-compute-scene.js';
 
 export const TITLE = 'Compute';
@@ -45,6 +45,8 @@ function styles(doc) {
 .deck-compute .dc-status { margin: 0; font-size: 15px; line-height: 22px; color: var(--text); }
 .deck-compute .dc-jobs { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; font-size: 14px; color: var(--text-2); }
 .deck-compute .dc-jobs:empty { display: none; }
+.deck-compute .dc-running { margin: 12px 0 0; }
+.deck-compute .dc-running h3 { margin: 0 0 6px; font-size: 14px; }
 .deck-compute .dc-job a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 .deck-compute .dc-stuck { margin: 4px 0 0; color: var(--text); }
 .deck-compute .dc-stuck strong { color: var(--block); }
@@ -177,7 +179,7 @@ export function summaryText({ mode, rows, payload }) {
 }
 
 export function mount(context) {
-  let ctx = context, rows = [], general = null, bots = [], work = workModel([]), mode = '', latest = null, map = null, built = '';
+  let ctx = context, rows = [], general = null, bots = [], work = workModel([]), readWork = createWorkReader(), mode = '', latest = null, map = null, built = '';
   let stopped = false, epoch = 0, request = null, framed = false, phone = false, builtColumns = 0, observer = null;
   let topAdd = null;
   const root = context.root, doc = root.ownerDocument || globalThis.document;
@@ -210,7 +212,14 @@ export function mount(context) {
       const facts = [['Projects', list(machine.projects)], ['Topics', list(machine.topics)], ['Wings', list(machine.wings)], ['Longest runtime mode', machine.max_runtime_mode || 'Not recorded'], ['Trust', machine.binding_state === 'owner_attested' ? 'Attested by the owner, not verified' : 'Not attested, not verified']];
       config = `<dl class="td-list">${facts.map(([name, value]) => `<div class="td-row"><dt>${e(name)}</dt><dd><span class="td-val">${e(value)}</span></dd></div>`).join('')}</dl>`;
     } else return null;
-    return { physical: plain('No physical details are recorded yet.'), config, agents: plain('Running work is not reported for this machine.'), sites: plain('No sites are recorded yet.') };
+    // The hub is no runner machine; a machine's Agents tab is read from its node (the runs on it), not described here.
+    return { physical: plain('No physical details are recorded yet.'), config, ...(key === HUB ? { agents: plain('Running work is not reported for the hub.') } : {}), sites: plain('No sites are recorded yet.') };
+  }
+  /** The runs on the selected machine, read from its node, shown in the panel's summary (the same count and list as the status line). */
+  function machineWork(detail) {
+    if (!detail?.agents?.applicable) return '';
+    const model = workModel([{ ok: true, agents: detail.agents }]);
+    return `<section class="dc-running" data-machine-work><h3>On this machine</h3><p class="dc-status">${e(statusText(model))}</p><ul class="dc-jobs">${jobsHTML(model, bots)}</ul></section>`;
   }
   // A machine to start on: the first computer, else whatever is first.
   const preselect = model => narrow() ? null : (model.nodes.find(n => MACHINE_KINDS.has(n.kind)) || model.nodes[0])?.key;
@@ -239,7 +248,7 @@ export function mount(context) {
       workspace: () => `deck:${phone ? 'phone:' : ''}${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
       onStartWork: discoveryAction({ api: (path, options) => ctx.api(path, options), root: () => region('map') }),
       interval: 0,
-      look: { presentation: computePresentation(phone, () => { const stage = region('map')?.querySelector('[data-topo="stage"]'); const top = stage?.getBoundingClientRect?.().top || 200; const nav = shell?.querySelector('#phone-tabs')?.getBoundingClientRect?.().height || 64; return (globalThis.innerHeight || 844)-top-nav-24; }), frame: computeFrame, site: routePreference, cards: true, labels: metrics.labels, pad: 48, grow: true, preselect, compact: true, linkPanel: options => computeLinkPanel({...options,phone}), panel: options => computePanel(runners ? { ...options, node: { ...options.node, status: undefined } } : options, latest?.nodes?.find(record => record.key === options.key), phone), layout: phone ? phoneTree : 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
+      look: { presentation: computePresentation(phone, () => { const stage = region('map')?.querySelector('[data-topo="stage"]'); const top = stage?.getBoundingClientRect?.().top || 200; const nav = shell?.querySelector('#phone-tabs')?.getBoundingClientRect?.().height || 64; return (globalThis.innerHeight || 844)-top-nav-24; }), frame: computeFrame, site: routePreference, cards: true, labels: metrics.labels, pad: 48, grow: true, preselect, compact: true, linkPanel: options => computeLinkPanel({...options,phone}), panel: options => computePanel(runners ? { ...options, node: { ...options.node, status: undefined } } : options, latest?.nodes?.find(record => record.key === options.key), phone, machineWork(options.detail)), layout: phone ? phoneTree : 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
     });
     map.show();
     if (globalThis.ResizeObserver && !observer && region('map')) { observer = new ResizeObserver(resized); observer.observe(region('map')); }
@@ -289,11 +298,12 @@ export function mount(context) {
     if (status) status.textContent = statusText(work);
     if (jobs) jobs.innerHTML = jobsHTML(work, bots);
   }
-  /** What is running: the agents part of each runner machine's node read. Only the topology names runner machines, so
-   * the enrollment fallback has no jobs to count and says so. */
+  /** What is running: the agents part of each runner machine's node read. The topology names its runner machines;
+   * the enrollment fallback has none on the map, so its machines are asked by their ids. Reads go in small batches and
+   * a read that worked is kept briefly, so a refresh does not ask every machine again. */
   async function loadWork(options, mine) {
-    const keys = mode === 'topology' ? runnerNodes(latest) : [];
-    const reads = await Promise.all(keys.map(key => ctx.api(`/api/topology/node?key=${encodeURIComponent(key)}`, options).then(result => ({ ok: true, agents: result?.agents }), error => { if (options.signal.aborted) throw error; return { ok: false }; })));
+    const keys = mode === 'topology' ? runnerNodes(latest) : runnerIds(rows);
+    const reads = await readWork(keys, key => ctx.api(`/api/topology/node?key=${encodeURIComponent(key)}`, options), () => options.signal.aborted);
     if (stopped || mine !== epoch) return;
     work = workModel(reads); paintWork();
   }

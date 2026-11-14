@@ -48,8 +48,8 @@ export function inspectorHTML(model) {
   return `<div class="dc-inspector">${model.stale ? '<p class="dc-observed">Some observations are out of date.</p>' : ''}${model.metrics.map(metric => `<div class="dc-metric"><div><span>${e(metric.label)}</span><strong>${e(metric.text)}</strong></div>${metric.percent === null ? '' : `<meter min="0" max="100" value="${metric.percent}" aria-label="${e(metric.label)}">${e(metric.text)}</meter>`}</div>`).join('')}<dl class="dc-facts">${model.fields.map(field => `<div><dt>${e(field.label)}</dt><dd${field.label === 'Version' ? ' class="dc-version"' : ''}>${field.label === 'Health' ? stateHTML(model.healthState,field.value) : e(field.value)}</dd></div>`).join('')}</dl></div>`;
 }
 
-export function computePanel(options, record, phone = false) {
-  const summary = options.failure ? '' : inspectorHTML(inspectorModel({ record, detail: options.detail, node: options.node }));
+export function computePanel(options, record, phone = false, running = '') {
+  const summary = options.failure ? '' : inspectorHTML(inspectorModel({ record, detail: options.detail, node: options.node })) + running;
   return decorateComputePanel(panelHTML(options), summary, phone);
 }
 
