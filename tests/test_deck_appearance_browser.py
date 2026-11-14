@@ -1,5 +1,6 @@
 """Optional real-browser canvas, appearance and render-budget checks."""
 
+import base64
 import json
 import mimetypes
 import os
@@ -139,5 +140,82 @@ def test_render_budget_at_1440_by_900(browser):
           return {samples,mean:samples.reduce((a,b)=>a+b)/samples.length};
         }""")
         assert metrics["mean"] <= 25, metrics
+    finally:
+        page.close()
+
+
+def stage_peak(page):
+    """Measure the displayed, composited stage rather than un-veiled canvas bytes."""
+    page.locator(".head").evaluate("el => el.style.visibility='hidden'")
+    png = page.locator(".deck-stage").screenshot()
+    return page.evaluate(
+        """async encoded => {
+      const image=await createImageBitmap(await (await fetch('data:image/png;base64,'+encoded)).blob());
+      const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
+      const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);
+      const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+      const linear=c=>{const s=c/255;return s<=.04045?s/12.92:((s+.055)/1.055)**2.4;};
+      const luminance=rgb=>linear(rgb[0])*.2126+linear(rgb[1])*.7152+linear(rgb[2])*.0722;
+      let peak={rgb:[0,0,0],luminance:0};
+      for(let k=0;k<pixels.length;k+=4){const rgb=[pixels[k],pixels[k+1],pixels[k+2]],v=luminance(rgb);if(v>peak.luminance)peak={rgb,luminance:v};}
+      // Brightest exposed artwork dot in the reviewed Today reference (UI excluded).
+      const reference={rgb:[65,30,104],luminance:luminance([65,30,104])};
+      return {...peak,reference,ratio:peak.luminance/reference.luminance};
+    }""",
+        base64.b64encode(png).decode(),
+    )
+
+
+def test_composited_today_stage_peak_matches_reference_within_ten_percent(browser):
+    page = browser.new_page(
+        viewport={"width": 1440, "height": 900}, device_scale_factor=2, reduced_motion="reduce"
+    )
+    try:
+        open_stage(page)
+        page.evaluate("show('#/today')")
+        peak = stage_peak(page)
+        assert 0.9 <= peak["ratio"] <= 1.1, peak
+    finally:
+        page.close()
+
+
+def test_phone_stage_is_full_bleed_and_appearance_has_one_card_per_row(browser):
+    page = browser.new_page(
+        viewport={"width": 390, "height": 844}, device_scale_factor=2, reduced_motion="reduce"
+    )
+    try:
+        open_stage(page)
+        stage = page.locator(".deck-stage").evaluate("""el=>{
+          const r=el.getBoundingClientRect(),p=el.parentElement.getBoundingClientRect(),s=getComputedStyle(el);
+          return {left:r.left-p.left,right:p.right-r.right,top:r.top-p.top,bottom:p.bottom-r.bottom,border:s.borderTopWidth,radius:s.borderTopLeftRadius};
+        }""")
+        assert stage == {
+            "left": 0,
+            "right": 0,
+            "top": 0,
+            "bottom": 0,
+            "border": "0px",
+            "radius": "0px",
+        }, stage
+        page.evaluate("show('#/settings')")
+        boxes = page.evaluate("""()=>{
+          const main=document.querySelector('.deck-settings-main'),card=document.querySelector('.deck-appearance');
+          const children=[...main.children];const end=children.at(-1).getBoundingClientRect().bottom;
+          const style=getComputedStyle(main),parent=getComputedStyle(main.parentElement);
+          return {gap:card.getBoundingClientRect().top-end,shadow:style.boxShadow,border:style.borderTopWidth,background:style.backgroundColor,parentBorder:parent.borderTopWidth,columns:parent.gridTemplateColumns};
+        }""")
+        assert boxes["gap"] == pytest.approx(12), boxes
+        assert boxes["shadow"] == "none" and boxes["border"] == "0px", boxes
+        assert boxes["parentBorder"] == "0px", boxes
+        page.locator('[data-appearance="dot"]').evaluate(
+            "el=>{el.value=7;el.dispatchEvent(new Event('input',{bubbles:true}));}"
+        )
+        assert page.locator(".stage-dither").get_attribute("data-dot") == "7"
+        for canvas in page.locator("[data-deck-appearance] canvas").all():
+            assert canvas.get_attribute("data-dot") == "2"
+        assert (
+            page.locator(".appearance-send").evaluate("el=>getComputedStyle(el).backgroundColor")
+            == "rgb(157, 92, 255)"
+        )
     finally:
         page.close()

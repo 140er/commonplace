@@ -1,7 +1,8 @@
 // Person-scoped Deck appearance. It has no effects until an authenticated Deck shell mounts.
 import { StageDither, SCENES } from './deck-dither.js';
 
-export const DEFAULTS = Object.freeze({ scene: 'capy-cyber', bayer: 4, vignette: .55, dot: 4, surface: .94 });
+export const DEFAULTS = Object.freeze({ scene: 'capy-cyber', bayer: 4, vignette: .6, dot: 4, surface: .94 });
+export const previewOptions = (value, scene = value.scene) => ({ ...value, scene, dot: 2, dim: 0, twinkle: false });
 const LABELS = { 'capy-cyber': 'Capy Cyber', 'palace-gate': 'Palace Gate', 'nebula-quiet': 'Nebula Quiet' };
 const clamp = (v, fallback, min, max) => typeof v === 'number' && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
 function normalize(value) {
@@ -26,7 +27,7 @@ export function appearanceHTML(value) {
   const slider = (key, label, min, max, step, suffix, shown) => `<label class="appearance-slider">${label}<output data-appearance-output="${key}">${shown}${suffix}</output><input type="range" aria-label="${label}" data-appearance="${key}" min="${min}" max="${max}" step="${step}" value="${v[key]}"></label>`;
   return `<section class="settings-section deck-appearance" data-deck-appearance aria-labelledby="appearance-title">
     <h2 id="appearance-title">Appearance</h2><p>Changes apply to the whole app straight away.</p>
-    <div class="appearance-preview"><canvas data-appearance-preview aria-label="Live scene preview"></canvas><div class="appearance-sample" aria-hidden="true"></div></div>
+    <div class="appearance-preview"><canvas data-appearance-preview aria-label="Live scene preview"></canvas><div class="appearance-sample" aria-hidden="true"><span class="appearance-send"></span></div></div>
     <div class="appearance-scenes" role="group" aria-label="Scene">${Object.keys(SCENES).map(scene => `<button type="button" data-scene="${scene}" aria-pressed="${v.scene === scene}"><canvas aria-hidden="true"></canvas><span>${LABELS[scene]}</span></button>`).join('')}</div>
     <div class="appearance-pattern"><span>Dither pattern<small>4×4 is coarser, 8×8 finer.</small></span><div role="group" aria-label="Bayer pattern">${[4, 8].map(n => `<button type="button" data-bayer="${n}" aria-pressed="${v.bayer === n}">${n}×${n}</button>`).join('')}</div></div>
     ${slider('vignette', 'Vignette', 0, 1, .01, '%', Math.round(v.vignette * 100))}
@@ -90,10 +91,10 @@ export function createDeckAppearance({ root, context, on, doc = globalThis.docum
     main.className = 'deck-settings-main';
     [...box.children].filter(node => node !== panel && node !== main).forEach(node => main.append(node));
     box.prepend(main);
-    preview = new StageDither(panel.querySelector('[data-appearance-preview]'), { ...value, dim: 0, twinkle: false });
-    thumbnails = [...panel.querySelectorAll('[data-scene]')].map(button => new StageDither(button.querySelector('canvas'), { ...value, dot: 3, scene: button.dataset.scene, dim: 0, twinkle: false }));
+    preview = new StageDither(panel.querySelector('[data-appearance-preview]'), previewOptions(value));
+    thumbnails = [...panel.querySelectorAll('[data-scene]')].map(button => new StageDither(button.querySelector('canvas'), previewOptions(value, button.dataset.scene)));
     function update(patch) {
-      value = store.write({ ...value, ...patch }); apply(); preview.set(value);
+      value = store.write({ ...value, ...patch }); apply(); preview.set(previewOptions(value));
       for (const [key, label] of Object.entries({ vignette: `${Math.round(value.vignette * 100)}%`, surface: `${Math.round(value.surface * 100)}%`, dot: `${value.dot} px` })) panel.querySelector(`[data-appearance-output="${key}"]`).textContent = label;
       panel.querySelectorAll('[data-scene]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.scene === value.scene)));
       panel.querySelectorAll('[data-bayer]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.bayer) === value.bayer)));
