@@ -239,6 +239,20 @@ def session_created_at(db: ControlDB, session: Optional[str]) -> Optional[dateti
 def end_session(db: ControlDB, session: str) -> None:
     ensure_schema(db)
     with db._lock:
+        # Signing out withdraws every outstanding deletion proof for this account.
+        if db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_delete_tokens'"
+        ).fetchone():
+            db._conn.execute(
+                "UPDATE account_delete_tokens SET revoked_at = strftime('%s','now') "
+                "WHERE user_id IN (SELECT user_id FROM sessions WHERE id_hash = ?)",
+                (_hash(session),),
+            )
+            db._conn.execute(
+                "DELETE FROM account_delete_checks WHERE user_id IN "
+                "(SELECT user_id FROM sessions WHERE id_hash = ?)",
+                (_hash(session),),
+            )
         db._conn.execute(
             "UPDATE sessions SET revoked_at = ? WHERE id_hash = ? AND revoked_at IS NULL",
             (_now().strftime(_FMT), _hash(session)),

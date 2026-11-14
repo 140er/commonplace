@@ -105,6 +105,11 @@ def install(gateway):
                 _exporting.discard(user_id)
 
     def delete(h):
+        if h.command == "POST" and h.headers.get_all("X-Account-Deletion-Token", []):
+            from . import person_token
+
+            person_token.delete(gateway, h)
+            return
         principal = _person(gateway, h)
         if principal is None:
             return

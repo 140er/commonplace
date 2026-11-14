@@ -240,6 +240,12 @@ def request(gateway, principal, session, confirm) -> dict:
             f"Sign in again: deleting an account needs a sign-in from the last "
             f"{REAUTH_MINUTES} minutes",
         )
+    return _record_request(gateway, principal, current, confirm)
+
+
+def _record_request(gateway, principal, current, confirm):
+    """Shared deletion rules, after the route has verified its person's proof."""
+    db = gateway.db
     if (
         not isinstance(confirm, str)
         or confirm.strip().casefold() != principal.user_email.casefold()
