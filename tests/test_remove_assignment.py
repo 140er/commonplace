@@ -172,12 +172,12 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
             assert form.locator("textarea").evaluate("""el=>({
                 background:getComputedStyle(el).backgroundColor,
                 radius:getComputedStyle(el).borderRadius
-            })""") == {"background": "rgb(30, 30, 30)", "radius": "12px"}
+            })""") == {"background": "rgb(27, 26, 33)", "radius": "12px"}
             assert (
                 form.locator(".confirm-removal").evaluate(
                     "el=>getComputedStyle(el).backgroundColor"
                 )
-                == "rgb(255, 255, 255)"
+                == "rgb(237, 237, 242)"
             )
             if width == 390:
                 assert form.locator("textarea").bounding_box()["x"] == 16
@@ -195,7 +195,10 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
             confirm = form.locator(".confirm-removal").bounding_box()
             cancel = form.get_by_role("button", name="Cancel").bounding_box()
             assert confirm["y"] == cancel["y"]
-            assert reason.evaluate("el=>getComputedStyle(el).outlineColor") == "rgb(74, 74, 74)"
+            assert (
+                reason.evaluate("el=>getComputedStyle(el).outlineColor")
+                == "rgba(255, 255, 255, 0.1)"
+            )
             assert reason.evaluate("el=>getComputedStyle(el).borderWidth") == "0px"
         shot(page, look, "confirm-filled", width)
         with page.expect_response(lambda response: response.url.endswith("/handoff")) as response:

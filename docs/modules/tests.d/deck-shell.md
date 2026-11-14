@@ -12,3 +12,5 @@
   panels with composer-aware phone chrome after integration.
   The workspace creation browser check expects the shared Capy surface colour
   after the Appearance and shell integrations.
+  Workspace dialog shape and assignment-removal visual pins use the Capy
+  dialog, raised surface, ink and border tokens; authority assertions remain.

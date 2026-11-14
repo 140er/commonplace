@@ -135,7 +135,7 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
                 page.locator(".workspace-switch").evaluate(
                     "el => getComputedStyle(el).borderRadius"
                 )
-                == "20px"
+                == "16px"
             )
         if look == "deck":
             page.get_by_role("button", name="Create workspace", exact=True).click()
