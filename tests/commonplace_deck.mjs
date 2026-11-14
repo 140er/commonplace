@@ -125,7 +125,7 @@ test("phone: a title bar and one tab per offered section", () => {
   assert.doesNotMatch(deck.renderDeckTabs({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
   assert.doesNotMatch(deck.renderDeckBar({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
   assert.match(deck.renderDeckTop({ hash: "#/bots" }), /<b>Bots<\/b>/);
-  assert.match(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Board<\/b>/);
+  assert.doesNotMatch(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Board<\/b>/);
   assert.match(deck.renderDeckTop(), /data-action="palette"/);
 });
 

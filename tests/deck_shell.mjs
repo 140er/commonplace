@@ -10,6 +10,14 @@ const data = {
   directory: { bots: [{ id: 'persona', name: 'Research bot', section: 'Research', state: 'live' }], conversations: [{ id: 'notes', title: 'Saved research', bot_ids: ['persona'], kind: 'dm' }] },
 };
 
+test('bot avatars use one letter unless the roster has a first-letter collision', () => {
+  const labels = bots => [...renderDeckBar({ bots }).matchAll(/class="deck-bot-avatar"[^>]*>([^<]+)</g)].map(match => match[1]);
+  assert.deepEqual(labels([{ id: 'one', name: 'Release bot' }, { id: 'two', name: 'Compute bot' }]), ['R', 'C']);
+  const bots = [{ id: 'one', name: 'Release bot' }, { id: 'two', name: 'Research bot' }, { id: 'three', name: 'Compute bot' }];
+  assert.deepEqual(labels(bots), ['RE', 'RS', 'C']);
+  assert.deepEqual(labels(bots.toReversed()), ['C', 'RS', 'RE']);
+});
+
 test('the four Deck entries and existing route destinations remain unchanged', () => {
   assert.deepEqual(deckSections(), entries);
   for (const hash of ['#/', '#/today', '#/bots', '#/bots/personal/coworkers', '#/board', '#/compute', '#/memory', '#/settings']) {
@@ -72,7 +80,7 @@ test('phone chrome has four destinations, Today badge, avatar wait dot and a mic
   assert.match(top, /data-action="palette"/);
   assert.match(top, /data-action="switch-workspace"/);
   assert.match(renderDeckTop({ hash: '#/memory' }), /<b>Memory<\/b>/);
-  assert.match(renderDeckTop({ board: { slug: 'work' } }), /<b>Board<\/b>/);
+  assert.doesNotMatch(renderDeckTop({ board: { slug: 'work' } }), /<b>Board<\/b>/);
   const css = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
   assert.match(css, /grid-template-columns: 252px/);
   assert.match(css, /height: 52px/);

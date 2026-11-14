@@ -18,3 +18,5 @@
   hooks, live queue counts, rail links and composer-aware microphone placement.
   Board integration checks the rail alias, unchanged classic routing and the
   divided Board's phone inset alongside existing drawer navigation.
+  Shell avatar regressions cover unique letters, collisions and roster order;
+  `tests/commonplace_deck_today.mjs` checks short composer copy and truncation.
