@@ -71,7 +71,8 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
         assert page.locator(".settings > .deck-settings-main").count() == 1
         assert page.locator(".settings > :last-child").get_attribute("data-deck-appearance") == ""
         titles = page.locator(".deck-settings-main > section > h2").all_text_contents()
-        assert titles[:4] == [
+        assert titles[:5] == [
+            "Look",
             "Bot sharing",
             "What bots may do without asking",
             "Second review",
@@ -92,7 +93,7 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
             "[data-schedule-form]",
             '[data-form="webhook"]',
             '[data-action="logout"]',
-            '[data-deck-action="toggle"]',
+            '[data-deck-action="look"][data-look="classic"]',
             "[data-orchestration-enabled]",
             '[data-voice="enabled"]',
         ]:
@@ -286,7 +287,7 @@ def test_member_settings_keep_mutation_controls_disabled(browser):
         assert page.locator('[data-form="agent"] button').is_disabled()
         for selector in [
             '[data-action="logout"]',
-            '[data-deck-action="toggle"]',
+            '[data-deck-action="look"][data-look="classic"]',
             '[data-action="switch-workspace"]',
             '[data-deck-setting="phone-push"]',
             '[data-form="webhook"] button',
