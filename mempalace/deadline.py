@@ -13,6 +13,10 @@ from time import monotonic
 
 _deadline = ContextVar("commonplace_rules_deadline", default=None)
 
+# What a worker's palace read answers when the palace stayed busy with an index
+# write past the worker's wait bound; the gateway recognizes it by this prefix.
+BUSY_INDEXING = "Memory is busy indexing"
+
 
 def remaining(timeout, clock=monotonic):
     end = _deadline.get()
