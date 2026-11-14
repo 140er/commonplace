@@ -59,6 +59,8 @@ EXACT = {
     ("GET", "/api/invites"): "authenticated",
     ("POST", "/api/invites"): "authenticated",
     ("GET", "/api/workspaces"): "authenticated",
+    # Workspace creation requires the signed-in person's same-origin session.
+    ("POST", "/api/workspaces"): "authenticated",
     ("POST", "/api/workspaces/switch"): "authenticated",
     ("GET", "/api/me"): "authenticated",
     ("GET", "/api/plan"): "authenticated",

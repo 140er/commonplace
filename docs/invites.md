@@ -93,3 +93,11 @@ chat thread or another workspace comes back or changes.
 
 No invitation email, no account creation by invite, no removing a member or changing a
 role from the app, and no owner invites (an invite always makes a member).
+
+## Create another workspace
+
+Choose **Switch workspace**, then **Create workspace**. Enter its name and continue. The confirmation explains that this creates an empty isolated workspace owned by you; your current workspace is unaffected and none of its members or data is copied. Cancel creates nothing. After creation, choose **Open workspace** to switch or **Stay here** to keep working where you are.
+
+Creation is available to signed-in people when the instance allows signups. A closed instance refuses new workspace creation with a plain reason. Existing account plans are preserved through the signup plan hook; a plan refusal leaves no workspace behind. There is currently no plan-based workspace count cap. Each person may create five workspaces in a rolling hour; a limit refusal explains when to retry. A lost response can be retried without duplicating the workspace.
+
+`POST /api/workspaces` accepts only `name` and a UUID `request_id`. It requires the person's browser session and an explicit same-origin Origin; app and other bearer tokens cannot create workspaces. The request id belongs to that person. Repeating it with the same name returns the original workspace; another name is a conflict. Creation returns the new workspace id, name and owner role without changing the session. The existing `/api/workspaces/switch` route performs the separate switch.
