@@ -278,9 +278,10 @@ def test_a_stuck_search_ends_in_an_error_with_retry(memory_browser, chat_hub):
     h = chat_hub
     service(h, h.person(h.admin)).space_post("work", "Exact words after the retry.")
     context, page, origin = _signed_in_page(memory_browser, h)
-    stuck = {"on": True}
+    stuck = {"on": True, "seen": 0}
 
     def note_search(route):
+        stuck["seen"] += 1
         if not stuck["on"]:
             route.fulfill(json={"results": []})
 
@@ -292,8 +293,15 @@ def test_a_stuck_search_ends_in_an_error_with_retry(memory_browser, chat_hub):
         query.fill("Exact words")
         query.press("Enter")
         expect(page.locator(".memory-loading")).to_be_visible()
+        # The deadline is armed before the note request leaves; only then move the clock.
+        for _ in range(100):
+            if stuck["seen"]:
+                break
+            page.wait_for_timeout(50)
+        assert stuck["seen"]
         page.clock.fast_forward(21000)
-        expect(page.locator("[role=alert]").filter(has_text="taking too long")).to_be_visible()
+        # Chat rows that arrived in time stay under a warning; with none, an error says why.
+        expect(page.locator("[role=alert]").filter(has_text="Try again")).to_be_visible()
         expect(page.locator(".memory-loading")).to_have_count(0)
         expect(page.get_by_text("No exact words match")).to_have_count(0)
         stuck["on"] = False
