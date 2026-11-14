@@ -30,7 +30,7 @@
   --bg: var(--ground); --pane: var(--stage); --surface: var(--s1); --well: var(--s2);
   --line-strong: var(--line2); --text: var(--ink); --text-2: var(--ink2); --text-3: var(--ink3);
   --accent: var(--ink); --accent-hover: var(--ink2); --accent-weak: var(--s2); --focus: var(--violet);
-  --wait: var(--amber); --wait-bg: var(--s2); --wait-line: var(--amber);
+  --wait: var(--ink3); --wait-bg: var(--s2); --wait-line: var(--line);
   --block: var(--red); --block-bg: var(--s2); --block-line: var(--line2);
   --ok: var(--cyan); --ok-bg: var(--s2); --agent: var(--violet-ink); --agent-bg: var(--s2);
   --r: var(--radius-control);
@@ -49,7 +49,9 @@
 :root[data-ui="deck"] .chip.ready { color: var(--ink2); background: var(--s2); }
 :root[data-ui="deck"] .chip.working { color: var(--violet-ink); background: var(--s2); }
 :root[data-ui="deck"] :is(.rail, .m-top, .m-tabs) { background: var(--rail); }
-:root[data-ui="deck"] .count.need { color: #1a1003; }
+:root[data-ui="deck"] .count.need { background: var(--s2); color: var(--ink2); }
+:root[data-ui="deck"] [data-nav="today"] .count.need { background: var(--amber); color: #1a1003; }
+:root[data-ui="deck"] .today-question[data-state="open"] { border-left: 2px solid var(--amber); }
 :root[data-ui="deck"] .settings-section h2 { color: var(--ink); font-size: 13.5px; font-weight: 600; }
 :root[data-ui="deck"] .shell .head h1 { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
 :root[data-ui="deck"] :is(#shell-dialog, dialog) { border-radius: var(--radius-dialog); border-color: var(--line2); }
