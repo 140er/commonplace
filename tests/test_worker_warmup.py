@@ -184,7 +184,7 @@ def test_searches_spaced_apart_through_the_tool_do_not_repeat_the_capacity_probe
     search()
     search()
     settled = len(runs)
-    for gap in (11.0, 120.0, 3_600.0):
+    for gap in (11.0, 100.0, 150.0):  # 261 s in all, inside the reuse ceiling
         clock.now += gap
         search()
     assert len(runs) == settled, "a search spaced apart re-ran the capacity probe"

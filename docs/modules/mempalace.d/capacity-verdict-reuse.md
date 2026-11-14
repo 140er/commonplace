@@ -1,10 +1,10 @@
 - **Owns:**
 
-  - The capacity verdict's reuse rule in `mempalace/backends/chroma.py`: a verdict is served again while the probed files keep the same signature, and a fine-grained timestamp is what lets it outlive the 10 s coarse-filesystem backstop. The worker's background warm-up (`_warm_worker_for_search`, `_start_worker_warmup`), its state in the HTTP status payload and the additive `warming_up` field on a search result.
+  - The capacity verdict's reuse rule in `mempalace/backends/chroma.py`: a verdict is served again while the probed files keep the same signature, and a fine-grained timestamp is what lets it outlive the 10 s coarse-filesystem backstop, up to a 300 s ceiling, and SQLite's file change counter is part of the signature. The worker's background warm-up (`_warm_worker_for_search`, `_start_worker_warmup`), its state in the HTTP status payload and the additive `warming_up` field on a search result.
 
 - **Promises:**
 
-  - A verdict is never re-probed by the clock alone where a stamp proves sub-10 ms timestamps; any change to the database, its journal, the metadata pickle or the header still re-probes. A verdict that turns "diverged" with time alone (a standing gap behind an aging pickle) is served only until then, and a reused verdict reports the current metadata age. Coarse-timestamp filesystems keep the 10 s ceiling. The warm-up runs the ordinary search path once after the files-only probe, never opens a diverged index through Chroma, never blocks startup or a request, and never raises. A search that arrives during it carries `warming_up: true`; no other search result changes.
+  - A verdict is not re-probed by the clock alone, within a 300 s ceiling, where a stamp proves sub-10 ms timestamps; any change to the database (including a same-size write in the same timestamp tick, which moves SQLite's change counter), its journal, the metadata pickle or the header still re-probes. A verdict that turns "diverged" with time alone (a standing gap behind an aging pickle) is served only until then, and a reused verdict reports the current metadata age. Coarse-timestamp filesystems keep the 10 s ceiling. The warm-up runs the ordinary search path once after the files-only probe, never opens a diverged index through Chroma, never blocks startup or a request, and never raises. A search that arrives during it carries `warming_up: true`; no other search result changes.
 
 - **How it fails:**
 
