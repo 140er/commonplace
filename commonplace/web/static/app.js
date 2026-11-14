@@ -367,7 +367,7 @@ function shell() {
     if (layout.classList.contains("chat-open") || layout.classList.contains("ctx-pushed")) return;
     // Project settings are a page from 700 px up (10), never a dimmed sheet; on a phone they are the m13 sheet.
     const page = panel.querySelector("[data-project-settings]") && !matchMedia("(max-width:699px)").matches;
-    const open = !panel.hidden, modal = open && (narrow.matches || state.deck?.on()) && !page;
+    const open = !panel.hidden, modal = open && (narrow.matches || (state.deck?.on() && state.route.startsWith("#/card/"))) && !page;
     root.querySelector("#details-btn")?.setAttribute("aria-expanded", String(open));
     if (open && !wasOpen) opener = document.activeElement;
     layout.classList.toggle("two", !open); layout.classList.toggle("panel-open", open);
@@ -383,7 +383,7 @@ function shell() {
   observer.observe(panel, { attributes:true, attributeFilter:["hidden"] });
   narrow.addEventListener("change", sync);
   panel.addEventListener("keydown", (event) => {
-    if (event.key !== "Tab" || !(narrow.matches || state.deck?.on())) return;
+    if (event.key !== "Tab" || !(narrow.matches || (state.deck?.on() && state.route.startsWith("#/card/")))) return;
     const items = [...panel.querySelectorAll('button:not(:disabled),a[href],input,textarea,select,[tabindex="0"]')].filter((el) => el.getClientRects().length);
     const index = items.indexOf(document.activeElement);
     if (!items.length) { event.preventDefault(); panel.focus(); }
