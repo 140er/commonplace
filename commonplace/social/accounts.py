@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 
 from .. import capacity, plans, sessions
 from ..boards.service import BoardService
@@ -10,6 +12,13 @@ from ..control_db import ControlError
 from ..extensions import ToolContext
 from ..oauth.store import iso
 from .providers import Profile, SignInError
+
+logger = logging.getLogger(__name__)
+
+ALLOW_EMAILS_ENV = "COMMONPLACE_SIGNUP_ALLOW_EMAILS"
+MAX_ALLOWED_EMAILS = 20
+_ALLOW_SPLIT = re.compile(r"[\s,]+")
+_ALLOW_SHAPE = re.compile(r"[^@\s*]+@[^@\s*]+")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_identities (
@@ -57,6 +66,44 @@ def reserve_github_owner(conn, subject, uid):
 def signup_enabled() -> bool:
     """New accounts require an explicit opt-in; sign-in remains available."""
     return os.environ.get("COMMONPLACE_SIGNUP", "").strip().lower() == "open"
+
+
+def allowed_signup_emails() -> frozenset:
+    """Emails that may sign up while sign-up is closed: exact match after strip and casefold.
+
+    At most ``MAX_ALLOWED_EMAILS`` valid entries count; extras and malformed entries are
+    ignored and only their number is logged. The entries themselves are never logged.
+    """
+    allowed: list[str] = []
+    ignored = 0
+    for entry in _ALLOW_SPLIT.split(os.environ.get(ALLOW_EMAILS_ENV, "")):
+        entry = entry.strip().casefold()
+        if not entry or entry in allowed:
+            continue
+        if len(entry) > 254 or not entry.isprintable() or not _ALLOW_SHAPE.fullmatch(entry):
+            ignored += 1
+        elif len(allowed) >= MAX_ALLOWED_EMAILS:
+            ignored += 1
+        else:
+            allowed.append(entry)
+    if ignored:
+        logger.warning("Ignored %d invalid or surplus sign-up allowlist entries", ignored)
+    return frozenset(allowed)
+
+
+def allowlisted_email(emails) -> str | None:
+    """The first provider-verified email on the allowlist, or None.
+
+    Callers pass only emails the provider (or an email link) verified; unverified
+    addresses never reach a ``Profile``.
+    """
+    allowed = allowed_signup_emails()
+    if not allowed:
+        return None
+    for email in emails:
+        if isinstance(email, str) and email.strip().casefold() in allowed:
+            return email
+    return None
 
 
 def resolve(db, provider: str, profile: Profile, *, signup: bool) -> str:
@@ -149,18 +196,24 @@ def _resolve_tx(
                 raise SignInError("disabled")
             uid = user["id"]
         else:
+            emails = profile.emails
             if not signup:
-                raise SignInError("account")
-            if not capacity.admit_new_account(conn, profile.emails, profile.name, provider):
+                allowlisted = allowlisted_email(emails)
+                if allowlisted is None:
+                    raise SignInError("account")
+                # The account takes the allowlisted address, not another verified one.
+                emails = (allowlisted, *(e for e in emails if e != allowlisted))
+                logger.info("allowlisted signup")
+            if not capacity.admit_new_account(conn, emails, profile.name, provider):
                 return None, None
             try:
-                uid = db.create_user(profile.emails[0], profile.name)
+                uid = db.create_user(emails[0], profile.name)
                 workspace_id = db.create_workspace(
-                    profile.emails[0], uid, personal=True, initial_space_pending=True, conn=conn
+                    emails[0], uid, personal=True, initial_space_pending=True, conn=conn
                 )
                 plans.assign_signup_plan(db, uid, workspace_id, via=provider, conn=conn)
                 created_workspace = workspace_id
-                capacity.mark_joined(conn, profile.emails)
+                capacity.mark_joined(conn, emails)
             except ControlError:
                 raise SignInError("failed") from None
             db.audit(action="user.create", decision="ok", user_id=uid, reason=provider)

@@ -193,7 +193,10 @@ class EmailAuth:
                 "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)
             ).fetchone()
             allowed = (
-                not user["disabled_at"] if user else signup_was_open and accounts.signup_enabled()
+                not user["disabled_at"]
+                if user
+                else (signup_was_open and accounts.signup_enabled())
+                or accounts.allowlisted_email((email,)) is not None
             )
             if not allowed or not self.mailer.configured:
                 return
