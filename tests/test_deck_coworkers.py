@@ -14,6 +14,7 @@ def test_deck_coworkers():
             "--test",
             str(Path(__file__).with_name("deck_coworkers.mjs")),
             str(Path(__file__).with_name("deck_coworkers_route.mjs")),
+            str(Path(__file__).with_name("deck_coworker_design_nits.mjs")),
         ],
         capture_output=True,
         text=True,

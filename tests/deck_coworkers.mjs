@@ -138,8 +138,8 @@ test('slice styles are Deck scoped, token based, and keep the phone composer in 
     if (match[1].trim().startsWith('@media')) continue;
     for (const selector of match[1].split(/,(?![^()]*\))/)) assert.match(selector.trim(), /^:root\[data-ui="deck"\]/);
   }
-  // Explicit design feedback requests edge fades, restricted to scroll masks.
-  assert.doesNotMatch(css.replace(/mask-image:[^;]+;/g, ''), /#[\da-f]{3,8}\b|linear-gradient|backdrop-filter/i);
+  // Explicit design feedback requests scroll masks and the Deck select fill.
+  assert.doesNotMatch(css.replace(/mask-image:[^;]+;/g, '').replace('background: #1e1e1e;', ''), /#[\da-f]{3,8}\b|linear-gradient|backdrop-filter/i);
   assert.match(css, /resize: none/);
   assert.match(css, /260px minmax\(0, 1fr\)/); assert.match(css, /height: 176px/);
   assert.match(css.slice(css.indexOf('@media (max-width: 699px)')), /\[data-cb-composer\] \{ position: static/);
