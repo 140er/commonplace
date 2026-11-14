@@ -1,0 +1,3 @@
+- **Owns:** `tests/test_coworker_owns.py` exercises live path ownership through the existing person-session coworker API with temporary control, board and runner ledgers.
+- **Promises:** Tests create no provider, worker process, browser or external service. The browser-free list/detail regression fails on the pinned base because `owns` is absent, and passes with the projection installed.
+- **Tests:** Live update and shared-holder release; admission-state parity and display names; canonical conversation origins; unreadable/archived projects, foreign workspaces, private DMs and agent/machine token refusals; unsafe paths, truncation and fixed read-only query counts.
