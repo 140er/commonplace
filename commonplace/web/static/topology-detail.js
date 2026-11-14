@@ -182,6 +182,10 @@ export function sitesHTML(detail, names = new Map()) {
   return `<ul class="td-items" data-sites>${items.join("")}</ul>`;
 }
 
+export function panelCloseHTML(compact = false) {
+  return `<button type="button" class="iconbtn bordered" data-td="close" aria-label="Close details">${compact ? '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>' : "×"}</button>`;
+}
+
 export function panelHTML({ key, node, tab, detail, links, answer, routeFailure, names, loading, failure, own = null, compact = false }) {
   const kind = KINDS[node ? node.kind : kindOf()] || KINDS[kindOf()];
   const title = node?.name || key;
@@ -192,7 +196,7 @@ export function panelHTML({ key, node, tab, detail, links, answer, routeFailure,
         : tab === "agents" ? agentsHTML(detail)
           : sitesHTML(detail, names);
   const flags = [node?.missing && "not recorded", detail?.stale && "stale", detail?.conflicted && "has a conflict"].filter(Boolean).join(" · ");
-  return `<header class="td-head"><div><h2 class="td-title">${esc(title)}</h2><p class="td-sub">${esc(kind.label)}${node?.role ? ` · ${esc(node.role)}` : ""}${flags ? ` · ${esc(flags)}` : ""}</p></div><button type="button" class="iconbtn bordered" data-td="close" aria-label="Close details">${compact ? '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>' : "×"}</button></header><div class="td-tabs" role="tablist" aria-label="Device details">${tabs}</div><div class="td-body" id="td-panel" role="tabpanel" aria-labelledby="td-tab-${tab}" tabindex="0">${body}</div><p class="td-foot">${esc(DETAIL_COPY.readOnly)}</p>`;
+  return `<header class="td-head"><div><h2 class="td-title">${esc(title)}</h2><p class="td-sub">${esc(kind.label)}${node?.role ? ` · ${esc(node.role)}` : ""}${flags ? ` · ${esc(flags)}` : ""}</p></div>${panelCloseHTML(compact)}</header><div class="td-tabs" role="tablist" aria-label="Device details">${tabs}</div><div class="td-body" id="td-panel" role="tabpanel" aria-labelledby="td-tab-${tab}" tabindex="0">${body}</div><p class="td-foot">${esc(DETAIL_COPY.readOnly)}</p>`;
 }
 
 /** Mounts the panel in `section` (the map's root). `model()` is the canvas's current drawable

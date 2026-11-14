@@ -4,7 +4,7 @@
 :root[data-ui="deck"] .deck-compute#content { padding: 0; background: transparent; }
 :root[data-ui="deck"] .deck-compute .dc-title { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px 16px; margin-bottom: 16px; }
 :root[data-ui="deck"] .deck-compute h1 { font-size: 22px; line-height: 28px; }
-:root[data-ui="deck"] .deck-compute .dc-summary { grid-column: 1; font-size: 13.5px; color: var(--ink2); }
+:root[data-ui="deck"] .deck-compute .dc-summary { display: flex; flex-wrap: wrap; column-gap: 14px; overflow: hidden; grid-column: 1; font-size: 13.5px; color: var(--ink2); }
 :root[data-ui="deck"] .deck-compute .dc-actions { grid-area: 1 / 2 / 3 / 3; align-self: end; }
 :root[data-ui="deck"] .deck-compute .dc-action { min-height: 36px; padding: 0 12px; border-radius: var(--radius-control); background: var(--s2); color: var(--ink); font-size: 13.5px; }
 :root[data-ui="deck"] .deck-compute .dc-action:hover { background: var(--s3); }
@@ -34,7 +34,8 @@
 :root[data-ui="deck"] .dc-node-status[data-state="down"] { color: var(--compute-down); }
 :root[data-ui="deck"] .dc-state-word { display: inline-flex; align-items: center; gap: 6px; }
 :root[data-ui="deck"] .dc-state { flex: none; overflow: visible; vertical-align: middle; }
-:root[data-ui="deck"] .dc-summary-state { display: inline-block; max-width: 100%; vertical-align: top; }
+:root[data-ui="deck"] .dc-summary-state { position: relative; display: inline-flex; max-width: 100%; vertical-align: top; }
+:root[data-ui="deck"] .dc-summary-state::before { content: "\00b7"; position: absolute; left: -10px; }
 :root[data-ui="deck"] .dc-summary-state .dc-state-word { max-width: 100%; overflow-wrap: anywhere; }
 :root[data-ui="deck"] .dc-node.dc-link-end .dc-node-surface { stroke: var(--violet); stroke-width: 1px; }
 :root[data-ui="deck"] .dc-top-add { display: none; }
@@ -48,7 +49,6 @@
 :root[data-ui="deck"] .dc-link-label { pointer-events: none; }
 :root[data-ui="deck"] .dc-link-caption rect { fill: var(--card); }
 :root[data-ui="deck"] .deck-compute .dc-link-caption .topo-method { display: inline; fill: var(--ink3); stroke: none; text-anchor: middle; font: 11px var(--font); }
-:root[data-ui="deck"] .deck-compute .topo-link[data-active="false"] .dc-link-label { display: none; }
 :root[data-ui="deck"] .deck-compute .topo-link.on .dc-link-label { display: inline; }
 :root[data-ui="deck"] .deck-compute .topo-link[data-active="true"] .topo-route { animation: dc-link 1.4s linear infinite; }
 :root[data-ui="deck"] .deck-compute[data-compute-motion="reduced"] .topo-link .topo-route { animation: none; }
