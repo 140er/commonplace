@@ -104,7 +104,7 @@ def browser():
         browser.close()
 
 
-def open_drawer(browser, hub, fresh, card, width, look):
+def open_drawer(browser, hub, fresh, card, width, look, *, removable=True):
     # The same cookie and shell as a normal card visit; the server handles every write.
     from urllib.parse import urlunsplit
 
@@ -119,7 +119,9 @@ def open_drawer(browser, hub, fresh, card, width, look):
     page = context.new_page()
     page.goto(origin + f"/app/?ui={look}#/board/work")
     page.locator(f'.card[data-card="{card["number"]}"]').click()
-    page.locator('[data-action="remove-assignment"]').wait_for()
+    page.locator(".workbench-details .fields").wait_for()
+    if removable:
+        page.locator('[data-action="remove-assignment"]').wait_for()
     page.evaluate("document.fonts.ready")
     return context, page
 
@@ -130,7 +132,9 @@ def shot(page, look, state, width):
         target = Path(folder)
         target.mkdir(parents=True, exist_ok=True)
         page.screenshot(
-            path=str(target / f"502-{look}-{state}-{'phone' if width == 390 else 'desktop'}.png"),
+            path=str(
+                target / f"502-design-{look}-{state}-{'phone' if width == 390 else 'desktop'}.png"
+            ),
             animations="disabled",
         )
 
@@ -155,10 +159,13 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
         shot(page, look, "before", width)
         action.click()
         form = page.locator('[data-form="remove-assignment"]')
-        assert form.get_by_label("Reason (required)").get_attribute("required") is not None
+        reason = form.get_by_label("Reason" if look == "deck" else "Reason (required)", exact=True)
+        assert reason.get_attribute("required") is not None
         assert form.locator('input[name="to"]').count() == 0
         assert form.get_by_text(
-            "Anyone eligible to work on this board can pick it up."
+            "Anyone who can work on this project can pick it up."
+            if look == "deck"
+            else "Anyone eligible to work on this board can pick it up."
         ).is_visible()
         if look == "deck":
             assert form.locator("h2").evaluate("el=>getComputedStyle(el).fontSize") == "24px"
@@ -170,18 +177,35 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
                 form.locator(".confirm-removal").evaluate(
                     "el=>getComputedStyle(el).backgroundColor"
                 )
-                == "rgb(240, 112, 138)"
+                == "rgb(255, 255, 255)"
             )
             if width == 390:
                 assert form.locator("textarea").bounding_box()["x"] == 16
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
-        form.get_by_label("Reason (required)").fill("Available for the next person")
-        shot(page, look, "confirm", width)
+        if look == "deck":
+            assert reason.input_value() == ""
+            assert form.locator(".confirm-removal").is_disabled()
+            reason.fill("   ")
+            assert form.locator(".confirm-removal").is_disabled()
+            reason.fill("")
+            shot(page, look, "confirm-empty", width)
+        reason.fill("Available for the next person")
+        if look == "deck":
+            assert form.locator(".confirm-removal").is_enabled()
+            confirm = form.locator(".confirm-removal").bounding_box()
+            cancel = form.get_by_role("button", name="Cancel").bounding_box()
+            assert confirm["y"] == cancel["y"]
+            assert reason.evaluate("el=>getComputedStyle(el).outlineColor") == "rgb(74, 74, 74)"
+            assert reason.evaluate("el=>getComputedStyle(el).borderWidth") == "0px"
+        shot(page, look, "confirm-filled", width)
         with page.expect_response(lambda response: response.url.endswith("/handoff")) as response:
             form.get_by_role("button", name="Remove assignment", exact=True).click()
         assert response.value.status == 200
         page.locator(".workbench-details .fields").get_by_text(
-            "Anyone eligible to work on this board can pick it up.", exact=True
+            "Anyone who can work on this project can pick it up."
+            if look == "deck"
+            else "Anyone eligible to work on this board can pick it up.",
+            exact=True,
         ).wait_for()
         assert page.locator('[data-action="remove-assignment"]').count() == 0
         page.locator(".activity").get_by_text(
@@ -198,13 +222,21 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
 def test_browser_removal_shows_server_refusal(browser, hub, fresh, refusal, width):
     hub.gateway.rate_limits = False
     card, receiver = reservation(fresh, refusal)
-    if refusal == "non-owner":
-        fresh.cookie = member_cookie(hub, fresh)
     context, page = open_drawer(browser, hub, fresh, card, width, "deck")
     try:
         page.get_by_role("button", name="Remove assignment", exact=True).click()
         form = page.locator('[data-form="remove-assignment"]')
-        form.get_by_label("Reason (required)").fill("Remove this reservation")
+        form.get_by_label("Reason", exact=True).fill("Remove this reservation")
+        if refusal == "non-owner":
+            cookie = member_cookie(hub, fresh)["Cookie"]
+            name, value = cookie.split("=", 1)
+            context.clear_cookies()
+            from urllib.parse import urlsplit
+
+            address = urlsplit(page.url)
+            context.add_cookies(
+                [{"name": name, "value": value, "url": f"{address.scheme}://{address.netloc}"}]
+            )
         if refusal == "active":
             receiver.work.task_take_next(task=card["number"])
         before = snapshot(fresh.owner, card["number"])
@@ -212,18 +244,40 @@ def test_browser_removal_shows_server_refusal(browser, hub, fresh, refusal, widt
             form.get_by_role("button", name="Remove assignment", exact=True).click()
         reply = response.value.json()
         assert response.value.status == (409 if refusal == "active" else 403), reply
-        error = page.locator("#card-panel [data-panel-error]")
+        error = page.locator("#card-panel .assignment-refusal")
         error.wait_for()
-        assert reply["error"] in error.inner_text()
-        if reply.get("next_step"):
-            assert reply["next_step"] in error.inner_text()
+        expected = {
+            "active": "receiver (agent) has started working on this card, so its assignment stays.",
+            "non-owner": "Only the workspace owner can remove this assignment.",
+            "origin": "This card is still locked by the bot that made it. The owner can unlock it in the card, then try again.",
+        }[refusal]
+        assert error.get_by_role("heading", name="Assignment not removed").is_visible()
+        assert error.get_by_text(expected, exact=True).is_visible()
+        assert error.locator("button").count() == 1
+        assert error.get_by_role("button", name="Close", exact=True).is_visible()
+        assert page.locator("#card-panel form, #card-panel textarea").count() == 0
+        # A background refresh must preserve the refusal until it is dismissed.
+        page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        assert error.is_visible()
         assert snapshot(fresh.owner, card["number"]) == before
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
-        if refusal == "active":
-            assert page.locator('[data-action="remove-assignment"]').count() == 0
-            footer = page.locator(".workbench-details .ctx-foot").bounding_box()
-            assert footer["y"] + footer["height"] <= page.viewport_size["height"]
-        assert error.evaluate("el=>getComputedStyle(el).color") == "rgb(255, 255, 255)"
         shot(page, "deck", f"refusal-{refusal}", width)
+        error.get_by_role("button", name="Close", exact=True).click()
+        page.locator(".workbench-details").wait_for()
+        assert page.locator(".assignment-refusal").count() == 0
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_browser_non_owner_has_explanation_instead_of_action(browser, hub, fresh, width):
+    card, _ = reservation(fresh)
+    fresh.cookie = member_cookie(hub, fresh)
+    context, page = open_drawer(browser, hub, fresh, card, width, "deck", removable=False)
+    try:
+        assert page.get_by_text(
+            "Only the workspace owner can change this.", exact=True
+        ).is_visible()
+        assert page.locator('[data-action="remove-assignment"]').count() == 0
     finally:
         context.close()
