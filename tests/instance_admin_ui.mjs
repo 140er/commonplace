@@ -118,7 +118,7 @@ try {
   const route = app.slice(app.indexOf('async function route()'),app.indexOf('// The current view'));
   const content={innerHTML:'',children:[]}, state={me:{can_manage_instance:false},screen:0,base:'#/',route:'#/',boards:[],chatVisible:new Set(),panelRequest:0};
   let shown=0,shared=0;
-  const context={remember(){},state,location:{hash:'#/instance-admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute:x=>x,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},markOpenCard(){},message:x=>x,showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:null,instanceAdminUI:null,root:{querySelector:k=>k==='#content'?content:k==='#shell-dialog'?{close(){}}:{}},instanceAdminScreen(){shown++;},refresh(){shared++;}};
+  const context={remember(){},state,location:{hash:'#/instance-admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute:x=>x,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},markOpenCard(){},message:x=>x,showLoading:(h,t)=>{h.innerHTML=t;},showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:null,instanceAdminUI:null,root:{querySelector:k=>k==='#content'?content:k==='#shell-dialog'?{close(){}}:{}},instanceAdminScreen(){shown++;},refresh(){shared++;}};
   runInNewContext(route,context);await context.route();assert.equal(shown,1);assert.equal(shared,0);assert.equal(state.base,'#/instance-admin');
   }
 } catch(error) {

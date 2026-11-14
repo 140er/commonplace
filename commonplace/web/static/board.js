@@ -1,6 +1,6 @@
 import { escape as e, actor, elapsed } from './api.js';
 import { whyStrip, waitingText } from './waiting.js';
-import { deckBoardView, bindDeckBoard } from './deck-board.js';
+import { deckBoardView, bindDeckBoard, boardGroup } from './deck-board.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
 const ITEM = '.card[data-card]';
@@ -197,8 +197,10 @@ export function roveTo(card) {
   reveal(card);
   card.closest('.cards')?.querySelectorAll(ITEM).forEach((item) => { item.tabIndex = item === card ? 0 : -1; });
 }
-export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, people = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
-  const options = { board, me, selected, messages, deck }, visible = filterCards(cards, filter, me).map((c, i) => [c, i]).sort(([a, i], [b, j]) => prioRank(a) - prioRank(b) || i - j).map(([c]) => c);
+// The column a card is drawn in: the Deck groups by who it waits on, the classic board by status.
+export const cardColumn = (card, me, deck) => (deck ? boardGroup(card, me) : card.status);
+export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, added = null, people = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
+  const options = { board, me, selected, messages, deck, added }, visible = filterCards(cards, filter, me).map((c, i) => [c, i]).sort(([a, i], [b, j]) => prioRank(a) - prioRank(b) || i - j).map(([c]) => c);
   const backlog = visible.filter((c) => c.status === 'backlog'), count = (s) => visible.filter((c) => c.status === s).length;
   const form = adding ? addCardForm({ people, me, sheet, canPrioritize }) : '';
   if (deck) return deckBoardView({ ...options, bots, cards: visible, filter, form, sheet, column });
