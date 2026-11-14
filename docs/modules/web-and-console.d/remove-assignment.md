@@ -1,7 +1,7 @@
 - **Owns:**
 
-  - Reserved Todo cards offer Remove assignment in both looks. The confirmation asks for the existing required reason and posts a versioned handoff to `anyone`; the drawer explains board eligibility before and after removal. Active claims and unapproved proposals do not offer this action. Refusals stay in the drawer with the server's reason and next step; existing origin, membership and audit rules remain authoritative. Deck uses the drawer's surface and input tokens, with the danger token confined to the confirmation button.
+  - Reserved Todo cards offer Remove assignment through the existing versioned handoff route and required reason. Deck shows it only to workspace owners, uses an empty Reason field and white confirmation pill, and explains project pickup after removal under Nobody yet. Known authority, origin and concurrent-start refusals replace the form with Assignment not removed and one Close button; unknown refusals retain the server text. Classic keeps its existing presentation. Authority and audit rules are unchanged.
 
 - **Tests:**
 
-  - `tests/test_remove_assignment_ui.py` executes the drawer, confirmation and submit path without a browser, covering the payload, blank reason and unchanged refusal messages. `tests/test_remove_assignment.py` checks the real handoff audit, subsequent pickup and unchanged card/audit on active-work, member, origin and blank-reason refusals. Optional browser checks exercise both looks and sizes, refusal messages and Deck tokens; evidence runs require the browser, while browser-free runs keep the request regression.
+  - `tests/test_remove_assignment_ui.py` executes ownership visibility, confirmation, blank/filled reason, request and refusal states without a browser. `tests/test_remove_assignment.py` checks the real handoff audit, subsequent pickup, unchanged card/audit on refusals, optional desktop/phone browser behavior and Deck tokens.
