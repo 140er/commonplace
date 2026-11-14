@@ -48,11 +48,11 @@ def test_creation_detail_list_and_restart_keep_model_and_effort(configured):
     conversation = response["conversation"]
     assert conversation["model"] == "fixture-other"
     assert conversation["reasoning_effort"] == "high"
-    assert api.request("GET", "/conversations")[1]["conversations"] == [conversation]
-    assert (
-        api.request("GET", f"/conversations/{conversation['id']}")[1]["conversation"]
-        == conversation
-    )
+    # Read routes add a live ownership projection to the stored conversation.
+    listed = api.request("GET", "/conversations")[1]["conversations"]
+    assert [{k: v for k, v in entry.items() if k != "owns"} for entry in listed] == [conversation]
+    detail = api.request("GET", f"/conversations/{conversation['id']}")[1]["conversation"]
+    assert {k: v for k, v in detail.items() if k != "owns"} == conversation
     path = api.gateway.supervisor.workspace_dir(api.workspace) / "coworkers.sqlite3"
     reopened = Store(path, authority=routes.Authority(api.gateway, api.workspace))
     assert reopened.get_conversation(api.owner, conversation["id"]) == conversation
