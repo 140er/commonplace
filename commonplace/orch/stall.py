@@ -12,8 +12,8 @@ Backoff: after a nudge, the next one waits another ``minutes`` with no done card
 card resets the streak. After ``ESCALATE_AFTER`` nudges in a row without a done card, the
 board is listed in the owner's Needs me (``stalled``).
 
-Never nudged: a board whose open cards are all blocked by another open card, snoozed or
-waiting on a person (that is a clear board for the orchestrator), a board with no open card, a board
+Never nudged: a board whose open cards are all blocked by another open card, snoozed,
+owner-only (restricted origin or a pending proposal) or waiting on a person (that is a clear board for the orchestrator), a board with no open card, a board
 at its agent cap with no expired claim and nothing unstarted.
 
 State lives in ``runner.sqlite3`` (``orch_stall``). Reads of ``boards.sqlite3`` are plain
@@ -102,19 +102,34 @@ def _on_person(row) -> bool:
     )
 
 
+def _owner_only(row) -> bool:
+    """A card only its owner works (restricted origin) or one still waiting on its
+    proposal review is not the orchestrator's to move, whoever its assignee is."""
+    keys = row.keys()
+    return ("restricted_origin" in keys and bool(row["restricted_origin"])) or (
+        "proposal_status" in keys and row["proposal_status"] == "pending"
+    )
+
+
 def assess(directory, board_row: dict, cap: int | None, now: str, minutes: int, since) -> dict:
     """The board's progress picture at ``now``. ``stalled`` is True when a nudge is due:
     actionable open work, a free slot or an expired claim or an unstarted card, and no
     card done after ``max(last done, since)`` for ``minutes``."""
     with BoardStore(directory, create=False).connection() as conn:
+        have = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+        extra = "".join(f", {c}" for c in ("restricted_origin", "proposal_status") if c in have)
         rows = conn.execute(
             "SELECT id, title, status, assignee, ask, ask_to, claim_until, claim_expired_at, "
-            "updated_at FROM tasks WHERE board_id=? AND status IN ('todo','doing') AND NOT "
+            f"updated_at{extra} FROM tasks WHERE board_id=? AND status IN ('todo','doing') AND NOT "
             + snooze.snoozed_sql()
             + " ORDER BY id",
             (board_row["id"], now),
         ).fetchall()
-        actionable = [r for r in rows if not _on_person(r) and not _blocked(conn, r["id"])]
+        actionable = [
+            r
+            for r in rows
+            if not _on_person(r) and not _owner_only(r) and not _blocked(conn, r["id"])
+        ]
         last_done = conn.execute(
             "SELECT MAX(e.created_at) FROM task_events e JOIN tasks t ON t.id=e.task_id "
             "WHERE t.board_id=? AND e.to_status='done'",
