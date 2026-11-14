@@ -76,8 +76,12 @@ def open_compute(page):
         if path == "/":
             route.fulfill(body=html, content_type="text/html")
         else:
-            file = STATIC / path.removeprefix("/app/")
-            if file.is_file():
+            file = (STATIC / path.removeprefix("/app/")).resolve()
+            if (
+                path.startswith("/app/")
+                and file.is_relative_to(STATIC.resolve())
+                and file.is_file()
+            ):
                 route.fulfill(
                     body=file.read_bytes(),
                     content_type=mimetypes.guess_type(file.name)[0] or "application/octet-stream",
@@ -110,6 +114,13 @@ def test_compute_capy_screen(browser, size):
         open_compute(page)
         capture(page, "initial-desktop.png" if size[0] == 1440 else "initial-phone.png")
         assert page.evaluate("document.documentElement.scrollWidth") == size[0]
+        assert page.evaluate("async () => (await fetch('/app/../../pyproject.toml')).status") == 404
+        ring = page.locator('.dc-node[data-key="laptop"] .dc-node-status circle')
+        assert ring.evaluate("el=>getComputedStyle(el).fill") == "none"
+        assert (
+            page.locator('.dc-node[data-key="hub"] .dc-node-status').get_attribute("data-shape")
+            == "disc"
+        )
         assert page.locator(".deck-stage").get_attribute("data-dimmed") == "true"
         # Sparse pairs may use a line rather than a routed path.
         live = page.locator('.topo-link[data-active="true"] :is(line,.topo-route)').first
@@ -156,8 +167,8 @@ def test_compute_capy_screen(browser, size):
         assert page.locator(".deck-compute").get_attribute("data-compute-motion") == "reduced"
         page.get_by_role("button", name="Add a machine", exact=True).click()
         assert page.evaluate("window.destination") == "#/admin"
-        await_route = """async () => { await ui.show('#/compute/management'); }"""
-        page.evaluate(await_route)
+        show_management = """async () => { await ui.show('#/compute/management'); }"""
+        page.evaluate(show_management)
         page.locator("[data-compute-route]").wait_for()
         page.locator("[data-compute-route]").select_option("workspace.example")
         page.get_by_role("button", name="Show on map").click()

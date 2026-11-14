@@ -480,26 +480,44 @@ function element(doc) {
   };
   return node;
 }
-function fakeRoot() {
+function fakeRoot({ tabs = false, nextSibling = true } = {}) {
   const regions = new Map(), handlers = new Map(), classes = new Set(), panels = [];
   const doc = { activeElement: null, hidden: false, adoptedStyleSheets: [], createElement: () => { const panel = element(doc); panels.push(panel); return panel; } };
   const header = { hidden: false }, phoneBar = { hidden: false }, phoneTabs = { style: { position: '', bottom: '', left: '', right: '', zIndex: '' } };
+  const workspaceTabs = tabs ? { parentNode: null, nextSibling: null } : null;
+  const sibling = {};
+  const parent = {
+    children: [],
+    querySelector: selector => ({ '.head': header, '#phone-bar': phoneBar, '#phone-tabs': phoneTabs, ':scope > .dw-tabs': workspaceTabs })[selector],
+    insertBefore(child, before) {
+      const old = child.parentNode?.children;
+      if (old?.includes(child)) old.splice(old.indexOf(child), 1);
+      const index = before ? this.children.indexOf(before) : this.children.length;
+      assert.ok(index >= 0, 'reference sibling belongs to parent');
+      this.children.splice(index, 0, child); child.parentNode = this;
+    },
+  };
+  if (workspaceTabs) {
+    parent.insertBefore(workspaceTabs, null);
+    if (nextSibling) { parent.children.push(sibling); sibling.parentNode = parent; workspaceTabs.nextSibling = sibling; }
+  }
   const root = {
-    dataset: {}, ownerDocument: doc, parentElement: { querySelector: selector => ({ '.head': header, '#phone-bar': phoneBar, '#phone-tabs': phoneTabs })[selector] },
+    children: [], dataset: {}, ownerDocument: doc, parentElement: parent,
     classList: { add: x => classes.add(x), remove: (...names) => names.forEach(x => classes.delete(x)), toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) },
     addEventListener: (type, handler) => handlers.set(type, handler),
     removeEventListener: type => handlers.delete(type),
-    querySelector(selector) { return regions.get(/data-compute-region="([^"]+)"/.exec(selector)?.[1]) || null; },
+    querySelector(selector) { if (selector === '.dc-title') return { after(child) { const old = child.parentNode?.children; if (old?.includes(child)) old.splice(old.indexOf(child), 1); root.children.push(child); child.parentNode = root; } }; return regions.get(/data-compute-region="([^"]+)"/.exec(selector)?.[1]) || null; },
     set innerHTML(html) {
+      for (const child of this.children) child.parentNode = null; this.children = [];
       this.html = html; regions.clear();
       for (const [, name] of html.matchAll(/data-compute-region="([^"]+)"/g)) regions.set(name, name === 'map' ? element(doc) : { innerHTML: '', textContent: '', hidden: /data-compute-region="empty"[^>]*hidden/.test(html) && name === 'empty' });
     },
   };
   const event = data => ({ target: { closest(selector) { return Object.keys(data).some(k => selector === `[data-${k.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}]`) ? { dataset: data } : null; } } });
-  return { root, doc, regions, handlers, classes, panels, header, phoneBar, phoneTabs, click: data => handlers.get('click')(event(data)) };
+  return { root, doc, regions, handlers, classes, panels, header, phoneBar, phoneTabs, workspaceTabs, parent, sibling, click: data => handlers.get('click')(event(data)) };
 }
-function harness({ bots = [{ id: 'general', kind: 'general' }], rows = machines, topology = EMPTY, error = null } = {}) {
-  const f = fakeRoot(), calls = [], nav = [], data = { rows, bots, error, topology };
+function harness({ tabs = false, nextSibling = true, bots = [{ id: 'general', kind: 'general' }], rows = machines, topology = EMPTY, error = null } = {}) {
+  const f = fakeRoot({ tabs, nextSibling }), calls = [], nav = [], data = { rows, bots, error, topology };
   const api = async (path, options) => {
     calls.push([path, options]);
     if (path === '/api/topology') { if (data.topology instanceof Error) throw data.topology; return data.topology; }
@@ -543,7 +561,9 @@ test('topology read: the Deck screen draws the shared canvas, one sentence from 
   assert.equal(f.chosen(), 'birch');
   assert.equal(f.panels.length, 1, 'still one detail view');
   assert.match(f.detail(), /Birch/);
+  // The old ban on hrefs no longer applies: enrollment is a link to the existing Admin flow.
   assert.doesNotMatch(f.regions.get('map').innerHTML, /dc-detail/);
+  assert.match(f.root.html, /href="#\/admin"/);
   f.ui.stop();
 });
 
@@ -566,7 +586,8 @@ test('empty or failed topology: the runners through the same canvas, in honest s
     const words = [...scene.matchAll(/<(?:title|text)[^>]*>([^<]*)</g)].map(m => m[1]).join(' | ');
     for (const word of ['Commonplace', 'Build box', 'Studio machine', 'Old tower', 'Ready', 'Waiting for attestation', 'Off']) assert.ok(words.includes(word), word);
     assert.doesNotMatch(words, /Revoked machine|online|\bUp\b|Degraded|Unknown|\bDown\b|agents working|proxy|CDN|website|route/i);
-    assert.doesNotMatch(f.map().innerHTML, /topo-legend/); // Approved compact view keeps status on nodes.
+    // The approved compact view removes the legend; node shapes and accessible words carry status.
+    assert.doesNotMatch(f.map().innerHTML, /topo-legend/);
     assert.doesNotMatch(f.regions.get('map').innerHTML, /Up<\/li>|Degraded<\/li>/);
     assert.equal(f.regions.get('summary').textContent, '1 of 3 machines ready.');
     assert.equal((scene.match(/class="dc-node-status"/g) || []).length, 3, 'one mark per machine, none at the hub or on a link');
@@ -751,6 +772,7 @@ test('Add a machine navigates to the existing enrollment screen without a discov
   const before = f.calls.length;
   f.click({ computeAction: 'add-machine' }); await flush();
   assert.deepEqual(f.nav, ['#/admin']);
+  // Enrollment moved to Admin: replace the old discovery POST expectation with no writes or form here.
   assert.equal(f.calls.length, before);
   assert.doesNotMatch(f.root.html, /<form|<input/);
   f.ui.stop();
@@ -761,4 +783,16 @@ test('a member without rights is shown no add buttons at all', async () => {
   assert.match(f.root.html, /Only workspace owners/);
   assert.doesNotMatch(f.root.html + (f.regions.get('actions')?.innerHTML || ''), /add-machine|add-site|Add a machine|Add site/);
   f.ui.stop();
+});
+
+
+test('stop restores moved workspace tabs before their original sibling or at the end', async () => {
+  for (const nextSibling of [false, true]) for (const removeSibling of [false, true]) {
+    const f = harness({ tabs: true, nextSibling }); await flush();
+    assert.equal(f.workspaceTabs.parentNode, f.root);
+    if (removeSibling && nextSibling) { f.parent.children.splice(f.parent.children.indexOf(f.sibling), 1); f.sibling.parentNode = null; }
+    f.ui.stop(); f.ui.stop();
+    assert.equal(f.workspaceTabs.parentNode, f.parent);
+    assert.deepEqual(f.parent.children, nextSibling && !removeSibling ? [f.workspaceTabs, f.sibling] : [f.workspaceTabs]);
+  }
 });

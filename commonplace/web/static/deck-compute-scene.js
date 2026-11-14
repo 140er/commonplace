@@ -41,12 +41,24 @@ export function directLinks(model, positions, phone = false, k = 1) {
   }));
 }
 
+function statusMark(node, x) {
+  if (node.status === 'none') return '';
+  const shape = node.stale || node.missing ? 'ring' : ({ up: 'disc', degraded: 'triangle', down: 'diamond' })[node.status] || 'ring';
+  const geometry = {
+    disc: '<circle r="3"/>',
+    ring: '<circle r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+    triangle: '<path d="M0 -4L4 3H-4Z"/>',
+    diamond: '<path d="M0 -4L4 0L0 4L-4 0Z"/>',
+  }[shape];
+  return `<g class="dc-node-status" data-shape="${shape}" transform="translate(${x} 0)">${geometry}</g>`;
+}
+
 function nodeHTML(node, at, { sel, on, dim, words }, phone) {
   const { width, height } = cardSize(node, phone), left = -width/2, textX = left+(phone ? 12 : 50), room = width-(phone ? 40 : 78);
   const name = wrapLines(node.name,room,13,1)[0], role = wrapLines(node.role || '',room,12,1)[0];
   const kind = KINDS[node.kind] || KINDS.unknown;
   const label = `${node.name}${node.role ? `, ${node.role}` : ''}${node.status === 'none' ? '' : `. ${words[node.status] || 'Not reported'}`}${node.stale ? '. Stale' : ''}${node.missing ? '. Not recorded' : ''}`;
-  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${node.status === 'none' ? '' : `<circle class="dc-node-status" cx="${width/2-12}" cy="0" r="3"/>`}</g></g>`;
+  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${statusMark(node, width/2-12)}</g></g>`;
 }
 function linkHTML(link, at, names, { on, dim, sel, words }) {
   const states = [...new Set([words[link.status.from],words[link.status.to]].filter(Boolean))].join('; ');

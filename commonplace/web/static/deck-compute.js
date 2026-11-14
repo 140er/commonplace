@@ -240,7 +240,9 @@ export function mount(context) {
     if (host) host.innerHTML = '<button class="dc-action" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action dc-primary" type="button" data-compute-action="map">Let a bot map it</button>' : '');
   }
   const tabs = root.parentElement?.querySelector(':scope > .dw-tabs');
+  let tabsHome = null;
   function frame() {
+    if (tabs && !tabsHome) tabsHome = { parent: tabs.parentNode, next: tabs.nextSibling };
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
     root.innerHTML = '<header class="dc-title"><h1>Compute</h1><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
     if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
@@ -304,6 +306,10 @@ export function mount(context) {
     if (stopped) return;
     stopped = true; stopMotion(); epoch++; request?.abort(); map?.stop(); map = null; observer?.disconnect();
     root.removeEventListener('click', click);
+    if (tabsHome?.parent) {
+      const { parent, next } = tabsHome;
+      parent.insertBefore(tabs, next?.parentNode === parent ? next : null);
+    }
     root.classList.remove('deck-compute', 'dc-runners'); root.innerHTML = '';
     for (const { node, hidden } of shellHeaders) node.hidden = hidden;
     if (navStyle) for (const [key, value] of previousNav) navStyle[key] = value;

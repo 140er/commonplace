@@ -8,7 +8,7 @@ test('inspector uses recorded fields, honest capacity and exact label copy', () 
   const record = { values: { role: 'Production · Provider', resources: { memory_gb: 32, memory_used_gb: 10.2, cpu_percent: 23, storage_gb: 240, storage_used_gb: 118 }, service: 'running', health: 'OK', oom_kill: 0, version: 'abc123', bots: ['Maintenance'] } };
   const model = inspectorModel({ record, node: { name: 'Machine', status: 'up' } });
   assert.deepEqual(model.metrics.map(m => m.text), ['10.2 of 32 GB', '23%', '118 of 240 GB']);
-  assert.equal(model.metrics[0].percent, 31.874999999999996);
+  assert.ok(Math.abs(model.metrics[0].percent - 31.875) < 1e-9);
   assert.deepEqual(model.fields, [
     { label: 'Service', value: 'Running' }, { label: 'Health', value: 'Healthy' },
     { label: 'Memory kills', value: '0' }, { label: 'Version', value: 'abc123' }, { label: 'Bots', value: 'Maintenance' },
@@ -120,4 +120,43 @@ test('compact presentation uses straight links, local curves for blockers, no en
   const frame=computeFrame();
   assert.doesNotMatch(frame,/topo-legend|zoom-in|zoom-out|<label>Route/);
   assert.equal((frame.match(/<button/g)||[]).length,2);
+});
+
+
+test('compact node states have distinct geometry and accessible status words', async () => {
+  const { computePresentation } = await import('../commonplace/web/static/deck-compute-scene.js');
+  const words = { up: 'Healthy', degraded: 'Degraded', down: 'Unreachable', unknown: 'Not reported' };
+  for (const phone of [false, true]) {
+    const draw = node => computePresentation(phone).node({ key: 'machine', name: 'Machine', kind: 'server', ...node }, { x: 0, y: 0 }, { words });
+    const marks = Object.entries({ up: 'disc', degraded: 'triangle', down: 'diamond', unknown: 'ring' }).map(([status, shape]) => {
+      const html = draw({ status });
+      assert.match(html, new RegExp(`aria-label="Machine\\. ${words[status]}"`));
+      assert.match(html, new RegExp(`<title>Machine\\. ${words[status]}</title>`));
+      const mark = /<g class="dc-node-status"[^>]*>(.*?)<\/g>/.exec(html)?.[0];
+      assert.ok(mark, `mark for ${status}`);
+      assert.match(mark, new RegExp(`data-shape="${shape}"`));
+      return mark.replace(/data-shape="[^"]*"/, '');
+    });
+    assert.equal(new Set(marks).size, 4, 'actual SVG geometry differs, even without colour');
+    for (const flag of ['stale', 'missing']) {
+      const html = draw({ status: 'up', [flag]: true });
+      assert.match(html, /data-shape="ring"[^>]*><circle[^>]*fill="none"/);
+      assert.match(html, flag === 'stale' ? /Machine\. Healthy\. Stale/ : /Machine\. Healthy\. Not recorded/);
+    }
+    assert.doesNotMatch(draw({ status: 'none' }), /dc-node-status/);
+  }
+});
+
+test('panel decoration falls back intact if any upstream marker changes', async () => {
+  const { decorateComputePanel } = await import('../commonplace/web/static/deck-compute-capy.js');
+  const html = '<header>Machine</header><div>Tabs and body</div><p class="td-foot">Read-only. Changes go through agent proposals.</p>';
+  for (const marker of ['</header>', '<p class="td-foot">', 'Read-only. Changes go through agent proposals.']) {
+    const changed = html.replace(marker, 'changed');
+    assert.equal(decorateComputePanel(changed, '<div>Facts</div>', true), changed);
+  }
+  const decorated = decorateComputePanel(html, '<div>Facts</div>');
+  assert.match(decorated, /<div>Facts<\/div><details[^>]*><summary>Device details<\/summary><div>Tabs and body<\/div><\/details><p/);
+  assert.match(decorated, /Bots propose changes here. You approve them in Today./);
+  const reordered = '<p class="td-foot">Read-only. Changes go through agent proposals.</p><header>Machine</header>';
+  assert.equal(decorateComputePanel(reordered, ''), reordered);
 });

@@ -45,10 +45,20 @@ export function inspectorHTML(model) {
 
 export function computePanel(options, record, phone = false) {
   const summary = options.failure ? '' : inspectorHTML(inspectorModel({ record, detail: options.detail, node: options.node }));
-  // Keep the existing physical/config/agents/sites controllers available behind one disclosure.
-  let html = panelHTML(options).replace('Read-only. Changes go through agent proposals.', 'Bots propose changes here. You approve them in Today.');
-  if (phone) html = html.replace(/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/, '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>');
-  return html.replace('</header>', `</header>${summary}<details class="dc-more"><summary>Device details</summary>`).replace('<p class="td-foot">', '</details><p class="td-foot">');
+  return decorateComputePanel(panelHTML(options), summary, phone);
+}
+
+export function decorateComputePanel(html, summary, phone = false) {
+  const header = '</header>', foot = '<p class="td-foot">', readOnly = 'Read-only. Changes go through agent proposals.';
+  const headEnd = html.indexOf(header), footStart = html.indexOf(foot), copyStart = html.indexOf(readOnly, footStart);
+  // Preserve the original panel if its upstream structure or copy has changed.
+  if (headEnd < 0 || footStart < headEnd + header.length || copyStart < footStart) return html;
+  const start = html.slice(0, headEnd + header.length);
+  const body = html.slice(headEnd + header.length, footStart);
+  const footer = html.slice(footStart).replace(readOnly, 'Bots propose changes here. You approve them in Today.');
+  let result = `${start}${summary}<details class="dc-more"><summary>Device details</summary>${body}</details>${footer}`;
+  if (phone) result = result.replace(/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/, '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>');
+  return result;
 }
 
 export function addMachineHTML() {

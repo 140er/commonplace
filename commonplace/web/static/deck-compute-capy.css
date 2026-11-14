@@ -26,9 +26,10 @@
 :root[data-ui="deck"] .dc-node-card text { font-family: var(--font); text-anchor: start; stroke: none; }
 :root[data-ui="deck"] .dc-node-name { font-size: 13px; font-weight: 600; fill: var(--ink); }
 :root[data-ui="deck"] .dc-node-role { font-size: 12px; fill: var(--ink3); }
-:root[data-ui="deck"] .dc-node-status { fill: var(--ink3); }
-:root[data-ui="deck"] .dc-node.s-up .dc-node-status { fill: var(--cyan); }
-:root[data-ui="deck"] .dc-runners .dc-node.s-degraded .dc-node-status { fill: var(--amber); }
+:root[data-ui="deck"] .dc-node-status { color: var(--ink3); fill: currentColor; }
+:root[data-ui="deck"] .dc-node.s-up .dc-node-status { color: var(--cyan); }
+:root[data-ui="deck"] .dc-runners .dc-node.s-degraded .dc-node-status { color: var(--amber); }
+:root[data-ui="deck"] .dc-node.stale .dc-node-status { color: var(--ink3); }
 :root[data-ui="deck"] .dc-node.stale .dc-node-surface { stroke: var(--ink4); stroke-dasharray: 4 6; }
 :root[data-ui="deck"] .deck-compute .topo-link { --link-ink: var(--cyan); }
 :root[data-ui="deck"] .deck-compute .topo-link[data-method="lan"] { --link-ink: var(--violet); }
@@ -69,7 +70,7 @@
 :root[data-ui="deck"] .dc-enroll { width: calc(100% - 314px); padding: 18px; margin-top: 14px; }
 :root[data-ui="deck"] .dc-enroll h2 { font-size: 13.5px; font-weight: 600; }
 :root[data-ui="deck"] .dc-enroll p { font-size: 13.5px; line-height: 1.5; color: var(--ink2); margin: 10px 0; }
-:root[data-ui="deck"] .dc-enroll .dc-observed, :root[data-ui="deck"] .dc-observed { font-size: 12.5px; color: var(--ink3); }
+:root[data-ui="deck"] .dc-observed { font-size: 12.5px; color: var(--ink3); }
 @keyframes dc-link { to { stroke-dashoffset: -10; } }
 @media (prefers-reduced-motion: reduce) {
   :root[data-ui="deck"] .deck-compute .topo-link :is(line,.topo-route) { animation: none; }
