@@ -147,7 +147,7 @@ test('optional Deck binding preserves minimal classic roots and tolerates partia
     removeEventListener: name => events.delete(name),
   };
   const stop = bindBoard(root, {board});
-  assert.deepEqual([...events.keys()], ['click','submit','keydown']);
+  assert.deepEqual([...events.keys()], ['click','submit','keydown','change']);
   stop();
   assert.equal(events.size, 0);
   for (const partial of [null, {}, {querySelector:null}, {querySelector:()=>null}, {querySelector:()=>({}),querySelectorAll:()=>[]}]) {

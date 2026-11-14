@@ -32,6 +32,19 @@ case 'assignee': {
   const calls = []; await b.submitCard({board, values:{title:'Test',assignee:'user:leon',body:'Exact\nwords',label:'copy'},api:async (...args) => {calls.push(args);return {number:1};}});
   assert.equal(calls.length,1); assert.equal(calls[0][0],'/api/boards/atlas/cards'); assert.equal(calls[0][1].body.assignee,'user:leon'); assert.equal(calls[0][1].body.body,'Exact\nwords'); assert.deepEqual(calls[0][1].body.labels,['copy']); break;
 }
+case 'who-default': {
+  // Adding a card never starts a run by default: Who is the person adding it, "Any agent" is explicit and says so.
+  const html = b.addCardForm({me, people:[{ref:me,name:'Maya'},{ref:'user:leon',name:'Leon'}]});
+  assert.ok(html.includes(`<option value="${me}" selected>Me (no run starts)</option>`)); assert.equal((html.match(/ selected>/g) || []).length, 1);
+  assert.ok(html.includes('<option value="any">Any agent (starts a run now)</option>')); assert.ok(!html.includes('<option value="">Any agent'));
+  assert.equal((html.match(new RegExp(`value="${me}"`, 'g')) || []).length, 1);
+  assert.ok(html.includes('Nothing starts when you add this card.'));
+  assert.ok(b.whoHint('any').includes('starts an agent run now')); assert.equal(b.whoHint(me), 'Nothing starts when you add this card.');
+  assert.ok(b.addCardForm({}).includes('<option value="" disabled selected>Choose who</option>')); assert.ok(b.addCardForm({}).includes('aria-describedby="add-card-who" required'));
+  const sent = []; const api = async (url, init) => { sent.push(init.body.assignee); return {number:1}; };
+  await b.submitCard({api, board, me, values:{title:'T', assignee:me}}); await b.submitCard({api, board, me, values:{title:'T'}}); await b.submitCard({api, board, me, values:{title:'T', assignee:''}}); await b.submitCard({api, board, me, values:{title:'T', assignee:'any'}});
+  assert.deepEqual(sent, [me, me, me, null]); break;
+}
 case 'filters': {
   const cards = [card,{...card,number:2,assignee:me,ask_to:me},{...card,number:3,assignee:'conn:Iris',status:'doing'}];
   assert.deepEqual(b.filterCards(cards,'mine',me).map(c=>c.number),[2]); assert.deepEqual(b.filterCards(cards,'agents',me).map(c=>c.number),[3]); assert.deepEqual(b.filterCards(cards,'blocked',me).map(c=>c.number),[121]); break;
