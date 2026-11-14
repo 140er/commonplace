@@ -172,17 +172,25 @@ def cleanup(fs, journal):
     def inspect(path):
         info = fs.info(path)
         directory = stat.S_ISDIR(info.st_mode)
-        fs._check(info, directory=directory)
+        link = stat.S_ISLNK(info.st_mode)
+        if link:
+            fs.check_link(info)
+        else:
+            fs._check(info, directory=directory)
         if directory:
             for child in (fs.home / path).iterdir():
                 inspect(str(child.relative_to(fs.home)))
-        entries.append((path, directory))
+        entries.append((path, directory, link))
 
     for root in (HOME + "/.codex", HOME + "/.claude"):
         if fs.info(root) is None:
             continue
         if not any(i["path"] == root and i["kind"] == "dir" for i in journal["items"]):
             raise InstallError("private provider directory is unmanaged")
+        fs._check(fs.info(root), directory=True)
         inspect(root)  # Validate all owned trees before removing anything.
-    for path, directory in entries:
-        fs.remove(path, directory=directory)
+    for path, directory, link in entries:
+        if link:
+            fs.remove_link(path)
+        else:
+            fs.remove(path, directory=directory)

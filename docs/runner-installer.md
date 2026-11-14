@@ -166,21 +166,23 @@ it does not trust a download-provided public key or a detached unsigned pin.
 Only selected executable names are looked up. A matching existing artifact is
 reused without modification; an incompatible installation is preserved while a
 verified copy goes into the private runner prefix. Supported release shapes are
-self-contained Linux native executables and Python zipapps, bounded at 128 MiB
+self-contained Linux native executables and Python zipapps, bounded at 384 MiB
 per artifact. Unknown wrappers,
 unsupported platforms, wrong versions or missing headless/status interfaces
 remain incomplete. There is no package-manager invocation, privilege escalation,
 global dependency installation or machine-setting change in this step.
 
 Stored artifacts and generated configuration remain 0600, directories 0700.
-Native capability probes execute verified bytes through sealed anonymous Linux
+Provider capability probes execute verified bytes through sealed anonymous Linux
 descriptors; no stored file gains execute bits. Probe stdin is closed, output is
 captured and discarded, and the environment contains only fixed runtime values
 and a dedicated private home. Checks inspect version, headless commands and
 read-only authentication status. A successful status is recorded as unverified:
 it cannot establish the intended account or scope. Existing credential
 directories are neither copied nor used. No login flow starts and no host-grant
-secret is received, stored or printed.
+secret is received, stored or printed. Read-only host discovery also supports a separately installed,
+rehashed inode for an embedded runtime that needs its real filename; see the
+[runtime and issuer guide](runner-runtime-issuer.md).
 
 `runtime-config.json` is a derived runner configuration cache, not authority. It
 contains the approved provider instance and worker ids, topic/model mapping,

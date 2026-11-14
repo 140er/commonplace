@@ -540,6 +540,10 @@ Moved to [`docs/system/visible-logical-drawer-pagination.md`](docs/system/visibl
 
 Moved to [`docs/system/hallway-read-eligibility-and-visible-pagination.md`](docs/system/hallway-read-eligibility-and-visible-pagination.md); edit it there.
 
+### Gateway vector diagnostics
+
+Moved to [`docs/system/gateway-vector-diagnostics.md`](docs/system/gateway-vector-diagnostics.md); edit it there.
+
 ### Authenticated room and status counts
 
 Moved to [`docs/system/authenticated-room-and-status-counts.md`](docs/system/authenticated-room-and-status-counts.md); edit it there.

@@ -4,7 +4,9 @@ import re
 from urllib.parse import urlsplit
 
 COMPONENTS = ("host", "claude", "codex")
-MAX_ARTIFACT = 128 * 1024 * 1024
+# Current native subscription releases exceed 256 MiB. This is a release-only
+# budget; credential, receipt, journal and response limits remain unchanged.
+MAX_ARTIFACT = 384 * 1024 * 1024
 
 
 def validate(value, topics):
