@@ -44,7 +44,8 @@
   .compute .btn, .compute summary, .compute input, .compute select { min-height: 44px; }
   .compute-capabilities > div { align-items: start; flex-direction: column; gap: 6px; }
 }
-.compute-advanced { padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); min-width: 0; }
+.compute-advanced { min-width: 0; }
 .compute-advanced > summary { cursor: pointer; min-height: 28px; font-size: 16px; font-weight: 600; }
+.compute-advanced > .compute-quiet { margin-top: 8px; }
 .compute-advanced > .compute-inventories { margin-top: 16px; }
 .compute-plain { margin-top: 8px; font-size: 13px; color: var(--text-2); }
