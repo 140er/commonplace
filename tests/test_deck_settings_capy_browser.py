@@ -71,7 +71,8 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
         assert page.locator(".settings > .deck-settings-main").count() == 1
         assert page.locator(".settings > :last-child").get_attribute("data-deck-appearance") == ""
         titles = page.locator(".deck-settings-main > section > h2").all_text_contents()
-        assert titles[:4] == [
+        assert titles[:5] == [
+            "Look",
             "Bot sharing",
             "What bots may do without asking",
             "Second review",
