@@ -1,0 +1,5 @@
+### Memory search sends one bounded request and never spins forever
+
+Decision: the Memory page no longer asks the palace once per room with a limit of 100. A usability test of the live Deck showed every tester stuck on "Searching…": the palace takes seconds per query, and a request per room in parallel never finished. One query now sends a single note request for all readable rooms (limit 25, "Show more" asks for 50 and then 100) and one cheap chat request per project, two in flight at most. The page picks each note's room from the note's own wing, so no wing the page cannot show is displayed, and the server's read checks are unchanged.
+
+The search owns one abort signal and a 20 second deadline. A newer query, leaving Memory or opening the map aborts the request in flight; the Deck also searches after a short pause in typing. A search that finds nothing because a source failed or timed out reports an error with Try again instead of "No exact words match", so a slow palace is never mistaken for an empty memory. Results stay the returned drawers, word for word.
