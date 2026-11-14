@@ -16,7 +16,7 @@ function mount() {
 const api = (paths, rooms) => async (path) => {
   paths.push(path);
   if (path === '/api/memory/rooms') return { rooms };
-  if (path.startsWith('/api/memory/search')) return { results: new URL(path, 'http://x').searchParams.get('theme') === 'inbox' ? [note] : [] };
+  if (path.startsWith('/api/memory/search')) return { results: [new URL(path, 'http://x').searchParams.get('theme')].some(theme => theme === null || theme === 'inbox') ? [note] : [] };
   return { results: [] };
 };
 
@@ -24,8 +24,8 @@ test('the inbox room is searched next to the project rooms and shows the exact w
   const node = mount(), paths = [];
   const ui = createMemory({ mount: node, boards: [board], me, api: api(paths, [{ wing: 'inbox', name: 'Agent notes' }]) });
   await ui.search({ query: 'exact' });
-  assert.ok(paths.some(path => path.startsWith('/api/memory/search?q=exact&theme=inbox')));
-  assert.ok(paths.some(path => path.startsWith('/api/memory/search?q=exact&theme=project_work')));
+  // One request covers every room, the agent-notes room included; the room is picked from each row.
+  assert.deepEqual(paths.filter(path => path.startsWith('/api/memory/search')), ['/api/memory/search?q=exact&limit=25']);
   assert.ok(!paths.some(path => path.includes('notes%3Ainbox') || path.includes('/api/chat/notes')));
   assert.match(node.innerHTML, /data-memory-room="notes:inbox"[^>]*>Agent notes/);
   assert.match(node.innerHTML, /data-memory-room="work"[^>]*>Workspace/);
@@ -39,8 +39,8 @@ test('a room the server does not list, or a project that already owns the wing, 
     const node = mount(), paths = [];
     const ui = createMemory({ mount: node, boards: [board], me, api: api(paths, rooms) });
     await ui.search({ query: 'exact' });
-    assert.ok(!paths.some(path => path.includes('theme=inbox')));
     assert.ok(!node.innerHTML.includes('Agent notes'));
+    assert.ok(!node.innerHTML.includes('second line'), 'a note from a room this person has no list entry for is not shown');
     ui.stop();
   }
 });

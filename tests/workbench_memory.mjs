@@ -92,13 +92,113 @@ const cases = {
       await tick(); active--;
       return { results: [], truncated: false };
     } });
-    assert.equal(peak, 4);
-    assert.equal(paths.length, 22);
+    // One palace request for every note room, one cheap chat request per project, two in flight at most.
+    assert.ok(peak <= 2, `peak ${peak}`);
+    assert.equal(paths.length, 12);
     assert.deepEqual(result.errors, []);
-    for (const project of boards) {
-      assert.ok(paths.some((path) => path.startsWith(`/api/chat/${project.slug}/search?`)));
-      assert.ok(paths.some((path) => new URL(path, 'https://example.test').searchParams.get('theme') === project.wing));
-    }
+    const notes = paths.filter((path) => path.startsWith('/api/memory/search'));
+    assert.equal(notes.length, 1, 'one note request per query, never one per room');
+    const noteParams = new URL(notes[0], 'https://example.test').searchParams;
+    assert.equal(noteParams.get('limit'), '25'); assert.equal(noteParams.get('theme'), null);
+    for (const project of boards) assert.ok(paths.some((path) => path.startsWith(`/api/chat/${project.slug}/search?`)));
+  },
+  async one_room() {
+    const paths = [];
+    await memory.searchMemory({ boards: [board, other], query: 'exact', project: 'atlas', api: async (path) => { paths.push(path); return { results: [] }; } });
+    const notes = paths.filter((path) => path.startsWith('/api/memory/search'));
+    assert.equal(notes.length, 1);
+    assert.equal(new URL(notes[0], 'https://example.test').searchParams.get('theme'), board.wing);
+    assert.equal(paths.length, 2);
+  },
+  async abort_on_change() {
+    const mount = node(), signals = [];
+    const control = memory.createMemory({ mount, boards: [board], api: (path, options) => {
+      if (path === '/api/memory/rooms') return Promise.resolve({ rooms: [] });
+      signals.push(options.signal);
+      return new Promise(() => {});
+    } });
+    void control.search({ query: 'first', source: 'chat' }); await tick();
+    assert.equal(signals.length, 1); assert.equal(signals[0].aborted, false);
+    void control.search({ query: 'second', source: 'chat' }); await tick();
+    assert.equal(signals[0].aborted, true, 'the previous request is aborted when the query changes');
+    assert.equal(signals[1].aborted, false);
+    control.stop();
+    assert.equal(signals[1].aborted, true, 'leaving Memory aborts the request');
+  },
+  async timeout() {
+    // A client that never answers and ignores the signal still ends with an error and Retry.
+    const mount = node(); let hang = true;
+    const control = memory.createMemory({ mount, boards: [board], searchTimeoutMs: 40, api: (path) => {
+      if (path === '/api/memory/rooms') return Promise.resolve({ rooms: [] });
+      return hang ? new Promise(() => {}) : Promise.resolve({ results: [{ ...row, text: 'Found after retry' }] });
+    } });
+    const started = Date.now();
+    await control.search({ query: 'exact', source: 'chat' });
+    assert.ok(Date.now() - started < 2000);
+    assert.match(mount.innerHTML, /role="alert"[^>]*><h2>Search couldn't run<\/h2><p>Memory is taking too long/);
+    assert.ok(mount.innerHTML.includes('data-memory-action="retry"'), 'Retry button');
+    assert.ok(!mount.innerHTML.includes('No exact words match'), 'a timeout is not an empty result');
+    assert.ok(!mount.innerHTML.includes('memory-loading'), 'no endless spinner');
+    assert.ok(!mount.innerHTML.includes('aria-busy="true"'));
+    hang = false;
+    click(mount, { memoryAction: 'retry' }); await tick(); await tick();
+    assert.ok(mount.innerHTML.includes('Found after retry')); assert.ok(!mount.innerHTML.includes('Search couldn'));
+    control.stop();
+  },
+  async empty_vs_error() {
+    const mount = node(); let mode = 'empty';
+    const control = memory.createMemory({ mount, boards: [board], api: async (path) => {
+      if (path === '/api/memory/rooms') return { rooms: [] };
+      if (mode === 'error') throw new Error('down');
+      return { results: [] };
+    } });
+    await control.search({ query: 'nothing', source: 'chat' });
+    assert.ok(mount.innerHTML.includes('No exact words match')); assert.ok(!mount.innerHTML.includes('role="alert"'));
+    mode = 'error';
+    await control.search({ query: 'nothing', source: 'chat' });
+    assert.ok(!mount.innerHTML.includes('No exact words match')); assert.match(mount.innerHTML, /role="alert"/);
+    assert.ok(mount.innerHTML.includes('data-memory-action="retry"'));
+    control.stop();
+  },
+  async loading() {
+    const mount = node(); let release;
+    const control = memory.createMemory({ mount, boards: [board], api: (path) => path === '/api/memory/rooms' ? Promise.resolve({ rooms: [] }) : new Promise((resolve) => { release = () => resolve({ results: [{ ...row, text: 'Done' }] }); }) });
+    const pending = control.search({ query: 'exact', source: 'chat' }); await tick();
+    assert.ok(mount.innerHTML.includes('class="memory-loading" role="status"')); assert.ok(mount.innerHTML.includes('Searching'));
+    release(); await pending;
+    assert.ok(!mount.innerHTML.includes('memory-loading')); assert.ok(mount.innerHTML.includes('Done'));
+    control.stop();
+  },
+  async show_more() {
+    const mount = node(), limits = [];
+    const notes = Array.from({ length: 25 }, (_, i) => ({ id: `n${i}`, theme: board.wing, author: 'user:leon', text: `note ${i}`, at: row.at }));
+    const control = memory.createMemory({ mount, boards: [board], api: async (path) => {
+      if (path === '/api/memory/rooms') return { rooms: [] };
+      const limit = Number(new URL(path, 'https://example.test').searchParams.get('limit')); limits.push(limit);
+      return { results: notes.slice(0, limit) };
+    } });
+    await control.search({ query: 'note', source: 'note' });
+    assert.deepEqual(limits, [25]);
+    assert.ok(mount.innerHTML.includes('data-memory-action="more"'));
+    click(mount, { memoryAction: 'more' }); await tick(); await tick();
+    assert.deepEqual(limits, [25, 50]);
+    assert.ok(!mount.innerHTML.includes('data-memory-action="more"'), 'no more to show');
+    // Every row shown is a returned drawer, word for word.
+    const shown = mount.innerHTML.replaceAll(/<\/?mark>/g, '');
+    for (const note of notes) assert.ok(shown.includes(note.text));
+    control.stop();
+  },
+  async partial_retry() {
+    const mount = node();
+    const control = memory.createMemory({ mount, boards: [board, other], api: async (path) => {
+      if (path === '/api/memory/rooms') return { rooms: [] };
+      if (path.includes('/atlas/')) throw new Error('unavailable');
+      return { results: [{ ...row, board: 'harbor', text: 'Harbor words' }] };
+    } });
+    await control.search({ query: 'exact', source: 'chat' });
+    assert.ok(mount.innerHTML.includes('Harbor words')); assert.ok(mount.innerHTML.includes('Some sources could not be searched'));
+    assert.ok(mount.innerHTML.includes('data-memory-action="retry"'));
+    control.stop();
   },
   async filters() {
     const paths = [];
@@ -118,7 +218,8 @@ const cases = {
     const result = await memory.searchMemory({ boards: [board, { ...board, slug: 'same-wing' }], query: 'rate', source: 'note', from: 'user:leon', since: '2026-01-01T00:00:00Z', api: async (path) => { paths.push(path); return { results: notes }; } });
     assert.equal(result.results.length, 1);
     assert.equal(result.results[0].kind, 'note'); assert.equal(result.results[0].text, text);
-    assert.ok(paths.every((path) => path.includes('theme=project_atlas')));
+    assert.equal(paths.length, 1, 'one note request for every room');
+    assert.ok(!paths[0].includes('theme='));
   },
   async neighbours() {
     const paths = [];
@@ -179,7 +280,7 @@ const cases = {
     const control = memory.createMemory({ mount, panel: pane, boards: [board, other], me: { actor: me }, singleKeys: () => keys,
       clipboard: { writeText: async (value) => copied.push(value) }, dock: { open: (args) => opened.push(args), close: () => calls.push('close') },
       api: async (path, options) => {
-        if (options) { calls.push([path, options]); return { ...card, version: 5 }; }
+        if (options?.method) { calls.push([path, options]); return { ...card, version: 5 }; }
         if (path.includes('/search')) return { results: [{ ...row, theme: board.wing }] };
         if (path.endsWith('/cards')) return { cards: [card] };
         return { board: 'atlas', messages: path.includes('before=') ? [{ id: 17, text }] : [] };
@@ -255,6 +356,7 @@ const cases = {
       return Promise.resolve({ results: [{ ...row, text: 'Newest result' }], cards: [] });
     } });
     const old = control.search({ query: 'old', source: 'chat' });
+    await tick();
     await control.search({ query: 'new', source: 'chat' });
     finish({ results: [{ ...row, text: 'Stale result' }] }); await old;
     const visible = mount.innerHTML.replaceAll(/<\/?mark>/g, '');

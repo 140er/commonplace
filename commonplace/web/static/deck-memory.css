@@ -28,6 +28,11 @@
 :root[data-ui="deck"] .deck-memory .src { display: block; margin: 0; color: var(--ink3); font-size: 12.5px; line-height: 1.5; }
 :root[data-ui="deck"] .deck-memory mark { background: color-mix(in srgb, var(--cyan) 20%, transparent); color: inherit; padding: 0; }
 :root[data-ui="deck"] .deck-memory .memory-warning { color: var(--ink2); }
+:root[data-ui="deck"] .deck-memory .memory-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 32px 20px; color: var(--ink2); font-size: 14px; }
+:root[data-ui="deck"] .deck-memory .memory-spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: memory-spin 0.9s linear infinite; }
+@keyframes memory-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { :root[data-ui="deck"] .deck-memory .memory-spinner { animation: none; } }
+:root[data-ui="deck"] .deck-memory .memory-more { display: block; margin: 12px auto; }
 :root[data-ui="deck"] .memory-restored { margin: 0; color: var(--ink3); font-size: 12.5px; }
 :root[data-ui="deck"] .memory-filterbar { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; }
 :root[data-ui="deck"] .memory-chip-scroll { display: contents; }

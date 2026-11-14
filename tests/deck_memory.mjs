@@ -69,6 +69,29 @@ test('query restoration is scoped to person and workspace and editing clears the
     history.save(''); assert.equal(history.read(), '');
   } finally { globalThis.sessionStorage = old; }
 });
+test('typing searches once after a pause, and a newer query aborts the older request', async () => {
+  const node = mount(true), searches = [], signals = [];
+  const ui = createMemory({ mount: node, boards: [board], me, typingPauseMs: 30, api: (path, options) => {
+    if (path === '/api/memory/rooms') return Promise.resolve({ rooms: [] });
+    if (!path.startsWith('/api/memory/search')) return new Promise(() => {});
+    searches.push(new URL(path, 'http://x').searchParams.get('q')); signals.push(options.signal);
+    return new Promise(() => {});
+  } });
+  const handler = node.listeners.get('input');
+  const type = value => handler({ target: { name: 'query', value } });
+  for (const value of ['e', 'ex', 'exa', 'exac']) type(value);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(searches, [], 'nothing is sent while the person is still typing');
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.deepEqual(searches.filter(q => q === 'exac'), ['exac']);
+  assert.equal(searches.filter(q => q === 'exac').length, 1, 'one request per pause, not one per keystroke');
+  const before = signals.length;
+  type('exact'); await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(signals.length, before + 1); assert.equal(signals[before - 1].aborted, true);
+  ui.stop();
+  type('later'); await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(signals.length, before + 1, 'no search after leaving Memory');
+});
 test('Deck consent blocks confirmation, unchecking blocks it again, retries keep bytes and consent', async () => {
   const node = mount(), calls = [], payload = Buffer.from(' \r\n[{"role":"user","content":" café "}]\r\n');
   const preview = { total: 1, messages: 1, source_bytes: payload.length, scope: 'threads', source: 'cursor', preview: 'preview-token' };
