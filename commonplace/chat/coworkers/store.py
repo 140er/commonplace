@@ -19,7 +19,7 @@ from pathlib import Path
 from commonplace.admission import GATE
 from mempalace.sqlite_crypto import connect, row_factory
 
-from . import taxonomy, unread
+from . import model_effort, taxonomy, turn_mode, unread
 
 MAX_TEXT = 8_000
 MAX_REPLY = 2_000
@@ -170,11 +170,11 @@ class Store:
         self._ready_path = None
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self, *, model_settings=None):
         # Lock current control authority until publication commits. Never hold a
         # workspace writer lock while waiting for the control authority lock.
         guard = self._authority.guard() if self._authority else nullcontext()
-        with guard, self._lock:
+        with guard, model_effort.context(self, model_settings):
             path = Path(self._path() if callable(self._path) else self._path).resolve()
             existed = path.is_file()
             with GATE.creating(path):
@@ -186,6 +186,8 @@ class Store:
                 conn.execute("PRAGMA journal_mode=WAL")
                 if self._ready_path != path or not existed:
                     conn.executescript(_SCHEMA)
+                    model_effort.ensure_schema(conn)
+                    turn_mode.ensure_schema(conn)
                     self._ready_path = path
                 conn.execute("BEGIN IMMEDIATE")
                 try:
@@ -229,10 +231,10 @@ class Store:
         if self._authority:
             self._authority.bot(row)
 
-    @staticmethod
-    def _conversation_view(conn, row):
+    def _conversation_view(self, conn, row):
         return {
             **{key: row[key] for key in ("id", "kind", "title", "board", "created_at")},
+            **model_effort.describe(conn, self._model_settings, row),
             "member_ids": [
                 r[0]
                 for r in conn.execute(
@@ -334,7 +336,18 @@ class Store:
                 return project(self._authority, conn, user_id, views)
             return views
 
-    def create_conversation(self, user_id, kind, title="", member_ids=(), bot_ids=(), board=None):
+    def create_conversation(
+        self,
+        user_id,
+        kind,
+        title="",
+        member_ids=(),
+        bot_ids=(),
+        board=None,
+        *,
+        model=model_effort.UNSET,
+        reasoning_effort=model_effort.UNSET,
+    ):
         if kind not in ("dm", "group"):
             raise StoreError()
         _text(title, 120, empty=True)
@@ -356,6 +369,8 @@ class Store:
                 self._bot_access(bot)
             if board is not None and self._authority:
                 board = self._authority.board(user_id, board)
+            choices = model_effort.options(model, reasoning_effort)
+            _, selected = model_effort.resolve(self._model_settings, board, choices)
             if (
                 conn.execute("SELECT count(*) FROM members WHERE user_id=?", (user_id,)).fetchone()[
                     0
@@ -374,6 +389,8 @@ class Store:
             conn.executemany(
                 "INSERT INTO conversation_bots VALUES (?,?)", [(conversation_id, b) for b in bots]
             )
+            model_effort.save(conn, "conversation", conversation_id, choices, selected)
+            model_effort.audit(self._model_settings, user_id, "coworker.create", selected)
             return self._conversation_view(
                 conn,
                 conn.execute(
@@ -442,7 +459,16 @@ class Store:
         return selected["id"] if selected is not None else None
 
     def post_message(
-        self, user_id, conversation_id, text, request_id, bot_id=None, *, session_hash=None
+        self,
+        user_id,
+        conversation_id,
+        text,
+        request_id,
+        bot_id=None,
+        *,
+        session_hash=None,
+        model=model_effort.UNSET,
+        reasoning_effort=model_effort.UNSET,
     ):
         _text(text, MAX_TEXT)
         _id(request_id)
@@ -453,15 +479,27 @@ class Store:
         ):
             raise StoreError()
         with self._transaction() as conn:
-            self._conversation(conn, user_id, conversation_id)
+            conversation = self._conversation(conn, user_id, conversation_id)
             if self._authority and session_hash is not None:
                 self._authority.job({"user_id": user_id, "session_hash": session_hash})
             actor = "user:" + user_id
+            turn = conn.execute(
+                "SELECT mode FROM coworker_turns WHERE conversation_id=? AND actor=? AND request_id=?",
+                (conversation_id, actor, request_id),
+            ).fetchone()
+            if turn is not None and turn["mode"] != "chat":
+                raise StoreError("request_conflict", 409)
+            overrides = model_effort.options(model, reasoning_effort)
+            choices = {
+                **model_effort.requested(conn, "conversation", conversation_id),
+                **overrides,
+            }
             existing = conn.execute(
                 "SELECT m.*,i.requested_bot FROM messages m JOIN intake i ON i.message_id=m.id WHERE m.conversation_id=? AND m.actor=? AND m.request_id=?",
                 (conversation_id, actor, request_id),
             ).fetchone()
             if existing is not None:
+                model_effort.check_retry(conn, "message", existing["id"], choices)
                 if existing["text"] != text or existing["requested_bot"] != bot_id:
                     raise StoreError("request_conflict", 409)
                 return {
@@ -475,6 +513,9 @@ class Store:
                         session_hash=session_hash,
                     ),
                 }
+            _, selected = model_effort.effective(
+                conn, self._model_settings, conversation, overrides, choices=choices
+            )
             target = self._target(conn, conversation_id, text, bot_id)
             if (
                 target is not None
@@ -490,6 +531,8 @@ class Store:
                 (conversation_id, actor, target, text, stamp, request_id),
             ).lastrowid
             conn.execute("INSERT INTO intake VALUES (?,?)", (mid, bot_id))
+            model_effort.save(conn, "message", mid, choices, selected)
+            model_effort.audit(self._model_settings, user_id, "coworker.turn", selected, "chat")
             if target is not None:
                 conn.execute(
                     "INSERT INTO jobs(conversation_id,message_id,bot_id,user_id,state,created_at,updated_at,session_hash,requested_bot) VALUES (?,?,?,?,'pending',?,?,?,?)",
@@ -660,7 +703,18 @@ class Store:
             raise StoreError("not_found", 404)
         return dict(current), target
 
-    def control_task(self, user_id, job_id, operation, request_id, text="", *, session_hash=None):
+    def control_task(
+        self,
+        user_id,
+        job_id,
+        operation,
+        request_id,
+        text="",
+        *,
+        session_hash=None,
+        model=model_effort.UNSET,
+        reasoning_effort=model_effort.UNSET,
+    ):
         """Durable one-attempt outbox for an explicit person's targeted control.
 
         Commit the uncertain receipt before crossing the canonical store boundary.
@@ -678,6 +732,12 @@ class Store:
             raise StoreError()
         with self._transaction() as conn:
             job, target = self._control_context(conn, user_id, job_id, session_hash)
+            conversation = self._conversation(conn, user_id, job["conversation_id"])
+            overrides = model_effort.options(model, reasoning_effort)
+            choices = {
+                **model_effort.requested(conn, "conversation", conversation["id"]),
+                **overrides,
+            }
             if operation == "stop" and target["runner_job"] is None:
                 raise StoreError("not_found", 404)
             actor = "user:" + user_id
@@ -686,6 +746,7 @@ class Store:
                 (actor, operation, request_id),
             ).fetchone()
             if previous is not None:
+                model_effort.check_retry(conn, "control", previous["id"], choices)
                 if previous["job_id"] != job_id or previous["text"] != text:
                     raise StoreError("request_conflict", 409)
                 if json.loads(previous["target"]) != target:
@@ -698,6 +759,9 @@ class Store:
                 >= MAX_CONTROLS
             ):
                 raise StoreError("at_capacity", 409)
+            _, selected = model_effort.effective(
+                conn, self._model_settings, conversation, overrides, choices=choices
+            )
             stamp = _stamp()
             receipt_id = conn.execute(
                 "INSERT INTO task_controls(job_id,actor,operation,request_id,text,target,state,code,created_at,updated_at) "
@@ -713,6 +777,8 @@ class Store:
                     stamp,
                 ),
             ).lastrowid
+            model_effort.save(conn, "control", receipt_id, choices, selected)
+            model_effort.audit(self._model_settings, user_id, "coworker.turn", selected, "steer")
 
         def authorize():
             # No broad control/conversation lock spans the canonical mutation.
@@ -748,7 +814,12 @@ class Store:
         bot = conn.execute("SELECT * FROM bots WHERE id=?", (job["bot_id"],)).fetchone()
         if bot is None:
             raise StoreError("not_found", 404)
-        data = {"conversation": self._conversation_view(conn, conversation), "bot": self._bot(bot)}
+        audience = self._conversation_view(conn, conversation)
+        # New display fields are not audience authority. Keep persisted origin
+        # bindings compatible, including after an inherited default changes.
+        audience.pop("model", None)
+        audience.pop("reasoning_effort", None)
+        data = {"conversation": audience, "bot": self._bot(bot)}
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
     def list_memory(self, user_id, conversation_id):
