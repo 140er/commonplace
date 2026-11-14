@@ -67,3 +67,12 @@ test('canonical Board route reuses the last readable board and classic routing s
   assert.equal(resolveRoute('#/board',{boards,last:'hidden',deck:true}),'#/board/product');
   assert.equal(resolveRoute('#/board',{boards,deck:false}),'#/board');
 });
+test('recorded plan approvals and origin release retain their existing authority paths',()=>{
+  const plan=renderDetails({...base,need:'you',actions:['approve'],ask:null},options);
+  assert.match(plan,/data-action="need-approve" data-card="7" data-version="3"/);
+  const origin=renderDetails({...base,need:'you',awaiting_release:true,can_approve:true},options);
+  assert.match(origin,/data-deck-release>Approve</);
+  assert.doesNotMatch(origin,/data-action="need-approve"/,'origin release still requires its reason form');
+  const unoffered=renderDetails({...base,need:'you',actions:[]},options);
+  assert.doesNotMatch(unoffered,/data-action="need-approve"/);
+});

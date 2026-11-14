@@ -173,6 +173,11 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
   const click = (event) => {
     const tab = event.target.closest("[data-details-tab]");
     if (tab) selectTab(tab.dataset.detailsTab, true);
+    else if (event.target.closest("[data-deck-release]")) {
+      const controls = mount.querySelector("[data-deck-card-controls]");
+      if (controls) controls.open = true;
+      mount.querySelector('[data-form="release-origin"] [name="reason"]')?.focus();
+    }
     else if (event.target.closest("[data-card-type-save]")) {
       void saveCardType(mount, current, api).then((updated) => {
         if (!updated) return;

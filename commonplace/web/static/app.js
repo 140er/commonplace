@@ -713,7 +713,8 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     // A refresh of the open card reuses the component, so focus stays where the user left it.
     if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
-    const shown = detailsUI.show(card, { board, bots: state.deckBots || [], me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
+    const queued = needsCards().find(item => item.number === card.number && item.version === card.version);
+    const shown = detailsUI.show({ ...card, actions: card.actions || queued?.actions }, { board, bots: state.deckBots || [], me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
     panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="panel-priority"], [data-action="panel-reviewer"], [data-action="handoff"], [data-action="remove-assignment"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
