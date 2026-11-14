@@ -88,7 +88,7 @@ const subOf = (node) => [node.role, node.missing && "not recorded", node.stale &
 
 // Counts keep an 11px screen size. Reserve their full box at the smallest fitted
 // scale, beside the mark and away from the disc, labels and every link stroke.
-function bundlePosition(key, count, model, positions, places, labels, selectedLink) {
+function bundlePosition(key, count, model, positions, places, labels, selectedLink, cards = false) {
   const origin = positions[key], width = String(count).length * 8 / K_LEAST, half = 8 / K_LEAST;
   const overlaps = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
   const nodes = model.nodes.filter(node => positions[node.key]);
@@ -97,7 +97,8 @@ function bundlePosition(key, count, model, positions, places, labels, selectedLi
     const points = place.points || [{ x: place.x1, y: place.y1 }, { x: place.x2, y: place.y2 }];
     return points.slice(1).map((p, i) => [points[i], p]);
   });
-  const clear = box => !plates.some(plate => overlaps(box, plate)) && !nodes.some(node => {
+  const cardPlates = cards ? nodes.map(node => ({ x: positions[node.key].x - labels / (2 * K_LEAST), y: positions[node.key].y - DISC, width: labels / K_LEAST, height: Math.max(54, labelBox(node.name, subOf(node), labels - 24).height) / K_LEAST })) : [];
+  const clear = box => !cardPlates.some(plate => overlaps(box, plate)) && !plates.some(plate => overlaps(box, plate)) && !nodes.some(node => {
     const at = positions[node.key], x = Math.max(box.x, Math.min(at.x, box.x + box.width)), y = Math.max(box.y, Math.min(at.y, box.y + box.height));
     return Math.hypot(x - at.x, y - at.y) <= DISC + 2;
   });
@@ -122,7 +123,7 @@ function bundlePosition(key, count, model, positions, places, labels, selectedLi
   }
 }
 
-function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle }) {
+function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle, cards = false }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
   const sub = subOf(node);
   const bundleTitle = bundle ? `${bundle.count} links, worst ${node.name} end: ${words[bundle.state]}.` : "";
@@ -131,10 +132,10 @@ function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle }) {
   // A label is drawn at a constant size on the screen: its group is scaled by the inverse of the view's scale
   // (the stage's --inv), so the type is the same size at every zoom. The plate hides a line that passes under it.
   // The hub's label sits above it: every line leaves the hub downwards.
-  const hub = node.kind === "hub", box = labels ? labelBox(node.name, sub, labels) : null;
+  const hub = node.kind === "hub", box = labels ? labelBox(node.name, sub, cards ? labels - 24 : labels) : null;
   const top = box ? (hub ? -GAP - box.height : GAP) : 0;
   const lines = (list, y, name) => (list.length ? `<text class="${name}" y="${y}">${list.map((line, i) => `<tspan x="0"${i ? ' dy="15"' : ""}>${esc(line)}</tspan>`).join("")}</text>` : "");
-  const tag = box ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${box.height}" rx="8"/>${lines(box.nameLines, top + 15, "topo-name")}${lines(box.roleLines, top + 15 + 15 * box.nameLines.length, "topo-role")}</g>` : "";
+  const tag = box ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${cards && !hub ? Math.max(54, box.height) : box.height}" rx="8"/>${lines(box.nameLines, top + 15, "topo-name")}${lines(box.roleLines, top + 15 + 15 * box.nameLines.length, "topo-role")}</g>` : "";
   const texts = box ? "" : `<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}`;
   return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${aria}"><title>${aria}</title>${tag}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}${texts}${badge}</g>`;
 }
@@ -145,12 +146,12 @@ function linkMarkup(link, at, names, { on, dim, words, interactive, sel, bundles
   const from = names.get(link.from), to = names.get(link.to);
   const ends = [["from", from], ["to", to]].filter(([end]) => link.status[end] !== "none").map(([end, name]) => ` ${name} end: ${words[link.status[end]]}.`).join("");
   const label = `${from} to ${to}, ${method}${link.via ? ` via ${link.via}` : ""}.${ends}${link.missing ? " Not recorded." : ""}${link.stale ? " Stale." : ""}`;
-  return `<g class="${classes}" data-link="${esc(link.id)}"${interactive ? ` tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${esc(label)}"` : ""}><title>${esc(label)}</title>${at.points ? `<path class="topo-route" d="M${at.points.map((p) => `${p.x} ${p.y}`).join("L")}"/>` : `<line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/>`}<text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${!sel && bundles.has(link.from) ? "" : statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${!sel && bundles.has(link.to) ? "" : statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
+  return `<g class="${classes}" data-link="${esc(link.id)}"${interactive ? ` tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${esc(label)}"` : ""} data-method="${esc(link.method)}" data-active="${!link.stale && !link.missing && link.status.from === "up" && link.status.to === "up"}"><title>${esc(label)}</title>${at.points ? `<path class="topo-route" d="M${at.points.map((p) => `${p.x} ${p.y}`).join("L")}"/>` : `<line x1="${at.x1}" y1="${at.y1}" x2="${at.x2}" y2="${at.y2}"/>`}<text class="topo-method" x="${at.label.x}" y="${at.label.y}" dy="-5">${esc(method)}</text>${!sel && bundles.has(link.from) ? "" : statusDot(link.status.from, at.from, `${from} end: ${words[link.status.from]}`, "from")}${!sel && bundles.has(link.to) ? "" : statusDot(link.status.to, at.to, `${to} end: ${words[link.status.to]}`, "to")}</g>`;
 }
 
 /** The whole map as SVG markup. `route` is one of `model.routes`: its links and nodes are
  * marked `on` and everything else `dim`. `selected` is a node key. */
-export function renderScene(model, positions, { route = null, selected = null, selectedLink = null, interactiveLinks = false, words = STATUS_TEXT, labels = 0, places: given = null } = {}) {
+export function renderScene(model, positions, { route = null, selected = null, selectedLink = null, interactiveLinks = false, words = STATUS_TEXT, labels = 0, places: given = null, cards = false, presentation = null } = {}) {
   const onLinks = new Set(route?.hops.map((hop) => hop.link));
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
@@ -158,7 +159,7 @@ export function renderScene(model, positions, { route = null, selected = null, s
   // Count incident ends before removing the selected link: a four-link bundle stays
   // collapsed while its selected link shows its own two marks. Classic keeps every mark.
   const bundles = new Map();
-  if (interactiveLinks) {
+  if (interactiveLinks && !presentation) {
     for (const link of model.links) if (places.has(link.id)) for (const end of ["from", "to"]) {
       const key = link[end];
       if (!bundles.has(key)) bundles.set(key, []);
@@ -169,11 +170,11 @@ export function renderScene(model, positions, { route = null, selected = null, s
       const remaining = ends.filter(end => end.id !== selectedLink);
       // Match the status reader: worst known state; unknown only with no known state.
       const state = ["down", "degraded", "up", "unknown"].find(state => remaining.some(end => end.state === state)) || "none";
-      bundles.set(key, { count: remaining.length, state, ...(state === "none" ? {} : bundlePosition(key, remaining.length, model, positions, places, labels, selectedLink)) });
+      bundles.set(key, { count: remaining.length, state, ...(state === "none" ? {} : bundlePosition(key, remaining.length, model, positions, places, labels, selectedLink, cards)) });
     }
   }
-  const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id, bundles }));
-  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
+  const links = model.links.filter((link) => places.has(link.id)).map((link) => (presentation?.link || linkMarkup)(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id, bundles }));
+  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => (presentation?.node || nodeMarkup)(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, cards, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
 
@@ -221,7 +222,7 @@ export function mapMemory(storage, workspace) {
 }
 
 /** The map without a DOM. Dragged places and the view survive a reload through `storage`. */
-export function createMapCore({ storage = null, workspace = "", words = STATUS_TEXT, none = false, labels = 0, columns = 0, layout = "auto", metrics = {}, route: routed = false } = {}) {
+export function createMapCore({ storage = null, workspace = "", words = STATUS_TEXT, none = false, labels = 0, columns = 0, layout = "auto", metrics = {}, route: routed = false, cards = false, presentation = null } = {}) {
   let boxes = [];
   const nodeInfo = () => boxes;
   const memory = mapMemory(storage, workspace);
@@ -233,9 +234,9 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
   let routes = null;
   const place = () => {
     // What each label needs: its height on the screen sets how far apart the rows are.
-    boxes = model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node), height: labels ? labelBox(node.name, subOf(node), labels).height : 0 }));
+    boxes = model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node), height: labels ? labelBox(node.name, subOf(node), cards ? labels - 24 : labels).height : 0 }));
     const heights = new Map(boxes.map((box) => [box.key, box.height]));
-    const auto = layout === "layered" ? layeredLayout(model.nodes, model.links, labels ? { ...metrics, below: (key) => heights.get(key) ?? 38, least: K_LEAST } : metrics) : autoLayout(model.nodes, model.links, { columns });
+    const auto = typeof layout === "function" ? layout(model.nodes, model.links) : layout === "layered" ? layeredLayout(model.nodes, model.links, labels ? { ...metrics, below: (key) => heights.get(key) ?? 38, least: K_LEAST } : metrics) : autoLayout(model.nodes, model.links, { columns });
     positions = Object.fromEntries(model.nodes.map((node) => [node.key, placed[node.key] ? { ...placed[node.key] } : auto[node.key]]));
     routes = null;
   };
@@ -243,6 +244,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
   // when the host asks. A link nobody could route keeps its straight line. Routes and plates are made for a
   // view no smaller than K_LEAST, which the first view never goes below.
   const linkPlaces = () => {
+    if (presentation) return presentation.links(model,positions,view?.k || 1);
     const straight = layoutLinks(model.links, positions);
     if (!routed) return straight;
     routes ??= routeLinks(model.links, nodeInfo(), positions, labels || 160, K_LEAST) || new Map();
@@ -276,6 +278,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     },
     setView(next, { remember = true } = {}) { view = { x: next.x, y: next.y, k: next.k }; if (remember) save(); },
     fit(width, height, options, { pad = 70, reach } = {}) {
+      if (presentation) { const fitted = presentation.fit(model,positions,width,height); this.setView(fitted,options); return fitted; }
       if (!labels) { this.setView(fitView(Object.values(positions), width, height, pad, reach), options); return null; }
       // Labels keep their size on the screen: fit the graph's width and let a taller graph pan.
       const heights = new Map(boxes.map((box) => [box.key, box]));
@@ -294,7 +297,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     /** Make `key` the selected node (not a toggle); false when the map has no such node. */
     choose(key) { if (!positions[key]) return false; selected = key; return true; },
     clear() { selected = null; },
-    scene() { return renderScene(model, positions, { route: route(), selected, selectedLink, interactiveLinks: routed, words, labels, places: routed ? linkPlaces() : null }); },
+    scene() { return renderScene(model, positions, { route: route(), selected, selectedLink, interactiveLinks: routed, words, labels, places: routed ? linkPlaces() : null, cards, presentation }); },
     links() { return linkPlaces(); },
     get routed() { return routed; },
     /** What each device's label needs, for a host or a test that reasons about plates. */
@@ -410,6 +413,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
       error = ""; stalled = false;
       const before = core.selected;
       const changed = core.apply(payload);
+      if (look.site) core.setRoute(look.site());
       // A device that left the map takes its details with it.
       if (before !== null && core.selected === null) { chosen = false; announce(null); }
       if (!chosen && !core.selected && core.model.nodes.length && preselect) {
@@ -467,7 +471,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
 
   function down(event) {
     // A press on the note (empty state, retry) belongs to its button, not to the canvas.
-    if (event.button > 0 || !core.view || event.target.closest?.(".topo-note > *")) return;
+    if (event.button > 0 || !core.view || event.target.closest?.("button, select") || event.target.closest?.(".topo-note > *")) return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     try { stage.setPointerCapture(event.pointerId); } catch { /* A pointer that already ended cannot be captured. */ }
     if (pointers.size === 2) { gesture = { kind: "pinch", last: pinch() }; return; }
@@ -562,6 +566,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     run += 1;
     clearTimeout(timer); timer = null;
     listeners?.abort(); listeners = null;
+    panel?.stop(); panel = null;
     sizes?.disconnect(); sizes = null;
     pointers.clear(); gesture = null;
     section = null;
@@ -570,10 +575,10 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     stop();
     const host = mount();
     if (!host) return;
-    host.innerHTML = renderFrame({ words, legend });
+    host.innerHTML = (look.frame || renderFrame)({ words, legend });
     section = host.querySelector("[data-topology]");
     stage = part("stage"); world = part("world");
-    core = createMapCore({ storage, workspace: workspace(), words, none, labels, columns, layout, metrics, route: routed });
+    core = createMapCore({ storage, workspace: workspace(), words, none, labels, columns, layout, metrics, route: routed, cards: look.cards, presentation: look.presentation });
     refused = false; error = ""; stalled = false; redraw = false; sites = null; fitted = false; chosen = false;
     listeners = new AbortController();
     const on = (target, kind, handler, options = {}) => target.addEventListener(kind, handler, { ...options, signal: listeners.signal });
@@ -581,7 +586,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     on(stage, "wheel", wheel, { passive: false });
     on(stage, "keydown", keys);
     on(section, "click", click);
-    panel = createNodePanel({ section, api, model: () => core.model, interval, own, compact });
+    panel = createNodePanel({ section, api, model: () => core.model, interval, own, compact, render: look.panel });
     on(part("route"), "change", (event) => { core.setRoute(event.target.value); draw(); });
     if (typeof ResizeObserver === "function") {
       sizes = new ResizeObserver(() => { if (fitted && core.view && !gesture) fit({ remember: false }); });

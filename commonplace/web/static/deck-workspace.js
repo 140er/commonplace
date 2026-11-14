@@ -2,6 +2,8 @@
 import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
 import { mount as mountMap } from './deck-compute.js';
+import { computeStyles } from './deck-compute-capy.js';
+import { mountComputeRoutes, placeManagementTabs } from './deck-compute-scene.js';
 import { createCompute } from './compute.js';
 import { createCoworkers } from './coworkers.js';
 import { statusMark } from './topology-map.js';
@@ -31,11 +33,12 @@ export function coworkerRow({ bot, board = {}, project, checkpoint, failed = fal
 }
 
 export function mount(context) {
-  let ctx = context, stopped = false, epoch = 0, request = null, child = null;
+  let ctx = context, stopped = false, epoch = 0, request = null, child = null, routePicker = null, tabPlacement = null;
   const root = context.root, page = workspaceRoute(context.route);
   const doc = root.ownerDocument || globalThis.document;
   if (page?.screen === 'coworkers' && !page.conversations && doc?.documentElement?.dataset?.ui === 'deck') return mountCapyCoworkers(context);
   styles(doc);
+  if (page.screen === 'compute' && doc?.documentElement?.dataset?.ui === 'deck') computeStyles(doc);
   root.classList.add('deck-workspace');
   const headers = ['.head', '#phone-bar'].map(selector => root.parentElement?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
   for (const { node } of headers) node.hidden = true;
@@ -50,6 +53,11 @@ export function mount(context) {
     if (page.management) {
       child = createCompute({ mount: () => region('content'), api: (...args) => ctx.api(...args), current: () => ctx.me, route: () => globalThis.location?.hash || ctx.route, expectedRoute: ctx.route, title: 'Compute', doc });
       child.show();
+      tabPlacement = placeManagementTabs(region('content'), root.querySelector('.dw-tabs'));
+      if (doc?.documentElement?.dataset?.ui === 'deck' && root.insertAdjacentHTML) {
+        root.insertAdjacentHTML('beforeend','<div data-compute-routes></div>');
+        routePicker = mountComputeRoutes({ root: root.querySelector('[data-compute-routes]'), api: (...args) => ctx.api(...args), go: hash => ctx.go(hash) });
+      }
     } else {
       root.classList.add('dw-map');
       child = mountMap({ ...ctx, root: region('content'), shell: root.parentElement });
@@ -92,7 +100,7 @@ export function mount(context) {
     }
   }
   return { refresh, stop() {
-    stopped = true; epoch++; request?.abort(); child?.stop();
+    stopped = true; epoch++; request?.abort(); child?.stop(); routePicker?.stop(); tabPlacement?.stop();
     root.classList.remove('deck-workspace'); root.classList.remove('dw-map'); root.innerHTML = '';
     for (const { node, hidden } of headers) node.hidden = hidden;
     if (navStyle) for (const [key, value] of previousNav) navStyle[key] = value;
