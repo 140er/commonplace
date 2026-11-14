@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
+import { createNeedLedger } from "../commonplace/web/static/deck-home-today.js";
 
 const read = (name) => readFile(new URL(`../commonplace/web/static/${name}`, import.meta.url), "utf8");
 const app = await read("app.js");
@@ -24,6 +25,7 @@ const content = {
   querySelector: (selector) => selector === ".settings" && html.includes('class="settings"') ? {} : null,
 };
 const reads = [], settingsReads = [];
+let needsSnapshot = { count: 0, waiting: 0 };
 const free = { enabled: true, plan: "free", storage: { used: 12, limit: 1024 }, transcription: { used_today: 0, limit: 600 }, sync: { interval_seconds: 900 } };
 const values = {
   "/api/connections": {}, "/api/webhooks": { webhooks: [] }, "/api/plan": free,
@@ -31,6 +33,7 @@ const values = {
   "/api/settings/orchestration": { enabled: false },
 };
 const context = {
+  deckNeedsLedger: createNeedLedger(),
   state, root: { querySelector: (selector) => selector === "#content" ? content : null },
   api(path) {
     if (["/api/boards", "/api/needs-me", "/api/rules/count"].includes(path)) {
@@ -53,18 +56,22 @@ const context = {
   showError: (error) => assert.equal(error, ""),
 };
 // Use the same production-function slicing as the other shell integration cases.
-runInNewContext(slice("async function settingsView(", "async function memoryView(") +
+// refresh() closes over the real queue ledger and roster helper in the complete shell.
+runInNewContext(slice("function rememberDeckBots(", "function setBotsWaiting(") +
+  slice("async function settingsView(", "async function memoryView(") +
   slice("async function refresh(", "function decideStart("), context);
 function batch() {
   const pending = reads.splice(0);
   assert.equal(pending.length, 3, "Each refresh must start its three shared reads");
   const boards = [{ slug: `project-${state.refreshRequest}` }];
-  return () => pending.forEach(({ path, resolve }) => resolve(path === "/api/boards" ? { boards } : { count: 0, waiting: 0 }));
+  return () => pending.forEach(({ path, resolve }) => resolve(path === "/api/boards" ? { boards } : path === "/api/needs-me" ? needsSnapshot : { count: 0, waiting: 0 }));
 }
 function completeView() {
   assert.equal(renders, 1, `First complete view never rendered: ${html}`);
   assert.doesNotMatch(html, /Loading/);
   assert.equal(state.botsWaiting, 3, "The roster read fills the Bots badge");
+  assert.equal(state.deckRoster.actor, state.me.actor);
+  assert.equal(state.deckRoster.bots.length, 2, "Refresh retains the authorized roster for the palette");
   if (consoleCase) assert.equal(html, "Console controls");
   else {
     assert.match(html, /<h2>Free plan<\/h2>/);
@@ -77,9 +84,25 @@ function navigateAway() {
   state.screen++; state.base = state.route = "#/boards";
   content.innerHTML = "Another page";
 }
+const settled = { number: 7, version: 1 };
+if (which === "settled_needs") {
+  needsSnapshot = { count: 1, approvals: [settled] };
+  context.deckNeedsLedger.settle(settled, state.me);
+}
 const foreground = context.refresh(), finishForeground = batch();
-if (which === "foreground_only" || which === "settled_background") {
+if (["foreground_only", "settled_background", "settled_needs"].includes(which)) {
   finishForeground(); await foreground; completeView();
+  if (which === "settled_needs") {
+    assert.equal(state.needs.count, 0, "A stale read cannot restore the settled count");
+    assert.equal(state.needs.approvals.length, 0);
+    needsSnapshot = { count: 1, approvals: [{ ...settled, version: 2 }] };
+    const changed = context.refresh({ background: true }); batch()(); await changed;
+    assert.equal(state.needs.count, 1, "A newer version is still actionable");
+    state.me = { ...state.me, workspace: "another" };
+    needsSnapshot = { count: 1, approvals: [settled] };
+    const switched = context.refresh({ background: true }); batch()(); await switched;
+    assert.equal(state.needs.count, 1, "Receipts cannot cross workspace boundaries");
+  }
   if (which === "settled_background") {
     const saved = html;
     const background = context.refresh({ background: true, events: [{ kind: "board.created" }] });
