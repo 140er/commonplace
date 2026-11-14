@@ -152,6 +152,7 @@ const styles = `
 .workbench-board .composer-foot .btn { padding: 0 10px; }
 .workbench-board .composer-hint, .workbench-board .composer [data-add-status] { margin: 0; font-size: 12px; color: var(--text-3); }
 .workbench-board .composer [data-add-status]:empty { display: none; }
+.workbench-board .composer [data-add-status][data-failed] { font-size: 14px; color: var(--text-1, inherit); border-left: 3px solid var(--danger, #c0392b); padding-left: 8px; }
 
 @media (min-width: 1100px) { .workbench-board .col-jump { display: none; } }
 @media (min-width: 1024px) and (max-width: 1099px) {
@@ -202,7 +203,7 @@ export const cardColumn = (card, me, deck) => (deck ? boardGroup(card, me) : car
 export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, added = null, people = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
   const options = { board, me, selected, messages, deck, added }, visible = filterCards(cards, filter, me).map((c, i) => [c, i]).sort(([a, i], [b, j]) => prioRank(a) - prioRank(b) || i - j).map(([c]) => c);
   const backlog = visible.filter((c) => c.status === 'backlog'), count = (s) => visible.filter((c) => c.status === s).length;
-  const form = adding ? addCardForm({ people, me, sheet, canPrioritize }) : '';
+  const form = adding ? addCardForm({ people, me, sheet, canPrioritize, failure: addFailureFor(board) }) : '';
   if (deck) return deckBoardView({ ...options, bots, cards: visible, filter, form, sheet, column });
   const steps = !cards.length ? `<section class="empty-strip" aria-label="Get started"><ol class="steps"><li class="is-next"><span class="num" aria-hidden="true">1</span><div><h2>Add your first card</h2><p>A card is one piece of work. Write it like a to-do.</p><button class="btn primary" data-action="new-card">${icon(PLUS)}Add card</button></div></li><li><span class="num" aria-hidden="true">2</span><div><h2>Connect an agent</h2><p>An agent is an AI helper that works on cards. The first one becomes the Coworker.</p><button class="btn" data-action="connect-agent">Connect an agent</button></div></li><li><span class="num" aria-hidden="true">3</span><div><h2>Ask for something</h2><p>Write in chat. The Coworker turns requests into cards.</p><button class="btn" data-action="open-chat">Write in chat <kbd>/</kbd></button></div></li></ol></section>` : '';
   return `<div class="workbench-board">${steps}${whyStrip(board)}<div class="board-tools"><div class="seg" role="group" aria-label="Filter cards">${['all','mine','agents','blocked'].map((f) => `<button data-board-filter="${f}" aria-pressed="${filter === f}">${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}</button>`).join('')}</div></div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
@@ -218,10 +219,20 @@ export function boardView({ board, cards = [], me, filter = 'all', selected, mes
 export const ANY_AGENT = 'any';
 export const WHO_HINTS = { me: 'Nothing starts when you add this card.', any: 'Adding this card starts an agent run now if a machine is connected. Choose Me to add it without starting one.' };
 export const whoHint = (value) => (value === ANY_AGENT ? WHO_HINTS.any : WHO_HINTS.me);
-export function addCardForm({ people = [], me = '', sheet = true, canPrioritize = false } = {}) {
+// One create at a time per page, and the last failure: the board re-renders on every poll, which makes a fresh
+// enabled form while a request is still out (a second tap then adds the card twice) and drops a message set on the old one.
+let addPending = false, addFailure = null;
+const addFailureFor = (board) => (addFailure && addFailure.slug === board?.slug ? addFailure.text : '');
+// A plain reason for a failed create, the server's own words when it gave any (a 409 included).
+export function addFailureText(error) {
+  const status = error?.status, reason = String(error?.message || '').trim().replace(/[.!?]+$/, '');
+  const why = status ? `${reason && reason !== `Request failed (${status})` ? `${reason} ` : ''}(error ${status})` : 'the server did not answer, check your connection';
+  return `Could not add card: ${why}. Your words are kept here. Try again.`;
+}
+export function addCardForm({ people = [], me = '', sheet = true, canPrioritize = false, failure = '' } = {}) {
   const first = me ? `<option value="${e(me)}" selected>Me (no run starts)</option>` : '<option value="" disabled selected>Choose who</option>';
   const who = `<select name="assignee" aria-describedby="add-card-who"${me ? '' : ' required'}>${first}<option value="${ANY_AGENT}">Any agent (starts a run now)</option>${people.filter((p) => p.ref !== me).map((p) => `<option value="${e(p.ref)}">${e(p.name)}</option>`).join('')}</select>`;
-  return `<form data-board-add class="composer"${sheet ? ' role="dialog" aria-modal="true" aria-labelledby="add-card-h"' : ' aria-labelledby="add-card-h"'}><h2 id="add-card-h"${sheet ? '' : ' class="sr"'}>Add card</h2><label><span class="sr">Title</span><input class="ttl" name="title" required maxlength="500" placeholder="Card title"></label><label class="vis">Details <small>(optional)</small><textarea name="body"></textarea></label><div class="composer-row"><label class="vis">Who${who}</label><label class="vis">Label<input name="label"></label>${canPrioritize ? `<label class="vis">Priority<select name="priority">${PRIORITIES.map((p) => `<option value="${p}"${p === 'normal' ? ' selected' : ''}>${heading(p)}</option>`).join('')}</select></label>` : ''}</div><p class="composer-hint" id="add-card-who" data-who-hint role="status">${whoHint(me)}</p><div class="composer-foot"><button class="btn primary" type="submit">Add card</button><button type="button" class="btn ghost" data-action="cancel-card">Cancel</button></div><p class="composer-hint">Enter adds · Esc cancels</p><p role="status" data-add-status></p></form>`;
+  return `<form data-board-add class="composer"${sheet ? ' role="dialog" aria-modal="true" aria-labelledby="add-card-h"' : ' aria-labelledby="add-card-h"'}><h2 id="add-card-h"${sheet ? '' : ' class="sr"'}>Add card</h2><label><span class="sr">Title</span><input class="ttl" name="title" required maxlength="500" placeholder="Card title"></label><label class="vis">Details <small>(optional)</small><textarea name="body"></textarea></label><div class="composer-row"><label class="vis">Who${who}</label><label class="vis">Label<input name="label"></label>${canPrioritize ? `<label class="vis">Priority<select name="priority">${PRIORITIES.map((p) => `<option value="${p}"${p === 'normal' ? ' selected' : ''}>${heading(p)}</option>`).join('')}</select></label>` : ''}</div><p class="composer-hint" id="add-card-who" data-who-hint role="status">${whoHint(me)}</p><div class="composer-foot"><button class="btn primary" type="submit"${addPending ? ' disabled' : ''}>Add card</button><button type="button" class="btn ghost" data-action="cancel-card">Cancel</button></div><p class="composer-hint">Enter adds · Esc cancels</p><p role="status" data-add-status${failure ? ' data-failed' : ''}>${e(failure)}</p></form>`;
 }
 // A missing Who falls back to the person adding the card, never to an agent start; only ANY_AGENT leaves it unassigned.
 export async function submitCard({ api, board, values, me = '' }) {
@@ -229,22 +240,28 @@ export async function submitCard({ api, board, values, me = '' }) {
   return api(`/api/boards/${encodeURIComponent(board.slug)}/cards`, { method:'POST', body:{ title:values.title, body:values.body || '', assignee, labels:values.label ? [values.label] : [], ...(values.priority ? { priority:values.priority } : {}) } });
 }
 export function bindBoard(root, { api, board, me = '', onAdded = () => {}, onFilter = () => {}, onSelect = () => {}, onOpen = () => {}, onCancel = () => {} }) {
-  const click = (event) => { const more = event.target.closest('[data-board-more]'); if (more) { const col = more.closest('.col'); col?.setAttribute('data-all', ''); more.remove(); const next = col?.querySelectorAll(ITEM)[DONE_SHOWN]; if (next) { roveTo(next); next.focus(); } return; } const button = event.target.closest('[data-board-filter]'); if (button) onFilter(button.dataset.boardFilter); const jump = event.target.closest('[data-board-column]'); if (jump) { root.querySelectorAll('[data-status]').forEach((el) => { el.dataset.active = String(el.dataset.status === jump.dataset.boardColumn); }); root.querySelectorAll('[data-board-column]').forEach((el) => el.setAttribute('aria-pressed', String(el === jump))); root.querySelector(`#col-${jump.dataset.boardColumn}`)?.scrollIntoView({ block:'nearest', inline:'nearest' }); } };
+  const click = (event) => { if (event.target.closest('[data-action="cancel-card"]')) addFailure = null; const more = event.target.closest('[data-board-more]'); if (more) { const col = more.closest('.col'); col?.setAttribute('data-all', ''); more.remove(); const next = col?.querySelectorAll(ITEM)[DONE_SHOWN]; if (next) { roveTo(next); next.focus(); } return; } const button = event.target.closest('[data-board-filter]'); if (button) onFilter(button.dataset.boardFilter); const jump = event.target.closest('[data-board-column]'); if (jump) { root.querySelectorAll('[data-status]').forEach((el) => { el.dataset.active = String(el.dataset.status === jump.dataset.boardColumn); }); root.querySelectorAll('[data-board-column]').forEach((el) => el.setAttribute('aria-pressed', String(el === jump))); root.querySelector(`#col-${jump.dataset.boardColumn}`)?.scrollIntoView({ block:'nearest', inline:'nearest' }); } };
   const submit = async (event) => {
     if (!event.target.matches('[data-board-add]')) return;
     event.preventDefault();
-    const form = event.target, button = form.querySelector('[type="submit"]'), status = form.querySelector('[data-add-status]');
-    if (button.disabled) return;
-    button.disabled = true;
-    try { const card = await submitCard({ api, board, me, values:Object.fromEntries(new FormData(form)) }); status.textContent = `Card ${cardId(board, card.number)} added to Todo`; onAdded(card); }
-    catch { status.textContent = 'Could not add card. Your words are kept here. Try again.'; }
-    finally { button.disabled = false; }
+    const form = event.target, button = form.querySelector('[type="submit"]');
+    if (addPending || button.disabled) return;
+    addPending = true; addFailure = null; button.disabled = true;
+    // The board may have re-rendered while the request was out: the live form is the one to update.
+    const live = () => root.querySelector?.('[data-board-add]') || form;
+    try { const card = await submitCard({ api, board, me, values:Object.fromEntries(new FormData(form)) }); const status = live().querySelector('[data-add-status]'); if (status) status.textContent = `Card ${cardId(board, card.number)} added to Todo`; onAdded(card); }
+    catch (error) {
+      addFailure = { slug:board.slug, text:addFailureText(error) };
+      const status = live().querySelector('[data-add-status]');
+      if (status) { status.textContent = addFailure.text; status.setAttribute('data-failed', ''); status.scrollIntoView?.({ block:'nearest' }); }
+    }
+    finally { addPending = false; const submitButton = live().querySelector('[type="submit"]'); if (submitButton) submitButton.disabled = false; }
   };
   // Enter, Space and arrows on a focused card work whatever the single-key switch says.
   const keydown = (event) => {
     // Esc cancels the composer; the phone sheet also keeps Tab inside.
     const composer = event.target.closest?.('[data-board-add]'), sheet = event.target.closest?.('[data-board-add][aria-modal="true"]');
-    if (composer && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); return; }
+    if (composer && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); addFailure = null; onCancel(); return; }
     if (sheet) {
       if (event.key !== 'Tab') return;
       const items = [...sheet.querySelectorAll('input,textarea,select,button:not(:disabled)')].filter((el) => el.getClientRects().length);

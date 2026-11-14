@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from commonplace.db_busy import RETRY_AFTER_S
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.rules.enforce import RulesRefresh, rest_write
 
@@ -51,6 +52,11 @@ def space_projection(service, row):
     }
 
 
+# A lock timeout saved nothing: say so in words a person can act on.
+BUSY_TEXT = (
+    "The workspace is busy with another change, so this did not go through. Try again in a moment."
+)
+
 LEGACY_REFUSALS = (
     sqlite3.OperationalError,
     CardRefused,
@@ -69,7 +75,7 @@ def _send_refusal(h, service, exc):
         from commonplace.projects import orchestration
 
         orchestration.require_lock_timeout(exc)
-        send_json(h, 409, {"error": "busy", "code": "busy"})
+        send_json(h, 409, {"error": BUSY_TEXT, "code": "busy"}, {"Retry-After": str(RETRY_AFTER_S)})
     elif isinstance(exc, CardRefused):
         send_json(
             h, exc.status, {"error": str(exc).removeprefix("no: "), "code": exc.code, **exc.details}
