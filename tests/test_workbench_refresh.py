@@ -17,6 +17,7 @@ import pytest
         "navigate_during_settings",
         "background_during_settings",
         "settled_background",
+        "settled_needs",
         "console_background_first",
     ],
 )

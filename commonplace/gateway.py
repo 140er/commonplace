@@ -55,6 +55,7 @@ from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
 from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
+from .vector_diagnostics import public_vector_diagnostics
 from .workers import SupervisorClosed, Worker, WorkersPaused, WorkerSupervisor
 
 logger = logging.getLogger("commonplace.gateway")
@@ -70,6 +71,46 @@ MAX_FANOUT_WINGS = 64
 MAX_SEARCH_CANDIDATES = 100
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
+
+
+def _public_worker_response(response):
+    """Strip global vector reasons from tool payloads and protocol error data.
+
+    Only diagnostic envelopes are inspected; stored drawer/fact text stays verbatim.
+    This boundary also covers internal tool calls and search fan-out.
+    """
+    if not isinstance(response, dict):
+        return response
+    out = response
+    error = response.get("error")
+    if isinstance(error, dict):
+        data = error.get("data")
+        cleaned = public_vector_diagnostics(data)
+        if cleaned is not data:
+            out = {**out, "error": {**error, "data": cleaned}}
+    result = response.get("result")
+    if isinstance(result, dict) and isinstance(result.get("content"), list):
+        content = []
+        changed = False
+        for block in result["content"]:
+            replacement = block
+            if isinstance(block, dict) and block.get("type") == "text":
+                try:
+                    payload = json.loads(block["text"])
+                except (KeyError, TypeError, ValueError):
+                    pass
+                else:
+                    cleaned = public_vector_diagnostics(payload)
+                    if cleaned is not payload:
+                        replacement = {
+                            **block,
+                            "text": json.dumps(cleaned, indent=2, ensure_ascii=False),
+                        }
+                        changed = True
+            content.append(replacement)
+        if changed:
+            out = {**out, "result": {**result, "content": content}}
+    return out
 
 
 def _with_search_facts(result, facts):
@@ -259,7 +300,7 @@ class WorkerClient:
                 except Exception as exc:
                     log_failure(logger, "worker start failed", exc)
                     raise WorkerUnavailable() from exc
-                return self._post(worker, principal, request)
+                return _public_worker_response(self._post(worker, principal, request))
         except WorkersPaused as exc:
             raise WorkerPaused(exc.retry_after_s) from None
         except SupervisorClosed as exc:

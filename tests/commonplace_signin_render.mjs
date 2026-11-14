@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import nodeTest from "node:test";
 import { createContext, runInContext } from "node:vm";
+import { createNeedLedger } from "../commonplace/web/static/deck-home-today.js";
 
 const selection = process.env.SIGNIN_CASE || "all";
 const test = (name, fn) => {
@@ -90,7 +91,7 @@ function app({ search = "", pathname = "/app/", hash = "", cookie = "", loadProv
   } };
   const document = { cookie, querySelector: () => root, addEventListener: (name, handler) => listeners.set(name, handler), createElement: () => ({ setAttribute(name, value) { this[name] = value; } }) };
   const context = createContext({
-    document, location, history, URLSearchParams, signinView, signinMessage, e: escape, calls, boundedRequest,
+    createNeedLedger, document, location, history, URLSearchParams, signinView, signinMessage, e: escape, calls, boundedRequest,
     FormData: class extends Array { constructor(form) { super(...Object.entries(form.payload)); } },
     setPeople() {},
     window: { addEventListener() {} },

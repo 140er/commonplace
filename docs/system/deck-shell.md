@@ -38,6 +38,10 @@ state fields render nothing. The Bots heading links to the existing New bot acti
 The account footer shows the authenticated workspace role beside the workspace name.
 The bare Board alias resolves only in Deck; classic routing stays unchanged.
 
+Bot avatar marks use one letter by default. Bots sharing a first letter receive
+distinct two-character marks, assigned in name/identity order for stable refreshes.
+The narrow Today composer uses “Ask anything” and ellipsis truncation for overflow.
+
 Home and New thread use the registered root hero; Today uses its registered screen.
 The shell shares the existing roster callback and retains the personal queue ledger,
 palette callbacks and settings navigation. Microphone placement follows visible
