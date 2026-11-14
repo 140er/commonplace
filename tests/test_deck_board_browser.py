@@ -135,7 +135,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
     try:
         writes = open_board(page)
         assert page.locator(".deck-board .col").count() == 4
-        assert page.locator(".deck-board .col .n").count() == 1
+        assert page.locator(".deck-board .col .n").count() == 4
         assert page.locator(".card.is-you").count() == 1
         for card in page.locator(".deck-board .card").all():
             css = card.evaluate(
@@ -150,12 +150,26 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             )
             assert geometry["x"] == 16 and geometry["width"] == 358
             assert geometry["scroll"] > geometry["width"]
-            page.locator(".deck-board .board").evaluate("el=>el.scrollLeft=el.scrollWidth")
-            assert page.locator("#col-done").is_visible()
-            page.locator(".deck-board .board").evaluate("el=>el.scrollLeft=0")
+            assert page.locator("#col-todo").bounding_box()["width"] == 358
+            page.locator('[data-board-column="done"]').click()
+            page.wait_for_function(
+                "document.querySelector('[data-board-column=done]').ariaPressed === 'true'"
+            )
+            assert abs(page.locator("#col-done").bounding_box()["x"] - 16) < 1
+            page.locator('[data-board-column="todo"]').click()
         shots = Path(os.environ.get("CAPY_D_SHOTS", str(tmp_path)))
         shots.mkdir(parents=True, exist_ok=True)
         suffix = "phone" if size[0] == 390 else "desktop"
+        assert page.locator(".deck-board-heading h1").inner_text() == "Board"
+        if size[0] == 1440:
+            page.locator('[data-board-filter="state:review"]').click()
+            assert page.locator(".deck-board .card").count() == 1
+            assert page.locator(".deck-board .card").get_attribute("data-card") == "4"
+            page.locator('[data-board-filter="all"]').click()
+            page.locator(".board-tools .deck-board-menu summary").click()
+            assert page.locator('.board-tools [data-action="coordinator"]').is_visible()
+            assert page.locator('.board-tools [data-board-filter="mine"]').is_visible()
+            page.locator(".board-tools .deck-board-menu summary").click()
         page.screenshot(path=str(shots / f"board-{suffix}.png"))
         page.locator('.card[data-card="1"] h3').click()
         page.wait_for_selector(".deck-card-drawer")
@@ -182,7 +196,24 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
                     assert control.bounding_box()["height"] >= 44
         else:
             assert drawer.evaluate("el=>getComputedStyle(el).borderRadius") == "14px"
+        assert not drawer.locator('[data-form="comment"]').is_visible()
+        assert drawer.get_by_role("button", name="Close card").is_visible()
+        assert drawer.locator(".deck-card-progress .child").count() == 3
+        assert drawer.locator(".deck-card-progress span.waiting").inner_text() == "Needs you"
+        if size[0] == 390:
+            label = drawer.locator(".deck-card-facts dt").first.bounding_box()
+            value = drawer.locator(".deck-card-facts dd").first.bounding_box()
+            assert abs(label["y"] + label["height"] / 2 - value["y"] - value["height"] / 2) < 1
         page.screenshot(path=str(shots / f"drawer-{suffix}.png"))
+        drawer.get_by_role("button", name="Reply", exact=True).click()
+        assert drawer.locator('[data-form="comment"]').is_visible()
+        assert drawer.locator("textarea").evaluate("el => getComputedStyle(el).resize") == "none"
+        drawer.locator("#details-comment").fill("Keep this draft")
+        drawer.get_by_role("tab", name="Memory", exact=True).click()
+        drawer.get_by_role("tab", name="Details", exact=True).click()
+        assert drawer.locator("#details-comment").input_value() == "Keep this draft"
+        drawer.get_by_role("button", name="Reply", exact=True).click()
+        assert not drawer.locator('[data-form="comment"]').is_visible()
         drawer.locator('.deck-card-actions [data-choice="Hold"]').click()
         page.wait_for_function("true")
         page.wait_for_timeout(100)

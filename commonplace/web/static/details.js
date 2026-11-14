@@ -138,9 +138,11 @@ export function renderDetails(card, { board = { slug: card.board }, me, messages
   const header = `<header class="detail-h"><div class="deck-card-state"><i class="deck-board-dot ${needsOwner(card, me) ? "waiting" : card.status === "done" ? "live" : "idle"}" aria-hidden="true"></i>${e(stateWord(card, me))}</div><h2 tabindex="-1" data-details-title>${e(card.title)}</h2></header>`;
   return drawerCopy(html
     .replace('class="workbench-details"', 'class="workbench-details deck-card-drawer"')
-    .replace(/<header class="detail-h">[\s\S]*?<\/header>/, header + drawerSummary(card, { board, people, bots }))
-    .replace('<dl class="fields">', '<details class="deck-card-controls" data-deck-card-controls><summary>More controls</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div><dl class="fields">')
+    .replace(/<header class="detail-h">[\s\S]*?<\/header>/, header + drawerSummary(card, { board, people, bots, me }))
+    .replace('<dl class="fields">', '<details class="deck-card-controls" data-deck-card-controls><summary>Edit card</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div><dl class="fields">')
     .replace('</div><div class="ctx-foot">', '</details></div><div class="ctx-foot">' + drawerActions(card, me))
+    .replace(' aria-keyshortcuts="]">Hide</button>', ' aria-keyshortcuts="]" aria-label="Close card"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>')
+    .replace('<form class="reply" data-form="comment">', '<form class="reply" data-form="comment" id="deck-card-reply" hidden>')
     .replace(`Memory for ${e(id)}`, 'Linked memory')
     .replace('Context (exact words)', 'Context')
     .replace("'s request, quoted exactly", "'s request"), id);
@@ -151,7 +153,13 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
   let current, options, revision = 0, links = null;
   const draw = () => {
     const controlsOpen = mount.querySelector(".workbench-details")?.dataset?.card === String(current.number) && mount.querySelector("[data-deck-card-controls]")?.open;
+    const replyOpen = mount.querySelector(".workbench-details")?.dataset?.card === String(current.number) && mount.querySelector("[data-deck-reply-toggle]")?.getAttribute("aria-expanded") === "true";
     mount.innerHTML = renderDetails(current, options);
+    if (replyOpen || options.replyOpen) {
+      const reply = mount.querySelector("#deck-card-reply");
+      if (reply) reply.hidden = false;
+      mount.querySelector("[data-deck-reply-toggle]")?.setAttribute("aria-expanded", "true");
+    }
     const controls = mount.querySelector("[data-deck-card-controls]");
     if (controls && controlsOpen) controls.open = true;
     if (options.tab === "details") placeCardLinks(mount, links);
@@ -163,6 +171,7 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
     // Keep an unfinished comment when switching away and back.
     const draft = mount.querySelector("[name=text]")?.value;
     if (draft != null) options.draft = draft;
+    options.replyOpen = mount.querySelector("[data-deck-reply-toggle]")?.getAttribute("aria-expanded") === "true" || options.replyOpen;
     options.tab = tab;
     draw();
     const input = mount.querySelector("[name=text]");
@@ -173,6 +182,12 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
   const click = (event) => {
     const tab = event.target.closest("[data-details-tab]");
     if (tab) selectTab(tab.dataset.detailsTab, true);
+    else if (event.target.closest("[data-deck-reply-toggle]")) {
+      const reply = mount.querySelector("#deck-card-reply");
+      if (reply) { reply.hidden = !reply.hidden; options.replyOpen = !reply.hidden; }
+      event.target.closest("[data-deck-reply-toggle]").setAttribute("aria-expanded", String(!reply?.hidden));
+      if (!reply?.hidden) reply?.querySelector("textarea")?.focus();
+    }
     else if (event.target.closest("[data-deck-release]")) {
       const controls = mount.querySelector("[data-deck-card-controls]");
       if (controls) controls.open = true;

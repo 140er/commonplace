@@ -10,7 +10,7 @@ const options = {board,me:'user:owner',bots:[bot],deck:true};
 const htmlFor = card => boardView({...options,cards:[{...base,...card}]});
 const visible = html => html.replace(/<[^>]*>/g,'');
 test('Deck cards use exactly one state phrase from live card state', () => {
-  for(const [patch,word] of [[{},'Building'],[{status:'review',need:'idle'},'In review'],[{status:'done',need:'done'},'Live'],[{status:'todo',need:'idle'},'Ready'],[{need:'checks'},'Checking'],[{status:'review',need:'you',ask:'Ship?',ask_to:'user:owner'},'Needs a decision']]) {
+  for(const [patch,word] of [[{},'Building'],[{status:'review',need:'idle'},'In review'],[{status:'done',need:'done'},'Live'],[{status:'todo',need:'idle'},'Ready'],[{need:'checks'},'Checking'],[{status:'review',need:'you',ask:'Ship?',ask_to:'user:owner'},'Needs you']]) {
     const html=htmlFor(patch);
     assert.match(html,new RegExp(`data-card-state>${word}<`));
     assert.match(html,/>Shipping</);
@@ -22,7 +22,7 @@ test('only personal action cards get the amber edge; routine waits never do', ()
   for(const patch of [{need:'working'},{status:'review',need:'idle',ask:'Check?',ask_to:'conn:reviewer'},{need:'checks'},{need:'plan'},{status:'done',need:'done'},{waiting:{code:'project_limit',text:'Waiting for a slot'}}]) assert.doesNotMatch(htmlFor(patch), /class="card[^\"]* is-you/);
   assert.match(htmlFor({need:'you'}),/class="card[^\"]* is-you/);
   const html=boardView({...options,cards:[{...base,need:'you'},{...base,number:8,status:'done',need:'done'}]});
-  assert.equal((html.match(/class="n"/g)||[]).length,1,'only the action column has a count');
+  assert.equal((html.match(/class="n"/g)||[]).length,4,'all column totals stay quiet grey');
   assert.equal((html.match(/class="col"/g)||[]).length,4);
   assert.match(html,/draggable="true"/);
   const proposal=htmlFor({status:'backlog',need:'you',proposal_status:'pending'});
@@ -31,7 +31,7 @@ test('only personal action cards get the amber edge; routine waits never do', ()
 });
 test('drawer shows summary, live Bot, Coworker, Version and truthful progress; controls survive', () => {
   const html=renderDetails({...base,status:'todo',need:'you',head_sha:'abc1234',can_prioritize:true,body:'Summary.\nEvidence: ~/private/review.json',ask:'Ship?',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
-  for(const label of ['Summary','Bot','Coworker','Version','Progress','More controls','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
+  for(const label of ['Summary','Bot','Coworker','Version','Progress','Edit card','Who','Remove assignment','Approve','Hold']) assert.ok(visible(html).includes(label),label);
   assert.match(html,/<code[^>]*>abc1234<\/code>/);
   assert.doesNotMatch(visible(html),/~\/|review\.json|Evidence:|P-7|#7/);
   for(const action of ['edit-card','handoff','panel-move','remove-assignment']) assert.match(html,new RegExp(`data-action="${action}"`));
@@ -79,4 +79,33 @@ test('recorded plan approvals and origin release retain their existing authority
   assert.doesNotMatch(renderDetails({...base,need:'you',awaiting_release:true,can_approve:false,proposal_status:'pending'},options),/data-action="need-approve"|data-deck-release/);
   const unoffered=renderDetails({...base,need:'you',actions:[]},options);
   assert.doesNotMatch(unoffered,/data-action="need-approve"/);
+});
+
+test('Board has one title/filter row, live totals and reachable legacy filters', () => {
+  const cards = [{...base,need:'you'}, {...base,number:8}, {...base,number:9,status:'review',need:'idle'}, {...base,number:10,status:'done',need:'done'}];
+  const html = boardView({...options,cards});
+  assert.match(html, /<h1>Board<\/h1>/);
+  for (const state of ['todo','doing','review','done']) {
+    assert.match(html, new RegExp(`data-board-filter="state:${state}"`));
+    assert.match(html, new RegExp(`data-board-column="${state}"`));
+  }
+  for (const filter of ['mine','agents','blocked']) assert.match(html, new RegExp(`data-board-filter="${filter}"`));
+  assert.match(html, /data-action="coordinator"/);
+  assert.doesNotMatch(html, /<kbd>|Chat ·/);
+  const filtered = boardView({...options,cards,filter:'state:review'});
+  assert.match(filtered,/data-card="9"/);
+  assert.doesNotMatch(filtered,/data-card="7"|data-card="8"|data-card="10"/);
+});
+test('drawer progress is a truthful tree, Reply is opt-in and the close control is named', () => {
+  const html = renderDetails({...base,need:'you',stage:'Release',events:[{kind:'pr'},{kind:'approve'}],checks:'pass',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
+  assert.match(html, /<span>Release<\/span>/);
+  assert.match(html, /class="child"><span>Builder<\/span><span class="live">Pushed/);
+  assert.match(html, /class="waiting">Needs you/);
+  assert.match(html, /id="deck-card-reply" hidden/);
+  assert.match(html, /data-deck-reply-toggle aria-expanded="false"/);
+  assert.match(html, /aria-label="Close card"><svg/);
+  assert.doesNotMatch(visible(html), /More controls|Hide|Needs me|Needs a decision/);
+  const memory = renderDetails({...base,linked:[{drawer_id:'note',title:'Saved words'}]},{...options,tab:'memory'});
+  assert.match(memory, /data-details-tab="memory"/);
+  assert.match(memory, /Saved words/);
 });
