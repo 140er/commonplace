@@ -40,9 +40,9 @@ export function audienceText(bot, shares, { mine = false } = {}) {
   return `${[owner, ...names].join(", ")} can read this conversation. Its creator can also read and reply. People granted access later can read only new messages.`;
 }
 
-export function accessLogText(row, people = {}) {
+export function accessLogText(row, people = {}, viewer = "") {
   const name = id => people[`user:${id}`] || "a former workspace member";
-  const actor = name(row.actor_id), member = name(row.member_id);
+  const actor = viewer && row.actor_id === viewer ? "You" : name(row.actor_id), member = name(row.member_id);
   switch (row.action) {
     case "share": return `${actor} gave ${member} access to this bot.`;
     case "unshare": return `${actor} removed ${member}’s access to this bot.`;
@@ -68,7 +68,7 @@ export function sharingHTML(sheet, bot, e) {
   if (frozen) content += `<section class="bot-access-card" data-frozen><h3>${bot.frozen_reason === "owner_left" ? "This bot needs a new owner" : "This bot is disabled"}</h3><p>${bot.frozen_reason === "owner_left" ? "Its owner left the workspace. Conversations and access are kept, but nobody can talk to it. A workspace owner can adopt it. The former owner’s private conversation stays private." : "Nobody can talk to this bot until a workspace owner enables it again."}</p>${canManage ? `<div class="sheet-btns"><button type="button" class="bb-opt go" data-bots-action="${bot.frozen_reason === "owner_left" ? "adopt" : "enable"}"${off ? " disabled" : ""}>${bot.frozen_reason === "owner_left" ? "Adopt bot" : "Enable bot"}</button></div>` : ""}</section>`;
   if (sheet.loading) content += '<p role="status">Loading bot settings…</p>';
   else if (sheet.tab === "log") {
-    content += `<section class="bot-access-card" data-access-log><h3>Access log</h3>${frozen ? '<p>The log is available after the bot is enabled or adopted.</p>' : (sheet.log || []).length ? `<ol>${sheet.log.map(row => `<li><p>${e(accessLogText(row, sheet.me?.people))}</p><time datetime="${e(row.at)}" title="${e(row.at)}">${e(accessLogTime(row.at))}</time></li>`).join("")}</ol>${sheet.moreLog ? action("sharing-more", "More changes") : ""}` : '<p>No access changes yet.</p>'}</section>`;
+    content += `<section class="bot-access-card" data-access-log><h3>Access log</h3>${frozen ? '<p>The log is available after the bot is enabled or adopted.</p>' : (sheet.log || []).length ? `<ol>${sheet.log.map(row => `<li><p>${e(accessLogText(row, sheet.me?.people, sheet.me?.user || sheet.me?.actor?.replace(/^user:/, "")))}</p><time datetime="${e(row.at)}" title="${e(row.at)}">${e(accessLogTime(row.at))}</time></li>`).join("")}</ol>${sheet.moreLog ? action("sharing-more", "More changes") : ""}` : '<p>No access changes yet.</p>'}</section>`;
   } else if (!owner && !bot.lifecycle) {
     content += `<section class="bot-access-card" data-member-access><h3>Your access</h3><p>Shared by ${e(bot.owner?.name || "the bot’s owner")}.</p><p>${e(permissionText(bot.perms || {}, "You").replace("They cannot", "You cannot").replace("They can", "You can").replace("they start", "you start"))}</p><p>Your private conversation is visible only to you. The bot’s owner and workspace owners cannot read it.</p><p>Only the bot’s owner can change your access.</p></section>`;
   } else if (!frozen) {
