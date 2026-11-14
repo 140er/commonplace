@@ -1050,7 +1050,7 @@ def cmd_restore(args) -> int:
 
 
 def cmd_runner(args) -> int:
-    if args.action in ("install", "status", "uninstall", "_setup-service"):
+    if args.action in ("install", "status", "uninstall", "sign-in", "_setup-service"):
         from .runner import installer
 
         return installer.run(args)

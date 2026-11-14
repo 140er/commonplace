@@ -20,7 +20,7 @@ def owned(path, kind):
         return path == RUNTIME_CACHE or bool(
             re.fullmatch(re.escape(PREFIX) + r"/(host|claude|codex)-[0-9a-f]{64}\.artifact", path)
         )
-    return path in (PREFIX, HOME, CHECKOUTS) or bool(
+    return path in (PREFIX, HOME, HOME + "/.codex", HOME + "/.claude", CHECKOUTS) or bool(
         re.fullmatch(re.escape(CHECKOUTS) + r"/[0-9a-f]{64}", path)
     )
 
@@ -86,6 +86,8 @@ class Runtime:
                 staged[name] = (path, source, raw)
             for directory in (PREFIX, HOME, CHECKOUTS):
                 self._directory(directory)
+            if "claude" in releases:
+                self._directory(HOME + "/.claude")
             for name, (_, _, raw) in staged.items():
                 report[name] = facts_valid(
                     self.host.probe(name, releases[name], raw, self.fs.home / HOME), name
