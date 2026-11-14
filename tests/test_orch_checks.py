@@ -747,7 +747,7 @@ def test_orch_cli_submit_accept_render_diff_and_retire(data, tmp_path, capsys):
     code, out, err = _cli(data, "orch", "list", *ws, *board, capsys=capsys)
     assert code == 0 and [row["ref"] for row in json.loads(out)] == ["v2", "v1"]
     code, out, err = _cli(data, "orch", "render", *ws, *board, capsys=capsys)
-    assert code == 0 and out.startswith("# Orchestrator config `personal`"), (out, err)
+    assert code == 0 and out.startswith("# Coworker config `personal`"), (out, err)
     code, out, err = _cli(data, "orch", "render", *ws, *board, "v2", capsys=capsys)
     assert code == 0 and "max_agents: 2" in out, out
     code, out, err = _cli(data, "orch", "render", *ws, *board, "--channel", "exp:x", capsys=capsys)

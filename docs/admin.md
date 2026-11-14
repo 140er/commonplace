@@ -2,9 +2,9 @@
 
 Sign in as the current workspace's owner and choose **Account → Admin**, or choose
 **Admin** in the command palette on a phone. The direct route is `/app/#/admin`.
-The page shows the active workspace's members, connections, runtime configuration, effective limits and cards needing attention. It adds no
-workspace switching, global account directory, invitation, token reveal or editing
-form. **Manage agents and workspace settings** opens the existing Settings page.
+The page shows the active workspace's members, connections, runtime configuration, effective limits and cards needing attention. Its sections add no
+workspace switching, global account directory, token reveal or editing
+form; the one write is the owner's machine requester list (see below). Invites live in their own block (see [Invite people](#invite-people-block)). **Manage agents and workspace settings** opens the existing Settings page.
 
 ## Authority
 
@@ -92,22 +92,68 @@ Source failures return safe 503 constants: `Users unavailable; try again` or
 `runtime` has independent `orchestration`, `orchestrators` and `machines` subresults.
 Each has `state: "ready"` or `state: "error"` with a safe error constant. A ready
 switch has `enabled`; ready lists have `items`, `count`, `has_more`, `next_cursor`.
-A failed machines source preserves the switch and orchestrator observations.
+A failed machines source preserves the switch and Coworker observations.
 Older stores without the optional coordinator or heartbeat columns are read as
 not configured/unknown without running migrations. Cursors accept slugs up to 100 characters.
 
-Orchestrators include `id`, `slug`, `name`, `coordinator`, `seat_name`, `source`,
+Coworkers include `id`, `slug`, `name`, `coordinator`, `seat_name`, `source`,
 `connected`, `activity`, `last_used_at`, `wakeable`. Only unarchived projects appear.
 A configured coordinator takes precedence over a stored seat; an absent seat is
 `not_configured` and a seat without a coordinator is configuration only. Current membership,
 user state, credential expiry/revocation and runner kind determine connection
-visibility. Machine credentials never become orchestrators. Wakeability means
+visibility. Machine credentials never become Coworkers. Wakeability means
 current subscription eligibility for `space_message`, with wildcard/exact-board
 filtering and current policy/wing access. It sends no webhook or liveness probe.
 
 Machines include `id`, `label`, `enabled`, `revoked_at`, `binding_state`,
 `verified:false`, `machine_last_used_at`, `worker_last_used_at`, `activity`,
-`worker_activity`, `max_in_flight`, `max_starts_per_hour`, `created_at`.
+`worker_activity`, `max_in_flight`, `max_starts_per_hour`, `grant_version`,
+`created_at` and
+`requesters` (at most 32 entries of `id`, `name`, `state`) and `requesters_total`.
+`state` is `active` only while the agent would pass the start check (active,
+trusted, personal token); a name is `null` for an id outside the workspace. The
+machines subresult also carries `requester_candidates`: the active trusted
+workspace agents (`id`, `name`) an owner may add, with runner credentials, OAuth,
+untrusted and revoked connections left out. It holds at most 100 entries, and
+`requester_candidates_more` is true when more exist; the panel then says it shows
+only the first ones. Requesters are resolved only for the machines on the page.
+
+The runtime panel lists each unrevoked machine's requesters with **Remove** and
+**Add** buttons. Each button changes one agent on the stored list, never the list
+the page shows:
+- `POST /api/runners/<machine-id>/requesters` with `{"requester":"<connection id>"}`
+  vets that one id and appends it.
+- `DELETE /api/runners/<machine-id>/requesters/<connection id>` removes it.
+
+Both are owner-only (a caller that is not a signed-in person owner of the machine's
+workspace is refused with 403 or 404 and nothing changes). Both require
+`If-Match: <grant_version>`, the machine's `grant_version` as the page read it from
+the runtime payload. A missing header is 428; a version that is no longer current
+is 409 and nothing changes, so a page that predates another owner's edit cannot
+add back a requester that owner removed, or remove one they added again. The page
+then says the machine changed and reads the list again. The version also moves for
+other grant edits, so a 409 can follow an unrelated change. A request that finds
+the list already in the asked state is 200 with `changed:false` (the page says
+"Already a requester." for an add and "Already removed." for a remove). The
+answer carries the machine's new `grant_version`, which the page uses for its next
+edit before it reloads. Projects trust and demotion also change a machine's
+requesters on the server, under the same registry lock and without `If-Match`; they
+bump `grant_version`, so an open page gets a 409 on its next edit and reloads.
+Each change is audited as `runner.requester_add` or `runner.requester_remove` with
+the machine id and the agent id. A machine may hold requesters beyond the 32
+listed; the panel says how many it shows, and an edit leaves the hidden ones alone.
+An entry a machine already holds stays even after it lapses, so it can be removed
+or left while other entries change. A lapsed requester becomes effective again if
+its token is rotated, because rotation resets the expiry and the stored entry is
+unchanged; remove the entry to end it.
+
+`PATCH /api/runners/<machine-id>` with a full `requesters` list still exists for
+other clients, and the Admin page does not use it. It replaces the whole list, so
+it is last-writer-wins unless the caller sends the optional
+`If-Match: <grant_version>` (409 on a mismatch), and it vets only the ids it adds.
+Never build its list from a view where `requesters_total` is greater than the
+listed entries: the hidden entries would be deleted.
+
 Machine activity uses machine contact, with worker contact shown separately.
 Working means recent contact; idle/quiet means no recent contact; unused means
 never contacted. Attestation never proves a live or verified runner.
@@ -116,7 +162,7 @@ never contacted. Attestation never proves a live or verified runner.
 `workspace_limit_source:"not_configured"`, `projects`, `machines`, `pagination`.
 Each project includes `id`, `slug`, `name`, `configured_max_agents`,
 `accepted_config_max_agents`, `effective_max_agents`, `used`, `counting_mode`.
-With orchestration off, distinct doing connection assignees count and a null cap
+With Coworker management off, distinct doing connection assignees count and a null cap
 means unlimited. With it on, existing slot accounting deduplicates cards, ordinary
 agents, queued/leased/starting/uncertain jobs and recent started jobs. The effective
 cap uses accepted runner configuration and the project cap, or default 3. Proposals
@@ -168,8 +214,8 @@ existing stores produce safe source errors, never zero usage. Missing board stor
 produce empty inventories; missing runner stores/tables provide empty job/config
 inputs without creation. Missing settings mean disabled; missing subscription tables
 mean not wakeable. Safe whole-section errors are `Limits unavailable; try again`
-and `Stuck unavailable; try again`; runtime suberrors use `Orchestration`,
-`Orchestrators`, or `Machines` followed by `unavailable; try again`.
+and `Stuck unavailable; try again`; runtime suberrors use `Coworker management`,
+`Coworkers`, or `Machines` followed by `unavailable; try again`.
 
 ## Loading and source bounds
 
@@ -201,6 +247,26 @@ unattempted siblings explicit errors. SQLite may take bounded ordinary read lock
 
 Deployment/health and backup receipts are read-only operational sections. No deploy,
 backup-run, restore, runner control or new enforcement endpoint is present.
+
+## Invite people block
+
+Above the runner block, the Admin page hosts an **Invite people** block for the
+workspace owner. It does not use the `/api/admin` dispatcher; it calls the owner-only
+`/api/invites` routes to make an invite link, list the workspace's invites and revoke an
+open one. A new link is shown once, in a panel the page empties on dismissal, navigation,
+sign-out or session expiry; it is never stored, logged or redrawn. See
+[Workspace invites](invites.md) for the rules and what a member can reach.
+
+## Runner machines block
+
+Below the sections, the Admin page hosts a separate **Runner machines** block for the
+workspace owner. It does not use the `/api/admin` dispatcher, which stays GET-only; it
+calls the existing owner-only `/api/runners` routes to list machines, enroll one,
+attest a binding and edit a machine's wings. Enrollment shows the machine and worker
+tokens once, in a panel the page empties on dismissal, navigation, sign-out or session
+expiry; they are never stored, logged or redrawn. The block redraws independently of
+the Admin sections, so refreshing them cannot clear a form or the token panel. See the
+[runner guide](runner.md#owner-screen) for the fields and what a wings change resets.
 
 ## Instance deployment, health and backup receipts
 
@@ -264,3 +330,5 @@ and the [deployment guide](../deploy/commonplace/DEPLOY.md#optional-backup-statu
 Receipt timestamps require `YYYY-MM-DDTHH:MM:SSZ`, optionally with one to six
 fractional-second digits before `Z`; shortened or space-separated forms are rejected.
 A parent receipts refresh supersedes older per-mode retries.
+
+The separate [Instance console](instance-admin.md) shows cross-workspace management metadata to signed-in instance admins, including members. It grants no content access.

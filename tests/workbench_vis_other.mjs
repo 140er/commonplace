@@ -200,7 +200,7 @@ const cases = {
     assert.match(css, /\.memory-search \.memory-results \{[^}]*max-height: none/, "the result list is not capped at 40%");
     assert.match(css, /\.memory-search \.memory-toolbar \{[^}]*box-shadow: none/, "no legacy toolbar frame");
   },
-  // m16: settings header (name, "Project settings", save status) and the orchestrator row.
+  // m16: settings header (name, "Project settings", save status) and the Coworker row.
   async settings_header() {
     const ui = await import(new URL("projects.js", staticURL));
     const html = ui.projectSettingsHTML(project, e, { origin: "#/board/atlas" });
@@ -212,7 +212,7 @@ const cases = {
     assert.equal(back.getAttribute("data-keys"), "G B");
     host.innerHTML = ui.mainHTML(project, e);
     assert.ok(host.querySelector(".orch-row .av"), "avatar");
-    assert.equal(host.querySelector(".orch-text b")?.textContent, "Atlas orchestrator");
+    assert.equal(host.querySelector(".orch-text b")?.textContent, "Atlas Coworker");
     assert.equal(host.querySelector(".tag.ok")?.textContent, "Connected");
     assert.match(host.querySelector(".orch-text small")?.textContent || "", /connected · working · reads chat, makes cards/);
     assert.equal(ui.lastActive(new Date(Date.now() - 3 * 60000).toISOString()), "3 min ago");

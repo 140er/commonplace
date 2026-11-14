@@ -89,7 +89,7 @@ def test_r19e_access(hub, actor):
 
         principal = replace(w.owner, role="member")
     else:
-        principal = w.a
+        principal = w.db.authenticate_connection(w.machine()["worker_connection_id"])
     status, error = tool(w, "orchestrator_inbox", principal, board="acme")
     assert status == 403 and "not_allowed" in str(error)  # RED
 
@@ -264,8 +264,9 @@ def test_split_key_rejects_wrong_parent_and_access(hub):
         w.boards.task_add, "Bad parent", board="acme", parent=a, labels=[f"split:{b}:build"]
     )
     assert status == 400 and result.get("code") == "split_parent_mismatch"
+    worker = w.db.authenticate_connection(w.machine()["worker_connection_id"])
     status, _ = invoke(
-        BoardService(w.ctx(w.a)).task_add,
+        BoardService(w.ctx(worker)).task_add,
         "No authority",
         board="acme",
         parent=a,

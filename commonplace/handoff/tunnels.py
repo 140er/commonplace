@@ -1,10 +1,17 @@
 """Request-local proof for explicit tunnel endpoints and drawer associations."""
 
+import unicodedata
+
 from commonplace.rules import checks
 from mempalace.read_scope import valid_descriptors
 from mempalace.tunnel_scope import TUNNEL_PAGE, drawer_ids, valid_tunnel
 
-from .mirror_access import reader, unreadable_room
+from .mirror_access import private_thread_reference, reader, unreadable_room
+
+
+def _without_formatting(label):
+    """Free text may carry emoji joiners; they never split or hide a reference."""
+    return "".join(c for c in label if unicodedata.category(c) not in {"Cc", "Cf"})
 
 
 def project(gateway, principal, workers, name, args, *, timeout=660.0, raise_on_failure=False):
@@ -38,9 +45,14 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0, raise_on_
                 from .provenance_refs import _THREAD, _private_matches
 
                 label = "" if row.get("label") is None else row["label"]
-                if not isinstance(label, str) or any(
-                    not access.reference(match[0])
-                    for match in [*_THREAD.finditer(label), *_private_matches(label)]
+                if (
+                    not isinstance(label, str)
+                    or any(
+                        not access.reference(match[0])
+                        for match in [*_THREAD.finditer(label), *_private_matches(label)]
+                    )
+                    # A label may also name a T3 source ID (mcp:...), like a room.
+                    or private_thread_reference(access, _without_formatting(label))
                 ):
                     return False
                 pairs = [row[k] for k in ("source", "target")] + item["drawers"]
@@ -118,6 +130,7 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0, raise_on_
             access = reader(gateway, principal)
             allowed = [item for item in allowed if visible(item, access)]
             output = []
+            current_access = None
             for start in range(0, max(1, len(allowed)), TUNNEL_PAGE):
                 result = workers.call_tool(
                     principal,
@@ -135,7 +148,8 @@ def project(gateway, principal, workers, name, args, *, timeout=660.0, raise_on_
                     return failed()
                 # Final rows carry the current label; authorize it again after
                 # endpoint revalidation, before any public label is returned.
-                current_access = reader(gateway, principal)
+                # One reader serves every final page.
+                current_access = current_access or reader(gateway, principal)
                 if name == "mempalace_list_tunnels":
                     result = [
                         row

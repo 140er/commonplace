@@ -1,0 +1,1 @@
+- **Promises:** The Bot guide describes Coworkers consistently with the project and chat guides, preserving tool and field names.

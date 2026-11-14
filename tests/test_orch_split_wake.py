@@ -6,6 +6,7 @@ from commonplace.orch import durable, runner_bridge, triggers
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
 from tests._phase_b_helpers import cap, doing
 from tests._split_helpers import DDL, age, tool, world
+from tests.test_orch_runner import config_text, session_config_text
 
 T0 = "2030-01-01T00:00:00Z"
 
@@ -140,3 +141,24 @@ def test_guard_g8_hub_never_splits(hub):
             == 0
         )
         assert conn.execute("SELECT count(*) FROM card_splits").fetchone()[0] == 0
+
+
+def test_session_without_todo_trigger_skips_split_reconciliation(hub):
+    w = world(hub, runner=True)
+    w.write(session_config_text(w.machine_id))
+    card = w.card()
+    age(w, card)
+    later = "2030-01-01T00:10:00Z"
+    assert triggers._reconcile(w.js, w.st, "acme", later) == []
+    assert triggers.run(w.js, now=later)["acme"] == []
+    assert not w.jobs_for(card) and not w.misses()
+
+
+def test_runner_without_session_key_keeps_per_card_sweeps_and_split_retries(hub):
+    w = world(hub, runner=True)
+    w.write(config_text(w.machine_id).split("[[triggers]]")[0])
+    card = w.card()
+    age(w, card)
+    later = "2030-01-01T00:10:00Z"
+    triggers.run(w.js, now=later)
+    assert w.jobs_for(card) or w.misses(), "a config without session = true keeps its old sweeps"

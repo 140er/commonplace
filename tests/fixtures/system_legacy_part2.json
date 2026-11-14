@@ -1,0 +1,246 @@
+{
+  "base": "ef25c47f05bfc44275c483880bddc40a75a560d3",
+  "base_sha256": "8ed59eb150db1b6c8c052fc90103a4cbb43a419722edb30e3328012ff539d22b",
+  "part": 2,
+  "of": 4,
+  "sections": [
+    {
+      "title": "Compact rules index",
+      "slug": "compact-rules-index",
+      "occurrences": 1,
+      "bytes": 717,
+      "sha256": "f564c01f9d127346a51e25fc1fd84b664ba1bd01b0617d6a5c8a87f09fb181ca"
+    },
+    {
+      "title": "Chroma session rebuilds",
+      "slug": "chroma-session-rebuilds",
+      "occurrences": 1,
+      "bytes": 492,
+      "sha256": "cf5493404c47131abf944581d5b75fddaa5702fdbe0acf855cec6d3a0580cbcb"
+    },
+    {
+      "title": "Email session cookie domain migration",
+      "slug": "email-session-cookie-domain-migration",
+      "occurrences": 1,
+      "bytes": 543,
+      "sha256": "2f8a0ac4568394108ed972c3dd8fe257f6227dc069884fcd782a873448a12b0e"
+    },
+    {
+      "title": "Release email login readiness",
+      "slug": "release-email-login-readiness",
+      "occurrences": 1,
+      "bytes": 258,
+      "sha256": "24d3702a8bef6241e8c4968e2b5d1a171bc0b0bcde718872c03118f08cb42e8b"
+    },
+    {
+      "title": "Restricted-origin release",
+      "slug": "restricted-origin-release",
+      "occurrences": 1,
+      "bytes": 812,
+      "sha256": "88d33d10138eb03a5a5d9dffaf4657b39e036637a309173ea164bdad8f161577"
+    },
+    {
+      "title": "Owner manual assignment starts",
+      "slug": "owner-manual-assignment-starts",
+      "occurrences": 1,
+      "bytes": 618,
+      "sha256": "b850022925b9bd62df419fc9981c83ef4dfdaaa3d3be4d28440cebcfcc4db49b"
+    },
+    {
+      "title": "Privacy scanner timing checks",
+      "slug": "privacy-scanner-timing-checks",
+      "occurrences": 1,
+      "bytes": 400,
+      "sha256": "6c03d7fe91e1831765946da1ae2c14cfa7089fe9509dcc910afa6ba9312f5146"
+    },
+    {
+      "title": "Rules initialization timing checks",
+      "slug": "rules-initialization-timing-checks",
+      "occurrences": 1,
+      "bytes": 181,
+      "sha256": "f45801e40e5010906baa88241f1805b9c79790e2b11e2ebf72562818a005ec68"
+    },
+    {
+      "title": "Orchestrator no-progress wake",
+      "slug": "orchestrator-no-progress-wake",
+      "occurrences": 1,
+      "bytes": 411,
+      "sha256": "082625e0b7c4f8d4e41e1a89136d199b57b275749e070c4741432864f4384f20"
+    },
+    {
+      "title": "Orchestrator trigger sweep never wedges",
+      "slug": "orchestrator-trigger-sweep-never-wedges",
+      "occurrences": 1,
+      "bytes": 872,
+      "sha256": "aa70db7f28861a31b3d41bd234ceb5cc4b7050698c4e123bfb4c92c8640f6093"
+    },
+    {
+      "title": "Board store opens take no write lock (#428)",
+      "slug": "board-store-opens-take-no-write-lock-428",
+      "occurrences": 1,
+      "bytes": 457,
+      "sha256": "fe31e343b6c1d1b0737cd75cd9c2e6d84feaedd40fc6bd4ef4cb5718db56d0d5"
+    },
+    {
+      "title": "Card context in a start",
+      "slug": "card-context-in-a-start",
+      "occurrences": 1,
+      "bytes": 1061,
+      "sha256": "ddb24a7f51835928889f44fa7eef0f331000205efd985ce69097ac2164e2efb8"
+    },
+    {
+      "title": "Runner wings and the owner runner block",
+      "slug": "runner-wings-and-the-owner-runner-block",
+      "occurrences": 1,
+      "bytes": 1375,
+      "sha256": "597ad94a73d55af3b2f0b8e4100db0cc14ec05f4dbbb5f235cf38be551855f97"
+    },
+    {
+      "title": "Workspace invites",
+      "slug": "workspace-invites",
+      "occurrences": 1,
+      "bytes": 658,
+      "sha256": "4f0ddc83e7a5c97bca87476577dc16e093d8c2dd35523e15a037a53366e03676"
+    },
+    {
+      "title": "Run ledger",
+      "slug": "run-ledger",
+      "occurrences": 1,
+      "bytes": 626,
+      "sha256": "226df5886a5247b92bbfc312a2bec266b3f42a4bc14663ed3b00a2bcb487acd1"
+    },
+    {
+      "title": "Raw test runs on a shared test host",
+      "slug": "raw-test-runs-on-a-shared-test-host",
+      "occurrences": 1,
+      "bytes": 430,
+      "sha256": "073b2b654a1996bdf8db9c283188fc4df7e987f718a8de2a043ea4dada5cdcdf"
+    },
+    {
+      "title": "Mirror and search-index test waits",
+      "slug": "mirror-and-search-index-test-waits",
+      "occurrences": 1,
+      "bytes": 539,
+      "sha256": "c7db48d1e96992882d18e0ed7c8e4498f20c594ab5f7870ba60dbe3413cc4df8"
+    },
+    {
+      "title": "Console activity query checks",
+      "slug": "console-activity-query-checks",
+      "occurrences": 1,
+      "bytes": 223,
+      "sha256": "cdd4d88a38b8a7ad7aaaf6a71e60fdf839898d8561af8c4bcef0db58567614b9"
+    },
+    {
+      "title": "Agent questions",
+      "slug": "agent-questions",
+      "occurrences": 1,
+      "bytes": 2195,
+      "sha256": "cd25db0d0bf10d4b59f1d11c2ef18a82c4bb39847687dece5b8081a9ff65137f"
+    },
+    {
+      "title": "Completion reviewer",
+      "slug": "completion-reviewer",
+      "occurrences": 1,
+      "bytes": 959,
+      "sha256": "522d8febae2b2039afd5ea795dde0e9ef266c1e1e673388c4b8b91c0e6c7701e"
+    },
+    {
+      "title": "Project seat wake recommendations",
+      "slug": "project-seat-wake-recommendations",
+      "occurrences": 1,
+      "bytes": 1673,
+      "sha256": "a93581c45884050782cb17e075ffe130b8e980b22738816fe7a96bc8344d427e"
+    },
+    {
+      "title": "Card-lifecycle rule replay",
+      "slug": "card-lifecycle-rule-replay",
+      "occurrences": 1,
+      "bytes": 542,
+      "sha256": "df3a1018c3dc674d2c380992589153125cf6c6ac1226de41f6c7549e06b5ede6"
+    },
+    {
+      "title": "Restricted-origin card content",
+      "slug": "restricted-origin-card-content",
+      "occurrences": 1,
+      "bytes": 403,
+      "sha256": "d689aa54c6acf8b324fabf157667be885baf57fe5f810fe39d8b4bb18ff6b95d"
+    },
+    {
+      "title": "Token-slot refusal verification",
+      "slug": "token-slot-refusal-verification",
+      "occurrences": 1,
+      "bytes": 435,
+      "sha256": "61b5204cc6a2be65aaecdaffdf824f22353e5a77197ae246204a1f029b5908c2"
+    },
+    {
+      "title": "Browser GitHub connection (experimental, default off)",
+      "slug": "browser-github-connection-experimental-default-off",
+      "occurrences": 1,
+      "bytes": 15237,
+      "sha256": "0bd30542089340d90400d717ab9f0e4114c4051bd36358cecb74a853925ae276"
+    },
+    {
+      "title": "Generic agent skills",
+      "slug": "generic-agent-skills",
+      "occurrences": 1,
+      "bytes": 426,
+      "sha256": "4a59bf482f3f7138bd677730607b86c137534a4592edc6023b1379e55c44f443"
+    },
+    {
+      "title": "Optional agent orchestration",
+      "slug": "optional-agent-orchestration",
+      "occurrences": 1,
+      "bytes": 2003,
+      "sha256": "faeb6ac22afb3d27d721e5b4e47b0a05138a5b54b66ee7302ceea7d7ae568f5b"
+    },
+    {
+      "title": "Optional project completion and stuck reports",
+      "slug": "optional-project-completion-and-stuck-reports",
+      "occurrences": 1,
+      "bytes": 5580,
+      "sha256": "864a807bed8a16770e432e04110735fead65c5a4782d9c04dcb6f3e586652e15"
+    },
+    {
+      "title": "Orchestrator config as code",
+      "slug": "orchestrator-config-as-code",
+      "occurrences": 1,
+      "bytes": 2798,
+      "sha256": "39cefcc481b66e6dc7d2766fbdc6c6f0500165ca620a1c42d30d3cf91f7cdce4"
+    },
+    {
+      "title": "Foreground refresh rendering",
+      "slug": "foreground-refresh-rendering",
+      "occurrences": 2,
+      "bytes": 1951,
+      "sha256": "dabd1eca60e613676f40cac9980d23a7158d5ed6c0fd647968a89471e980897d"
+    },
+    {
+      "title": "Starts on a configured board",
+      "slug": "starts-on-a-configured-board",
+      "occurrences": 1,
+      "bytes": 1769,
+      "sha256": "44b71f6f1ba25ceba4b1e13aadb767da963497f6a2a91e5f3a623cddef281812"
+    },
+    {
+      "title": "Bots from a person's own app (`bots:chat`, `bots:confirm`)",
+      "slug": "bots-from-a-person-s-own-app-bots-chat-bots-confirm",
+      "occurrences": 1,
+      "bytes": 1979,
+      "sha256": "f33e6a2bbca32dbd418948f5a6a88a1c9728bdb1458aa06c7bc039479fc55cb6"
+    },
+    {
+      "title": "Owner-granted answers from the owner's own apps (`cards:decide`)",
+      "slug": "owner-granted-answers-from-the-owner-s-own-apps-cards",
+      "occurrences": 1,
+      "bytes": 5413,
+      "sha256": "ff05bdd93a07b8ee3c0ed5f7cf145ccf7582a6f742717c1729d0a1a43519fc78"
+    },
+    {
+      "title": "Explicit imported-history reader consent",
+      "slug": "explicit-imported-history-reader-consent",
+      "occurrences": 1,
+      "bytes": 2258,
+      "sha256": "9c72bcd686ab7ed2f25ceb57b709707486338d6c2ef6073b1fa2d3cb8faf065d"
+    }
+  ]
+}

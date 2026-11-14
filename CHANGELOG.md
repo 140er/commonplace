@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- A project's connected orchestrator releases new parentless restricted-origin cards by itself; a card that cannot be released says who can release it (#345).
+
+- Live sync's first backfill has its own configurable, bounded server allowance above the steady untrusted write limit (per connection and per space, durable, never re-armed by a restart or a new stream); steady limits are configurable too ([guide](docs/live-sync.md#server-side-limits)).
+
 - Add separate, unticked reader consent for connection-route imported history.
   Import remains write-only; existing tokens retain their scopes. Consented
   reads are bounded to the exact filer's imports and exclude capture tails.
@@ -23,6 +27,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Optional context handoff in Commonplace, off by default: verbatim thread storage, successor agents, thread recall, settings and webhooks ([guide](docs/handoff.md)).
 - Commonplace gateway, milestone 1 (`commonplace/`): accounts, workspaces with owner/member roles, `cmmn_` personal access tokens stored as SHA-256, per-token policy (scopes, tool profiles, wing scopes, trust levels, fail closed), an append-only audit log, and one `mempalace` worker per workspace behind it. Workers started with `MEMPALACE_MCP_TRUSTED_IDENTITY=1` stamp the gateway's verified author (`hub_user`, `hub_connection`, `hub_client`, `hub_auth`, `hub_trust`, `hub_workspace`, `hub_written_at`) on drawers, diary entries and KG facts, keep the client's `added_by` as `claimed_by`, and return the stamp in search, get_drawer and kg_query results.
 - An optional `recall` command in all three plugins (`/mempalace:recall`, `/mempalace-recall`, `$mempalace recall`) and `mempalace instructions recall`. Recall never needs it: the `mempalace-recall` skill fires on its own in Claude Code and in Codex, whose plugin loads the repo-root `skills/`. `scripts/evals/codex_auto_recall.sh` checks the Codex half against a real `codex exec`. The Cursor and Antigravity recall rules and the Antigravity skill now use the new trigger and repo-fallback wording, and each is shorter than before.
+
+### Changed
+
+- Compute (off by default): an actor can no longer approve its own workspace script proposal. Single-owner workspaces that relied on self-approval opt back in with the trusted startup setting `WorkspaceExecutionConfig.allow_script_self_approval=True`; denied and refused approvals are now audited ([execution contract](docs/compute/execution-contract.md)).
 
 ### Fixed
 

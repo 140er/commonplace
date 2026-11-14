@@ -1,6 +1,8 @@
+import { runnerConsent, consentStyle, decideRunner } from "./runnerconsent.js";
 import { api as request, escape as e } from "./api.js";
 import { detailsAuthor, detailsContext } from "./details.js";
 import { cardId } from "./board.js";
+import { decisionBlocksHTML } from "./decision-blocks.js";
 
 const enc = encodeURIComponent;
 const exact = (text) => e(text).replaceAll("\r", "&#13;");
@@ -48,17 +50,17 @@ function stopButton(hold, now) {
 }
 function holdCopy(hold, now) {
   const state = holdState(hold, now).state;
-  if (hold.tooLate && state !== "released") return `<b>Too late to stop</b><p>The 60 seconds have passed, so this can't be stopped here anymore. To follow up, ask the orchestrator.</p>`;
+  if (hold.tooLate && state !== "released") return `<b>Too late to stop</b><p>The 60 seconds have passed, so this can't be stopped here anymore. To follow up, ask the Coworker.</p>`;
   if (state === "waiting") return `<b>Approved, not sent yet</b><p>Commonplace holds it until ${stamp(hold.release_at)}; nothing has been sent.</p>`;
-  if (state === "sending") return "<b>Sending now…</b><p>Waiting for Commonplace to release your answer to the orchestrator.</p>";
-  if (state === "released") return `<b>Released to the orchestrator at ${stamp(hold.updated_at || hold.release_at)}</b><p>The 60 seconds have passed, so this can't be stopped here anymore. This can't be recalled here. To follow up, ask the orchestrator.</p>`;
-  if (state === "stopped") return "<b>Stopped. Nothing was sent.</b><p>Your answer did not reach the orchestrator.</p>";
+  if (state === "sending") return "<b>Sending now…</b><p>Waiting for Commonplace to release your answer to the Coworker.</p>";
+  if (state === "released") return `<b>Released to the Coworker at ${stamp(hold.updated_at || hold.release_at)}</b><p>The 60 seconds have passed, so this can't be stopped here anymore. This can't be recalled here. To follow up, ask the Coworker.</p>`;
+  if (state === "stopped") return "<b>Stopped. Nothing was sent.</b><p>Your answer did not reach the Coworker.</p>";
   if (state === "failed") return `<b>Approval was not released.</b><p>${hold.code === "stale_version" ? "The card changed. Open it again to review the latest words." : "Commonplace could not release this answer. Open the card again before answering."}</p>`;
   return "";
 }
 
 // Styles are scoped here so the shell can wire the module without a shared-sheet edit.
-const styles = `
+const styles = consentStyle + `
 .needs-me,.needs-detail { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; background:#FEFEFC; color:var(--text); }
 .needs-me .bar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
 .needs-me h1 { font-size:18px; line-height:24px; font-weight:650; }
@@ -126,8 +128,22 @@ if (globalThis.document?.adoptedStyleSheets) {
   document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
 }
 
+// A board whose config uses a model role with no model: one item per role, its button opens that setting.
+export function modelRoleItems(needs = {}, filter = "all") {
+  return filter === "all" || filter === "decisions" ? (needs.model_roles || []).filter((item) => item.kind === "model_role" && item.board) : [];
+}
+// An item with an action opens that role's setting; one without says what the board config needs.
+function modelRoleRow(item) {
+  const key = item.role || (item.config_roles || []).join(",") || "config";
+  const button = item.action && item.role ? `<button class="btn primary" data-action="project-models" data-board="${e(item.board)}" data-role="${e(item.role)}">${e(item.action.label || "Set the model")}</button>` : "";
+  return `<article class="row-item" data-model-role-item="${e(item.board)}:${e(key)}"><span class="typ decision">Set up</span><div><h3>${e(item.message)}</h3><div class="sub">${e(item.board_name || item.board)} · ${e(item.role ? `${item.role} role` : "board config")}</div></div>${button}</article>`;
+}
+
 export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], filter = "all", selected = null, now = Date.now() } = {}) {
   const items = needsItems(needs, filter);
+  const roles = modelRoleItems(needs, filter);
+  const setup = filter === "all" || filter === "decisions" ? (needs.runner_setup || []).filter((item) => ["runner_settings", "runner_consent"].includes(item.kind)) : [];
+  const setupRows = setup.map((item) => item.kind === "runner_consent" ? runnerConsent(item) : `<article class="row-item" data-runner-setup="${e(item.id)}"><span class="typ decision">Set up</span><div><h3>${e(item.message)}</h3><div class="sub">Runner settings need owner approval.</div></div><a class="btn" href="#/admin">Review settings</a></article>`).join("");
   const known = new Map([...cards, ...needsItems(needs).map((item) => item.card)].map((card) => [card.number, card]));
   const approvals = holds.filter((hold) => hold.kind === "approve");
   const held = [...new Set(approvals.map((hold) => hold.card))].map((number) => latestHold(approvals, number))
@@ -150,8 +166,9 @@ export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], f
     return rows.length ? `<h2 class="group-h">${name}</h2>${rows.map((hold) => row(known.get(hold.card), hold.kind === "approve" ? "approval" : "decision", hold)).join("")}` : "";
   };
   const visibleCards = [...new Set([...items.map((item) => item.card.number), ...held.map((hold) => hold.card)])];
-  const projects = new Set(visibleCards.map((number) => known.get(number)?.board).filter(Boolean)).size;
-  return `<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${visibleCards.length} ${visibleCards.length === 1 ? "item" : "items"}, ${projects} ${projects === 1 ? "project" : "projects"}</span><div class="seg" role="group" aria-label="Filter">${Object.entries(filters).map(([key, text]) => `<button data-needs-filter="${key}" aria-pressed="${filter === key}">${text}</button>`).join("")}</div></header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
+  const projectSlugs = new Set([...visibleCards.map((number) => known.get(number)?.board), ...roles.map((item) => item.board)].filter(Boolean));
+  const total = visibleCards.length + roles.length + setup.length, projectCount = projectSlugs.size;
+  return `<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${total} ${total === 1 ? "item" : "items"}, ${projectCount} ${projectCount === 1 ? "project" : "projects"}</span><div class="seg" role="group" aria-label="Filter">${Object.entries(filters).map(([key, text]) => `<button data-needs-filter="${key}" aria-pressed="${filter === key}">${text}</button>`).join("")}</div></header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${setupRows}${roles.length ? `<h2 class="group-h">Set up</h2>${roles.map(modelRoleRow).join("")}` : ""}${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length && !roles.length && !setup.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
 }
 
 export function githubPrUrl(value) {
@@ -162,6 +179,18 @@ export function githubPrUrl(value) {
     return url.href;
   } catch { return null; }
 }
+const mergeReasons = {
+  github_head_moved: "The PR changed after the agent reported it. Use Open PR to review the new commits.",
+  github_not_mergeable: "GitHub does not report this PR as ready to merge (checks, reviews, conflicts or draft). Use Open PR.",
+  github_not_merge_ready: "This card no longer reports a merge-ready PR on GitHub.",
+  github_merge_refused: "GitHub refused the merge for your account, or your account cannot see this repository. Use Open PR.",
+  github_merge_consent: "Connect GitHub with repo access to merge.",
+  github_not_connected: "Your GitHub connection is not available. Connect GitHub again.",
+};
+export const mergeReason = (code) => mergeReasons[code] || "Could not merge this PR. Use Open PR to merge it on GitHub.";
+// The server merges only this exact raw form (no case folding, no port); show Merge only for it.
+const mergeUrl = (value) => githubPrUrl(value) && /^https:\/\/github\.com\/(?!\.+\/)[A-Za-z0-9_.-]+\/(?!\.+\/)[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(value) ? value : null;
+const prLabel = (url) => url.replace(/^https:\/\/github\.com\//, "").replace("/pull/", "#");
 function githubControls(card, github, busy) {
   if (card.need !== "merge") return "";
   const state = github?.state || "loading", disabled = busy || github?.pending || state === "loading" ? " disabled" : "";
@@ -169,14 +198,24 @@ function githubControls(card, github, busy) {
   if (state === "error") return `<p role="alert">GitHub connection unavailable. ${access}</p>`;
   if (state === "other_workspace") return `<p>This GitHub account is connected in another workspace. Disconnect it before connecting here.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
   if (state === "confirm" && github.connect_enabled === false) return `<p>New GitHub connections are disabled.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
+  if (state === "merge_confirm" && github.connect_enabled === false) return `<p>New GitHub permissions are disabled.</p><button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button>${access}`;
+  if (state === "merge_confirm") return `<p>Allow merging with GitHub account ${e(github.login)}? GitHub will be asked for ${e((github.scopes || []).join(", "))}, which gives Commonplace read and write access to every repository your GitHub account can reach, private and organisation repositories included, not only this one. GitHub offers no narrower scope for merging. This is optional: Commonplace merges only when you press Merge, only with your own permissions and only for you, and Disconnect revokes the access.</p><button class="btn" data-needs-github="confirm"${disabled}>Grant repo access</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>${access}`;
   if (state === "unconfigured") return '<p>GitHub connection setup is required.</p>';
   if (state === "loading") return '<button class="btn" disabled>Loading GitHub…</button>';
   if (state === "confirm") return `<p>Connect GitHub account ${e(github.login)} (${e(github.subject)})?${github.inherited_scopes?.length ? " This includes inherited sign-in permissions: " + e(github.inherited_scopes.join(", ")) : ""}</p><button class="btn" data-needs-github="confirm"${disabled}>Connect this account</button><button class="btn" data-needs-github="decline"${disabled}>Cancel</button>`;
   if (state === "connected") {
     const url = githubPrUrl(card.pr_url);
-    return `${url ? `<a class="btn" href="${e(url)}" target="_blank" rel="noopener noreferrer">Open PR</a>` : ""}<button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button><p>PR reports are unverified. A connection proves no merge permissions. Disconnect also revokes GitHub login authorization for this app; your current session survives.</p>`;
+    const target = mergeUrl(card.pr_url), head = /^[0-9a-f]{40,64}$/.test(card.pr_head || "") ? card.pr_head : null;
+    let merge = "";
+    // Nothing to merge once it has merged; Connecting with repo access is offered only where Merge would be.
+    if (github.merged || !target || !head) merge = "";
+    else if (github.merge && github.armed) merge = `<p>Merge ${e(prLabel(target))} at ${e(head.slice(0, 7))} with your GitHub permissions? GitHub chooses how it merges: squash if the repository allows it, otherwise a merge commit, otherwise rebase. Commonplace merges only a PR GitHub reports as clean at exactly this commit; GitHub's own rules still apply.</p><button class="btn primary" data-needs-github="merge"${disabled}>Confirm merge</button><button class="btn" data-needs-github="disarm"${disabled}>Cancel</button>`;
+    else if (github.merge) merge = `<button class="btn primary" data-needs-github="arm-merge"${disabled}>Merge</button>`;
+    else merge = `<p>To merge here, Commonplace needs GitHub repo access: read and write to every repository your GitHub account can reach, private ones included. It is optional and off until you grant it.</p><button class="btn" data-needs-github="allow-merge"${disabled}>Connect GitHub with repo access to merge</button>`;
+    const notice = github.merged ? `<p role="status">Merged${github.merged === true ? "" : " at " + e(String(github.merged).slice(0, 7))}.</p>` : github.notice ? `<p role="alert">${e(github.notice)}</p>` : "";
+    return `${notice}${merge}${url ? `<a class="btn" href="${e(url)}" target="_blank" rel="noopener noreferrer">Open PR</a>` : ""}<button class="btn" data-needs-github="disconnect"${disabled}>Disconnect</button><p>PR reports are unverified. A connection alone proves no merge permissions: merging needs your separate, optional repo-access grant. Without it, merge on GitHub itself. Disconnect also revokes GitHub authorization for this app, including merging; your current session survives.</p>`;
   }
-  return `<button class="btn" data-needs-github="connect"${disabled}>Connect GitHub</button>${state === "expired" ? `<p>Expired locally. ${access}</p>` : ""}${github.acknowledge_required ? `<label><input type="checkbox" data-needs-github-ack> I reviewed GitHub app access; revocation was unconfirmed.</label>${access}` : ""}`;
+  return `<button class="btn" data-needs-github="connect"${disabled}>Connect GitHub</button><p>Connecting alone gives no merge rights. After connecting you can opt in to GitHub repo access, which merging needs; otherwise merge on GitHub itself.</p>${state === "expired" ? `<p>Expired locally. ${access}</p>` : ""}${github.acknowledge_required ? `<label><input type="checkbox" data-needs-github-ack> I reviewed GitHub app access; revocation was unconfirmed.</label>${access}` : ""}`;
 }
 export function renderNeedDetail(card, { board = { slug: card.board }, hold = null, now = Date.now(), confirm = false, note = "", error = "", busy = false, chatOpen = false, phone = false, kind, github = null } = {}) {
   const origin = originKind(card), release = card.approval_kind === "origin";
@@ -187,11 +226,13 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const allowed = (action) => (card.actions || []).includes(action);
   const quote = !context.text ? "" : `<section class="context-words"><h3>Context (exact words)</h3><p class="quote" data-context-text>${exact(context.text)}</p>${context.author ? `<p>— ${e(detailsAuthor(context.author, board))}</p>` : ""}</section>`;
   const linked = card.child_cards?.length ? `<section><h3>Linked cards</h3><div class="linked">${card.child_cards.map((child) => `<a href="#/card/${e(child.number)}"><span><span class="cid">${e(cardId(board, child.number))}</span> ${e(child.title)}</span><span class="tag${child.status === "done" ? " ok" : ""}">${e(child.status)}</span></a>`).join("")}</div></section>` : "";
-  const ask = `<button class="btn" data-needs-ask aria-keyshortcuts="R" aria-controls="chat" aria-expanded="${chatOpen}">${hold?.tooLate || hold?.state === "released" ? "Ask the orchestrator" : "Ask a question"} <kbd>R</kbd></button>`;
+  const ask = `<button class="btn" data-needs-ask aria-keyshortcuts="R" aria-controls="chat" aria-expanded="${chatOpen}">${hold?.tooLate || hold?.state === "released" ? "Ask the Coworker" : "Ask a question"} <kbd>R</kbd></button>`;
   const disabled = busy ? " disabled" : "";
   const confirmTag = phone ? "dialog" : "div";
-  const noteBox = canAnswer && (release || proposal || allowed("answer")) ? `<label class="lbl">${release ? "Origin release reason" : "Note to the orchestrator"} <span class="help">${release ? "Required, up to 500 characters." : "Optional. Sent with your answer."}</span><textarea data-needs-note rows="1" placeholder="e.g. Send at 09:00 tomorrow"${release ? ' required maxlength="500"' : proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
-  const decisions = !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
+  const noteBox = canAnswer && (release || proposal || allowed("answer")) ? `<label class="lbl">${release ? "Origin release reason" : "Note to the Coworker"} <span class="help">${release ? "Required, up to 500 characters." : "Optional. Sent with your answer."}</span><textarea data-needs-note rows="1" placeholder="e.g. Send at 09:00 tomorrow"${release ? ' required maxlength="500"' : proposal ? ' maxlength="500"' : ""}>${exact(note)}</textarea></label>` : "";
+  // A structured ask shows its options side by side in the body; a plain ask keeps its footer buttons.
+  const blocks = !proposal && kind === "decision" && allowed("answer") && canAnswer ? decisionBlocksHTML(card, { disabled: busy }) : "";
+  const decisions = !blocks && !proposal && kind === "decision" && allowed("answer") ? (card.ask_options || []).map((choice, index) => `<button class="btn primary" data-needs-choice="${index}"${disabled}>${e(choice)}</button>`).join("") : "";
   // The shell's existing handlers carry these: Accept, and recovery for a card whose claim ran out.
   const shellButton = (action, label, tone = "") => allowed(action) ? `<button class="btn${tone}" data-action="need-${action}" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>${label}</button>` : "";
   // A plan is approved directly; only a proposal's approval waits as a hold.
@@ -200,8 +241,8 @@ export function renderNeedDetail(card, { board = { slug: card.board }, hold = nu
   const originAction = release && allowed("approve") ? `<button class="btn primary" data-needs-approve="origin"${disabled}>Release origin</button>` : origin && allowed("configure_coordinator") ? `<button class="btn" data-action="coordinator" data-board="${e(card.board)}"${disabled}>Configure coordinator</button>` : "";
   const direct = proposal ? shellButton("reject", "Decline", " danger") : originAction + plan + shellButton("accept", "Accept", " primary") + recovery;
   const open = recovery ? `<a class="btn" href="#/card/${e(card.number)}">Answer</a>` : `<a class="btn" href="${kind === "decision" ? `#/decide/${e(card.number)}` : `#/card/${e(card.number)}`}">${kind === "review" ? "Open review" : "Open card"}</a>`;
-  const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the orchestrator 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `${direct ? `<div class="acts">${direct}</div>` : ""}<div class="decide-acts">${decisions}${open}${ask}</div>` : ask;
-  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${badge(card, kind)}</span><span>${e(board.name || board.slug)}${asked(card) ? ` · asked ${asked(card)}` : ""}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the orchestrator receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${githubControls(card, github, busy)}${actions}</footer></section>`;
+  const actions = canAnswer ? proposal && allowed("approve") ? `${confirm ? `<${confirmTag} class="confirm" role="${phone ? "alertdialog" : "group"}"${phone ? ' aria-modal="true"' : ""} aria-labelledby="needs-confirm-title" aria-describedby="needs-confirm-description"><h3 id="needs-confirm-title">${e(card.title)}</h3><p id="needs-confirm-description">Your approval reaches the Coworker 60 seconds after you confirm. Until then you can stop it from Needs me.</p><div class="acts"><button class="btn" data-needs-cancel${disabled}>Cancel</button><button class="btn primary" data-needs-confirm${disabled}>Yes, approve</button></div></${confirmTag}>` : `<button class="btn primary" data-needs-approve${disabled}>Approve and send…</button><div class="decide-acts">${allowed("reject") ? `<button class="btn danger" data-action="need-reject" data-card="${e(card.number)}" data-version="${e(card.version)}"${disabled}>Decline</button>` : ""}${ask}</div>`}` : `${direct ? `<div class="acts">${direct}</div>` : ""}<div class="decide-acts">${decisions}${open}${ask}</div>` : ask;
+  return `<section class="needs-detail" data-card="${e(card.number)}" data-version="${e(card.version)}" aria-label="Needs me details"><header class="ctx-head"><b>Details</b><button class="btn ghost sm" data-needs-close>Hide</button></header><div class="ctx-body"><button class="btn phone-back" data-needs-close>Back to Needs me</button><header class="detail-h"><div class="row"><span class="typ ${kind}">${badge(card, kind)}</span><span>${e(board.name || board.slug)}${asked(card) ? ` · asked ${asked(card)}` : ""}</span></div><h2 tabindex="-1" data-needs-title>${e(card.title)}</h2></header>${hold ? `<section class="hold-note ${e(hold.state)}" role="status">${holdCopy(hold, now)}${stopButton(hold, now)}</section>` : ""}${quote}${card.ask && !proposal ? `<p class="quote">${exact(card.ask)}</p>` : ""}${blocks}${linked}${proposal && canAnswer ? '<div class="facts" role="note">Commonplace holds your approval for <b>60 seconds</b> before the Coworker receives it, so it can’t send earlier. Until then, Stop cancels it and nothing is sent. After that it can’t be undone here.</div>' : ""}${noteBox}${error ? `<p class="error" role="alert">${e(error)}</p>` : ""}</div><footer class="ctx-foot">${githubControls(card, github, busy)}${actions}</footer></section>`;
 }
 
 // The shell owns routing, sheet modality and chat. All requests use the shared JSON api.
@@ -220,6 +261,8 @@ function asked(card) {
 export function createNeeds({ mount, detailMount, api = request, onAction, onAsk = () => {}, onSelect = () => {}, onClose = () => {}, onChange = () => {}, onError = () => {}, onRender = () => {}, singleKeys = () => true,
   isPhone = () => globalThis.matchMedia?.("(max-width:699px)").matches || false, now = Date.now, document: doc = globalThis.document, setInterval: schedule = globalThis.setInterval, clearInterval: unschedule = globalThis.clearInterval } = {}) {
   let data = { needs: {}, boards: [] }, holds = [], selected = null, filter = "all", current = null;
+  // Cards merged this session, keyed by number with the head merged: re-selecting must not offer Merge again.
+  const mergedHeads = new Map();
   let holdsLoaded = false, github = null;
   let stopped = false, paused = false, revision = 0, busy = false, confirming = false, chatOpen = false, error = "", lastPoll = 0, holdRead = null;
   const cards = new Map(), notes = new Map(), tooLate = new Set();
@@ -246,7 +289,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (!detailMount || stopped || paused) return;
     const restoreFocus = savedFocus(detailMount);
     detailMount.innerHTML = current ? renderNeedDetail(current, { board: boardFor(data.boards, current), hold: currentHold(), now: now(), confirm: confirming, note: notes.get(current.number) || "", error, busy: busy || !holdsLoaded, chatOpen, phone: isPhone(),
-      github, kind: needsItems(data.needs).find((item) => item.card.number === current.number)?.kind }) : '<p class="empty">Choose an item to see its exact words.</p>';
+      github: github && mergedHeads.get(current.number) === current.pr_head ? { ...github, merged: current.pr_head } : github, kind: needsItems(data.needs).find((item) => item.card.number === current.number)?.kind }) : '<p class="empty">Choose an item to see its exact words.</p>';
     const dialog = detailMount.querySelector('dialog.confirm');
     if (dialog && !dialog.open) dialog.showModal();
     restoreFocus();
@@ -269,7 +312,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     }
     return visible;
   }
-  async function select(number) {
+  // A refresh re-reads the selection with { background: true }; only a pick by the user may open a closed panel.
+  async function select(number, { background = false } = {}) {
     if (stopped) return;
     rememberNote();
     const token = ++revision;
@@ -290,7 +334,7 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
         }
         draw();
       }
-      focus("[data-needs-title]"); onSelect(card);
+      focus("[data-needs-title]"); onSelect(card, { background });
     } catch (failure) {
       if (stopped || token !== revision) return;
       if (detailMount && !paused) detailMount.innerHTML = '<p role="alert">Could not load this card. Open it again to retry.</p>';
@@ -438,27 +482,71 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
   async function githubAction(action) {
     if (busy || !current || !github || stopped) return;
     const card = current, token = revision;
+    if (action === "arm-merge" || action === "disarm") { github = { ...github, armed: action === "arm-merge", notice: "" }; drawDetail(); return; }
     const acknowledge = detailMount?.querySelector("[data-needs-github-ack]")?.checked === true;
     busy = true;
     try {
       const method = action === "disconnect" ? "DELETE" : "POST";
-      const path = action === "disconnect" ? "/api/github" : action === "connect" ? "/api/github/connect" : "/api/github/confirm";
-      const result = await api(path, { method, body: { csrf: github.csrf, card: card.number, accept: action === "confirm", acknowledge } });
+      const path = { disconnect: "/api/github", connect: "/api/github/connect", "allow-merge": "/api/github/merge-consent", merge: "/api/github/merge" }[action] || "/api/github/confirm";
+      const result = await api(path, { method, body: { csrf: github.csrf, card: card.number, accept: action === "confirm", acknowledge, ...(action === "merge" ? { head: card.pr_head } : {}) } });
+      // Remember the merge before any stale-view check: it happened whichever card is on screen now.
+      if (action === "merge" && !stopped) mergedHeads.set(card.number, card.pr_head);
       if (stopped || token !== revision) return;
       github = null;
       if (result.authorize_url) { globalThis.location.assign(result.authorize_url); return; }
       github = await api("/api/github");
       if (stopped || token !== revision) { github = null; return; }
+      if (action === "merge") github = { ...github, merged: result.sha || true };
       error = result.message || ""; drawDetail();
-    } catch (failure) { failedFor(card.number, "Could not update GitHub connection. Check GitHub app access before trying again.", failure); }
+    } catch (failure) {
+      const code = failure?.payload?.error;
+      if (action === "merge" && failure?.status === 409 && typeof code === "string" && code.startsWith("github_")) {
+        if (!stopped && token === revision) { github = { ...github, armed: false, notice: mergeReason(code) }; drawDetail(); }
+      } else failedFor(card.number, action === "merge" ? "Could not merge. Use Open PR to merge it on GitHub." : "Could not update GitHub connection. Check GitHub app access before trying again.", failure);
+    }
     finally { busy = false; if (!stopped && token === revision) drawDetail(); }
   }
   const click = async (event) => {
     if (paused && detailMount?.contains(event.target)) return;
-    const button = event.target.closest("[data-needs-github],[data-needs-select],[data-needs-filter],[data-needs-approve],[data-needs-confirm],[data-needs-cancel],[data-needs-stop],[data-needs-ask],[data-needs-choice],[data-needs-close],[data-action=need-reject]");
+    const button = event.target.closest("[data-runner-consent],[data-needs-github],[data-needs-select],[data-needs-filter],[data-needs-approve],[data-needs-confirm],[data-needs-cancel],[data-needs-stop],[data-needs-ask],[data-needs-choice],[data-needs-close],[data-action=need-reject]");
     if (!button) return;
     event.preventDefault(); event.stopPropagation();
     if (button.disabled) return;
+    if (button.hasAttribute("data-runner-consent")) {
+      const item = (data.needs.runner_setup || []).find(row => row.id === button.dataset.runnerConsent);
+      const card = button.closest('[data-runner-consent-card]');
+      if (!item || !card || busy || item.ui_result) return;
+      const action = button.dataset.runnerConsentAction;
+      if (action === 'refuse-start' || action === 'refuse-cancel') {
+        item.ui_refusing = action === 'refuse-start'; item.ui_error = '';
+        card.outerHTML = runnerConsent(item);
+        const updated = [...mount.querySelectorAll('[data-runner-consent-card]')].find(el => el.dataset.runnerConsentCard === item.id);
+        updated?.querySelector(`[data-runner-consent-action="${item.ui_refusing ? 'refuse-cancel' : 'refuse-start'}"]`)?.focus();
+        return;
+      }
+      if (action !== 'refuse' && !card.querySelector('[data-runner-fingerprint]')?.checked) return;
+      if (action === 'refuse' && !item.ui_refusing) return;
+      busy = true;
+      for (const control of card.querySelectorAll('button,input')) control.disabled = true;
+      card.querySelector('[data-runner-consent-status]').textContent = 'Saving…';
+      try {
+        const result = await decideRunner(api, item, action);
+        if (stopped) return;
+        if (action === 'device') {
+          if (result.url !== 'https://auth.openai.com/codex/device' || !/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(result.user_code)) throw new Error();
+          item.ui_device = result.user_code;
+        }
+        item.ui_result = action === 'refuse' ? 'refused' : 'confirmed';
+        item.ui_error = '';
+        if (action === 'refuse') data.needs.runner_setup = data.needs.runner_setup.filter(row => row.machine_id !== item.machine_id || row.id === item.id);
+      } catch {
+        if (!stopped) item.ui_error = 'Could not save. Refresh Needs me to check the current setup before trying again.';
+      } finally {
+        busy = false;
+        if (!stopped) card.outerHTML = runnerConsent(item);
+      }
+      return;
+    }
     // Picking an item takes the shared panel back from whatever paused the detail.
     if (button.hasAttribute("data-needs-github")) await githubAction(button.dataset.needsGithub);
     else if (button.hasAttribute("data-needs-select")) { paused = false; await select(button.dataset.needsSelect); }
@@ -481,6 +569,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     if (event.key.toLowerCase() === "r") { event.preventDefault(); event.stopPropagation?.(); ask(); }
     else if (event.key.toLowerCase() === "z" && holdState(currentHold(), now()).canStop) { event.preventDefault(); event.stopPropagation?.(); void stopHold(currentHold().id); }
     else if (["j", "k"].includes(event.key.toLowerCase())) {
+      // An open form holds the panel and the keyboard until it is cancelled or saved.
+      if (detailMount?.querySelector("form.form-tile")) return;
       const rows = items(), index = rows.findIndex((card) => card.number === selected);
       const next = rows[Math.max(0, Math.min(rows.length - 1, index + (event.key.toLowerCase() === "j" ? 1 : -1)))];
       if (next) { event.preventDefault(); event.stopPropagation?.(); paused = false; void select(next.number); }
@@ -491,6 +581,8 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
     rememberNote(); filter = value;
     const rows = items();
     if (!rows.some((card) => card.number === selected)) {
+      // The selection leaves with the filter, so a form held for it no longer belongs on screen.
+      paused = false;
       if (rows.length) return select(rows[0].number);
       revision++; selected = null; current = null; confirming = false;
     }
@@ -509,8 +601,14 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       try { await refreshHolds(); } catch (failure) { onError(failure); }
     }
   }
+  const consentChange = event => {
+    if (!event.target.matches?.('[data-runner-fingerprint]')) return;
+    const card = event.target.closest('[data-runner-consent-card]');
+    const primary = card?.querySelector('.runner-primary');
+    if (primary) primary.disabled = busy || !event.target.checked;
+  };
   const visibility = () => { if (!doc.hidden) void refreshHolds().catch(onError); };
-  for (const root of mounts) { root.addEventListener("click", click); root.addEventListener("keydown", keydown); }
+  for (const root of mounts) { root.addEventListener("click", click); root.addEventListener("keydown", keydown); root.addEventListener("change", consentChange); }
   doc?.addEventListener("visibilitychange", visibility);
   const timer = schedule(tick, 1000);
   return {
@@ -520,20 +618,29 @@ export function createNeeds({ mount, detailMount, api = request, onAction, onAsk
       for (const { card } of needsItems(data.needs)) cards.set(card.number, card);
       const number = settings.selected ?? selected ?? items()[0]?.number;
       // Start selection before reading holds; neither response may choose an older card.
-      const loading = number != null ? select(number) : Promise.resolve();
+      const loading = number != null ? select(number, { background: true }) : Promise.resolve();
       try { await refreshHolds(); } catch (failure) { showError("Could not load approvals. Check again before answering.", failure); }
       await loading;
-      if (!current && selected == null && items().length) await select(items()[0].number);
+      if (!current && selected == null && items().length) await select(items()[0].number, { background: true });
       draw();
     },
     select, setFilter, approve, approvePlan, confirm, decline, answer, stopHold, ask, refreshHolds,
     setChatOpen(open) { rememberNote(); chatOpen = Boolean(open); drawDetail(); },
-    pause(on) { if (paused === Boolean(on)) return; paused = Boolean(on); if (!paused) drawDetail(); },
+    pause(on) {
+      if (paused === Boolean(on)) return;
+      paused = Boolean(on);
+      if (paused) return;
+      // A closed panel stays closed: the next pick reads the card, and a read must not reopen it.
+      if (detailMount?.hidden) { drawDetail(); return; }
+      // A read that failed while the form held the panel would leave a bare placeholder: read the selection again.
+      if (current == null && selected != null) void select(selected);
+      else { drawDetail(); focus("[data-needs-title]"); }
+    },
     paused: () => paused,
     stop() {
-      stopped = true; github = null; revision++; unschedule(timer);
+      stopped = true; github = null; mergedHeads.clear(); revision++; unschedule(timer);
       detailMount?.querySelector("dialog.confirm")?.close(); if (detailMount && current?.need === "merge") detailMount.innerHTML = ""; cards.clear(); notes.clear(); holds = []; current = null;
-      for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); }
+      for (const root of mounts) { root.removeEventListener("click", click); root.removeEventListener("keydown", keydown); root.removeEventListener("change", consentChange); }
       doc?.removeEventListener("visibilitychange", visibility);
     },
   };

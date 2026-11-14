@@ -72,20 +72,20 @@ STATUS_PREFIXES = (
 )
 RECEIPT_COPY = {
     "forwarded": {
-        role: "Passed to {name}, this project's orchestrator ({status}). Its replies and card changes appear here."
+        role: "Passed to {name}, this project's Coworker ({status}). Its replies and card changes appear here."
         for role in ("owner", "member")
     },
     "forwarded_no_wake": {
-        role: "Passed to {name}, this project's orchestrator ({status}). {name} has no wake-up hook, so it sees this on its next check."
+        role: "Passed to {name}, this project's Coworker ({status}). {name} has no wake-up hook, so it sees this on its next check."
         for role in ("owner", "member")
     },
     "no_orchestrator": {
-        "owner": "This project's orchestrator isn't connected yet. Use Connect above.",
-        "member": "This project's orchestrator isn't connected yet. Ask the workspace owner to connect it.",
+        "owner": "This project's Coworker isn't connected yet. Use Connect above.",
+        "member": "This project's Coworker isn't connected yet. Ask the workspace owner to connect it.",
     },
     "orchestrator_gone": {
-        "owner": "The orchestrator for this project is no longer connected. Use Connect above to connect it again.",
-        "member": "The orchestrator for this project is no longer connected. Ask the workspace owner to connect it again.",
+        "owner": "The Coworker for this project is no longer connected. Use Connect above to connect it again.",
+        "member": "The Coworker for this project is no longer connected. Ask the workspace owner to connect it again.",
     },
     "_handoff": {
         role: "If nobody picks this up within {wait} minutes, I'll put it on the board as a card for you."
@@ -94,7 +94,7 @@ RECEIPT_COPY = {
 }
 HANDOFF_COPY = {
     "filed": "Nobody picked this up within {wait} minutes. I put it on the board as card #{number} for {name}.",
-    "filed_no_orchestrator": "I put this on the board as card #{number}. Ask the workspace owner to choose an orchestrator.",
+    "filed_no_orchestrator": "I put this on the board as card #{number}. Ask the workspace owner to choose a Coworker.",
     "file_failed": "I couldn't put this on the board. Please ask the workspace owner for help.",
 }
 
@@ -105,7 +105,7 @@ class ChatDenied(Exception):
 
 class ModelError(Exception):
     def __init__(self, code: str):
-        if code not in ("timeout", "http_error", "bad_response"):
+        if code not in ("timeout", "http_error", "bad_response", "stopped"):
             raise ValueError("Invalid model error code")
         self.code = code
         super().__init__(code)

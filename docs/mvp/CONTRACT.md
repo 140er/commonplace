@@ -44,10 +44,14 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
 | Tool | Args | Notes |
 |---|---|---|
 | `board_list` | — | |
+| `space_list` | — | same operation as `board_list` |
 | `board_add` | `slug`, `name?`, `wing?`, `repo?` | trusted_only, all profiles |
+| `space_add` | `slug`, `name?`, `wing?`, `repo?` | same operation and authority as `board_add` |
+| `space_set` | `space`, `coordinator` | same operation and authority as `board_set` |
+| `space_own_wing` | `space` | same operation and authority as `board_own_wing` |
 | `board_set` | `board`, `coordinator` (connection or null) | standard/full, owner_only, trusted_only; active PAT agent with chat access; warns without a matching active webhook |
-| `space_read` | `board`, `after?` or `last?` (1–100), `before?` | standard/full; board wing + memory:read; JSON with chronological verbatim messages, cursor, oldest and has_more |
-| `space_post` | `board`, `text` | standard/full, trusted_only; board read/write wing + memory:write; append-only, verbatim |
+| `space_read` | `space` (or legacy `board`), `after?` or `last?` (1–100), `before?` | standard/full; board wing + memory:read; JSON with chronological verbatim messages, cursor, oldest and has_more |
+| `space_post` | `space` (or legacy `board`), `text` | standard/full, trusted_only; board read/write wing + memory:write; append-only, verbatim |
 | `task_list` | `board?`, `status?`, `mine?` | |
 | `task_heartbeat` | `task` | holder-only claim renewal, including after expiry |
 | `task_approve` | `task`, `approve?`, `version?`, `reason?`, `escalate?` | direct parent, top-level agent, board coordinator or owner decides proposals; direct parent, creator-parent, board coordinator or owner decides plan reviews; agents give a reason or escalate |
@@ -78,7 +82,7 @@ MCP tools (all `profiles` per API.md; text replies, 10–60 tokens, errors start
  "position": 1.0, "message_id": null}
 ```
 
-Events (via `events.emit`, subject `#<n>`): `card.created`, `card.updated`, `card.moved`, `card.commented`, `card.claimed`, `card.expired`, `card.handoff`, `card.review_needed` (a card enters review; `data.ask_to`), `card.decided`. `data` = `{"board","number","title","status","from","to","assignee","ask_to","actor"}` as applicable.
+Events (via `events.emit`, subject `#<n>`): `card.created`, `card.updated`, `card.moved`, `card.commented`, `card.claimed`, `card.expired`, `card.snoozed`, `card.woke`, `card.handoff`, `card.review_needed` (a card enters review; `data.ask_to`), `card.decided`. `data` = `{"board","number","title","status","from","to","assignee","ask_to","actor"}` as applicable.
 
 REST (people via cookie, agents via Bearer; same service, same rules):
 
@@ -167,6 +171,7 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
 
 - `commonplace onboard [--url URL] [--token-env NAME] [--home DIR] [--project DIR | --no-project] [--dry-run]`: default home and current project pointers, exact reversible imports, and native Claude/Codex connection + hook configuration. Dry-run writes nothing and needs no token. Codex hook trust stays under native review. [Onboarding](../agent-onboarding.md) defines refusal and recovery behavior.
 - `commonplace remember TEXT` saves verbatim through `memory_save`; `commonplace rule TEXT [--agent self|'*'] [--kind instruction|permission|limit|style]` proposes through `rules_publish`. Both accept `--url` and `--token-env`, fetch current effective rules and use the configured caller's permissions.
+- `commonplace review-rules [--url URL] [--token-env NAME] [--verify VERDICT_FILE]` prints the caller's effective rules as a block for a reviewer's prompt, or checks that a verdict ends with the current `Rules checked:` line. Exit 0 complete or attested, 1 verdict not attested, 2 rules incomplete or unavailable; the block is never empty ([Rules](../design/RULES.md)).
 - `commonplace check [--home DIR] [--project DIR | --no-project]` flags managed local-only instruction/memory files without uploading content; exit 1 means findings, exit 2 means an operation failed. These client commands bypass the server data-directory lock and never initialize a local server database.
 - `commonplace login-link <email> [--workspace] [--base-url] [--minutes] [--send]` prints `<base>/app/login?t=…`; with `--send` it emails the link instead (SMTP via `COMMONPLACE_SMTP_*`, see `commonplace/README.md`) and prints only `login link sent to <address>`.
 - `commonplace connect --url <base>/mcp [--token-env COMMONPLACE_TOKEN]`: stdio ↔ HTTP MCP bridge (newline-delimited JSON-RPC on stdin/stdout; POST each to the URL with the Bearer; 202 → no output). For clients that only speak stdio.
@@ -199,6 +204,20 @@ mcp_url() -> str               # AGENT_URL + "/mcp"
 Every link we hand out (webhook payload `url`, `ask`/`needs_me` replies, card JSON `url`, login links) uses `share_link` for app pages and `mcp_url()` for MCP. `GET /s/<code>` → 302 to `APP_URL + path` (no auth on the redirect; the target page needs sign-in). Codes: 7 chars base62, table `short_links(code PK, workspace_id, path, created_at)`. Until W8 lands, call `commonplace.urls` lazily and fall back to `APP_URL + path`.
 
 **OAuth 2.1 (W8)** for claude.ai and ChatGPT, on AGENT_URL: protected-resource metadata (RFC 9728) at `/.well-known/oauth-protected-resource` (and `/.well-known/oauth-protected-resource/mcp`), AS metadata (RFC 8414) at `/.well-known/oauth-authorization-server`, dynamic client registration (RFC 7591) at `/oauth/register`, `/oauth/authorize` (requires the web session; consent screen = one card: client name, workspace, Allow / Deny; policy preset = slim, standard trust, write_wing `inbox`, read `shared,inbox,project_*`; no extra clicks beyond Allow), `/oauth/token` (authorization_code with PKCE S256 only, refresh_token with rotation), `/oauth/revoke`. Access tokens `cmmn_at_…`-style opaque, 1 h; refresh 90 d. Stored as hashes; each grant is a `connections` row with `auth='oauth'`. 401 on `/mcp` carries `WWW-Authenticate: Bearer resource_metadata="<AGENT_URL>/.well-known/oauth-protected-resource"`. An `OAuthAuthenticator` is added to `gateway.authenticators` in `install(gateway)`.
+
+OAuth consent permits only `'self'` and the exact validated callback origin in
+CSP `form-action` and shows that same escaped origin as the code destination. Login
+and generic HTML/error pages remain self-only. Strict parsed DNS
+host and numeric-port validation, including refusal of all IPv6 literals, rejects unsafe new or legacy redirect URIs
+through the existing invalid-redirect path (Chromium ignores IPv6 CSP host-sources); HTTPS/loopback HTTP schemes and
+exact registered-URI matching remain unchanged, with one exception: the exact private-use redirect
+`cmmn://auth/callback` of the native app (RFC 8252 section 7.1; no other scheme, path or query). Its consent
+CSP `form-action` carries the scheme source `cmmn:` and the code destination shows the full redirect. HTTPS numeric/`0x`-hex final labels
+require canonical dotted-quad IPv4. Registered-but-invalid redirects explicitly
+request re-registration; missing registrations keep their separate error. Live
+redirect registrations must be inventoried before deploy; this inventory is not
+performed here.
+
 
 **Privacy, invisible (W9)**: `commonplace/privacy.py` with `scan(text) -> list[str]` flags: `secret:<kind>` (API keys, tokens incl. cmmn_, private keys, passwords in URLs, JWTs), `health`, `injection:<kind>` (§9 list). No clicks, no prompts. Use: `memory_save` routes text flagged `health` to theme `private` when the caller may write `private`, otherwise keeps the theme; secrets are flagged in the event data (`flags`) and shown as ⚠ in the app; text is never changed. Boards store `flags` from `scan()` on titles/bodies/comments.
 
@@ -259,5 +278,69 @@ PATCH/DELETE and item POST/PATCH/DELETE are 405 `method_not_allowed` with
 An Idempotency-Key or include_deleted query is rejected with 400
 `unsupported_idempotency` or `unsupported_include_deleted`.
 
-Rename, archive, versions/retries/tombstones, project adapters, MCP/UI vocabulary,
-new-user migration and desktop synchronization are deferred.
+#### Space cards and chat
+
+`GET`/`POST /api/spaces/<slug>/cards` and `GET`/`POST /api/spaces/<slug>/chat` are
+adapters over the board card and chat operations of one exact Space. They run the
+same service calls as `/api/boards/<slug>/cards` and `/chat`, so card payloads,
+authority, verbatim chat and rules freshness are unchanged. Differences are the
+canonical vocabulary and identity: the slug must match an active, readable Space
+exactly (a repo reference or a sole visible board is not accepted; otherwise 404
+`space_not_found`); chat reads name the Space as `space` instead of `board`; a body
+`space` or `board` must equal the path slug; a body `rules_seq`, an unknown field or
+invalid JSON is 400 `invalid_arguments`; freshness comes only from
+`Commonplace-Rules-Seq`. Non-person callers must pass the `task_list`/`task_add`
+or `space_read`/`space_post` tool gate. Other methods are 405 with `Allow: GET, POST`
+and other subpaths are 404 `not_found`.
+
+#### MCP names
+
+`space_list`, `space_add`, `space_set` and `space_own_wing` run the `board_list`,
+`board_add`, `board_set` and `board_own_wing` operations with a `space` argument; the
+board names remain. `space_read` and `space_post` accept `space` or the legacy
+`board`; naming two different spaces, or none, is refused. A connection that lists
+either name of a pair is granted both, so an alias never widens authority. Scope,
+trust, owner and profile rules, rules freshness and legacy output are unchanged.
+
+Rename, archive, versions/retries/tombstones, settings and orchestrator adapters,
+the `space` argument on card tools, UI wording, new-user migration and desktop
+synchronization are deferred.
+
+## Instance index figures (#284)
+
+`GET /api/admin/instance/index-stats?cursor=...` requires the same server-side
+person + workspace owner + `users.is_admin=1` authority as deploy/backups.
+It returns `{workspaces: [{workspace_id, drawers, embedding_model, dimension,
+vector_count, hnsw_capacity, tombstones}], has_more, next_cursor}`; every figure
+is `{value: number|string|null, reason: null|stable_code}`. The console labels
+unknown figures with their reasons and paginates with the existing lifecycle.
+Admin `mempalace_status` adds `index_stats: {workspace_id, ...figures}` to
+the normal overview, preserving every existing field and diagnostic. Only the
+added figures avoid worker calls; the normal overview path is unchanged. Non-admin status responses remain unchanged; no stats
+fields appear for member persons, tokens or ordinary workspace owners.
+
+Only read-only Chroma SQLite queries and the bounded fixed HNSW header supply
+figures. Live SQL rows are not necessarily persisted HNSW rows; vector_count
+explicitly means the SQL count. Model and tombstones remain unknown rather than
+assuming defaults or subtracting unsynchronized counts. No content, names,
+paths, tokens or thread IDs are exposed. See SYSTEM.md for bounds and reasons.
+
+Store overrides and active generation pointers are stat-ed only. Their presence
+returns `backend_not_established` or `generation_not_established`; reading those
+JSON files is outside the permitted figure sources, and retired legacy Chroma
+files must not be mistaken for the current store.
+
+A missing pointer with sibling generation directories is also unknown. Each SQL
+query has a 0.5-second budget within the 2-second page deadline; an expired page
+returns null/read_timeout for the current and remaining workspaces. Rollback
+journals and WAL are supported read-only. The 20-byte SQLite header is read
+before opening SQL: WAL requires both sidecars or returns wal_unavailable,
+creating no files on a closed WAL palace. Symlinked workspace/palace/database/
+segment/header paths are refused with symlink; locks return busy. Empty HNSW
+state returns header_unavailable. Non-admin index-stats requests return exactly
+404 {"error":"not found"}, identical to an unknown section.
+
+Drawer count, vector count and HNSW capacity include private wings. They are
+returned only for workspaces where the viewer is currently an owner (and, for
+status, holds `private:read`); otherwise each is `{"value":null,"reason":
+"private_scope"}`. Model and dimension are unaffected.

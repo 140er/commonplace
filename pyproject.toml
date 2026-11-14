@@ -82,8 +82,11 @@ sqlcipher = [
 voice = ["useful-moonshine-onnx>=20251121,<20260101", "faster-whisper>=1.2.1"]
 # Sign in with Apple signs its client secret with ES256.
 commonplace = ["cryptography>=42"]
+# Opt-in two-hop Compute transport; no network capability is enabled on install.
+compute = ["cryptography>=42", "paramiko>=5.1,<6"]
 dev = [
     "cryptography>=42",
+    "paramiko>=5.1,<6",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-xdist>=3.6",
@@ -179,6 +182,7 @@ extract = [
 [dependency-groups]
 dev = [
     "cryptography>=42",
+    "paramiko>=5.1,<6",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-xdist>=3.6",
