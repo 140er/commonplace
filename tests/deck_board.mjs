@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { bindDeckBoard } from '../commonplace/web/static/deck-board.js';
-import { boardView, bindBoard } from '../commonplace/web/static/board.js';
+import * as deckBoard from '../commonplace/web/static/deck-board.js';
+import { bindDeckBoard, boardCopy } from '../commonplace/web/static/deck-board.js';
+import { boardView, bindBoard, submitCard } from '../commonplace/web/static/board.js';
 import { escape as e } from '../commonplace/web/static/api.js';
 import { renderDetails } from '../commonplace/web/static/details.js';
 const board = {slug:'product',name:'Product',coordinator:'conn:coordinator'};
@@ -206,4 +207,29 @@ test('drawer progress parent uses its state text without a duplicate state dot',
 test('desktop filter group gets twelve extra pixels before Add card', () => {
   const css = readFileSync(new URL('../commonplace/web/static/deck-board.css',import.meta.url),'utf8');
   assert.match(css, /\.deck-board-filters\s*\{[^}]*margin-right:\s*12px/);
+});
+const TITLES = ['#12 foo', 'foo #12 bar', '#599 retest', 'PR #7 and #8, see #9'];
+test('Deck shows a card title exactly as typed, #NNN tokens included', async () => {
+  const { renderCardMenu } = await import('../commonplace/web/static/cardmenu.js');
+  globalThis.document = { documentElement: { dataset: { ui: 'deck' } } };
+  try {
+    for (const title of TITLES) {
+      const card = { ...base, title };
+      const html = boardView({ ...options, cards: [card], added: 7 });
+      assert.match(html, new RegExp(`<a href="#/card/7"[^>]*>${e(title)}</a>`), `board card ${title}`);
+      assert.ok(html.includes(`aria-label="${e(title)}"`), `aria-label ${title}`);
+      assert.ok(html.includes(`Added “${e(title)}”`), `added notice ${title}`);
+      assert.ok(visible(renderDetails(card, options)).includes(title), `drawer ${title}`);
+      assert.match(renderCardMenu(card, { board, me: 'user:owner' }), new RegExp(`id="cm-h">${e(title)}</h2>`), `menu ${title}`);
+    }
+  } finally { delete globalThis.document; }
+});
+test('Add card sends the title verbatim and Deck copy still hides other internal references', async () => {
+  for (const title of TITLES) {
+    let body;
+    await submitCard({ board, me: 'user:owner', values: { title }, api: async (_url, init) => { body = init.body; return { number: 1 }; } });
+    assert.equal(body.title, title);
+  }
+  assert.equal(boardCopy('Fix #12 in ~/work/x'), 'Fix', 'body copy keeps hiding references');
+  assert.equal(deckBoard.cardTitle?.('Fix #12 in ~/work/x'), 'Fix #12', 'a title keeps #NNN; paths are still hidden');
 });

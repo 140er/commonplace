@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_card_title_verbatim.py` round-trips titles such as "#12 foo", "foo #12 bar" and "#599 retest" through the cards API create and list, and `tests/deck_board.mjs` checks the Deck board card, Added notice, card menu and drawer show the typed title and that Add card sends it unchanged; the Deck case fails on the old display copy.
