@@ -118,3 +118,8 @@ test('the phone keeps four tabs plus More and offers Home first in the More shee
   assert.match(sheet, /<div class="deck-more-panel"><a href="#\/" data-nav="home">[^]*?<\/svg>Home<\/a>/);
   assert.match(renderShellMore(options('#/')), /data-nav="home" aria-current="page"/);
 });
+
+test('without a registered Home screen neither the rail nor the More sheet offers Home', () => {
+  assert.doesNotMatch(renderShellBar({ ...options('#/'), homeOn: false }), /data-nav="home"/);
+  assert.doesNotMatch(renderShellMore({ ...options('#/'), homeOn: false }), /data-nav="home"/);
+});
