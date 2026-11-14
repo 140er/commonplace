@@ -5,6 +5,7 @@ import { blockersSection } from "./blockers.js";
 import { waitingSection } from "./waiting.js";
 import { cardTypeRows, saveCardType } from "./tasktypes.js";
 import { reviewerRows } from "./card-reviewer.js";
+import { drawerSummary, drawerActions, drawerCopy, stateWord, needsOwner } from "./deck-board.js";
 
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const priorities = ["urgent", "high", "normal", "low"];
@@ -136,7 +137,7 @@ function activityHTML(card, author, stamp) {
   if (card.ask != null && lastAsk < 0) items.push(`<li class="is-open"><p><b>${e(author(card.return_to))}</b> asked${card.ask_to ? ` → ${e(author(card.ask_to))}` : ""} <span class="tag wait">Open</span></p><p class="event-text">${exact(card.ask)}</p>${choices(card.ask_options, true)}<p class="act-at">${stamp(card.updated_at)}</p></li>`);
   return items.join("");
 }
-export function renderDetails(card, { board = { slug: card.board }, me, messages = [], origin = originMessage(card, messages), strip = null, tab = "details", people = {}, deck = false, canRemove = false } = {}) {
+export function renderDetails(card, { board = { slug: card.board }, me, messages = [], origin = originMessage(card, messages), strip = null, tab = "details", people = {}, bots = [], canRemove = false, deck = globalThis.document?.documentElement?.dataset?.ui === "deck" } = {}) {
   const context = detailsContext(card, me);
   const name = board.name || board.slug || card.board;
   const prefix = [board.name, board.slug, card.board].map((part) => String(part || "").normalize("NFKD").toUpperCase().match(/[A-Z]/)?.[0]).find(Boolean) || "C";
@@ -154,14 +155,35 @@ export function renderDetails(card, { board = { slug: card.board }, me, messages
   const stripBox = strip ? `<div class="chat-about from-chat" data-row="${e(strip.row || "")}"><span class="fc-text">${strip.kind === "board" ? `You picked ${e(id)} on the board. The chat is one click away.` : `Opened from ${e(name)} chat: ${e(strip.source || "")}.`}</span><button class="btn sm" data-back-chat data-action="back-to-chat">Back to chat</button></div>` : "";
   const tag = context.blocked ? "Blocked" : context.needsMe ? "Needs me" : card.review_kind === "completion" ? `Reviewer: ${author(card.ask_to)}` : "";
   const linked = (card.linked || []).map((link) => `<li><a href="#/memory?id=${enc(link.drawer_id)}"${link.invalidated ? ' class="gone"' : ""}>${e(link.title || "Memory")}</a></li>`).join("");
-  return `<section class="workbench-details" aria-label="Card details" data-card="${e(card.number)}" data-version="${e(card.version)}"><div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context">${["details", "memory"].map((key) => `<button role="tab" id="tab-${key}" aria-selected="${tab === key}" aria-controls="ctx-panel" tabindex="${tab === key ? 0 : -1}" data-details-tab="${key}">${label(key)}</button>`).join("")}</div><button class="btn ghost sm hide" data-action="close-panel" aria-keyshortcuts="]">Hide</button></div>${stripBox}<div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-${tab}">${tab === "memory" ? `<div class="ctx-body"><h2>Memory for ${e(id)}</h2><ul>${linked || "<li>No linked memories</li>"}</ul><a class="btn" href="#/memory?q=${enc(card.ask || card.title)}">Search memory</a></div>` : `<div class="ctx-body"><header class="detail-h"><div class="row"><span class="cid">${e(id)}</span>${tag ? `<span class="tag ${context.blocked ? "block" : "wait"}">${e(tag)}</span>` : ""}</div><div class="title-row"><h2 tabindex="-1" data-details-title>${e(card.title)}</h2><button class="btn ghost sm" data-action="edit-card">Edit <kbd>E</kbd></button><button class="btn ghost sm" data-action="handoff">Hand off</button></div></header><dl class="fields"><dt>Status</dt><dd><select id="card-status" aria-label="Card status"${context.proposal ? " disabled" : ""}>${statuses.map((status) => `<option value="${status}"${status === card.status ? " selected" : ""}>${label(status)}</option>`).join("")}</select><button class="btn sm" data-action="panel-move"${context.proposal ? " disabled" : ""}>Move</button></dd><dt>Priority</dt><dd>${card.can_prioritize ? `<select id="card-priority" aria-label="Card priority">${priorities.map((item) => `<option value="${item}"${item === (card.priority || "normal") ? " selected" : ""}>${label(item)}</option>`).join("")}</select><button class="btn sm" data-action="panel-priority">Set</button>` : e(label(card.priority || "normal"))}</dd>${cardTypeRows(card)}<dt>${card.need === "working" ? "Working on it" : "Who"}</dt><dd>${e(card.assignee ? author(card.assignee) : card.status === "todo" ? deck ? "Nobody yet" : assignmentPickup(card) : "—")}${deck && !card.assignee && card.status === "todo" ? `<small class="assignment-help">${e(assignmentPickup(card, true))}</small>` : ""}${canRemoveAssignment(card) ? deck && !canRemove ? `<small class="assignment-help">Only the workspace owner can change this.</small>` : `<button class="btn" data-action="remove-assignment">Remove assignment</button>${deck ? "" : `<small>${e(assignmentPickup(card))}</small>`}` : ""}</dd>${card.ask_to && card.review_kind !== "completion" ? `<dt>Waiting on</dt><dd>${e(author(card.ask_to))}</dd>` : ""}${reviewerRows(card, { people, author })}${card.return_to?.startsWith("conn:") && card.status === "review" ? `<dt>Built by</dt><dd>${e(author(card.return_to))}</dd>` : ""}${card.labels?.length ? `<dt>Labels</dt><dd>${card.labels.map((item) => e(item)).join(" · ")}</dd>` : ""}${card.paths?.length ? `<dt>Owns paths</dt><dd class="path-contract" data-path-contract>${card.paths.map((item) => `<code>${e(item)}</code>`).join(" ")}</dd>` : ""}</dl>${waitingSection(card)}${blockersSection(card)}${cardRunsSlot(card)}${contextBox}${originBox}<section data-details-description><div class="sec-h"><h3>Description</h3><button class="btn ghost sm" data-action="edit-card" aria-label="Edit ${e(id)}">Edit</button></div><p class="body-text">${exact(card.body)}</p></section><section><div class="sec-h"><h3>Activity</h3></div><ol class="activity">${activityHTML(card, author, stamp)}</ol></section></div><div class="ctx-foot"><form class="reply" data-form="comment"><label class="sr" for="details-comment">Comment on ${e(id)}</label><textarea id="details-comment" name="text" rows="1" data-draft="comment-${e(card.number)}" placeholder="Comment or @mention…" required></textarea><button class="btn">Send</button></form></div>`}</div></section>`;
+  const html = `<section class="workbench-details" aria-label="Card details" data-card="${e(card.number)}" data-version="${e(card.version)}"><div class="ctx-head"><div class="ctx-tabs" role="tablist" aria-label="Context">${["details", "memory"].map((key) => `<button role="tab" id="tab-${key}" aria-selected="${tab === key}" aria-controls="ctx-panel" tabindex="${tab === key ? 0 : -1}" data-details-tab="${key}">${label(key)}</button>`).join("")}</div><button class="btn ghost sm hide" data-action="close-panel" aria-keyshortcuts="]">Hide</button></div>${stripBox}<div class="ctx-panel-wrap" id="ctx-panel" role="tabpanel" aria-labelledby="tab-${tab}">${tab === "memory" ? `<div class="ctx-body"><h2>Memory for ${e(id)}</h2><ul>${linked || "<li>No linked memories</li>"}</ul><a class="btn" href="#/memory?q=${enc(card.ask || card.title)}">Search memory</a></div>` : `<div class="ctx-body"><header class="detail-h"><div class="row"><span class="cid">${e(id)}</span>${tag ? `<span class="tag ${context.blocked ? "block" : "wait"}">${e(tag)}</span>` : ""}</div><div class="title-row"><h2 tabindex="-1" data-details-title>${e(card.title)}</h2><button class="btn ghost sm" data-action="edit-card">Edit <kbd>E</kbd></button><button class="btn ghost sm" data-action="handoff">Hand off</button></div></header><dl class="fields"><dt>Status</dt><dd><select id="card-status" aria-label="Card status"${context.proposal ? " disabled" : ""}>${statuses.map((status) => `<option value="${status}"${status === card.status ? " selected" : ""}>${label(status)}</option>`).join("")}</select><button class="btn sm" data-action="panel-move"${context.proposal ? " disabled" : ""}>Move</button></dd><dt>Priority</dt><dd>${card.can_prioritize ? `<select id="card-priority" aria-label="Card priority">${priorities.map((item) => `<option value="${item}"${item === (card.priority || "normal") ? " selected" : ""}>${label(item)}</option>`).join("")}</select><button class="btn sm" data-action="panel-priority">Set</button>` : e(label(card.priority || "normal"))}</dd>${cardTypeRows(card)}<dt>${card.need === "working" ? "Working on it" : "Who"}</dt><dd>${e(card.assignee ? author(card.assignee) : card.status === "todo" ? deck ? "Nobody yet" : assignmentPickup(card) : "—")}${deck && !card.assignee && card.status === "todo" ? `<small class="assignment-help">${e(assignmentPickup(card, true))}</small>` : ""}${canRemoveAssignment(card) ? deck && !canRemove ? `<small class="assignment-help">Only the workspace owner can change this.</small>` : `<button class="btn" data-action="remove-assignment">Remove assignment</button>${deck ? "" : `<small>${e(assignmentPickup(card))}</small>`}` : ""}</dd>${card.ask_to && card.review_kind !== "completion" ? `<dt>Waiting on</dt><dd>${e(author(card.ask_to))}</dd>` : ""}${reviewerRows(card, { people, author })}${card.return_to?.startsWith("conn:") && card.status === "review" ? `<dt>Built by</dt><dd>${e(author(card.return_to))}</dd>` : ""}${card.labels?.length ? `<dt>Labels</dt><dd>${card.labels.map((item) => e(item)).join(" · ")}</dd>` : ""}${card.paths?.length ? `<dt>Owns paths</dt><dd class="path-contract" data-path-contract>${card.paths.map((item) => `<code>${e(item)}</code>`).join(" ")}</dd>` : ""}</dl>${waitingSection(card)}${blockersSection(card)}${cardRunsSlot(card)}${contextBox}${originBox}<section data-details-description><div class="sec-h"><h3>Description</h3><button class="btn ghost sm" data-action="edit-card" aria-label="Edit ${e(id)}">Edit</button></div><p class="body-text">${exact(card.body)}</p></section><section><div class="sec-h"><h3>Activity</h3></div><ol class="activity">${activityHTML(card, author, stamp)}</ol></section></div><div class="ctx-foot"><form class="reply" data-form="comment"><label class="sr" for="details-comment">Comment on ${e(id)}</label><textarea id="details-comment" name="text" rows="1" data-draft="comment-${e(card.number)}" placeholder="Comment or @mention…" required></textarea><button class="btn">Send</button></form></div>`}</div></section>`;
+  if (!deck) return html;
+  const header = `<header class="detail-h"><div class="deck-card-state"><i class="deck-board-dot ${needsOwner(card, me) ? "waiting" : card.status === "done" ? "live" : "idle"}" aria-hidden="true"></i>${e(stateWord(card, me))}</div><h2 tabindex="-1" data-details-title>${e(card.title)}</h2></header>`;
+  return drawerCopy(html
+    .replace('class="workbench-details"', () => 'class="workbench-details deck-card-drawer"')
+    .replace(/<header class="detail-h">[\s\S]*?<\/header>/, () => header + drawerSummary(card, { board, people, bots, me }))
+    .replace(/<dl class="fields">[\s\S]*?<\/dl>/, (fields) => `<details class="deck-card-controls" data-deck-card-controls><summary>Edit card</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div>${fields}</details>`)
+    .replace('</div><div class="ctx-foot">', () => '</div><div class="ctx-foot">' + drawerActions(card, me))
+    .replace(' aria-keyshortcuts="]">Hide</button>', () => ' aria-keyshortcuts="]" aria-label="Close card"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>')
+    .replace('<form class="reply" data-form="comment">', () => '<form class="reply" data-form="comment" id="deck-card-reply" hidden>')
+    .replace(`Memory for ${e(id)}`, () => 'Linked memory')
+    .replace('Context (exact words)', () => 'Context')
+    .replace("'s request, quoted exactly", () => "'s request"), id);
 }
 
 // The shell keeps ownership of card mutations, drafts, sheet modality and chat focus return.
 export function createDetails({ mount, api = request, onMemory = () => {}, afterDraw = () => {} }) {
   let current, options, revision = 0, links = null;
   const draw = () => {
+    const controlsOpen = mount.querySelector(".workbench-details")?.dataset?.card === String(current.number) && mount.querySelector("[data-deck-card-controls]")?.open;
+    const replyOpen = mount.querySelector(".workbench-details")?.dataset?.card === String(current.number) && mount.querySelector("[data-deck-reply-toggle]")?.getAttribute("aria-expanded") === "true";
     mount.innerHTML = renderDetails(current, options);
+    if (replyOpen || options.replyOpen) {
+      const reply = mount.querySelector("#deck-card-reply");
+      if (reply) reply.hidden = false;
+      mount.querySelector("[data-deck-reply-toggle]")?.setAttribute("aria-expanded", "true");
+    }
+    const controls = mount.querySelector("[data-deck-card-controls]");
+    if (controls && controlsOpen) controls.open = true;
     if (options.tab === "details") placeCardLinks(mount, links);
     void attachCardRuns(mount, current, { api });
     if (options.tab === "details") afterDraw(mount, current);
@@ -171,6 +193,7 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
     // Keep an unfinished comment when switching away and back.
     const draft = mount.querySelector("[name=text]")?.value;
     if (draft != null) options.draft = draft;
+    options.replyOpen = mount.querySelector("[data-deck-reply-toggle]")?.getAttribute("aria-expanded") === "true" || options.replyOpen;
     options.tab = tab;
     draw();
     const input = mount.querySelector("[name=text]");
@@ -181,6 +204,17 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
   const click = (event) => {
     const tab = event.target.closest("[data-details-tab]");
     if (tab) selectTab(tab.dataset.detailsTab, true);
+    else if (event.target.closest("[data-deck-reply-toggle]")) {
+      const reply = mount.querySelector("#deck-card-reply");
+      if (reply) { reply.hidden = !reply.hidden; options.replyOpen = !reply.hidden; }
+      event.target.closest("[data-deck-reply-toggle]").setAttribute("aria-expanded", String(!reply?.hidden));
+      if (!reply?.hidden) reply?.querySelector("textarea")?.focus();
+    }
+    else if (event.target.closest("[data-deck-release]")) {
+      const controls = mount.querySelector("[data-deck-card-controls]");
+      if (controls) controls.open = true;
+      mount.querySelector('[data-form="release-origin"] [name="reason"]')?.focus();
+    }
     else if (event.target.closest("[data-card-type-save]")) {
       void saveCardType(mount, current, api).then((updated) => {
         if (!updated) return;
@@ -226,7 +260,9 @@ export function createDetails({ mount, api = request, onMemory = () => {}, after
               const template = document.createElement("template");
               template.innerHTML = html;
               const block = template.content.querySelector("[data-origin-text]")?.closest("section");
-              if (block && body) body.insertBefore(block, body.querySelector("[data-details-description]"));
+              if (block && body) {
+                body.insertBefore(block, body.querySelector("[data-details-description]"));
+              }
             }
           }
         } catch {
