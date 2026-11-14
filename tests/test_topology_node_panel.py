@@ -246,6 +246,70 @@ def test_another_workspace_sees_nothing_and_no_secret_is_in_the_answer(signup_hu
         assert secret not in text
 
 
+def test_a_runner_machine_id_is_read_when_the_map_holds_no_node_for_it(signup_hub, owners):
+    owner = owners["A"]
+    machine = _enrolled(signup_hub, owner)
+    number, _ = _start(signup_hub, owner, machine)
+    # No topology node at all: the Compute fallback asks with the machine's own id.
+    status, body = _read(signup_hub, owner, machine["machine_id"])
+    assert status == 200
+    assert body["node"] == {"key": machine["machine_id"], "found": False}
+    agents = body["agents"]
+    assert agents["applicable"] is True and agents["machine"]["id"] == machine["machine_id"]
+    [run] = agents["runs"]
+    assert (run["board"], run["card"], run["state"]) == ("shared", number, "queued")
+    assert {"job", "updated_at", "thread_id", "log_ref"} <= run.keys()
+    assert agents["coordinators"] == []
+    # Same shape as the read through a topology node that names the machine.
+    _seed(signup_hub, owner, machine["machine_id"])
+    assert _read(signup_hub, owner, "maple")[1]["agents"] == agents
+
+
+def test_an_unknown_key_and_a_foreign_runner_id_answer_identically(signup_hub, owners):
+    owner = owners["A"]
+    machine = _enrolled(signup_hub, owner)
+    _start(signup_hub, owner, machine)
+    unknown = _read(signup_hub, owners["B"], "mach_ffffffffffffffff")
+    foreign = _read(signup_hub, owners["B"], machine["machine_id"])
+    assert unknown[0] == foreign[0] == 200
+    assert unknown[1]["agents"] == {"applicable": False, "reason": "not_a_runner"}
+    assert foreign[1]["node"] == {"key": machine["machine_id"], "found": False}
+    # Everything but the echoed key and the clock is the same, so the id is no existence oracle.
+
+    def strip(body):
+        return {k: v for k, v in body.items() if k != "as_of"} | {"node": {"found": False}}
+
+    assert strip(foreign[1]) == strip(unknown[1])
+    assert machine["machine_id"] not in str(foreign[1]["agents"])
+    # A key that is no machine id at all is unchanged.
+    assert _read(signup_hub, owner, "nowhere")[1]["agents"] == {
+        "applicable": False,
+        "reason": "not_a_runner",
+    }
+
+
+def test_a_runner_id_read_follows_the_same_grants_as_a_node_read(signup_hub, owners):
+    owner = owners["A"]
+    machine = _enrolled(signup_hub, owner)
+    _start(signup_hub, owner, machine)
+    key = machine["machine_id"]
+    _, blind = cli_token(owner, "blind-reader", read_wings="shared")
+    status, body = _read(signup_hub, blind, key)
+    assert status == 403 and key not in str(body)
+    _, narrow = cli_token(owner, "topology-only", read_wings="topology")
+    body = _read(signup_hub, narrow, key)[1]
+    assert body["agents"]["applicable"] is True
+    assert body["agents"]["runs"] == [] and body["agents"]["connections"] is None
+    peer = member(signup_hub, owner, owners["B"])
+    body = _read(signup_hub, peer, key)[1]
+    assert [run["board"] for run in body["agents"]["runs"]] == ["shared"]
+    assert body["agents"]["connections"] is None
+    assert [item["kind"] for item in _read(signup_hub, owner, key)[1]["agents"]["connections"]] == [
+        "machine",
+        "worker",
+    ]
+
+
 def test_sites_say_how_each_node_takes_part_and_how_fresh_the_route_is(signup_hub, owners):
     owner = owners["A"]
     machine = _enrolled(signup_hub, owner)
