@@ -128,6 +128,13 @@ def attention(db, owner):
             if approved is None or status["settings_version"] != approved["version"]:
                 continue
             facts = json.loads(status["components"])
+            if all(f["availability"] == "present" for f in facts.values()):
+                from . import setup_approvals
+
+                # The specific sign-in cards own this state once the machine has
+                # fetched consent. Do not leave an unresolvable generic duplicate.
+                if setup_approvals.owner_view(db, row).get("setup_approval", {}).get("requests"):
+                    continue
             reason = (
                 "component_missing"
                 if any(f["availability"] == "missing" for f in facts.values())

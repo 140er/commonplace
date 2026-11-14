@@ -26,6 +26,8 @@ const RAMPS = {
 const PACKED = {};
 for (const k in RAMPS) PACKED[k] = RAMPS[k].map((h) => pack(hex(h)));
 const GAP = pack(hex("#08080b"));
+// Scene channels are bytes; this is exactly the reference power for every possible input.
+const VALUES = Float64Array.from({ length: 256 }, (_, channel) => Math.pow(channel / 255, 1.15));
 
 // deterministic RNG
 function rng(seed) {
@@ -273,7 +275,7 @@ function StageDither(canvas, opts) {
   this.ctx = canvas.getContext("2d");
   this.doc = canvas.ownerDocument;
   this.win = this.doc.defaultView;
-  this.opts = Object.assign({ scene: "capy-cyber", bayer: 4, vignette: 0.55, dim: 0, dot: 4 }, opts || {});
+  this.opts = Object.assign({ scene: "capy-cyber", bayer: 4, vignette: 0.6, dim: 0, dot: 4 }, opts || {});
   this.levels = null;
   this._tw = [];
   this.motion = this.win.matchMedia("(prefers-reduced-motion: reduce)");
@@ -305,7 +307,7 @@ StageDither.prototype.destroy = function () {
 function valuePass(mx, i, j, cols, rows, vignette, dim, field = null) {
   const k = j * cols + i;
   const tex = field ? field.tex[k] : fbm(i / 16, j / 16);
-  let v = Math.pow(mx / 255, 1.15) * (0.45 + tex * 0.85) + (field ? field.hash[k] : hash2(i, j)) * 0.08 + tex * 0.05;
+  let v = (VALUES[mx] ?? Math.pow(mx / 255, 1.15)) * (0.45 + tex * 0.85) + (field ? field.hash[k] : hash2(i, j)) * 0.08 + tex * 0.05;
   const edge = field ? field.edge[k] : 1 - vignette * Math.min(1, Math.max(0, (Math.hypot(i - cols / 2, j - rows / 2) / Math.hypot(cols / 2, rows / 2) - 0.35) / 0.65)) ** 1.4;
   v *= edge;
   return v * (1 - dim);
@@ -332,19 +334,24 @@ StageDither.prototype.render = function () {
   const started = this.win.performance.now();
   const dpr = Math.min(this.win.devicePixelRatio || 1, 2);
   const W = Math.round(rect.width * dpr), H = Math.round(rect.height * dpr);
-  c.width = W; c.height = H;
+  if (c.width !== W) c.width = W;
+  if (c.height !== H) c.height = H;
   const cs = Math.max(2, Math.round(o.dot * dpr));
   const gap = Math.max(1, Math.round(dpr));
   const cols = Math.ceil(W / cs), rows = Math.ceil(H / cs);
   this.cs = cs; this.gap = gap; this.cols = cols; this.rows = rows;
 
   // 1. paint the scene at one texel per dot
-  const off = this.doc.createElement("canvas");
-  off.width = cols; off.height = rows;
-  const octx = off.getContext("2d");
-  octx.fillStyle = "#000"; octx.fillRect(0, 0, cols, rows);
-  (SCENES[o.scene] || sceneCapy)(octx, cols, rows);
-  const src = octx.getImageData(0, 0, cols, rows).data;
+  // Scenes are seeded and static. Only scene/geometry changes need a new vector buffer.
+  if (!this.source || this.source.cols !== cols || this.source.rows !== rows || this.source.scene !== o.scene) {
+    const off = this.doc.createElement("canvas");
+    off.width = cols; off.height = rows;
+    const octx = off.getContext("2d");
+    octx.fillStyle = "#000"; octx.fillRect(0, 0, cols, rows);
+    (SCENES[o.scene] || sceneCapy)(octx, cols, rows);
+    this.source = { cols, rows, scene: o.scene, pixels: octx.getImageData(0, 0, cols, rows).data };
+  }
+  const src = this.source.pixels;
 
   // 2. quantise with Bayer and stamp dots
   // At 2x, each reference pixel is an exact 2×2 square (including gaps).
@@ -405,6 +412,7 @@ StageDither.prototype.render = function () {
     lowFraction: Object.values(counts).reduce((n, steps) => n + steps[0] + steps[1] + steps[2], 0) / (cols * rows),
     ms: this.win.performance.now() - started, dpr, dot: o.dot, dim: o.dim, scene: o.scene };
   c.dataset.dim = String(o.dim);
+  c.dataset.dot = String(o.dot);
 
 };
 

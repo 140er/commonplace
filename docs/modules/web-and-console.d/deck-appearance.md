@@ -1,13 +1,4 @@
-- **Owns:**
-
-  - The opt-in Deck look loads its Capy colour and shape tokens from `deck-capy.css`. `deck-dither.js` contains the dependency-free `StageDither` canvas renderer: three procedural scenes, ordered Bayer 4×4/8×8 thresholds, the reference value pass and four colour ramps. One texel represents one dot. ResizeObserver repaints the stage; only the sparse optional twinkle uses a timer. Reduce Motion stops it, including dots already lifted, and disposal releases its observer and timer.
-
-  - `deck-appearance.js` mounts the inset stage behind the shell and the Appearance panel in Settings. Home (`#/` and `#/home`) is undimmed; other routes apply a 0.45 renderer dim and a separate 50% stage veil. Home routing belongs to the Home screen. The Settings wrapper preserves existing section content and order, placing Appearance beside it on desktop and last on narrow screens.
-
-- **Promises:**
-
-  - Scene, Bayer pattern, vignette, dot size and surface opacity are validated and saved under a localStorage key containing both workspace and person. The initial render uses the saved values. There is no server schema or external service. The classic look does not mount the stage, panel, or appearance tokens.
-
-- **Tests:**
-
-  - Verification: `test_deck_appearance.py` wraps fixed-input Node checks for value, hue, thresholds, persistence isolation, and reduced-motion cleanup. `test_deck_appearance_browser.py` optionally checks crisp rendering, both dim layers, Settings interaction/reload, resize, dark-dot distribution and the render budget. It skips when browser support is unavailable or explicitly disabled.
+- **Owns:** `deck-capy.css` defines the opt-in Capy tokens and stage layers; `deck-dither.js` provides the dependency-free StageDither renderer; `deck-appearance.js` mounts the stage and person-scoped Appearance controls.
+- **Promises:** The three procedural scenes, Bayer thresholds, ramps and value pass preserve the reference artwork. Home (`#/` and `#/home`) stays undimmed; other routes use renderer dim 0.45, an explicitly uppermost 50% veil, and a measured canvas-opacity trim. The phone stage is full bleed. Existing Settings sections retain their content/order, with a separate Appearance card and 12px phone gaps. Scene, Bayer, 60% default vignette, page dot size and surface alpha load before the first stage render and persist in workspace-plus-person localStorage; no server table or external service is added. Preview and thumbnails use the same renderer at a fixed 2px dot, independently of the page. Classic stays unaffected.
+- **How it fails:** Unavailable storage retains choices for the visit; malformed stored values fall back to validated defaults. Browser coverage skips cleanly when optional browser support is absent. Wall-time render measurements depend on concurrent load and do not establish a universal 25ms guarantee.
+- **Tests:** `tests/test_deck_appearance.py` wraps the fixed-input Node, persistence, miniature-settings and reduced-motion contracts. `tests/test_deck_appearance_browser.py` covers rendered brightness against the reviewed reference, the two dim layers, full-bleed phone geometry, distinct Settings cards, fixed miniature dots, reload/resize and the optional render-budget check.

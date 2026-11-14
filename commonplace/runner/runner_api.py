@@ -222,6 +222,11 @@ def _listing(store, machine, query):
 
 
 def _dispatch(gateway, h, route):
+    from . import setup_api, setup_approvals
+
+    if urlsplit(h.path).path in setup_approvals.MACHINE_PATHS:
+        setup_api.machine_dispatch(gateway, h)
+        return
     if urlsplit(h.path).path in ("/api/runner/install-manifest", "/api/runner/install-status"):
         _install_manifest(gateway, h)
     else:

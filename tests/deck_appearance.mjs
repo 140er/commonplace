@@ -2,6 +2,19 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { B4, B8, RAMPS, valuePass, rampFor, quantize, StageDither } from '../commonplace/web/static/deck-dither.js';
 import { appearanceStore, appearanceHTML, DEFAULTS } from '../commonplace/web/static/deck-appearance.js';
+import * as appearance from '../commonplace/web/static/deck-appearance.js';
+
+test('Appearance starts at 60% vignette and miniature dots stay at 2px independently of the page', () => {
+  assert.equal(DEFAULTS.vignette, .6);
+  for (const dot of [3, 4, 5, 6, 7]) {
+    for (const scene of ['capy-cyber', 'palace-gate', 'nebula-quiet']) {
+      const opts = appearance.previewOptions({ ...DEFAULTS, dot }, scene);
+      assert.equal(opts.dot, 2); assert.equal(opts.dim, 0); assert.equal(opts.scene, scene);
+      assert.equal(opts.twinkle, false);
+    }
+  }
+  assert.match(appearanceHTML(DEFAULTS), /class="appearance-send"/);
+});
 
 test('ordered thresholds, fixed value inputs and hue boundaries match the reference', () => {
   assert.equal(B4.length, 16); assert.equal(B8.length, 64);
@@ -11,6 +24,9 @@ test('ordered thresholds, fixed value inputs and hue boundaries match the refere
   assert.equal(valuePass(255, 0, 0, 100, 100, 0, 0), .45);
   assert.equal(valuePass(255, 0, 0, 100, 100, 0, .45), .45 * .55);
   assert.ok(Math.abs(valuePass(255, 0, 0, 100, 100, .55, 0) - .2025) < 1e-12);
+  assert.equal(valuePass(150, 17, 23, 360, 225, .55, 0), .41376888551622965);
+  assert.equal(valuePass(230, 240, 71, 360, 225, .55, .45), .5181483417887613);
+  assert.equal(valuePass(80, 90, 150, 98, 211, .7, 0), .26982832779112287);
   assert.equal(rampFor(23, 0, 20, .1), 'grey');
   assert.equal(rampFor(100, 90, 100, .5), 'grey');
   assert.equal(rampFor(40, 190, 230, .99), 'cyan');

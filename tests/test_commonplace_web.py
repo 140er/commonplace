@@ -51,6 +51,7 @@ def test_login_cookie_identity_replay_and_logout(hub):
         "workspace": hub.workspace,
         "workspace_name": hub.db.workspace(hub.workspace)["name"],
         "actor": f"user:{hub.admin}",
+        "connection_id": None,
         "people": {f"user:{hub.admin}": "owner"},
     }
     status, headers, _ = request(hub, f"/app/login?t={token}")
