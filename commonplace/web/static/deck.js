@@ -6,6 +6,7 @@
 import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
 import { arrangeSettings, policyPresentation, selectSettings } from './deck-settings.js';
+import { createDeckAppearance } from './deck-appearance.js';
 
 export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
@@ -100,6 +101,7 @@ export function toolsHTML({ needs = 0, rulesWaiting = 0, can_admin = false } = {
 /** The shell's handle on Deck. Everything it needs comes in, so it runs without a browser.
  *  context() returns what a screen may read: { me, boards, needs, go(hash) }. */
 export function createDeck({ root, api, context, title, screen = () => 0, reload = () => {}, screens = SCREENS, storage = store(), doc = globalThis.document } = {}) {
+  const appearance = createDeckAppearance({ root, context, on: () => deckOn(storage), doc, storage });
   let active = null;
   const name = (base) => workspaceRoute(base)?.screen || /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
   const owns = (base) => typeof screens[name(base)] === 'function' && (deckOn(storage) || (!!workspaceRoute(base) && base !== '#/compute'));
@@ -123,6 +125,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     }
     if (deckOn(storage)) arrangeSettings(box, { owner: context()?.me?.role === 'owner' });
     if (!box.querySelector('#look')) box.insertAdjacentHTML('beforeend', lookHTML(deckOn(storage)));
+    appearance.settings(box);
   }
   function toggle() {
     setDeck(!deckOn(storage), storage);
@@ -146,5 +149,5 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     }
   });
   const drawn = (render) => (options = {}) => deckOn(storage) ? render({ ...options, screens }) : '';
-  return { policyPresentation: () => deckOn(storage) ? policyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
+  return { appearance, policyPresentation: () => deckOn(storage) ? policyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
 }

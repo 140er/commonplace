@@ -198,6 +198,7 @@ def install(gateway):
                     "workspace": principal.workspace_id,
                     "workspace_name": gateway.db.workspace(principal.workspace_id)["name"],
                     "actor": principal.actor,
+                    "connection_id": principal.connection_id if principal.auth == "oauth" else None,
                     "people": _people(gateway.db, principal.workspace_id),
                 },
             )
