@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createNeedLedger } from "../commonplace/web/static/deck-home-today.js";
 const url = (source) => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const read = (name) => readFile(new URL(`../commonplace/web/static/${name}`, import.meta.url), "utf8");
 const apiUrl = url(await read("api.js"));
@@ -428,6 +429,7 @@ const shellUI = rulesHandlers({
 const updateShellUI = shellUI.update;
 shellUI.update = (...args) => { updates.push(args); updateShellUI(...args); };
 const shellDeps = {
+  deckNeedsLedger: createNeedLedger(),
   state: shellState,
   api: async (path) => {
     shellCalls.push(path);
@@ -446,7 +448,7 @@ const shellDeps = {
   title: (_text, actions = "") => { headerActions = actions; }, remember: noWork, capture: () => noWork, restore: noWork,
   boardsView: noWork, showError: (error) => { shellErrorCalls.push(error); if (error) shellErrors.push(error); },
 };
-shellRefresh = new Function(...Object.keys(shellDeps), `${refreshSource}; return refresh;`)(...Object.values(shellDeps));
+shellRefresh = new Function(...Object.keys(shellDeps), `${shellSource.slice(shellSource.indexOf("function rememberDeckBots("), shellSource.indexOf("function setBotsWaiting("))}; ${refreshSource}; return refresh;`)(...Object.values(shellDeps));
 assert.equal(await shellRefresh(), true);
 assert.equal(shellMarker.hidden, true);
 assert.deepEqual(updates.at(-1)[1], { owner: false });
