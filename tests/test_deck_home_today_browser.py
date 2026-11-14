@@ -209,7 +209,7 @@ def test_home_today_live_actions(hub, fresh, width):
                 )
                 assert animation == "4s"
                 assert (
-                    "work asked: Ship consent for the phone feed"
+                    "work asked 3 things"
                     in await page.locator('[data-bt="activity"]').text_content()
                 )
                 # Leave the pointer where the removed card's Approve button was.
