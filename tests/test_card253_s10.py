@@ -132,7 +132,9 @@ def test_card253_s10_readable_guard(case, role):
     assert reply["source_kept"] == {"thread": w.readable.id, "seq_start": 0, "seq_end": 0}
     drawer = invoke(w, TOOLS[1], {"drawer_id": identifier}, role)
     assert drawer["content"] == TEXT
-    assert drawer["metadata"]["source_file"] == "original.md"
+    # This world's collection is not a Chroma snapshot, so no exact local match can prove the
+    # plain file citation and it is omitted (locked D9.1-A); the readable bundle is kept.
+    assert "source_file" not in drawer["metadata"]
     assert drawer["metadata"]["source_thread"] == w.readable.id
 
 
@@ -261,9 +263,15 @@ def test_card253_s10_r1_private_parent(case, monkeypatch, role, operation):
             args = {"query": "bundle", "wing": "wing_fixture", "include_facts": False}
             raw = w.h.gateway.mediator.workers.call_tool(principal, TOOLS[4], args)
             reply = invoke(w, TOOLS[4], args, role)
-            # Drawer search does not emit source_thread/ranges. Preserve the
-            # real worker's complete hit projection for this readable parent.
-            assert reply["results"] == raw["results"]
+            # Drawer search does not emit source_thread/ranges. The gateway keeps the
+            # real worker's hit projection except the source citation, which only a
+            # proved source path may carry: this drawer has none, so the path and its
+            # display basename are omitted together.
+            expected = [
+                {k: v for k, v in hit.items() if k not in {"source_path", "source_file"}}
+                for hit in raw["results"]
+            ]
+            assert reply["results"] == expected
             assert TEXT in str(reply)
             return
 
