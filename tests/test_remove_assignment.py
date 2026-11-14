@@ -119,6 +119,9 @@ def open_drawer(browser, hub, fresh, card, width, look, *, removable=True):
     page = context.new_page()
     page.goto(origin + f"/app/?ui={look}#/board/work")
     page.locator(f'.card[data-card="{card["number"]}"]').click()
+    edit = page.locator("[data-deck-card-controls]")
+    if edit.count():
+        edit.locator("summary").click()
     page.locator(".workbench-details .fields").wait_for()
     if removable:
         page.locator('[data-action="remove-assignment"]').wait_for()
