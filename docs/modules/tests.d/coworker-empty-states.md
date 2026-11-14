@@ -1,0 +1,1 @@
+- **Tests:** `deck_coworker_empty_states.mjs` (run through `test_deck_coworkers.py`) mounts the Coworker page per state and checks the Working on line and the list row text, and that "No summary recorded" never appears. `test_coworker_page_guidance_mutations.py` gained one reverted-rule case per wording rule.
