@@ -19,8 +19,23 @@ export function directLinks(model, positions, phone = false, k = 1) {
     const { width, height } = cardSize(node, phone), p = positions[node.key];
     return { key: node.key, x: p.x-width/(2*k)-6, y: p.y-height/(2*k)-6, width: width/k+12, height: height/k+12 };
   });
-  const lanes = [];
-  return new Map((model.links || []).filter(link => positions[link.from] && positions[link.to]).map(link => {
+  const lanes = [], ports = new Map();
+  const valid = (model.links || []).filter(link => positions[link.from] && positions[link.to]);
+  const curved = new Set(phone ? valid.filter(link => {
+    const a = positions[link.from], b = positions[link.to];
+    return valid.some(other => other.id !== link.id && ((other.from === link.from && other.to === link.to) || (other.from === link.to && other.to === link.from))) ||
+      boxes.some(box => box.key !== link.from && box.key !== link.to && Array.from({length:39},(_,i)=>pointAt(a,b,null,(i+1)/40)).some(p=>inside(p,box)));
+  }).map(link=>link.id) : []);
+  for (const link of valid) if (curved.has(link.id)) for (const key of [link.from,link.to]) {
+    if (!ports.has(key)) ports.set(key,[]);
+    ports.get(key).push(link.id);
+  }
+  const port = (key,id) => {
+    const group = ports.get(key), at = positions[key], node = model.nodes.find(n=>n.key === key);
+    const step = Math.min(12,24/Math.max(1,group.length-1));
+    return { x:at.x-cardSize(node,true).width/(2*k), y:at.y+(group.indexOf(id)-(group.length-1)/2)*step/k };
+  };
+  return new Map(valid.map(link => {
     const a = positions[link.from], b = positions[link.to], obstacles = boxes.filter(box => box.key !== link.from && box.key !== link.to);
     const hits = control => {
       let count = 0;
@@ -28,15 +43,15 @@ export function directLinks(model, positions, phone = false, k = 1) {
       return count;
     };
     let control = null, best = hits(null);
-    const parallel = phone && model.links.some(other => other.id !== link.id && ((other.from === link.from && other.to === link.to) || (other.from === link.to && other.to === link.from)));
-    if (phone && (best || parallel)) {
+    if (curved.has(link.id)) {
       const low = Math.min(a.y,b.y), high = Math.max(a.y,b.y);
       let lane = 0;
       while (lanes.some(other => other.lane === lane && Math.min(high,other.high)-Math.max(low,other.low) > 40/k)) lane++;
       lanes.push({lane,low,high});
       const x = Math.min(...boxes.map(box=>box.x))-(20+lane*16)/k, turn = Math.min(16/k, Math.abs(b.y-a.y)/3), sign = Math.sign(b.y-a.y) || 1;
-      const label = {x,y:(a.y+b.y)/2};
-      return [link.id, { d: `M${a.x} ${a.y}Q${x} ${a.y} ${x} ${a.y+turn*sign}L${x} ${b.y-turn*sign}Q${x} ${b.y} ${b.x} ${b.y}`, lane:x, label, points:[a,{x,y:a.y},{x,y:b.y},b] }];
+      const start = port(link.from,link.id), end = port(link.to,link.id);
+      const label = {x,y:(start.y+end.y)/2};
+      return [link.id, { d: `M${start.x} ${start.y}Q${x} ${start.y} ${x} ${start.y+turn*sign}L${x} ${end.y-turn*sign}Q${x} ${end.y} ${end.x} ${end.y}`, lane:x, label, points:[start,{x,y:start.y},{x,y:end.y},end] }];
     }
     const distance = Math.hypot(b.x-a.x,b.y-a.y) || 1;
     if (best) for (let offset = 32; offset <= 320 && best; offset += 24) for (const sign of [1,-1]) {
