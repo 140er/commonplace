@@ -10,7 +10,7 @@ refuses with `not_configured`; an untrusted or unlisted requester gets `not_allo
 Both refusals keep their code and status and now say which prerequisite is missing. The
 refusal's `details` hold `missing` (stable slugs such as `accepted_config`,
 `runner_table`, `seat_not_trusted`, `not_on_requester_list`) and `fix`, the owner's route:
-Project settings > Orchestrator start permissions > Trust and allow starts for trust and
+Project settings > Coworker start permissions > Trust and allow starts for trust and
 requester entries, and `orch_config_propose` / `orch_config_accept`, the board's configs
 REST routes or the owner CLI `accept` for the config. The text names only the caller's own
 board and seat; it does not change who may claim.
