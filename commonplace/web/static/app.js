@@ -1,3 +1,4 @@
+import { deckPaletteItems } from './deck-home-palette.js';
 import { mountWorkspaceOrchestration } from "./projects.js";
 import { mountProjectPanel } from "./projectpanel.js";
 import { mountAgentSchedules } from "./agent-schedules.js";
@@ -311,7 +312,9 @@ function paletteUI() {
 function shortcutsView() { paletteUI().shortcuts(); }
 function shellMenu() {
   const board = currentBoard(), cards = boardCards().filter((card) => !card.board || card.board === board?.slug);
-  paletteUI().open({ can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
+  const deck = document.documentElement.dataset.ui === "deck", roster = state.deckRoster;
+  const bots = roster?.workspace === state.me?.workspace && roster?.actor === state.me?.actor ? roster.bots : [];
+  paletteUI().open({ deck, ...(deck ? { items: deckPaletteItems({ board, bots }) } : {}), can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true, board, boards: state.boards, cards, selected: state.card || cards.find((card) => card.number === state.selected) || null });
 }
 async function paletteCommand(item) {
   const action = item.action;
@@ -1057,6 +1060,7 @@ function clearWorkbenchChat() {
   chatUI?.stop(); chatUI = null;
   if (typeof Event === "function") document.dispatchEvent?.(new Event("signout"));
 }
+function rememberDeckBots(bots) { state.deckRoster = { workspace: state.me?.workspace, actor: state.me?.actor, bots }; }
 function setBotsWaiting(total) {
   if (total === state.botsWaiting) return;
   state.botsWaiting = total;
@@ -1064,7 +1068,7 @@ function setBotsWaiting(total) {
 }
 function botsScreen() {
   // The roster the screen already loads also feeds the rail badge, so the screen adds no second poll.
-  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => setBotsWaiting(waitingTotal(bots)) });
+  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => { rememberDeckBots(bots); setBotsWaiting(waitingTotal(bots)); } });
   const [path, query] = state.base.split("?");
   const create = new URLSearchParams(query).get("new") === "1";
   if (create) {
@@ -1119,7 +1123,7 @@ async function refresh({ background = false, events = [] } = {}) {
     const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = deckNeedsLedger.apply(needs || { count: 0 }, state.me);
-    if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
+    if (roster?.bots) { rememberDeckBots(roster.bots); state.botsWaiting = waitingTotal(roster.bots); }
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { escape as e } from '../commonplace/web/static/api.js';
-import { todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText } from '../commonplace/web/static/deck-home-today.js';
+import { todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText, runUpdate, retryIntent, quietSelector } from '../commonplace/web/static/deck-home-today.js';
+import { cardHTML, activityText } from '../commonplace/web/static/deck-today-capy.js';
 import { modelControls } from '../commonplace/web/static/deck-home.js';
 
 const card = { number: 7, version: 4, title: 'Review the release', actions: ['approve', 'reject'] };
@@ -80,4 +81,40 @@ test('run cards show only the sent run and its reported steps, at most three', (
   const html = runHTML({ text: '<Check>', state: 'running', steps: [{ label: 'Read the change', state: 'done' }, { label: 'Check the preview', state: 'running' }] }, e);
   assert.match(html, /&lt;Check&gt;/); assert.match(html, /data-state="done"/); assert.match(html, /data-state="running"/);
   assert.equal(displayText('PR #123 Review the release ~/private/file'), 'Review the release');
+});
+
+test('failed run keeps the hub reason and settings link, and still exposes failed state with steps', () => {
+  const run = { state: 'streaming', text: 'Check release', canConfigure: true, intent: {}, requestId: 'turn-1', steps: [{ label: 'Read release', state: 'done' }] };
+  runUpdate(run, { state: 'failed:needs_configuration' }, { code: 'needs_configuration', text: 'No chat model is set up for this bot yet.' });
+  const html = runHTML(run, e);
+  assert.match(html, /bh-run-failed/); assert.match(html, /Could not complete/);
+  assert.match(html, /No chat model is set up for this bot yet/); assert.match(html, /href="#\/settings">Choose one/);
+  assert.match(html, /Try again/); assert.match(html, /Read release/);
+  assert.doesNotMatch(runHTML({ ...run, canConfigure: false }, e), /Choose one/);
+  assert.doesNotMatch(runHTML({ text: 'Check', state: 'running' }, e), /Try again|Choose one/);
+});
+test('retry preserves original recipient and model intent while retaining uncertain receipt identity', () => {
+  const intent = { bot: { id: 'original' }, conversation: 'one', body: { text: 'Original', model: 'offered', reasoning_effort: 'high', bot_id: 'worker' } };
+  const run = { intent, requestId: 'original-receipt', acked: false };
+  assert.deepEqual(retryIntent(run), { ...intent, requestId: run.requestId });
+  const retry = retryIntent({ ...run, acked: true });
+  assert.notEqual(retry.requestId, run.requestId); assert.deepEqual(retry.body, intent.body); assert.equal(retry.conversation, 'one');
+  retry.body.text = 'Changed'; assert.equal(intent.body.text, 'Original');
+});
+test('Today omits queue boilerplate and preserves an explicit bot fact', () => {
+  const state = { busy: new Set(), errors: new Map(), held: new Set(), exiting: new Set() };
+  const item = { ...card, why: 'Awaiting plan review. Approve or reject it.' };
+  assert.doesNotMatch(cardHTML(item, [], state), /Awaiting plan review|bt-fact/);
+  assert.match(cardHTML({ ...item, fact: 'Auto-deploy is off, so it waits for you' }, [], state), /Auto-deploy is off/);
+});
+test('Activity uses sentences and live bot names rather than event labels', () => {
+  const event = { kind: 'card.created', data: { board: 'work', number: 7, title: 'Agree the action list' } }, bots = [{ board: 'work', name: 'work' }];
+  assert.equal(activityText(event, bots, { plans: [card] }), 'work asked: Agree the action list');
+  assert.equal(activityText({ ...event, kind: 'card.updated' }, bots), 'work updated Agree the action list');
+  assert.equal(activityText({ kind: 'unrecognized', data: {} }, bots), '');
+});
+test('quiet selector keeps native keyboard behavior and an adjacent chevron', () => {
+  const html = quietSelector('bot', 'Bot', 'bh-bot');
+  assert.match(html, /class="bh-choice-text"/); assert.match(html, /viewBox="0 0 12 12"/);
+  assert.match(html, /<select name="bot" aria-label="Bot">/);
 });

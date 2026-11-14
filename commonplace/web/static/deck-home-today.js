@@ -74,11 +74,27 @@ export function actionRow(card, { busy = false } = {}, e) {
 }
 export const avatar = (bot, e) => `<span class="bt-avatar" aria-hidden="true">${e(Array.from(bot?.name || '?')[0])}</span>`;
 export const timeHTML = (at, e) => at && Number.isFinite(Date.parse(at)) ? `<time datetime="${e(at)}">${e(elapsed(at))}</time>` : '';
-export const stateName = state => ({ working: 'Working', busy: 'Working', running: 'Running', queued: 'Queued', pending: 'Queued', streaming: 'Running', sending: 'Sending', polling: 'Running', dropped: 'Waiting for an update', needs_you: 'Needs you', needs_person: 'Needs you', ready: 'Ready', healthy: 'Healthy', completed: 'Completed', succeeded: 'Completed', done: 'Completed', error: 'Could not complete', failed: 'Could not complete', cancelled: 'Cancelled', idle: 'Idle', blocked: 'Blocked', needs_configuration: 'Needs configuration', interrupted: 'Interrupted' })[state] || 'State unavailable';
+export const stateName = state => ({ working: 'Working', busy: 'Working', running: 'Running', queued: 'Queued', pending: 'Queued', streaming: 'Running', sending: 'Sending', polling: 'Running', dropped: 'Waiting for an update', needs_you: 'Needs you', needs_person: 'Needs you', ready: 'Ready', healthy: 'Healthy', completed: 'Completed', succeeded: 'Completed', done: 'Completed', error: 'Could not complete', failed: 'Could not complete', cancelled: 'Cancelled', idle: 'Idle', blocked: 'Blocked', needs_configuration: 'Needs configuration', interrupted: 'Interrupted' })[state] || (String(state).startsWith('failed:') ? 'Could not complete' : state === 'ok' ? 'Completed' : 'State unavailable');
 export const stateTone = state => ['needs_you', 'needs_person'].includes(state) ? 'waiting' : ['working', 'busy', 'running', 'streaming', 'sending', 'polling', 'queued', 'pending'].includes(state) ? 'busy' : ['ready', 'healthy', 'done', 'completed', 'succeeded'].includes(state) ? 'live' : 'idle';
+export const runFailed = run => /^(?:error|failed(?::.*)?|needs_configuration|model_error)$/.test(run.state);
+export function runUpdate(run, message = {}, detail = {}) {
+  run.state = message.state || detail.state || run.state;
+  if (runFailed(run)) {
+    run.reason = detail.text || message.reason || message.error?.message || message.error || message.text || '';
+    if (typeof run.reason !== 'string') run.reason = '';
+    run.code = detail.code || String(run.state).replace(/^failed:/, '');
+  }
+}
+// A terminal failure starts a new turn; uncertain delivery reuses its receipt.
+export function retryIntent(run) {
+  return { ...run.intent, body: { ...run.intent.body }, requestId: run.acked ? globalThis.crypto.randomUUID() : run.requestId };
+}
+export function quietSelector(name, label, className) {
+  return `<label class="bh-choice ${className}" hidden><span class="sr">${label}</span><span class="bh-choice-text" aria-hidden="true"></span><svg aria-hidden="true" viewBox="0 0 12 12" fill="none" stroke="currentColor"><path d="m3 4.5 3 3 3-3"/></svg><select name="${name}" aria-label="${label}"></select></label>`;
+}
 export function runHTML(run, e) {
-  const steps = (run.steps || []).filter(step => typeof step?.label === 'string' && step.label);
-  return `<article class="bh-run"><header>${run.bot ? `${avatar(run.bot, e)}<b>${e(run.bot.name)}</b>` : ''}${timeHTML(run.at, e)}</header><p>${e(displayText(run.text))}</p>${steps.length ? `<ul>${steps.map(step => `<li class="bt-step" data-state="${e(step.state)}"><span aria-hidden="true">${['ok', 'done', 'completed', 'succeeded'].includes(step.state) ? '✓' : ['running', 'working'].includes(step.state) ? '▍' : '·'}</span>${e(displayText(step.label))}</li>`).join('')}</ul>` : `<p class="bh-run-state" role="status">${e(stateName(run.state))}</p>`}</article>`;
+  const steps = (run.steps || []).filter(step => typeof step?.label === 'string' && step.label), failed = runFailed(run);
+  return `<article class="bh-run${failed ? ' bh-run-failed' : ''}"><header>${run.bot ? `${avatar(run.bot, e)}<b>${e(run.bot.name)}</b>` : ''}${timeHTML(run.at, e)}</header><p>${e(displayText(run.text))}</p>${steps.length ? `<ul>${steps.map(step => `<li class="bt-step" data-state="${e(step.state)}"><span aria-hidden="true">${['ok', 'done', 'completed', 'succeeded'].includes(step.state) ? '✓' : ['running', 'working'].includes(step.state) ? '▍' : '·'}</span>${e(displayText(step.label))}</li>`).join('')}</ul>` : ''}${failed || !steps.length ? `<p class="bh-run-state" role="status">${e(stateName(run.state))}</p>` : ''}${failed ? `${run.reason ? `<p class="bh-run-reason">${e(displayText(run.reason))}${run.code === 'needs_configuration' && run.canConfigure ? ' <a href="#/settings">Choose one</a>' : ''}</p>` : ''}${run.intent ? `<button type="button" class="bh-retry" data-bh-retry="${e(run.requestId)}">Try again</button>` : ''}` : ''}</article>`;
 }
 export function addStyles(doc) {
   if (!doc?.head || doc.querySelector('link[data-home-today]')) return;

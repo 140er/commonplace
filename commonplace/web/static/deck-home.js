@@ -2,7 +2,7 @@
 import { escape as e } from './api.js';
 import { sendMessage } from './botstream.js';
 import { composerHTML, sendButtonHTML } from './bots.js';
-import { addStyles, runHTML, displayText } from './deck-home-today.js';
+import { addStyles, runHTML, displayText, quietSelector, runUpdate, retryIntent } from './deck-home-today.js';
 
 export const TITLE = 'Commonplace';
 const enc = encodeURIComponent;
@@ -20,12 +20,12 @@ export function mount(context) {
   addStyles(doc);
   const host = root.closest?.('.center') || root;
   host.classList.add('deck-hero');
-  root.innerHTML = `<div class="bh-wrap"><div class="bh-content"><section class="bh-runs" aria-label="Your runs" aria-live="polite"></section><form class="bh-form"><div class="bh-context"><label class="bh-bot" hidden><span class="sr">Bot</span><select name="bot" aria-label="Bot"></select></label><label class="bh-coworker" hidden><span class="sr">Coworker</span><select name="coworker" aria-label="Coworker"></select></label><span class="bh-host" hidden></span></div><div class="bh-composer">${composerHTML({ name: TITLE }, e)}<div class="bh-toolbar"><button type="button" data-bh-commands aria-label="Commands">＋</button><span class="bh-model" hidden></span><label class="bh-model-choice" hidden><span class="sr">Model</span><select name="model" aria-label="Model"></select></label><label class="bh-effort-choice" hidden><span class="sr">Effort</span><select name="effort" aria-label="Effort"></select></label><span class="bh-spacer"></span>${sendButtonHTML({ busy: false })}</div></div><div class="bh-mentions" role="listbox" aria-label="Mention a bot" hidden></div></form><p class="bh-hint" aria-live="polite"></p><p class="bh-error" role="alert" hidden></p><p class="bh-empty" hidden>No bots yet. <a href="#/bots?new=1">New bot</a></p></div></div>`;
+  root.innerHTML = `<div class="bh-wrap"><div class="bh-content"><section class="bh-runs" aria-label="Your runs" aria-live="polite"></section><form class="bh-form"><div class="bh-context">${quietSelector('bot', 'Bot', 'bh-bot')}${quietSelector('coworker', 'Coworker', 'bh-coworker')}${quietSelector('machine', 'Machine', 'bh-host')}</div><div class="bh-composer">${composerHTML({ name: TITLE }, e)}<div class="bh-toolbar"><button type="button" data-bh-commands aria-label="Commands">＋</button><button type="button" data-bh-commands aria-label="Tools"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 4h12M2 12h12M5 2v4M11 10v4"/></svg></button>${quietSelector('model', 'Model', 'bh-model-choice')}${quietSelector('effort', 'Effort', 'bh-effort-choice')}<span class="bh-spacer"></span>${sendButtonHTML({ busy: false })}</div></div><div class="bh-mentions" role="listbox" aria-label="Mention a bot" hidden></div></form><p class="bh-hint" aria-live="polite"></p><p class="bh-error" role="alert" hidden></p><p class="bh-empty" hidden>No bots yet. <a href="#/bots?new=1">New bot</a></p></div></div>`;
   const form = root.querySelector('form'), fields = form.elements, runRegion = root.querySelector('.bh-runs'), hint = root.querySelector('.bh-hint'), errorBox = root.querySelector('.bh-error'), mentions = root.querySelector('.bh-mentions');
   let ctx = context, active = true, generation = 0, read, sending = false, configured = null, bots = [], directory = {}, catalog = [], rosterSignature = '', coworkerSignature = '', controlsSignature = '', timer = null, attempt = null;
   fields.text.placeholder = 'Ask anything, / for commands, @ for a bot';
   fields.text.setAttribute('aria-label', 'Ask anything'); fields.text.required = true; fields.text.rows = 2;
-  const submit = form.querySelector('[type="submit"]'); submit.className = 'bh-send'; submit.textContent = '↑'; submit.setAttribute('aria-label', 'Send');
+  const submit = form.querySelector('[type="submit"]'); submit.className = 'bh-send'; submit.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 15V5m-4 4 4-4 4 4"/></svg>'; submit.setAttribute('aria-label', 'Send');
   const runs = [], requests = new Set();
   const selectedBot = () => bots.find(bot => bot.id === fields.bot.value);
   const conversations = () => (directory.conversations || []).filter(item => item.board && item.board === selectedBot()?.board && item.bot_ids?.length === 1);
@@ -55,18 +55,16 @@ export function mount(context) {
     }
     root.querySelector('.bh-coworker').hidden = !coworkers.length;
     const bot = selectedBot(), coworker = selectedCoworker(), hostName = coworker?.host?.name || bot?.host?.name || (typeof bot?.host === 'string' ? bot.host : '');
-    const hostLabel = root.querySelector('.bh-host'); hostLabel.hidden = !hostName; hostLabel.textContent = displayText(hostName);
-    const control = modelControls(coworker, catalog, configured), controlKey = JSON.stringify([coworker?.id, control, coworker?.model, coworker?.reasoning_effort]);
+    const hostLabel = root.querySelector('.bh-host'); hostLabel.hidden = !hostName; options(fields.machine, hostName ? [[hostName, hostName]] : []);
+    const control = modelControls(coworker, catalog, configured), currentModel = configured?.ready && configured?.label?.split('/').slice(1).join('/'), controlKey = JSON.stringify([coworker?.id, control, coworker?.model, coworker?.reasoning_effort, currentModel]);
     if (controlKey !== controlsSignature) {
-      options(fields.model, [['', coworker?.model || 'Default model'], ...control.models.map(model => [model, model])], '');
-      options(fields.effort, [['', coworker?.reasoning_effort ? effortLabels[coworker.reasoning_effort] : 'Default effort'], ...control.efforts.map(effort => [effort, effortLabels[effort]])], '');
+      options(fields.model, control.models.length ? [['', coworker?.model || 'Default model'], ...control.models.filter(model => model !== coworker?.model).map(model => [model, model])] : currentModel ? [['', currentModel]] : [], '');
+      options(fields.effort, [['', coworker?.reasoning_effort ? effortLabels[coworker.reasoning_effort] : 'Default effort'], ...control.efforts.filter(effort => effort !== coworker?.reasoning_effort).map(effort => [effort, effortLabels[effort]])], '');
       controlsSignature = controlKey;
     }
-    root.querySelector('.bh-model-choice').hidden = !control.models.length;
+    root.querySelector('.bh-model-choice').hidden = !control.models.length && !currentModel;
     root.querySelector('.bh-effort-choice').hidden = !control.efforts.length;
-    const model = root.querySelector('.bh-model');
-    model.hidden = !!control.models.length || !configured?.ready || !configured?.label;
-    model.textContent = configured?.label?.split('/').slice(1).join('/') || configured?.label || '';
+    for (const select of [fields.bot, fields.coworker, fields.machine, fields.model, fields.effort]) select.closest('label').querySelector('.bh-choice-text').textContent = select.selectedOptions[0]?.textContent || '';
     fields.text.disabled = !bot || sending;
     form.querySelector('[type="submit"]').disabled = !bot || sending || !fields.text.value.trim() || runs.some(run => pending(run) && run.bot?.id === bot.id);
   }
@@ -82,13 +80,13 @@ export function mount(context) {
           const page = await request(`/api/coworkers/conversations/${enc(run.conversation)}/messages`);
           if (!active) return;
           const job = page.jobs?.find(job => String(job.id) === String(run.job));
-          if (job) { run.state = job.state; run.steps = job.steps || (job.task_progress?.availability === 'available' ? job.task_progress.steps : []) || []; }
+          if (job) { runUpdate(run, job); run.steps = job.steps || (job.task_progress?.availability === 'available' ? job.task_progress.steps : []) || []; }
         } else if (run.state !== 'sending' && run.state !== 'streaming') {
           const page = await request(`/api/bots/${enc(run.bot.id)}/messages?limit=50`);
           if (!active) return;
           const message = page.messages?.find(message => message.request_id === run.requestId && message.role === 'user');
           const reply = message && page.messages?.find(item => item.role === 'bot' && item.reply_to === message.id);
-          if (reply) { run.state = reply.state || 'done'; run.steps = (reply.blocks || []).filter(block => block.type === 'action'); }
+          if (reply) { runUpdate(run, reply); run.steps = (reply.blocks || []).filter(block => block.type === 'action'); }
         }
       } catch (error) { if (active && [403, 404].includes(error.status)) { run.state = 'unavailable'; run.steps = []; } }
     }
@@ -125,36 +123,45 @@ export function mount(context) {
     event.preventDefault();
     const text = fields.text.value.trim(), bot = selectedBot(), coworker = selectedCoworker();
     if (!text || text.length > 8000 || !bot || sending || runs.some(run => pending(run) && run.bot?.id === bot.id)) return;
-    // A retry keeps its original identity and intent; changing text creates a new turn.
     const body = { text, ...(coworker ? { bot_id: coworker.bot_ids[0], ...(fields.model.value ? { model: fields.model.value } : {}), ...(fields.effort.value ? { reasoning_effort: fields.effort.value } : {}) } : {}) };
     const signature = JSON.stringify([bot.id, coworker?.id, body]);
     if (attempt?.signature !== signature) attempt = { signature, requestId: globalThis.crypto.randomUUID() };
-    const run = { bot: { id: bot.id, name: bot.name }, text, requestId: attempt.requestId, at: new Date().toISOString(), state: 'sending', steps: [] };
-    runs.push(run); if (runs.length > 3) runs.shift(); sending = true; report(); paintRuns(); paint();
+    await sendRun({ bot: { id: bot.id, name: bot.name }, conversation: coworker?.id, body, requestId: attempt.requestId });
+  }
+  async function sendRun(intent, previous) {
+    if (sending || runs.some(run => pending(run) && run.bot?.id === intent.bot.id)) return;
+    const keepDraft = !!previous; previous ||= runs.find(run => run.requestId === intent.requestId);
+    const run = { bot: intent.bot, text: intent.body.text, intent, requestId: intent.requestId, conversation: intent.conversation, at: new Date().toISOString(), state: 'sending', steps: [], canConfigure: ctx.me?.can_admin === true };
+    if (previous) runs.splice(runs.indexOf(previous), 1, run);
+    else { runs.push(run); if (runs.length > 3) runs.shift(); }
+    sending = true; report(); paintRuns(); paint();
     const controller = new AbortController(); requests.add(controller);
     try {
-      if (coworker) {
-        const result = await api(`/api/coworkers/conversations/${enc(coworker.id)}/messages`, { method: 'POST', body: { ...body, request_id: run.requestId }, signal: controller.signal, timeoutMs: 10000 });
+      if (intent.conversation) {
+        const result = await api(`/api/coworkers/conversations/${enc(intent.conversation)}/messages`, { method: 'POST', body: { ...intent.body, request_id: run.requestId }, signal: controller.signal, timeoutMs: 10000 });
         if (!active) return;
-        if (String(result.message?.conversation_id) !== String(coworker.id)) throw new Error('The response did not match this conversation.');
-        run.conversation = coworker.id; run.job = result.job?.id; run.state = result.job?.state || 'done';
-        run.steps = result.job?.steps || [];
+        if (String(result.message?.conversation_id) !== String(intent.conversation)) throw new Error('The response did not match this conversation.');
+        run.acked = true; run.job = result.job?.id;
+        runUpdate(run, result.job, { state: 'done' }); run.steps = result.job?.steps || [];
       } else {
-        const result = await (ctx.send || sendMessage)({ botId: bot.id, text, requestId: run.requestId, signal: controller.signal, onEvent(name, data) {
+        const result = await (ctx.send || sendMessage)({ botId: intent.bot.id, text: intent.body.text, requestId: run.requestId, signal: controller.signal, onEvent(name, data) {
           if (!active) return;
-          if (name === 'ack') run.state = 'streaming';
+          if (name === 'ack') { run.acked = true; run.state = 'streaming'; }
           if (name === 'action') run.steps[Number.isSafeInteger(data.step) ? data.step : run.steps.length] = { label: data.label, state: data.state };
-          if (['done', 'error', 'running'].includes(name)) run.state = data.message?.state || name;
+          if (['done', 'error', 'running'].includes(name)) { run.terminal = true; runUpdate(run, data.message, { ...data, state: name }); }
           paintRuns();
         } });
         if (!active) return;
+        run.acked ||= result.acked;
         if (['running', 'dropped'].includes(result.state)) run.state = 'polling';
-        else if (!['done', 'error'].includes(run.state)) run.state = result.state;
+        else if (!run.terminal) run.state = result.state;
       }
-      fields.text.value = ''; attempt = null;
+      if (!keepDraft) fields.text.value = '';
+      attempt = null;
     } catch (error) {
       if (!active) return;
-      run.state = 'error'; report(error.message || 'Could not send. Your message is kept.');
+      runUpdate(run, {}, { state: 'error', text: error.message, code: error.code });
+      report(error.message || 'Could not send. Your message is kept.');
     } finally { requests.delete(controller); sending = false; if (active) { paintRuns(); paint(); schedule(); } }
   }
   function openCommands() { ctx.openPalette?.(); }
@@ -168,6 +175,8 @@ export function mount(context) {
   }
   function onClick(event) {
     if (event.target.closest?.('[data-bh-commands]')) openCommands();
+    const retry = event.target.closest?.('[data-bh-retry]');
+    if (retry) { const run = runs.find(run => run.requestId === retry.dataset.bhRetry); if (run?.intent) void sendRun(retryIntent(run), run); }
     const mention = event.target.closest?.('[data-bh-mention]');
     if (mention) {
       const bot = bots.find(bot => bot.id === mention.dataset.bhMention); if (!bot) return;

@@ -75,25 +75,79 @@ def test_home_today_live_actions(hub, fresh, width):
                 assert await page.locator(".bh-coworker").is_hidden()
                 assert await page.locator(".bh-host").is_hidden()
                 await page.evaluate("document.fonts.ready")
+                if width == 390:
+                    assert (await page.locator(".bh-composer").bounding_box())["x"] == 16
+                    assert (await page.locator(".bh-bot").bounding_box())["x"] == 16
+                    await expect(page.locator("#phone-bar .deck-brand b")).to_have_text(
+                        "Commonplace"
+                    )
+                await expect(page.locator('.bh-toolbar [aria-label="Tools"]')).to_be_visible()
+                send_style = await page.locator(".bh-send").evaluate(
+                    "e=>({bg:getComputedStyle(e).backgroundColor,opacity:getComputedStyle(e).opacity})"
+                )
+                assert send_style == {"bg": "rgb(157, 92, 255)", "opacity": "0.4"}
                 await capture("hero")
                 await page.locator(".bh-composer textarea").fill("/")
                 await page.wait_for_selector(".workbench-palette[open]")
+                assert (
+                    await page.locator(".workbench-palette .gh").first.text_content() == "Actions"
+                )
+                if width == 390:
+                    assert await page.locator(".workbench-palette .pfoot").is_hidden()
+                    await expect(page.locator(".palette-close")).to_be_visible()
                 await capture("commands")
-                await page.keyboard.press("Escape")
+                if width == 390:
+                    await page.keyboard.press("Shift+Tab")
+                    await expect(page.locator(".palette-close")).to_be_focused()
+                    await page.locator(".palette-close").click()
+                else:
+                    await page.keyboard.press("Escape")
                 await page.locator(".bh-composer textarea").fill("@")
                 await page.locator(".bh-mentions button").first.click()
                 assert "@" in await page.locator(".bh-composer textarea").input_value()
                 await page.locator(".bh-composer textarea").fill("Check this release")
+                original_bot = await page.locator('select[name="bot"]').input_value()
                 await page.locator(".bh-send").click()
-                await page.wait_for_selector(".bh-run")
+                await expect(page.locator(".bh-run-state")).to_have_text("Could not complete")
+                await expect(page.locator(".bh-run-reason")).to_contain_text(
+                    "No chat model is set up for this bot yet."
+                )
+                await expect(page.locator(".bh-retry")).to_have_text("Try again")
+                await expect(page.locator(".bh-run-reason a")).to_have_text("Choose one")
+                assert (
+                    await page.locator(".bh-run-state").evaluate("e=>getComputedStyle(e).color")
+                    == "rgb(251, 113, 133)"
+                )
+                assert (
+                    await page.locator(".bh-run").evaluate("e=>getComputedStyle(e).backgroundColor")
+                    == "rgba(20, 19, 25, 0.94)"
+                )
                 await capture("run")
+                # A different current selector must never reroute an earlier run's retry.
+                bot_values = await page.locator('select[name="bot"] option').evaluate_all(
+                    "es=>es.map(e=>e.value)"
+                )
+                await page.locator('select[name="bot"]').select_option(
+                    next(value for value in bot_values if value != original_bot)
+                )
+                async with page.expect_response(
+                    lambda response: (
+                        response.request.method == "POST"
+                        and response.url.endswith(f"/api/bots/{original_bot}/messages")
+                    )
+                ) as retry_info:
+                    await page.locator(".bh-retry").click()
+                retry = await retry_info.value
+                assert retry.status == 200
+                assert retry.request.post_data_json["text"] == "Check this release"
+                await expect(page.locator(".bh-run-state")).to_have_text("Could not complete")
                 await page.goto(url + "#/today")
                 await page.wait_for_selector(".bt-card")
                 assert await page.locator(".bt-card").count() == 3
                 assert await page.locator(".deck-stage").get_attribute("data-dimmed") == "true"
                 if width == 390:
                     assert await page.locator(".bt-title h1").is_hidden()
-                    assert await page.locator(".bt-fact").first.is_hidden()
+                    assert await page.locator(".bt-fact").count() == 0
                     await page.locator(".bt-more summary").first.click()
                     await page.locator('[role="menuitem"][data-bt-action="reply"]').first.wait_for(
                         state="visible"
@@ -106,6 +160,11 @@ def test_home_today_live_actions(hub, fresh, width):
                         .evaluate_all("es=>es.map(e=>e.getBoundingClientRect().height)")
                     )
                     assert all(size >= 44 for size in sizes)
+                assert "Awaiting plan review" not in await page.locator(".bt-page").text_content()
+                heights = await page.locator(".bt-bots li a").evaluate_all(
+                    "es=>es.map(e=>e.getBoundingClientRect().height)"
+                )
+                assert heights and all(height == 56 for height in heights)
                 await capture("today")
                 response_wait = page.expect_response(
                     lambda response: (
@@ -130,6 +189,14 @@ def test_home_today_live_actions(hub, fresh, width):
                 ]:
                     assert (await page.locator(selector).text_content()).startswith("2")
                 assert "You approved" in await page.locator('[data-bt="activity"]').text_content()
+                animation = await page.locator(".bt-new-activity").evaluate(
+                    "e=>getComputedStyle(e).animationDuration"
+                )
+                assert animation == "4s"
+                assert (
+                    "work asked: Ship consent for the phone feed"
+                    in await page.locator('[data-bt="activity"]').text_content()
+                )
                 await capture("approved")
                 if width == 1440:
                     await page.keyboard.press("j")

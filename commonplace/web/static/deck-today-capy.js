@@ -3,12 +3,21 @@ import { addStyles, needsCards, removeNeed, todayKey, stamp, displayText, action
 
 export const TITLE = 'Today';
 const enc = encodeURIComponent;
-const labels = { 'card.review_needed': 'Needs your decision', 'card.decided': 'Decision recorded', 'card.created': 'Created', 'card.updated': 'Updated', 'card.moved': 'Progress updated', 'card.commented': 'Replied', 'memory.saved': 'Memory saved' };
+export function activityText(event, bots = [], needs = {}) {
+  if (event.summary) return event.summary;
+  const title = event.data?.title, name = bots.find(bot => bot.board && bot.board === event.data?.board)?.name;
+  const waiting = needsCards(needs).some(card => card.number === event.data?.number);
+  if (!title) return event.kind === 'memory.saved' ? 'Memory was saved' : '';
+  if (event.kind === 'card.review_needed' || (event.kind === 'card.created' && waiting)) return name ? `${name} asked: ${title}` : `Waiting for your decision: ${title}`;
+  const verbs = { 'card.created': 'added', 'card.updated': 'updated', 'card.moved': 'made progress on', 'card.commented': 'replied to', 'card.decided': 'recorded a decision on' };
+  const verb = verbs[event.kind];
+  return verb ? `${name ? `${name} ${verb}` : verb[0].toUpperCase() + verb.slice(1)} ${title}` : '';
+}
 
 export function cardHTML(card, bots, { busy, errors, held, exiting }, escape = e) {
   const bot = bots.find(bot => bot.board && bot.board === card.board);
   const name = bot?.name || card.bot_name;
-  const fact = card.fact || card.why;
+  const fact = card.fact || card.bot_reason;
   const waiting = (card.actions || []).some(action => ['approve', 'answer', 'accept', 'reject'].includes(action));
   return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(displayText(name))}</b>` : ''}${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(displayText(card.display_title || card.title))}</h2>${card.body || card.ask ? `<p class="bt-body">${escape(displayText(card.display_body || card.body || card.ask))}</p>` : ''}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${actionRow(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
 }
@@ -45,8 +54,9 @@ export function mount(context) {
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');
     }
     region('bots').innerHTML = botsHTML(bots);
-    const rows = [...activity, ...events.map(event => ({ at: event.at, text: event.summary || (labels[event.kind] ? `${labels[event.kind]}${event.data?.title ? `: ${event.data.title}` : ''}` : ''), fresh: false }))].filter(row => row.text).slice(0, 12);
-    region('activity').innerHTML = rows.length ? rows.map(row => `<li${row.fresh && Date.now() - Date.parse(row.at) < 1400 ? ' class="bt-new-activity"' : ''}>${timeHTML(row.at, e)}<span>${e(displayText(row.text))}</span></li>`).join('') : '<li class="bt-empty">No recent activity.</li>';
+    const rows = [...activity, ...events.map(event => ({ at: event.at, text: activityText(event, bots, needs), fresh: false }))].filter(row => row.text).slice(0, 12);
+    region('activity').innerHTML = rows.length ? rows.map(row => `<li${row.fresh && Date.now() - Date.parse(row.at) < 4000 ? ` class="bt-new-activity" data-at="${e(row.at)}"` : ''}>${timeHTML(row.at, e)}<span>${e(displayText(row.text))}</span></li>`).join('') : '<li class="bt-empty">No recent activity.</li>';
+    for (const row of region('activity').querySelectorAll('.bt-new-activity')) for (const animation of row.getAnimations()) animation.currentTime = Math.max(0, Date.now() - Date.parse(row.dataset.at));
     if (mark && list.some(card => String(card.number) === mark)) focus(Number(mark));
   }
   async function refresh(next = {}) {
@@ -71,7 +81,7 @@ export function mount(context) {
     else if ([401, 403, 404].includes(roster.reason?.status)) bots = [];
     if (feed.status === 'fulfilled') {
       if (feed.value.reset) events = [];
-      events = [...new Map([...events, ...(feed.value.events || [])].map(event => [event.seq || event.id, event])).values()].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 12);
+      events = [...new Map([...events, ...(feed.value.events || [])].map(event => [event.seq || event.id, event])).values()].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 12).map(event => ({ ...event, summary: activityText(event, bots, needs) }));
       seq = feed.value.seq || 0; eventEpoch = feed.value.epoch || '';
     } else if ([401, 403].includes(feed.reason?.status)) events = [];
     region('error').hidden = queue.status === 'fulfilled' && roster.status === 'fulfilled';
