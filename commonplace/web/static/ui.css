@@ -110,6 +110,13 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 .agent-secret h3 { font-size: 16px; overflow-wrap: anywhere; }
 .agent-secret pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
 .agent-secret button, .agents-settings .setting-row button { min-height: 44px; }
+.look-switch { display: flex; gap: 8px; }
+.look-switch .opt { flex: 1 1 0; justify-content: center; min-height: 44px; }
+.look-switch .opt[aria-pressed="true"] { background: var(--strong); color: var(--bg); box-shadow: none; }
+.agent-tokens { flex: 1 1 100%; }
+.agent-tokens summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); font-size: 12px; }
+.agent-tokens[open] { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.agent-tokens[open] summary { flex-basis: 100%; }
 .runner-block form > :is(h3, h4, p, fieldset) { flex-basis: 100%; margin: 0; }
 .runner-block fieldset { border: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .runner-block fieldset label { flex-direction: row; align-items: center; gap: 8px; }

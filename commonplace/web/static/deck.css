@@ -122,6 +122,8 @@
 :root[data-ui="deck"] .setting-row button { min-height: 32px; padding: 0 14px; border-radius: 16px; background: var(--well); color: var(--text); box-shadow: none; font-weight: 500; }
 :root[data-ui="deck"] .setting-row button:hover { background: var(--accent-weak); box-shadow: none; }
 :root[data-ui="deck"] .setting-row button[aria-pressed="true"] { background: var(--text); color: var(--bg); box-shadow: none; }
+:root[data-ui="deck"] .look-switch .opt { min-height: 44px; border-radius: 22px; background: var(--well); color: var(--text); box-shadow: none; font-weight: 500; }
+:root[data-ui="deck"] .look-switch .opt[aria-pressed="true"] { background: var(--text); color: var(--bg); }
 :root[data-ui="deck"] .settings :is(input:not([type=checkbox], [type=radio]), select, textarea) { min-height: 36px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
 :root[data-ui="deck"] .deck-tools { display: none; }
 :root[data-ui="deck"] .deck-tools a { display: flex; align-items: center; justify-content: space-between; min-height: 48px; color: var(--text); text-decoration: none; font-weight: 500; }

@@ -132,6 +132,41 @@ class _RWLock:
 
 
 _HTTP_REQUEST_LOCK = _RWLock()
+
+
+def _lower_mirror_priority() -> None:
+    """Run this request thread's index write at a lower CPU priority.
+
+    Best effort and Linux only. A request thread lives for one request, and an
+    unprivileged thread cannot take priority back, so nothing is restored. The
+    main thread is never lowered. ``MEMPALACE_MIRROR_NICE=0`` turns it off.
+    """
+    try:
+        nice = int(os.environ.get("MEMPALACE_MIRROR_NICE", "10"))
+        if nice <= 0 or threading.current_thread() is threading.main_thread():
+            return
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), min(nice, 19))
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
+# A read that hit a transient SQLite refusal is run again a few times, briefly,
+# before the caller sees an error. Reads change nothing, so a replay is safe.
+_HTTP_READ_RETRY_DELAYS = (0.05, 0.15, 0.4)
+
+
+def _handle_read_with_retry(request):
+    response = handle_request(request)
+    for delay in _HTTP_READ_RETRY_DELAYS:
+        error = response.get("error") if isinstance(response, dict) else None
+        data = error.get("data") if isinstance(error, dict) else None
+        if not isinstance(data, dict) or data.get("error_class") != "OperationalError":
+            break
+        time.sleep(delay)
+        response = handle_request(request)
+    return response
+
+
 # Taken before _HTTP_REQUEST_LOCK by a hub mine, so a second mine waits for the
 # first as before even though the first yields the request lock between files.
 # mempalace_reconnect takes it too (see _http_dispatch): a mine keeps the
@@ -652,6 +687,7 @@ def _http_dispatch_unobserved(request):
         from ..palace import mine_yield_hook
 
         req_id = request.get("id")
+        _lower_mirror_priority()
         with (
             _http_embedding_release_installed("write"),
             _HTTP_REQUEST_LOCK,
@@ -678,9 +714,9 @@ def _http_dispatch_unobserved(request):
         release_mode = _embedding_release_mode(tool_name, request, "read")
         if release_mode:
             with _http_embedding_release_installed(release_mode), _HTTP_REQUEST_LOCK.read_lock():
-                return handle_request(request)
+                return _handle_read_with_retry(request)
         with _HTTP_REQUEST_LOCK.read_lock():
-            return handle_request(request)
+            return _handle_read_with_retry(request)
     if tool_name in _HTTP_YIELDING_TOOLS:
         # A mine held the exclusive lock for its whole run, so every other
         # palace request, status included, waited for all of it. It still runs

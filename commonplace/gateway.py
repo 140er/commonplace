@@ -44,6 +44,7 @@ from . import (
     db_busy,
     events,
     extensions,
+    foreground_load,
     plans,
     privacy,
     ratelimit,
@@ -296,6 +297,14 @@ class WorkerClient:
         self.supervisor = supervisor
 
     def post(self, principal: Principal, request: dict) -> Optional[dict]:
+        # Background index writes wait for people's requests and rest after each
+        # write; a person's request never waits for them (foreground_load).
+        if isinstance(request, dict) and request.get("method") == "internal/write_mirror_units":
+            return foreground_load.background_call(lambda: self._post_to_worker(principal, request))
+        with foreground_load.request():
+            return self._post_to_worker(principal, request)
+
+    def _post_to_worker(self, principal: Principal, request: dict) -> Optional[dict]:
         # One in-flight slot covers the worker start and the whole call, so
         # an online backup's pause drains it and never cuts it.
         slot = getattr(self.supervisor, "call", None)

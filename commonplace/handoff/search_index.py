@@ -4,18 +4,55 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from commonplace import continuity_read, plans, sessions
+from commonplace import continuity_read, foreground_load, plans, sessions
 
 from . import palace_mirror
 
-MAX_THREADS = 20
-MAX_UNITS = 2000
-PAUSE_SECONDS = 1
+
+def _env_number(name, default, low, high, cast=int):
+    try:
+        value = cast(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return min(max(value, low), high)
+
+
+# Each sweep is one small step; people's searches come first (foreground_load).
+# Conversation threads and message units one sweep may take, the rest between
+# sweeps, and the longest rest after repeated failures. Env overrides:
+# COMMONPLACE_SEARCH_INDEX_THREADS / _UNITS / _PAUSE / _NICE (the worker's
+# COMMONPLACE_SEARCH_INDEX_REST_RATIO is read in foreground_load).
+MAX_THREADS = _env_number("COMMONPLACE_SEARCH_INDEX_THREADS", 3, 1, 50)
+MAX_UNITS = _env_number("COMMONPLACE_SEARCH_INDEX_UNITS", 192, 1, 5000)
+PAUSE_SECONDS = _env_number("COMMONPLACE_SEARCH_INDEX_PAUSE", 3.0, 0.0, 600.0, float)
+MAX_BACKOFF_SECONDS = 60.0
+# Niceness of the sweep thread (0 leaves it alone). Best effort, Linux only.
+NICE = _env_number("COMMONPLACE_SEARCH_INDEX_NICE", 10, 0, 19)
 STORAGE_MARGIN = 16 * 1024 * 1024
 logger = logging.getLogger(__name__)
+_niced = threading.local()
+
+
+def lower_priority():
+    """Lower this thread's CPU priority once; never raises, never raises it back."""
+    if not NICE or getattr(_niced, "done", False):
+        return
+    _niced.done = True
+    if threading.current_thread() is threading.main_thread():
+        return
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), NICE)
+    except (AttributeError, OSError):
+        pass
+
+
+def next_pause(state):
+    """Rest before the next sweep: the base pause, doubled per recent failure."""
+    return min(MAX_BACKOFF_SECONDS, PAUSE_SECONDS * (2 ** min(state.failures, 5)))
 
 
 def enabled():
@@ -33,6 +70,7 @@ class State:
     after_id: str = ""
     dirty: bool = False
     enrolled: bool = False
+    failures: int = 0
 
 
 class _JobFull(Exception):
@@ -96,6 +134,11 @@ def quota_ok(service, workspace_id):
 
 def sweep(service, workspace_id, state):
     """Return whether another bounded job is needed. Never log user content."""
+    with foreground_load.background():
+        return _sweep(service, workspace_id, state)
+
+
+def _sweep(service, workspace_id, state):
     written = 0
     visited = 0
     deferred = False
@@ -190,12 +233,19 @@ def sweep(service, workspace_id, state):
                     # Later readable work must get its own actual quota refusal.
                     # Workspace storage accounting remains unchanged.
                     state.state = "deferred_storage"
+                else:
+                    # A busy or unavailable worker: stop here and come back after
+                    # a longer rest instead of hammering the next thread.
+                    state.failures += 1
+                    state.after_id = stored.id
+                    return True
                 # A failed range stays pinned; the next trigger replays only it.
             finally:
                 with service._mirror_lock:
                     state.active_threads.discard(stored.id)
             state.after_id = stored.id
             visited += 1
+        state.failures = 0
         if len(threads) == MAX_THREADS or state.dirty:
             return True
         state.after_id = ""

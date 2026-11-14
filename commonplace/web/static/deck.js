@@ -64,9 +64,10 @@ export const renderDeckTop = options => renderShellTop(shellOptions(options));
 export const renderDeckTabs = options => renderShellTabs(shellOptions(options));
 export const renderDeckMore = options => renderShellMore(shellOptions(options));
 
-/** The Look section appended to Settings: one switch, saved in this browser only. */
+/** The Look section at the top of Settings: Deck or Classic, saved in this browser only. */
 export function lookHTML(on) {
-  return `<section class="settings-section" id="look"><h2>Look</h2><p>Deck puts what waits on you first and moves the workspace tools into the account menu. The choice is saved in this browser.</p><button class="opt" data-deck-action="toggle" aria-pressed="${on ? 'true' : 'false'}">${on ? 'Go back to the classic look' : 'Try the Deck look'}</button></section>`;
+  const pick = (look, label, chosen) => `<button type="button" class="opt" data-deck-action="look" data-look="${look}" aria-pressed="${chosen ? 'true' : 'false'}">${label}</button>`;
+  return `<section class="settings-section" id="look"><h2>Look</h2><p>Deck puts what waits on you first and moves the workspace tools into the account menu. Classic is the older layout. The choice is saved in this browser.</p><div class="look-switch" role="group" aria-label="Look">${pick('deck', 'Deck', on)}${pick('classic', 'Classic', !on)}</div></section>`;
 }
 
 /** The workspace tools as one Settings section. The phone layout shows it, because a phone has no account menu. */
@@ -102,18 +103,26 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
       box.insertAdjacentHTML('afterbegin', toolsHTML({ needs: needs?.count, can_admin: me?.can_admin }));
     }
     if (deckOn(storage)) arrangeSettings(box, { owner: context()?.me?.role === 'owner' });
-    if (!box.querySelector('#look')) box.insertAdjacentHTML('beforeend', lookHTML(deckOn(storage)));
+    if (!box.querySelector('#look')) box.insertAdjacentHTML('afterbegin', lookHTML(deckOn(storage)));
     appearance.settings(box);
     if (deckOn(storage)) arrangeCapySettings(box, { api, context });
   }
-  function toggle() {
-    setDeck(!deckOn(storage), storage);
+  // Switching restarts nothing but the current route, so the person stays on the same screen. The stage
+  // and preview canvases go first: once data-ui is gone their Deck-only sizing is gone too, and a canvas
+  // with no CSS size feeds its own bitmap back into its layout (the resize loop that froze the page).
+  function choose(look) {
+    const on = look === 'deck';
+    if (on === deckOn(storage)) return;
+    appearance.stop();
+    setDeck(on, storage);
     applyDeck({ doc, loc: null, storage });
     leave();
     reload();
   }
+  const toggle = () => choose(deckOn(storage) ? 'classic' : 'deck');
   doc?.addEventListener?.('click', (event) => {
-    if (event.target?.closest?.('[data-deck-action="toggle"]')) toggle();
+    const look = event.target?.closest?.('[data-deck-action="look"]');
+    if (look) choose(look.dataset.look);
     const jump = event.target?.closest?.('[data-deck-setting]');
     if (jump && deckOn(storage)) {
       const target = root.querySelector(`#${jump.dataset.deckSetting}`);
@@ -128,5 +137,5 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     }
   });
   const drawn = (render) => (options = {}) => deckOn(storage) ? render({ ...shell.options(), ...options, screens }) : '';
-  return { appearance, shell, policyPresentation: () => deckOn(storage) ? capyPolicyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(options => renderDeckTabs(options) + renderDeckMore(options)) };
+  return { appearance, shell, policyPresentation: () => deckOn(storage) ? capyPolicyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, choose, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(options => renderDeckTabs(options) + renderDeckMore(options)) };
 }

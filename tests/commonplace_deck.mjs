@@ -206,18 +206,18 @@ test("createDeck mounts a registered screen once, refreshes it, and stops it on 
 test("the Look switch is added to Settings once and flips the look", () => {
   const s = storage(CLASSIC), d = doc();
   let reloads = 0, html = "";
-  const box = { querySelector: (q) => (q === "#look" && html.includes('id="look"') ? {} : null), insertAdjacentHTML: (where, markup) => { assert.equal(where, "beforeend"); html += markup; } };
+  const box = { querySelector: (q) => (q === "#look" && html.includes('id="look"') ? {} : null), insertAdjacentHTML: (where, markup) => { assert.equal(where, "afterbegin", "the Look switch goes first, not last"); html += markup; } };
   const content = { querySelector: (q) => (q === ".settings" ? box : null) };
   const ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, reload: () => reloads++, screens: {}, storage: s, doc: d });
   ui.settings(content); ui.settings(content); ui.settings(null); ui.settings({ querySelector: () => null });
   assert.equal((html.match(/id="look"/g) || []).length, 1);
-  assert.match(html, /data-deck-action="toggle" aria-pressed="false">Try the Deck look/);
-  assert.match(deck.lookHTML(true), /aria-pressed="true">Go back to the classic look/);
+  assert.match(html, /data-look="deck" aria-pressed="false">Deck[\s\S]*data-look="classic" aria-pressed="true">Classic/);
+  assert.match(deck.lookHTML(true), /data-look="deck" aria-pressed="true">Deck/);
   const [type, click] = d.listeners[0];
   assert.equal(type, "click");
   click({ target: { closest: () => null } });
   assert.equal(reloads, 0);
-  click({ target: { closest: (q) => (q === '[data-deck-action="toggle"]' ? {} : null) } });
+  click({ target: { closest: (q) => (q === '[data-deck-action="look"]' ? { dataset: { look: "deck" } } : null) } });
   assert.equal(ui.on(), true);
   assert.equal(d.documentElement.dataset.ui, "deck");
   assert.equal(reloads, 1);
@@ -234,7 +234,7 @@ test("the Look switch shows Deck as on for a first visit and turns it off for go
   const box = { querySelector: () => null, insertAdjacentHTML: (where, markup) => { html += markup; } };
   const ui = deck.createDeck({ root: {}, context: () => ({}), title() {}, reload: () => reloads++, screens: {}, storage: s, doc: d });
   ui.settings({ querySelector: (q) => (q === ".settings" ? box : null) });
-  assert.match(html, /data-deck-action="toggle" aria-pressed="true">Go back to the classic look/);
+  assert.match(html, /data-look="deck" aria-pressed="true">Deck[\s\S]*data-look="classic" aria-pressed="false">Classic/);
   ui.toggle();
   assert.deepEqual([ui.on(), s.getItem(deck.UI_KEY), reloads], [false, "classic", 1]);
   assert.equal(deck.deckOn(s), false, "the next visit stays classic");
@@ -252,9 +252,9 @@ test("Settings carries the workspace tools in the Deck look only, with Admin for
     ui.settings({ querySelector: (q) => (q === ".settings" ? box : null) });
     return parts;
   };
-  assert.deepEqual(make(false, { can_admin: true }).map(([where]) => where), ["beforeend"], "classic look: the Look switch only");
+  assert.deepEqual(make(false, { can_admin: true }).map(([where]) => where), ["afterbegin"], "classic look: the Look switch only");
   const on = make(true, { can_admin: true });
-  assert.deepEqual(on.map(([where]) => where), ["afterbegin", "afterbegin", "beforeend"]);
+  assert.deepEqual(on.map(([where]) => where), ["afterbegin", "afterbegin", "afterbegin"]);
   assert.match(on[1][1], /Notifications[\s\S]*Connections[\s\S]*Workspace/);
   assert.deepEqual([...on[0][1].matchAll(/href="(#\/[a-z]+)"/g)].map((m) => m[1]), ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]);
   assert.match(on[0][1], />Needs me<\/a>/);

@@ -59,7 +59,7 @@ test('layout keeps every old section, places the four primary sections first and
   const old=['phone-push','deck-connections','deck-tools','plan','voice','chat','agent-schedules','tool-policy','webhooks','sign-out','look'];
   const sections=[...old,'deck-bot-sharing','deck-second-review'].map(id=>({id}));
   const ordered=settingsOrder(sections);
-  assert.deepEqual(ordered.slice(0,4).map(n=>n.id),['deck-bot-sharing','tool-policy','deck-second-review','deck-connections']);
+  assert.deepEqual(ordered.slice(0,5).map(n=>n.id),['look','deck-bot-sharing','tool-policy','deck-second-review','deck-connections']);
   assert.deepEqual(new Set(ordered),new Set(sections));
   assert.equal(ordered.length,sections.length);
   assert.equal(settingsLayout(1440),'columns'); assert.equal(settingsLayout(390),'stack');
@@ -100,10 +100,10 @@ test('the arrangement moves all legacy setting nodes intact, including newly add
   arrangeCapySettings(box);
   for(const entry of before) assert.ok(main.children.includes(entry),entry.id);
   assert.equal(new Set(main.children).size,main.children.length,'each section is reachable once');
-  const first=main.children.slice(0,4).map(node=>node.id);
-  assert.deepEqual(first,['deck-bot-sharing','tool-policy','deck-second-review','deck-connections']);
+  const first=main.children.slice(0,5).map(node=>node.id);
+  assert.deepEqual(first,['look','deck-bot-sharing','tool-policy','deck-second-review','deck-connections']);
   arrangeCapySettings(box);
-  assert.deepEqual(main.children.slice(0,4).map(node=>node.id),first,'late refresh is idempotent');
+  assert.deepEqual(main.children.slice(0,5).map(node=>node.id),first,'late refresh is idempotent');
 });
 
 test('connected app copy and scope titles are plain while classic retains its client labels', async () => {
