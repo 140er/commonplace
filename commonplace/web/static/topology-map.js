@@ -97,7 +97,7 @@ function bundlePosition(key, count, model, positions, places, labels, selectedLi
     const points = place.points || [{ x: place.x1, y: place.y1 }, { x: place.x2, y: place.y2 }];
     return points.slice(1).map((p, i) => [points[i], p]);
   });
-  const cardPlates = cards ? nodes.map(node => ({ x: positions[node.key].x - labels / (2 * K_LEAST), y: positions[node.key].y - DISC, width: labels / K_LEAST, height: 54 / K_LEAST })) : [];
+  const cardPlates = cards ? nodes.map(node => ({ x: positions[node.key].x - labels / (2 * K_LEAST), y: positions[node.key].y - DISC, width: labels / K_LEAST, height: Math.max(54, labelBox(node.name, subOf(node), labels - 24).height) / K_LEAST })) : [];
   const clear = box => !cardPlates.some(plate => overlaps(box, plate)) && !plates.some(plate => overlaps(box, plate)) && !nodes.some(node => {
     const at = positions[node.key], x = Math.max(box.x, Math.min(at.x, box.x + box.width)), y = Math.max(box.y, Math.min(at.y, box.y + box.height));
     return Math.hypot(x - at.x, y - at.y) <= DISC + 2;
@@ -123,7 +123,7 @@ function bundlePosition(key, count, model, positions, places, labels, selectedLi
   }
 }
 
-function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle }) {
+function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle, cards = false }) {
   const classes = ["topo-node", `k-${node.kind}`, `s-${node.status}`, node.stale && "stale", node.missing && "missing", on && "on", dim && "dim", sel && "sel"].filter(Boolean).join(" ");
   const sub = subOf(node);
   const bundleTitle = bundle ? `${bundle.count} links, worst ${node.name} end: ${words[bundle.state]}.` : "";
@@ -132,10 +132,10 @@ function nodeMarkup(node, at, { on, dim, sel, words, labels, bundle }) {
   // A label is drawn at a constant size on the screen: its group is scaled by the inverse of the view's scale
   // (the stage's --inv), so the type is the same size at every zoom. The plate hides a line that passes under it.
   // The hub's label sits above it: every line leaves the hub downwards.
-  const hub = node.kind === "hub", box = labels ? labelBox(node.name, sub, labels) : null;
+  const hub = node.kind === "hub", box = labels ? labelBox(node.name, sub, cards ? labels - 24 : labels) : null;
   const top = box ? (hub ? -GAP - box.height : GAP) : 0;
   const lines = (list, y, name) => (list.length ? `<text class="${name}" y="${y}">${list.map((line, i) => `<tspan x="0"${i ? ' dy="15"' : ""}>${esc(line)}</tspan>`).join("")}</text>` : "");
-  const tag = box ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${box.height}" rx="8"/>${lines(box.nameLines, top + 15, "topo-name")}${lines(box.roleLines, top + 15 + 15 * box.nameLines.length, "topo-role")}</g>` : "";
+  const tag = box ? `<g class="topo-label${hub ? " above" : ""}" transform="translate(0 ${hub ? -DISC : DISC})"><rect class="topo-label-plate" x="${-labels / 2}" y="${top}" width="${labels}" height="${cards && !hub ? Math.max(54, box.height) : box.height}" rx="8"/>${lines(box.nameLines, top + 15, "topo-name")}${lines(box.roleLines, top + 15 + 15 * box.nameLines.length, "topo-role")}</g>` : "";
   const texts = box ? "" : `<text class="topo-name" y="45">${esc(clip(node.name, 24))}</text>${sub ? `<text class="topo-role" y="60">${esc(clip(sub, 36))}</text>` : ""}`;
   return `<g class="${classes}" data-key="${esc(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel ? "true" : "false"}" aria-label="${aria}"><title>${aria}</title>${tag}<rect class="topo-plate" x="-27" y="-27" width="54" height="54" rx="10"/><g class="topo-icon">${KINDS[node.kind].icon}</g>${statusDot(node.status, { x: 24, y: -24 }, `Status: ${words[node.status]}`)}${texts}${badge}</g>`;
 }
@@ -174,7 +174,7 @@ export function renderScene(model, positions, { route = null, selected = null, s
     }
   }
   const links = model.links.filter((link) => places.has(link.id)).map((link) => linkMarkup(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id, bundles }));
-  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
+  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => nodeMarkup(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, cards, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
 
@@ -234,7 +234,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
   let routes = null;
   const place = () => {
     // What each label needs: its height on the screen sets how far apart the rows are.
-    boxes = model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node), height: labels ? labelBox(node.name, subOf(node), labels).height : 0 }));
+    boxes = model.nodes.map((node) => ({ key: node.key, kind: node.kind, sub: !!subOf(node), height: labels ? labelBox(node.name, subOf(node), cards ? labels - 24 : labels).height : 0 }));
     const heights = new Map(boxes.map((box) => [box.key, box.height]));
     const auto = typeof layout === "function" ? layout(model.nodes, model.links) : layout === "layered" ? layeredLayout(model.nodes, model.links, labels ? { ...metrics, below: (key) => heights.get(key) ?? 38, least: K_LEAST } : metrics) : autoLayout(model.nodes, model.links, { columns });
     positions = Object.fromEntries(model.nodes.map((node) => [node.key, placed[node.key] ? { ...placed[node.key] } : auto[node.key]]));

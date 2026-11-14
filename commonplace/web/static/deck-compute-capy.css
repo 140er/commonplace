@@ -20,7 +20,7 @@
 /* Card nodes reuse the canvas labels, selection, drag targets and route geometry. */
 :root[data-ui="deck"] .deck-compute .topo-node > :is(.topo-plate,.topo-icon) { display: none; }
 :root[data-ui="deck"] .deck-compute .topo-node:not(.k-hub) .topo-label { transform: translate(0, -27px) scale(var(--inv,1)); }
-:root[data-ui="deck"] .deck-compute .topo-node:not(.k-hub) .topo-label-plate { y: 0; height: 54px; rx: 10px; }
+:root[data-ui="deck"] .deck-compute .topo-node:not(.k-hub) .topo-label-plate { y: 0; rx: 10px; }
 :root[data-ui="deck"] .deck-compute .topo-node > .topo-dot { transform: translate(52px, 0); }
 :root[data-ui="deck"] .deck-compute .topo-plate { fill: var(--s3); rx: 8px; ry: 8px; }
 :root[data-ui="deck"] .deck-compute .topo-node.sel { color: var(--ink2); }
@@ -43,6 +43,7 @@
 :root[data-ui="deck"] .deck-compute .topo-link[data-active="true"] .topo-method { display: inline; fill: var(--ink3); font-size: 11px; }
 :root[data-ui="deck"] .deck-compute .topo-link[data-active="false"] .topo-method { display: none; }
 :root[data-ui="deck"] .deck-compute[data-compute-motion="reduced"] .topo-link :is(line,.topo-route) { animation: none; }
+:root[data-ui="deck"] .dc-back { min-height: 44px; padding: 0 12px; border: 0; border-radius: var(--radius-control); background: var(--s2); color: var(--ink); cursor: pointer; }
 :root[data-ui="deck"] .dc-inspector { margin-top: 20px; }
 :root[data-ui="deck"] .dc-metric { margin: 16px 0; }
 :root[data-ui="deck"] .dc-metric > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; }

@@ -46,7 +46,9 @@ export function inspectorHTML(model) {
 export function computePanel(options, record, phone = false) {
   const summary = options.failure ? '' : inspectorHTML(inspectorModel({ record, detail: options.detail, node: options.node }));
   // Keep the existing physical/config/agents/sites controllers available behind one disclosure.
-  return panelHTML(options).replace('aria-label="Close details"', phone ? 'aria-label="Back to machines"' : 'aria-label="Close details"').replace('</header>', `</header>${summary}<details class="dc-more"><summary>Device details</summary>`).replace('<p class="td-foot">', '</details><p class="td-foot">');
+  let html = panelHTML(options);
+  if (phone) html = html.replace(/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/, '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>');
+  return html.replace('</header>', `</header>${summary}<details class="dc-more"><summary>Device details</summary>`).replace('<p class="td-foot">', '</details><p class="td-foot">');
 }
 
 export function addMachineHTML() {

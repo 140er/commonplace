@@ -80,3 +80,11 @@ test('phone tree follows real links, fits peer nodes, and keeps isolated nodes a
   assert.ok(Object.values(positions).every(p => Math.abs(p.x) <= 82.5));
   assert.deepEqual(positions, phoneTree([...nodes].reverse(), [...links].reverse()));
 });
+
+test('phone inspector has a visible Back control and preserves the existing detail tab controller', () => {
+  const html = computePanel({ key: 'machine', node: { name: 'Machine', kind: 'server', status: 'up' }, tab: 'physical', detail: { fields: {}, sites: [] }, links: [], names: new Map(), compact: true }, {}, true);
+  assert.match(html, /data-td="close" aria-label="Back to machines">Back<\/button>/);
+  assert.match(html, /Device details/);
+  assert.match(html, /data-td-tab="physical"/);
+  assert.match(html, /Healthy/);
+});
