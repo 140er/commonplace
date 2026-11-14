@@ -1,7 +1,8 @@
 // Capy Bot lists and Coworker detail. Optional projections never invent work.
 import { escape as e } from './api.js';
-import { workspaceRoute } from './routes.js';
+import { botPage, workspaceRoute } from './routes.js';
 import { scrollFades } from './deck-coworker-sharing.js';
+import { setupText } from './bot-setup.js';
 
 const enc = encodeURIComponent;
 const list = value => Array.isArray(value) ? value : [];
@@ -44,13 +45,14 @@ export function botGroups(bots) {
   }
   return [...groups].map(([label, rows]) => ({ label, bots: rows }));
 }
-export function capyRosterHTML({ bots = [], conversations = [], loaded = true }) {
+export function capyRosterHTML({ bots = [], conversations = [], loaded = true, setup = '' }) {
   if (!bots.length) return `<li class="bots-note">${loaded ? 'No bots yet. Create one to get started.' : 'Loading…'}</li>`;
   return botGroups(bots).map(group => `<li class="cb-folder"><h2>${e(group.label)}</h2><ul>${group.bots.map(bot => {
     const coworkers = Array.isArray(bot.coworkers) ? bot.coworkers.length : Number.isSafeInteger(bot.coworker_count) ? bot.coworker_count : conversations.filter(row => belongs(row, bot)).length || (bot.board ? 1 : 0);
     const unread = positive(bot.unread_count ?? bot.unread);
     const privateBot = Object.hasOwn(bot, 'private') ? bot.private === true : bot.is_private === true;
-    return `<li><a class="cb-bot-row" href="#/bots/${enc(bot.id)}/coworkers">${avatar(bot.name)}<span class="cb-bot-main"><span class="cb-bot-name"><b>${e(name(bot.name))}</b>${dot(bot.state)}${privateBot ? lock('Private bot') : ''}</span><span class="cb-summary">${e(displayCopy(bot.last?.text || bot.summary || bot.job))}</span></span><span class="cb-bot-count">${coworkers} ${coworkers === 1 ? 'coworker' : 'coworkers'}</span>${unread ? `<span class="cb-unread">${unread}<span class="sr"> unread</span></span>` : ''}</a></li>`;
+    const summary = displayCopy(bot.last?.text || bot.summary || bot.job), next = setup && /no chat model/i.test(summary) ? `<span class="cb-next">${e(setup)}</span>` : '';
+    return `<li><a class="cb-bot-row" href="${botPage(bot.id, bot.coworkerOnly)}">${avatar(bot.name)}<span class="cb-bot-main"><span class="cb-bot-name"><b>${e(name(bot.name))}</b>${dot(bot.state)}${privateBot ? lock('Private bot') : ''}</span><span class="cb-summary">${e(summary)}</span>${next}</span><span class="cb-bot-count">${coworkers} ${coworkers === 1 ? 'coworker' : 'coworkers'}</span>${unread ? `<span class="cb-unread">${unread}<span class="sr"> unread</span></span>` : ''}</a></li>`;
   }).join('')}</ul></li>`).join('');
 }
 
@@ -89,10 +91,29 @@ export function stepDescription(step) {
   return text;
 }
 const stepHTML = (steps, depth = 0) => depth > 12 ? '' : `<ul class="cb-tree">${steps.map(step => `<li><div><b>${e(name(step.name || step.subagent || step.assignee))}</b><span class="cb-state" data-tone="${stateView(step.state).tone}">${e(stateView(step.state).word)}</span>${stepDescription(step) ? `<span class="cb-step-summary">${e(stepDescription(step))}</span>` : ''}</div>${list(step.children).length ? stepHTML(step.children, depth + 1) : ''}</li>`).join('')}</ul>`;
+const RUN_NOW = ['pending', 'running'];
+const RUN_WORD = { pending: 'Queued', running: 'Working now', done: 'Last ran: finished', failed: 'Last ran: failed', interrupted: 'Last ran: interrupted', uncertain: 'Last ran: result unconfirmed', cancelled: 'Last ran: cancelled' };
+/** One plain line: what the Coworker does now, what it last did, or that it is idle. Existing projections only. */
+export function workStatus(worker = {}, detail = {}, checkpoint = {}) {
+  const id = detail.conversation?.id;
+  const jobs = list(detail.jobs).filter(job => job && (id == null || String(job.conversation_id) === String(id)));
+  const job = jobs.find(row => RUN_NOW.includes(row.state)) || jobs.reduce((latest, row) => !latest || Number(row.id) > Number(latest.id) ? row : latest, null);
+  const progress = job?.task_progress?.availability === 'available' ? job.task_progress : null;
+  const number = positive(Number(progress?.number ?? (typeof job?.task === 'object' ? job.task?.number : job?.task)));
+  const href = number ? `#/card/${number}` : '';
+  const text = displayCopy(progress?.status_line || progress?.title || worker.summary || worker.last?.text);
+  if (job) return { tone: RUN_NOW.includes(job.state) ? 'working' : 'idle', headline: RUN_WORD[job.state] || 'Last ran', text, href };
+  const tone = stateView(worker.state).tone;
+  if (tone === 'working') return { tone, headline: 'Working now', text, href: '' };
+  if (tone === 'waiting') return { tone, headline: 'Waiting on you', text, href: '' };
+  if (text || workingSteps(worker, detail, checkpoint).length) return { tone: 'idle', headline: 'Last activity', text, href: '' };
+  return { tone: 'idle', headline: 'Idle', text: 'Nothing is running and no earlier work is recorded.', href: '' };
+}
+const statusHTML = status => `<p class="cb-now" data-cb-now data-tone="${e(status.tone)}"><b>${e(status.headline)}</b>${status.text ? ` <span>${e(status.text)}</span>` : ''}${status.href ? ` <a href="${e(status.href)}">Open the card</a>` : ''}</p>`;
 export function panelsHTML(worker, detail = {}, checkpoint = {}) {
   const steps = workingSteps(worker, detail, checkpoint), owns = ownedPaths(worker, detail), log = liveLog(worker, detail);
   const paths = (owns || []).filter(row => typeof row === 'string' || typeof (row.path || row.glob) === 'string');
-  return `<div class="cb-panels"><section class="cb-panel"><h3>Working on</h3>${steps.length ? stepHTML(steps) : '<p class="cb-empty">No work recorded yet.</p>'}</section>${paths.length ? `<section class="cb-panel"><h3>Owns <small>${paths.length} ${paths.length === 1 ? 'file' : 'files'}</small></h3><ul class="cb-paths">${paths.map(row => `<li><code>${e(typeof row === 'string' ? row : row.path || row.glob)}</code>${row.shared || row.shared_lock || row.lock?.shared ? `<span class="cb-shared">${lock('Shared lock')}<span>shared</span></span>` : ''}</li>`).join('')}</ul></section>` : ''}</div>${log !== null ? '<section class="cb-panel cb-log"><h3>Live log</h3><pre data-cb-log tabindex="0" aria-label="Live log"></pre></section>' : ''}`;
+  return `<div class="cb-panels"><section class="cb-panel"><h3>Working on</h3>${statusHTML(workStatus(worker, detail, checkpoint))}${steps.length ? stepHTML(steps) : ''}</section>${paths.length ? `<section class="cb-panel"><h3>Owns <small>${paths.length} ${paths.length === 1 ? 'file' : 'files'}</small></h3><ul class="cb-paths">${paths.map(row => `<li><code>${e(typeof row === 'string' ? row : row.path || row.glob)}</code>${row.shared || row.shared_lock || row.lock?.shared ? `<span class="cb-shared">${lock('Shared lock')}<span>shared</span></span>` : ''}</li>`).join('')}</ul></section>` : ''}</div>${log !== null ? '<section class="cb-panel cb-log"><h3>Live log</h3><pre data-cb-log tabindex="0" aria-label="Live log"></pre></section>' : ''}`;
 }
 export function logLine(text) {
   const match = /^(\d{2}:\d{2}(?::\d{2})?)(\s+)(\S+)(\s+)(.*)$/.exec(text);
@@ -134,15 +155,28 @@ export function composerRequest(detail, mode, text, requestId) {
   if (list(conversation.bot_ids).length === 1) body.bot_id = conversation.bot_ids[0];
   return { path: `/api/coworkers/conversations/${enc(conversation.id)}/messages`, body };
 }
+export const MODE_HELP = {
+  steer: 'Steer: send a follow-up to the task this Coworker is already working on.',
+  chat: 'Chat: talk with the Coworker without changing the task it is working on.',
+  private: 'Private: only you and this bot can see a one-to-one conversation; group conversations are shared with their members.',
+};
+/** Why Send cannot be used right now, or '' when it can. */
+export function sendBlock(detail = {}, mode = 'chat') {
+  if (!detail.conversation) return 'Send is off until a conversation is open.';
+  if (mode === 'steer' && !canSteer(detail)) return 'Steer needs a task that is running now.';
+  return '';
+}
 export function composerHTML(detail = {}, { mode = 'chat', text = '', busy = false, pending = false, coworker = detail.conversation?.title || 'Coworker' } = {}) {
   const conversation = detail.conversation, enabled = Boolean(conversation), steer = canSteer(detail), placeholder = `${mode === 'steer' ? 'Steer' : 'Message'} ${name(coworker)}`;
-  return `<form class="cb-composer" data-cb-compose><label class="sr" for="cb-draft">${mode === 'steer' ? 'Steer Coworker' : 'Chat with Coworker'}</label><textarea id="cb-draft" rows="2" maxlength="8000" placeholder="${e(placeholder)}"${!enabled || busy || pending ? ' disabled' : ''}>${e(text)}</textarea><div class="cb-compose-bar"><div class="cb-modes" role="group" aria-label="Composer mode">${['steer', 'chat'].map(value => `<button type="button" data-cb-mode="${value}" aria-pressed="${mode === value}"${busy || pending || value === 'steer' && !steer ? ' disabled' : ''}>${value === 'steer' ? 'Steer' : 'Chat'}</button>`).join('')}</div><span class="cb-compose-hint">${pending ? 'Send unconfirmed. Retry uses the same request.' : mode === 'steer' ? 'Follow up on the linked task' : conversation?.kind === 'group' ? 'Message the group' : 'Private conversation'}</span><button type="submit" class="cb-send"${!enabled || busy || !text.trim() || mode === 'steer' && !steer ? ' disabled' : ''}>${busy ? 'Sending…' : pending ? 'Retry send' : 'Send'}</button></div>${!enabled ? '<a href="#/bots/-/coworkers/conversations">Open a conversation to send a message</a>' : ''}</form>`;
+  const block = sendBlock(detail, mode), reason = !enabled ? '<p class="cb-compose-reason" id="cb-reason" role="status">Send is off until a conversation is open. <a href="#/bots/-/coworkers/conversations">Open a conversation</a> to send a message.</p>' : block ? `<p class="cb-compose-reason" id="cb-reason" role="status">${e(block)}</p>` : '';
+  const describe = reason ? ' aria-describedby="cb-reason"' : '';
+  return `<form class="cb-composer" data-cb-compose><label class="sr" for="cb-draft">${mode === 'steer' ? 'Steer Coworker' : 'Chat with Coworker'}</label><textarea id="cb-draft" rows="2" maxlength="8000" placeholder="${e(placeholder)}"${describe}${!enabled || busy || pending ? ' disabled' : ''}>${e(text)}</textarea><div class="cb-compose-bar"><div class="cb-modes" role="group" aria-label="Composer mode">${['steer', 'chat'].map(value => `<button type="button" title="${e(MODE_HELP[value])}" data-cb-mode="${value}" aria-pressed="${mode === value}"${busy || pending || value === 'steer' && !steer ? ' disabled' : ''}>${value === 'steer' ? 'Steer' : 'Chat'}</button>`).join('')}</div><span class="cb-compose-hint">${pending ? 'Send unconfirmed. Retry uses the same request.' : mode === 'steer' ? 'Follow up on the linked task' : conversation?.kind === 'group' ? 'Message the group' : 'Private conversation'}</span><button type="submit" class="cb-send"${describe}${!enabled || busy || !text.trim() || block ? ' disabled' : ''}>${busy ? 'Sending…' : pending ? 'Retry send' : 'Send'}</button></div>${reason}<ul class="cb-mode-help" aria-label="What the modes mean">${Object.values(MODE_HELP).map(line => `<li>${e(line)}</li>`).join('')}</ul></form>`;
 }
 
 /** Deck-only, while the classic workspace and the conversation controller keep their routes. */
 export function mount(context) {
   let ctx = context, stopped = false, epoch = 0, controller = null, selected = null, workers = [], parent = null;
-  let detail = {}, project = {}, checkpoint = {}, mode = 'chat', text = '', busy = false, notice = '', attempt = null, refreshing = false;
+  let detail = {}, project = {}, checkpoint = {}, mode = 'chat', text = '', busy = false, notice = '', setup = '', canConfigure = false, attempt = null, refreshing = false;
   const root = ctx.root, doc = root.ownerDocument || globalThis.document, page = workspaceRoute(ctx.route);
   const identity = `${ctx.me?.workspace}:${ctx.me?.actor}`;
   const timers = ctx.timers || globalThis;
@@ -174,7 +208,7 @@ export function mount(context) {
     const worker = activeWorker(), botName = parent ? name(parent.name) : 'Coworkers';
     const focused = doc?.activeElement?.id === 'cb-draft', selection = focused ? [doc.activeElement.selectionStart, doc.activeElement.selectionEnd] : null;
     const summary = displayCopy(detail.conversation?.summary || worker?.summary), model = displayCopy(workerModel(worker, detail, project));
-    body().innerHTML = `<nav class="cb-crumbs" aria-label="Breadcrumb"><a href="#/bots">Bots</a><span>›</span><span>${e(displayCopy(parent?.section?.name || parent?.section) || botName)}</span></nav><header class="cb-heading">${parent ? avatar(parent.name) : ''}<div><h1>${e(botName)}</h1><p>${e(displayCopy(parent?.job) || 'Coworkers and their recorded work')}</p></div></header><nav class="cb-tabs" data-cb-scroll aria-label="Bot views"><a href="${page.bot ? `#/bots/${enc(page.bot)}/coworkers` : '#/bots/-/coworkers'}" aria-current="page">Coworkers <span>${workers.length}</span></a><a href="${worker?.conversation ? `#/bots/-/coworkers/conversations/${enc(worker.conversation.id)}` : parent && !parent.coworkerOnly ? `#/bots/${enc(parent.id)}` : '#/bots/-/coworkers/conversations'}">Conversation</a>${parent && !parent.coworkerOnly ? '<button type="button" data-cb-share>Shared</button>' : ''}</nav><div class="cb-layout"><aside class="cb-worker-list" aria-label="Coworkers">${workers.map(row => `<button type="button" class="cb-worker" data-cb-worker="${e(row.key)}"${row.key === selected ? ' aria-current="true"' : ''}>${avatar(row.name)}<span><b>${e(name(row.name))} ${dot(row.state)}</b><small>${e(displayCopy(row.summary) || 'No summary recorded')}</small></span></button>`).join('')}${!workers.length ? '<p class="cb-empty">No Coworkers recorded yet.</p>' : ''}<a class="cb-new-worker" href="#/bots/-/coworkers/conversations"><span aria-hidden="true">+</span><span>New coworker<small>Give it a goal and the files it owns</small></span></a></aside><section class="cb-detail" aria-label="Coworker detail">${worker ? `<header class="cb-detail-head"><h2>${e(name(worker.name))}</h2><p>${e(model ? `Runs on ${model}${summary ? ' · ' : ''}` : '')}${e(summary)}</p></header>${panelsHTML(worker, detail, checkpoint)}` : ''}<p class="cb-notice" role="status">${e(notice)}</p><div data-cb-composer>${composerHTML(detail, { mode, text, busy, pending: Boolean(attempt), coworker: worker?.name })}</div></section></div>`;
+    body().innerHTML = `<nav class="cb-crumbs" aria-label="Breadcrumb"><a href="#/bots">Bots</a><span>›</span><span>${e(displayCopy(parent?.section?.name || parent?.section) || botName)}</span></nav><header class="cb-heading">${parent ? avatar(parent.name) : ''}<div><h1>${e(botName)}</h1><p>${e(displayCopy(parent?.job) || 'Coworkers and their recorded work')}</p></div></header><nav class="cb-tabs" data-cb-scroll aria-label="Bot views"><a href="${page.bot ? `#/bots/${enc(page.bot)}/coworkers` : '#/bots/-/coworkers'}" aria-current="page">Coworkers <span>${workers.length}</span></a><a href="${worker?.conversation ? `#/bots/-/coworkers/conversations/${enc(worker.conversation.id)}` : parent && !parent.coworkerOnly ? `#/bots/${enc(parent.id)}` : '#/bots/-/coworkers/conversations'}">Conversation</a>${parent && !parent.coworkerOnly ? '<button type="button" data-cb-share>Shared</button>' : ''}</nav><div class="cb-layout"><aside class="cb-worker-list" aria-label="Coworkers">${workers.map(row => `<button type="button" class="cb-worker" data-cb-worker="${e(row.key)}"${row.key === selected ? ' aria-current="true"' : ''}>${avatar(row.name)}<span><b>${e(name(row.name))} ${dot(row.state)}</b><small>${e(displayCopy(row.summary) || 'No summary recorded')}</small></span></button>`).join('')}${!workers.length ? '<p class="cb-empty">No Coworkers recorded yet.</p>' : ''}<a class="cb-new-worker" href="#/bots/-/coworkers/conversations"><span aria-hidden="true">+</span><span>New coworker<small>Give it a goal and the files it owns</small></span></a></aside><section class="cb-detail" aria-label="Coworker detail">${worker ? `<header class="cb-detail-head"><h2>${e(name(worker.name))}</h2><p>${e(model ? `Runs on ${model}${summary ? ' · ' : ''}` : '')}${e(summary)}</p></header>${panelsHTML(worker, detail, checkpoint)}` : ''}<p class="cb-notice" role="status">${e(notice)}</p>${setup ? `<p class="cb-setup" role="status">${e(setup)}${canConfigure ? ' <a href="#/settings">Open settings</a>' : ''}</p>` : ''}<div data-cb-composer>${composerHTML(detail, { mode, text, busy, pending: Boolean(attempt), coworker: worker?.name })}</div></section></div>`;
     renderLiveLog(root.querySelector('[data-cb-log]'), liveLog(worker, detail));
     scrollFades(root);
     if (focused) { const field = root.querySelector('#cb-draft'); field?.focus({ preventScroll: true }); if (selection) field?.setSelectionRange(...selection); }
@@ -207,6 +241,7 @@ export function mount(context) {
     try {
       const [roster, directory] = await Promise.all([ctx.api('/api/bots', options()), ctx.api('/api/coworkers', options())]);
       if (!current() || mine !== epoch) return;
+      canConfigure = roster.can_configure === true; setup = roster.model?.ready === false ? setupText(roster.model.code, canConfigure) : '';
       const bots = overviewBots(list(roster.bots), list(directory.bots));
       parent = bots.find(bot => String(bot.id) === String(page.bot)) || null;
       const conversations = list(directory.conversations).filter(row => !page.bot || parent && belongs(row, parent));
@@ -267,7 +302,7 @@ export function mount(context) {
     else if (button.dataset.cbMode) chooseMode(button.dataset.cbMode);
     else if (parent) void openSharing();
   }
-  function input(event) { if (event.target.id === 'cb-draft') { text = event.target.value; drafts.set(draftKey(activeWorker()), text); const send = root.querySelector('.cb-send'); if (send) send.disabled = busy || !text.trim(); } }
+  function input(event) { if (event.target.id === 'cb-draft') { text = event.target.value; drafts.set(draftKey(activeWorker()), text); const send = root.querySelector('.cb-send'); if (send) send.disabled = busy || !text.trim() || Boolean(sendBlock(detail, mode)); } }
   function submit(event) { if (event.target.matches('[data-cb-compose]')) { event.preventDefault(); void send(); } }
   function stop() {
     stopped = true; epoch++; controller?.abort(); sharing?.stop(); drafts.clear(); timers.clearTimeout(timer); doc?.removeEventListener?.('visibilitychange', visible);

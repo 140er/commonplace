@@ -323,6 +323,11 @@ def test_coworker_panels_modes_sharing_and_overview(browser, size, tmp_path):
         assert page.get_by_role("link", name="Conversation", exact=True).count() == 1
         assert page.get_by_role("link", name="Open conversation", exact=True).count() == 0
         assert page.locator("#cb-draft").get_attribute("placeholder") == "Message Release"
+        assert page.locator("[data-cb-now]").count() == 1
+        assert page.locator(".cb-mode-help li").count() == 3
+        assert page.locator(".cb-mode-help").is_visible()
+        assert page.locator(".cb-compose-reason").count() == 0
+        assert page.locator(".cb-send").is_disabled()
         assert page.locator("#cb-draft").evaluate("el=>getComputedStyle(el).resize") == "none"
         assert page.locator(".cb-log-source").count() == 25
         colours = page.locator(".cb-log-line").first.evaluate(

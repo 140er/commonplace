@@ -1,5 +1,6 @@
 // Capy shell: pure markup plus one refresh tied to the shell's existing refresh cycle.
 import { escape as e, elapsed } from './api.js';
+import { botPage } from './routes.js';
 
 export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
@@ -60,7 +61,7 @@ export function shellBots({ bots = [], directory = {} } = {}) {
     ...rows(directory.bots).map(bot => ({ ...bot, shellKind: 'coworker' }))];
 }
 export const shellUnread = options => shellBots(options).reduce((total, bot) => total + count(bot.unread), 0);
-const botHref = bot => bot.shellKind === 'personal' ? `#/bots/${enc(bot.id)}` : `#/bots/-/coworkers`;
+const botHref = bot => botPage(bot.id, bot.shellKind !== 'personal');
 const botCoworkers = (bot, directory) => {
   if (Array.isArray(bot.coworkers)) return bot.coworkers;
   if (bot.shellKind !== 'coworker') return [];
@@ -75,7 +76,7 @@ export function shellTrees(options = {}) {
     groups.get(group).push(bot);
   }
   return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
-    const href = botHref(bot), selected = bot.shellKind === 'personal' && (hash === href || hash.startsWith(`${href}/`));
+    const href = botHref(bot), selected = hash === href || hash.startsWith(`${href}/`) || hash.startsWith(`${href}?`);
     return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
       const title = worker.name || worker.title || conversation?.title || 'Coworker';

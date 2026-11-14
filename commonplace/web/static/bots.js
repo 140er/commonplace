@@ -6,6 +6,7 @@ import { elapsed, safeLink } from "./api.js";
 import { sendMessage } from "./botstream.js";
 import { permissionText, settingsFrameHTML, sharingHTML, threadsHTML, threadPreviewHTML } from "./bot-sharing.js";
 import { capyRosterHTML, overviewBots } from "./deck-coworkers.js";
+import { setupText } from "./bot-setup.js";
 import { scrollFades, sharePermission } from "./deck-coworker-sharing.js";
 
 export const BOTS_COPY = Object.freeze({
@@ -36,11 +37,6 @@ const FAILS = Object.freeze({
   model_error: "The model could not answer.",
   timeout: "The bot took too long to answer.",
 });
-const SETUP = Object.freeze({
-  needs_configuration: ["Bots need a chat model before they can answer.", "Choose one in Workspace settings.", "Ask the workspace owner to choose a chat model."],
-  needs_turn_on: ["This project's chat model is not turned on yet.", "Turn it on in the project's settings, then send again.", "Ask the workspace owner to turn it on for this project."],
-  key_missing: ["The chat model has no key yet.", "Add it in Workspace settings.", "Ask the workspace owner to add it."],
-});
 // Server-supplied keys only ever match the table's own entries ("constructor" is not a status).
 const own = (table, key, fallback) => typeof key === "string" && Object.hasOwn(table, key) ? table[key] : fallback;
 const MAX_TEXT = 8000;
@@ -60,10 +56,7 @@ const link = (url) => {
 const chevron = '<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6"/></svg>';
 const back = '<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>';
 
-export function setupText(code, canConfigure) {
-  const [what, owner, member] = own(SETUP, code, SETUP.needs_configuration);
-  return `${what} ${canConfigure ? owner : member}`;
-}
+export { setupText };
 
 // ---------- markup ----------
 
@@ -436,7 +429,7 @@ export function createBots({
   // --- painting ---
   function paintRoster() {
     const node = region("roster");
-    if (node) node.innerHTML = deck() ? capyRosterHTML({ bots: overviewBots(s.bots, s.coworkerBots), conversations: s.coworkerConversations, loaded: s.loaded }) : rosterHTML({ bots: s.bots, current: s.botId, loaded: s.loaded }, e);
+    if (node) node.innerHTML = deck() ? capyRosterHTML({ bots: overviewBots(s.bots, s.coworkerBots), conversations: s.coworkerConversations, loaded: s.loaded, setup: s.model?.ready === false ? setupText(s.model.code, s.canConfigure) : "" }) : rosterHTML({ bots: s.bots, current: s.botId, loaded: s.loaded }, e);
     const model = region("model");
     if (model) model.innerHTML = modelNoteHTML({ model: s.model, canConfigure: s.canConfigure, error: s.error }, e);
     if (deck()) paintHead();
