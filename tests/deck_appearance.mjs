@@ -11,6 +11,9 @@ test('ordered thresholds, fixed value inputs and hue boundaries match the refere
   assert.equal(valuePass(255, 0, 0, 100, 100, 0, 0), .45);
   assert.equal(valuePass(255, 0, 0, 100, 100, 0, .45), .45 * .55);
   assert.ok(Math.abs(valuePass(255, 0, 0, 100, 100, .55, 0) - .2025) < 1e-12);
+  assert.equal(valuePass(150, 17, 23, 360, 225, .55, 0), .41376888551622965);
+  assert.equal(valuePass(230, 240, 71, 360, 225, .55, .45), .5181483417887613);
+  assert.equal(valuePass(80, 90, 150, 98, 211, .7, 0), .26982832779112287);
   assert.equal(rampFor(23, 0, 20, .1), 'grey');
   assert.equal(rampFor(100, 90, 100, .5), 'grey');
   assert.equal(rampFor(40, 190, 230, .99), 'cyan');
