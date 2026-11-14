@@ -1,0 +1,4 @@
+- **Owns:** How the gateway passes on a worker's "Memory is busy indexing" answer (`-32001`, see the memory-and-search module): `WorkerBusy`, a `WorkerUnavailable` that carries `retry_after_s`.
+- **Promises:** A gateway tool call that meets it answers MCP clients `-32001` with `data.retryable` and `data.retry_after_s`, the same code and data shape as a locked database, and `call_memory_tool` raises a retryable busy `ToolError`; any other worker error keeps the generic unavailable answer.
+- **How it fails:** A worker answer that is not that busy error is never read as one.
+- **Tests:** `tests/test_search_lock_bounded_wait.py` covers the mapping.
