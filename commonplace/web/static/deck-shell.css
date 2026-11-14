@@ -1,3 +1,4 @@
+:root[data-ui="deck"] { --tree-line: #302e3a; }
 /* 252 rail + the remaining stage width = the viewport. Classic selectors stay untouched. */
 @media (min-width: 700px) {
   :root[data-ui="deck"] .shell.two { grid-template-columns: 252px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
