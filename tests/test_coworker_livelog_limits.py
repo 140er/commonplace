@@ -129,7 +129,7 @@ def test_existing_single_segment_get_routes_are_not_conversation_aliases(api, mo
     # Complete existing GET collection inventory beneath /api/coworkers.
     collections = {
         "": {"bots", "conversations", "user_id", "can_manage_bots"},
-        "/bots": {"bots"},
+        "/bots": {"bots", "team_bots"},
         "/conversations": {"conversations"},
     }
 
