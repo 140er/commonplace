@@ -343,6 +343,10 @@ def register(gateway):
                             launch = runner_bridge.launch_fields(conn, row)
                     # An invalid pinned config launches nothing, so it gets no card.
                     if row["config_version"] is None or launch:
+                        from . import capacity
+
+                        with store.connection() as conn:
+                            launch.update(capacity.lease_fields(conn, row))
                         launch.update(
                             start_context.lease_fields(gateway, machine, row, launch.get("message"))
                         )

@@ -12,10 +12,10 @@
 
 - The cap counts distinct cards: queued, leased, starting or uncertain jobs; jobs started within `STARTED_HOLD_SECONDS`; and `doing` cards with any connection assignee.
 
-- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set. Both accept 1–100. Per machine, `max_in_flight` and `max_starts_per_hour` still apply at lease time, and the runner refuses a leased start with the pre-spawn code `low_memory` when its available memory cannot cover `min_free_memory_mb` plus the launch reserve (the job ends `failed`, shown by `card_start_status`; the guard never blocks when the probe is unreadable).
+- The limit is `min(config.max_agents, project_limits.max_agents)` when both are set. Both accept 1–100. Per machine, `max_in_flight` and `max_starts_per_hour` still apply at lease time, and the runner refuses a leased start with the pre-spawn code `low_memory` when its available memory is below `min_free_memory_mb` (above 20 configured agents, it must also cover the launch reserve) (the job ends `failed`, shown by `card_start_status`; the guard never blocks when the probe is unreadable).
 
 - A `plan`-labelled card never starts from config until the plan is approved; the plan-approval row fires the trigger once.
 
 - The plan is also re-checked when the runner reports `starting`; a refused job ends `cancelled` with outcome `plan_pending`.
 
-Runner CPU headroom can also refuse a start (`low_cpu`). Short-lived local reservations serialize startup bursts across clients sharing the machine journal. Fresh numeric reports constrain leases and the board summary, while the runner rechecks locally before launching. The board reports both its configured limit and runner capacity; the effective ceiling is their minimum.
+Only an explicit accepted config limit above 20 enables the added CPU guard and launch reservations. Known CPU shortages can refuse a start (`low_cpu`); missing or stale measurements are unknown and cannot supply a resource refusal. Short-lived local reservations serialize startup bursts across clients sharing the machine journal. Fresh numeric reports constrain leases and the board summary, while the runner rechecks locally before launching. The board reports both its configured limit and runner capacity; the effective ceiling is their minimum.

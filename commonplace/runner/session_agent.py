@@ -151,7 +151,11 @@ def tick(hub, config, journal, env, secrets):
     if command["action"] in ("launch", "continue"):
         from . import headroom
 
-        code = headroom.reserve(config, journal, "session:" + token)
+        code = (
+            headroom.reserve(config, journal, "session:" + token)
+            if headroom.required(command)
+            else None
+        )
         if code:
             entry = {"lease_token": token, "outcome": "refused", "code": code}
             _save(path, entry)

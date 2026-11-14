@@ -29,7 +29,8 @@ def test_report_is_machine_only_and_caps_a_high_project_limit(signup_hub, owners
         ]
         == 200
     )
-    assert _lease(hub, machine)[0] == 200
+    status, lease = _lease(hub, machine)
+    assert status == 200 and lease["max_agents"] == 100
     assert _lease(hub, machine)[0] == 204  # granted max_in_flight remains one
     # Turn on shared admission to expose the board summary without changing config.
     assert (
@@ -55,3 +56,21 @@ def test_summary_exposes_both_limits():
         summary_line({}, used=0, cap=100, runner_capacity=4)
         == "0 agents busy (limit 100, runner capacity 4)."
     )
+
+
+def test_normal_limit_lease_ignores_resource_shortage(signup_hub, owners):  # noqa: F811
+    hub, owner = signup_hub, owners["A"]
+    machine = _machine(hub, owner)
+    task = card(hub, owner, board=BOARD)
+    _configure(hub, owner, machine, max_agents=20)
+    assert _person_start(hub, owner, machine, task)[0] == 201
+    data = {"memory_available_mb": 0, "memory_floor_mb": 256, "cpu_free": 0}
+    assert (
+        http(hub.port, "POST", "/api/runner/resources", token=machine["machine_token"], body=data)[
+            0
+        ]
+        == 200
+    )
+    status, lease = _lease(hub, machine)
+    assert status == 200
+    assert "max_agents" not in lease

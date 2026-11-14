@@ -112,6 +112,7 @@ def start_setup(tmp_path, monkeypatch):
         "job_id": "job_" + "0" * 16,
         "title_marker": "commonplace-job:job_" + "0" * 16,
         "lease_token": "lease",
+        "max_agents": 100,
         "project": "demo",
         "topic": "worker",
         "runtime_mode": "approval-required",

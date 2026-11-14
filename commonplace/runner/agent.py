@@ -484,7 +484,7 @@ def _start(hub, config, job, journal, env, secrets):
         return
     from . import headroom
 
-    code = headroom.reserve(config, journal, job["job_id"])
+    code = headroom.reserve(config, journal, job["job_id"]) if headroom.required(job) else None
     if code:
         hub.post("result", {"lease_token": job["lease_token"], "outcome": "failed", "code": code})
         return
@@ -541,7 +541,12 @@ def _run(config, once):
                 _deliver(hub, path, entry, replay=True)
             from . import headroom, session_agent
 
-            hub.post("resources", headroom.snapshot(config))
+            try:
+                hub.post("resources", headroom.snapshot(config))
+            except _HubError as exc:
+                if exc.kind == "credential":
+                    raise
+                exc.report()  # Optional reporting must not gate legacy launches.
 
             session_error = None
             try:

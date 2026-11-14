@@ -538,7 +538,8 @@ def lease(store, machine):
 
             if (
                 len(in_flight) >= current["max_in_flight"]
-                or capacity.available(conn, current, now) <= 0
+                or capacity.available(conn, current, now, max_agents=capacity.job_limit(conn, row))
+                <= 0
             ):
                 return None
             # A switch flip requires another admission pass; never use an OFF read

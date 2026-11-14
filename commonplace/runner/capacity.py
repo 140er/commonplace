@@ -21,18 +21,21 @@ def report(store, machine, data):
     return {"ok": True}
 
 
-def available(conn, machine, now):
+def available(conn, machine, now, *, max_agents=None):
     """Upper bound on concurrent starts, including hourly and resource headroom.
 
-    Older clients without reports retain their granted caps. Stale reports cannot
-    attest headroom. The local runner always probes again immediately before launch.
+    Only expanded config limits use resource reports. Missing/stale measurements
+    are unknown, not a measured shortage. The runner rechecks before launching.
     """
     hourly = conn.execute(
         "SELECT COUNT(*) FROM runner_jobs WHERE machine_id=? AND starting_at>?",
         (machine["id"], jobs._after(now, -3600)),
     ).fetchone()[0]
     bounds = [machine["max_in_flight"], max(0, machine["max_starts_per_hour"] - hourly)]
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='runner_resources'").fetchone():
+    if (
+        headroom.required({"max_agents": max_agents})
+        and conn.execute("SELECT 1 FROM sqlite_master WHERE name='runner_resources'").fetchone()
+    ):
         row = conn.execute(
             "SELECT * FROM runner_resources WHERE machine_id=?", (machine["id"],)
         ).fetchone()
@@ -40,7 +43,7 @@ def available(conn, machine, now):
             bounds.extend(
                 headroom.slots(json.loads(row["resources"]))
                 if row["reported_at"] > jobs._after(now, -REPORT_SECONDS)
-                else [0]
+                else []
             )
     return min(bounds)
 
@@ -62,5 +65,30 @@ def board_capacity(gateway, ws, conn, board, cap, now):
         and not machine["revoked_at"]
         and machine["binding_state"] == "owner_attested"
     ):
-        capacity = available(conn, machine, now)
+        capacity = available(conn, machine, now, max_agents=config.max_agents)
     return {"runner_capacity": capacity, "effective_start_limit": min(cap, capacity)}
+
+
+def job_limit(conn, row):
+    """Read the pinned config limit without adding any authority to a legacy job."""
+    from commonplace.orch import schema, store
+
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='orch_configs'").fetchone():
+        return None
+    if row["config_version"] is None:
+        version = store.accepted_in(conn, row["board_slug"])
+    else:
+        stored = conn.execute(
+            "SELECT * FROM orch_configs WHERE board=? AND version=? AND sha256=?",
+            (row["board_slug"], row["config_version"], row["config_sha256"]),
+        ).fetchone()
+        version = store._version(stored)
+    try:
+        return store._checked_config(version).max_agents if version else None
+    except (schema.ConfigError, store.OrchError):
+        return None  # The existing starting fence handles invalid config authority.
+
+
+def lease_fields(conn, row):
+    limit = job_limit(conn, row)
+    return {"max_agents": limit} if headroom.required({"max_agents": limit}) else {}

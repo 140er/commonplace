@@ -93,5 +93,7 @@ def test_capacity_respects_hourly_resources_and_report_expiry():
     assert capacity.available(conn, machine, now) == 2
     data = {"memory_available_mb": 2048, "memory_floor_mb": 256, "cpu_free": 1.5}
     conn.execute("INSERT INTO runner_resources VALUES (?,?,?)", ("example", now, json.dumps(data)))
-    assert capacity.available(conn, machine, now) == 1
-    assert capacity.available(conn, machine, jobs._after(now, 601)) == 0
+    assert capacity.available(conn, machine, now, max_agents=100) == 1
+    assert capacity.available(conn, machine, now, max_agents=20) == 2
+    assert capacity.available(conn, machine, now, max_agents=None) == 2
+    assert capacity.available(conn, machine, jobs._after(now, 601), max_agents=100) == 2

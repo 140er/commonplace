@@ -7,6 +7,13 @@ import time
 
 RESERVE_MB = 512
 RESERVE_SECONDS = 120
+LEGACY_MAX_AGENTS = 20
+
+
+def required(command):
+    """Only an explicit expanded limit enables the additional startup guard."""
+    limit = command.get("max_agents")
+    return type(limit) is int and LEGACY_MAX_AGENTS < limit <= 100
 
 
 def cpu_free():
@@ -66,6 +73,8 @@ def reserve(config, journal, key):
     Reserve before the launch, including unknown outcomes. Expiry lets real probes
     take over after startup; this is admission headroom, not a process memory limit.
     """
+    if not slots(snapshot(config)):
+        return None  # No measurements: do not require reservation storage either.
     try:
         with sqlite3.connect(journal / "headroom.sqlite3", timeout=2) as conn:
             conn.execute("CREATE TABLE IF NOT EXISTS reservations (id TEXT PRIMARY KEY, at REAL)")
