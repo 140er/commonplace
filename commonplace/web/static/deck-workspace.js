@@ -5,6 +5,7 @@ import { mount as mountMap } from './deck-compute.js';
 import { createCompute } from './compute.js';
 import { createCoworkers } from './coworkers.js';
 import { statusMark } from './topology-map.js';
+import { mount as mountCapyCoworkers } from './deck-coworkers.js';
 
 export const TITLE = 'Compute';
 const enc = encodeURIComponent;
@@ -33,6 +34,7 @@ export function mount(context) {
   let ctx = context, stopped = false, epoch = 0, request = null, child = null;
   const root = context.root, page = workspaceRoute(context.route);
   const doc = root.ownerDocument || globalThis.document;
+  if (page?.screen === 'coworkers' && !page.conversations && doc?.documentElement?.dataset?.ui === 'deck') return mountCapyCoworkers(context);
   styles(doc);
   root.classList.add('deck-workspace');
   const headers = (doc?.documentElement?.dataset?.ui === 'deck' ? ['.head'] : ['.head', '#phone-bar']).map(selector => root.parentElement?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));

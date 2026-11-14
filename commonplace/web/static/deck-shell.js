@@ -90,7 +90,7 @@ export function renderShellTabs(options) {
   return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}${mic ? micButton('deck-tab-mic') : ''}</nav>`;
 }
 const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
-const composerSelector = ':is(#content, #card-panel) :is(.today-compose, .bots-compose, .cw-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
+const composerSelector = ':is(#content, #card-panel) :is(.today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
 
 export function createDeckShell({ root, api, context, on }) {
   let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '';
@@ -104,7 +104,7 @@ export function createDeckShell({ root, api, context, on }) {
       const ownMic = form.querySelector('[data-deck-shell-action="mic"]');
       const voiceMic = form.querySelector('[data-voice="mic"], [data-today="mic"], [data-bot-action="mic"]');
       if (voiceMic) ownMic?.remove();
-      else if (!ownMic) form.insertAdjacentHTML('beforeend', micButton('deck-composer-mic'));
+      else if (!ownMic) (form.querySelector('.cb-compose-bar') || form).insertAdjacentHTML('beforeend', micButton('deck-composer-mic'));
     }
     if (!tabs) return;
     const show = globalThis.location?.hash !== '#/' && !form;
@@ -157,7 +157,7 @@ export function createDeckShell({ root, api, context, on }) {
     if (action === 'mic') {
       event.preventDefault();
       const mic = [...(root.querySelectorAll?.('#content [data-voice="mic"], #content [data-today="mic"], #content [data-bot-action="mic"]') || [])].find(button => !button.disabled);
-      if (mic) mic.click(); else if (context?.()?.voice) void context().voice(composer()?.querySelector('[name="text"], [name="reply"], textarea[data-draft], input[data-draft]')); else context?.()?.go?.('#/');
+      if (mic) mic.click(); else if (context?.()?.voice) void context().voice(composer()?.querySelector('[name="text"], [name="reply"], textarea[data-draft], input[data-draft], .cb-composer textarea')); else context?.()?.go?.('#/');
     }
   });
   root?.ownerDocument?.addEventListener?.('signout', () => { reset(); paint(); });

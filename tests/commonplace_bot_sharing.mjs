@@ -6,7 +6,7 @@ import { sendMessage } from '../commonplace/web/static/botstream.js';
 
 const settle = async () => { for (let i = 0; i < 25; i++) await new Promise(setImmediate); };
 const owner = { id: 'owner', name: 'Workspace owner' }, person = { id: 'member', name: 'Workspace member' };
-function harness({ member = false, frozen = false, deck = true, fail = false, lifecycle = false } = {}) {
+function harness({ member = false, frozen = false, deck = true, fail = false, lifecycle = false, failRevoke = false } = {}) {
   globalThis.document = { documentElement: { dataset: { ui: deck ? 'deck' : 'classic' } } };
   const bot = { id: 'bot', name: 'Team helper', kind: 'custom', owner, mine: !member, shared: member, frozen, frozen_reason: frozen ? 'owner_left' : null, perms: { talk: true, see_shared: false }, lifecycle };
   const regions = Object.fromEntries(['roster', 'model', 'head', 'messages', 'waiting', 'notice', 'composer', 'send', 'sheet'].map(name => [name, { innerHTML: '', querySelector() { return null; } }]));
@@ -25,7 +25,13 @@ function harness({ member = false, frozen = false, deck = true, fail = false, li
     if (path.includes('/shares')) {
       if (fail) throw new Error('Sharing unavailable');
       if (method === 'GET') return { shares: structuredClone(shares) };
-      if (method === 'DELETE') { allowed = false; shares.splice(0); return { ok: true }; }
+      if (method === 'DELETE') {
+        if (failRevoke && path.endsWith('/reader')) throw new Error('Removal unavailable');
+        allowed = false;
+        const index = shares.findIndex(row => path.endsWith('/' + row.user.id));
+        if (index >= 0) shares.splice(index, 1);
+        return { ok: true };
+      }
       allowed = true; bot.shared = true;
       shares.splice(0, shares.length, { user: person, talk: options.body.talk, see_shared: options.body.see_shared });
       return { share: shares[0] };
@@ -215,4 +221,43 @@ test('person summaries start with the permission while confirmations retain the 
   assert.match(permissionSummary({ see_shared: true }), /^Can read shared conversations/);
   assert.equal(permissionSummary({}), 'Has no access to this bot.');
   assert.match(permissionText({ talk: true }, 'Syntheticlonggivenname Syntheticlongfamilyname'), /^Syntheticlonggivenname Syntheticlongfamilyname can talk/);
+});
+
+
+test('compact sharing uses inline permissions and confirms stopping through existing routes', async () => {
+  const h = harness(); await h.ui.showSharing(h.bot);
+  assert.match(h.regions.sheet.innerHTML, /placeholder="Add a person by name"/);
+  assert.match(h.regions.sheet.innerHTML, /Only you\./);
+  await h.click('sharing-select', { user: 'member' });
+  h.ui.state.sheet.draft = {talk: true, see_shared: false};
+  await h.ui.submit({dataset:{botsForm:'share'}});
+  assert.match(h.regions.sheet.innerHTML, /data-capy-permission="member"/);
+  await h.click('sharing-stop');
+  assert.ok(h.calls.every(([,method])=>method!=='DELETE'));
+  assert.match(h.regions.sheet.innerHTML, /Remove access for Workspace member/);
+  await h.click('sharing-stop-cancel');
+  assert.equal(h.ui.state.sheet.confirmStop, false);
+  await h.click('sharing-stop'); await h.click('sharing-stop');
+  assert.equal(h.calls.filter(([path, method]) => path === '/api/bots/bot/shares/member' && method === 'DELETE').length, 1);
+  assert.match(h.regions.sheet.innerHTML, /Only you\./);
+  h.ui.stop();
+});
+test('compact stop-sharing rejects forged member, lifecycle and frozen actions', async () => {
+  for (const options of [{member:true},{frozen:true},{lifecycle:true}]) {
+    const h=harness(options); await h.ui.showSharing(h.bot);
+    await h.click('sharing-stop'); await h.click('sharing-stop');
+    assert.ok(h.calls.every(([, method])=>method==='GET'));
+    h.ui.stop();
+  }
+});
+
+test('compact stop-sharing keeps remaining access visible after a partial failure', async () => {
+  const h=harness({failRevoke:true});
+  h.shares.push({user:person,talk:true,see_shared:false}, {user:{id:'reader',name:'Workspace reader'},talk:false,see_shared:true});
+  await h.ui.showSharing(h.bot);
+  await h.click('sharing-stop'); await h.click('sharing-stop');
+  assert.deepEqual(h.ui.state.sheet.shares.map(row=>row.user.id), ['reader']);
+  assert.match(h.regions.sheet.innerHTML, /Removal unavailable/);
+  assert.doesNotMatch(h.regions.sheet.innerHTML, /data-access-saved/);
+  h.ui.stop();
 });

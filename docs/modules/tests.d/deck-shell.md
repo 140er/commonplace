@@ -8,3 +8,5 @@
   optional browser checks capture desktop, tablet and phone at scale two.
   `tests/test_deck_phone_navigation_browser.py` measures attached navigation
   targets atomically so a replaced board cannot yield empty computed gutters.
+  Rail browser cases also cover workspace creation access and the Coworker
+  panels with composer-aware phone chrome after integration.

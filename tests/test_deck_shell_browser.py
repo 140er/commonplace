@@ -93,6 +93,18 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                             await page.locator(".deck-owner small").text_content()
                             == "Owner · " + (await me.json())["workspace_name"]
                         )
+                        await page.locator(".deck-rail-heading.ws").click()
+                        await page.get_by_role("combobox", name="Search or run an action").fill(
+                            "Switch workspace"
+                        )
+                        await page.get_by_role(
+                            "option", name="Switch workspace", exact=True
+                        ).click()
+                        await page.locator(".workspace-switch").wait_for(state="visible")
+                        assert await page.get_by_role(
+                            "button", name="Create workspace", exact=True
+                        ).is_visible()
+                        await page.keyboard.press("Escape")
                         await page.locator(".deck-new-bot").click()
                         await page.wait_for_selector('dialog[open], [role="dialog"]')
                         await page.keyboard.press("Escape")
@@ -145,12 +157,22 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.wait_for_function(
                             "() => !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
                         )
+                        await page.goto(url + "#/bots/-/coworkers")
+                        await page.locator(".cb-composer").wait_for(state="visible")
+                        await page.locator(".cb-composer .deck-composer-mic").wait_for(
+                            state="visible"
+                        )
+                        await page.wait_for_function(
+                            "() => !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
+                        )
+                        assert await page.locator(".cb-detail").is_visible()
+                        assert await page.evaluate("document.documentElement.scrollWidth") == width
                         await page.goto(url + "#/today")
                         await page.locator('[data-deck="top"]').wait_for(state="visible")
                     if width == 390:
                         await page.wait_for_selector(".today-question", state="visible")
                     else:
-                        await page.wait_for_selector(".bots-list .bot-row", state="visible")
+                        await page.wait_for_selector(".bots-list .cb-bot-row", state="visible")
                     if width == 390:
                         await page.wait_for_function("""() => {
                           const tabs=document.querySelector('[data-deck=tabs]');
