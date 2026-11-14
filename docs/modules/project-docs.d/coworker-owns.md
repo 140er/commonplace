@@ -1,0 +1,2 @@
+- **Owns:** `docs/system/coworker-owned-paths.md` records the boundary between declared ownership and observed admission holds, with the API contract in the chat module fragment.
+- **Promises:** Documentation describes repo-relative paths, current per-viewer project authority, nullable lock observations and bounded responses without implying worker execution or file-system locks.

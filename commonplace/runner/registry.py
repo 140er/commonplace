@@ -346,6 +346,9 @@ def patch_in(
         updated_at=control_db._iso(control_db._now()),
     )
     _write(db, row["id"], data)
+    from . import setup_approvals
+
+    setup_approvals.invalidate_in(db, row["id"])
     if reset:
         db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
     _audit(db, owner, audit[0], row["id"], reset=reset, also=audit[1])
@@ -400,6 +403,13 @@ def attest(db, owner, machine_id, binding):
     _owner(owner)
     with db._lock, db._tx():
         row = _active(db, owner, machine_id)
+        if isinstance(binding, dict) and "setup_attestation" in binding:
+            from . import setup_approvals
+
+            if "install_settings" in binding:
+                raise ValueError("review settings before final confirmation")
+            setup_approvals.attest_in(db, owner, row, binding["setup_attestation"])
+            binding = {k: v for k, v in binding.items() if k != "setup_attestation"}
         settings = binding.get("install_settings") if isinstance(binding, dict) else None
         if isinstance(binding, dict) and "install_settings" in binding:
             binding = {k: v for k, v in binding.items() if k != "install_settings"}
@@ -490,32 +500,38 @@ def rotate(db, owner, machine_id, kind="worker"):
 def revoke(db, owner, machine_id):
     _owner(owner)
     with db._lock, db._tx():
-        row = _active(db, owner, machine_id)
-        for kind in ("machine", "worker"):
-            db.revoke(
-                row[f"{kind}_connection_id"],
-                actor=owner.user_id,
-                workspace_ref=owner.workspace_id,
-                _runner_owned=True,
-            )
-        now = control_db._iso(control_db._now())
-        _write(
-            db,
-            row["id"],
-            dict(
-                revoked_at=now,
-                enabled=0,
-                grant_version=row["grant_version"] + 1,
-                updated_by=owner.user_id,
-                updated_at=now,
-            ),
-        )
-        db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
-        _audit(db, owner, "revoke", row["id"], reset=True)
-        from . import enrollment
+        return revoke_in(db, owner, machine_id)
 
-        enrollment.revoke_machine_in(db, owner, row["id"])
-        return {"ok": True}
+
+def revoke_in(db, owner, machine_id):
+    """Use inside an existing control transaction, including enrollment refusal."""
+    _owner(owner)
+    row = _active(db, owner, machine_id)
+    for kind in ("machine", "worker"):
+        db.revoke(
+            row[f"{kind}_connection_id"],
+            actor=owner.user_id,
+            workspace_ref=owner.workspace_id,
+            _runner_owned=True,
+        )
+    now = control_db._iso(control_db._now())
+    _write(
+        db,
+        row["id"],
+        dict(
+            revoked_at=now,
+            enabled=0,
+            grant_version=row["grant_version"] + 1,
+            updated_by=owner.user_id,
+            updated_at=now,
+        ),
+    )
+    db._conn.execute(f"UPDATE runner_machines SET {RESET} WHERE id=?", (row["id"],))
+    _audit(db, owner, "revoke", row["id"], reset=True)
+    from . import enrollment
+
+    enrollment.revoke_machine_in(db, owner, row["id"])
+    return {"ok": True}
 
 
 def worker_principal(db, machine):
