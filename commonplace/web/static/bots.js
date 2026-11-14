@@ -5,6 +5,7 @@
 import { elapsed, safeLink } from "./api.js";
 import { sendMessage } from "./botstream.js";
 import { permissionText, settingsFrameHTML, sharingHTML, threadsHTML, threadPreviewHTML } from "./bot-sharing.js";
+import { capyRosterHTML, overviewBots } from "./deck-coworkers.js";
 
 export const BOTS_COPY = Object.freeze({
   title: "Bots",
@@ -434,7 +435,7 @@ export function createBots({
   // --- painting ---
   function paintRoster() {
     const node = region("roster");
-    if (node) node.innerHTML = rosterHTML({ bots: s.bots, current: s.botId, loaded: s.loaded }, e);
+    if (node) node.innerHTML = deck() ? capyRosterHTML({ bots: overviewBots(s.bots, s.coworkerBots), conversations: s.coworkerConversations, loaded: s.loaded }) : rosterHTML({ bots: s.bots, current: s.botId, loaded: s.loaded }, e);
     const model = region("model");
     if (model) model.innerHTML = modelNoteHTML({ model: s.model, canConfigure: s.canConfigure, error: s.error }, e);
     if (deck()) paintHead();
@@ -551,8 +552,9 @@ export function createBots({
   }
   async function loadRoster(token) {
     try {
-      const result = await api("/api/bots");
+      const [result, directory] = await Promise.all([api("/api/bots"), deck() && !s.sharingOnly ? api('/api/coworkers').catch(() => null) : null]);
       if (!alive(token)) return;
+      s.coworkerConversations = directory?.conversations || []; s.coworkerBots = directory?.bots || [];
       s.bots = result.bots || []; s.model = result.model || null; s.canConfigure = result.can_configure === true;
       if (deck() && s.canConfigure) {
         try {
@@ -794,7 +796,7 @@ export function createBots({
   }
   async function openSharing(tab = "people") {
     if (!deck() || !s.bot) return;
-    const sheet = s.sheet = { kind: "sharing", tab, shares: [], log: [], busy: false, loading: true, error: "", painted: false };
+    const sheet = s.sheet = { kind: "sharing", capy: s.sharingOnly === true, tab, shares: [], log: [], busy: false, loading: true, error: "", painted: false };
     await loadSharing(sheet);
   }
   async function sharingWrite(action, confirmed = false) {
@@ -1170,6 +1172,14 @@ export function createBots({
   }
 
   return {
+    async showSharing(bot) {
+      if (!deck() || !host()) return;
+      active = true; s.sharingOnly = true; s.botId = bot.id; s.bot = bot;
+      host().innerHTML = '<div class="bots"><div data-region="sheet"></div></div>';
+      rootEl = host().querySelector('.bots');
+      for (const [type, handler] of [["click", onClick], ["submit", onSubmit], ["input", onInput], ["change", onChange], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
+      return openSharing();
+    },
     newBot() { if (active) return openSheet("new"); },
     show(id = null) {
       const wasActive = active, previous = s.botId;

@@ -28,7 +28,7 @@ export function settingsFrameHTML(sheet, bot, content, e) {
   const tabs = [["people", bot.mine || bot.lifecycle ? "People & permissions" : "Your access"], ["log", "Access log"]];
   if (bot.mine || bot.lifecycle) tabs.push(["details", "Name, job & memory"], ["learning", "Learning & sharing"]);
   const nav = `<nav class="bot-access-tabs" aria-label="Bot settings">${tabs.map(([key, label]) => button("sharing-tab", label, sheet.busy || (["details", "learning"].includes(key) && (!bot.mine || bot.frozen)), ` data-tab="${key}" aria-pressed="${(sheet.tab || "people") === key}"`)).join("")}</nav>`;
-  return `<div class="sheet bot-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><header class="bot-access-heading"><div><h2 id="sheet-h">Bot settings</h2><p>${e(bot.name)}</p></div>${button("close", "Close")}</header>${nav}${content}</div></div>`;
+  return `<div class="sheet bot-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body bot-access"><header class="bot-access-heading"><div><h2 id="sheet-h">${sheet.capy ? `Who can use ${e(bot.name)}` : 'Bot settings'}</h2><p>${e(bot.name)}</p></div>${button("close", "Close")}</header>${nav}${content}</div></div>`;
 }
 
 export function audienceText(bot, shares, { mine = false } = {}) {
