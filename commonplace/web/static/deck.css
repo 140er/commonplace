@@ -123,7 +123,7 @@
 :root[data-ui="deck"] .setting-row button:hover { background: var(--accent-weak); box-shadow: none; }
 :root[data-ui="deck"] .setting-row button[aria-pressed="true"] { background: var(--text); color: var(--bg); box-shadow: none; }
 :root[data-ui="deck"] .settings :is(input:not([type=checkbox], [type=radio]), select, textarea) { min-height: 36px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
-:root[data-ui="deck"] .deck-tools { display: block; }
+:root[data-ui="deck"] .deck-tools { display: none; }
 :root[data-ui="deck"] .deck-tools a { display: flex; align-items: center; justify-content: space-between; min-height: 48px; color: var(--text); text-decoration: none; font-weight: 500; }
 :root[data-ui="deck"] .deck-tools a + a { border-top: 1px solid var(--line); }
 @media (max-width: 699px) {
@@ -224,6 +224,47 @@
   :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
 }
 
+/* Workspace creation stays on the shared Deck surfaces and controls. */
+:root[data-ui="deck"] .workspace-switch.sheet { background: var(--surface); border: 0; border-radius: 20px; }
+:root[data-ui="deck"] .workspace-switch input { background: var(--well); color: var(--text); border: 0; border-radius: 12px; box-shadow: none; caret-color: var(--text); }
+:root[data-ui="deck"] .workspace-switch .btn { border-radius: 999px; }
+:root[data-ui="deck"] .workspace-switch input:focus-visible, :root[data-ui="deck"] .workspace-switch .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+
+/* A workspace dialog owns its full content width; creation stays secondary in the list. */
+:root[data-ui="deck"] .workspace-switch.sheet { display: block; box-sizing: border-box; width: min(400px, calc(100% - 32px)); padding: 24px; }
+:root[data-ui="deck"] .workspace-switch .menu-body { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+:root[data-ui="deck"] .workspace-switch h2 { margin: 0; text-align: left; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workspace-switch .workspace-list { width: 100%; gap: 0; }
+:root[data-ui="deck"] .workspace-switch .workspace-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 16px; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 10px 0; text-align: left; background: none; color: var(--text); line-height: 1.4; }
+:root[data-ui="deck"] .workspace-switch .workspace-row[aria-current] { opacity: 1; cursor: default; }
+:root[data-ui="deck"] .workspace-switch .workspace-label { min-width: 0; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workspace-switch .workspace-role { color: var(--text-3); font-size: 13px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-create] { align-self: flex-start; background: var(--well); color: var(--text-2); }
+:root[data-ui="deck"] .workspace-switch .workspace-close-row { justify-content: flex-end; }
+:root[data-ui="deck"] .workspace-switch .btn { min-height: 44px; padding: 10px 16px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-name-error] { color: var(--text-2); font-size: 14px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-name-error]:empty { display: none; }
+:root[data-ui="deck"] .workspace-switch input[aria-invalid="true"] { outline: 1px solid var(--text-3); outline-offset: 0; }
+
+/* Assignment removal keeps the drawer controls and its confirmation in the same palette. */
+:root[data-ui="deck"] .assignment-removal { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; color: var(--text); }
+:root[data-ui="deck"] .assignment-removal p { color: var(--text-2); overflow-wrap: anywhere; }
+:root[data-ui="deck"] .assignment-removal.form-tile { width: 100%; padding: 24px 16px; background: var(--surface); box-shadow: none; }
+:root[data-ui="deck"] .assignment-removal h2 { font-size: 24px; line-height: 1.2; }
+:root[data-ui="deck"] .assignment-removal label { width: 100%; }
+:root[data-ui="deck"] .assignment-removal textarea { min-width: 0; width: 100%; padding: 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
+:root[data-ui="deck"] .assignment-removal .confirm-removal { background: var(--text); color: var(--bg); }
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .assignment-removal .btn { min-height: 44px; }
+}
+:root[data-ui="deck"] .workbench-details .title-row h2 { flex-basis: 100%; font-size: 24px; line-height: 1.2; }
+
+:root[data-ui="deck"] .assignment-refusal { padding: 24px 16px; }
+:root[data-ui="deck"] .assignment-removal textarea { outline: none; box-shadow: none; }
+:root[data-ui="deck"] .assignment-removal textarea:focus-visible { outline: 2px solid var(--line-strong); outline-offset: 2px; }
+:root[data-ui="deck"] .assignment-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+:root[data-ui="deck"] .assignment-help { display: block; color: var(--text-2); }
+
 /* Settings shortcuts stay before the longer lists, on every screen size. */
 :root[data-ui="deck"] #deck-settings-nav { position: sticky; top: 0; z-index: 3; display: flex; flex: none; flex-wrap: nowrap; gap: 8px; max-width: 100%; overflow-x: auto; padding-block: 4px; background: var(--bg); scrollbar-width: thin; }
 :root[data-ui="deck"] #deck-settings-nav button { flex: none; white-space: nowrap; min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--well); color: var(--text); font: inherit; cursor: pointer; }
@@ -251,15 +292,4 @@
 :root[data-ui="deck"] .deck-permission-group .setting-row > select { grid-column: 2; grid-row: 1; }
 :root[data-ui="deck"] .deck-permission-meta small { flex: none; white-space: nowrap; }
 :root[data-ui="deck"] .deck-permission-meta details { min-width: 0; }
-/* Assignment removal keeps the drawer controls and its confirmation in the same palette. */
-:root[data-ui="deck"] .assignment-removal { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; color: var(--text); }
-:root[data-ui="deck"] .assignment-removal p { color: var(--text-2); overflow-wrap: anywhere; }
-:root[data-ui="deck"] .assignment-removal.form-tile { width: 100%; padding: 24px 16px; background: var(--surface); box-shadow: none; }
-:root[data-ui="deck"] .assignment-removal h2 { font-size: 24px; line-height: 1.2; }
-:root[data-ui="deck"] .assignment-removal label { width: 100%; }
-:root[data-ui="deck"] .assignment-removal textarea { min-width: 0; width: 100%; padding: 12px; border: 0; border-radius: 12px; background: var(--well); color: var(--text); }
-:root[data-ui="deck"] .assignment-removal .confirm-removal { background: var(--block); color: var(--bg); }
-@media (max-width: 699px) {
-  :root[data-ui="deck"] .assignment-removal .btn { min-height: 44px; }
-}
-:root[data-ui="deck"] .workbench-details .title-row h2 { flex-basis: 100%; font-size: 24px; line-height: 1.2; }
+:root[data-ui="deck"] .deck-tools { display: block; }
