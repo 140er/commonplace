@@ -4,6 +4,7 @@ import { elapsed } from './api.js';
 const BUCKETS = ['approvals', 'backlog_from_agents', 'asks', 'done_review', 'ready_to_merge', 'plans', 'stale'];
 const positive = text => /^(?:yes\b|accept\b|approve\b|ship\b|start\b|send\b|publish\b|proceed\b|go ahead\b)/i.test(String(text));
 const holding = text => /^(?:hold\b|wait\b|not now\b|later\b)/i.test(String(text));
+const actionable = card => Number.isSafeInteger(card.number) && card.number > 0 && Number.isSafeInteger(card.version) && card.version > 0;
 export const stamp = card => `${card.number}:${card.version}`;
 // Display copy only; the source card and submitted choice are kept verbatim.
 export const displayText = value => String(value ?? '').replace(/\bPR\s*#\d+\b|#\d+\b/gi, '').replace(/(?:~\/|\/(?:home|Users|tmp|var|srv|opt|etc|mnt|work|api)\/|[A-Z]:\\)\S+/g, '').replace(/\s+/g, ' ').trim();
@@ -35,7 +36,7 @@ export function todayKey(event, enabled = true) {
   return ({ a: 'approve', h: 'hold', r: 'reply', j: 'next', k: 'previous' })[event.key?.toLowerCase()] || null;
 }
 export function actionRequest(card, action, { reply = '', reason = '', choice, key = globalThis.crypto?.randomUUID?.() } = {}) {
-  if (!Number.isSafeInteger(card.number) || card.number < 1 || !Number.isSafeInteger(card.version) || card.version < 1) return null;
+  if (!actionable(card)) return null;
   const actions = card.actions || [], options = card.ask_options || [];
   const body = { version: card.version };
   let route = 'decide';
@@ -59,12 +60,17 @@ export function actionRequest(card, action, { reply = '', reason = '', choice, k
   if (!key) return null;
   return { path: `/api/cards/${card.number}/${route}`, options: { method: 'POST', headers: { 'Idempotency-Key': key }, body } };
 }
+export function canApprove(card) {
+  if (!actionable(card)) return false;
+  const actions = card.actions || [], options = card.ask_options || [];
+  return actions.includes('approve') || (actions.includes('accept') && !options.length) ||
+    (actions.some(action => action === 'accept' || action === 'answer') && options.some(positive));
+}
 export function actionRow(card, { busy = false } = {}, e) {
   const disabled = busy ? ' disabled' : '';
-  const approve = actionRequest(card, 'approve', { key: 'check' });
+  const approve = canApprove(card);
   const reject = (card.actions || []).includes('reject');
-  const reply = true;
-  return `<div class="bt-actions">${approve ? `<button type="button" class="bt-approve" data-bt-action="approve"${disabled}>Approve</button>` : ''}<button type="button" class="bt-hold" data-bt-action="hold"${disabled}>Hold</button>${reply ? `<button type="button" class="bt-desktop-reply" data-bt-action="reply"${disabled}>Reply</button>` : ''}<details class="bt-more"><summary aria-label="More">⋯</summary><div role="menu" aria-label="More actions">${reply ? '<button type="button" role="menuitem" data-bt-action="reply">Reply</button>' : ''}${reject ? `<button type="button" role="menuitem" data-bt-action="reject"${disabled}>Turn down</button>` : ''}${!reply && !reject ? `<a role="menuitem" href="#/card/${card.number}">Open card</a>` : ''}</div></details></div>`;
+  return `<div class="bt-actions">${approve ? `<button type="button" class="bt-approve" data-bt-action="approve"${disabled}>Approve</button>` : ''}<button type="button" class="bt-hold" data-bt-action="hold"${disabled}>Hold</button><button type="button" class="bt-desktop-reply" data-bt-action="reply"${disabled}>Reply</button><details class="bt-more"><summary aria-label="More">⋯</summary><div role="menu" aria-label="More actions"><button type="button" role="menuitem" data-bt-action="reply">Reply</button>${reject ? `<button type="button" role="menuitem" data-bt-action="reject"${disabled}>Turn down</button>` : ''}</div></details></div>`;
 }
 export const avatar = (bot, e) => `<span class="bt-avatar" aria-hidden="true">${e(Array.from(bot?.name || '?')[0])}</span>`;
 export const timeHTML = (at, e) => at && Number.isFinite(Date.parse(at)) ? `<time datetime="${e(at)}">${e(elapsed(at))}</time>` : '';

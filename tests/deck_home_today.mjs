@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { escape as e } from '../commonplace/web/static/api.js';
-import { todayKey, removeNeed, createNeedLedger, actionRequest, actionRow, needsCards, runHTML, displayText } from '../commonplace/web/static/deck-home-today.js';
+import { todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText } from '../commonplace/web/static/deck-home-today.js';
 import { modelControls } from '../commonplace/web/static/deck-home.js';
 
 const card = { number: 7, version: 4, title: 'Review the release', actions: ['approve', 'reject'] };
@@ -53,6 +53,27 @@ test('phone row has one primary, Hold and More; Reply and Turn down are in the m
   assert.match(html, /role="menuitem"[^>]*data-bt-action="reply"/);
   assert.match(html, /role="menuitem"[^>]*data-bt-action="reject"[^>]*>Turn down/);
   assert.doesNotMatch(actionRow({ ...card, actions: [] }, {}, e), /data-bt-action="approve"|data-bt-action="reject"/);
+});
+test('Approve visibility follows the offered action and choice without creating a request', () => {
+  for (const [fields, visible] of [
+    [{ actions: ['approve'] }, true],
+    [{ actions: ['reject'] }, false],
+    [{ actions: ['accept'], ask_options: [] }, true],
+    [{ actions: ['accept'], ask_options: ['Accept', 'Hold'] }, true],
+    [{ actions: ['accept'], ask_options: ['Blue', 'Orange'] }, false],
+    [{ actions: ['answer'], ask_options: ['Ship it', 'Hold'] }, true],
+    [{ actions: ['answer'], ask_options: ['Blue', 'Orange'] }, false],
+    [{ actions: ['answer'], ask_options: [] }, false],
+    [{ actions: [] }, false], [{ version: 0 }, false], [{ number: 0 }, false],
+  ]) {
+    const item = { ...card, ...fields };
+    assert.equal(canApprove(item), visible);
+    assert.equal(actionRow(item, {}, e).includes('data-bt-action="approve"'), visible);
+  }
+  const row = actionRow({ ...card, actions: [] }, {}, e);
+  assert.match(row, /bt-desktop-reply/);
+  assert.match(row, /role="menuitem"[^>]*data-bt-action="reply"/);
+  assert.doesNotMatch(row, /Open card/);
 });
 test('run cards show only the sent run and its reported steps, at most three', () => {
   assert.doesNotMatch(runHTML({ text: 'Check this', state: 'running', steps: [] }, e), /bt-step/);
