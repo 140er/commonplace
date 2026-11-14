@@ -137,6 +137,9 @@ def _invalidate(db, row, now, owner=None, *, action="revoke"):
         "UPDATE runner_enrollments SET revoked_at=?, code_hash=NULL WHERE id=?", (now, row["id"])
     )
     _purge_delivery(db, row["id"])
+    from . import setup_approvals
+
+    setup_approvals.invalidate_in(db, row["machine_id"])
     if row["machine_id"]:
         machine = registry.get_machine(db, row["workspace_id"], row["machine_id"])
         if machine and not machine["revoked_at"]:
@@ -191,6 +194,12 @@ def sweep(db):
     """Expire pending codes and purge recovery ciphertext, including while off."""
     with db._tx():
         _, now = _time()
+        from . import setup_approvals
+
+        if db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='runner_browser_requests'"
+        ).fetchone():
+            setup_approvals.sweep_in(db)
         for row in db._conn.execute("SELECT workspace_id FROM runner_install_settings").fetchall():
             _sweep_in(db, row[0], now)
 
