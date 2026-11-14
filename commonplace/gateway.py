@@ -352,8 +352,11 @@ class WorkerClient:
         # an online backup's pause drains it and never cuts it.
         slot = getattr(self.supervisor, "call", None)
         try:
-            held = slot() if pause_wait_s is None else slot(wait_s=pause_wait_s)
-            with held if slot is not None else contextlib.nullcontext():
+            if slot is None:
+                held = contextlib.nullcontext()
+            else:
+                held = slot() if pause_wait_s is None else slot(wait_s=pause_wait_s)
+            with held:
                 try:
                     worker = self.supervisor.get(principal.workspace_id)
                 except (WorkersPaused, WorkersStarting, SupervisorClosed):
