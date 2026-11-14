@@ -132,11 +132,31 @@ def test_compute_capy_screen(browser, size):
         assert live.evaluate("el=>getComputedStyle(el).strokeDasharray") == "4px, 6px"
         idle = page.locator('.topo-link[data-active="false"] :is(line,.topo-route)').first
         assert idle.evaluate("el=>getComputedStyle(el).animationName") == "none"
-        assert all(
-            display == "none"
-            for display in page.locator(
-                '.topo-link[data-active="false"] .dc-link-label'
-            ).evaluate_all("els=>els.map(el=>getComputedStyle(el).display)")
+        # Idle describes motion, not whether the recorded route caption is visible.
+        captions = page.locator(".dc-link-caption .topo-method")
+        assert sorted(captions.all_text_contents()) == [
+            "Direct",
+            "Tailscale",
+            "Tailscale",
+            "Tailscale",
+        ]
+        for caption in captions.all():
+            assert caption.is_visible()
+            assert caption.evaluate("el=>getComputedStyle(el).fontSize") == "11px"
+            assert caption.evaluate("el=>getComputedStyle(el).fill") == "rgb(133, 131, 154)"
+        assert page.locator(".dc-summary-state").all_text_contents() == [
+            "Build machine down",
+            "Bench degraded",
+            "Laptop unknown",
+        ]
+        summary = page.locator(".dc-summary")
+        assert summary.evaluate("el=>getComputedStyle(el).overflow") == "hidden"
+        # Separators belong to an item; at a new row they sit outside the clipped summary edge.
+        assert (
+            page.locator(".dc-summary-state").first.evaluate(
+                'el=>getComputedStyle(el,"::before").left'
+            )
+            == "-10px"
         )
         if size[0] == 390:
             assert page.locator(".topo-detail:not([hidden])").count() == 0
@@ -165,6 +185,7 @@ def test_compute_capy_screen(browser, size):
             assert panel.bounding_box()["width"] == pytest.approx(300)
             assert panel.get_by_text("32 GB capacity").is_visible()
             assert panel.get_by_text("Healthy", exact=True).is_visible()
+            node_close = panel.locator('[data-td="close"]').evaluate("el=>el.outerHTML")
             capture(page, "compute-desktop.png")
         assert live.evaluate("el=>getComputedStyle(el).strokeWidth") == "1px"
         assert page.locator(".topo-link [data-end]").count() == 0
@@ -190,6 +211,11 @@ def test_compute_capy_screen(browser, size):
                 "State",
                 "Last seen",
             ]
+            assert page.locator(".topo-detail dd").last.inner_text() == "Unknown"
+            assert (
+                page.locator('.topo-detail [data-td="close"]').evaluate("el=>el.outerHTML")
+                == node_close
+            )
             capture(page, "compute-link-selected.png")
             page.locator('.dc-node[data-key="hub"]').focus()
             page.keyboard.press("Enter")

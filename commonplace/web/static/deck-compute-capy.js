@@ -1,6 +1,6 @@
 // Capy presentation for the existing topology canvas. No enrollment or discovery writes live here.
 import { escape as e } from './api.js';
-import { panelHTML } from './topology-detail.js';
+import { panelHTML, panelCloseHTML } from './topology-detail.js';
 import { stateHTML, effectiveState } from './deck-compute-state.js';
 import { linkName } from './deck-compute-scene.js';
 
@@ -113,16 +113,17 @@ export function computeStyles(doc) {
 
 
 export function summaryStatesHTML(nodes) {
-  return ' '+nodes.filter(n => n.status !== 'up' || n.stale || n.missing).filter(n=>n.status !== 'none').map(n => `<span class="dc-summary-state"> · ${stateHTML(effectiveState(n),`${n.name} ${effectiveState(n)}`)}</span>`).join(' ');
+  const rank = { down:0, degraded:1, unknown:2 };
+  return ' '+nodes.filter(n => n.status !== 'up' || n.stale || n.missing).filter(n=>n.status !== 'none').sort((a,b)=>rank[effectiveState(a)]-rank[effectiveState(b)]).map(n => `<span class="dc-summary-state">${stateHTML(effectiveState(n),`${n.name} ${effectiveState(n)}`)}</span>`).join(' ');
 }
 
 export function computeLinkPanel({ link, names, compact = false }) {
   const states = [link.status.from,link.status.to];
   const state = link.stale || link.missing ? 'unknown' : states.includes('down') ? 'down' : states.includes('degraded') ? 'degraded' : states.every(s=>s === 'up') ? 'up' : 'unknown';
-  const close = compact ? 'Back' : '×';
+  const close = compact ? '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>' : panelCloseHTML(true);
   const observed = link.observedAt;
-  const seen = observed && Number.isFinite(Date.parse(observed)) ? `<time datetime="${e(observed)}">${e(new Date(observed).toLocaleString('en',{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'}))} UTC</time>` : 'Not reported';
-  return `<header class="td-head"><h2 class="td-title">${e(names.get(link.from) || link.from)} to ${e(names.get(link.to) || link.to)}</h2><button type="button" class="${compact ? 'dc-back' : 'iconbtn'}" data-td="close" aria-label="${compact ? 'Back to machines' : 'Close details'}">${close}</button></header><dl class="dc-facts dc-link-facts"><div><dt>Route</dt><dd>${e(linkName(link.method) || 'Not reported')}</dd></div><div><dt>State</dt><dd>${stateHTML(state)}</dd></div><div><dt>Last seen</dt><dd>${seen}</dd></div></dl>`;
+  const seen = observed && Number.isFinite(Date.parse(observed)) ? `<time datetime="${e(observed)}">${e(new Date(observed).toLocaleString('en',{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'}))} UTC</time>` : 'Unknown';
+  return `<header class="td-head"><h2 class="td-title">${e(names.get(link.from) || link.from)} to ${e(names.get(link.to) || link.to)}</h2>${close}</header><dl class="dc-facts dc-link-facts"><div><dt>Route</dt><dd>${e(linkName(link.method) || 'Not reported')}</dd></div><div><dt>State</dt><dd>${stateHTML(state)}</dd></div><div><dt>Last seen</dt><dd>${seen}</dd></div></dl>`;
 }
 
 
