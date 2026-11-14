@@ -110,13 +110,17 @@ vm.runInContext(slice('const message = ', '// The board lists child'), context);
 const projects = read('projects.js');
 vm.runInContext('function installOrchestrationStyles() {}\n' +
   projects.slice(projects.indexOf('export function mountWorkspaceOrchestration('), projects.indexOf('export function mountOrchestratorTrust(')).replace('export ', ''), context);
-vm.runInContext(slice('function phonePushView(', 'async function memoryView(') +
+// refresh() closes over the real queue ledger and roster helper of the complete shell.
+vm.runInContext(slice('function rememberDeckBots(', 'function setBotsWaiting(') +
+  slice('function phonePushView(', 'async function memoryView(') +
   slice('async function refresh(', 'function decideStart('), context);
 // Exercise the actual delegated Retry branch rather than a test-only reload path.
 const retry = app.match(/else if \(action === "retry"\) ([^\n]+)/);
 assert.ok(retry);
 vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
 (async () => {
+  const { createNeedLedger } = await import(require('node:url').pathToFileURL(require('node:path').resolve('commonplace/web/static/deck-home-today.js')).href);
+  context.deckNeedsLedger = createNeedLedger();
   if (mode === 'background') {
     blocked = false;
     await context.refresh();

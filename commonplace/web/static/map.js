@@ -106,7 +106,13 @@ export function mountMap(root, graph, onOpen) {
 
   const visible = (x) => (!off.has(x.theme) || x.kind === "person") && (!match.set || match.set.has(x.id));
   const phone = () => matchMedia("(max-width: 640px)").matches;
-  const panelW = () => (!panel.hidden && !phone() ? 520 + 6 : 0);
+  const panelW = () => {
+    if (panel.hidden || phone()) return 0;
+    // The workbench already reserves a column for its panel. Only subtract
+    // actual overlap when the panel floats over this canvas.
+    const stageBox = stage.getBoundingClientRect(), panelBox = panel.getBoundingClientRect();
+    return Math.max(0, Math.min(stageBox.right, panelBox.right) - Math.max(stageBox.left, panelBox.left));
+  };
   const sheetH = () => 0;
 
   function resize() {
@@ -123,7 +129,7 @@ export function mountMap(root, graph, onOpen) {
     vis.forEach((x) => { x0 = Math.min(x0, x.x); y0 = Math.min(y0, x.y); x1 = Math.max(x1, x.x); y1 = Math.max(y1, x.y); });
     const left = phone() ? 0 : 200, w = W - left - panelW() - (phone() ? 0 : 48), h = H - sheetH() - (phone() ? 104 : 68);
     const pad = phone() ? 28 : 56;
-    cam.k = Math.min(2.4, Math.min((w - pad * 2) / (x1 - x0 || 1), (h - pad * 2) / (y1 - y0 || 1)));
+    cam.k = Math.max(0.2, Math.min(2.4, Math.min((w - pad * 2) / (x1 - x0 || 1), (h - pad * 2) / (y1 - y0 || 1))));
     cam.x = left + w / 2 - ((x0 + x1) / 2) * cam.k;
     cam.y = h / 2 - ((y0 + y1) / 2) * cam.k;
   }

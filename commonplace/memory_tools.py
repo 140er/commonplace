@@ -10,6 +10,7 @@ import os
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from mempalace import fact_provenance
@@ -399,12 +400,97 @@ def _instant(value):
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _recent(ctx, limit):
-    """Enumerate policy-visible metadata; relevance order is never chronology."""
+def _map_hides_private(ctx):
+    """Map-only restriction: a person needs current workspace-owner proof."""
+    if not ctx.principal.person:
+        return False
+    try:
+        return ctx.db.role(ctx.principal.workspace_id, ctx.principal.user_id) != "owner"
+    except Exception:
+        return True
+
+
+def _map_private(row):
+    metadata = row.get("metadata") or {}
+    return any(
+        is_private_wing(part.get("wing") or part.get("theme") or "")
+        or part.get("visibility") in ("private", "secret")
+        or part.get("sensitivity") in ("private", "secret")
+        for part in (row, metadata)
+    )
+
+
+def _map_private_thread(ctx, thread, cache):
+    """Resolve citation authority in this workspace; failed proof stays private."""
+    if thread is None or thread == "":
+        return False
+    if not isinstance(thread, str):
+        return True
+    if thread not in cache:
+        cache[thread] = True
+        try:
+            stored = ctx.gateway.handoff.store_for(ctx.principal.workspace_id).get(thread)
+            if (
+                stored is not None
+                and stored.workspace_id == ctx.principal.workspace_id
+                and isinstance(stored.wing, str)
+                and stored.wing.strip()
+            ):
+                cache[thread] = is_private_wing(stored.wing)
+        except Exception:
+            pass
+    return cache[thread]
+
+
+def _path_threads(path):
+    """The first segment is the citation; later thread-id forms stay checked."""
+    first, *rest = path.split("/")
+    return {first, *(part for part in rest if part.startswith(("thr_", "mcp:")))}
+
+
+def _map_private_reference(ctx, value, cache):
+    """Only thread-naming derived fields take part in the map citation check."""
+    from .handoff.provenance_refs import REFUSE, label_tokens, refs
+
+    # Separate reference decisions from thread lookups in this request's cache.
+    key = ("reference", value) if isinstance(value, str) else None
+    if key is not None and key in cache:
+        return cache[key]
+    parsed = refs(value)
+    if parsed is REFUSE:
+        # Recognition failure alone must not hide an ordinary non-thread field.
+        text = value if isinstance(value, str) else ""
+        threads = set(label_tokens(text))
+    else:
+        threads = set(parsed.tokens)
+        text = parsed.text or ""
+    if text.startswith(("thr_", "mcp:")):
+        threads.update(_path_threads(text))
+    try:
+        link = urlsplit(text)
+        if link.scheme == "t3-thread" and link.netloc == "v1":
+            threads.update(_path_threads(link.path.lstrip("/")))
+        elif link.path.startswith("/app/threads/"):
+            threads.update(_path_threads(link.path.removeprefix("/app/threads/").lstrip("/")))
+    except ValueError:
+        # An ordinary, malformed non-thread URL is not a citation.
+        pass
+    private = any(_map_private_thread(ctx, thread, cache) for thread in threads)
+    if key is not None:
+        cache[key] = private
+    return private
+
+
+def _recent(ctx, limit, theme=None, *, hide_private=False):
+    """Enumerate checked metadata, excluding private rows before totals/limits."""
     wings = _memory(ctx, "mempalace_list_wings", {}).get("wings", {})
     records = {}
     for wing in wings:
-        if not ctx.principal.policy.can_read_wing(wing):
+        if (
+            (theme and canonical_wing(wing) != theme)
+            or not ctx.principal.policy.can_read_wing(wing)
+            or (hide_private and is_private_wing(wing))
+        ):
             continue
         offset = 0
         while True:
@@ -413,7 +499,8 @@ def _recent(ctx, limit):
             )
             items = page.get("drawers", [])
             for item in items:
-                records[item["drawer_id"]] = item
+                if not hide_private or not _map_private(item):
+                    records[item["drawer_id"]] = item
             offset += len(items)
             if not items or ("total" in page and offset >= page["total"]):
                 break
@@ -426,7 +513,7 @@ def _recent(ctx, limit):
     return sorted(records.values(), key=date_key, reverse=True)[:limit], counts
 
 
-def _people(ctx, nodes, links, memory_ids):
+def _people(ctx, nodes, links, memory_ids, theme=None, *, hide_private=False):
     policy = ctx.principal.policy
     if not policy.sees_all_wings or not policy.tool_visible("mempalace_kg_query"):
         return
@@ -453,11 +540,63 @@ def _people(ctx, nodes, links, memory_ids):
         conn.close()
     from .handoff.mirror_access import gate
 
-    visible = gate(ctx.gateway, ctx.principal, "kg_read", {"facts": facts})["facts"]
+    visible = facts
+    if hide_private:
+        private_drawers, private_threads = {}, {}
+
+        # A private citation must not reveal its people or predicate indirectly.
+        def public_fact(fact):
+            if _map_private(fact):
+                return False
+            citations = [fact, *fact.get("sources", [])]
+            if any(
+                _map_private_thread(ctx, row.get("source_thread"), private_threads)
+                for row in citations
+            ):
+                return False
+            if any(
+                _map_private_reference(ctx, row.get(field), private_threads)
+                for row in citations
+                for field in ("origin_id", "origin_link", "approval_link")
+            ):
+                return False
+            citations = {row.get("source_drawer_id") for row in citations}
+            for identifier in citations - {None, ""}:
+                if identifier not in private_drawers:
+                    private_drawers[identifier] = True
+                    try:
+                        drawer = _memory(ctx, "mempalace_get_drawer", {"drawer_id": identifier})
+                        private_drawers[identifier] = (
+                            _map_private(drawer)
+                            or _map_private_thread(
+                                ctx,
+                                (drawer.get("metadata") or {}).get("source_thread"),
+                                private_threads,
+                            )
+                            or _map_private_reference(
+                                ctx,
+                                drawer.get("room") or (drawer.get("metadata") or {}).get("room"),
+                                private_threads,
+                            )
+                        )
+                    except Exception:
+                        pass
+                if private_drawers[identifier]:
+                    return False
+            return True
+
+        visible = [fact for fact in visible if public_fact(fact)]
+    visible = gate(ctx.gateway, ctx.principal, "kg_read", {"facts": visible})["facts"]
+    if theme:
+        visible = [
+            fact for fact in visible if canonical_wing(fact.get("wing") or "shared") == theme
+        ]
     visible_people = {fact[key] for fact in visible for key in ("subject", "object")}
     referenced = {fact[key] for fact in facts for key in ("subject", "object")}
     people = {
-        key: row for key, row in people.items() if key not in referenced or key in visible_people
+        key: row
+        for key, row in people.items()
+        if (not theme and key not in referenced) or key in visible_people
     }
     for person in people.values():
         nodes.append(
@@ -489,8 +628,51 @@ def _people(ctx, nodes, links, memory_ids):
     )
 
 
-def memory_map(ctx, limit=400):
-    records, counts = _recent(ctx, _limit(limit, 400, 2000))
+def _map_cards(ctx, cards, store, theme, hide_private):
+    if not hide_private and not theme:
+        return cards
+    visible = []
+    for card in cards:
+        board = store.board_for_task(card["number"], principal=ctx.principal)
+        if (hide_private and _map_private(board)) or (
+            theme and canonical_wing(board.get("wing") or "") != theme
+        ):
+            continue
+        visible.append(card)
+    return visible
+
+
+def _map_memory(ctx, identifier, theme=None):
+    """Selection reads use the same map-only boundary as the graph."""
+    theme = canonical_wing(theme) if theme else None
+    record = _memory(ctx, "mempalace_get_drawer", {"drawer_id": identifier})
+    hide_private = _map_hides_private(ctx)
+    if (hide_private and _map_private(record)) or (
+        theme and canonical_wing(record.get("wing") or "") != canonical_wing(theme)
+    ):
+        raise ToolError("no: memory not found")
+    store = _boards(ctx)
+    memory = _record(ctx, record, store)
+    if hide_private:
+        private_threads = {}
+        if memory["source"] and _map_private_thread(
+            ctx, memory["source"]["thread"], private_threads
+        ):
+            memory["source"] = None
+        topic = memory["topic"]
+        if isinstance(topic, str) and _map_private_reference(ctx, topic, private_threads):
+            memory["topic"] = None
+    memory["cards"] = _map_cards(ctx, memory["cards"], store, theme, hide_private)
+    return memory
+
+
+def memory_map(ctx, limit=400, theme=None):
+    if ctx.principal.policy.refusal("memory_search"):
+        raise ToolError("no: memory search refused")
+    if theme:
+        theme = canonical_wing(_string({"theme": theme}, "theme"))
+    hide_private = _map_hides_private(ctx)
+    records, counts = _recent(ctx, _limit(limit, 400, 2000), theme, hide_private=hide_private)
     store = _boards(ctx)
     nodes, links = [], []
     weeks = Counter()
@@ -498,24 +680,24 @@ def memory_map(ctx, limit=400):
     memory_ids = set()
     for record in records:
         memory = _get(ctx, record["drawer_id"], store)
-        memory_id, theme = memory["id"], memory["theme"]
+        memory_id, memory_theme = memory["id"], memory["theme"]
         memory_ids.add(memory_id)
         nodes.append(
             {
                 "id": memory_id,
                 "kind": "memory",
                 "label": memory["text"].split("\n", 1)[0][:120],
-                "theme": theme,
+                "theme": memory_theme,
                 "at": memory["at"],
                 "weight": 1,
             }
         )
-        links.append({"source": memory_id, "target": theme, "kind": "theme", "label": ""})
+        links.append({"source": memory_id, "target": memory_theme, "kind": "theme", "label": ""})
         stamp = _instant(memory["at"])
         if stamp.year > 1:
             year, week, _ = stamp.astimezone(_AMSTERDAM).isocalendar()
             weeks[f"{year}-W{week:02d}"] += 1
-        for card in memory["cards"]:
+        for card in _map_cards(ctx, memory["cards"], store, theme, hide_private):
             card_id = f"card:{card['number']}"
             if card_id not in cards_seen:
                 nodes.append(
@@ -523,14 +705,14 @@ def memory_map(ctx, limit=400):
                         "id": card_id,
                         "kind": "card",
                         "label": card["title"],
-                        "theme": theme,
+                        "theme": memory_theme,
                         "at": "",
                         "weight": 1,
                     }
                 )
                 cards_seen.add(card_id)
             links.append({"source": memory_id, "target": card_id, "kind": "card", "label": ""})
-    _people(ctx, nodes, links, memory_ids)
+    _people(ctx, nodes, links, memory_ids, theme, hide_private=hide_private)
     return {
         "nodes": nodes,
         "links": links,
@@ -565,11 +747,18 @@ def install(gateway):
                 args["limit"] = params.get("limit")
                 send_json(h, 200, {"results": _search(ctx, args, _boards(ctx))})
             elif h.command == "GET" and parts == ["map"]:
-                send_json(h, 200, memory_map(ctx, query(h).get("limit")))
+                params = query(h)
+                send_json(h, 200, memory_map(ctx, params.get("limit"), params.get("theme")))
             elif h.command == "GET" and len(parts) == 1:
                 if principal.policy.refusal("memory_get"):
                     raise ToolError("no: memory read refused")
-                send_json(h, 200, _get(ctx, parts[0], _boards(ctx)))
+                params = query(h)
+                memory = (
+                    _map_memory(ctx, parts[0], params.get("theme"))
+                    if params.get("view") == "map"
+                    else _get(ctx, parts[0], _boards(ctx))
+                )
+                send_json(h, 200, memory)
             else:
                 send_json(h, 404, {"error": "not found"})
         except BadRequest:
