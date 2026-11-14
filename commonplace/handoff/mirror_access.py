@@ -524,6 +524,12 @@ def gate(gateway, principal, rule, result, *, access=None):
     import_allowed = access.import_allowed
     reader_recall = access.recall
     reader_scope = principal.policy.has_scope("memory:import:read")
+    owner_reader = (
+        getattr(principal, "person", False)
+        and getattr(principal, "role", None) == "owner"
+        and principal.policy.trust == "trusted"
+        and principal.policy.sees_all_wings
+    )
 
     def scrub(node, *, import_file_alias=False):
         if isinstance(node, dict):
@@ -578,8 +584,9 @@ def gate(gateway, principal, rule, result, *, access=None):
                 return _DROP
             out = {}
             for key, value in node.items():
-                if rule == "search" and key == "closet_preview":
-                    # Source-file agreement does not prove the closet's authority.
+                if rule == "search" and key == "closet_preview" and not owner_reader:
+                    # Source-file agreement does not prove the closet's authority;
+                    # only an unrestricted person owner session may see the preview.
                     continue
                 # Only the source_file alias constructed after exact import
                 # proof is exempt; other metadata still passes through the gate.
