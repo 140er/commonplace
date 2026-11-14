@@ -38,6 +38,7 @@ def open_screen(page):
         "deck-bots",
         "deck-capy",
         "deck-coworkers",
+        "deck-shell",
     ]
     html = "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
     html += "".join(f'<link rel="stylesheet" href="/app/{name}.css">' for name in styles)
@@ -358,6 +359,21 @@ def test_coworker_panels_modes_sharing_and_overview(browser, size, tmp_path):
         assert page.locator(".bot-access").evaluate(
             "el=>getComputedStyle(el).backgroundColor"
         ) == page.locator(".rail").evaluate("el=>getComputedStyle(el).backgroundColor")
+        explanation = page.locator(".cb-share-explanation").bounding_box()
+        pills = page.locator(".bot-access-tabs").bounding_box()
+        assert pills["y"] - explanation["y"] - explanation["height"] == pytest.approx(12)
+        title = page.locator("#sheet-h").bounding_box()
+        first_pill = page.locator(".bot-access-tabs button").first.bounding_box()
+        assert first_pill["x"] == title["x"]
+        drawer = page.locator(".bot-access").bounding_box()
+        assert title["x"] - drawer["x"] == (25 if size[0] == 1440 else 17)
+        select_style = page.locator("[data-capy-permission]").first.evaluate(
+            "el=>{const s=getComputedStyle(el);return [s.backgroundColor,s.borderTopWidth,s.borderRadius,s.boxShadow]}"
+        )
+        assert select_style == ["rgb(30, 30, 30)", "0px", "12px", "none"]
+        assert page.get_by_text(
+            "You gave Workspace member access to this bot.", exact=True
+        ).is_visible()
         assert page.locator("[data-capy-permission]").count() == 2
         assert page.locator(".cb-share-footer").bounding_box()["y"] < size[1] - 56
         save_shot(page, f"sharing-{size[0]}.png", tmp_path)
@@ -385,6 +401,9 @@ def test_coworker_panels_modes_sharing_and_overview(browser, size, tmp_path):
         page.evaluate("show('#/bots')")
         page.wait_for_selector(".cb-bot-row")
         assert page.get_by_text("3 coworkers", exact=True).is_visible()
+        if size[0] == 390:
+            assert page.locator("#phone-bar .m-top > b").inner_text() == "Bots"
+            assert page.locator("#phone-bar .m-top > b").is_visible()
         save_shot(page, f"bots-{size[0]}.png", tmp_path)
         assert page.evaluate("document.documentElement.scrollWidth<=innerWidth")
         assert not errors, errors

@@ -10,6 +10,14 @@ const data = {
   directory: { bots: [{ id: 'persona', name: 'Research bot', section: 'Research', state: 'live' }], conversations: [{ id: 'notes', title: 'Saved research', bot_ids: ['persona'], kind: 'dm' }] },
 };
 
+test('bot avatars use one letter unless the roster has a first-letter collision', () => {
+  const labels = bots => [...renderDeckBar({ bots }).matchAll(/class="deck-bot-avatar"[^>]*>([^<]+)</g)].map(match => match[1]);
+  assert.deepEqual(labels([{ id: 'one', name: 'Release bot' }, { id: 'two', name: 'Compute bot' }]), ['R', 'C']);
+  const bots = [{ id: 'one', name: 'Release bot' }, { id: 'two', name: 'Research bot' }, { id: 'three', name: 'Compute bot' }];
+  assert.deepEqual(labels(bots), ['RE', 'RS', 'C']);
+  assert.deepEqual(labels(bots.toReversed()), ['C', 'RS', 'RE']);
+});
+
 test('the four Deck entries and existing route destinations remain unchanged', () => {
   assert.deepEqual(deckSections(), entries);
   for (const hash of ['#/', '#/today', '#/bots', '#/bots/personal/coworkers', '#/board', '#/compute', '#/memory', '#/settings']) {

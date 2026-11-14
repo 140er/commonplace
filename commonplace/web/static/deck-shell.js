@@ -25,6 +25,24 @@ const brand = '<svg class="deck-mark" viewBox="0 0 24 24" aria-hidden="true"><re
 const badge = (n, type, label) => count(n) ? `<span class="count ${type}">${n}<span class="sr"> ${label}</span></span>` : '';
 const waiting = options => Number.isSafeInteger(options.needs) ? count(options.needs) : count(options.botsWaiting);
 const initials = user => String(user || '?').trim().split(/\s+/u).slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase();
+function botInitials(bots) {
+  const groups = new Map(), labels = new Map();
+  for (const bot of bots) {
+    const letters = Array.from(String(bot.name || 'Bot').toUpperCase()).filter(letter => /[\p{L}\p{N}]/u.test(letter));
+    const first = letters[0] || 'B';
+    if (!groups.has(first)) groups.set(first, []);
+    groups.get(first).push({ bot, letters });
+  }
+  for (const [first, group] of groups) {
+    const used = new Set();
+    group.sort((a, b) => String(a.bot.name).localeCompare(String(b.bot.name)) || String(a.bot.id).localeCompare(String(b.bot.id)) || a.bot.shellKind.localeCompare(b.bot.shellKind));
+    for (const { bot, letters } of group) {
+      const second = group.length > 1 ? [...letters.slice(1), ...'123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(letter => !used.has(letter)) || '?' : '';
+      used.add(second); labels.set(bot, first + second);
+    }
+  }
+  return labels;
+}
 const states = { live: ['Ready', 'live'], ready: ['Ready', 'live'], healthy: ['Healthy', 'live'], busy: ['Busy', 'busy'], working: ['Busy', 'busy'], waiting: ['Needs you', 'waiting'], needs_you: ['Needs you', 'waiting'], idle: ['Parked', 'idle'], parked: ['Parked', 'idle'] };
 const stateHTML = row => {
   const state = Object.hasOwn(states, row.state) ? states[row.state] : null;
@@ -49,14 +67,15 @@ const botCoworkers = (bot, directory) => {
 };
 export function shellTrees(options = {}) {
   const { directory = {}, hash = '', closed = new Set() } = options, groups = new Map();
-  for (const bot of shellBots(options)) {
+  const roster = shellBots(options), labels = botInitials(roster);
+  for (const bot of roster) {
     const group = typeof bot.section === 'string' ? bot.section.trim() : '';
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(bot);
   }
   return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
     const href = botHref(bot), selected = bot.shellKind === 'personal' && (hash === href || hash.startsWith(`${href}/`));
-    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(initials(bot.name))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
+    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(labels.get(bot))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
       const title = worker.name || worker.title || conversation?.title || 'Coworker';
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
