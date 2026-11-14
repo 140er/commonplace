@@ -41,6 +41,9 @@ def ensure(db):
     from . import runtime_status
 
     runtime_status.ensure(db)
+    from . import setup_approvals
+
+    setup_approvals.ensure(db)
 
 
 def installation(db, workspace, machine_id):
@@ -99,11 +102,14 @@ def owner_view(db, row):
             "SELECT version,snapshot FROM runner_install_manifests WHERE machine_id=? AND workspace_id=?",
             (row["id"], row["workspace_id"]),
         ).fetchone()
+        from . import setup_approvals
+
         return {
+            **setup_approvals.owner_view(db, row),
             "install_settings": {
                 "settings_version": approved["version"] if approved else 0,
                 "approved": json.loads(approved["snapshot"]) if approved else None,
-            }
+            },
         }
 
 
@@ -153,6 +159,9 @@ def approve_in(db, owner, row, settings):
     snapshot = {**_scope(row), "projects": projects}
     if "runtime" in settings:
         snapshot["runtime"] = runtime_manifest.validate(settings["runtime"], snapshot["topics"])
+    from . import setup_approvals
+
+    setup_approvals.invalidate_in(db, row["id"])
     stamp = control_db._iso(control_db._now())
     item = installation(db, owner.workspace_id, row["id"])
     db._conn.execute(
@@ -240,17 +249,21 @@ def attention(db, owner):
             "SELECT r.id,r.machine_id,r.grant_version,r.binding_epoch FROM runner_setup_requests r JOIN runner_machines m ON m.id=r.machine_id JOIN runner_enrollments e ON e.id=r.enrollment_id WHERE r.workspace_id=? AND r.state='pending' AND m.revoked_at IS NULL AND e.revoked_at IS NULL AND r.grant_version=m.grant_version AND r.binding_epoch=m.binding_epoch ORDER BY r.created_at,r.id",
             (owner.workspace_id,),
         ).fetchall()
-    from . import runtime_status
+    from . import runtime_status, setup_approvals
 
-    return runtime_status.attention(db, owner) + [
-        {
-            **dict(row),
-            "kind": "runner_settings",
-            "message": "Review runner binding and project settings",
-            "reason": "approval_required",
-        }
-        for row in rows
-    ]
+    return (
+        setup_approvals.attention(db, owner)
+        + runtime_status.attention(db, owner)
+        + [
+            {
+                **dict(row),
+                "kind": "runner_settings",
+                "message": "Review runner binding and project settings",
+                "reason": "approval_required",
+            }
+            for row in rows
+        ]
+    )
 
 
 def fetch(gateway, principal, nonce):
