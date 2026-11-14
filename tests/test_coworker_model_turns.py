@@ -48,9 +48,30 @@ def test_creation_detail_list_and_restart_keep_model_and_effort(configured):
     conversation = response["conversation"]
     assert conversation["model"] == "fixture-other"
     assert conversation["reasoning_effort"] == "high"
-    # Read routes add a live ownership projection to the stored conversation.
+    # Directory metadata is additive to every persisted conversation field.
     listed = api.request("GET", "/conversations")[1]["conversations"]
-    assert [{k: v for k, v in entry.items() if k != "owns"} for entry in listed] == [conversation]
+    assert [{key: entry[key] for key in conversation} for entry in listed] == [conversation]
+    assert {
+        key: listed[0][key]
+        for key in (
+            "section",
+            "private",
+            "unread",
+            "state",
+            "summary",
+            "coworker_count",
+            "coworkers",
+        )
+    } == {
+        "section": None,
+        "private": True,
+        "unread": 0,
+        "state": "idle",
+        "summary": "0 coworkers",
+        "coworker_count": 0,
+        "coworkers": [],
+    }
+    assert "owns" in listed[0]
     detail = api.request("GET", f"/conversations/{conversation['id']}")[1]["conversation"]
     assert {k: v for k, v in detail.items() if k != "owns"} == conversation
     path = api.gateway.supervisor.workspace_dir(api.workspace) / "coworkers.sqlite3"
@@ -95,6 +116,10 @@ def test_omission_uses_default_and_legacy_message_shape_stays_compatible(configu
     conversation = api.request("GET", f"/conversations/{cid}")[1]["conversation"]
     assert conversation["model"] == "fixture-default"
     assert conversation["reasoning_effort"] is None
+    listed = api.request("GET", "/conversations")[1]["conversations"]
+    assert [(row["id"], row["model"], row["reasoning_effort"]) for row in listed] == [
+        (cid, "fixture-default", None)
+    ]
     status, legacy = api.post(cid)
     assert status == 201 and set(legacy) == {"message", "job"}
     status, turn = api.post(cid, mode="chat", request_id="explicit")

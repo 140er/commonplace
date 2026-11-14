@@ -22,6 +22,8 @@
 
   - Model settings and scoped catalogs are snapshotted under the outer control guard before taking a coworker writer lock. Views and runtime selection consume that snapshot without taking the control lock; selection audits publish after the private transaction closes. Dispatch/publication refresh policy before checking queued choices.
 
+  - The conversation directory retains its section, unread, state, ownership and audience projections alongside model/effort. It joins persisted selections into the existing bounded directory query, then uses the resolved settings snapshot; no per-conversation model-policy or selection query is added.
+
   - Steer checks all task-origin candidates against current canonical run state rather than a recent chat history window. Effort transport failures use the bounded model-error contract and never leak an HTTP store error into the provider layer.
 
 - **Tests:**

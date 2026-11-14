@@ -173,8 +173,9 @@ def save(conn, kind, object_id, choices, selected):
     )
 
 
-def describe(conn, resolved, conversation):
-    choices = requested(conn, "conversation", conversation["id"])
+def describe(conn, resolved, conversation, *, choices=None):
+    if choices is None:
+        choices = requested(conn, "conversation", conversation["id"])
     config = resolved.front(conversation["board"])
     return {
         "model": choices.get("model", config.model or None if config else None),
