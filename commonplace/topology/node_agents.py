@@ -143,13 +143,17 @@ def _coordinators(gateway, principal, machine, boards) -> list[dict]:
     return found
 
 
-def read(gateway, principal, runner_id, *, now) -> dict:
-    """The agents of the node whose ``runner_id`` fact is ``runner_id`` (or ``None``)."""
+def read(gateway, principal, runner_id, *, now, by_key=False) -> dict:
+    """The agents of the node whose ``runner_id`` fact is ``runner_id`` (or ``None``).
+
+    ``by_key`` is the read for a key the topology does not hold: ``runner_id`` is then only a
+    guess taken from the request, so a machine this workspace does not have answers exactly as
+    any other unknown key does (``not_a_runner``), never ``machine_not_found``."""
     if not isinstance(runner_id, str) or not registry.MACHINE_ID.fullmatch(runner_id):
         return {"applicable": False, "reason": "not_a_runner"}
     machine = registry.get_machine(gateway.db, principal.workspace_id, runner_id)
     if machine is None:
-        return {"applicable": False, "reason": "machine_not_found"}
+        return {"applicable": False, "reason": "not_a_runner" if by_key else "machine_not_found"}
     boards = _readable_boards(gateway, principal)
     return {
         "applicable": True,

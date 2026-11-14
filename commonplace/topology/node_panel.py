@@ -4,7 +4,8 @@ One node with the provenance and freshness of every field it holds (the map read
 out) and, for a node that is an enrolled runner machine, the agents working there. Read-only.
 
 Access is the topology wing grant, like every other topology read; what the agents part adds
-is decided per card and per connection in ``node_agents``. See "Node detail read" in
+is decided per card and per connection in ``node_agents``. A key no node holds is tried as an
+enrolled runner machine's id (the Compute fallback without map nodes). See "Node detail read" in
 ``docs/topology.md``.
 """
 
@@ -145,12 +146,18 @@ def install(gateway):
             graph = store.read_graph(topo, now=now)
             record = next((node for node in graph["nodes"] if node["key"] == key), None)
             view = node_view(record, key)
-            runner = view.get("fields", {}).get("runner_id", {}).get("value")
+            # A key the map does not hold may still be an enrolled runner machine's id: the
+            # Compute screen's fallback lists machines without map nodes.
+            runner = (
+                key if record is None else view.get("fields", {}).get("runner_id", {}).get("value")
+            )
             result = {
                 "as_of": model.stamp(now),
                 "node": view,
                 "sites": sites_view(graph, key),
-                "agents": node_agents.read(gateway, principal, runner, now=now),
+                "agents": node_agents.read(
+                    gateway, principal, runner, now=now, by_key=record is None
+                ),
             }
         except Exception as exc:
             log_failure(LOG, "topology node read failed", exc)
