@@ -16,3 +16,8 @@ literal dollar tokens in card titles, summaries, body text, coworker names and
 exact decision values. Edit card wraps only fields and action controls;
 Description, Activity, waiting, blockers, runs, context and origin stay in the
 resting view, including origin quotes that load after the initial render.
+
+Board phone actions share the page title line. State pills use a separate
+full-width scrolling line with a 16px trailing fade; the phone bar keeps its mark
+without duplicating the page title. Progress parents rely on their state text
+without a second status dot. Desktop filters leave 12px extra before Add card.
