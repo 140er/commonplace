@@ -15,3 +15,7 @@
 - **Tests:**
 
   - `tests/test_runner_headroom_388.py` covers resource validation, local refusals, concurrent reservations and expiry. `tests/test_runner_capacity_contract_388.py` covers machine-only reporting and lease limits; `tests/test_agent_limit_388.py` protects the memory guard and machine cap.
+
+- **Error reporting:**
+
+  - One poll pass prints each distinct hub error once: when the best-effort resource report and the following lease or session call fail the same way, the runner prints a single `hub unavailable` or `hub refused` line, not one per failed call. `tests/test_runner_agent.py::test_k2_hub_errors` covers it.
