@@ -723,8 +723,10 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (tab === "details") {
       const controls = panel.querySelector("[data-deck-card-controls]") || panel.querySelector(".ctx-body");
       controls?.insertAdjacentHTML("afterbegin", releaseControl(card));
-      const extra = `${asks}${callTree(card)}`;
-      controls?.insertAdjacentHTML("beforeend", state.deck?.on() ? drawerCopy(extra, cardId(board, card.number)) : extra);
+      if (controls) {
+        const extra = `${asks}${callTree(card)}`;
+        controls.insertAdjacentHTML("beforeend", state.deck?.on() ? drawerCopy(extra, cardId(board, card.number)) : extra);
+      }
     }
     restore(saved);
     await shown;
