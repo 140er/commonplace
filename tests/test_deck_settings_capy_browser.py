@@ -18,7 +18,12 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
     page.on("pageerror", lambda error: errors.append(str(error)))
     writes = []
     actions = [
-        {"name": name, "kind": "write", "mode": mode}
+        {
+            "name": name,
+            "kind": "write",
+            "mode": mode,
+            **({"limit": "Never on production"} if name == "shell.exec" else {}),
+        }
         for name, mode in [
             ("shell.exec", "ask"),
             ("git.push", "allowed"),
@@ -122,21 +127,70 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
             "!document.querySelector('[data-tool-policy-mode=\"shell.exec\"]').disabled"
         )
         deny = row.get_by_role("button", name="Deny", exact=True)
-        assert deny.evaluate("el=>getComputedStyle(el).color") == "rgb(251, 113, 133)", (
-            deny.evaluate(
-                "el=>({color:getComputedStyle(el).color,disabled:el.disabled,red:getComputedStyle(el).getPropertyValue('--red')})"
-            )
+        assert deny.evaluate("el=>getComputedStyle(el).color") == "rgb(133, 131, 154)"
+        denied = page.locator('[data-tool-policy-row="deploy.preview"] [data-policy-state="deny"]')
+        assert denied.evaluate("el=>getComputedStyle(el).color") == "rgb(251, 113, 133)"
+        assert row.get_attribute("title") == "shell.exec"
+        assert row.locator(".capy-policy-limit").inner_text() == "Never on production"
+        assert page.get_by_text("Technical name", exact=True).count() == 0
+        assert page.locator(".capy-always h3").inner_text() == "Always on"
+        assert page.locator(".capy-always input").count() == 0
+        assert (
+            page.locator(".capy-settings-subtitle").inner_text()
+            == "For the Example workspace. Only you can change these."
         )
+        assert (
+            page.locator("[data-tool-policy] > p").first.inner_text()
+            == "Ask sends the request to Today first. Deny refuses it."
+        )
+        assert "denied" in page.locator("[data-tool-policy-status]").inner_text()
+        assert (
+            page.locator("[data-tool-policy] > p").first.evaluate(
+                "el=>getComputedStyle(el).fontSize"
+            )
+            == "15px"
+        )
+        assert (
+            page.locator(".appearance-send").evaluate("el=>getComputedStyle(el).backgroundColor")
+            == "rgb(157, 92, 255)"
+        )
+        assert page.locator('[data-appearance-output="vignette"]').inner_text() == "60%"
+        for canvas in page.locator(".appearance-scenes canvas, [data-appearance-preview]").all():
+            assert canvas.get_attribute("data-dot") == "2"
+        slider = page.locator('[data-appearance="surface"]')
+        assert float(
+            slider.evaluate("el=>el.style.getPropertyValue('--range-fill')").rstrip("%")
+        ) == pytest.approx(85)
+        slider.evaluate("el=>{el.value='.7';el.dispatchEvent(new Event('input',{bubbles:true}));}")
+        assert float(
+            slider.evaluate("el=>el.style.getPropertyValue('--range-fill')").rstrip("%")
+        ) == pytest.approx(25)
+        slider.evaluate("el=>{el.value='.94';el.dispatchEvent(new Event('input',{bubbles:true}));}")
         if width == 390:
             assert deny.bounding_box()["height"] >= 44
+            label = row.locator(".deck-permission-label").bounding_box()
+            control = row.locator(".capy-policy").bounding_box()
+            assert control["x"] > label["x"] + label["width"]
+            assert control["y"] < label["y"] + label["height"]
+            assert (
+                page.locator("#content").evaluate("el=>getComputedStyle(el).paddingTop") == "16px"
+            )
+            assert (
+                page.locator(".deck-appearance").evaluate(
+                    "el=>getComputedStyle(el).borderTopLeftRadius"
+                )
+                == "12px"
+            )
         page.get_by_role("switch", name="Allow bot sharing").check()
         assert writes[-1] == {"sharing": True}
         field = page.get_by_role("searchbox", name="Search permissions")
         field.fill("memory_save")
         assert page.locator('[data-tool-policy-row="memory_save"]').count() == 1
         field.fill("")
-        page.locator('[data-tool-policy-row="shell.exec"] summary').click()
-        assert page.get_by_text("shell.exec", exact=True).is_visible()
+        assert (
+            page.locator('[data-tool-policy-row="shell.exec"]').get_attribute("title")
+            == "shell.exec"
+        )
         page.locator('[data-scene="palace-gate"]').click()
         assert page.locator("[data-appearance-preview]").evaluate(
             "c=>c.getContext('2d').getImageData(0,0,c.width,c.height).data.some(x=>x!==0)"
@@ -150,8 +204,26 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
             page.screenshot(path=str(folder / f"settings-{width}x{height}.png"))
             page.locator("#tool-policy").scroll_into_view_if_needed()
             page.screenshot(path=str(folder / f"policies-{width}x{height}.png"))
-            page.locator(".deck-appearance").scroll_into_view_if_needed()
+            page.locator(".settings").evaluate(
+                "el=>{const panel=el.querySelector('.deck-appearance');el.scrollBy({top:panel.getBoundingClientRect().top-el.getBoundingClientRect().top});}"
+            )
             page.screenshot(path=str(folder / f"appearance-{width}x{height}.png"))
         assert not errors, errors
+    finally:
+        context.close()
+
+
+def test_member_settings_keep_mutation_controls_disabled(browser):
+    context, page = open_settings(browser, 390, role="member")
+    try:
+        page.wait_for_selector("[data-capy-sharing] input")
+        assert (
+            page.locator(".capy-settings-subtitle").inner_text()
+            == "For the Example workspace. Only the owner can change these."
+        )
+        assert page.get_by_role("switch", name="Allow bot sharing").is_disabled()
+        assert page.locator("[data-policy-state]").count() > 0
+        assert page.locator("[data-policy-state]:not(:disabled)").count() == 0
+        assert page.locator('[data-form="agent"] button').is_disabled()
     finally:
         context.close()

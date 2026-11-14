@@ -46,7 +46,7 @@ test('every old permission remains reachable by its label and raw search; wire n
       assert.ok(list.innerHTML.includes(`data-tool-policy-row="${action.name}"`), `${action.name}: ${search}`);
     }
     const row = presentation.rows([action],modes,'',e);
-    assert.match(row, /<details[\s\S]*<summary>Technical name<\/summary>/);
+    assert.ok(row.includes(`title="${e(action.name)}"`), 'wire name is available in the row title');
     const visible = row.replace(/<details[\s\S]*?<\/details>/g,'').replace(/<[^>]*>/g,'');
     assert.ok(!visible.includes(action.name), action.name);
     assert.ok(!row.match(/aria-label="[^"]*_/), 'accessible label is human too');
@@ -68,7 +68,7 @@ test('permission labels ignore prototype members and use notification outcomes',
   assert.equal(permissionLabel({name:'toString'}), 'ToString');
   const expected = {webhook_add:'Send notifications to another app', webhook_list:'See where notifications are sent', webhook_remove:'Stop sending to an app', webhook_test:'Send a test notification'};
   for (const [name,label] of Object.entries(expected)) assert.equal(permissionLabel({name}),label);
-  assert.equal(ui(true).policyPresentation().introduction(10), 'Allow runs without asking. Ask puts the action in Needs me. Deny refuses it. Each bot’s own permissions still apply.');
+  assert.equal(ui(true).policyPresentation().introduction(10), 'Ask sends the request to Today first. Deny refuses it.');
 });
 test('notification guidance distinguishes the owner and tolerates a missing connection heading', () => {
   for (const owner of [false,true]) {

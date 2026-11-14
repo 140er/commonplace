@@ -9,13 +9,15 @@ section shortcuts still move focus without discarding form state.
 
 Action permissions remain grouped by purpose and searchable by human label,
 purpose or technical name. Allow, Ask and Deny use the existing server values;
-Ask sends requests to Needs me, and Deny uses red text. Unknown stored values keep
+Ask sends requests to Today, and only selected Deny uses red text. Unknown stored values keep
 their exact identity behind the nearest label until another state is selected.
-Technical names appear only in disclosures; retired actions remain reachable.
+Technical names appear only in row titles; retired actions remain reachable.
 Connected apps use plain labels, with scope IDs as grey monospace suffixes.
 
 The sharing switch uses the existing workspace setting. Private defaults, access
-logs and owner-managed grants describe existing guarantees. Second review opens
+logs and owner-managed grants are listed under Always on, with explanations below
+their names. Workspace subtitles distinguish owners from members, whose workspace
+mutation controls stay disabled. Second review opens
 project settings and preserves their existing controls. Appearance reuses its
 live preview, dithered thumbnails and person-scoped saved preferences.
 

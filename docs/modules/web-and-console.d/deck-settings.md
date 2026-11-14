@@ -6,7 +6,7 @@
 
   - Settings keeps its original shortcuts below the primary sections in the two-column layout; they move focus without discarding form state. Notification labels describe outcomes; permission details share the secondary line. Delayed Voice completion only refreshes the active Settings epoch.
 
-  - Notifications, Connected apps and Workspace remain reachable through Settings shortcuts. Every existing section and action remains reachable. Permission search understands purpose labels such as notifications, and technical names stay inside disclosures. Classic presentation and all permission semantics remain unchanged.
+  - Notifications, Connected apps and Workspace remain reachable through Settings shortcuts. Every existing section and action remains reachable. Permission search understands purpose labels such as notifications, and technical names stay in row titles. Classic presentation and all permission semantics remain unchanged.
 
 - **Tests:**
 

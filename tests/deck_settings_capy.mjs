@@ -94,7 +94,7 @@ test('the arrangement moves all legacy setting nodes intact, including newly add
   // Enumerate the real Settings render's named mounts, forms, draft fields and actions.
   const entries=[...new Set([...source.matchAll(/(?:data-(?:form|action|draft)|id|data-(?:workspace-orchestration|agent-schedules|tool-policy))="([^"]*)"/g)].map(match=>match[0]))];
   for (const required of ['data-form="webhook"', 'data-action="logout"', 'id="tool-policy"', 'data-draft="webhook-url"']) assert.ok(entries.includes(required), required);
-  const main=new Node(), box={ownerDocument:{createElement:()=>new Node()},classList:{add(){}},querySelector:()=>main};
+  const main=new Node(), box={ownerDocument:{createElement:()=>new Node()},classList:{add(){}},querySelector:q=>q==='.deck-settings-main'?main:null};
   for(const id of ['deck-connections','tool-policy','phone-push','deck-tools','look','deck-settings-nav',...entries]) main.append(new Node(id));
   const before=[...main.children];
   arrangeCapySettings(box);
@@ -122,4 +122,33 @@ test('connected app copy and scope titles are plain while classic retains its cl
     assert.match(classic,/>Claude Code<\/option>/);
     assert.match(classic,/Uses your bots \(bots:chat, bots:confirm\)/);
   } finally { globalThis.document=previous; }
+});
+
+test('policy rows expose only hub limits, keep wire names in titles and omit the lone miscellaneous heading', () => {
+  const actions=[{name:'shell.exec',kind:'write',mode:'ask',limit:'Never on production'},
+    {name:'git.push',kind:'write',mode:'allowed',limit_description:'Never to main or live'},
+    {name:'memory_save',kind:'write',mode:'off'}];
+  const html=capyPermissionRows(actions,modes,'',e);
+  assert.match(html,/title="shell.exec"/);
+  assert.match(html,/Never on production/); assert.match(html,/Never to main or live/);
+  assert.doesNotMatch(html,/Changes things|Technical name|<details|<h3>Other actions/);
+  const bare=capyPermissionRows([{name:'shell.exec',kind:'write',mode:'ask'}],modes,'',e);
+  assert.doesNotMatch(bare,/capy-policy-limit|<small/);
+});
+
+test('policy copy uses Today and denied; subtitles distinguish owners and members', async () => {
+  const { policySummary, settingsSubtitle }=await import('../commonplace/web/static/deck-settings-capy.js');
+  assert.equal(capyPolicyPresentation.introduction(),'Ask sends the request to Today first. Deny refuses it.');
+  assert.equal(policySummary([{mode:'ask'},{mode:'off'},{mode:'allowed'}]),'1 ask first · 1 denied · the rest allowed');
+  assert.equal(settingsSubtitle({workspace_name:'Example',role:'owner'}),'For the Example workspace. Only you can change these.');
+  assert.equal(settingsSubtitle({workspace_name:'Example',role:'member'}),'For the Example workspace. Only the owner can change these.');
+});
+
+test('a member cannot submit through segmented controls even if a click is dispatched', () => {
+  const button={disabled:false,dataset:{policyState:'allow'},closest(){throw Error('must not reach a mutable control');}};
+  const list={}, controls=[{disabled:false}];
+  const host={closest:()=>({dataset:{settingsOwner:'false'}}),querySelector:()=>list,querySelectorAll:()=>controls};
+  capyPolicyPresentation.bind(host,{modes});
+  list.onclick({target:{closest:()=>button}});
+  assert.equal(controls[0].disabled,true);
 });
