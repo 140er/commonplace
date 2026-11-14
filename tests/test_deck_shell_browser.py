@@ -57,7 +57,7 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                     errors = []
                     page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
                     await page.goto(url + "#/today")
-                    await page.wait_for_selector('[data-deck-folder="Bots"]', state="attached")
+                    await page.wait_for_selector(".deck-bot-tree", state="attached")
                     await page.wait_for_function(
                         "getComputedStyle(document.querySelector('[data-deck=bar]')).backgroundColor === 'rgb(17, 16, 21)'"
                         if width >= 700
@@ -74,12 +74,29 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                           return rail?.getBoundingClientRect().width===252 && getComputedStyle(rail).backgroundColor==='rgb(17, 16, 21)' && row?.getBoundingClientRect().height===26;
                         }""")
                         assert await measured.json_value()
-                        await page.locator('[data-deck-folder="Bots"] summary').click()
-                        await page.locator('.deck-links [data-nav="bots"]').click()
-                        await page.wait_for_function(
-                            "!document.querySelector('[data-deck-folder=\"Bots\"]').open"
+                        stage = page.locator(".deck-stage")
+                        await stage.wait_for(state="attached")
+                        metrics = await stage.evaluate("""e => {
+                          const box=e.getBoundingClientRect(), parent=e.parentElement.getBoundingClientRect(), style=getComputedStyle(e);
+                          return {inset:box.left-parent.left,radius:style.borderRadius,border:style.borderTopWidth,dim:e.dataset.dimmed,canvas:!!e.querySelector('canvas')};
+                        }""")
+                        assert metrics == {
+                            "inset": 8,
+                            "radius": "12px",
+                            "border": "1px",
+                            "dim": "true",
+                            "canvas": True,
+                        }
+                        assert await page.locator('[data-deck-folder="Bots"]').count() == 0
+                        me = await page.request.get(url.split("/app/")[0] + "/api/me")
+                        assert (
+                            await page.locator(".deck-owner small").text_content()
+                            == "Owner · " + (await me.json())["workspace_name"]
                         )
-                        await page.locator('[data-deck-folder="Bots"] summary').click()
+                        await page.locator(".deck-new-bot").click()
+                        await page.wait_for_selector('dialog[open], [role="dialog"]')
+                        await page.keyboard.press("Escape")
+                        await page.locator('.deck-links [data-nav="bots"]').click()
                     else:
                         top = page.locator('[data-deck="top"]')
                         await page.wait_for_function(
@@ -89,7 +106,10 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.locator('[data-deck-waiting="true"]').wait_for(state="visible")
                         tabs = page.locator('[data-deck="tabs"]')
                         assert await tabs.locator("a").count() == 4
-                        assert await tabs.locator('[data-deck-shell-action="mic"]').is_visible()
+                        await page.wait_for_function(
+                            "() => document.querySelector('.today-compose:not([hidden])') && !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
+                        )
+                        assert await page.locator(".today-compose .deck-composer-mic").is_visible()
                         for entry in ["bots", "compute", "settings", "today"]:
                             await tabs.locator(f'[data-nav="{entry}"]').click()
                             await page.wait_for_function(
@@ -109,6 +129,9 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.wait_for_selector('.bots[data-pane="thread"]')
                         await page.locator('[data-deck="top"]').wait_for(state="visible")
                         await page.locator('[data-deck="tabs"]').wait_for(state="visible")
+                        await page.wait_for_function(
+                            "() => !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
+                        )
                         await page.goto(url + "#/today")
                         await page.locator('[data-deck="top"]').wait_for(state="visible")
                     if width == 390:
@@ -121,8 +144,20 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                           return tabs?.getBoundingClientRect().bottom===innerHeight && document.elementFromPoint(350, innerHeight-30)?.closest('[data-deck=tabs]');
                         }""")
                     await page.screenshot(path=str(output / f"shell-{name}.png"))
+                    if width == 1440:
+                        # Supplement the live legacy capture with explicit optional-metadata fixtures.
+                        await page.evaluate("""async () => {
+                          const {renderDeckBar}=await import('/app/deck.js');
+                          document.querySelector('[data-deck=bar]').outerHTML=renderDeckBar({hash:'#/bots',user:'Workspace person',role:'member',workspace:'Studio',bots:[
+                            {id:'fixture',name:'Release bot',section:'Delivery',unread:2,coworkers:[
+                              {name:'Checklist',state:'waiting'},{name:'Preview',state:'healthy'},
+                              {name:'Build',state:'busy'},{name:'Notes',state:'parked'}]},
+                            {id:'fixture-time',name:'Research bot',last:{at:new Date().toISOString()}}
+                          ]});
+                        }""")
+                        await page.screenshot(path=str(output / "rail-states-fixture.png"))
                     if width == 390:
-                        await page.locator('[data-deck-shell-action="mic"]').click()
+                        await page.locator('.today-compose [data-deck-shell-action="mic"]').click()
                         metrics = await page.evaluate("""() => {
                           const tabs=document.querySelector('#phone-tabs'), error=document.querySelector('#screen-error');
                           return {tabs:tabs?.getBoundingClientRect().toJSON(), tabsStyle:tabs?.getAttribute('style'), error:error?.textContent, errorHidden:error?.hidden, errorBox:error?.getBoundingClientRect().toJSON(), scrollY, height:innerHeight};

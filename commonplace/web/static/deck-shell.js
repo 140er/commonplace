@@ -1,5 +1,5 @@
 // Capy shell: pure markup plus one refresh tied to the shell's existing refresh cycle.
-import { escape as e } from './api.js';
+import { escape as e, elapsed } from './api.js';
 
 export const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
 const count = n => Number.isSafeInteger(n) && n > 0 ? n : 0;
@@ -25,8 +25,12 @@ const brand = '<svg class="deck-mark" viewBox="0 0 24 24" aria-hidden="true"><re
 const badge = (n, type, label) => count(n) ? `<span class="count ${type}">${n}<span class="sr"> ${label}</span></span>` : '';
 const waiting = options => Number.isSafeInteger(options.needs) ? count(options.needs) : count(options.botsWaiting);
 const initials = user => String(user || '?').trim().split(/\s+/u).slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase();
-const words = { live: 'Ready', busy: 'Working', working: 'Working', waiting: 'Needs you', idle: 'Idle' };
-const stateHTML = row => words[row.state] ? `<small class="deck-tree-state">${words[row.state]}</small><span class="deck-state-dot" data-state="${row.state === 'working' ? 'busy' : row.state}" aria-hidden="true"></span>` : '';
+const states = { live: ['Ready', 'live'], ready: ['Ready', 'live'], healthy: ['Healthy', 'live'], busy: ['Busy', 'busy'], working: ['Busy', 'busy'], waiting: ['Needs you', 'waiting'], needs_you: ['Needs you', 'waiting'], idle: ['Parked', 'idle'], parked: ['Parked', 'idle'] };
+const stateHTML = row => {
+  const state = Object.hasOwn(states, row.state) ? states[row.state] : null;
+  return state ? `<small class="deck-tree-state">${state[0]}</small><span class="deck-state-dot" data-state="${state[1]}" aria-hidden="true"></span>` : '';
+};
+const botTail = bot => count(bot.unread) ? badge(bot.unread, 'unread', 'unread') : Number.isFinite(Date.parse(bot.last?.at)) ? `<time class="deck-bot-time" datetime="${e(bot.last.at)}">${e(elapsed(bot.last.at))}</time>` : '';
 const conversationHref = id => `#/bots/-/coworkers/conversations/${enc(id)}`;
 
 // The two registries have distinct identities. Only the explicit team projection may enrich
@@ -46,19 +50,19 @@ const botCoworkers = (bot, directory) => {
 export function shellTrees(options = {}) {
   const { directory = {}, hash = '', closed = new Set() } = options, groups = new Map();
   for (const bot of shellBots(options)) {
-    const group = typeof bot.section === 'string' && bot.section.trim() ? bot.section : 'Bots';
+    const group = typeof bot.section === 'string' ? bot.section.trim() : '';
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(bot);
   }
-  return [...groups].map(([group, bots]) => `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>${bots.map(bot => {
+  return [...groups].map(([group, bots]) => `${group ? `<details class="deck-bot-folder" data-deck-folder="${e(group)}"${closed.has(group) ? '' : ' open'}><summary>${icon('chevron')}${icon('folder')}<span>${e(group)}</span></summary>` : ''}${bots.map(bot => {
     const href = botHref(bot), selected = bot.shellKind === 'personal' && (hash === href || hash.startsWith(`${href}/`));
-    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(initials(bot.name))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" aria-label="Private bot">${icon('lock')}</span>` : ''}${stateHTML(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
+    return `<div class="deck-bot-tree"><a class="deck-bot-row" href="${href}"${current(selected)}><span class="deck-bot-avatar" aria-hidden="true">${e(initials(bot.name))}</span><span class="deck-bot-name">${e(bot.name || 'Bot')}</span>${bot.private === true ? `<span class="deck-private" aria-label="Private bot">${icon('lock')}</span>` : ''}${botTail(bot)}</a><ul>${botCoworkers(bot, directory).map(worker => {
       const conversation = rows(directory.conversations).find(item => String(item.id) === String(worker.conversation_id || worker.id));
       const title = worker.name || worker.title || conversation?.title || 'Coworker';
       const href = worker.conversation_id || conversation ? conversationHref(worker.conversation_id || conversation.id) : `#/bots/${enc(bot.id)}/coworkers`;
       return `<li><a class="deck-tree-row" href="${href}"${current(hash === href)}><span class="deck-tree-name">${e(title)}</span>${stateHTML(worker)}</a></li>`;
     }).join('')}</ul></div>`;
-  }).join('')}</details>`).join('') || '<p class="deck-rail-empty">No bots yet</p>';
+  }).join('')}${group ? '</details>' : ''}`).join('') || '<p class="deck-rail-empty">No bots yet</p>';
 }
 export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');
@@ -66,13 +70,14 @@ export function shellThreads({ directory = {} } = {}) {
 const accountLinks = ({ can_admin, can_manage_instance }) => `<a href="#/needs">Needs me</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`;
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '', sections, section } = options;
+  const role = { owner: 'Owner', member: 'Member' }[options.role];
   return `<nav class="rail" data-deck="bar" aria-label="Workspace">
     <div class="deck-brand-row"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}<b>Commonplace</b></a><button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button></div>
     <a class="deck-new-thread nav" href="#/" data-deck-shell-action="new-thread">${icon('edit')}New thread</a>
     <div class="deck-links">${sections.map(([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : id === 'bots' ? `<span data-deck-unread>${badge(shellUnread(options), 'unread', 'unread')}</span>` : ''}</a>`).join('')}</div>
     <div class="deck-rail-scroll"><button class="deck-rail-heading ws" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">${e(workspace)} workspace</button><a class="nav" href="#/board"${current(/^#\/board(?:\/|$)/.test(hash))}>${icon('board')}Board</a><a class="nav" href="#/memory"${current(hash.startsWith('#/memory'))}>${icon('memory')}Memory</a>
-    <h2 class="deck-rail-heading">Bots</h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading">Threads</h2><div data-deck-threads>${shellThreads(options)}</div><p class="deck-rail-error" data-deck-rail-error hidden></p></div>
-    <div class="rail-foot"><details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details></div>
+    <h2 class="deck-rail-heading">Bots<a class="deck-new-bot" href="#/bots?new=1" aria-label="New bot">+</a></h2><div data-deck-bots>${shellTrees(options)}</div><h2 class="deck-rail-heading">Threads</h2><div data-deck-threads>${shellThreads(options)}</div><p class="deck-rail-error" data-deck-rail-error hidden></p></div>
+    <div class="rail-foot"><details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(initials(user))}</span><span class="deck-owner"><b>${e(user || 'Account')}</b><small>${role ? `${role} · ` : ''}${e(workspace)}</small></span>${icon('chevron')}</summary><div class="user-links">${accountLinks(options)}</div></details></div>
   </nav>`;
 }
 export function renderShellTop(options) {
@@ -81,14 +86,29 @@ export function renderShellTop(options) {
   return `<header class="m-top" data-deck="top"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}</a><b>${label}</b><span class="spacer"></span>${board?.slug ? `<button class="iconbtn" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Project settings">${icon('settings')}</button>` : ''}<button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button><button class="deck-phone-avatar" data-action="switch-workspace" aria-label="Account and workspace" data-deck-waiting="${waiting(options) > 0}">${e(initials(user))}</button></header>`;
 }
 export function renderShellTabs(options) {
-  const { sections, section, hash } = options, home = hash === '#/';
-  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${!home}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}${home ? '' : `<button class="deck-tab-mic" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`}</nav>`;
+  const { sections, section, hash } = options, mic = hash !== '#/' && !options.hasComposer;
+  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}${mic ? micButton('deck-tab-mic') : ''}</nav>`;
 }
+const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
+const composerSelector = '#content :is(.today-compose, .bots-compose, .cw-composer, .composer, .space-compose, .space-composer):has([name="text"])';
 
 export function createDeckShell({ root, api, context, on }) {
   let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '';
   const closed = new Set();
-  const options = () => ({ bots, directory, closed, hash: globalThis.location?.hash || '' });
+  const composer = () => [...(root?.querySelectorAll?.(composerSelector) || [])].find(form => !form.closest('[hidden]') && form.getClientRects().length);
+  const options = () => ({ bots, directory, closed, hash: globalThis.location?.hash || '', hasComposer: !!composer() });
+  function chrome() {
+    if (!on()) return;
+    const form = composer(), tabs = root?.querySelector?.('[data-deck="tabs"]');
+    if (form && !form.querySelector('[data-voice="mic"], [data-today="mic"], [data-bot-action="mic"], [data-deck-shell-action="mic"]')) form.insertAdjacentHTML('beforeend', micButton('deck-composer-mic'));
+    if (!tabs) return;
+    const show = globalThis.location?.hash !== '#/' && !form;
+    if (tabs.dataset.mic !== String(show)) tabs.dataset.mic = String(show);
+    const mic = tabs.querySelector('[data-deck-shell-action="mic"]');
+    if (show && !mic) tabs.insertAdjacentHTML('beforeend', micButton('deck-tab-mic'));
+    if (!show && mic) mic.remove();
+  }
+  if (root?.ownerDocument && globalThis.MutationObserver) new MutationObserver(chrome).observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
   function paint() {
     const tree = root?.querySelector?.('[data-deck-bots]'), threads = root?.querySelector?.('[data-deck-threads]');
     if (tree && tree.innerHTML !== shellTrees(options())) tree.innerHTML = shellTrees(options());
@@ -132,7 +152,7 @@ export function createDeckShell({ root, api, context, on }) {
     if (action === 'mic') {
       event.preventDefault();
       const mic = [...(root.querySelectorAll?.('#content [data-voice="mic"], #content [data-today="mic"], #content [data-bot-action="mic"]') || [])].find(button => !button.disabled);
-      if (mic) mic.click(); else if (context?.()?.voice) void context().voice(); else context?.()?.go?.('#/');
+      if (mic) mic.click(); else if (context?.()?.voice) void context().voice(composer()?.querySelector('[name="text"]')); else context?.()?.go?.('#/');
     }
   });
   root?.ownerDocument?.addEventListener?.('signout', () => { reset(); paint(); });

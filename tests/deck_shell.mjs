@@ -25,7 +25,8 @@ test('only Today has an amber action count and Bots has a violet unread count', 
   const html = renderDeckBar({ needs: 3, rulesWaiting: 8, botsWaiting: 3, ...data });
   assert.match(html, /data-nav="today"[^>]*>[\s\S]*?class="count need">3/);
   assert.match(html, /data-nav="bots"[^>]*>[\s\S]*?class="count unread">2/);
-  assert.equal((html.match(/class="count /g) || []).length, 2);
+  assert.equal((html.match(/class="count /g) || []).length, 3);
+  assert.equal((html.match(/class="count need"/g) || []).length, 1);
   assert.equal((renderDeckBar({}).match(/class="count /g) || []).length, 0);
   const tabs = renderDeckTabs({ needs: 3, ...data });
   assert.equal((tabs.match(/class="count /g) || []).length, 1);
@@ -47,10 +48,9 @@ test('folders and bot trees render live records, coworker states and private loc
   assert.doesNotMatch(html, /undefined|\[object Object\]/);
 });
 
-test('older lists get a single Bots folder and no invented state or unread counts', () => {
+test('older lists render directly under Bots and no invented state or unread counts', () => {
   const html = renderDeckBar({ bots: [{ id: 'one', name: 'One', shared: false }], directory: { bots: [{ id: 'two', name: 'Two' }], conversations: [] } });
-  assert.equal((html.match(/data-deck-folder=/g) || []).length, 1);
-  assert.match(html, /data-deck-folder="Bots"/);
+  assert.doesNotMatch(html, /data-deck-folder=/);
   assert.match(html, /One/); assert.match(html, /Two/);
   assert.doesNotMatch(html, /data-state=|class="count |Private bot/);
   const escaped = renderDeckBar({ bots: [{ id: 'x', name: '<script>', section: 'A"<', state: 'arbitrary' }] });
@@ -58,12 +58,13 @@ test('older lists get a single Bots folder and no invented state or unread count
   assert.doesNotMatch(escaped, /<script>|data-state="arbitrary"/);
 });
 
-test('phone chrome has four destinations, Today badge, avatar wait dot and a mic except Home', () => {
+test('phone chrome has four destinations, Today badge, avatar wait dot and a mic only without a composer', () => {
   for (const hash of ['#/today', '#/bots/x/coworkers', '#/board', '#/compute', '#/memory', '#/settings']) {
-    const tabs = renderDeckTabs({ hash, needs: 2 });
+    const tabs = renderDeckTabs({ hash, needs: 2, hasComposer: false });
     assert.deepEqual(links(tabs), entries.map(([id]) => [id, `#/${id}`]));
     assert.match(tabs, /data-deck-shell-action="mic"/);
   }
+  for (const hash of ['#/today', '#/bots/x', '#/bots/x/coworkers', '#/board/work/chat', '#/memory']) assert.doesNotMatch(renderDeckTabs({ hash, hasComposer: true }), /data-deck-shell-action="mic"/);
   assert.doesNotMatch(renderDeckTabs({ hash: '#/' }), /data-deck-shell-action="mic"/);
   const top = renderDeckTop({ hash: '#/today', needs: 2, user: 'Owner' });
   assert.match(top, /<b>Today<\/b>/);
@@ -116,4 +117,21 @@ test('shell refreshes only readable lists, keeps folder collapse and rejects sta
   const { resolveRoute } = await import('../commonplace/web/static/routes.js');
   assert.equal(resolveRoute('#/board', { boards: [{ slug: 'one' }, { slug: 'two' }], last: 'two' }), '#/board/two');
   assert.equal(resolveRoute('#/board', { boards: [] }), '#/start');
+});
+
+ test('bot tails prefer unread over recorded time; child states and real roles are optional', () => {
+  const html = renderDeckBar({ role: 'member', user: 'Account person', workspace: 'Studio', bots: [
+    { id: 'time', name: 'Timed bot', last: { at: new Date().toISOString() }, coworkers: [
+      {name:'Ready child',state:'ready'}, {name:'Healthy child',state:'healthy'},
+      {name:'Busy child',state:'busy'}, {name:'Parked child',state:'parked'}, {name:'Unknown child'}] },
+    { id: 'unread', name: 'Unread bot', unread: 3, last: {at: new Date().toISOString()} }
+  ]});
+  assert.equal((html.match(/deck-bot-time/g)||[]).length, 1);
+  assert.match(html, /class="count unread">3/);
+  assert.equal((html.match(/deck-tree-state/g)||[]).length, 4);
+  for (const word of ['Ready', 'Healthy', 'Busy', 'Parked']) assert.match(html, new RegExp('deck-tree-state">'+word));
+  assert.match(html, /Member · Studio/);
+  assert.match(html, /href="#\/bots\?new=1" aria-label="New bot"/);
+  assert.doesNotMatch(renderDeckBar({bots:[{id:'missing', name:'Missing',last:{at:'invalid'}}]}), /deck-bot-time|deck-tree-state/);
+  assert.match(renderDeckBar({role:'owner',workspace:'Studio'}), /Owner · Studio/);
 });

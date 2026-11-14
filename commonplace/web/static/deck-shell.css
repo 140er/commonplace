@@ -4,7 +4,11 @@
   :root[data-ui="deck"] .shell:not(.two), :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 252px minmax(0, 1fr) 396px; grid-template-rows: minmax(0, 1fr); }
   :root[data-ui="deck"] .shell > .rail { grid-column: 1; grid-row: 1; }
   :root[data-ui="deck"] .shell > :is(.center, .context) { grid-row: 1; }
+  :root[data-ui="deck"] .shell > .center { padding: 8px; }
+  :root[data-ui="deck"] .shell > .center .deck-stage { inset: 8px; border-radius: 12px; border: 1px solid var(--line); }
+  :root[data-ui="deck"] .center > #content { border-radius: 12px; }
 }
+:root[data-ui="deck"] .center :is(.bots, .bots-roster) { background: transparent; }
 :root[data-ui="deck"] .rail[data-deck="bar"] { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; overflow: hidden; border-right: 1px solid var(--line); background: var(--rail); }
 :root[data-ui="deck"] .deck-brand-row { display: flex; align-items: center; height: 56px; flex: none; padding: 0 16px; gap: 4px; }
 :root[data-ui="deck"] .deck-brand { gap: 10px; margin: 0; min-width: 0; font-size: 14px; }
@@ -28,7 +32,7 @@
 :root[data-ui="deck"] .rail[data-deck="bar"] .deck-rail-heading.ws { margin-top: 0; height: 32px; border: 0; }
 :root[data-ui="deck"] .deck-bot-folder > summary { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; list-style: none; cursor: pointer; color: var(--ink3); font-size: 13px; }
 :root[data-ui="deck"] .deck-bot-folder > summary::-webkit-details-marker { display: none; }
-:root[data-ui="deck"] .deck-bot-folder > summary .i:first-child { width: 10px; margin-left: -8px; transition: transform 160ms; }
+:root[data-ui="deck"] .deck-bot-folder > summary .i:first-child { width: 12px; height: 12px; color: var(--ink3); transition: transform 160ms; }
 :root[data-ui="deck"] .deck-bot-folder[open] > summary .i:first-child { transform: rotate(90deg); }
 :root[data-ui="deck"] .deck-bot-tree { margin-bottom: 4px; }
 :root[data-ui="deck"] .deck-bot-row { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; color: var(--ink); text-decoration: none; border-radius: var(--radius-control); }
@@ -44,7 +48,12 @@
 :root[data-ui="deck"] .deck-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :root[data-ui="deck"] .deck-tree-state { flex: none; color: var(--ink3); font-size: 12px; white-space: nowrap; }
 :root[data-ui="deck"] .deck-tree-state::before { content: '· '; }
-:root[data-ui="deck"] .deck-bot-row .deck-tree-state { display: none; }
+:root[data-ui="deck"] .deck-bot-time { color: var(--ink4); font-size: 12px; flex: none; }
+:root[data-ui="deck"] .deck-new-bot { display: grid; place-items: center; width: 28px; height: 28px; margin-left: auto; color: var(--ink3); font-size: 20px; text-decoration: none; border-radius: var(--radius-control); }
+:root[data-ui="deck"] .deck-new-bot:hover { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] .deck-composer-mic { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border: 0; padding: 10px; border-radius: var(--radius-control); color: var(--ink3); background: transparent; }
+:root[data-ui="deck"] .deck-composer-mic:hover { color: var(--ink); background: var(--s3); }
+:root[data-ui="deck"] .deck-composer-mic .i { width: 20px; height: 20px; }
 :root[data-ui="deck"] .deck-state-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink4); flex: none; margin-left: auto; }
 :root[data-ui="deck"] .deck-state-dot[data-state="live"] { background: var(--cyan); }
 :root[data-ui="deck"] .deck-state-dot[data-state="busy"] { background: var(--violet); animation: deck-shell-busy 1.8s infinite; }
@@ -58,6 +67,7 @@
 :root[data-ui="deck"] .deck-owner { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 :root[data-ui="deck"] .deck-owner b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :root[data-ui="deck"] .deck-owner small { color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .rail .me > .i { width: 12px; height: 12px; color: var(--ink3); }
 :root[data-ui="deck"] .rail[data-deck="bar"] .user-links { top: auto; bottom: 48px; left: 0; right: 0; min-width: 0; border: 1px solid var(--line2); background: var(--s2); border-radius: var(--radius-card); }
 :root[data-ui="deck"] .deck-phone-avatar { position: relative; width: 28px; height: 28px; border: 0; border-radius: var(--radius-control); background: var(--s3); color: var(--violet-ink); font-size: 12px; font-weight: 600; }
 :root[data-ui="deck"] .deck-phone-avatar[data-deck-waiting="true"]::after { content: ""; position: absolute; top: 0; right: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
