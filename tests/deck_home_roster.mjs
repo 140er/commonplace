@@ -42,6 +42,8 @@ test('before the first read lands Home says Loading, never "No bots yet"', async
   assert.equal(f.empty.hidden, false);
   assert.match(f.empty.innerHTML, /Loading bots/);
   assert.doesNotMatch(f.empty.innerHTML, /No bots yet/);
+  assert.match(f.empty.innerHTML, /^<span class="cp-art" data-art="loading" aria-hidden="true"><svg /);
+  assert.equal(f.empty.innerHTML.replace(/<svg[^]*?<\/svg>/, '').replace(/<[^>]*>/g, ''), 'Loading bots…');
   gate.resolve({ bots: [{ id: 'atlas', name: 'Atlas', board: 'atlas' }] }); await settle();
   assert.equal(f.empty.hidden, true);
   assert.equal(f.empty.innerHTML, '');
@@ -57,6 +59,7 @@ test('a failing roster read says it could not load, retries by itself, and Retry
   assert.match(f.empty.innerHTML, /Could not load bots, retrying/);
   assert.match(f.empty.innerHTML, /data-bh-reload/);
   assert.doesNotMatch(f.empty.innerHTML, /No bots yet/);
+  assert.doesNotMatch(f.empty.innerHTML, /cp-art/);
   assert.equal(f.roster(), 1);
   // The automatic retry fires without any click, and keeps the failure note while it still fails.
   t.mock.timers.tick(3000); await settle();
@@ -80,6 +83,8 @@ test('"No bots yet" shows only when the read succeeded with an empty list', asyn
   assert.equal(f.empty.hidden, false);
   assert.match(f.empty.innerHTML, /No bots yet/);
   assert.match(f.empty.innerHTML, /href="#\/bots\?new=1"[^>]*>New bot/);
+  assert.match(f.empty.innerHTML, /^<span class="cp-art" data-art="bots" aria-hidden="true"><svg /);
+  assert.equal(f.empty.innerHTML.replace(/<svg[^]*?<\/svg>/, '').replace(/<[^>]*>/g, ''), 'No bots yet. New bot');
   assert.equal(f.botPicker.hidden, true);
   f.ui.stop();
 });

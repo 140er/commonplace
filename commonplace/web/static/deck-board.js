@@ -1,6 +1,7 @@
 // Deck Board presentation. Card mutations, drag/drop and drawer lifecycle stay in the shell.
 import { escape as e, actor } from './api.js';
 import { inNeedsQueue, needsMeCount, currentNeeds, hideReferences } from './needs-me.js';
+import { artHTML } from './deck-art.js';
 
 // What the card itself says: the server flagged it for this person. Used only while no owner queue is loaded.
 const awaitsYou = (card, me) => card.status !== 'done' && (card.need === 'you' ||
@@ -53,7 +54,7 @@ export function deckBoardView({ cards = [], filter = 'all', form = '', sheet = t
   const note = everywhere != null && everywhere !== count('todo') ? `<p class="deck-board-needs-note" data-needs-note>${everywhere} ${everywhere === 1 ? 'card is' : 'cards are'} waiting on you across all projects; ${count('todo')} ${count('todo') === 1 ? 'is' : 'are'} in this one.</p>` : '';
   const columnHTML = columns.map(([status, name, tone]) => {
     const list = cards.filter(card => (!filter.startsWith('state:') || filter === `state:${status}`) && (card.status !== 'backlog' || needsOwner(card, options.me)) && boardGroup(card, options.me) === status);
-    return `<section class="col" id="col-${status}" data-status="${status}" data-active="${column === status}" aria-label="${name}"><div class="col-h">${dot(status === 'todo' && !list.length ? 'idle' : tone)}<h2>${name}</h2><span class="n">${count(status)}</span></div><div class="cards">${status === 'todo' && !sheet ? form : ''}${list.map((card, i) => cardHTML(card, options, i === 0)).join('') || '<p class="empty-col">Nothing here yet</p>'}</div></section>`;
+    return `<section class="col" id="col-${status}" data-status="${status}" data-active="${column === status}" aria-label="${name}"><div class="col-h">${dot(status === 'todo' && !list.length ? 'idle' : tone)}<h2>${name}</h2><span class="n">${count(status)}</span></div><div class="cards">${status === 'todo' && !sheet ? form : ''}${list.map((card, i) => cardHTML(card, options, i === 0)).join('') || `<p class="empty-col">${artHTML('column')}Nothing here yet</p>`}</div></section>`;
   }).join('');
   const stateFilters = [['all','All'], ...columns.map(([status,name]) => [`state:${status}`,name])];
   const add = '<button class="btn deck-board-add" data-action="new-card">Add card</button>';

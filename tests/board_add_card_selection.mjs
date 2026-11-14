@@ -190,7 +190,7 @@ if (which === "add_flow" || which === "add_flow_classic") {
   older();
   assert.doesNotMatch(host.innerHTML, /Still loading/);
   // The card read in the shell uses it.
-  assert.match(slice("async function cardPanel(", "function newCardForm("), /showLoading\(panel, "Loading card…"\)/);
+  assert.match(slice("async function cardPanel(", "function newCardForm("), /showLoading\(panel, "Loading card…"(, \{ art: "loading" \})?\)/);
 } else {
   throw new Error(`Unknown case ${which}`);
 }

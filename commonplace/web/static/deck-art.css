@@ -1,0 +1,5 @@
+/* Dithered art for empty and loading states: decorative, static (no animation), drawn in the text colour. */
+.cp-art { display: block; width: fit-content; max-width: 100%; margin: 0 0 8px; color: var(--ink4, var(--text-3, currentColor)); line-height: 0; pointer-events: none; user-select: none; }
+.cp-art svg { display: block; max-width: 100%; height: auto; }
+.cp-art[data-art="column"] { margin-bottom: 6px; }
+.message > .cp-art { margin-inline: 0; }
