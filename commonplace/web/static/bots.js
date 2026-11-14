@@ -6,6 +6,7 @@ import { elapsed, safeLink } from "./api.js";
 import { sendMessage } from "./botstream.js";
 import { permissionText, settingsFrameHTML, sharingHTML, threadsHTML, threadPreviewHTML } from "./bot-sharing.js";
 import { capyRosterHTML, overviewBots } from "./deck-coworkers.js";
+import { scrollFades, sharePermission } from "./deck-coworker-sharing.js";
 
 export const BOTS_COPY = Object.freeze({
   title: "Bots",
@@ -473,9 +474,11 @@ export function createBots({
   function paintSheet() {
     const node = region("sheet");
     if (!node) return;
+    if (s.sheet && s.sharingOnly) s.sheet.capy = true;
     node.innerHTML = s.sheet ? sheetHTML(s.sheet, s.bot || {}, e) : "";
     const tabs = node.querySelector?.(".bot-access-tabs"), selected = tabs?.querySelector?.('[aria-pressed="true"]');
     if (selected) tabs.scrollLeft = Math.max(0, selected.offsetLeft - (tabs.clientWidth - selected.offsetWidth) / 2);
+    scrollFades(node);
     if (s.sheet && !s.sheet.painted) { s.sheet.painted = true; node.querySelector?.("[data-focus]")?.focus?.(); }
   }
   function paintThread() {
@@ -792,7 +795,7 @@ export function createBots({
       if (s.sheet !== sheet || s.botId !== id) return;
       Object.assign(sheet, { me, settings, shares: shares.shares, access, log: log.log, moreLog: log.log.length === 50 });
     } catch (error) { if (s.sheet === sheet) sheet.error = error.message || "Bot settings are unavailable. Try again."; }
-    if (s.sheet === sheet) { sheet.loading = false; paintSheet(); }
+    if (s.sheet === sheet) { sheet.loading = false; paintSheet(); if (sheet.capy && sheet.tab === "log") region("sheet")?.querySelector?.("[data-access-log]")?.scrollIntoView?.({ block: "start" }); }
   }
   async function openSharing(tab = "people") {
     if (!deck() || !s.bot) return;
@@ -839,6 +842,22 @@ export function createBots({
     if (sheet?.kind !== "sharing" || sheet.busy || !sheet.moreLog) return;
     const result = await sheetCall(sheet, () => api(`/api/bots/${enc(s.botId)}/access/log?after=${sheet.log.at(-1).id}&limit=50`));
     if (result && s.sheet === sheet) { sheet.log.push(...result.log); sheet.moreLog = result.log.length === 50; paintSheet(); }
+  }
+  async function stopSharing() {
+    const sheet = s.sheet, bot = s.bot, id = s.botId;
+    if (!sheet?.capy || sheet.kind !== 'sharing' || sheet.busy || sheet.loading || !bot?.mine || bot.frozen || bot.lifecycle || bot.kind !== 'custom' || !sheet.settings?.sharing || !sheet.shares?.length) return;
+    if (!sheet.confirmStop) { sheet.confirmStop = true; paintSheet(); return; }
+    const rows = [...sheet.shares];
+    await sheetCall(sheet, async () => {
+      for (const row of rows) {
+        if (!active || s.sheet !== sheet || s.botId !== id) return;
+        await api(`/api/bots/${enc(id)}/shares/${enc(row.user.id)}`, { method: 'DELETE' });
+        sheet.shares = sheet.shares.filter(item => item.user.id !== row.user.id);
+      }
+      sheet.confirmStop = false; sheet.selected = null; sheet.saved = true;
+      return {};
+    });
+    if (active && s.sheet === sheet && s.botId === id && !sheet.error) await loadSharing(sheet);
   }
   function selectShare(user) {
     const sheet = s.sheet;
@@ -1062,6 +1081,8 @@ export function createBots({
       case "sharing-select": case "sharing-edit": selectShare(d.user); break;
       case "sharing-cancel": if (s.sheet?.kind === "sharing") { s.sheet.selected = null; paintSheet(); } break;
       case "sharing-revoke": void sharingWrite("revoke"); break;
+      case "sharing-stop": void stopSharing(); break;
+      case "sharing-stop-cancel": if (s.sheet) { s.sheet.confirmStop = false; paintSheet(); } break;
       case "disable-cancel": if (s.sheet?.kind === "details") { s.sheet.confirmDisable = false; paintSheet(); } break;
       case "disable-confirm": if (s.sheet?.confirmDisable) void sharingWrite("disable", true); break;
       case "sharing-enable": case "disable": case "enable": case "adopt": void sharingWrite(d.botsAction); break;
@@ -1119,6 +1140,8 @@ export function createBots({
     if (deck() && s.sheet?.kind === "sharing") {
       if (box?.name === "person-search") {
         s.sheet.search = box.value;
+        const results = region("sheet")?.querySelector?.('[data-capy-results]');
+        if (results) results.hidden = !box.value.trim();
         let visible = 0;
         for (const row of region("sheet")?.querySelectorAll?.("[data-person-name]") || []) { row.hidden = !row.dataset.personName.includes(box.value.toLocaleLowerCase()); if (!row.hidden) visible++; }
         const empty = region("sheet")?.querySelector?.("[data-picker-empty]"); if (empty) empty.hidden = visible > 0;
@@ -1151,7 +1174,16 @@ export function createBots({
     if (s.botId) { void pollThread(token); scheduleThread(token); }
     if (!s.botId || !phone()) void loadRoster(token);
   }
-  function onChange(event) { if (event.target?.name === "bot-thread") void switchThread(event.target.value); }
+  function onChange(event) {
+    const field = event.target, user = field?.dataset?.capyPermission, sheet = s.sheet;
+    if (user && sheet?.capy && sheet.kind === 'sharing' && !sheet.busy && !sheet.loading && s.bot?.mine && !s.bot.frozen && s.bot.kind === 'custom' && sheet.settings?.sharing && ['talk', 'read', 'both'].includes(field.value)) {
+      if (sheet.selected && sheet.selected !== user) return;
+      selectShare(user);
+      if (sheet.selected === user) { sheet.draft = sharePermission(field.value); paintSheet(); }
+      return;
+    }
+    if (field?.name === "bot-thread") void switchThread(field.value);
+  }
   // The on-screen keyboard shrinks the visual viewport; the screen follows it so the composer stays in view.
   function followViewport() {
     if (!viewport) return;
@@ -1197,7 +1229,7 @@ export function createBots({
         s.messages = []; s.waiting = []; s.running = false; s.more = false; s.ready = false; s.waitingOpen = false;
         ticks = 0;
       }
-      el.innerHTML = deck() ? shellHTML.replace('<div data-region="model">', `${coworkersNavHTML()}<div data-region="model">`) : shellHTML;
+      el.innerHTML = shellHTML;
       rootEl = el.querySelector(".bots");
       for (const [type, handler] of [["click", onClick], ["submit", onSubmit], ["input", onInput], ["change", onChange], ["keydown", onKeydown]]) rootEl?.addEventListener?.(type, handler);
       if (!visibilityBound) { globalThis.document?.addEventListener?.("visibilitychange", onVisible); visibilityBound = true; }

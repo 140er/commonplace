@@ -149,10 +149,29 @@ def open_screen(page):
         ],
     }
     writes = []
+    shares = [
+        {"user": {"id": "two", "name": "Workspace member"}, "talk": True, "see_shared": False},
+        {"user": {"id": "three", "name": "Workspace reader"}, "talk": False, "see_shared": True},
+    ]
 
     def serve(request):
         path = urlsplit(request.request.url).path
-        if request.request.method == "POST":
+        if "/shares" in path and request.request.method != "GET":
+            body = request.request.post_data_json if request.request.method != "DELETE" else {}
+            writes.append((path, body))
+            user = path.rsplit("/", 1)[-1] if request.request.method != "POST" else body["user"]
+            if request.request.method == "DELETE":
+                shares[:] = [row for row in shares if row["user"]["id"] != user]
+                request.fulfill(json={"ok": True})
+            else:
+                row = {
+                    "user": {"id": user, "name": me_json()["people"]["user:" + user]},
+                    "talk": body["talk"],
+                    "see_shared": body["see_shared"],
+                }
+                shares[:] = [old for old in shares if old["user"]["id"] != user] + [row]
+                request.fulfill(json={"share": row})
+        elif request.request.method == "POST":
             body = request.request.post_data_json
             writes.append((path, body))
             payload = (
@@ -202,11 +221,30 @@ def open_screen(page):
         elif path == "/api/bots/settings":
             request.fulfill(json={"sharing": True})
         elif path.endswith("/shares"):
-            request.fulfill(json={"shares": []})
+            request.fulfill(json={"shares": shares})
         elif path.endswith("/access"):
             request.fulfill(json={"entries": []})
         elif path.endswith("/access/log"):
-            request.fulfill(json={"log": []})
+            request.fulfill(
+                json={
+                    "log": [
+                        {
+                            "id": 1,
+                            "at": "2026-01-02T12:34:00Z",
+                            "action": "share",
+                            "actor_id": "one",
+                            "member_id": "two",
+                        },
+                        {
+                            "id": 2,
+                            "at": "2026-01-02T12:36:00Z",
+                            "action": "permissions",
+                            "actor_id": "one",
+                            "member_id": "three",
+                        },
+                    ]
+                }
+            )
         else:
             file = STATIC / path.removeprefix("/app/")
             if file.is_file():
@@ -227,7 +265,16 @@ def open_screen(page):
 
 
 def me_json():
-    return {"workspace": "fixture", "actor": "user:one", "people": {"user:one": "Owner"}}
+    return {
+        "workspace": "fixture",
+        "actor": "user:one",
+        "people": {
+            "user:one": "Owner",
+            "user:two": "Workspace member",
+            "user:three": "Workspace reader",
+            "user:four": "New member",
+        },
+    }
 
 
 def save_shot(page, name, tmp_path):
@@ -270,7 +317,25 @@ def test_coworker_panels_modes_sharing_and_overview(browser, size, tmp_path):
             )
             assert page.locator(".cb-heading").bounding_box()["x"] == 16
             assert page.locator("[data-cb-composer]").bounding_box()["y"] > log.bounding_box()["y"]
+        assert page.locator(".cb-tree .cb-dot").count() == 0
+        assert page.get_by_text("Waiting for approval", exact=True).count() == 0
+        assert page.get_by_role("link", name="Conversation", exact=True).count() == 1
+        assert page.get_by_role("link", name="Open conversation", exact=True).count() == 0
+        assert page.locator("#cb-draft").get_attribute("placeholder") == "Message Release"
+        assert page.locator("#cb-draft").evaluate("el=>getComputedStyle(el).resize") == "none"
+        assert page.locator(".cb-log-source").count() == 25
+        colours = page.locator(".cb-log-line").first.evaluate(
+            "el=>Array.from(el.querySelectorAll('span')).map(node=>getComputedStyle(node).color)"
+        )
+        assert len(set(colours)) == 3
+        if size[0] == 390:
+            assert page.locator(".cb-log-message").first.bounding_box()["height"] > 20
+            assert (
+                page.locator(".cb-log-message").first.bounding_box()["x"]
+                == page.locator(".cb-log-message").nth(1).bounding_box()["x"]
+            )
         page.locator('[data-cb-mode="steer"]').click()
+        assert page.locator("#cb-draft").get_attribute("placeholder") == "Steer Release"
         page.locator("#cb-draft").fill("  Exact follow-up  ")
         page.locator(".cb-send").click()
         page.get_by_text(
@@ -287,10 +352,27 @@ def test_coworker_panels_modes_sharing_and_overview(browser, size, tmp_path):
         save_shot(page, f"coworkers-{size[0]}.png", tmp_path)
         page.locator("[data-cb-share]").click()
         page.get_by_role("heading", name="Who can use Workspace helper", exact=True).wait_for()
-        page.get_by_text("People with access", exact=True).wait_for()
+        page.locator("[data-people-access]").wait_for()
         if size[0] == 1440:
             assert page.locator(".bot-access").bounding_box()["width"] == 460
+        assert page.locator(".bot-access").evaluate(
+            "el=>getComputedStyle(el).backgroundColor"
+        ) == page.locator(".rail").evaluate("el=>getComputedStyle(el).backgroundColor")
+        assert page.locator("[data-capy-permission]").count() == 2
+        assert page.locator(".cb-share-footer").bounding_box()["y"] < size[1] - 56
         save_shot(page, f"sharing-{size[0]}.png", tmp_path)
+        before = len(writes)
+        page.locator('[data-capy-permission="two"]').select_option("both")
+        assert len(writes) == before
+        page.get_by_role("button", name="Save", exact=True).click()
+        page.locator("[data-access-saved]").wait_for()
+        assert writes[-1] == ("/api/bots/atlas/shares/two", {"talk": True, "see_shared": True})
+        before = len(writes)
+        page.get_by_role("button", name="Stop sharing", exact=True).click()
+        assert len(writes) == before
+        page.get_by_role("button", name="Stop sharing now", exact=True).click()
+        page.get_by_text("Only you.", exact=True).wait_for()
+        assert len(writes) == before + 2
         page.get_by_role("button", name="Close", exact=True).click()
         assert not page.get_by_role("dialog").count()
         page.locator('[data-cb-worker="conversation:checks"]').click()

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { botGroups, overviewBots, capyRosterHTML, panelsHTML, workingSteps, ownedPaths, liveLog, renderLiveLog, workerModel, stateView, composerRequest, composerHTML, mount } from '../commonplace/web/static/deck-coworkers.js';
+import { botGroups, overviewBots, capyRosterHTML, panelsHTML, workingSteps, ownedPaths, liveLog, renderLiveLog, logLine, workerModel, stateView, composerRequest, composerHTML, mount } from '../commonplace/web/static/deck-coworkers.js';
 
 const conversation = { id: 'room', title: 'Release', bot_ids: ['bot'], board: 'product' };
 const job = { id: 7, conversation_id: 'room', task_progress: { availability: 'available', controls: { can_follow_up: true } } };
@@ -32,17 +32,21 @@ test('present projections win over legacy data, including explicit empty trees a
   assert.deepEqual(ownedPaths({ owns: ['stale.py'] }, { conversation: { owns: [] } }), []);
   assert.deepEqual(workingSteps({}, { conversation: { working_on: { name: 'Release', state: 'working', children: [{ name: 'Checks', state: 'done' }] } } })[0].children, [{ name: 'Checks', state: 'done' }]);
 });
-test('tree shows names, action summaries, state words and dots; owned paths have shared lock marks', () => {
+test('tree shows names, action summaries, one state without dots; owned paths have shared lock marks', () => {
   const html = panelsHTML({}, { working_on: [{ name: 'Release', summary: 'Checking the change', state: 'working', children: [{ name: 'Review', summary: 'Change accepted', state: 'done' }, { name: 'Publish', summary: 'Needs your go', state: 'waiting_on_owner' }] }], owns: [{ glob: 'src/*.py', shared_lock: true }, { path: 'tests/test_release.py' }], live_log: { tail: ['checks complete'] } });
   for (const text of ['Working on', 'Checking the change', 'Change accepted', 'Working', 'Done', 'Waiting on you', 'Owns', 'Shared lock', 'Live log']) assert.ok(html.includes(text), text);
   assert.match(html, /<code>src\/\*\.py<\/code>/);
   assert.match(html, /data-tone="waiting"/);
+  assert.doesNotMatch(html, /cb-dot|Needs your go/);
+  assert.doesNotMatch(panelsHTML({}, { working_on: [{ name: 'Release', summary: 'Waiting for approval', state: 'needs_you' }] }), /Waiting for approval/);
   assert.doesNotMatch(html, /checks complete/, 'log content is assigned through textContent only');
 });
 test('redacted tails are text, never HTML; a new tail scrolls to its end', () => {
   const node = { textContent: '', scrollTop: 0, scrollHeight: 400, set innerHTML(_) { throw new Error('HTML is forbidden'); } };
   const raw = '<img src=x onerror=alert(1)> [redacted:credential]';
   renderLiveLog(node, liveLog({}, { live_log: { tail: [{ text: raw }, { text: 'finished' }] } }));
+  assert.deepEqual(logLine('12:34  checks  '+raw), {time:'12:34',source:'checks',message:raw,gaps:['  ','  ']});
+  assert.equal(logLine(raw), null);
   assert.equal(node.textContent, raw + '\nfinished'); assert.equal(node.scrollTop, 400);
   renderLiveLog(node, ''); assert.equal(node.textContent, '');
 });
@@ -59,6 +63,8 @@ test('legacy composer switches Steer and Chat to their own authorized routes and
   const text = '  exact words\n<script>inert</script>  ';
   assert.deepEqual(composerRequest(detail(), 'steer', text, 'req'), { path: '/api/coworkers/jobs/7/controls', body: { text, request_id: 'req', operation: 'follow_up' } });
   assert.deepEqual(composerRequest(detail(), 'chat', text, 'req'), { path: '/api/coworkers/conversations/room/messages', body: { text, request_id: 'req', bot_id: 'bot' } });
+  assert.match(composerHTML(detail(), { mode: 'chat', coworker: 'Release' }), /placeholder="Message Release"/);
+  assert.match(composerHTML(detail(), { mode: 'steer', coworker: 'Release' }), /placeholder="Steer Release"/);
   const group = { conversation: { ...conversation, bot_ids: ['a', 'b'] } };
   assert.equal(Object.hasOwn(composerRequest(group, 'chat', text, 'req').body, 'bot_id'), false);
   for (const invalid of [{}, { conversation, jobs: [{ ...job, conversation_id: 'other' }] }, { conversation, jobs: [{ ...job, task_progress: { availability: 'unavailable', controls: { can_follow_up: true } } }] }]) assert.equal(composerRequest(invalid, 'steer', text, 'req'), null);
@@ -98,6 +104,8 @@ function fixture(api) {
 test('real composer mode clicks keep separate drafts and send through the selected mode', async () => {
   const h = fixture(async (path, options) => options.method === 'POST' ? { receipt: { job_id: 7, request_id: options.body.request_id, text: options.body.text, operation: 'follow_up', state: 'completed' } } : undefined);
   await settle(); h.input('chat draft'); h.mode('steer'); h.input('  steer draft  '); h.mode('chat');
+  assert.equal((h.body.innerHTML.match(/>Conversation<\/a>/g) || []).length, 1);
+  assert.doesNotMatch(h.body.innerHTML, /Open conversation/);
   assert.match(h.body.innerHTML, /chat draft/); h.mode('steer'); assert.match(h.body.innerHTML, /  steer draft  /);
   h.send(); await settle(); const post = h.calls.find(([, options]) => options.method === 'POST');
   assert.equal(post[0], '/api/coworkers/jobs/7/controls'); assert.equal(post[1].body.text, '  steer draft  ');
@@ -130,7 +138,9 @@ test('slice styles are Deck scoped, token based, and keep the phone composer in 
     if (match[1].trim().startsWith('@media')) continue;
     for (const selector of match[1].split(/,(?![^()]*\))/)) assert.match(selector.trim(), /^:root\[data-ui="deck"\]/);
   }
-  assert.doesNotMatch(css, /#[\da-f]{3,8}\b|linear-gradient|backdrop-filter/i);
+  // Explicit design feedback requests edge fades, restricted to scroll masks.
+  assert.doesNotMatch(css.replace(/mask-image:[^;]+;/g, ''), /#[\da-f]{3,8}\b|linear-gradient|backdrop-filter/i);
+  assert.match(css, /resize: none/);
   assert.match(css, /260px minmax\(0, 1fr\)/); assert.match(css, /height: 176px/);
   assert.match(css.slice(css.indexOf('@media (max-width: 699px)')), /\[data-cb-composer\] \{ position: static/);
 });
