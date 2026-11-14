@@ -161,7 +161,8 @@ def test_canonical_chat_origin_links_unassigned_paths_without_cross_dm_leaks(own
 def test_unreadable_project_and_archived_project_never_disclose_paths_or_locks(owned, monkeypatch):
     cid = owned.conversation(group=True)
     owned.card(["hidden/structure.py"], status="doing")
-    authority = open_store(owned.api.gateway, owned.api.workspace)._authority
+    store = open_store(owned.api.gateway, owned.api.workspace)
+    authority = store._authority
     original = authority.user
 
     def restricted(user_id, **kwargs):
@@ -175,16 +176,22 @@ def test_unreadable_project_and_archived_project_never_disclose_paths_or_locks(o
 
     monkeypatch.setattr(authority, "user", restricted)
     for user in (owned.api.owner, owned.api.member):
-        assert owned.detail(cid, user=user) == {
+        assert store.get_conversation(user, cid, owns=True)["owns"] == {
             "availability": "unavailable",
             "paths": [],
             "truncated": False,
         }
+        # The combined detail also projects live steps, so project denial fails closed.
+        assert owned.api.request("GET", "/conversations/" + cid, user=user) == (
+            404,
+            {"error": "not_found"},
+        )
         assert "hidden/" not in json.dumps(owned.api.request("GET", user=user)[1])
     monkeypatch.setattr(authority, "user", original)
     with owned.boards.store.transaction() as conn:
         conn.execute("UPDATE boards SET archived=1 WHERE slug='work'")
-    assert owned.detail(cid)["paths"] == []
+    assert store.get_conversation(owned.api.owner, cid, owns=True)["owns"]["paths"] == []
+    assert owned.api.request("GET", "/conversations/" + cid) == (404, {"error": "not_found"})
 
 
 def test_foreign_workspace_private_dm_and_agent_machine_tokens_are_refused(owned):
@@ -303,7 +310,13 @@ def test_revoked_binding_and_fresh_board_fence_withhold_paths(owned, monkeypatch
             yield conn
 
     monkeypatch.setattr(owns, "_read", archive_before_fresh_read)
-    assert owned.detail(cid)["paths"] == []
+    store = open_store(owned.api.gateway, owned.api.workspace)
+    assert store.get_conversation(owned.api.owner, cid, owns=True)["owns"]["paths"] == []
+    with owned.boards.store.transaction() as conn:
+        conn.execute("UPDATE boards SET archived=0 WHERE slug='work'")
+    board_reads = 0
+    # Revoke during the HTTP ownership read too; neither paths nor live steps escape.
+    assert owned.api.request("GET", "/conversations/" + cid) == (404, {"error": "not_found"})
     monkeypatch.setattr(owns, "_read", original)
     with owned.boards.store.transaction() as conn:
         conn.execute("UPDATE boards SET archived=0 WHERE slug='work'")
@@ -311,7 +324,12 @@ def test_revoked_binding_and_fresh_board_fence_withhold_paths(owned, monkeypatch
         "UPDATE connections SET revoked_at='2000-01-01T00:00:00Z' WHERE id=?",
         (owned.connection,),
     )
-    assert owned.detail(cid) == {"availability": "unavailable", "paths": [], "truncated": False}
+    assert store.get_conversation(owned.api.owner, cid, owns=True)["owns"] == {
+        "availability": "unavailable",
+        "paths": [],
+        "truncated": False,
+    }
+    assert owned.api.request("GET", "/conversations/" + cid) == (404, {"error": "not_found"})
 
 
 def test_unreadable_runner_store_preserves_paths_with_unknown_locks(owned):
