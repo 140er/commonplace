@@ -1,0 +1,1 @@
+- `tests/test_scoped_taxonomy_scan_budget.py` counts the full wing/room tally across scoped probe first pages with the database stat moving between them, and pins reuse, expiry, per-palace keying and the never-reuse rule for too-large results.

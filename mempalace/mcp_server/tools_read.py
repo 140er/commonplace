@@ -714,6 +714,38 @@ Read AAAK naturally — expand codes mentally, treat *markers* as emotional cont
 When WRITING AAAK: use entity codes, mark emotions, keep structure tight."""
 
 
+# The first scoped page only consults the raw wing/room tally for its
+# ``overview_too_large`` verdict; identities decide every scoped sum. Wing and
+# room names are bounded at write time, so a palace that passed once stays clean
+# for a long while. Without this memo each probe re-ran the full GROUP BY over
+# the palace database (the write-keyed taxonomy cache never survives a busy
+# palace), which held the palace lock and re-read the whole file every time.
+_ADVISORY_TAXONOMY_TTL_S = 3600.0
+_ADVISORY_TAXONOMY_CLEAN = (0, {})
+_advisory_clock = time.monotonic
+_advisory_taxonomy_memo = None
+
+
+def _reset_advisory_taxonomy():
+    global _advisory_taxonomy_memo
+    _advisory_taxonomy_memo = None
+
+
+def _advisory_taxonomy():
+    """``_sqlite_taxonomy()`` for the scoped first page; a clean verdict is reused."""
+    global _advisory_taxonomy_memo
+    key = (_config.palace_path, _config.collection_name)
+    memo = _advisory_taxonomy_memo
+    if memo is not None and memo[0] == key and _advisory_clock() < memo[1]:
+        return _ADVISORY_TAXONOMY_CLEAN
+    fast = _sqlite_taxonomy()
+    if isinstance(fast, tuple):
+        _advisory_taxonomy_memo = (key, _advisory_clock() + _ADVISORY_TAXONOMY_TTL_S)
+    else:
+        _advisory_taxonomy_memo = None
+    return fast
+
+
 def _scoped_taxonomy(scope, *, wings=False):
     """Private complete-page acquisition or concrete-descriptor revalidation."""
     from ..read_scope import descriptor, metadata_page, valid_descriptors
@@ -734,7 +766,7 @@ def _scoped_taxonomy(scope, *, wings=False):
         # Keep indexed pair acquisition and the legacy fallback seams. These
         # raw maps are advisory only; identities determine every scoped sum.
         first_page = probe and scope["after"] is None
-        fast = _sqlite_taxonomy() if first_page else None
+        fast = _advisory_taxonomy() if first_page else None
         if isinstance(fast, dict) and "error" in fast:
             return _overview_error(fast["error"], wings=wings)
         fallback = False

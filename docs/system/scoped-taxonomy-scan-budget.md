@@ -1,0 +1,4 @@
+### Scoped overview probes no longer rescan the palace each time
+
+- Every authenticated overview read, and every session start that searches memory, opens a scoped probe on the memory worker. Its first page ran the whole wing/room tally over the palace database only to read the `overview_too_large` verdict, then discarded the tally. A palace that is being written to never hits the write-keyed cache, so each probe re-read the whole database while holding the palace lock. On a multi-million-drawer palace that was a repeated multi-gigabyte read, tens of seconds long, that stalled writers and filled the container's page cache.
+- The worker now remembers a clean verdict per palace and collection for an hour and skips the scan; the first probe after a worker start still counts once. The worker's own resident memory was not growing: this removes the repeated whole-database reads that inflated the container's memory counter after each start.
