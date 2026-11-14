@@ -7,7 +7,7 @@
 
 - **Promises:**
 
-  - Release email login waits for the accessible signed-in Board region after identity checks; step failure details retain exception messages through the shared credential redactor.
+  - Release email login waits for the accessible signed-in Board region (new signup) or the signed-in shell (return login) after identity checks; step failure details retain exception messages through the shared credential redactor.
 
   - Import release checks retain owner listing and exact read-back and require the write-only bearer to receive the not-found response without metadata.
 

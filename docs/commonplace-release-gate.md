@@ -22,16 +22,25 @@ private: they show synthetic accounts and may include temporary connection UI.
 No browser trace, cookie jar or bearer token is intentionally saved.
 The memory worker runs unchanged; prepare its configured local embedding model
 before the timed gate. A model startup/download failure does not count as a pass.
+The first memory write of a new workspace starts that worker and can take about
+twenty seconds on a cold machine; the journey allows it forty and later calls the
+normal fifteen.
 
 The browser uses the normal email sign-in form (`POST /app/auth/email`, HTTP 202)
 and opens the captured `/app/auth/email/verify?t=…` message link (HTTP 200).
 The user confirms with **Sign in** (`POST` to that URL, HTTP 303). Opening the link
 alone must not create a session. It creates
-a space, uses the signed-in person's connection route, connects the unmodified
+a project (the interface's word for a space), uses the signed-in person's connection route, connects the unmodified
 Python MCP SDK, checks initialize and the prescribed startup reads, and performs
-card, memory and rule operations through normal HTTP/MCP routes. It checks an
+card, memory and rule operations through normal HTTP/MCP routes. A card the agent
+creates waits in backlog until the signed-in owner releases it from the card
+panel (a reason is required); only then can the agent claim it. It checks an
 actual owner question with two options, rejects the proposing agent's attempt
 to bypass that decision, and answers through the browser before completion.
+Memory: the agent saves and searches exact words; agent notes land in the inbox
+wing, which the Memory page does not list, so the owner reads them back through
+the signed-in search request and the Memory page is checked with a note the owner
+saves in the project's own wing.
 The Rules page must show a summary, expand the exact full text, accept the
 proposal, and supply it to a new agent session.
 
@@ -43,7 +52,8 @@ archive bytes and readable words. An immediate identical upload with the same to
 must again return HTTP 200, `completed`, `accepted: 1`, `errors: 0` (including an
 `accepted` result row), as documented in [one-time import](one-time-import.md).
 The owner must still see one identical stored thread ID/message count and unchanged
-read-back. A cookie-free bearer request to list imports must return HTTP 403.
+read-back. A cookie-free bearer request to list imports must return HTTP 404 with
+`{"error": "not found"}` and no import metadata.
 This API-only check records protocol assertions without a success screenshot.
 
 Two separate browser contexts/email identities prove workspace isolation, with
@@ -68,6 +78,13 @@ actionable message. Voice retains the production route/usage enforcement and
 replaces only speech decoding: the first one-second PCM clip succeeds, the
 second must receive a quota error with its reset time, and rejected audio must
 not increase usage. Missing voice metering fails this check.
+
+The journey finds its controls by their visible names. When the app renames a
+button, label or region, the fast helper test
+`test_release_journey_browser_labels_exist_in_the_shipped_interface` fails
+without a browser, so the names are updated in the same change. A returning
+login lands wherever the app restores the person; only a new signup is required to
+land on the board.
 
 ## Local release and nightly integration
 
@@ -97,17 +114,22 @@ date, browser and any failures. Save screenshots without secrets.
 
 - Open `/app/login` with no `t`. Sign in is visible and no session is created.
 - Request an email link with the first address. Open it, check that a default
-  space exists and opens as a board, then create another space.
+  project exists and opens as a board, then create another project.
 - In Settings create a named agent. Copy its one-time token into a stock MCP
   client's HTTP configuration. Check startup rules and memory retrieval.
 - Create an import-consented connection and upload a synthetic native archive. List
   and read it as the owner, repeat the exact upload, verify one unchanged thread
   and exact bytes/words, and confirm the bearer cannot list imports.
-- Through that agent create a card, claim it, and request an owner decision with
-  context and two real options. Try to finish it before the owner answers: the
-  request must fail. Answer as the person, then reclaim and finish the card.
-- Save a memory containing Unicode, multiple spaces and a newline. Search from
-  both the agent and browser; compare the exact original text.
+- Through that agent create a card. It waits in backlog: the agent cannot claim it
+  yet. As the person open the card, enter a reason and choose Release. Then the
+  agent claims it and requests an owner decision with context and two real
+  options. Try to finish it before the owner answers: the request must fail.
+  Answer as the person, then reclaim and finish the card.
+- Have the agent save a memory containing Unicode, multiple spaces and a newline.
+  Search from the agent and read it back as the person (the agent's note is in the
+  inbox wing, which the Memory page does not list); compare the exact original
+  text. Save a note in the project's own wing as the person and check that the
+  Memory page finds it with the same exact words.
 - Have the agent propose a shared rule with a summary. On Rules, expand its
   full text and accept it. A new agent session receives the accepted rule.
 - Sign out. Confirm protected requests are anonymous. Request another email

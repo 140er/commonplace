@@ -60,13 +60,21 @@ PROPOSED_RULE = "Keep every release memory verbatim. Ask the owner before changi
 SUMMARY = "Preserve release memories and ask before changes."
 
 
-async def api(page, path, method="GET", body=None, expected=200):
+def describe(exc):
+    """Name the leaf errors: the SDK reports failures inside anyio task groups."""
+    parts = getattr(exc, "exceptions", None)  # ExceptionGroup, without needing Python 3.11
+    if parts:
+        return "; ".join(describe(part) for part in parts)
+    return f"{type(exc).__name__}: {exc}"
+
+
+async def api(page, path, method="GET", body=None, expected=200, timeout=15000):
     response = await page.context.request.fetch(
         page.url.split("/app", 1)[0] + path,
         method=method,
         data=json.dumps(body) if body is not None else None,
         headers={"Content-Type": "application/json"},
-        timeout=15000,
+        timeout=timeout,
     )
     # Inspect status before JSON: missing routes can be plain HTML.
     checked_json(response.status, None, method, path, expected)
@@ -116,7 +124,12 @@ async def email_login(page, instance, email, *, signup=False):
     require(bool(me.get("workspace")), "Fresh signup did not create a personal workspace")
     if signup:
         require(me.get("actor") == "user:" + me["user"], "Signup did not create a person session")
-    await page.get_by_role("region", name="Board", exact=True).wait_for()
+    if signup:
+        # A new account lands on its default project's board. A returning person
+        # lands wherever the shell restores, so only the signed-in shell is required.
+        await page.get_by_role("region", name="Board", exact=True).wait_for()
+    else:
+        await page.get_by_role("navigation", name="Workspace", exact=True).wait_for()
     return me
 
 
@@ -154,8 +167,8 @@ async def stock_client(origin, token):
 
 async def tool(session, name, arguments=None, *, error=False):
     result = await session.call_tool(name, arguments or {})
-    require(result.isError is error, f"MCP {name}: expected isError={error}")
     text = "\n".join(part.text for part in result.content if part.type == "text")
+    require(result.isError is error, f"MCP {name}: expected isError={error}: {text[:300]}")
     # Commonplace returns both plain text and JSON-encoded text tool content.
     try:
         value = json.loads(text)
@@ -199,7 +212,7 @@ class Journey:
             row.status, row.detail = "FAIL", str(exc)
         except Exception as exc:
             # SDK/browser exceptions can contain bearer headers and login URLs.
-            row.status, row.detail = "FAIL", f"{type(exc).__name__}: {exc}"
+            row.status, row.detail = "FAIL", describe(exc)
         row.detail = redact(row.detail)[0]
         if (
             self.page is not None
@@ -231,14 +244,14 @@ class Journey:
         await self.page.goto(self.instance.origin + "/app/#/boards")
         await (
             self.page.get_by_role("main")
-            .get_by_role("button", name="New space", exact=True)
+            .get_by_role("button", name="New project", exact=True)
             .click()
         )
-        await self.page.get_by_label("Name", exact=True).fill("Release journey")
+        await self.page.get_by_label("Project name", exact=True).fill("Release journey")
         async with self.page.expect_response(
             lambda r: r.request.method == "POST" and r.url.endswith("/api/boards")
         ) as created:
-            await self.page.get_by_role("button", name="Create", exact=True).click()
+            await self.page.get_by_role("button", name=re.compile("^Create project")).click()
         response = await created.value
         checked_json(response.status, None, "POST", "/api/boards", 201)
         self.values["space"] = await response.json()
@@ -268,7 +281,8 @@ class Journey:
         await control.wait_for()
         row = control.locator("xpath=ancestor::div[contains(@class, 'setting-row')]")
         require(
-            (await row.locator("span").inner_text()).splitlines()[0] == "release-agent",
+            (await row.locator(":scope > span").first.inner_text()).splitlines()[0]
+            == "release-agent",
             "Settings omitted the created agent name",
         )
         return "Ordinary person session created a named agent token; listing hides the secret"
@@ -282,8 +296,14 @@ class Journey:
             {"agent": "*", "text": BASELINE_RULE, "kind": "instruction"},
             201,
         )
+        # The first memory write starts the worker and loads its local embedding model.
         await api(
-            self.page, "/api/memory", "POST", {"text": BASELINE_MEMORY, "theme": "inbox"}, 201
+            self.page,
+            "/api/memory",
+            "POST",
+            {"text": BASELINE_MEMORY, "theme": "inbox"},
+            201,
+            timeout=40000,
         )
         async with stock_client(self.instance.origin, token) as (session, initialized):
             require(
@@ -417,6 +437,20 @@ class Journey:
             match = re.search(r"#(\d+) added", added)
             require(match is not None, "Agent did not create a card")
             number = int(match.group(1))
+            # Agent-created cards wait in backlog until the signed-in owner releases them.
+            await self.page.goto(self.instance.origin + f"/app/#/card/{number}")
+            release = self.page.get_by_role("dialog", name="Card", exact=True)
+            await release.get_by_label("Reason").fill("Synthetic release journey card")
+            async with self.page.expect_response(
+                lambda r: (
+                    r.request.method == "POST" and r.url.endswith(f"/api/cards/{number}/approve")
+                )
+            ):
+                await release.get_by_role("button", name="Release", exact=True).click()
+            require(
+                not (await api(self.page, f"/api/cards/{number}")).get("awaiting_release"),
+                "Owner release did not make the agent's card claimable",
+            )
             await tool(session, "task_take_next", {"task": number})
             claimed = await api(self.page, f"/api/cards/{number}")
             require(claimed["status"] == "doing", "Agent claim did not start work")
@@ -472,7 +506,7 @@ class Journey:
         self.values["card"] = number
         await self.page.reload()
         panel = self.page.get_by_role("dialog", name="Card", exact=True)
-        await panel.locator(".state.done").first.wait_for()
+        await panel.get_by_text("This card is final").first.wait_for()
         require(
             await panel.locator('[data-action="decide"]').count() == 0,
             "Completed card still offers a live owner decision",
@@ -484,7 +518,7 @@ class Journey:
         )
 
     async def memory_save_search(self):
-        (token,) = self.need("token")
+        token, space = self.need("token", "space")
         text = "Release memory: café, two  spaces, and\na second line — exact words."
         async with stock_client(self.instance.origin, token) as (session, _initialized):
             await tool(session, "rules_get", {"effective": True})
@@ -498,11 +532,24 @@ class Journey:
         memory = next((row for row in matches if row["text"] == text), None)
         require(memory is not None, "Person cannot retrieve the agent's saved memory")
         self.values["memory"] = memory
+        # Agent notes land in the inbox wing, which the Memory page does not list; it
+        # searches each project's own wing. The owner's project note proves the page.
+        owner_text = "Owner note: café, two  spaces, and\na second line — exact words."
+        await api(
+            self.page, "/api/memory", "POST", {"text": owner_text, "theme": space["wing"]}, 201
+        )
         await self.page.goto(self.instance.origin + "/app/#/memory")
-        await self.page.get_by_role("searchbox", name="Search memories").fill("café release memory")
-        await self.page.get_by_role("button", name="Search", exact=True).click()
-        await self.page.get_by_text(text, exact=True).first.wait_for()
-        return "Agent save/search and browser search return verbatim Unicode and whitespace"
+        await self.page.get_by_role("searchbox", name="Search memory").fill("café owner note")
+        await (
+            self.page.get_by_role("search")
+            .get_by_role("button", name=re.compile("^Search"))
+            .click()
+        )
+        await self.page.get_by_text(owner_text, exact=True).first.wait_for()
+        return (
+            "Agent save/search and the owner's API search return verbatim Unicode and "
+            "whitespace; the Memory page shows the owner's project note verbatim"
+        )
 
     async def rule_owner_acceptance(self):
         (token,) = self.need("token")
