@@ -17,6 +17,7 @@ STATIC = Path(__file__).resolve().parents[1] / "commonplace/web/static"
         "columns",
         "backlog",
         "assignee",
+        "who-default",
         "filters",
         "empty",
         "escaping",
