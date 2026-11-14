@@ -119,12 +119,14 @@ def open_drawer(browser, hub, fresh, card, width, look, *, removable=True):
     page = context.new_page()
     page.goto(origin + f"/app/?ui={look}#/board/work")
     page.locator(f'.card[data-card="{card["number"]}"]').click()
+    page.locator(".workbench-details").wait_for()
     edit = page.locator("[data-deck-card-controls]")
     if edit.count():
         edit.locator("summary").click()
     page.locator(".workbench-details .fields").wait_for()
     if removable:
         page.locator('[data-action="remove-assignment"]').wait_for()
+        page.locator('[data-action="remove-assignment"]').scroll_into_view_if_needed()
     page.evaluate("document.fonts.ready")
     return context, page
 
@@ -155,9 +157,10 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
                 action.bounding_box()["y"] + action.bounding_box()["height"]
                 <= (page.locator(".workbench-details .ctx-foot").bounding_box()["y"])
             )
+            expected_title = "18px" if page.locator(".deck-card-drawer").count() else "24px"
             assert (
                 page.locator("[data-details-title]").evaluate("el=>getComputedStyle(el).fontSize")
-                == "24px"
+                == expected_title
             )
         shot(page, look, "before", width)
         action.click()
