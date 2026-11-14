@@ -44,6 +44,15 @@ function fixture({ api: custom, roster = bots, pages = {}, boards = [] } = {}) {
 }
 const waiting = (f) => f.regions.get('waiting').innerHTML;
 
+test('the narrow composer uses a short placeholder with ellipsis handling', () => {
+  const f = fixture();
+  assert.match(f.root.html, /placeholder="Ask anything"/);
+  assert.doesNotMatch(f.root.html, /placeholder="What do you need\?"/);
+  const source = readFileSync(new URL('../commonplace/web/static/deck-today.js', import.meta.url), 'utf8');
+  assert.match(source, /\.today-compose input \{[^}]*text-overflow:ellipsis/);
+  f.ui.stop();
+});
+
 test('registered Today is first and home; an off switch never imports or mounts it', async () => {
   assert.equal(deckHome(), '#/');
   assert.equal(deckSections()[0][0], 'today');
