@@ -700,7 +700,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     const card = await api(`/api/cards/${number}`);
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
-    if (keepForm && !opening && panelForm()) return;
+    if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
     state.card = card;
     // A shared card link draws its own board behind the card, once.
     const rebase = state.rebase === number && card.board && state.base !== `#/board/${enc(card.board)}`;
@@ -1642,6 +1642,7 @@ root.addEventListener("click", async (event) => {
     } else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
+      root.querySelector("#card-panel .assignment-refusal")?.remove();
       // Needs me redraws the item's detail; a card route reads the card again.
       const needs = onNeeds() ? state.needsUI : null;
       if (needs?.paused()) needs.pause(false); else await refresh();
