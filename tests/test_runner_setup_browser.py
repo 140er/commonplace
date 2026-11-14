@@ -208,7 +208,10 @@ def test_deck_setup_states_and_measurements(browser, width, mode):
         assert before["refuse"]["color"] == "rgb(240, 112, 138)"
         assert before["card"]["width"] == (720 if width == 1280 else 326)
         if width == 1280:
-            assert before["card"]["x"] == before["pageTitle"]["x"]
+            # The Deck surface lines up with the page title and insets its content by 16px.
+            assert before["surface"]["x"] == before["pageTitle"]["x"]
+            assert before["card"]["x"] - before["surface"]["x"] == 16
+            assert before["count"]["x"] == before["card"]["x"]
         else:
             assert before["surface"]["x"] == 16
             assert before["card"]["x"] - before["surface"]["x"] == 16

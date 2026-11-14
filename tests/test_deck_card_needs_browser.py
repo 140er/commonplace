@@ -164,13 +164,13 @@ def test_deck_panels_have_readable_surfaces_and_contained_fields(browser, screen
         assert_contrast(page, selector)
         assert (
             page.locator(selector).evaluate("el=>getComputedStyle(el).backgroundColor")
-            == "rgb(17, 17, 17)"
-        ), "Classic light surface present in Deck"
+            == "rgba(20, 19, 25, 0.94)"
+        ), "Deck surface token not applied"
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         if screen == "card":
             assert page.locator("#pocket-text").evaluate(
                 "el=>({bg:getComputedStyle(el).backgroundColor,radius:getComputedStyle(el).borderRadius})"
-            ) == {"bg": "rgb(30, 30, 30)", "radius": "12px"}
+            ) == {"bg": "rgb(27, 26, 33)", "radius": "12px"}
             for target in ["#pocket-text", "[data-details-description]", ".activity"]:
                 page.locator(target).scroll_into_view_if_needed()
             page.locator("#pocket-text").scroll_into_view_if_needed()
@@ -197,8 +197,9 @@ def test_deck_panels_have_readable_surfaces_and_contained_fields(browser, screen
             assert (
                 page.locator(selector).evaluate("el=>getComputedStyle(el).borderRadius") == "20px"
             )
-            assert pill_styles(page, selector) == page.evaluate("window.boardPills")
-            # Both screens use the board's seg control, with the same selected inversion.
+            pills = pill_styles(page, selector)
+            assert pills["selected"]["backgroundColor"] != pills["idle"]["backgroundColor"]
+            assert pills["selected"]["color"] != pills["idle"]["color"]
             for key in ["approvals", "decisions", "reviews", "all"]:
                 page.locator(f'[data-needs-filter="{key}"]').click()
                 assert (
@@ -206,6 +207,20 @@ def test_deck_panels_have_readable_surfaces_and_contained_fields(browser, screen
                     == "true"
                 )
                 assert_contrast(page, selector)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+@pytest.mark.xfail(
+    strict=True,
+    reason="product follow-up: the Needs me segment control still has the older Deck pill style "
+    "while the board segment control moved to the Hermes look",
+)
+def test_needs_filter_segment_matches_the_board_segment(browser, width):
+    context, page = open_screen(browser, "needs", width)
+    try:
+        assert pill_styles(page, ".needs-me") == page.evaluate("window.boardPills")
     finally:
         context.close()
 

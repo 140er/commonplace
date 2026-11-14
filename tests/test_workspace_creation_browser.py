@@ -64,6 +64,11 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
     expect(page.locator(".shell")).to_be_visible()
 
     def switcher():
+        if look == "deck":
+            # The Deck palette lists destinations only; the switcher is its rail or top-bar button.
+            page.locator('[data-action="switch-workspace"]:visible').first.click()
+            expect(page.locator(".workspace-switch")).to_be_visible()
+            return
         page.keyboard.press("Control+k")
         page.get_by_role("combobox", name="Search or run an action").fill("Switch workspace")
         page.get_by_role("option", name="Switch workspace", exact=True).click()

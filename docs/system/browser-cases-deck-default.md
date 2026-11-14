@@ -1,0 +1,5 @@
+### Browser cases follow the Deck default
+
+The optional real-browser cases were written against the classic look and the first Deck tokens, so once the Deck became the default and took the Capy tokens many of them failed on a plain checkout while no quick check ran them. They now assert what each look really renders: the Deck surface, well, ground, ink and line tokens, the Deck Memory search label and its collapsed "More filters", the consent checkbox before a Deck import, the rail or top-bar workspace button (the Deck palette lists destinations only), the 16px inset of the Needs me surface and the shell root class. Cases about the classic look open `/app/?ui=classic`.
+
+No product code changed. Where the Deck differs from the design a case encoded (Needs me segment style, Compute bundle badge, import actions clearance on a short phone) the assertion stays behind a strict expected failure, or a looser bound with a comment, and is listed for a product card instead of being weakened silently. Running the cases needs the Playwright package and the real browser cache path; see the tests module.
