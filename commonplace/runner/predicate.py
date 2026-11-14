@@ -27,24 +27,35 @@ def grant_values(machine, key):
     return json.loads(value) if isinstance(value, str) else value
 
 
-def requester_ok(gateway, principal, machine) -> bool:
-    if (
-        principal is None
-        or getattr(principal, "runner", None) is not None
-        or principal.workspace_id != machine["workspace_id"]
-    ):
-        return False
+def requester_gaps(gateway, principal, machine) -> list[str]:
+    """Why ``principal`` cannot start on ``machine``: stable slugs, empty when allowed.
+
+    ``requester_ok`` is true exactly when this list is empty; a caller that refuses uses
+    the slugs to say which prerequisite is missing."""
+    if principal is None or principal.workspace_id != machine["workspace_id"]:
+        return ["workspace_mismatch"]
+    if getattr(principal, "runner", None) is not None:
+        return ["runner_credential"]
     if principal.person:
-        return principal.role == "owner"
+        return [] if principal.role == "owner" else ["owner_required"]
     live = gateway.db.authenticate_connection(principal.connection_id)
-    return bool(
-        live is not None
-        and live.workspace_id == machine["workspace_id"]
-        and getattr(live, "runner", None) is None
-        and live.auth == "pat"
-        and live.policy.trust == "trusted"
-        and live.connection_id in grant_values(machine, "requesters")
-    )
+    if (
+        live is None
+        or live.workspace_id != machine["workspace_id"]
+        or getattr(live, "runner", None) is not None
+        or live.auth != "pat"
+    ):
+        return ["pat_required"]
+    gaps = []
+    if live.policy.trust != "trusted":
+        gaps.append("seat_not_trusted")
+    if live.connection_id not in grant_values(machine, "requesters"):
+        gaps.append("not_on_requester_list")
+    return gaps
+
+
+def requester_ok(gateway, principal, machine) -> bool:
+    return not requester_gaps(gateway, principal, machine)
 
 
 def startable(gateway, machine, row, board) -> None:

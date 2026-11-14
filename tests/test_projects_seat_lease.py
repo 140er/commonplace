@@ -235,3 +235,101 @@ def test_a_config_accepted_during_the_claim_is_noticed(settings, monkeypatch):
     with pytest.raises(ToolError) as refused:
         s.w.claim(seat)
     assert refused.value.code == "config_changed"
+
+
+def refused(call, *args):
+    with pytest.raises(ToolError) as exc:
+        call(*args)
+    return exc.value
+
+
+def test_not_configured_names_the_missing_config_and_where_to_fix_it(settings):
+    s = settings
+    for principal in (s.w.owner, s.w.a):
+        err = refused(s.w.claim, principal)
+        assert (err.code, err.status) == ("not_configured", 409)
+        assert err.details["missing"] == ["accepted_config", "runner_table"]
+        for part in ("[runner]", "limits.max_agents", "orch_config_accept", "/configs"):
+            assert part in str(err), str(err)
+    # A config without [runner] is a different gap.
+    s.w.write(config_text(s.w.machine_id, runner=False))
+    err = refused(s.w.claim, s.w.owner)
+    assert err.code == "not_configured" and err.details["missing"] == ["runner_table"]
+    assert "no [runner] table" in str(err)
+    # Over MCP the stable code and the missing list are in the text the agent reads.
+    ok, text = s.resume(s.seat())
+    assert ok, text
+    ok, text = s.tool(s.seat(PLAIN), "orch_resume", board=BOARD, role=ROLE)
+    assert not ok and '"code": "not_configured"' in text and "another project" in text, text
+    assert '"missing": ["seat_of_another_project"]' in text, text
+
+
+def test_seat_with_the_wrong_role_is_told_which_role_it_holds(settings):
+    s = settings
+    token = s.seat()
+    ok, text = s.tool(token, "orch_resume", board=BOARD, role="builder")
+    assert not ok and '"code": "not_configured"' in text, text
+    assert f"holds the {ROLE} role" in text and '"missing": ["seat_role_mismatch"]' in text, text
+
+
+def test_untrusted_seat_names_trust_and_the_requester_list(settings):
+    s = settings
+    token = s.connect()
+    ok, text = s.resume(token)
+    assert not ok and '"code": "not_allowed"' in text, text
+    assert '"missing": ["seat_not_trusted"]' in text, text
+    assert "Trust and allow starts" in text and "/orchestrator/trust" in text, text
+    # With a [runner] config the machine's requester list matters too.
+    s.w.configure()
+    ok, text = s.resume(token)
+    assert not ok and '"code": "not_allowed"' in text, text
+    assert '"missing": ["seat_not_trusted", "not_on_requester_list"]' in text, text
+    assert "Trust and allow starts" in text, text
+
+
+def test_requester_refusals_name_each_missing_prerequisite(settings):
+    s = settings
+    s.w.configure()
+    trusted_unlisted = s.w.pat("orch-trusted-unlisted")
+    err = refused(s.w.claim, trusted_unlisted)
+    assert (err.code, err.status) == ("not_allowed", 403)
+    assert err.details["missing"] == ["not_on_requester_list"]
+    assert str(err).startswith("no: requester not allowed")
+    err = refused(s.w.claim, s.w.pat("orch-untrusted", trust="standard"))
+    assert err.details["missing"] == ["seat_not_trusted", "not_on_requester_list"]
+    # A project seat of another board is told so, not about requester lists.
+    other = s.w.gw.authenticate("Bearer " + s.seat(PLAIN))
+    err = refused(s.w.claim, other)
+    assert err.details["missing"] == ["seat_of_another_project"]
+    # The text never carries other credentials or the machine's identity.
+    for leak in (s.w.a.connection_id, s.w.machine_id, s.w.machine_token):
+        assert leak not in str(err) and leak not in json.dumps(err.details)
+
+
+def test_revoked_machine_refusal_says_the_machine_is_the_gap(settings):
+    s = settings
+    s.w.configure()
+    with s.w.hub.db._lock, s.w.hub.db._tx() as conn:
+        conn.execute("UPDATE runner_machines SET revoked_at='2030-01-01T00:00:00Z'")
+    err = refused(s.w.claim, s.w.a)
+    assert (err.code, err.status) == ("not_allowed", 403)
+    assert err.details["missing"] == ["runner_machine_unavailable"]
+    assert "runner settings" in str(err)
+
+
+def test_authorization_is_unchanged_by_the_explanations(settings):
+    s = settings
+    s.w.configure()
+    assert s.w.claim(s.w.a)["epoch"] == 1  # a listed, trusted agent still passes
+    gateway, machine = s.w.gw, s.w.machine()
+    from commonplace.runner.predicate import requester_gaps, requester_ok
+
+    for principal, expected in (
+        (s.w.owner, True),
+        (s.w.a, True),
+        (s.w.b, True),
+        (s.w.unlisted, False),
+        (s.w.pat("orch-untrusted2", trust="standard"), False),
+    ):
+        assert requester_ok(gateway, principal, machine) is expected
+        assert (requester_gaps(gateway, principal, machine) == []) is expected

@@ -88,7 +88,7 @@ from commonplace.boards.store import BoardStore
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import log_failure
 from commonplace.runner import jobs, registry
-from commonplace.runner.predicate import requester_ok
+from commonplace.runner.predicate import requester_gaps
 from commonplace.snooze import store as snooze
 
 from . import schema, store as orch_store
@@ -636,26 +636,113 @@ def _snapshot(ctx, st, board, role):
     if config is None or not config.has_runner:
         # No machine grants authority here: only the board's own trusted seat coordinates.
         if seat is None or seat[:2] != (board, role):
-            raise DurableError("not_configured", 409, "board has no Coworker config")
+            raise _no_config_refusal(board, role, version, seat)
         if not seat[2]:
-            raise DurableError(
+            raise _refusal(
                 "not_allowed",
                 403,
-                "this seat is not trusted yet; a workspace owner approves its start "
-                "permissions in Project settings",
+                "this seat is not trusted yet",
+                ["seat_not_trusted"],
+                _FIX_TRUST.format(board=board),
             )
         return version
     if role not in config.roles:
         raise DurableError("unknown_role", 404, "role not found")
     if seat is not None and seat[0] != board:
         # A project seat coordinates its own board, whatever a machine grants it.
-        raise DurableError("not_allowed", 403, "requester not allowed")
+        raise _refusal(
+            "not_allowed",
+            403,
+            "this seat belongs to another project",
+            ["seat_of_another_project"],
+            "connect a seat for this project in Project settings > Connect agent",
+        )
     machine = registry.get_machine(ctx.db, principal.workspace_id, config.runner.machine)
     if machine is None or machine["revoked_at"]:
-        raise DurableError("not_allowed", 403, "requester not allowed")
-    if not requester_ok(ctx.gateway, principal, machine):
-        raise DurableError("not_allowed", 403, "requester not allowed")
+        raise _refusal(
+            "not_allowed",
+            403,
+            "the machine named in the config's [runner] table is not registered or was revoked",
+            ["runner_machine_unavailable"],
+            "a workspace owner registers the machine in the runner settings, or accepts a "
+            "config whose [runner] names a registered machine",
+        )
+    gaps = requester_gaps(ctx.gateway, principal, machine)
+    if gaps:
+        raise _requester_refusal(board, gaps)
     return version
+
+
+_FIX_TRUST = (
+    "a workspace owner trusts the seat and allows its starts in Project settings > "
+    "Orchestrator start permissions > Trust and allow starts (needs workspace "
+    "orchestration on; REST: POST /api/projects/{board}/orchestrator/trust)"
+)
+_FIX_CONFIG = (
+    "a workspace owner proposes a config with a [runner] table (machine, project, "
+    "runtime_mode) and limits.max_agents (orch_config_propose or POST "
+    "/api/orch/boards/{board}/configs) and accepts it (orch_config_accept, POST "
+    "/api/orch/boards/{board}/configs/<version>/accept or `commonplace orch accept`)"
+)
+_REQUESTER_TEXT = {
+    "workspace_mismatch": "this credential is not part of the machine's workspace",
+    "runner_credential": "a runner machine credential cannot hold a coordinator lease",
+    "owner_required": "only a workspace owner or a trusted agent on the machine's requester list may coordinate",
+    "pat_required": "only a signed-in owner or a trusted agent token (PAT) may coordinate",
+    "seat_not_trusted": "this agent is not trusted",
+    "not_on_requester_list": "this agent is not on the machine's requester list",
+}
+
+
+def _refusal(code, status, message, missing, fix):
+    """A refusal that names its missing prerequisites (stable slugs) and where an owner
+    fixes them; it never names other workspaces, other credentials or a secret."""
+    return DurableError(code, status, f"{message}; {fix}", missing=missing, fix=fix)
+
+
+def _no_config_refusal(board, role, version, seat):
+    """``not_configured``: the board has no accepted config with ``[runner]`` and the caller
+    is not the board's own seat for ``role``."""
+    if seat is not None and seat[0] != board:
+        return _refusal(
+            "not_configured",
+            409,
+            "this seat belongs to another project",
+            ["seat_of_another_project"],
+            "connect a seat for this project in Project settings > Connect agent",
+        )
+    if seat is not None:
+        return _refusal(
+            "not_configured",
+            409,
+            f"this seat holds the {seat[1]} role, not {role}; without a [runner] config "
+            "only that role can coordinate",
+            ["seat_role_mismatch"],
+            _FIX_CONFIG.format(board=board),
+        )
+    missing = ["accepted_config", "runner_table"] if version is None else ["runner_table"]
+    what = (
+        "the board has no accepted Coworker config"
+        if version is None
+        else "the board's accepted Coworker config has no [runner] table"
+    )
+    return _refusal(
+        "not_configured",
+        409,
+        f"{what} (Coworker config with [runner] and limits.max_agents, or this project's "
+        "own seat, is required)",
+        missing,
+        _FIX_CONFIG.format(board=board),
+    )
+
+
+def _requester_refusal(board, gaps):
+    message = "requester not allowed: " + "; ".join(_REQUESTER_TEXT[g] for g in gaps)
+    if "seat_not_trusted" in gaps or "not_on_requester_list" in gaps:
+        fix = _FIX_TRUST.format(board=board)
+    else:
+        fix = "start as a signed-in workspace owner or a trusted agent on the machine's requester list"
+    return _refusal("not_allowed", 403, message, gaps, fix)
 
 
 def _seat(ctx):
