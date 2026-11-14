@@ -40,7 +40,7 @@ export function mount(context) {
   styles(doc);
   if (page.screen === 'compute' && doc?.documentElement?.dataset?.ui === 'deck') computeStyles(doc);
   root.classList.add('deck-workspace');
-  const headers = ['.head', '#phone-bar'].map(selector => root.parentElement?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
+  const headers = (doc?.documentElement?.dataset?.ui === 'deck' ? ['.head'] : ['.head', '#phone-bar']).map(selector => root.parentElement?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
   for (const { node } of headers) node.hidden = true;
   const navStyle = root.parentElement?.querySelector('#phone-tabs')?.style;
   const previousNav = navStyle && ['position', 'bottom', 'left', 'right', 'zIndex'].map(key => [key, navStyle[key]]);

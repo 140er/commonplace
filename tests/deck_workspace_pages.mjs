@@ -72,7 +72,7 @@ test('Management uses the existing controller and restores the shell and phone d
     assert.match(f.regions.get('content').innerHTML, /<h1>Compute<\/h1>/);
     assert.doesNotMatch(f.root.innerHTML, /<p>Management<\/p>/);
     assert.doesNotMatch(f.root.innerHTML + f.regions.get('content').innerHTML, /orchestrator/i);
-    assert.equal(header.hidden, true); assert.equal(phone.hidden, true); assert.equal(tabs.style.position, 'fixed');
+    assert.equal(header.hidden, true); assert.equal(phone.hidden, !deck); assert.equal(tabs.style.position, 'fixed');
     ui.stop();
     assert.equal(header.hidden, false); assert.equal(phone.hidden, false); assert.equal(tabs.style.position, 'relative');
     assert.equal(f.root.innerHTML, '');

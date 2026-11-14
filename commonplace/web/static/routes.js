@@ -15,8 +15,8 @@ export function boardRoute({ boards = [], last } = {}) {
  */
 export function resolveRoute(hash, { boards = [], last, deck = false } = {}) {
   const route = hash || "#/";
-  if (route === "#/") return deck ? "#/" : boards.length ? "#/bots" : "#/start";
   if (route === "#/board" && deck) return boardRoute({ boards, last });
+  if (route === "#/") return deck ? "#/" : boards.length ? "#/bots" : "#/start";
   if (route === "#/compute-map" && deck) return "#/compute";
   if (route === "#/compute" && !deck) return "#/compute/management";
   if (route === "#/coworkers") return "#/bots/-/coworkers";
