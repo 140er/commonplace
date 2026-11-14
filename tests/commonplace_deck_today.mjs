@@ -175,6 +175,7 @@ test('working bots and project agent counts use only reported data, with honest 
   f.ui.stop();
   const empty = fixture({ roster: [] }); await flush();
   assert.match(waiting(empty), /Nothing waits on you./);
+  assert.match(waiting(empty), /<span class="cp-art" data-art="clear" aria-hidden="true"><svg /);
   assert.equal(empty.form.hidden, true);
   assert.equal(empty.regions.get('no-bots').hidden, false);
   assert.match(empty.root.html, /No bots yet/);

@@ -3,3 +3,12 @@
 .cp-art svg { display: block; max-width: 100%; height: auto; }
 .cp-art[data-art="column"] { margin-bottom: 6px; }
 .message > .cp-art { margin-inline: 0; }
+/* Inline pieces sit beside a title and add no height; the section line and the Memory title piece stay off the phone. */
+.cp-art[data-art="rule"], .cp-art[data-art="header"], .cp-art[data-art^="step-"] { margin: 0; flex: none; }
+.memory-heading > .cp-art { align-self: center; }
+.memory-import > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.memory-import > header > h1 { min-width: 0; }
+.deck-rail-empty > .cp-art { margin: 0 0 4px; }
+@media (max-width: 699px) {
+  .cp-art[data-art="rule"], .cp-art[data-art="header"] { display: none; }
+}

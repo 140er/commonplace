@@ -85,6 +85,26 @@ def stroke_only(shape, scale):
     )
 
 
+def rect(x0, y0, x1, y1):
+    return lambda x, y: x0 <= x <= x1 and y0 <= y <= y1
+
+
+def segment(ax, ay, bx, by, width):
+    """Points within width / 2 of the segment a-b."""
+    dx, dy = bx - ax, by - ay
+    span = dx * dx + dy * dy
+
+    def hit(x, y):
+        t = max(0, min(1, ((x - ax) * dx + (y - ay) * dy) / span))
+        return math.hypot(x - ax - t * dx, y - ay - t * dy) <= width / 2
+
+    return hit
+
+
+def union(*shapes):
+    return lambda x, y: any(shape(x, y) for shape in shapes)
+
+
 def vgrad(y0, y1, hi=1.0, lo=0.35):
     return lambda x, y: hi + (lo - hi) * min(1, max(0, (y - y0) / (y1 - y0)))
 
@@ -151,6 +171,47 @@ def main():
         for x in range(2, 38):
             img[y][x] = max(img[y][x], 0.25 if (x // 2) % 2 else 0)
     write_png(HERE / "loading.png", img)
+
+    # header: a small mark with a scan fading away to the right, for the Memory page title row.
+    img = canvas(48, 10)
+    paint(img, mark(0.5, 1, 1), lambda x, y: 1.0)
+    paint(img, rect(12, 4, 47, 6), hgrad(12, 47, 0.9, 0.05))
+    write_png(HERE / "header.png", img)
+
+    # rule: a thin fading line that opens a section.
+    img = canvas(48, 3)
+    paint(img, rect(0, 0, 47, 2), hgrad(0, 47, 1.0, 0.0))
+    write_png(HERE / "rule.png", img)
+
+    # rail: one small mark for the narrow rail.
+    img = canvas(20, 12)
+    paint(img, mark(0.65, 4, 1), vgrad(1, 11, 1.0, 0.4))
+    write_png(HERE / "rail.png", img)
+
+    # Import steps, 24 x 12 each: the mark plus one cue.
+    img = canvas(24, 12)
+    paint(img, mark(0.65, 1, 1), vgrad(1, 11, 1.0, 0.4))
+    paint(
+        img,
+        union(segment(14, 6, 22, 6, 1.4), segment(19, 3, 22, 6, 1.4), segment(19, 9, 22, 6, 1.4)),
+        lambda x, y: 0.9,
+    )
+    write_png(HERE / "step-choose.png", img)
+
+    img = canvas(24, 12)
+    paint(img, stroke_only(mark(0.65, 1, 1), 0.8), lambda x, y: 0.9)
+    paint(img, union(*[rect(14, y0, 22, y0 + 0.8) for y0 in (2, 5, 8)]), lambda x, y: 0.85)
+    write_png(HERE / "step-preview.png", img)
+
+    img = canvas(24, 12)
+    paint(img, mark(0.65, 1, 1), hgrad(1, 12, 1.0, 0.15))
+    paint(img, rect(14, 5, 22, 6.5), hgrad(14, 22, 0.7, 0.1))
+    write_png(HERE / "step-progress.png", img)
+
+    img = canvas(24, 12)
+    paint(img, mark(0.65, 1, 1), vgrad(1, 11, 1.0, 0.4))
+    paint(img, union(segment(14, 6.5, 17, 9, 1.5), segment(17, 9, 22, 3, 1.5)), lambda x, y: 0.95)
+    write_png(HERE / "step-report.png", img)
 
 
 if __name__ == "__main__":
