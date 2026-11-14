@@ -46,7 +46,7 @@ test('every old permission remains reachable by its label and raw search; wire n
       assert.ok(list.innerHTML.includes(`data-tool-policy-row="${action.name}"`), `${action.name}: ${search}`);
     }
     const row = presentation.rows([action],modes,'',e);
-    assert.match(row, /<details[\s\S]*<summary>Technical name<\/summary>/);
+    assert.ok(row.includes(`title="${e(action.name)}"`), 'wire name is available in the row title');
     const visible = row.replace(/<details[\s\S]*?<\/details>/g,'').replace(/<[^>]*>/g,'');
     assert.ok(!visible.includes(action.name), action.name);
     assert.ok(!row.match(/aria-label="[^"]*_/), 'accessible label is human too');
@@ -68,7 +68,7 @@ test('permission labels ignore prototype members and use notification outcomes',
   assert.equal(permissionLabel({name:'toString'}), 'ToString');
   const expected = {webhook_add:'Send notifications to another app', webhook_list:'See where notifications are sent', webhook_remove:'Stop sending to an app', webhook_test:'Send a test notification'};
   for (const [name,label] of Object.entries(expected)) assert.equal(permissionLabel({name}),label);
-  assert.equal(ui(true).policyPresentation().introduction(10), 'Choose what Bots may do without asking. Ask first puts the action in Needs me. Off refuses it. This does not limit what you do yourself.');
+  assert.equal(ui(true).policyPresentation().introduction(10), 'Ask sends the request to Today first. Deny refuses it.');
 });
 test('notification guidance distinguishes the owner and tolerates a missing connection heading', () => {
   for (const owner of [false,true]) {
@@ -79,6 +79,20 @@ test('notification guidance distinguishes the owner and tolerates a missing conn
     assert.doesNotThrow(()=>arrangeSettings(box,{owner}));
     assert.equal(notice.textContent.startsWith('Ask the workspace owner'),!owner);
   }
+});
+test('Settings keeps one scroll listener when a render replaces its navigation', () => {
+  const listeners=[];
+  let nav=null;
+  const box={dataset:{},querySelector:q=>q==='#deck-settings-nav'?nav:null,
+    querySelectorAll:()=>[],prepend(){},insertAdjacentHTML(){nav={};},
+    addEventListener:(...args)=>listeners.push(args)};
+  arrangeSettings(box);
+  arrangeSettings(box);
+  nav=null; // A late render can replace the children of the same scrolling box.
+  arrangeSettings(box);
+  assert.equal(listeners.length,1);
+  assert.equal(listeners[0][0],'scroll');
+  assert.deepEqual(listeners[0][2],{passive:true});
 });
 for (const initial of ['#/boards','#/needs','#/settings']) test(`late Voice after boot on ${initial} respects the active Settings epoch`, async () => {
   const app=readFileSync(new URL('../commonplace/web/static/app.js',import.meta.url),'utf8');
