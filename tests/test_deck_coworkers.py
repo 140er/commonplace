@@ -16,6 +16,7 @@ def test_deck_coworkers():
             str(Path(__file__).with_name("deck_coworkers_route.mjs")),
             str(Path(__file__).with_name("deck_coworker_design_nits.mjs")),
             str(Path(__file__).with_name("deck_coworker_page_guidance.mjs")),
+            str(Path(__file__).with_name("deck_coworker_empty_states.mjs")),
         ],
         capture_output=True,
         text=True,
