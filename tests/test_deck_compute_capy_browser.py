@@ -210,7 +210,10 @@ def test_compute_capy_screen(browser, size):
             page.wait_for_timeout(100)
         assert live.evaluate("el=>getComputedStyle(el).strokeWidth") == "1px"
         assert page.locator(".topo-link [data-end]").count() == 0
-        assert page.locator(".topo-bundle").count() == 0
+        bundle = page.locator(".topo-bundle")  # the runner has four links, so its card says so
+        assert bundle.count() == 1
+        assert bundle.get_attribute("data-bundle-node") == "runner"
+        assert bundle.locator(".topo-bundle-count").text_content() == "4"
         assert page.locator(".dc-map-controls button").count() == 2
         if size[0] == 1440:
             page.locator('.topo-link[data-link="link-0"]').focus()

@@ -69,12 +69,17 @@ export function directLinks(model, positions, phone = false, k = 1) {
   }));
 }
 
-function nodeHTML(node, at, { sel, on, dim, words, linkEnd }, phone) {
+// Counts keep an 11px screen size inside the card, straddling its top-right corner clear of the text and status mark.
+function bundleHTML(node, count, right) {
+  const text = String(count), width = Math.max(18, text.length*7+10), x = right-width/2+6;
+  return `<g class="topo-bundle dc-bundle" data-bundle-node="${e(node.key)}" data-count="${count}"><rect class="dc-bundle-chip" x="${x-width/2}" y="-33" width="${width}" height="18" rx="9"/><text class="topo-bundle-count" x="${x}" y="-20" text-anchor="middle">${text}</text></g>`;
+}
+function nodeHTML(node, at, { sel, on, dim, words, linkEnd, bundle }, phone) {
   const { width, height } = cardSize(node, phone), left = -width/2, textX = left+(phone ? 12 : 50), room = width-(phone ? 40 : 78);
   const name = wrapLines(node.name,room,13,1)[0], role = wrapLines(node.role || '',room,12,1)[0];
   const kind = KINDS[node.kind] || KINDS.unknown;
-  const label = `${node.name}${node.role ? `, ${node.role}` : ''}${node.status === 'none' ? '' : `. ${words[node.status] || 'Not reported'}`}${node.stale ? '. Stale' : ''}${node.missing ? '. Not recorded' : ''}`;
-  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${linkEnd ? ' dc-link-end' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${nodeStatusMark(node, width/2-16, phone)}</g></g>`;
+  const label = `${node.name}${node.role ? `, ${node.role}` : ''}${node.status === 'none' ? '' : `. ${words[node.status] || 'Not reported'}`}${node.stale ? '. Stale' : ''}${node.missing ? '. Not recorded' : ''}${bundle ? `. ${bundle.count} links` : ''}`;
+  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${linkEnd ? ' dc-link-end' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${nodeStatusMark(node, width/2-16, phone)}${bundle ? bundleHTML(node, bundle.count, width/2) : ''}</g></g>`;
 }
 function linkHTML(link, at, names, { on, dim, sel, words }) {
   const states = [...new Set([words[link.status.from],words[link.status.to]].filter(Boolean))].join('; ');

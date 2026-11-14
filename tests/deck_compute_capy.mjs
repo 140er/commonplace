@@ -124,6 +124,24 @@ test('compact presentation uses straight links, local curves for blockers, no en
 });
 
 
+for (const phone of [false, true]) test(`compact presentation: a device with more than three links shows its link count, ${phone ? 'phone' : 'desktop'}`, async () => {
+  const { computePresentation } = await import('../commonplace/web/static/deck-compute-scene.js');
+  const graph = count => ({ nodes: ['a','b','c'].map(key => ({ key, values: { kind: 'server', name: key } })), links: Array.from({ length: count }, (_, i) => ({ id: `link-${i}`, from: 'a', to: i % 2 ? 'b' : 'c', method: 'direct' })) });
+  const badges = scene => [...scene.matchAll(/<g class="topo-bundle dc-bundle" data-bundle-node="([^"]+)" data-count="(\d+)">.*?<text class="topo-bundle-count"[^>]*>(\d+)<\/text><\/g>/g)].map(m => [m[1], Number(m[2]), Number(m[3])]);
+  const draw = (count, options = { route: true }) => { const core = createMapCore({ ...options, presentation: computePresentation(phone) }); core.apply(graph(count)); return core; };
+  const four = draw(4);
+  assert.deepEqual(badges(four.scene()), [['a', 4, 4]], 'only the device with four link ends is marked, with its count');
+  assert.match(four.scene(), /aria-label="a[^"]*\. 4 links"/, 'the count has words for assistive technology');
+  assert.deepEqual(badges(draw(6).scene()), [['a', 6, 6]]);
+  assert.deepEqual(badges(draw(3).scene()), [], 'three links stay unmarked');
+  assert.deepEqual(badges(draw(4, {}).scene()), [], 'a map without link targets draws no count');
+  four.selectLink('link-1');
+  assert.deepEqual(badges(four.scene()), [['a', 4, 4]], 'every stroke is still drawn, so the count stays whole');
+  assert.equal((four.scene().match(/data-link="/g) || []).length, 4);
+  assert.doesNotMatch(four.scene(), /data-end=/, 'the Deck look keeps its own link ends');
+});
+
+
 test('compact node states have distinct geometry and accessible status words', async () => {
   const { computePresentation } = await import('../commonplace/web/static/deck-compute-scene.js');
   const words = { up: 'Healthy', degraded: 'Degraded', down: 'Unreachable', unknown: 'Not reported' };

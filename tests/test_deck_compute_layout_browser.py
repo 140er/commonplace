@@ -59,20 +59,7 @@ def mount_compute(page, route):
     page.wait_for_function("document.querySelector('link[data-workspace-style]')?.sheet")
 
 
-@pytest.mark.parametrize(
-    "route",
-    [
-        pytest.param(
-            "#/compute",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="product follow-up: the Deck map draws no bundle count badge for a node "
-                "with more than three links (renderScene skips bundles when a presentation is set)",
-            ),
-        ),
-        "#/compute/management",
-    ],
-)
+@pytest.mark.parametrize("route", ["#/compute", "#/compute/management"])
 def test_compute_phone_has_16px_gutters_and_no_horizontal_overflow(route):
     playwright = pytest.importorskip("playwright.sync_api")
     with playwright.sync_playwright() as pw:
@@ -110,13 +97,9 @@ def test_compute_phone_has_16px_gutters_and_no_horizontal_overflow(route):
                   const overlaps = other => { const b=other.getBoundingClientRect();
                     return r.left < b.right && r.right > b.left && r.top < b.bottom && r.bottom > b.top; };
                   const count={font:parseFloat(style.fontSize)*Math.hypot(m.a,m.b), collision:false};
-                  for(const node of document.querySelectorAll('.topo-node')) {
-                    const disc=node.querySelector('.topo-plate').getBoundingClientRect();
-                    const x=Math.max(r.left,Math.min((disc.left+disc.right)/2,r.right));
-                    const y=Math.max(r.top,Math.min((disc.top+disc.bottom)/2,r.bottom));
-                    if(Math.hypot(x-(disc.left+disc.right)/2,y-(disc.top+disc.bottom)/2)<=disc.width/2) count.collision=true;
+                  for(const card of document.querySelectorAll('.dc-node-card')) {
+                    for(const part of card.querySelectorAll('.dc-node-name,.dc-node-role,.dc-node-status')) if(overlaps(part)) count.collision=true;
                   }
-                  for(const label of document.querySelectorAll('.topo-label-plate')) if(overlaps(label)) count.collision=true;
                   for(const path of document.querySelectorAll('.topo-route')) {
                     const m=path.getScreenCTM();
                     for(let d=0;d<=path.getTotalLength();d+=0.5) {
