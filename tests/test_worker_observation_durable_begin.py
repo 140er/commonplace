@@ -7,6 +7,24 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def http_child_generation(monkeypatch):
+    """Startup ordering is a property of the HTTP child, not of its restart owner.
+
+    Without the child marker ``_run_http_loop`` would hand off to the real
+    supervisor, which launches a server process and blocks for as long as it
+    lives. The stub makes that mistake fail immediately instead of hanging.
+    """
+    from mempalace import mcp_server as server
+
+    def no_supervisor(**kwargs):
+        raise AssertionError("startup tests must run the child path, not spawn a supervisor")
+
+    monkeypatch.setenv("MEMPALACE_HTTP_CHILD", "1")
+    monkeypatch.setattr(server, "_http_coordinator", None, raising=False)
+    monkeypatch.setattr(server, "_http_supervisor_factory", no_supervisor, raising=False)
+
+
 def test_default_http_startup_phases_on_disk(tmp_path, monkeypatch):
     from mempalace import mcp_server as server
     from mempalace.worker_observation import Observer

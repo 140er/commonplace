@@ -1,0 +1,2 @@
+- **Owns:**
+  - `tests/test_worker_observation_durable_begin.py` runs `_run_http_loop` as the HTTP child generation (child marker set, coordinator cleared) and replaces the supervisor factory with a stub that raises, so these startup-ordering tests never launch a real server process.
