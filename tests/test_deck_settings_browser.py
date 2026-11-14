@@ -42,7 +42,15 @@ def browser():
 
 
 def open_settings(
-    browser, width, *, look="deck", static=STATIC, available=False, late_voice=False, role="owner"
+    browser,
+    width,
+    *,
+    look="deck",
+    static=STATIC,
+    available=False,
+    late_voice=False,
+    role="owner",
+    connections=None,
 ):
     context = browser.new_context(
         viewport={"width": width, "height": 844 if width == 390 else 800},
@@ -66,7 +74,7 @@ def open_settings(
         "/api/bots": {"bots": []},
         "/api/rules/count": {"waiting": 0},
         "/api/voice": {"available": True, "enabled": False, "owner": True},
-        "/api/connections": {"connections": [], "wings": []},
+        "/api/connections": {"connections": connections or [], "wings": []},
         "/api/webhooks": {"webhooks": []},
         "/api/plan": {
             "enabled": True,
@@ -169,7 +177,7 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             "[data-schedule-form]",
             '[data-form="webhook"]',
             '[data-action="logout"]',
-            '[data-deck-action="toggle"]',
+            '[data-deck-action="look"][data-look="classic"]',
             "[data-orchestration-enabled]",
             '[data-voice="enabled"]',
         ]:

@@ -333,7 +333,9 @@ StageDither.prototype.render = function () {
   if (!rect.width || !rect.height) return;
   const started = this.win.performance.now();
   const dpr = Math.min(this.win.devicePixelRatio || 1, 2);
-  const W = Math.round(rect.width * dpr), H = Math.round(rect.height * dpr);
+  // Never larger than the window: a canvas without CSS size grows with its own bitmap, and each render would double it.
+  const fit = (size, limit) => limit > 0 ? Math.min(size, Math.ceil(limit * dpr)) : size;
+  const W = fit(Math.round(rect.width * dpr), this.win.innerWidth), H = fit(Math.round(rect.height * dpr), this.win.innerHeight);
   if (c.width !== W) c.width = W;
   if (c.height !== H) c.height = H;
   const cs = Math.max(2, Math.round(o.dot * dpr));
