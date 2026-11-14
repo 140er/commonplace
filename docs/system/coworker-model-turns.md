@@ -5,3 +5,4 @@
 - The complete request/response, enum and error contract lives in the chat-and-voice module's coworker model turns fragment.
 - Conversation list responses retain directory section, unread, state, audience and ownership fields alongside model/effort using the existing bounded query; detail may also include live ownership. Creation and stored conversation reads retain the persisted fields.
 - Model-policy snapshots precede coworker writer locks; pure view/selection helpers use the snapshot, and audit writes follow private transaction closure. Canonical active-run lookup is independent of recent chat history length.
+- Live-log and working-on projections retain their existing authority checks alongside model/effort; canonical and short detail/log aliases use the same snapshot-backed conversation views and model-independent origin bindings.

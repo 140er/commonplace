@@ -512,6 +512,11 @@ def test_model_lock_order_on_all_view_routes_and_runtime(
         ("GET", "/conversations", None),
         ("GET", f"/conversations/{item.cid}", None),
         ("GET", f"/conversations/{item.cid}/messages", None),
+        ("GET", f"/{item.cid}", None),
+        ("GET", f"/conversations/{item.cid}/log", None),
+        ("GET", f"/conversations/{item.cid}/log/stream", None),
+        ("GET", f"/{item.cid}/log", None),
+        ("GET", f"/{item.cid}/log/stream", None),
         ("POST", "/conversations", {"kind": "dm", "bot_ids": [env.bot["id"]], "model": "fixture"}),
         (
             "POST",
