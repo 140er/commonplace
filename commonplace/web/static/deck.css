@@ -224,6 +224,28 @@
   :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
 }
 
+/* Workspace creation stays on the shared Deck surfaces and controls. */
+:root[data-ui="deck"] .workspace-switch.sheet { background: var(--surface); border: 0; border-radius: 20px; }
+:root[data-ui="deck"] .workspace-switch input { background: var(--well); color: var(--text); border: 0; border-radius: 12px; box-shadow: none; caret-color: var(--text); }
+:root[data-ui="deck"] .workspace-switch .btn { border-radius: 999px; }
+:root[data-ui="deck"] .workspace-switch input:focus-visible, :root[data-ui="deck"] .workspace-switch .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+
+/* A workspace dialog owns its full content width; creation stays secondary in the list. */
+:root[data-ui="deck"] .workspace-switch.sheet { display: block; box-sizing: border-box; width: min(400px, calc(100% - 32px)); padding: 24px; }
+:root[data-ui="deck"] .workspace-switch .menu-body { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+:root[data-ui="deck"] .workspace-switch h2 { margin: 0; text-align: left; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workspace-switch .workspace-list { width: 100%; gap: 0; }
+:root[data-ui="deck"] .workspace-switch .workspace-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 16px; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 10px 0; text-align: left; background: none; color: var(--text); line-height: 1.4; }
+:root[data-ui="deck"] .workspace-switch .workspace-row[aria-current] { opacity: 1; cursor: default; }
+:root[data-ui="deck"] .workspace-switch .workspace-label { min-width: 0; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .workspace-switch .workspace-role { color: var(--text-3); font-size: 13px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-create] { align-self: flex-start; background: var(--well); color: var(--text-2); }
+:root[data-ui="deck"] .workspace-switch .workspace-close-row { justify-content: flex-end; }
+:root[data-ui="deck"] .workspace-switch .btn { min-height: 44px; padding: 10px 16px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-name-error] { color: var(--text-2); font-size: 14px; }
+:root[data-ui="deck"] .workspace-switch [data-workspace-name-error]:empty { display: none; }
+:root[data-ui="deck"] .workspace-switch input[aria-invalid="true"] { outline: 1px solid var(--text-3); outline-offset: 0; }
+
 /* Assignment removal keeps the drawer controls and its confirmation in the same palette. */
 :root[data-ui="deck"] .assignment-removal { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; color: var(--text); }
 :root[data-ui="deck"] .assignment-removal p { color: var(--text-2); overflow-wrap: anywhere; }
