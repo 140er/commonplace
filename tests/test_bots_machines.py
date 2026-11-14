@@ -244,10 +244,40 @@ def test_cancel_start_cancels_a_queued_start(env):
     assert env.jobs()[0]["state"] == "cancelled"
 
 
-def test_cancel_start_refuses_a_launched_agent_plainly(env):
+def test_cancel_start_on_a_launched_agent_requests_a_stop_and_never_claims_it(env):
     env.enroll()
     started = machines.start_agent(env.gateway, env.owner, env.card(), request_key="k-l")
     env.set_state(started["job"], "started")
+    # No retained run id: the stop cannot be targeted, so it stays unsupported.
+    assert machines.cancel_start(env.gateway, env.owner, started["job"]) == {"state": "started"}
+    row = env.jobs()[0]
+    assert row["state"] == "started" and row["cancel_requested_at"]
+    assert (row["stop_status"], row["stop_code"]) == ("unsupported", "run_id_missing")
+    assert row["stop_confirmed_at"] is None
+
+
+def test_cancel_start_with_a_run_id_leaves_a_pending_stop_for_the_runner(env):
+    env.enroll()
+    started = machines.start_agent(env.gateway, env.owner, env.card(), request_key="k-p")
+    store = jobs.open_store(env.gateway, env.owner.workspace_id)
+    with store.transaction() as conn:
+        conn.execute(
+            "UPDATE runner_jobs SET state='started', run_id='demo-run' WHERE id=?",
+            (started["job"],),
+        )
+    first = machines.cancel_start(env.gateway, env.owner, started["job"])
+    request = env.jobs()[0]["stop_request_id"]
+    again = machines.cancel_start(env.gateway, env.owner, started["job"])
+    assert first == again == {"state": "started"}, "a request alone never reads as stopped"
+    row = env.jobs()[0]
+    assert row["state"] == "started" and row["stop_status"] == "pending"
+    assert row["stop_request_id"] == request and row["stop_confirmed_at"] is None
+
+
+def test_cancel_start_refuses_a_finished_start_plainly(env):
+    env.enroll()
+    started = machines.start_agent(env.gateway, env.owner, env.card(), request_key="k-f")
+    assert machines.cancel_start(env.gateway, env.owner, started["job"]) == {"state": "cancelled"}
     with pytest.raises(machines.Refused) as caught:
         machines.cancel_start(env.gateway, env.owner, started["job"])
     assert caught.value.code == "already_finished"
