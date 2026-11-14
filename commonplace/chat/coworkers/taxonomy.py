@@ -47,15 +47,16 @@ def _visible(store, bots):
     ids = [b["connection_id"] for b in bots if b["connection_id"] is not None]
     if not ids:
         return bots
-    rows = db._conn.execute(
-        "SELECT c.*,u.email AS user_email,u.disabled_at AS user_disabled,m.role,r.kind AS runner_kind "
-        "FROM connections c JOIN users u ON u.id=c.user_id "
-        "LEFT JOIN memberships m ON m.workspace_id=c.workspace_id AND m.user_id=c.user_id "
-        "LEFT JOIN runner_connections r ON r.connection_id=c.id "
-        f"WHERE c.id IN ({','.join('?' for _ in ids)}) AND c.workspace_id=?",
-        (*ids, authority.workspace_id),
-    ).fetchall()
-    visible = {row["id"] for row in rows if db._connection_principal(row) is not None}
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT c.*,u.email AS user_email,u.disabled_at AS user_disabled,m.role,r.kind AS runner_kind "
+            "FROM connections c JOIN users u ON u.id=c.user_id "
+            "LEFT JOIN memberships m ON m.workspace_id=c.workspace_id AND m.user_id=c.user_id "
+            "LEFT JOIN runner_connections r ON r.connection_id=c.id "
+            f"WHERE c.id IN ({','.join('?' for _ in ids)}) AND c.workspace_id=?",
+            (*ids, authority.workspace_id),
+        ).fetchall()
+        visible = {row["id"] for row in rows if db._connection_principal(row) is not None}
     return [b for b in bots if b["connection_id"] is None or b["connection_id"] in visible]
 
 
@@ -151,6 +152,9 @@ def set_section(store, user_id, bot_id, section):
     """Workspace-owner configuration; audit identifiers only, never the section text."""
     from .store import StoreError, _id
 
+    authority = store._authority
+    if authority is None:
+        raise StoreError("owner_required", 403)
     _id(bot_id)
     with store._transaction() as conn:
         store._user(user_id, owner=True)
@@ -169,15 +173,14 @@ def set_section(store, user_id, bot_id, section):
             "SELECT section FROM coworker_sections WHERE bot_id=?", (bot_id,)
         ).fetchone()
         if (old[0] if old else None) != section:
-            if store._authority is not None:
-                store._authority.gateway.db.audit(
-                    action="coworkers.section",
-                    decision="ok",
-                    workspace_id=store._authority.workspace_id,
-                    user_id=user_id,
-                    target_ids=[bot_id],
-                    reason="clear" if section is None else "set",
-                )
+            authority.gateway.db.audit(
+                action="coworkers.section",
+                decision="ok",
+                workspace_id=authority.workspace_id,
+                user_id=user_id,
+                target_ids=[bot_id],
+                reason="clear" if section is None else "set",
+            )
             if section is None:
                 conn.execute("DELETE FROM coworker_sections WHERE bot_id=?", (bot_id,))
             else:
@@ -194,6 +197,8 @@ def team_bots(gateway, principal):
 
     Reuse its original-owner read mark or member private-thread read mark;
     never sum over other people's private threads, including for a bot owner.
+    The gateway caches this store per workspace. Its owner controls cleanup;
+    a request retains the shared handle on both success and exception.
     """
     from commonplace.bots import limits
     from commonplace.bots.errors import stamp

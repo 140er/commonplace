@@ -10,10 +10,19 @@ import pytest
 
 from commonplace import sessions
 from commonplace.account import deletion, tables
-from commonplace.bots import limits, sharing_setting
+from commonplace.bots import limits, sharing_setting, store as bot_store
 from commonplace.bots.store import open_bots
-from commonplace.chat.coworkers.store import Store, open_store
+from commonplace.chat.coworkers import taxonomy
+from commonplace.chat.coworkers.store import Store, StoreError, open_store
 from tests.test_coworker_api import api as api
+
+
+@pytest.fixture
+def team_store(api):
+    # open_bots is a workspace cache. Its owner, not individual GETs, closes it.
+    store = open_bots(api.gateway, api.workspace)
+    api.gateway.db.add_pre_close_callback(store.close)
+    return store
 
 
 def directory(api, *, user=None):
@@ -71,6 +80,70 @@ def test_section_owner_only_sanitized_clearable_and_audited_without_name(api):
     assert api.request("POST", path, {"section": None})[0] == 200
     assert directory(api)["bots"][0]["section"] is None
     assert api.request("POST", "/bots/missing/section", {"section": "Research"})[0] == 404
+
+
+@pytest.mark.parametrize("section", ["Core Ops", None])
+def test_section_without_authority_refuses_set_and_clear(tmp_path, section):
+    store = Store(tmp_path / "coworkers.sqlite3")
+    bot = store.create_bot("fixture", "Fixture")
+    with store._transaction() as conn:
+        conn.execute("INSERT INTO coworker_sections VALUES (?,?)", (bot["id"], "Original"))
+    with pytest.raises(StoreError, match="owner_required") as error:
+        taxonomy.set_section(store, "fixture", bot["id"], section)
+    assert error.value.status == 403
+    with store._transaction() as conn:
+        assert conn.execute("SELECT section FROM coworker_sections").fetchone()[0] == "Original"
+
+
+def test_visible_holds_control_lock_through_query_and_fetch(api, monkeypatch):
+    connection, _ = api.gateway.db.create_token(
+        workspace_ref=api.workspace,
+        user_ref=api.owner,
+        name="fixture-bound",
+        client="tests",
+        policy=sessions.person_policy(),
+        actor=api.owner,
+    )
+    bot = api.bot(connection_id=connection)
+    store = open_store(api.gateway, api.workspace)
+    db = api.gateway.db
+    real_lock, real_conn = db._lock, db._conn
+
+    class Lock:
+        depth = 0
+
+        def __enter__(self):
+            real_lock.__enter__()
+            self.depth += 1
+            return self
+
+        def __exit__(self, *args):
+            self.depth -= 1
+            return real_lock.__exit__(*args)
+
+    lock = Lock()
+    observations = []
+
+    class Cursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def fetchall(self):
+            assert lock.depth > 0, "control cursor fetched outside its lock"
+            observations.append("fetch")
+            return self.cursor.fetchall()
+
+    class Connection:
+        def execute(self, *args):
+            assert lock.depth > 0, "control query executed outside its lock"
+            observations.append("query")
+            return Cursor(real_conn.execute(*args))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(db, "_lock", lock)
+        patch.setattr(db, "_conn", Connection())
+        assert taxonomy._visible(store, [bot]) == [bot]
+    assert observations == ["query", "fetch"]
 
 
 def test_unread_is_person_scoped_and_only_marks_delivered_pages(api):
@@ -143,10 +216,10 @@ def test_closed_states_come_from_latest_real_job_without_model_or_ticket_copy(
     assert "#123" not in row["summary"] and "model-tag" not in json.dumps(row["coworkers"])
 
 
-def test_team_bots_reuse_roster_shares_and_existing_unread_without_copying(api):
+def test_team_bots_reuse_roster_shares_and_existing_unread_without_copying(api, team_store):
     principal = sessions.person_principal(api.gateway.db, api.owner, api.workspace)
     sharing_setting.set_enabled(api.gateway.db, principal, True)
-    bots = open_bots(api.gateway, api.workspace)
+    bots = team_store
     own = bots.create(api.owner, "Private fixture")
     hidden = bots.create(api.member, "Hidden canary")
     shared = bots.create(api.member, "Shared fixture")
@@ -172,11 +245,10 @@ def test_team_bots_reuse_roster_shares_and_existing_unread_without_copying(api):
         assert conn.execute("SELECT count(*) FROM bots").fetchone()[0] == 0
     bots.revoke(shared["id"], api.member, api.owner)
     assert {row["id"] for row in directory(api)["team_bots"]} == {own["id"]}
-    bots.close()
 
 
-def test_team_sharing_default_off_and_disabled_share_never_exposes_bot(api):
-    bots = open_bots(api.gateway, api.workspace)
+def test_team_sharing_default_off_and_disabled_share_never_exposes_bot(api, team_store):
+    bots = team_store
     hidden = bots.create(api.member, "Private fixture")
     assert directory(api)["team_bots"] == []
     principal = sessions.person_principal(api.gateway.db, api.owner, api.workspace)
@@ -189,11 +261,10 @@ def test_team_sharing_default_off_and_disabled_share_never_exposes_bot(api):
     assert row["unread"] == 0 and row["state"] == "idle"
     sharing_setting.set_enabled(api.gateway.db, principal, False)
     assert directory(api)["team_bots"] == []
-    bots.close()
 
 
-def test_team_projection_does_not_count_other_persons_running_turn(api):
-    bots = open_bots(api.gateway, api.workspace)
+def test_team_projection_does_not_count_other_persons_running_turn(api, team_store):
+    bots = team_store
     bot = bots.create(api.owner, "Fixture")
     turn = SimpleNamespace(
         workspace_id=api.workspace,
@@ -208,11 +279,10 @@ def test_team_projection_does_not_count_other_persons_running_turn(api):
         assert row["state"] == "idle"
     finally:
         limits.REGISTRY.release(turn)
-        bots.close()
 
 
-def test_team_state_uses_own_live_reply_running_turn_and_unexpired_confirmation(api):
-    bots = open_bots(api.gateway, api.workspace)
+def test_team_state_uses_own_live_reply_running_turn_and_unexpired_confirmation(api, team_store):
+    bots = team_store
     bot = bots.create(api.owner, "Fixture")
     bots.add_event_message(bot["id"], api.owner, "Received")
     assert directory(api)["team_bots"][0]["state"] == "live"
@@ -233,11 +303,10 @@ def test_team_state_uses_own_live_reply_running_turn_and_unexpired_confirmation(
         assert (row["state"], row["summary"]) == ("waiting", "Needs you")
     finally:
         limits.REGISTRY.release(turn)
-        bots.close()
 
 
-def test_workspace_and_agent_token_boundaries_apply_to_both_projections(api):
-    bots = open_bots(api.gateway, api.workspace)
+def test_workspace_and_agent_token_boundaries_apply_to_both_projections(api, team_store):
+    bots = team_store
     bots.create(api.owner, "Workspace canary")
     api.bot()
     other = api.gateway.db.create_workspace("Other", api.owner)
@@ -253,7 +322,6 @@ def test_workspace_and_agent_token_boundaries_apply_to_both_projections(api):
     )
     for path in ("/bots", "/conversations"):
         assert api.request("GET", path, headers={"Authorization": "Bearer " + token})[0] == 403
-    bots.close()
 
 
 @pytest.mark.parametrize("bound", [False, True])
@@ -290,25 +358,65 @@ def test_directory_lookup_count_is_constant_for_fifty_bots(api, monkeypatch, bou
         api.gateway.db._conn.set_trace_callback(None)
         assert status == 200 and len(body[key]) == 50
         reads = [q for q in queries if q.lstrip().upper().startswith(("SELECT", "WITH"))]
-        assert len(reads) <= 4, reads
+        assert 1 <= len(reads) <= 4, reads
         assert (
             len([q for q in control_queries if q.lstrip().upper().startswith(("SELECT", "WITH"))])
             <= 10
         )
 
 
-def test_team_lookup_count_is_constant_for_fifty_bots(api):
-    bots = open_bots(api.gateway, api.workspace)
+def test_team_lookup_count_is_constant_for_fifty_bots(api, team_store, monkeypatch):
+    bots = team_store
     for number in range(50):
         bots.create(api.owner, f"Team fixture {number}")
     queries = []
+    route_stores = []
+    original_open = bot_store.open_bots
+
+    def traced_open(gateway, workspace_id):
+        store = original_open(gateway, workspace_id)
+        route_stores.append(store)
+        return store
+
+    monkeypatch.setattr(bot_store, "open_bots", traced_open)
     with bots._tx(write=False) as conn:
         conn.set_trace_callback(queries.append)
-        rows = directory(api)["team_bots"]
-        conn.set_trace_callback(None)
+        try:
+            rows = directory(api)["team_bots"]
+        finally:
+            conn.set_trace_callback(None)
     assert len(rows) == 50
-    assert len([q for q in queries if q.lstrip().upper().startswith(("SELECT", "WITH"))]) <= 4
-    bots.close()
+    assert route_stores == [bots]
+    reads = [q for q in queries if q.lstrip().upper().startswith(("SELECT", "WITH"))]
+    assert 1 <= len(reads) <= 4, reads
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_team_cached_handle_survives_request_and_owner_closes_it(
+    api, team_store, monkeypatch, fails
+):
+    bots = team_store
+    bots.create(api.owner, "Fixture")
+    connection = bots._conn
+
+    if fails:
+
+        def unavailable(*args):
+            raise RuntimeError("fixture unavailable")
+
+        monkeypatch.setattr(bots, "roster", unavailable)
+        with pytest.raises(RuntimeError, match="fixture unavailable"):
+            api.request("GET", "/bots")
+    else:
+        assert directory(api)["team_bots"][0]["name"] == "Fixture"
+    assert open_bots(api.gateway, api.workspace) is bots
+    assert bots._conn is connection
+    assert connection.execute("SELECT 1").fetchone()[0] == 1
+    # Both outcomes leave the shared connection to its owner for cleanup.
+    api.gateway.db.close()
+    assert bots._conn is None
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
 
 
 @pytest.mark.parametrize("former_member", [False, True])
