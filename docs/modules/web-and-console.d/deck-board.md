@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - The optional Deck look renders the existing board reads through `deck-board.js` and `deck-board.css`. `#/board` resolves to the last readable project board; existing project and card links retain their routes. Classic rendering stays in `board.js` and `details.js`.
+  - The optional Deck look renders the existing board reads through `deck-board.js` and `deck-board.css`. `#/board` resolves to the last readable project board; existing project and card links retain their routes. The Board alias is additive: the Deck root remains Home and the existing product palette keeps its destinations. Classic rendering stays in `board.js` and `details.js`.
 
   - Four open columns group personal actions, active work, review and shipped work. Only a personal action receives an amber edge; all four columns show quiet grey totals. Cards show the recorded Bot name and one state phrase; missing Bot attribution is explicit. The drawer adds summary, Bot, Coworker, Version and progress from recorded card events/checks. No completed checks or review steps are inferred from a column. Display copy omits ticket/model clutter and evidence locations without changing stored text or versioned action values.
 

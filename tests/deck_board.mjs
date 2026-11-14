@@ -70,6 +70,8 @@ test('canonical Board route reuses the last readable board and classic routing s
   assert.equal(resolveRoute('#/board',{boards,last:'other',deck:true}),'#/board/other');
   assert.equal(resolveRoute('#/board',{boards,last:'hidden',deck:true}),'#/board/product');
   assert.equal(resolveRoute('#/board',{boards,deck:false}),'#/board');
+  assert.equal(resolveRoute('#/',{boards,deck:true}),'#/','Board alias preserves Deck Home');
+  assert.equal(resolveRoute('#/',{boards,deck:false}),'#/bots','classic root stays unchanged');
 });
 test('recorded plan approvals and origin release retain their existing authority paths',()=>{
   const plan=renderDetails({...base,need:'you',actions:['approve'],ask:null},options);

@@ -42,7 +42,7 @@ for (const [label, base, route, drawer] of [
       assert.match(mount.innerHTML, new RegExp(`href="#/${destination}"`));
       assert.ok(closes.length + 1 <= 2, "close drawer, then choose a tab");
     }
-    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>3<span/);
+    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>2<span/);
   }
   state.deck = undefined;
   runInNewContext(`({${callback}}).phone()`, context);
@@ -199,7 +199,8 @@ test("Settings carries the workspace tools in the Deck look only, with Admin for
   };
   assert.deepEqual(make(false, { can_admin: true }).map(([where]) => where), ["beforeend"], "classic look: the Look switch only");
   const on = make(true, { can_admin: true });
-  assert.deepEqual(on.map(([where]) => where), ["afterbegin", "beforeend"]);
+  assert.deepEqual(on.map(([where]) => where), ["afterbegin", "afterbegin", "beforeend"]);
+  assert.match(on[1][1], /Notifications[\s\S]*Connections[\s\S]*Workspace/);
   assert.deepEqual([...on[0][1].matchAll(/href="(#\/[a-z]+)"/g)].map((m) => m[1]), ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]);
   assert.match(on[0][1], /Needs me<span class="count need">3/);
   for (const can_admin of [false, undefined, "true"]) assert.doesNotMatch(make(true, { can_admin })[0][1], /#\/admin/);
