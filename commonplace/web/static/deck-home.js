@@ -2,10 +2,17 @@
 import { escape as e } from './api.js';
 import { sendMessage } from './botstream.js';
 import { composerHTML, sendButtonHTML } from './bots.js';
+import { needsMeCount, needsKnown } from './needs-me.js';
 import { addStyles, runHTML, displayText, quietSelector, runUpdate, retryIntent } from './deck-home-today.js';
 
 export const TITLE = 'Commonplace';
 const enc = encodeURIComponent;
+/** The Home hint under the composer: the shared needs-me count as a link to Today. Empty while nothing has loaded. */
+export const waitingHint = needs => {
+  if (!needsKnown(needs)) return '';
+  const n = needsMeCount(needs);
+  return n > 0 ? `<a href="#/today"><i class="bt-dot" data-tone="waiting" aria-hidden="true"></i>${n} waiting on you in Today</a>` : 'Nothing is waiting on you';
+};
 const pending = run => ['sending', 'streaming', 'running', 'polling', 'dropped', 'pending', 'queued'].includes(run.state);
 const effortLabels = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
 export function modelControls(conversation, catalog = [], configured = null) {
@@ -38,8 +45,7 @@ export function mount(context) {
   }
   function paint() {
     if (!active) return;
-    const n = ctx.needs?.count;
-    hint.innerHTML = Number.isSafeInteger(n) ? n > 0 ? `<a href="#/today"><i class="bt-dot" data-tone="waiting" aria-hidden="true"></i>${n} waiting in Today</a>` : 'Nothing is waiting on you' : '';
+    hint.innerHTML = waitingHint(ctx.needs);
     const signature = JSON.stringify(bots.map(bot => [bot.id, bot.name]));
     if (signature !== rosterSignature) {
       const previous = fields.bot.value;
