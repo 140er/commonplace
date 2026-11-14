@@ -46,10 +46,17 @@ async def assert_tabs(page):
 
 
 async def assert_gutters(page, selector):
-    padding = await page.locator(selector).first.evaluate(
-        "e => [getComputedStyle(e).paddingLeft, getComputedStyle(e).paddingRight]"
+    # Navigation can replace a matched board between locator resolution and evaluation.
+    # Measure the current attached node and its styles in the same browser task.
+    await page.wait_for_function(
+        """selector => {
+          const node = document.querySelector(selector);
+          if (!node) return false;
+          const style = getComputedStyle(node);
+          return style.paddingLeft === '16px' && style.paddingRight === '16px';
+        }""",
+        arg=selector,
     )
-    assert padding == ["16px", "16px"]
 
 
 @pytest.mark.parametrize("surface", ["board", "card", "project-settings", "needs"])
@@ -96,7 +103,11 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
                         await page.wait_for_selector(".needs-me")
                         await assert_gutters(page, "#content")
                     else:
-                        await assert_gutters(page, ".workbench-board .board")
+                        await page.wait_for_function("""() => {
+                          const board = document.querySelector('.deck-board .board');
+                          const box = board?.getBoundingClientRect();
+                          return box?.left === 16 && box.right === innerWidth - 16;
+                        }""")
                     await assert_tabs(page)
                     await page.locator(f'[data-deck="tabs"] a[href="#/{destination}"]').click()
                     await page.wait_for_function(
@@ -108,8 +119,8 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
                 for href in ["#/boards", "#/memory", "#/needs"]:
                     assert await page.locator(f'#deck-tools a[href="{href}"]').is_visible()
                 await page.locator('#deck-tools [data-action="switch-workspace"]').click()
-                await page.wait_for_selector("#shell-dialog[open]")
-                assert "Switch workspace" in await page.locator("#shell-dialog").inner_text()
+                await page.locator(".workspace-switch").wait_for(state="visible")
+                assert "Switch workspace" in await page.locator(".workspace-switch").inner_text()
                 await context.close()
             finally:
                 await browser.close()

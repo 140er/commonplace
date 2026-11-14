@@ -7,6 +7,7 @@ import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
 import { arrangeCapySettings, capyPolicyPresentation } from './deck-settings-capy.js';
 import { createDeckAppearance } from './deck-appearance.js';
+import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, createDeckShell } from './deck-shell.js';
 import { arrangeSettings, selectSettings } from './deck-settings.js';
 
 export const UI_KEY = 'cmmn.ui';
@@ -18,7 +19,6 @@ export const SCREENS = {
   compute: () => import('./deck-workspace.js'),
   coworkers: () => import('./deck-workspace.js'),
 };
-const SECTIONS = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
 
 const store = () => { try { return globalThis.localStorage || null; } catch { return null; } };
 export function deckOn(storage = store()) {
@@ -43,19 +43,6 @@ export function applyDeck({ doc = globalThis.document, loc = globalThis.location
   return on;
 }
 
-const count = (n) => Number.isSafeInteger(n) && n > 0 ? n : 0;
-const current = (yes) => yes ? ' aria-current="page"' : '';
-const paths = {
-  today: '<path d="M3 8.5l3 3 7-7"/>',
-  bots: '<rect x="2.5" y="5" width="11" height="8" rx="2"/><path d="M8 5V2.8M5.8 9h.1M10.2 9h.1"/>',
-  compute: '<circle cx="3.5" cy="8" r="1.6"/><circle cx="12.5" cy="4" r="1.6"/><circle cx="12.5" cy="12" r="1.6"/><path d="M5 7.3l6-2.6M5 8.7l6 2.6"/>',
-  settings: '<path d="M2 4.5h7M12.5 4.5H14M2 11.5h1.5M6.5 11.5H14"/><circle cx="10.8" cy="4.5" r="1.6"/><circle cx="5" cy="11.5" r="1.6"/>',
-  search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>',
-};
-const icon = (name) => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
-const brand = '<svg class="deck-mark" viewBox="0 0 22 22" aria-hidden="true"><rect x="2" y="2" width="18" height="18" rx="6" fill="currentColor"/><path class="deck-tick" d="M7 11.5l3 3 5.5-6.5" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const badge = (n, label) => count(n) ? `<span class="count need">${n}<span class="sr"> ${label}</span></span>` : '';
-
 /** The bar section a route belongs to; '' for the workspace tools reached from the account menu. */
 export function deckSection(hash = '') {
   const name = /^#\/([a-z]+)/.exec(hash)?.[1] || '';
@@ -67,27 +54,11 @@ export const deckSections = (screens = SCREENS) => SECTIONS.filter(([id]) => id 
 export const deckHome = (screens = SCREENS) => screens.home ? '#/' : screens.today ? '#/today' : '#/bots';
 const here = () => { try { return globalThis.location?.hash || ''; } catch { return ''; } };
 
-// The home section carries the count of what waits on the person (the bots' count when the shell has one).
-// Same contract as renderRail: pure markup, the shell delegates data-action clicks. The opening
-// tag stays `<nav class="rail"` because the shell gives that element its id.
-export function renderDeckBar({ workspace = 'Commonplace', user = '', needs = 0, botsWaiting = 0, rulesWaiting = 0, can_admin = false, can_manage_instance = false, hash = here(), screens = SCREENS } = {}) {
-  const sections = deckSections(screens), home = sections[0][0], waiting = home === 'today' ? count(needs) : count(botsWaiting) || count(needs), section = deckSection(hash);
-  return `<nav class="rail" data-deck="bar" aria-label="Workspace">
-    <a class="deck-brand" href="${deckHome(screens)}" aria-label="Commonplace home">${brand}<b>Commonplace</b></a>
-    <div class="deck-links">${sections.map(([id, label]) => `<a class="nav" href="#/${id}" data-nav="${id}"${current(section === id)}>${label}${id === home ? badge(waiting, 'waiting on you') : ''}</a>`).join('')}</div>
-    <button class="iconbtn" id="cmdk" data-action="palette" aria-keyshortcuts="Control+K Meta+K" aria-label="Search or do">${icon('search')}</button>
-    <button class="ws" data-action="switch-workspace" aria-label="Workspace: ${e(workspace)}. Switch workspace">${e(workspace)}</button>
-    <details class="user-menu"><summary class="me" aria-label="${e(user || 'Account')}"><span class="mark" aria-hidden="true">${e(Array.from(user)[0] || '?')}</span>${badge(rulesWaiting, 'rules waiting')}</summary><div class="user-links"><a href="#/needs">Needs me${badge(needs, 'items')}</a><a href="#/boards">Projects</a><a href="#/memory">Memory</a><a href="#/console">Console</a><a href="#/rules">Rules${badge(rulesWaiting, 'waiting')}</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button></div></details>
-  </nav>`;
-}
-export function renderDeckTop({ hash = here(), board = null } = {}) {
-  const section = deckSection(hash), label = /^#\/memory(?:[?/#]|$)/.test(hash) ? 'Memory' : SECTIONS.find(([id]) => id === section)?.[1] || (board?.slug ? 'Board' : 'Commonplace');
-  return `<header class="m-top" data-deck="top"><span class="deck-brand">${brand}<b>${label}</b></span><span class="spacer"></span>${board?.slug ? `<button class="iconbtn" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Project settings">${icon('settings')}</button>` : ''}<button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button></header>`;
-}
-export function renderDeckTabs({ needs = 0, botsWaiting = 0, hash = here(), screens = SCREENS } = {}) {
-  const sections = deckSections(screens), home = sections[0][0], waiting = home === 'today' ? count(needs) : count(botsWaiting) || count(needs), section = deckSection(hash);
-  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === home ? badge(waiting, 'waiting on you') : ''}</a>`).join('')}</nav>`;
-}
+// Keep the public render contract; the rail and phone chrome live in the slice module.
+const shellOptions = (options = {}) => ({ ...options, hash: options.hash ?? here(), sections: deckSections(options.screens || SCREENS), section: deckSection(options.hash ?? here()) });
+export const renderDeckBar = options => renderShellBar(shellOptions(options));
+export const renderDeckTop = options => renderShellTop(shellOptions(options));
+export const renderDeckTabs = options => renderShellTabs(shellOptions(options));
 
 /** The Look section appended to Settings: one switch, saved in this browser only. */
 export function lookHTML(on) {
@@ -95,14 +66,15 @@ export function lookHTML(on) {
 }
 
 /** The workspace tools as one Settings section. The phone layout shows it, because a phone has no account menu. */
-export function toolsHTML({ needs = 0, rulesWaiting = 0, can_admin = false } = {}) {
-  const row = (href, label, n = 0) => `<a href="${href}">${label}${badge(n, 'waiting')}</a>`;
-  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Needs me', needs)}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules', rulesWaiting)}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
+export function toolsHTML({ can_admin = false } = {}) {
+  const row = (href, label) => `<a href="${href}">${label}</a>`;
+  return `<section class="settings-section deck-tools" id="deck-tools"><h2>Workspace</h2>${row('#/needs', 'Needs me')}${row('#/boards', 'Projects')}${row('#/memory', 'Memory')}${row('#/console', 'Console')}${row('#/rules', 'Rules')}${can_admin === true ? row('#/admin', 'Admin') : ''}<button class="btn" data-action="switch-workspace">Switch workspace</button></section>`;
 }
 
 /** The shell's handle on Deck. Everything it needs comes in, so it runs without a browser.
  *  context() returns what a screen may read: { me, boards, needs, go(hash) }. */
 export function createDeck({ root, api, context, title, screen = () => 0, reload = () => {}, screens = SCREENS, storage = store(), doc = globalThis.document } = {}) {
+  const shell = createDeckShell({ root, api, context, on: () => deckOn(storage) });
   const appearance = createDeckAppearance({ root, context, on: () => deckOn(storage), doc, storage });
   let active = null;
   const name = (base) => ['#/', '#/home'].includes(base) ? 'home' : workspaceRoute(base)?.screen || /^#\/([a-z]+)$/.exec(base || '')?.[1] || '';
@@ -151,6 +123,6 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
       target?.focus?.({ preventScroll: true });
     }
   });
-  const drawn = (render) => (options = {}) => deckOn(storage) ? render({ ...options, screens }) : '';
-  return { appearance, policyPresentation: () => deckOn(storage) ? capyPolicyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
+  const drawn = (render) => (options = {}) => deckOn(storage) ? render({ ...shell.options(), ...options, screens }) : '';
+  return { appearance, shell, policyPresentation: () => deckOn(storage) ? capyPolicyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
 }

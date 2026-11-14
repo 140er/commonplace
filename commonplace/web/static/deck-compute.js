@@ -2,7 +2,7 @@ import { escape as e } from './api.js';
 import { MAP_PATH, createTopologyMap, mapModel } from './topology-map.js';
 import { discoveryAction } from './map-discovery.js';
 import { addAction } from './map-add.js';
-import { ENROLL_ROUTE, computePanel, addMachineHTML, watchComputeMotion, computeStyles, phoneTree } from './deck-compute-capy.js';
+import { ENROLL_ROUTE, computePanel, addMachineHTML, watchComputeMotion, computeStyles, phoneTree, computeLinkPanel, summaryStatesHTML, mountComputeTopAction } from './deck-compute-capy.js';
 
 import { computePresentation, computeFrame, routePreference } from './deck-compute-scene.js';
 
@@ -164,14 +164,14 @@ export function summaryText({ mode, rows, payload }) {
   if (mode === 'runners') return `${rows.filter(m => machineState(m) === 'ready').length} of ${plural(rows.length, 'machine')} ready.`;
   const nodes = mapModel(payload).nodes, machines = nodes.filter(n => MACHINE_KINDS.has(n.kind)), sites = nodes.filter(n => n.kind === 'website');
   const count = status => machines.filter(n => n.status === status).length;
-  const notes = [[count('degraded'), 'degraded'], [count('down'), 'down']].filter(([n]) => n).map(([n, word]) => `${n} ${word}`);
-  const text = machines.length ? `${count('up')} of ${plural(machines.length, 'machine')} up${notes.length ? ` (${notes.join(', ')})` : ''}.` : '';
+  const text = machines.length ? `${count('up')} of ${plural(machines.length, 'machine')} up.` : '';
   return sites.length ? `${text ? `${text} ` : ''}${plural(sites.length, 'site')}.` : text || `${plural(nodes.length, 'device')} on the map.`;
 }
 
 export function mount(context) {
   let ctx = context, rows = [], general = null, mode = '', latest = null, map = null, built = '';
   let stopped = false, epoch = 0, request = null, framed = false, phone = false, builtColumns = 0, observer = null;
+  let topAdd = null;
   const root = context.root, doc = root.ownerDocument || globalThis.document;
   styles(doc);
   computeStyles(doc);
@@ -179,7 +179,7 @@ export function mount(context) {
   root.classList.add('deck-compute');
   // The screen owns its title row; restore the shared header on departure.
   const shell = context.shell || root.parentElement;
-  const shellHeaders = ['.head', '#phone-bar'].map(selector => shell?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
+  const shellHeaders = (doc?.documentElement?.dataset?.ui === 'deck' ? ['.head'] : ['.head', '#phone-bar']).map(selector => shell?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
   for (const { node } of shellHeaders) node.hidden = !(node.id === 'phone-bar' && globalThis.matchMedia?.('(max-width:699px)').matches === true);
   // Keep the shell's phone destinations reachable while the long map/details page scrolls.
   const phoneTabs = shell?.querySelector('#phone-tabs');
@@ -223,6 +223,7 @@ export function mount(context) {
     builtColumns = metrics.columns;
     const runners = mode === 'runners';
     built = mode;
+    placeActions();
     map = createTopologyMap({
       mount: () => region('map'),
       // The screen reads the topology itself (refresh drives it); the canvas asks for what was read.
@@ -230,10 +231,16 @@ export function mount(context) {
       workspace: () => `deck:${phone ? 'phone:' : ''}${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
       onStartWork: discoveryAction({ api: (path, options) => ctx.api(path, options), root: () => region('map') }),
       interval: 0,
-      look: { presentation: computePresentation(phone), frame: computeFrame, site: routePreference, cards: true, labels: metrics.labels, pad: 48, grow: true, preselect, compact: true, panel: options => computePanel(runners ? { ...options, node: { ...options.node, status: undefined } } : options, latest?.nodes?.find(record => record.key === options.key), phone), layout: phone ? phoneTree : 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
+      look: { presentation: computePresentation(phone, () => { const stage = region('map')?.querySelector('[data-topo="stage"]'); const top = stage?.getBoundingClientRect?.().top || 200; const nav = shell?.querySelector('#phone-tabs')?.getBoundingClientRect?.().height || 64; return (globalThis.innerHeight || 844)-top-nav-24; }), frame: computeFrame, site: routePreference, cards: true, labels: metrics.labels, pad: 48, grow: true, preselect, compact: true, linkPanel: options => computeLinkPanel({...options,compact:phone}), panel: options => computePanel(runners ? { ...options, node: { ...options.node, status: undefined } } : options, latest?.nodes?.find(record => record.key === options.key), phone), layout: phone ? phoneTree : 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
     });
     map.show();
     if (globalThis.ResizeObserver && !observer && region('map')) { observer = new ResizeObserver(resized); observer.observe(region('map')); }
+  }
+  function placeActions() {
+    const host = region('actions');
+    if (!host) return;
+    if (narrow()) region('map')?.after?.(host);
+    else root.querySelector('.dc-title')?.append?.(host);
   }
   function actions() {
     const host = region('actions');
@@ -246,13 +253,15 @@ export function mount(context) {
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
     root.innerHTML = '<header class="dc-title"><h1>Compute</h1><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
     if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
-    framed = true; actions();
+    topAdd ??= mountComputeTopAction(shell, hash=>ctx.go(hash));
+    placeActions(); framed = true; actions();
   }
   function apply(read) {
     mode = read.mode; rows = read.rows; latest = read.payload;
     root.classList.toggle('dc-runners', mode === 'runners');
     if (!framed) frame();
     region('summary').textContent = summaryText({ mode, rows, payload: latest });
+    if (mode === 'topology') region('summary').insertAdjacentHTML?.('beforeend', summaryStatesHTML(mapModel(latest).nodes.filter(node=>MACHINE_KINDS.has(node.kind))));
     region('empty').hidden = !(mode === 'runners' && !rows.length);
     note('');
     if (!map || built !== mode || phone !== narrow()) build(); else void map.refresh();
@@ -284,6 +293,7 @@ export function mount(context) {
     } catch (error) {
       if (stopped || mine !== epoch) return;
       if (error?.status === 403) {
+        topAdd?.stop(); topAdd = null;
         map?.stop(); map = null; built = ''; framed = false; rows = []; general = null; latest = null;
         root.innerHTML = '<h1>Compute</h1><p class="dc-notice">Only workspace owners can see the machines.</p>';
       } else if (!note(GENERIC_FAILURE)) root.innerHTML = `<h1>Compute</h1><p class="dc-notice" role="status">${GENERIC_FAILURE}</p>`;
@@ -304,7 +314,7 @@ export function mount(context) {
   void refresh();
   return { refresh, stop() {
     if (stopped) return;
-    stopped = true; stopMotion(); epoch++; request?.abort(); map?.stop(); map = null; observer?.disconnect();
+    stopped = true; topAdd?.stop(); stopMotion(); epoch++; request?.abort(); map?.stop(); map = null; observer?.disconnect();
     root.removeEventListener('click', click);
     if (tabsHome?.parent) {
       const { parent, next } = tabsHome;

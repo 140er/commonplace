@@ -198,18 +198,20 @@ export function panelHTML({ key, node, tab, detail, links, answer, routeFailure,
 /** Mounts the panel in `section` (the map's root). `model()` is the canvas's current drawable
  * model; `api` reads JSON. It reads the node on selection and again every `interval` ms while
  * the device stays selected and the page is visible, and removes itself with the markup. */
-export function createNodePanel({ section, api, model, interval = 5000, own = null, compact = false, render = panelHTML, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
+export function createNodePanel({ section, api, model, interval = 5000, own = null, compact = false, render = panelHTML, renderLink = null, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
   const doc = section.ownerDocument;
   // The panel's element exists from the first selection on, so a map nobody selects on pays nothing.
   let panel = null;
+  let selectedLink = null;
   let key = null, tab = "physical", detail = null, answer = null, routeFailure = "", failure = "", loading = false, timer = null, run = 0, shown = "";
 
   const node = () => model().nodes.find((item) => item.key === key) || null;
   function paint() {
-    if (!key) { if (panel) { panel.hidden = true; panel.innerHTML = ""; } shown = ""; return; }
+    if (!key && !selectedLink) { if (panel) { panel.hidden = true; panel.innerHTML = ""; } shown = ""; return; }
     panel ??= mountPanel();
     const current = model();
-    const html = render({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure, own: own?.(key) || null, compact });
+    panel.setAttribute("aria-label", selectedLink ? "Link details" : "Device details");
+    const html = selectedLink ? renderLink({ link: selectedLink, names:new Map(current.nodes.map(n=>[n.key,n.name])), compact }) : render({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure, own: own?.(key) || null, compact });
     if (html === shown) return;
     const focused = panel.contains(doc.activeElement) ? doc.activeElement.getAttribute("data-td-tab") || doc.activeElement.getAttribute("data-td") : null;
     const scroll = panel.querySelector(".td-body")?.scrollTop || 0;
@@ -241,6 +243,7 @@ export function createNodePanel({ section, api, model, interval = 5000, own = nu
   function stop() { run += 1; clearTimeout(timer); timer = null; controller.abort(); panel?.remove(); }
   function select(next) {
     run += 1; clearTimeout(timer); timer = null;
+    selectedLink = null;
     key = typeof next === "string" && next ? next : null;
     detail = null; answer = null; routeFailure = ""; failure = ""; loading = !!key; shown = "";
     paint();
@@ -248,6 +251,7 @@ export function createNodePanel({ section, api, model, interval = 5000, own = nu
   }
   // Closing deselects the device on the canvas the way a second Enter on it would.
   function close() {
+    if (selectedLink) { section.dispatchEvent(new CustomEvent("topology:link-close")); return; }
     const el = key && [...section.querySelectorAll("[data-key]")].find((item) => item.dataset.key === key);
     if (el) el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     else select(null);
@@ -298,5 +302,10 @@ export function createNodePanel({ section, api, model, interval = 5000, own = nu
   const controller = new AbortController();
   const on = (kind, handler) => section.addEventListener(kind, handler, { signal: controller.signal });
   on("topology:select", (event) => select(event.detail?.key));
-  return { select, stop, refresh: () => (key && section.isConnected ? load() : undefined), get key() { return key; }, get tab() { return tab; } };
+  if (renderLink) on("topology:link", event => {
+    select(null);
+    selectedLink = model().links.find(link=>link.id === event.detail?.id) || null;
+    paint();
+  });
+  return { select, stop, refresh: () => { if (selectedLink) { selectedLink = model().links.find(link=>link.id === selectedLink.id) || null; paint(); return; } return key && section.isConnected ? load() : undefined; }, get key() { return key; }, get tab() { return tab; } };
 }

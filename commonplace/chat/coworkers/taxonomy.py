@@ -9,6 +9,8 @@ import json
 
 from mempalace.config import sanitize_name
 
+from . import model_effort
+
 SECTION_MAX = 60
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS coworker_sections (
@@ -90,12 +92,13 @@ def directory(store, user_id, *, owns=False):
         rows = conn.execute(
             "WITH readable AS (SELECT c.* FROM conversations c JOIN members m "
             "ON m.conversation_id=c.id WHERE m.user_id=? ORDER BY c.created_at DESC,c.id LIMIT ?) "
-            "SELECT c.*,cb.bot_id,j.id AS job_id,j.state AS job_state, "
+            "SELECT c.*,cs.requested AS model_choices,cb.bot_id,j.id AS job_id,j.state AS job_state, "
             "(SELECT json_group_array(user_id) FROM (SELECT user_id FROM members "
             "WHERE conversation_id=c.id ORDER BY user_id)) AS member_ids, "
             "(SELECT count(*) FROM messages msg WHERE msg.conversation_id=c.id "
             "AND msg.actor<>? AND msg.id>coalesce(cr.last_read,0)) AS unread "
             "FROM readable c LEFT JOIN coworker_reads cr ON cr.conversation_id=c.id AND cr.user_id=? "
+            "LEFT JOIN coworker_selections cs ON cs.kind='conversation' AND cs.object_id=c.id "
             "LEFT JOIN conversation_bots cb ON cb.conversation_id=c.id "
             "LEFT JOIN jobs j ON j.id=(SELECT max(id) FROM jobs "
             "WHERE conversation_id=c.id AND bot_id=cb.bot_id) "
@@ -111,6 +114,12 @@ def directory(store, user_id, *, owns=False):
                 cid,
                 {
                     **{key: row[key] for key in ("id", "kind", "title", "board", "created_at")},
+                    **model_effort.describe(
+                        conn,
+                        store._model_settings,
+                        row,
+                        choices=json.loads(row["model_choices"] or "{}"),
+                    ),
                     "member_ids": json.loads(row["member_ids"]),
                     "bot_ids": [],
                     "section": None,

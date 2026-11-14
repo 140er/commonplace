@@ -26,10 +26,18 @@
 :root[data-ui="deck"] .dc-node-card text { font-family: var(--font); text-anchor: start; stroke: none; }
 :root[data-ui="deck"] .dc-node-name { font-size: 13px; font-weight: 600; fill: var(--ink); }
 :root[data-ui="deck"] .dc-node-role { font-size: 12px; fill: var(--ink3); }
+/* The down mark uses the approved failure rose; other hues come from the Deck tokens. */
+:root[data-ui="deck"] .deck-compute { --compute-down: #f0708a; }
 :root[data-ui="deck"] .dc-node-status { color: var(--ink3); fill: currentColor; }
-:root[data-ui="deck"] .dc-node.s-up .dc-node-status { color: var(--cyan); }
-:root[data-ui="deck"] .dc-runners .dc-node.s-degraded .dc-node-status { color: var(--amber); }
-:root[data-ui="deck"] .dc-node.stale .dc-node-status { color: var(--ink3); }
+:root[data-ui="deck"] .dc-node-status[data-state="up"] { color: var(--cyan); }
+:root[data-ui="deck"] .dc-node-status[data-state="degraded"] { color: var(--violet); }
+:root[data-ui="deck"] .dc-node-status[data-state="down"] { color: var(--compute-down); }
+:root[data-ui="deck"] .dc-state-word { display: inline-flex; align-items: center; gap: 6px; }
+:root[data-ui="deck"] .dc-state { flex: none; overflow: visible; vertical-align: middle; }
+:root[data-ui="deck"] .dc-summary-state { display: inline-block; max-width: 100%; vertical-align: top; }
+:root[data-ui="deck"] .dc-summary-state .dc-state-word { max-width: 100%; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .dc-node.dc-link-end .dc-node-surface { stroke: var(--violet); stroke-width: 1px; }
+:root[data-ui="deck"] .dc-top-add { display: none; }
 :root[data-ui="deck"] .dc-node.stale .dc-node-surface { stroke: var(--ink4); stroke-dasharray: 4 6; }
 :root[data-ui="deck"] .deck-compute .topo-link { --link-ink: var(--cyan); }
 :root[data-ui="deck"] .deck-compute .topo-link[data-method="lan"] { --link-ink: var(--violet); }
@@ -38,7 +46,7 @@
 :root[data-ui="deck"] .deck-compute .topo-link.on .topo-route { stroke-opacity: .8; }
 :root[data-ui="deck"] .dc-link-hit { fill: none; stroke: transparent; stroke-width: 14px; cursor: pointer; }
 :root[data-ui="deck"] .dc-link-label { pointer-events: none; }
-:root[data-ui="deck"] .dc-link-caption rect { fill: var(--stage); }
+:root[data-ui="deck"] .dc-link-caption rect { fill: var(--card); }
 :root[data-ui="deck"] .deck-compute .dc-link-caption .topo-method { display: inline; fill: var(--ink3); stroke: none; text-anchor: middle; font: 11px var(--font); }
 :root[data-ui="deck"] .deck-compute .topo-link[data-active="false"] .dc-link-label { display: none; }
 :root[data-ui="deck"] .deck-compute .topo-link.on .dc-link-label { display: inline; }
@@ -71,6 +79,9 @@
 :root[data-ui="deck"] .dc-enroll h2 { font-size: 13.5px; font-weight: 600; }
 :root[data-ui="deck"] .dc-enroll p { font-size: 13.5px; line-height: 1.5; color: var(--ink2); margin: 10px 0; }
 :root[data-ui="deck"] .dc-observed { font-size: 12.5px; color: var(--ink3); }
+:root[data-ui="deck"] .deck-compute .topo-link.selected .topo-route { stroke: var(--cyan); stroke-width: 2px; stroke-opacity: 1; stroke-dasharray: none; animation: none; }
+:root[data-ui="deck"] .deck-compute .topo-link.selected .topo-method { fill: var(--ink); }
+:root[data-ui="deck"] .deck-compute .topo-link.selected .dc-link-label { display: inline; }
 @keyframes dc-link { to { stroke-dashoffset: -10; } }
 @media (prefers-reduced-motion: reduce) {
   :root[data-ui="deck"] .deck-compute .topo-link :is(line,.topo-route) { animation: none; }
@@ -86,7 +97,10 @@
   :root[data-ui="deck"] .deck-compute .dc-title { grid-template-columns: minmax(0,1fr); margin-bottom: 18px; }
   :root[data-ui="deck"] .deck-compute .dc-actions { grid-area: auto; margin-left: 0; }
   :root[data-ui="deck"] .deck-compute .dc-action { min-height: 44px; }
-  :root[data-ui="deck"] .deck-compute .topo-stage { min-height: 360px; }
+  :root[data-ui="deck"] .deck-compute .topo-stage { min-height: 288px; }
+  :root[data-ui="deck"] .dc-map-controls { flex-direction: column; right: 8px; }
+  :root[data-ui="deck"] .dc-top-add { display: grid; place-items: center; }
+  :root[data-ui="deck"] .deck-compute .dc-map + .dc-actions { display: flex; gap: 8px; margin-top: 14px; }
   :root[data-ui="deck"] .dc-map-control { width: 44px; height: 44px; }
   :root[data-ui="deck"] .deck-compute .topo-detail { grid-area: 1 / 1; margin: 0; min-height: 440px; }
   :root[data-ui="deck"] .deck-compute:has(.topo-detail:not([hidden])) :is(.topo-stage,.topo-foot,.topo-bar,.dc-enroll) { display: none; }

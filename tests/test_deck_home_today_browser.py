@@ -78,9 +78,7 @@ def test_home_today_live_actions(hub, fresh, width):
                 if width == 390:
                     assert (await page.locator(".bh-composer").bounding_box())["x"] == 16
                     assert (await page.locator(".bh-bot").bounding_box())["x"] == 16
-                    await expect(page.locator("#phone-bar .deck-brand b")).to_have_text(
-                        "Commonplace"
-                    )
+                    await expect(page.locator("#phone-bar .m-top > b")).to_have_text("Home")
                 await expect(page.locator('.bh-toolbar [aria-label="Tools"]')).to_be_visible()
                 send_style = await page.locator(".bh-send").evaluate(
                     "e=>({bg:getComputedStyle(e).backgroundColor,opacity:getComputedStyle(e).opacity})"
