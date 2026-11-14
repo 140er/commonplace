@@ -362,6 +362,7 @@ def test_setup_route_inventory_is_explicit_and_exempts_only_bound_facts_or_peopl
     from commonplace.rules.enforce import RUNNER_SETUP_ROUTES
 
     assert {r.path for r in RUNNER_SETUP_ROUTES} == {
+        "/api/runner-enrollment/recover",
         "/api/runners/<machine>/setup-requests/<request>/decide",
         "/api/runners/<machine>/setup-requests/<request>/refuse",
         "/api/runners/<machine>/setup-requests/<request>/device",

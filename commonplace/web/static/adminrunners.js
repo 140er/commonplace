@@ -95,6 +95,7 @@ export function createRunnerBlock({ api, e, copy = text => globalThis.navigator.
       <p>${e(RESET_NOTE)}</p><button type="submit" class="btn">Save wings</button></form>${revokeControl(m)}` : '';
     return `<article class="runner-machine" aria-label="${e(m.label)}"><h3>${e(m.label)}</h3>
       <p>${e(state)} · ${e(m.binding_state)}, not verified · ${e(m.max_runtime_mode)} · ${e(m.max_in_flight)} in flight</p>
+      ${m.lifecycle ? `<p role="status">${e(m.lifecycle.service)} · Host verification: ${e(m.lifecycle.host_verification)}</p>` : ''}
       <p>Projects: ${e(m.projects.join(', '))} · Topics: ${e(m.topics.join(', '))} · Wings: ${e(m.wings.join(', '))}</p>${forms}</article>`;
   };
   const renderList = resetForm => {

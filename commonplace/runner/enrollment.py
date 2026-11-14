@@ -58,6 +58,9 @@ class Refused(Exception):
 def ensure(db):
     with db._lock:
         db._conn.executescript(SCHEMA)
+    from . import lifecycle
+
+    lifecycle.ensure(db)
 
 
 def _hash(value):
@@ -137,6 +140,10 @@ def _invalidate(db, row, now, owner=None, *, action="revoke"):
         "UPDATE runner_enrollments SET revoked_at=?, code_hash=NULL WHERE id=?", (now, row["id"])
     )
     _purge_delivery(db, row["id"])
+    if row["machine_id"]:
+        from . import lifecycle
+
+        lifecycle.invalidate_in(db, row, now)
     from . import setup_approvals
 
     setup_approvals.invalidate_in(db, row["machine_id"])

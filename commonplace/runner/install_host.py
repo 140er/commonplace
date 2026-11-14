@@ -3,10 +3,17 @@
 import os
 import platform
 import pwd
+import re
 import subprocess
 from pathlib import Path
 
 UNIT = "commonplace-runner-setup.service"
+
+
+def sign_in_scope(installation_id):
+    if not re.fullmatch(r"install_[0-9a-f]{32}", installation_id):
+        raise InstallError("invalid installation identity")
+    return "commonplace-runner-sign-in-" + installation_id + ".scope"
 
 
 class InstallError(Exception):
@@ -23,6 +30,7 @@ class FakeHost:
         self.enabled = self.active = False
         self.other_services = False
         self.commands = []
+        self.in_terminal = False
 
     def preflight(self):
         if not self.permitted or self.occupied:
@@ -44,6 +52,24 @@ class FakeHost:
 
     def has_other_services(self):
         return self.other_services
+
+    def termination_confirmed(self, installation_id=None):
+        return not self.active and not self.in_terminal
+
+    def owns_terminal(self, installation_id):
+        sign_in_scope(installation_id)
+        return self.in_terminal
+
+    def terminal(self, command, installation_id, *, run):
+        sign_in_scope(installation_id)
+        if not self.active:
+            raise InstallError("setup service is not active")
+        self.commands.append("terminal-scope")
+        self.in_terminal = True
+        try:
+            return run()
+        finally:
+            self.in_terminal = False
 
 
 class LiveHost:
@@ -76,6 +102,109 @@ class LiveHost:
 
     def _unit(self, action):
         return self._run(["/usr/bin/systemctl", "--user", action, UNIT], check=False)
+
+    def termination_confirmed(self, installation_id=None):
+        main = self._run(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "show",
+                UNIT,
+                "--property=MainPID",
+                "--value",
+            ]
+        )
+
+        if main.stdout.strip() != "0" or self._unit("is-active").returncode == 0:
+            return False
+        if installation_id is not None:
+            state = self._run(
+                [
+                    "/usr/bin/systemctl",
+                    "--user",
+                    "show",
+                    sign_in_scope(installation_id),
+                    "--property=ActiveState",
+                    "--value",
+                ]
+            )
+            if state.stdout.strip() not in ("inactive", "failed"):
+                return False
+        return True
+
+    def request_stop(self):
+        self._run(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "stop",
+                "--no-block",
+                UNIT,
+            ]
+        )
+
+    def owns_terminal(self, installation_id):
+        result = self._run(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "show",
+                sign_in_scope(installation_id),
+                "--property=ControlGroup",
+                "--value",
+            ]
+        )
+        group = result.stdout.strip()
+        return bool(
+            group
+            and any(
+                line.split(":", 2)[-1] == group or line.split(":", 2)[-1].startswith(group + "/")
+                for line in Path("/proc/self/cgroup").read_text().splitlines()
+            )
+        )
+
+    def terminal(self, command, installation_id, *, run=None):
+        if self._unit("is-active").returncode:
+            raise InstallError("setup service is not active")
+        try:
+            result = subprocess.run(
+                [
+                    "/usr/bin/systemd-run",
+                    "--user",
+                    "--scope",
+                    "--quiet",
+                    "--collect",
+                    "--unit=" + sign_in_scope(installation_id),
+                    "--property=BindsTo=" + UNIT,
+                    "--property=PartOf=" + UNIT,
+                    "--property=Requisite=" + UNIT,
+                    "--property=After=" + UNIT,
+                    "--property=KillSignal=SIGKILL",
+                    "--property=TimeoutStopSec=1",
+                    "--",
+                    *command,
+                ],
+                timeout=320,
+                cwd=Path.home(),
+                umask=0o077,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "LANG": "C",
+                    "HOME": str(Path.home()),
+                    "XDG_RUNTIME_DIR": self.runtime,
+                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path={self.runtime}/bus",
+                },
+            )
+            if result.returncode:
+                raise ValueError
+            return 0
+        except Exception:
+            raise InstallError("terminal sign-in stopped or unavailable") from None
+        finally:
+            self._run(
+                ["/usr/bin/systemctl", "--user", "stop", sign_in_scope(installation_id)],
+                check=False,
+            )
 
     def state(self):
         linger = self._run(

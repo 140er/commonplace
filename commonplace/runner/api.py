@@ -18,6 +18,9 @@ from . import (
 def install(gateway):
     if getattr(gateway, "runner_installed", False):
         return
+    from . import trust
+
+    trust.configure(gateway)
     registry.ensure(gateway.db)
     enrollment_api.install(gateway)
     install_receipts.ensure(gateway.db)

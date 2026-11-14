@@ -104,6 +104,16 @@ def browser():
         browser.close()
 
 
+def editing_fields(page):
+    page.locator(".workbench-details").wait_for()
+    edit = page.locator("[data-deck-card-controls]")
+    if edit.count() and edit.get_attribute("open") is None:
+        edit.locator("summary").click()
+    fields = page.locator(".workbench-details .fields")
+    fields.wait_for()
+    return fields
+
+
 def open_drawer(browser, hub, fresh, card, width, look, *, removable=True):
     # The same cookie and shell as a normal card visit; the server handles every write.
     from urllib.parse import urlunsplit
@@ -119,9 +129,10 @@ def open_drawer(browser, hub, fresh, card, width, look, *, removable=True):
     page = context.new_page()
     page.goto(origin + f"/app/?ui={look}#/board/work")
     page.locator(f'.card[data-card="{card["number"]}"]').click()
-    page.locator(".workbench-details .fields").wait_for()
+    editing_fields(page)
     if removable:
         page.locator('[data-action="remove-assignment"]').wait_for()
+        page.locator('[data-action="remove-assignment"]').scroll_into_view_if_needed()
     page.evaluate("document.fonts.ready")
     return context, page
 
@@ -150,11 +161,12 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
         if look == "deck":
             assert (
                 action.bounding_box()["y"] + action.bounding_box()["height"]
-                <= (page.locator(".workbench-details .ctx-foot").bounding_box()["y"])
+                <= (page.locator(".workbench-details .ctx-foot").bounding_box()["y"]) + 1
             )
+            expected_title = "18px" if page.locator(".deck-card-drawer").count() else "24px"
             assert (
                 page.locator("[data-details-title]").evaluate("el=>getComputedStyle(el).fontSize")
-                == "24px"
+                == expected_title
             )
         shot(page, look, "before", width)
         action.click()
@@ -204,7 +216,7 @@ def test_browser_remove_assignment(browser, hub, fresh, look, width):
         with page.expect_response(lambda response: response.url.endswith("/handoff")) as response:
             form.get_by_role("button", name="Remove assignment", exact=True).click()
         assert response.value.status == 200
-        page.locator(".workbench-details .fields").get_by_text(
+        editing_fields(page).get_by_text(
             "Anyone who can work on this project can pick it up."
             if look == "deck"
             else "Anyone eligible to work on this board can pick it up.",

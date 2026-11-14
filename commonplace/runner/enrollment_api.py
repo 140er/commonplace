@@ -159,10 +159,15 @@ def _bootstrap(gateway, h):
         return
     purpose = "exchange" if path == BOOTSTRAP[0] else "recover"
     try:
-        enrollment.charge(gateway.db, workspace, purpose)
-        if purpose == "exchange":
+        if purpose == "recover" and data.get("action") == "lifecycle":
+            from . import lifecycle
+
+            result, code = lifecycle.exchange(gateway, data), 200
+        elif purpose == "exchange":
+            enrollment.charge(gateway.db, workspace, purpose)
             result, code = enrollment.exchange(gateway.db, data), 201
         else:
+            enrollment.charge(gateway.db, workspace, purpose)
             result, code = enrollment.recover(gateway.db, data), 200
     except (enrollment.Refused, ValueError, InvalidSignature, ControlError) as exc:
         status = exc.status if isinstance(exc, enrollment.Refused) else 403

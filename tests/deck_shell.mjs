@@ -72,6 +72,7 @@ test('phone chrome has four destinations, Today badge, avatar wait dot and a mic
   assert.match(top, /data-action="palette"/);
   assert.match(top, /data-action="switch-workspace"/);
   assert.match(renderDeckTop({ hash: '#/memory' }), /<b>Memory<\/b>/);
+  assert.match(renderDeckTop({ board: { slug: 'work' } }), /<b>Board<\/b>/);
   const css = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
   assert.match(css, /grid-template-columns: 252px/);
   assert.match(css, /height: 52px/);
