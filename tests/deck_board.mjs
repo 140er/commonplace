@@ -25,6 +25,9 @@ test('only personal action cards get the amber edge; routine waits never do', ()
   assert.equal((html.match(/class="n"/g)||[]).length,1,'only the action column has a count');
   assert.equal((html.match(/class="col"/g)||[]).length,4);
   assert.match(html,/draggable="true"/);
+  const proposal=htmlFor({status:'backlog',need:'you',proposal_status:'pending'});
+  assert.match(proposal.split('id="col-doing"')[0],/data-card="7"/,'owner decisions never disappear in collapsed Backlog');
+  assert.doesNotMatch(proposal,/class="backlog"/);
 });
 test('drawer shows summary, live Bot, Coworker, Version and truthful progress; controls survive', () => {
   const html=renderDetails({...base,status:'todo',need:'you',head_sha:'abc1234',can_prioritize:true,body:'Summary.\nEvidence: ~/private/review.json',ask:'Ship?',ask_to:'user:owner',ask_options:['Approve','Hold']},options);
