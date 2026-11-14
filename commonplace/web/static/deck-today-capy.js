@@ -1,7 +1,7 @@
 import { activityEvent, groupActivity, activityHTML } from './deck-home-activity.js';
 export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
-import { addStyles, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone } from './deck-home-today.js';
+import { addStyles, placeMenu, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone } from './deck-home-today.js';
 
 export const TITLE = 'Today';
 const enc = encodeURIComponent;
@@ -147,7 +147,7 @@ export function mount(context) {
     const choice = current.ask_options?.[Number(form.elements.choice.value)];
     void act(current, 'reply', { submit: true, reply: form.elements.reply.value, ...(form.elements.choice.value !== '' ? { choice } : {}) });
   }
-  function onGroupToggle(event) { const group = event.target; if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
+  function onGroupToggle(event) { const group = event.target; if (group.matches?.('.bt-more') && group.open) placeMenu(group.querySelector('[role="menu"]'), doc?.defaultView || globalThis);  if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
   root.addEventListener('toggle', onGroupToggle, true);
   root.addEventListener('click', onClick); form.addEventListener('submit', onSubmit); doc?.addEventListener('keydown', onKey, true);
   paint(); void refresh();

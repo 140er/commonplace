@@ -155,11 +155,15 @@
   :root[data-ui="deck"] .bt-title p { margin-top: 4px; }
   :root[data-ui="deck"] .bt-card { padding: 14px; }
   :root[data-ui="deck"] .bt-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-  :root[data-ui="deck"] :is(.bt-fact, .bt-keys, .bt-desktop-reply) { display: none; }
+  :root[data-ui="deck"] :is(.bt-fact, .bt-keys) { display: none; }
   :root[data-ui="deck"] .bt-actions { flex-wrap: nowrap; margin-top: 12px; }
   :root[data-ui="deck"] .bt-actions .bt-approve { flex: 1; min-width: 0; }
   :root[data-ui="deck"] .bt-actions button { min-height: 44px; padding-inline: 12px; }
+  /* Reply is an inline button on a phone; the menu keeps only what has no button (Turn down). */
   :root[data-ui="deck"] .bt-more { display: block; }
+  :root[data-ui="deck"] .bt-more:not(:has([data-bt-action="reject"])) { display: none; }
+  :root[data-ui="deck"] .bt-more [role="menuitem"][data-bt-action="reply"] { display: none; }
+  :root[data-ui="deck"] .bt-actions .bt-desktop-reply { background: var(--s2); color: var(--ink); }
   :root[data-ui="deck"] .bt-bots { margin-top: 26px; }
   :root[data-ui="deck"] .bt-bots a { padding: 8px 14px; }
   :root[data-ui="deck"] .bt-activity { margin-top: 0; }

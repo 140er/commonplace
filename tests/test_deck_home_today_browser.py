@@ -163,15 +163,12 @@ def test_home_today_live_actions(hub, fresh, width):
                 if width == 390:
                     assert await page.locator(".bt-title h1").is_hidden()
                     assert await page.locator(".bt-fact").count() == 0
-                    await page.locator(".bt-more summary").first.click()
-                    await page.locator('[role="menuitem"][data-bt-action="reply"]').first.wait_for(
-                        state="visible"
-                    )
+                    # Reply is an inline button on a phone; the menu only holds what has no button.
+                    await page.locator(".bt-desktop-reply").first.wait_for(state="visible")
                     await capture("more")
-                    await page.locator(".bt-more summary").first.click()
                     sizes = (
                         await page.locator(".bt-card")
-                        .first.locator(".bt-approve, .bt-hold, summary")
+                        .first.locator(".bt-approve, .bt-hold, .bt-desktop-reply")
                         .evaluate_all("es=>es.map(e=>e.getBoundingClientRect().height)")
                     )
                     assert all(size >= 44 for size in sizes)

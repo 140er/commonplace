@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { renderDeckBar, renderDeckTop, renderDeckTabs, deckSections, deckSection } from '../commonplace/web/static/deck.js';
+import { renderDeckBar, renderDeckTop, renderDeckTabs, renderDeckMore, deckSections, deckSection } from '../commonplace/web/static/deck.js';
 
 const entries = [['today', 'Today'], ['bots', 'Bots'], ['compute', 'Compute'], ['settings', 'Settings']];
 const links = html => [...html.matchAll(/href="([^"]+)" data-nav="([^"]+)"/g)].map(m => [m[2], m[1]]);
@@ -158,4 +158,55 @@ test('shell refreshes only readable lists, keeps folder collapse and rejects sta
   assert.match(html,/class="deck-brand" href="#\/"/);
   assert.match(html,/class="deck-new-thread nav" href="#\/"/);
   assert.doesNotMatch(renderDeckTabs({hash:'#/home'}), /data-deck-shell-action="mic"/);
+});
+
+const sheetLinks = html => [...html.matchAll(/<a href="([^"]+)"/g)].map(m => m[1]);
+test('phone: every rail and account destination is reachable from the More sheet with its count', () => {
+  const tabs = renderDeckTabs({ hash: '#/today', needs: 3 }), sheet = renderDeckMore({ hash: '#/today', needs: 3, can_admin: true, can_manage_instance: true });
+  assert.match(tabs, /<button[^>]*class="deck-tab-more"[^>]*aria-expanded="false"[^>]*aria-controls="deck-more"[^>]*>[\s\S]*?More<\/button>/);
+  assert.match(sheet, /<div class="deck-more" id="deck-more" aria-label="More"[^>]* hidden>/);
+  assert.doesNotMatch(sheet, /role="dialog"/, 'a closed sheet is not announced as a dialog');
+  const bar = renderDeckBar({ hash: '#/today', can_admin: true, can_manage_instance: true });
+  const railTools = ['#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/rules', '#/admin', '#/instance-admin'];
+  for (const href of railTools) assert.ok(bar.includes(`href="${href}"`), `rail offers ${href}`);
+  assert.deepEqual(sheetLinks(sheet), railTools, 'the sheet offers each of them, with the same routes');
+  assert.match(sheet, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> waiting on you/);
+  assert.match(sheet, /data-action="switch-workspace"/);
+  assert.match(sheet, /data-action="logout"/);
+  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/today' })), ['#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/rules']);
+  assert.doesNotMatch(renderDeckBar({ hash: '#/today', needs: 3 }), /deck-more|waiting on you<\/span><\/span><\/a><a href="#\/boards"/);
+  assert.match(renderDeckTabs({ hash: '#/memory' }), /class="deck-tab-more"[^>]*aria-current="page"/);
+  assert.doesNotMatch(renderDeckTabs({ hash: '#/today' }), /class="deck-tab-more"[^>]*aria-current/);
+});
+
+test('the More button opens and closes the sheet, any tap inside closes it, Escape returns focus', async () => {
+  const { createDeckShell } = await import('../commonplace/web/static/deck-shell.js');
+  const attrs = {}, focused = [];
+  const sheet = { hidden: true, querySelector: () => ({ focus: () => focused.push('first') }), setAttribute(key, value) { attrs.role = value; }, removeAttribute(key) { delete attrs[key]; } };
+  const opener = { setAttribute: (key, value) => { attrs[key] = value; }, focus: () => focused.push('opener') };
+  const nodes = { '#phone-tabs .deck-more': sheet, '.deck-tab-more': opener }, events = {};
+  const shell = createDeckShell({ root: { querySelector: key => nodes[key], addEventListener: (name, cb) => { events[name] = cb; } }, context: () => ({}), on: () => true });
+  const tap = action => events.click({ target: { closest: () => ({ dataset: { deckShellAction: action } }) }, preventDefault() {} });
+  tap('more');
+  assert.equal(sheet.hidden, false); assert.equal(attrs.role, 'dialog'); assert.equal(attrs['aria-expanded'], 'true'); assert.deepEqual(focused, ['first']);
+  tap('more-close');
+  assert.equal(sheet.hidden, true); assert.equal(attrs.role, undefined); assert.equal(attrs['aria-expanded'], 'false');
+  tap('more'); events.keydown({ key: 'Escape' });
+  assert.equal(sheet.hidden, true); assert.equal(focused.at(-1), 'opener');
+  tap('more'); events.keydown({ key: 'a' }); assert.equal(sheet.hidden, false);
+  tap('more-close'); tap('more');
+  assert.equal(shell.options().moreOpen, true, 'a refresh redraws the sheet open');
+  globalThis.location = { hash: '#/memory' };
+  assert.equal(shell.options().moreOpen, false, 'a route change closes it');
+  delete globalThis.location;
+  assert.doesNotMatch(renderDeckMore({ moreOpen: true }), /id="deck-more"[^>]* hidden/);
+  assert.match(renderDeckMore({ moreOpen: true }), /id="deck-more"[^>]* role="dialog"/);
+  assert.match(renderDeckTabs({ moreOpen: true }), /aria-expanded="true"/);
+});
+
+test('phone CSS: five tab columns and a sheet fixed inside the viewport', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
+  assert.match(css, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\) 46px/);
+  assert.match(css, /\.deck-more \{[^}]*position: fixed; inset: 0/);
+  assert.match(css, /\.deck-more-panel \{[^}]*left: 8px; right: 8px; bottom: calc\(76px/);
 });

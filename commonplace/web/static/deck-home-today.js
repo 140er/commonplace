@@ -72,6 +72,18 @@ export function actionRow(card, { busy = false } = {}, e) {
   const reject = (card.actions || []).includes('reject');
   return `<div class="bt-actions">${approve ? `<button type="button" class="bt-approve" data-bt-action="approve"${disabled}>Approve</button>` : ''}<button type="button" class="bt-hold" data-bt-action="hold"${disabled}>Hold</button><button type="button" class="bt-desktop-reply" data-bt-action="reply"${disabled}>Reply</button><details class="bt-more"><summary aria-label="More">⋯</summary><div role="menu" aria-label="More actions"><button type="button" role="menuitem" data-bt-action="reply">Reply</button>${reject ? `<button type="button" role="menuitem" data-bt-action="reject"${disabled}>Turn down</button>` : ''}</div></details></div>`;
 }
+/** Keep an opened card menu inside the viewport: shift it sideways when it overhangs an edge, flip it above its button
+ *  when the space below is taken by the tab bar. Inline offsets are cleared first so every open measures afresh. */
+export function placeMenu(menu, view = globalThis, { margin = 8, bottomReserve = 80 } = {}) {
+  if (!menu?.getBoundingClientRect) return;
+  menu.style.translate = ''; menu.style.top = ''; menu.style.bottom = '';
+  const rect = menu.getBoundingClientRect(), width = view.innerWidth, height = view.innerHeight;
+  let shift = 0;
+  if (rect.left < margin) shift = margin - rect.left;
+  else if (rect.right > width - margin) shift = width - margin - rect.right;
+  if (shift) menu.style.translate = `${shift}px 0`;
+  if (rect.bottom > height - bottomReserve && rect.height + margin <= (menu.parentElement?.getBoundingClientRect?.().top ?? 0)) { menu.style.top = 'auto'; menu.style.bottom = '42px'; }
+}
 export const avatar = (bot, e) => `<span class="bt-avatar" aria-hidden="true">${e(Array.from(bot?.name || '?')[0])}</span>`;
 export const timeHTML = (at, e) => at && Number.isFinite(Date.parse(at)) ? `<time datetime="${e(at)}">${e(elapsed(at))}</time>` : '';
 export const stateName = state => ({ working: 'Working', busy: 'Working', running: 'Running', queued: 'Queued', pending: 'Queued', streaming: 'Running', sending: 'Sending', polling: 'Running', dropped: 'Waiting for an update', needs_you: 'Needs you', needs_person: 'Needs you', ready: 'Ready', healthy: 'Healthy', completed: 'Completed', succeeded: 'Completed', done: 'Completed', error: 'Could not complete', failed: 'Could not complete', cancelled: 'Cancelled', idle: 'Idle', blocked: 'Blocked', needs_configuration: 'Needs configuration', interrupted: 'Interrupted' })[state] || (String(state).startsWith('failed:') ? 'Could not complete' : state === 'ok' ? 'Completed' : 'State unavailable');
