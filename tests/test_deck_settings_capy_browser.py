@@ -61,6 +61,13 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
         page.wait_for_selector(".capy-policy")
         page.wait_for_selector("[data-capy-sharing] input")
         page.evaluate("document.fonts.ready")
+        rows = page.locator("[data-tool-policy-row]").all()
+        assert len(rows) == 4
+        for first, second in zip(rows, rows[1:]):
+            before, after = first.bounding_box(), second.bounding_box()
+            assert after["y"] == pytest.approx(before["y"] + before["height"], abs=1)
+            assert first.evaluate("el=>getComputedStyle(el).borderBottomWidth") == "1px"
+        assert rows[-1].evaluate("el=>getComputedStyle(el).borderBottomWidth") == "0px"
         assert page.locator(".settings > .deck-settings-main").count() == 1
         assert page.locator(".settings > :last-child").get_attribute("data-deck-appearance") == ""
         titles = page.locator(".deck-settings-main > section > h2").all_text_contents()
@@ -148,7 +155,12 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
             page.locator("[data-tool-policy] > p").first.evaluate(
                 "el=>getComputedStyle(el).fontSize"
             )
-            == "15px"
+            == "14px"
+        )
+        assert page.locator("#deck-bot-sharing > p").evaluate(
+            "el=>getComputedStyle(el).fontSize"
+        ) == page.locator("[data-tool-policy] > p").first.evaluate(
+            "el=>getComputedStyle(el).fontSize"
         )
         assert (
             page.locator(".appearance-send").evaluate("el=>getComputedStyle(el).backgroundColor")
@@ -184,6 +196,7 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
         page.get_by_role("switch", name="Allow bot sharing").check()
         assert writes[-1] == {"sharing": True}
         field = page.get_by_role("searchbox", name="Search permissions")
+        assert field.get_attribute("placeholder") == "Search actions"
         field.fill("memory_save")
         assert page.locator('[data-tool-policy-row="memory_save"]').count() == 1
         field.fill("")
@@ -209,6 +222,25 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
             )
             page.screenshot(path=str(folder / f"appearance-{width}x{height}.png"))
         assert not errors, errors
+    finally:
+        context.close()
+
+
+def test_phone_appearance_saved_note_has_bottom_space(browser):
+    context, page = open_settings(browser, 390)
+    try:
+        page.locator(".settings").evaluate("el=>el.scrollTop=el.scrollHeight")
+        card = page.locator(".deck-appearance")
+        note = card.locator(".appearance-save")
+        assert card.evaluate("el=>getComputedStyle(el).paddingBottom") == "20px"
+        card_box, note_box = card.bounding_box(), note.bounding_box()
+        assert card_box["y"] + card_box["height"] - note_box["y"] - note_box["height"] >= 20
+        frame = page.locator(".settings").bounding_box()
+        assert note_box["y"] >= frame["y"]
+        assert note_box["y"] + note_box["height"] <= frame["y"] + frame["height"]
+        output = os.environ.get("CAPY_SETTINGS_SHOTS")
+        if output:
+            page.screenshot(path=str(Path(output) / "appearance-end-390x844.png"))
     finally:
         context.close()
 

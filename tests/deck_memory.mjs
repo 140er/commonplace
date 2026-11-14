@@ -128,3 +128,14 @@ test('import presentation keeps the picked format and puts the primary action la
   assert.ok(review.indexOf('>Choose another file</button>') < review.indexOf('>Cancel</button>'));
   assert.ok(review.indexOf('>Cancel</button>') < review.indexOf('>Import</button>'));
 });
+test('release nits keep More filters inside the chip scroll and the count outside it', () => {
+  const html = renderMemory(state);
+  assert.match(html, /<div class="memory-chip-scroll"><nav class="memory-rooms".*<\/nav><details class="memory-filters".*<summary>More filters<\/summary>.*<\/details><\/div><span class="memory-status"/s);
+});
+test('release nits shorten Deck retry copy while retaining Classic presentation', () => {
+  const preview = { source: 'cursor', total: 1, messages: 1, scope: 'threads', source_bytes: 50 };
+  const state = { phase: 'preview', preview };
+  assert.ok(renderImport(state, {}, 'deck').includes('Importing the same file here again adds nothing.'));
+  assert.ok(!renderImport(state, {}, 'deck').includes('same destination'));
+  assert.ok(renderImport(state, {}, 'classic').includes('Importing the same file to the same destination again adds nothing.'));
+});
