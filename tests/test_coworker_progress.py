@@ -1,6 +1,6 @@
 """Canonical synthetic ledgers only; no worker processes, providers or devices.
 
-These cases intentionally run with the parent's grouped test selection. Progress
+These cases intentionally run with the grouped integration test selection. Progress
 is a read-only per-viewer observation, not persisted disclosure into group chat.
 """
 

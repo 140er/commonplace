@@ -1,4 +1,4 @@
-"""Fixture-only local cross-process ordering; parent owns test execution.
+"""Fixture-only local cross-process ordering; the integration maintainer owns test execution.
 
 No servers, endpoints, devices or ambient credentials. Synthetic custody keys
 come exclusively from execution_env. Remote helper channel installation remains

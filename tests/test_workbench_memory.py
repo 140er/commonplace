@@ -19,6 +19,7 @@ REDS = [
     "link",
     "render",
     "controller",
+    "typed_query",
     "stale",
     "failures",
 ]

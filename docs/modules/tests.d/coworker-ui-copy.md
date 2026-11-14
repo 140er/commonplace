@@ -1,0 +1,2 @@
+- **Owns:** `tests/test_coworker_ui_copy.py` and the role-label assertions in the node render harnesses.
+- **Promises:** UI copy scans include both classic and Deck surfaces without treating protocol fields, selectors or comments as labels.

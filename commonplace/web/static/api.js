@@ -1,13 +1,14 @@
 export class ApiError extends Error {
   constructor(status, payload) {
-    super(payload?.error || `Request failed (${status})`);
+    const reason = payload?.error || (status === 403 ? "You are not allowed to do that here. Reload the page; if it is still refused, ask the workspace owner." : `Request failed (${status})`);
+    super(payload?.next_step ? `${reason} ${payload.next_step}` : reason);
     this.status = status;
     this.payload = payload;
   }
 }
 
 export async function api(path, options = {}) {
-  const { timeoutMs = 0, ...requestOptions } = options;
+  const { timeoutMs = 0, optional = false, ...requestOptions } = options;
   if (timeoutMs > 0) {
     const controller = new AbortController();
     const abort = () => controller.abort(requestOptions.signal.reason);
@@ -17,7 +18,7 @@ export async function api(path, options = {}) {
     try {
       // Race the complete read, including JSON decoding; abort alone may not settle it.
       return await Promise.race([
-        api(path, { ...requestOptions, signal: controller.signal }),
+        api(path, { ...requestOptions, optional, signal: controller.signal }),
         new Promise((_, reject) => {
           timer = setTimeout(() => {
             reject(new Error(`Request timed out: ${path}`));
@@ -33,12 +34,20 @@ export async function api(path, options = {}) {
   const response = await fetch(path, {
     credentials: "same-origin",
     cache: "no-store",
-    ...options,
+    ...requestOptions,
     headers: { "Accept": "application/json", ...((options.body || ["POST", "PATCH", "DELETE"].includes(options.method?.toUpperCase())) ? { "Content-Type": "application/json" } : {}), ...options.headers },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
-  const payload = response.status === 204 ? null : await response.json();
+  let payload = null;
+  if (response.status !== 204) {
+    try { payload = await response.json(); } catch (error) {
+      // A refusal without a JSON body (a proxy or a bare status line) still gets a readable message.
+      if (response.ok) throw error;
+    }
+  }
   if (!response.ok) {
+    // An optional capability may be refused while the person's session is valid.
+    if (optional && [401, 403].includes(response.status)) return null;
     if (response.status === 401) document.dispatchEvent(new Event("session-expired"));
     throw new ApiError(response.status, payload);
   }

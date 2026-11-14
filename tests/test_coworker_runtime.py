@@ -513,7 +513,7 @@ def test_atomic_quota_reservations_count_inflight_calls(env, monkeypatch):
 
 @pytest.fixture
 def dispatch(env, monkeypatch):
-    """Exact canonical seam supplied by parent integration, absent at this base."""
+    """Exact canonical seam supplied by the integration maintainer, absent at this base."""
     cards, calls = {}, []
     allowed = {(env.uid, "work")}
 

@@ -2,15 +2,24 @@
 
 from commonplace import redact
 from commonplace.boards.service import BoardService
-from commonplace.chat import front, model, search, settings, status, store
+from commonplace.chat import front, live, model, search, settings, status, store
 from commonplace.chat.types import LINKED_CARDS_MAX, ChatDenied
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import path_parts, query, read_json, require_principal, send_json
 
 
-def _person(gateway, h):
+def _person(gateway, h, *, phone=False):
+    if phone:
+        h._phone_chat = False
     principal = require_principal(gateway, h)
     if principal is not None and not principal.person:
+        if phone:
+            from commonplace import person_actions
+
+            acting = person_actions.chat_person(gateway, h)
+            if acting is not None:
+                h._phone_chat = True
+                return acting
         send_json(h, 403, {"error": "Sign in to view chat"})
         return None
     return principal
@@ -38,12 +47,18 @@ def _cursors(params):
 
 def install(gateway) -> None:
     def listing(h):
-        principal = _person(gateway, h)
+        principal = _person(gateway, h, phone=True)
         if principal is None:
             return
         service = BoardService(ToolContext(principal=principal, gateway=gateway))
         projects = []
-        for board in service.board_list():
+        phone = getattr(h, "_phone_chat", False)
+        if phone:
+            with service.store.connection() as conn:
+                boards = service._visible_boards(conn)
+        else:
+            boards = service.board_list()
+        for board in boards:
             actor = board["coordinator"]
             projects.append(
                 {
@@ -54,6 +69,12 @@ def install(gateway) -> None:
                     else None,
                 }
             )
+        if phone:
+            from commonplace.chat import phone_list
+
+            summaries = phone_list.summaries(gateway, principal, service, boards)
+            for project in projects:
+                project.update(summaries[project["slug"]])
         send_json(
             h,
             200,
@@ -65,10 +86,10 @@ def install(gateway) -> None:
         )
 
     def page(h):
-        principal = _person(gateway, h)
+        parts = path_parts(h, "/api/chat/")
+        principal = _person(gateway, h, phone=len(parts) == 1)
         if principal is None:
             return
-        parts = path_parts(h, "/api/chat/")
         if len(parts) not in (1, 2) or (len(parts) == 2 and parts[1] not in ("status", "search")):
             send_json(h, 404, {"error": "Not found"})
             return
@@ -90,6 +111,7 @@ def install(gateway) -> None:
                 payload.pop("coordinator", None)
                 view = front.orchestrator(gateway, principal, parts[0])
                 payload["orchestrator"] = view.public() if view is not None else None
+                payload["live"] = live.snapshot(gateway, principal, parts[0], view)
                 payload["messages"] = [
                     {**message, "text": redact.redact(message["text"])[0]}
                     for message in payload["messages"]

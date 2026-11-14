@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from commonplace import sessions
@@ -10,6 +11,8 @@ from commonplace.control_db import ControlError
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.http_util import read_json, send_json
 
+from . import taxonomy, turn_mode
+from ._util import numeric as _numeric
 from .store import StoreError, _id, open_store
 
 
@@ -148,20 +151,6 @@ def _body(h):
         return None
 
 
-def _numeric(value, *, zero=False):
-    if (
-        not isinstance(value, str)
-        or len(value) > 19
-        or not value.isascii()
-        or not value.isdecimal()
-    ):
-        raise StoreError()
-    number = int(value)
-    if not (0 if zero else 1) <= number < 2**63:
-        raise StoreError()
-    return number
-
-
 def _parameters(h, allowed=()):
     pairs = parse_qsl(urlsplit(h.path).query, keep_blank_values=True)
     if len(pairs) != len(dict(pairs)) or set(dict(pairs)) - set(allowed):
@@ -185,7 +174,11 @@ def handle(gateway, h):
             raise StoreError("not_found", 404)
         params = _parameters(
             h,
-            ("after", "limit") if len(parts) == 3 and parts[2] == "messages" and not write else (),
+            ("cursor", "limit")
+            if "log" in parts and not write
+            else ("after", "limit")
+            if len(parts) == 3 and parts[2] == "messages" and not write
+            else (),
         )
         store = open_store(gateway, principal.workspace_id)
         if not parts and h.command == "GET":
@@ -194,14 +187,21 @@ def handle(gateway, h):
                 200,
                 {
                     "bots": store.list_bots(),
-                    "conversations": store.list_conversations(principal.user_id),
+                    "conversations": store.list_conversations(principal.user_id, owns=True),
                     "user_id": principal.user_id,
                     "can_manage_bots": principal.role == "owner",
                 },
             )
         if parts == ["bots"]:
             if h.command == "GET":
-                return send_json(h, 200, {"bots": store.list_bots()})
+                return send_json(
+                    h,
+                    200,
+                    {
+                        "bots": taxonomy.directory(store, principal.user_id)["bots"],
+                        "team_bots": taxonomy.team_bots(gateway, principal),
+                    },
+                )
             if h.command == "POST":
                 if principal.role != "owner":
                     raise StoreError("owner_required", 403)
@@ -210,21 +210,58 @@ def handle(gateway, h):
                     return None
                 _fields(body, ("name", "instructions", "connection_id"), ("name",))
                 return send_json(h, 201, {"bot": store.create_bot(principal.user_id, **body)})
+        if len(parts) == 3 and parts[0] == "bots" and parts[2] == "section" and h.command == "POST":
+            if principal.role != "owner":
+                raise StoreError("owner_required", 403)
+            body = _body(h)
+            if body is None:
+                return None
+            _fields(body, ("section",), ("section",))
+            return send_json(
+                h, 200, taxonomy.set_section(store, principal.user_id, parts[1], body["section"])
+            )
         if parts == ["conversations"]:
             if h.command == "GET":
                 return send_json(
-                    h, 200, {"conversations": store.list_conversations(principal.user_id)}
+                    h,
+                    200,
+                    {
+                        "conversations": taxonomy.directory(store, principal.user_id, owns=True)[
+                            "conversations"
+                        ]
+                    },
                 )
             if h.command == "POST":
                 body = _body(h)
                 if body is None:
                     return None
-                _fields(body, ("kind", "title", "member_ids", "bot_ids", "board"), ("kind",))
+                _fields(
+                    body,
+                    (
+                        "kind",
+                        "title",
+                        "member_ids",
+                        "bot_ids",
+                        "board",
+                        "model",
+                        "reasoning_effort",
+                    ),
+                    ("kind",),
+                )
                 return send_json(
                     h, 201, {"conversation": store.create_conversation(principal.user_id, **body)}
                 )
         if len(parts) >= 2 and parts[0] == "conversations":
             return _conversation_route(gateway, h, principal, session, store, parts, params)
+        if (
+            not write
+            and parts
+            and re.fullmatch(r"conv_[0-9a-f]{32}", parts[0])
+            and (len(parts) == 1 or len(parts) in (2, 3) and parts[1] == "log")
+        ):
+            return _conversation_route(
+                gateway, h, principal, session, store, ["conversations", *parts], params
+            )
         if (
             len(parts) == 3
             and parts[0] == "jobs"
@@ -234,7 +271,11 @@ def handle(gateway, h):
             body = _body(h)
             if body is None:
                 return None
-            _fields(body, ("operation", "request_id", "text"), ("operation", "request_id"))
+            _fields(
+                body,
+                ("operation", "request_id", "text", "model", "reasoning_effort"),
+                ("operation", "request_id"),
+            )
             if body.get("operation") == "stop" and "text" in body:
                 raise StoreError()
             return send_json(
@@ -269,14 +310,23 @@ def handle(gateway, h):
 def _conversation_route(gateway, h, principal, session, store, parts, params):
     conversation_id = _id(parts[1])
     # Authorize the object before parsing any subordinate body or IDs.
-    conversation = store.get_conversation(principal.user_id, conversation_id)
+    conversation = store.get_conversation(
+        principal.user_id, conversation_id, owns=len(parts) == 2 and h.command == "GET"
+    )
+    if h.command == "GET" and (parts[2:] == ["log"] or parts[2:] == ["log", "stream"]):
+        from . import livelog
+
+        return livelog.handle(gateway, h, principal, session, store, conversation_id, params)
     if len(parts) == 2 and h.command == "GET":
+        from . import livelog
+
+        live = livelog.detail(gateway, principal, session, store, conversation_id)
         return send_json(
             h,
             200,
             {
                 "conversation": conversation,
-                "messages": store.list_messages(principal.user_id, conversation_id),
+                "messages": store.list_messages(principal.user_id, conversation_id, mark_read=True),
                 "jobs": store.list_jobs(
                     principal.user_id,
                     conversation_id,
@@ -284,6 +334,7 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
                     session_hash=sessions._hash(session),
                 ),
                 "memories": store.list_memory(principal.user_id, conversation_id),
+                **live,
             },
         )
     if len(parts) == 3 and parts[2] == "messages":
@@ -295,7 +346,7 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
                 200,
                 {
                     "messages": store.list_messages(
-                        principal.user_id, conversation_id, after=after, limit=limit
+                        principal.user_id, conversation_id, after=after, limit=limit, mark_read=True
                     ),
                     "jobs": store.list_jobs(
                         principal.user_id,
@@ -309,17 +360,27 @@ def _conversation_route(gateway, h, principal, session, store, parts, params):
             body = _body(h)
             if body is None:
                 return None
-            _fields(body, ("text", "request_id", "bot_id"), ("text", "request_id"))
-            result = store.post_message(
+            _fields(
+                body,
+                ("text", "request_id", "bot_id", "mode", "fallback", "model", "reasoning_effort"),
+                ("text", "request_id"),
+            )
+            composer = bool(set(body) & {"mode", "fallback", "model", "reasoning_effort"})
+            post = (
+                (lambda *args, **kwargs: turn_mode.post(store, *args, **kwargs))
+                if composer
+                else store.post_message
+            )
+            result = post(
                 principal.user_id,
                 conversation_id,
                 **body,
                 session_hash=sessions._hash(session),
             )
             worker = getattr(gateway, "coworker_worker", None)
-            if result["job"] is not None and worker is not None:
+            if result.get("job") is not None and worker is not None:
                 worker.wake()
-            return send_json(h, 201, result)
+            return send_json(h, 200 if result.get("mode") == "steer" else 201, result)
     if len(parts) == 3 and parts[2] == "memory":
         if h.command == "GET":
             return send_json(

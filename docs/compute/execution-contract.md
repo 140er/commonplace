@@ -1,19 +1,20 @@
 # Execution and coworker handoff integration
 
-2026-11-09. Build real durable components, not release/deployment claims.
+2026-11-09. This contract describes durable execution and coworker runner integration;
+implementation and synthetic verification do not establish deployment readiness.
 
-## Ownership
+## Components
 
-Compute execution builder: new `commonplace/compute/executor.py`, any narrowly
-required `commonplace/compute/fence.py`, owning `control.py` additions/migrations,
-and `tests/test_compute_executor.py`. Keep existing public REST schema/semantics
-and metadata tests. No changes to routes, credentials, protocol, transport,
-chat/runtime or shared docs. Parent integrates worker installation and UI fields.
+Compute execution spans `commonplace/compute/executor.py`, its authority fence in
+`fence.py`, control-store additions/migrations in `control.py`, and
+`tests/test_compute_executor.py`. Preserve existing public REST schemas, metadata
+tests and the interfaces to routes, credentials, protocol, transport and chat/runtime.
+Worker installation and UI fields must remain consistent with these interfaces.
 
-Coworker runner builder: `commonplace/chat/coworkers/runtime.py`, narrowly required
-`commonplace/boards/service.py` changes, and dedicated new
-`tests/test_coworker_dispatch.py`. Do not edit other builders' Compute files or
-existing coworker store/routes/UI. Parent handles necessary store/result gluing.
+Coworker runner integration spans `commonplace/chat/coworkers/runtime.py`, the
+canonical task methods in `commonplace/boards/service.py`, and
+`tests/test_coworker_dispatch.py`. Preserve existing coworker store/routes/UI and
+Compute interfaces, including the storage and result projections between them.
 
 ## Durable Compute execution
 
@@ -130,3 +131,58 @@ while new HTTP/store intake/B conversation progress. Keep old runtime tests vali
 Return actual limitations; do not claim natural-language/tool parity or installed
 worker capabilities without evidence. No new natural-language side effects are
 authorized by model output.
+
+
+## Security reconcile: approval, context, audit and execution barrier
+
+`WorkspaceExecutionConfig.allow_script_self_approval` is a trusted startup-only
+boolean, false by default. Script approval rejects the requester's user ID even
+from another session, and `_fresh` repeats the check before claim/dispatch. An
+operator may explicitly allow single-owner script workflows by setting it true;
+no request body can set policy. Fixed read-only operations retain existing
+same-owner approval behavior. The pinned base cannot store taskless scopes: `scopes.task_number` is NOT NULL,
+so `create_scope(task_number=None)` raises IntegrityError before metadata is
+persisted. Scope creation needs no extra check; a synthetic regression asserts
+rejection and an empty scope table.
+
+Pre-claim security refusals write `execution.admission_denied` in the same
+transaction without granting admission or changing the refusal. Each refusal is
+audited, including repeated refused attempts. Result/recovery transitions write
+`execution.<terminal|uncertain>.<fixed_reason>`; observed exits additionally write
+`execution.exit.<code>`. Attribution uses the stored requester ID, even when that
+session has been revoked. Audit never contains stdout, stderr, script source,
+credential data, operator notes or raw exception text. Existing operator settlement
+and cancellation intent audit records retain their existing semantics.
+
+At the rename-to-execute barrier TargetHelper passes anchored paths relative to
+its still-held claim and job directory descriptors. `_spawn` re-reads no-follow
+regular files relative to these handles, validates size and SHA-256 against the
+approved manifest and creates sealed memfd copies. bwrap receives those copies
+using `--ro-bind-data` with inherited descriptors; the job directory bind also
+uses its held descriptor. Replacement of an ancestor path cannot redirect the
+upload, and changes to file content fail validation or cannot change the sealed
+snapshot. Unsupported memfd/sealing/bwrap functionality fails closed. Runtime
+host qualification and actual confinement still require the separately provisioned
+disposable target; synthetic process spies do not establish that evidence.
+
+Regression selection for both pinned base and implementation:
+`pytest -q tests/test_compute_security_regressions.py tests/test_compute_scopes.py tests/test_compute_dependencies.py`.
+The IPv6 /125 endpoints, /127 and /128 tests are coverage additions; no scope
+normalization bug is assumed when those tests pass on both revisions.
+
+The `dev` extra and dev dependency group include both `cryptography>=42` and
+`paramiko>=5.1,<6`, matching the unchanged opt-in `compute` extra. This ensures
+normal `.[dev]` check installs collect the Compute SSH suites. The dependency
+regression reads pyproject.toml and requires every compute requirement in dev.
+
+
+Sealing portability: `_seal_snapshot` prefers the fcntl module constants. On
+Linux only, missing names use the fixed kernel ABI: F_ADD_SEALS=1033,
+F_GET_SEALS=1034, F_SEAL_SEAL=1, F_SEAL_SHRINK=2, F_SEAL_GROW=4,
+F_SEAL_WRITE=8. All required seals must be applied and read back before Popen.
+An unavailable memfd API, refused sealing operation, failed seal query or missing
+required seal yields a confirmed `denied/sandbox_unavailable` result and no
+process launch. There is no unsealed fallback. Each rename-to-execute variant
+also runs with the fcntl constants removed, checking actual kernel seal bits and
+rejecting writes to the snapshot. The unavailability regression uses a synthetic
+cgroup and forbids Popen; it does not claim production confinement.

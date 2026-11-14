@@ -1,6 +1,6 @@
 """Real Chromium + gateway + durable coworkers; synthetic providers only.
 
-Optional Playwright dependency is supplied by the coordinator's browser round.
+Requires Playwright and its Chromium browser.
 No operator credentials, external endpoints, or memory workers are used.
 """
 
@@ -76,9 +76,9 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                 page.set_default_timeout(10000)
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.goto(origin + "/app/#/coworkers")
+                page.goto(origin + "/app/?ui=deck#/bots/-/coworkers/conversations")
                 page.get_by_role("button", name="Create bot", exact=True).click()
-                page.get_by_label("Name", exact=True).fill("Mira")
+                page.get_by_label("Name", exact=True).fill("Fixture bot")
                 page.get_by_label("Instructions", exact=True).fill("Be concise.")
                 page.locator('[data-cw-form="bot"] button.primary').click()
                 page.locator('.cw-bot [data-cw-action="start-dm"]').click()
@@ -87,7 +87,7 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                 page.locator("#cw-compose").fill("Block this turn")
                 page.get_by_role("button", name="Send", exact=True).click()
                 assert entered.wait(5)
-                first_id = page.url.split("/coworkers/", 1)[1]
+                first_id = page.url.split("/conversations/", 1)[1]
                 page.locator("#cw-compose").fill("A second message is accepted")
                 page.get_by_role("button", name="Send", exact=True).click()
                 page.locator(".cw-message p").filter(
@@ -108,7 +108,7 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                     has_text="Synthetic coworker answer"
                 ).wait_for()
                 assert not release.is_set()
-                second_id = page.url.split("/coworkers/", 1)[1]
+                second_id = page.url.split("/conversations/", 1)[1]
                 assert first_id != second_id
                 assert (
                     prompts[-1]["memories"][0]["text"]
@@ -154,7 +154,7 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                 page.get_by_label("Other workspace user IDs").fill(member)
                 page.get_by_role("button", name="Create conversation", exact=True).click()
                 page.get_by_role("heading", name="Shared planning room", exact=True).wait_for()
-                group_id = page.url.split("/coworkers/", 1)[1]
+                group_id = page.url.split("/conversations/", 1)[1]
                 assert set(
                     open_store(gateway, wid).get_conversation(member, group_id)["member_ids"]
                 ) == {owner, member}
@@ -196,7 +196,7 @@ def test_browser_canonical_progress_returns_to_origin_without_blocking_composer(
     boards = BoardService(ToolContext(principal=principal, gateway=gateway))
     boards.board_add("work", wing="fixture")
     store = open_store(gateway, wid)
-    bot = store.create_bot(owner, "Mira")
+    bot = store.create_bot(owner, "Fixture bot")
     conversation = store.create_conversation(owner, "dm", bot_ids=[bot["id"]], board="work")
     gateway.coworker_worker.start()
     server = gateway.build_server("127.0.0.1", 0)

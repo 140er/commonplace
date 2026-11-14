@@ -9,7 +9,7 @@ from commonplace.extensions import ToolContext, ToolError
 from commonplace.policy import Policy
 from commonplace.projects.copy import OWN_WING_EFFECT, SHARED_EXPLAIN
 from commonplace.projects.seats import active_connection, ensure_main, reconcile
-from commonplace.projects.types import SEAT_CLIENT, SEAT_PREFIX, TOKEN_DAYS, ProjectDenied
+from commonplace.projects.types import SEAT_CLIENT, TOKEN_DAYS, ProjectDenied
 from commonplace.web.agents import connection_view
 
 
@@ -87,8 +87,8 @@ def connect(
                 ).fetchone():
                     break
                 if attempt == 3:
-                    return 409, {"error": "Could not allocate an orchestrator name; try again"}
-                name = f"{SEAT_PREFIX}{board}:{secrets.token_hex(3)}"
+                    return 409, {"error": "Could not allocate a Coworker name; try again"}
+                name = f"{seat.name}:{secrets.token_hex(3)}"
             cid, token = db.create_token(
                 workspace_ref=ws,
                 user_ref=principal.user_id,
@@ -120,7 +120,7 @@ def connect(
                 ).fetchone()
                 row = active_connection(db, ws, winner["connection_id"]) if winner else None
                 if row is None:
-                    return 409, {"error": "The orchestrator connection changed; try again"}
+                    return 409, {"error": "The Coworker connection changed; try again"}
                 cid, name = row["id"], row["name"]
                 token = db.rotate_token(
                     cid, actor=principal.user_id, workspace_ref=ws, expires_days=TOKEN_DAYS
@@ -142,7 +142,7 @@ def connect(
                 )
         if not isinstance(exc, (ToolError, ControlError)):
             raise
-        return 409, {"error": "Could not connect the project's orchestrator"}
+        return 409, {"error": "Could not connect the project's Coworker"}
 
     db.audit(
         action="project.orchestrator.connect",
@@ -210,7 +210,7 @@ def trust(gateway, principal, board, body):
     from commonplace.runner import registry
 
     if not principal.person or principal.role != "owner":
-        raise ProjectDenied("Only workspace owners can trust an orchestrator")
+        raise ProjectDenied("Only workspace owners can trust a Coworker")
     demoting = isinstance(body, dict) and body == {"trusted": False}
     if not demoting and (
         not isinstance(body, dict)

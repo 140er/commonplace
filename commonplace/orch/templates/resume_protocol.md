@@ -1,4 +1,4 @@
-Resume protocol. Your session can end at any moment; the orchestrator journal on the hub is the memory, not this conversation.
+Resume protocol. Your session can end at any moment; the Coworker journal on the hub is the memory, not this conversation.
 
 1. Start every session with `orch_resume` for your board and role. It claims the lease (never cards) and returns a checkpoint: open steps, steps `in_doubt`, steps that need a person, holds, the next step, jobs, misses and todo cards that have no start. Keep the lease token in memory only; never print it, post it or write it to a file.
 2. Card classes in the checkpoint are read-only: `held` (yours, heartbeat it), `expired` and `not_held_by_caller`. Do not take over cards you do not hold.

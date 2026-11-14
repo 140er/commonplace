@@ -241,7 +241,7 @@ def cmd_restore_ack(args) -> int:
 
 def add_parsers(sub) -> None:
     """Register ``orch`` (and the top-level ``docs-check`` alias) on the main subparsers."""
-    orch = sub.add_parser("orch", help="orchestrator configs and checks").add_subparsers(
+    orch = sub.add_parser("orch", help="Coworker configs and checks").add_subparsers(
         dest="action", required=True
     )
 

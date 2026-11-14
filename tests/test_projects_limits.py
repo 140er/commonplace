@@ -153,7 +153,7 @@ def test_r07_invalid_limits_leave_setting_untouched(projects_hub):
         {},
         {"max_agents": True},
         {"max_agents": 0},
-        {"max_agents": 21},
+        {"max_agents": 101},
         {"max_agents": 1.5},
         {"max_agents": "2"},
         {"max_agents": 2, "extra": 1},

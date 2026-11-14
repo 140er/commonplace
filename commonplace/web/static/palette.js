@@ -5,7 +5,8 @@ const keyPreference = 'cmmn.keys.single';
 const encode = encodeURIComponent;
 
 // Command descriptors are dispatched by the shell; this module makes no API calls.
-export function paletteItems({ board = null, boards = [], cards = [], selected = null, query = '', can_admin = false } = {}) {
+export function paletteItems({ board = null, boards = [], cards = [], selected = null, query = '', can_admin = false, can_manage_instance = false, items = null } = {}) {
+  if (items) { const words = String(query).trim().toLowerCase().split(/\s+/).filter(Boolean); return items.filter(item => words.every(word => item.label.toLowerCase().includes(word))); }
   const commands = [];
   const add = (id, label, group, details = {}) => commands.push({ id, label, group, ...details });
   const currentCards = board ? cards.filter(card => !card.board || card.board === board.slug) : [];
@@ -21,14 +22,12 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   }
   if (board) {
     add('new-card', `New card in ${board.name || board.slug}`, 'Actions', { action: 'new-card', board: board.slug, key: 'C' });
-    add('new-request', 'New request to the orchestrator', 'Actions', { action: 'open-chat', board: board.slug, key: '/' });
+    add('new-request', 'New request to the Coworker', 'Actions', { action: 'open-chat', board: board.slug, key: '/' });
   }
   add('new-project', 'New project', 'Actions', { action: 'new-board' });
   for (const project of boards) add(`board-${project.slug}`, project.name || project.slug, 'Projects', { href: `#/board/${encode(project.slug)}`, board: project.slug });
   add('needs', 'Needs me', 'Go to', { href: '#/needs', key: 'G N' });
   add('memory', 'Memory', 'Go to', { href: '#/memory', key: 'G M' });
-  add('coworkers', 'Coworkers', 'Go to', { href: '#/coworkers', keywords: 'bots conversations direct messages groups' });
-  if (can_admin === true) add('compute', 'Compute', 'Go to', { href: '#/compute', keywords: 'gateways targets passive scopes execution proposals' });
   if (board) {
     add('board', 'Go to board', 'Go to', { href: `#/board/${encode(board.slug)}`, key: 'G B' });
     add('space', 'Space', 'Go to', { href: `#/space/${encode(board.slug)}` });
@@ -37,7 +36,10 @@ export function paletteItems({ board = null, boards = [], cards = [], selected =
   add('rules', 'Rules', 'Workspace', { href: '#/rules' });
   add('console', 'Console', 'Workspace', { href: '#/console' });
   add('workspace-settings', 'Workspace settings', 'Workspace', { href: '#/settings', keywords: 'voice webhooks phone notifications plan' });
+  if (can_admin === true) add('compute-map', 'Compute map', 'Workspace', { href: '#/compute-map', keywords: 'topology machines network sites routes' });
   if (can_admin === true) add('admin', 'Admin', 'Workspace', { href: '#/admin' });
+  if (can_manage_instance === true) add('instance-admin', 'Instance console', 'Workspace', { href: '#/instance-admin' });
+  add('workspaces', 'Switch workspace', 'Workspace', { action: 'workspaces', keywords: 'change team join' });
   add('decide', 'Decision queue', 'Workspace', { href: '#/decide' });
   add('shortcuts', 'Keyboard shortcuts', 'Workspace', { action: 'shortcuts', key: '?' });
   add('sign-out', 'Sign out', 'Workspace', { action: 'logout' });
@@ -203,7 +205,7 @@ export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}
   function open(options = {}) {
     context = options; mode = 'commands';
     show('Command palette');
-    dialog.innerHTML = `<div class="pin">${icon('search')}<input type="text" role="combobox" aria-label="Search or run an action" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list" autocomplete="off" spellcheck="false"><span class="scope">${context.board ? `in ${e(context.board.name || context.board.slug)}` : 'Workspace'}</span></div><ul class="pl" id="palette-results" role="listbox" aria-label="Results"></ul><div class="pfoot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span><span class="note">Every action except Approve and Decline, which stay in Needs me</span><button class="btn ghost sm" data-palette-action="close">Close <kbd>Esc</kbd></button></div>`;
+    dialog.innerHTML = `<div class="pin">${icon('search')}<input type="text" role="combobox" aria-label="Search or run an action" aria-expanded="true" aria-controls="palette-results" aria-autocomplete="list" autocomplete="off" spellcheck="false"><span class="scope">${context.board ? `in ${e(context.board.name || context.board.slug)}` : 'Workspace'}</span>${context.deck ? `<button type="button" class="palette-close" data-palette-action="close" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg></button>` : ''}</div><ul class="pl" id="palette-results" role="listbox" aria-label="Results"></ul><div class="pfoot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>↵</kbd> run</span>${context.deck ? '<span class="note"></span>' : '<span class="note">Every action except Approve and Decline, which stay in Needs me</span>'}<button class="btn ghost sm" data-palette-action="close">Close <kbd>Esc</kbd></button></div>`;
     const input = dialog.querySelector('[role="combobox"]');
     input.value = options.query || '';
     renderResults(input.value); input.focus();
@@ -233,7 +235,7 @@ export function createPalette({ dialog, onCommand, onSingleKeysChange = () => {}
     if (event.isComposing) return;
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return; }
     if (event.key === 'Tab') {
-      const nodes = [...dialog.querySelectorAll('input,button,a[href],[tabindex="0"]')].filter(node => !node.disabled && !node.hidden);
+      const nodes = [...dialog.querySelectorAll('input,button,a[href],[tabindex="0"]')].filter(node => !node.disabled && !node.hidden && (!node.getClientRects || node.getClientRects().length));
       const index = nodes.indexOf(document.activeElement);
       if (nodes.length && ((event.shiftKey && index <= 0) || (!event.shiftKey && index === nodes.length - 1))) {
         event.preventDefault(); nodes[event.shiftKey ? nodes.length - 1 : 0].focus();

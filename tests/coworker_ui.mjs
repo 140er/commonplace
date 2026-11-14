@@ -281,7 +281,7 @@ const cases = {
     assert.match(f.host.innerHTML, /Needs configuration/);
     assert.doesNotMatch(f.host.innerHTML, />Completed</);
     assert.match(f.host.innerHTML, /href="#\/card\/314"/);
-    assert.match(f.host.innerHTML, /href="#\/coworkers\/a\?message=1"/);
+    assert.match(f.host.innerHTML, /href="#\/bots\/-\/coworkers\/conversations\/a\?message=1"/);
     assert.doesNotMatch(coworkerJobHTML(job('bad', 'a', 'failed', { task: 'javascript:alert(1)' })), /javascript:/);
     const admission = coworkerJobHTML(job('created', 'a', 'done', { code: 'task_created', task: { board: 'work', number: 315 } }));
     assert.match(admission, />Task created</);
@@ -404,30 +404,6 @@ const cases = {
     assert.equal(coworkerTarget('@Mira and @Nia', bot.id, [bot, other]).botId, bot.id);
     assert.ok(coworkerTarget('hello', 'foreign-bot', [bot]).error);
     assert.equal(coworkerTarget('email@Nia.example', '', [bot, other]).botId, null);
-
-    const { renderRail, renderPhoneTabs } = await load('rail');
-    assert.match(renderRail({ view: 'coworkers' }), /href="#\/coworkers"[^>]*aria-current="page"/);
-    assert.match(renderPhoneTabs({ board: { slug: 'demo' } }), /href="#\/board\/demo\/chat"/, 'Existing project chat remains in phone navigation');
-    const palette = source('palette').replace(/import \{ cardId \} from '.\/board.js';/, 'const cardId = () => "";');
-    const { paletteItems } = await import(moduleURL(palette.replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL))));
-    assert.ok(paletteItems({ query: 'coworkers' }).some(item => item.href === '#/coworkers'), 'Phone project picker must find coworkers');
-
-    const app = source('app'), slice = (start, end) => app.slice(app.indexOf(start), app.indexOf(end, app.indexOf(start)));
-    let shared = 0, stops = 0; const shown = [];
-    const state = { me: { workspace: 'w-one' }, screen: 0, route: '#/', base: '#/', boards: [], chatVisible: new Set() };
-    const nodes = { '#content': { children: [], innerHTML: '' }, '#card-panel': { hidden: true }, '#shell-dialog': { close() {} } };
-    const context = { state, root: { querySelector: selector => nodes[selector] || null }, location: { hash: '#/coworkers/a?message=4' }, history: { replaceState() {} }, localStorage: { getItem: () => null },
-      remember() {}, resolveRoute: hash => hash, boardPreference: () => '', decideStart: () => undefined, clearAgentSecret() {}, voice: { stop() {} }, speech: { stop() {} }, markOpenCard() {}, showError() {}, message: value => value,
-      coworkersUI: { show(...args) { shown.push(args); }, stop() { stops++; } }, adminUI: null, consoleUI: null, detailsUI: null, boardDispose: null, title() {}, navigation() {},
-      async refresh() { shared++; }, api() { throw new Error('Coworker route must bypass shared prerequisites'); } };
-    runInNewContext(slice('function coworkersScreen()', 'async function refresh(') + slice('async function route()', '// The current view'), context);
-    await context.route();
-    assert.equal(state.base, '#/coworkers/a?message=4'); assert.deepEqual(shown[0], ['a', '4']); assert.equal(shared, 0);
-    context.location.hash = '#/board/demo'; await context.route(); assert.equal(stops, 1); assert.equal(shared, 1);
-    context.state.route = '#/coworkers/b';
-    runInNewContext(slice('async function refresh(', 'function decideStart('), context);
-    await context.refresh({ background: true });
-    assert.match(readFileSync(new URL('../commonplace/web/static/index.html', import.meta.url), 'utf8'), /coworkers\.css/);
   },
 
   async memory() {
@@ -480,7 +456,7 @@ const cases = {
       const group = f.take('/api/coworkers/conversations', 'POST');
       assert.deepEqual(group.options.body, { kind: 'group', title: 'Project channel', member_ids: ['u-two', 'u-three'], bot_ids: [bot.id, 'bot-2'], board: 'demo' });
       group.resolve({ conversation: conversation('new', { kind: 'group' }) }); await flush();
-      assert.deepEqual(f.navigation, ['#/coworkers/new']); f.ui.stop();
+      assert.deepEqual(f.navigation, ['#/bots/-/coworkers/conversations/new']); f.ui.stop();
 
       const member = fixture(); await member.open('a', detail('a'), directory({ can_manage_bots: false }));
       assert.doesNotMatch(member.host.innerHTML, /data-cw-action="new-bot"/);

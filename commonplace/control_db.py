@@ -32,8 +32,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Optional
 
-from . import tokens
+from . import bots_grant, decide_grant, tokens
 from .admission import GATE
+from .db_busy import BUSY_TIMEOUT_S, begin_immediate
+from .decide_grant import DECIDE_SCOPE
 from .policy import Policy
 
 SCHEMA_VERSION = 1
@@ -218,6 +220,29 @@ class Principal:
         }
 
 
+_DECIDE_MATCH = (
+    "workspace_id = NEW.workspace_id AND user_id = NEW.user_id "
+    "AND CASE WHEN json_valid(policy) THEN EXISTS ("
+    "SELECT 1 FROM json_each(policy, '$.scopes') WHERE value = 'cards:decide') ELSE 0 END"
+)
+# Strips cards:decide from a demoted owner's connections, with one audit row each.
+_DECIDE_DEMOTE_TRIGGER = f"""
+    CREATE TRIGGER IF NOT EXISTS connections_decide_demote
+    AFTER UPDATE OF role ON memberships
+    WHEN OLD.role = 'owner' AND NEW.role != 'owner' BEGIN
+        INSERT INTO audit_log(at, workspace_id, user_id, connection_id, auth, action,
+                              decision, reason, target_ids)
+        SELECT strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), workspace_id, user_id, id, auth,
+               'connection.decide.revoke', 'ok', 'ownership lost', '[]'
+        FROM connections WHERE {_DECIDE_MATCH};
+        UPDATE connections SET policy = json_set(policy, '$.scopes', (
+            SELECT json_group_array(value) FROM json_each(connections.policy, '$.scopes')
+            WHERE value != 'cards:decide'))
+        WHERE {_DECIDE_MATCH};
+    END;
+"""
+
+
 class ControlDB:
     def __init__(self, path: str, *, compute_config=None):
         self.path = path
@@ -227,7 +252,9 @@ class ControlDB:
         self._close_lock = threading.Lock()
         self._closed = False
         self._pre_close: list[Callable[[], None]] = []
-        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._conn = sqlite3.connect(
+            path, timeout=BUSY_TIMEOUT_S, check_same_thread=False, isolation_level=None
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
@@ -270,6 +297,10 @@ class ControlDB:
                         SELECT RAISE(ABORT, 'connection parent cycle') FROM ancestors WHERE id = NEW.id;
                     END;
                 """)
+            # Losing ownership clears a stored cards:decide grant, so regaining
+            # ownership never revives it without fresh consent. (Connections keep
+            # their membership row from being deleted, so demotion is the path.)
+            self._conn.executescript(_DECIDE_DEMOTE_TRIGGER)
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -321,7 +352,7 @@ class ControlDB:
             def __enter__(self_inner):
                 lock.__enter__()
                 try:
-                    conn.execute("BEGIN IMMEDIATE")
+                    begin_immediate(conn)
                 except BaseException:
                     lock.__exit__(None, None, None)
                     raise
@@ -471,8 +502,11 @@ class ControlDB:
         actor: str,
         expires_days: Optional[int] = DEFAULT_TOKEN_DAYS,
         parent: Optional[str] = None,
+        grantor: Optional["Principal"] = None,
     ) -> tuple:
         """Create a connection with a new token. Returns ``(connection_id, token)``.
+
+        ``grantor`` is the signed-in owner's principal; only it can add cards:decide.
 
         The token is returned once and only its hash is stored.
         """
@@ -485,6 +519,39 @@ class ControlDB:
             raise ControlError(f"{user['email']} is not a member of {ws['name']}")
         if "admin" in policy.scopes and role != "owner":
             raise ControlError("only an owner's connection can hold the admin scope")
+        if "private:read" in policy.scopes and role != "owner":
+            raise ControlError("only an owner's connection can hold the private:read scope")
+        if DECIDE_SCOPE in policy.scopes:
+            # Only the signed-in owner's browser grants it, for their own top-level app.
+            try:
+                decide_grant.require_grantor(self, grantor, ws["id"], user["id"])
+            except decide_grant.GrantRefused:
+                raise ControlError(
+                    "only the signed-in owner can give their own top-level connection "
+                    "the cards:decide scope"
+                ) from None
+            if (
+                actor_id != user["id"]
+                or parent is not None
+                or client.strip() == decide_grant.SEAT_CLIENT
+            ):
+                raise ControlError(decide_grant.TOP_LEVEL_TEXT)
+        if set(bots_grant.SCOPES) & set(policy.scopes):
+            # A signed-in member's grant for their own top-level app; never agent machinery.
+            try:
+                bots_grant.require_grantor(self, grantor, ws["id"], user["id"])
+            except bots_grant.GrantRefused:
+                raise ControlError(
+                    "only the signed-in member can give their own top-level connection "
+                    "the bots scopes"
+                ) from None
+            if (
+                actor_id != user["id"]
+                or parent is not None
+                or client.strip() == decide_grant.SEAT_CLIENT
+                or bots_grant.CHAT_SCOPE not in policy.scopes
+            ):
+                raise ControlError(bots_grant.TOP_LEVEL_TEXT)
         name = name.strip()
         client = client.strip()
         if not _CONNECTION_NAME.fullmatch(name):
@@ -648,6 +715,10 @@ class ControlDB:
                 raise RunnerLinkedError()
             if row["auth"] != "pat" or row["revoked_at"]:
                 raise ControlError("only active personal access tokens can be rotated")
+            expires = _parse(row["expires_at"])
+            if expires is not None and expires <= _now():
+                # Expiry ended the app's eligibility: reviving it needs fresh consent.
+                self.clear_decide(row["id"], reason="expired", user_id=actor_id)
             token = tokens.new_token()
             self._conn.execute(
                 "UPDATE connections SET token_hash=?, token_hint=?, expires_at=?, "
@@ -694,6 +765,117 @@ class ControlDB:
                 connection_id=row["id"],
                 auth="pat",
             )
+
+    def set_connection_decide(self, ref, allowed, *, actor, workspace_ref):
+        """Grant or withdraw cards:decide on the signed-in owner's own top-level app.
+
+        ``actor`` is the signed-in owner's principal, never a bare user id or an
+        agent. Granting is for personal access tokens; OAuth clients gain it only
+        through consent. Withdrawing works for both and takes effect on the next
+        request. Refusals carry a message safe to show the owner.
+        """
+        with self._lock, self._tx():
+            row = self.connection(ref, workspace_ref)
+            try:
+                decide_grant.require_grantor(self, actor, row["workspace_id"], row["user_id"])
+            except decide_grant.GrantRefused as exc:
+                raise ControlError(str(exc)) from None
+            if decide_grant.is_runner(self, row["id"]):
+                raise RunnerLinkedError()
+            # Withdrawing always works, also on expired or revoked connections;
+            # granting needs a live connection.
+            if allowed and self.authenticate_connection(row["id"]) is None:
+                raise ControlError(decide_grant.INACTIVE_TEXT)
+            if allowed:
+                reason = decide_grant.refusal(self, row) or (
+                    decide_grant.OAUTH_GRANT_TEXT if row["auth"] != "pat" else None
+                )
+                if reason:
+                    raise ControlError(reason)
+            elif row["auth"] not in ("pat", "oauth"):
+                raise ControlError(decide_grant.TOP_LEVEL_TEXT)
+            policy = json.loads(row["policy"])
+            scopes = set(policy.get("scopes", ())) - {DECIDE_SCOPE}
+            policy["scopes"] = sorted(scopes | ({DECIDE_SCOPE} if allowed else set()))
+            self._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?",
+                (json.dumps(policy, sort_keys=True), row["id"]),
+            )
+            self.audit(
+                action="connection.decide.grant" if allowed else "connection.decide.revoke",
+                decision="ok",
+                workspace_id=row["workspace_id"],
+                user_id=actor.user_id,
+                connection_id=row["id"],
+                auth=row["auth"],
+            )
+
+    def set_connection_bots(self, ref, *, chat, confirm, actor, workspace_ref, learned=None):
+        """Set ``bots:chat``, ``bots:confirm`` and ``bots:learned`` on the person's own top-level app.
+
+        ``actor`` is the signed-in person's principal (any role). Confirming and reading learned
+        items need chat (asking for either alone is refused); withdrawing chat withdraws all.
+        ``learned=None`` leaves the learned scope as it is. Granting is for personal access tokens; OAuth clients
+        gain the scopes only through consent. Withdrawing works for both and takes effect on
+        the next request. Refusals carry a message safe to show the person.
+        """
+        with self._lock, self._tx():
+            row = self.connection(ref, workspace_ref)
+            try:
+                bots_grant.require_grantor(self, actor, row["workspace_id"], row["user_id"])
+            except bots_grant.GrantRefused as exc:
+                raise ControlError(str(exc)) from None
+            if decide_grant.is_runner(self, row["id"]):
+                raise RunnerLinkedError()
+            chat, confirm = bool(chat), bool(confirm)
+            policy = json.loads(row["policy"])
+            before = set(policy.get("scopes", ()))
+            if learned is None:
+                learned = bots_grant.LEARNED_SCOPE in before and chat
+            learned = bool(learned)
+            if (confirm or learned) and not chat:
+                raise ControlError(bots_grant.NEEDS_CHAT_TEXT)
+            wanted = {
+                s
+                for s, on in (
+                    (bots_grant.CHAT_SCOPE, chat),
+                    (bots_grant.CONFIRM_SCOPE, confirm),
+                    (bots_grant.LEARNED_SCOPE, learned),
+                )
+                if on
+            }
+            added = wanted - before
+            if added:
+                if self.authenticate_connection(row["id"]) is None:
+                    raise ControlError(bots_grant.INACTIVE_TEXT)
+                reason = bots_grant.refusal(self, row) or (
+                    bots_grant.OAUTH_GRANT_TEXT if row["auth"] != "pat" else None
+                )
+                if reason:
+                    raise ControlError(reason)
+            elif row["auth"] not in ("pat", "oauth"):
+                raise ControlError(bots_grant.TOP_LEVEL_TEXT)
+            policy["scopes"] = sorted((before - set(bots_grant.SCOPES)) | wanted)
+            self._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?",
+                (json.dumps(policy, sort_keys=True), row["id"]),
+            )
+            for scope in sorted(added):
+                self._audit_bots(row, actor.user_id, bots_grant.AUDIT_GRANT, scope)
+            for scope in sorted((before & set(bots_grant.SCOPES)) - wanted):
+                self._audit_bots(row, actor.user_id, bots_grant.AUDIT_REVOKE, scope)
+
+    def _audit_bots(self, row, user_id, action, scope, reason=""):
+        self.audit(
+            action=action,
+            decision="ok",
+            workspace_id=row["workspace_id"],
+            user_id=user_id,
+            connection_id=row["id"],
+            auth=row["auth"],
+            tool=scope,
+            reason=reason,
+        )
 
     def authenticate_token(self, token: str) -> Optional[Principal]:
         """The principal for a bearer token, or ``None``. Checked on every request."""
@@ -749,7 +931,7 @@ class ControlDB:
             client=row["client"],
             auth=row["auth"],
             role="member" if row["runner_kind"] is not None else row["role"],
-            policy=Policy.from_json(row["policy"]),
+            policy=Policy.from_json(row["policy"]).for_role(row["role"]),
             parent_connection_id=row["parent_id"],
             parent_agent=(
                 f"conn:{self.connection(row['parent_id'], row['workspace_id'])['name']}"
@@ -850,15 +1032,16 @@ class ControlDB:
         reason: str = "",
         wing: Optional[str] = None,
         target_ids: Iterable[str] = (),
-    ) -> None:
-        """Append one entry. Ids and decisions only, never memory text."""
+        recorded_at=None,
+    ) -> int:
+        """Append one entry and return its sequence number. Ids and decisions only."""
         ids = [str(t)[:200] for t in target_ids if t][:500]
         with self._lock:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "INSERT INTO audit_log(at, workspace_id, user_id, connection_id, auth, action, "
                 "tool, decision, reason, wing, target_ids) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    _iso(_now()),
+                    _iso(recorded_at if recorded_at is not None else _now()),
                     workspace_id,
                     user_id,
                     connection_id,
@@ -871,6 +1054,70 @@ class ControlDB:
                     json.dumps(ids),
                 ),
             )
+            return cursor.lastrowid
+
+    def clear_decide(self, connection_id: str, *, reason: str, user_id=None) -> bool:
+        """Remove stored app scopes and phone capabilities; True when one was removed
+        (audited). Called when a connection turns into agent machinery or expires."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, workspace_id, user_id, auth, policy FROM connections WHERE id=?",
+                (connection_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            from commonplace import person_actions
+
+            revoked = person_actions.revoke(self, row, user_id=user_id)
+            try:
+                policy = json.loads(row["policy"])
+                scopes = list(policy.get("scopes", ()))
+            except (TypeError, ValueError, AttributeError):
+                return revoked
+            gone = {DECIDE_SCOPE, *bots_grant.SCOPES} & set(scopes)
+            if not gone:
+                return revoked
+            policy["scopes"] = sorted(set(scopes) - gone)
+            self._conn.execute(
+                "UPDATE connections SET policy=? WHERE id=?",
+                (json.dumps(policy, sort_keys=True), row["id"]),
+            )
+            if DECIDE_SCOPE in gone:
+                self.audit(
+                    action="connection.decide.revoke",
+                    decision="ok",
+                    workspace_id=row["workspace_id"],
+                    user_id=user_id or row["user_id"],
+                    connection_id=row["id"],
+                    auth=row["auth"],
+                    reason=reason,
+                )
+            for scope in sorted(gone & set(bots_grant.SCOPES)):
+                self._audit_bots(
+                    row, user_id or row["user_id"], bots_grant.AUDIT_REVOKE, scope, reason
+                )
+            return True
+
+    def audit_bounded(self, context, **fields):
+        """Append through the coordinated writer with one remaining request budget."""
+        if not self._lock.acquire(timeout=context.remaining()):
+            raise TimeoutError()
+        try:
+            conn = self._conn
+            previous = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            try:
+                wait = int(context.remaining() * 1000)
+                conn.execute(f"PRAGMA busy_timeout={wait}")
+                conn.set_progress_handler(
+                    lambda: int(context.clock.monotonic() >= context.deadline), 100
+                )
+                self.audit(recorded_at=context.now, **fields)
+                context.remaining()
+            finally:
+                conn.set_progress_handler(None, 0)
+                conn.execute(f"PRAGMA busy_timeout={previous}")
+        finally:
+            self._lock.release()
 
     def audit_entries(self, workspace_ref: Optional[str] = None, limit: int = 100) -> list:
         sql = "SELECT * FROM audit_log"

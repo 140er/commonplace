@@ -3,7 +3,7 @@
 All identities, keys, receipts and paths are synthetic. The target process is an
 explicit WIRE-ONLY fixture: it runs TargetHelper's real strict upload/result
 protocol and a durable synthetic attempt journal, but NEVER launches a script or
-claims production confinement. Parent owns suite execution; child static checks.
+claims production confinement. The integration maintainer runs the suite; component authors run static checks.
 """
 
 import base64
@@ -93,6 +93,8 @@ def script_state(admission_state):
             ScriptRuntimeConfig(state.node["id"], receipt.runtime_digest, receipt.key_principal),
         ),
     )
+    # This synthetic single-owner fixture explicitly opts into self approval.
+    object.__setattr__(workspace, "allow_script_self_approval", True)
     state.config = replace(state.config, workspaces=(workspace,))
     state.env.db._compute_config = state.config
     state.service._accept_script_runtime(

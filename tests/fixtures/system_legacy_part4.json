@@ -1,0 +1,190 @@
+{
+  "base": "ef25c47f05bfc44275c483880bddc40a75a560d3",
+  "base_sha256": "8ed59eb150db1b6c8c052fc90103a4cbb43a419722edb30e3328012ff539d22b",
+  "part": 4,
+  "of": 4,
+  "sections": [
+    {
+      "title": "Topology is one store of structured facts",
+      "slug": "topology-is-one-store-of-structured-facts",
+      "occurrences": 1,
+      "bytes": 2300,
+      "sha256": "a7990bbba1bbe86bc2af951b474aba44ce14ca70e4b29f3a8d8f4d51c92155ff"
+    },
+    {
+      "title": "Bots keep conversations in the workspace store",
+      "slug": "bots-keep-conversations-in-the-workspace-store",
+      "occurrences": 1,
+      "bytes": 777,
+      "sha256": "898c0829afbfeaa670f8bcfc4b64bddf161b0c15e73c6b6d3f7859b27f21d03a"
+    },
+    {
+      "title": "Bots hear about their work without being asked",
+      "slug": "bots-hear-about-their-work-without-being-asked",
+      "occurrences": 1,
+      "bytes": 3433,
+      "sha256": "0fcf75e304d7d50982f4829220c89690908c349cd53d9523118bc046c581c432"
+    },
+    {
+      "title": "Bots use machines only through the runner's own checks",
+      "slug": "bots-use-machines-only-through-the-runner-s-own-checks",
+      "occurrences": 1,
+      "bytes": 731,
+      "sha256": "0ef3198ae602982ca71fb16ec77e59c8e5facafde71d87fa96d8cb89f15e9798"
+    },
+    {
+      "title": "After Done: archive hides, never deletes",
+      "slug": "after-done-archive-hides-never-deletes",
+      "occurrences": 1,
+      "bytes": 565,
+      "sha256": "b7b3a74aa6497e28060c77432d7b0ccd56bc0447b59dbebe581290ec7e4d75e0"
+    },
+    {
+      "title": "Reassigning active work",
+      "slug": "reassigning-active-work",
+      "occurrences": 1,
+      "bytes": 281,
+      "sha256": "6c9f4dee8a0553630bd67b9a4d0b6a827e379a8cdb5fad5408ea3097f036cd90"
+    },
+    {
+      "title": "Legacy surface comparison and agent guidance",
+      "slug": "legacy-surface-comparison-and-agent-guidance",
+      "occurrences": 1,
+      "bytes": 366,
+      "sha256": "c9d7e1762623291b74dff36aba34161c2bea26672dd2a0002781e9e4a41f2715"
+    },
+    {
+      "title": "Compatibility fixture coverage boundary",
+      "slug": "compatibility-fixture-coverage-boundary",
+      "occurrences": 1,
+      "bytes": 253,
+      "sha256": "b2ef2329ff826d044f01051a0719b61a3ac7893780728079118b8c1b3fd8b579"
+    },
+    {
+      "title": "Refused Done moves and handoffs",
+      "slug": "refused-done-moves-and-handoffs",
+      "occurrences": 1,
+      "bytes": 778,
+      "sha256": "ab306fb21b4d0a76621164f38b5d97ed28cc94aa93790d72dc4175b9ea4c981f"
+    },
+    {
+      "title": "Canonical Space REST foundation",
+      "slug": "canonical-space-rest-foundation",
+      "occurrences": 1,
+      "bytes": 3722,
+      "sha256": "a11e66ee7aeb01ce3e946aeef741ab1cecb26295d0b69aedc3bd6eebf4072d52"
+    },
+    {
+      "title": "Authorization-only provenance spelling recognition",
+      "slug": "authorization-only-provenance-spelling-recognition",
+      "occurrences": 1,
+      "bytes": 7091,
+      "sha256": "3b080475f8b3a348ff17b9ee8648979027ac80c4c52c4dcdd339aab3229f0e60"
+    },
+    {
+      "title": "Current typed provenance association proof",
+      "slug": "current-typed-provenance-association-proof",
+      "occurrences": 1,
+      "bytes": 1657,
+      "sha256": "420d291569c76872763ab664088ed39407b7dd87525ed8619763692f12bf8b1a"
+    },
+    {
+      "title": "Memory map citation omission",
+      "slug": "memory-map-citation-omission",
+      "occurrences": 1,
+      "bytes": 421,
+      "sha256": "a80f64d0047112eb5566371ce890c5d4f6a80bb2828a1851856bae95b31e5781"
+    },
+    {
+      "title": "Explicit tunnel read proof",
+      "slug": "explicit-tunnel-read-proof",
+      "occurrences": 1,
+      "bytes": 1199,
+      "sha256": "c6478cf270822d621bebab1ceb1d45941b280a4d48a4de2c74b7ca83b1b62214"
+    },
+    {
+      "title": "Explicit tunnel concurrency and import qualification",
+      "slug": "explicit-tunnel-concurrency-and-import-qualification",
+      "occurrences": 1,
+      "bytes": 1111,
+      "sha256": "05982ed92350428bf9f103389e96380920c7e6b3022ba65f51a4a1895826c5c1"
+    },
+    {
+      "title": "Graph projection before traversal and ranking",
+      "slug": "graph-projection-before-traversal-and-ranking",
+      "occurrences": 1,
+      "bytes": 2192,
+      "sha256": "985b64c6951a92d0b3828569425fa3a83aa540bf125f6b30e2977a722092a2e1"
+    },
+    {
+      "title": "Readable legacy graph parity",
+      "slug": "readable-legacy-graph-parity",
+      "occurrences": 1,
+      "bytes": 2031,
+      "sha256": "790dba6e966f1c8c2d44d75a3e78a4f5fea5394fb77db7bff1504ae343823b13"
+    },
+    {
+      "title": "Graph compatibility residuals",
+      "slug": "graph-compatibility-residuals",
+      "occurrences": 1,
+      "bytes": 677,
+      "sha256": "1537f5492803a4289c1d5800b84b83eb0d398404d3e9a8e3b1b9f0879b37bafb"
+    },
+    {
+      "title": "Local worker allocation observation",
+      "slug": "local-worker-allocation-observation",
+      "occurrences": 1,
+      "bytes": 2892,
+      "sha256": "7fb1446090b158fde62a6e6c3c11dc60270cd9b76f255b8127360e8932af2de1"
+    },
+    {
+      "title": "D1-visible KG pages and aggregates",
+      "slug": "d1-visible-kg-pages-and-aggregates",
+      "occurrences": 1,
+      "bytes": 3443,
+      "sha256": "6aedf1e6cdab4f4373f8cc18f11a63f64e2b408d45e88819e0ed202eb721c15a"
+    },
+    {
+      "title": "Scoped KG search cost",
+      "slug": "scoped-kg-search-cost",
+      "occurrences": 1,
+      "bytes": 1205,
+      "sha256": "c2fae578e482e929efaab2b165ebf3858c6a97f6b5ba380bafa4609599009f2e"
+    },
+    {
+      "title": "Search enrichment compatibility note",
+      "slug": "search-enrichment-compatibility-note",
+      "occurrences": 1,
+      "bytes": 560,
+      "sha256": "d9cda172bd66fea6a7511bf46551410f7ceb894a3bf33b5d44518ea3eaa49c1c"
+    },
+    {
+      "title": "Bounded memory for overview reads",
+      "slug": "bounded-memory-for-overview-reads",
+      "occurrences": 1,
+      "bytes": 6594,
+      "sha256": "8fb2f0fa447bd428927502affb2d87565b34d4d209ad42f9b5f0783ec1e4eb39"
+    },
+    {
+      "title": "Outgoing provenance aliases and coherent ranges",
+      "slug": "outgoing-provenance-aliases-and-coherent-ranges",
+      "occurrences": 1,
+      "bytes": 2580,
+      "sha256": "37f9f90eb48761562ba961801f9ef7fd4ae733660dee01ef35878019d1af06c5"
+    },
+    {
+      "title": "Authorized room and status count responses",
+      "slug": "authorized-room-and-status-count-responses",
+      "occurrences": 1,
+      "bytes": 952,
+      "sha256": "0fce9faf27e41f6adbfc6257865c3e24d581ea4bfdaaea40849e9caa2d0fed81"
+    },
+    {
+      "title": "Event, write and durable-token boundaries",
+      "slug": "event-write-and-durable-token-boundaries",
+      "occurrences": 1,
+      "bytes": 4725,
+      "sha256": "ac8cf69c5e2a6dff8389394d5f45e28fc5fa332bff9868772ad98b85966fe568"
+    }
+  ]
+}

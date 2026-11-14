@@ -1,0 +1,2 @@
+- **Promises:** Classic and Deck use Coworker for the project role, including chat, Needs me and Settings. Wire fields and route paths retain their existing spellings; handoff suggestions use the existing coordinator alias.
+- **Tests:** `tests/test_coworker_ui_copy.py` rejects old role labels in quoted UI text and nested templates while allowing explicit protocol literals, selectors and code comments. Node render checks pin the shared copy.

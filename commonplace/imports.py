@@ -37,7 +37,7 @@ def _acl_import_allowed(policy):
     )
 
 
-def _import_envelope(ctx, principal, handler):
+def _import_envelope(ctx, principal, handler, *, allowed=None, limit=MAX_IMPORT_BYTES):
     policy = principal.policy
     acl_allowed = _acl_import_allowed(policy)
     acl_error = _RequestError(
@@ -50,7 +50,7 @@ def _import_envelope(ctx, principal, handler):
         path = "grant"
     if path == "acl" and not acl_allowed and not principal.person:
         raise acl_error
-    data = _read_json(handler, MAX_IMPORT_BYTES)
+    data = _read_json(handler, limit)
     if isinstance(data, dict) and "private" in data:
         if not principal.person or data["private"] is not True:
             raise _RequestError(400, "private requires a person and true")
@@ -59,7 +59,7 @@ def _import_envelope(ctx, principal, handler):
         path = "grant"
     if path == "acl" and not acl_allowed:
         raise acl_error
-    data = _object(data, {"source", "threads", "private"})
+    data = _object(data, allowed if allowed is not None else {"source", "threads", "private"})
     return data, path
 
 
@@ -100,6 +100,9 @@ def register(ctx):
 
     ctx.import_batch = import_batch
     ctx.grant_admit = admit
+    from . import import_files
+
+    import_files.register(ctx)
 
     def handle(handler):
         handler._handoff_body_read = False

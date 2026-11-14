@@ -21,6 +21,7 @@ import pytest
 
 from commonplace.compute.protocol import ProtocolDenied
 from commonplace.compute.script_sandbox import (
+    AnchoredPath,
     BubblewrapSandbox,
     ScriptResult,
     ScriptTargetConfig,
@@ -86,7 +87,9 @@ def test_disabled_and_root_hosts_deny_without_subprocess_or_storage(tmp_path, mo
     settings = config(tmp_path)
     monkeypatch.setattr(os, "geteuid", lambda: 0)
     monkeypatch.setattr(
-        BubblewrapSandbox, "_check_host", lambda *a: pytest.fail("root must deny early")
+        BubblewrapSandbox,
+        "_check_host",
+        lambda *a: pytest.fail("root must deny early"),
     )
     with pytest.raises(ScriptDenied, match="sandbox_unavailable"):
         BubblewrapSandbox(settings).check(value.manifest)
@@ -327,6 +330,16 @@ def test_literal_argv_clean_environment_and_mandatory_namespace_flags(tmp_path):
     assert all(value not in args for value in ("/home", "/etc", "/run", "/sys"))
 
 
+def test_disable_userns_comes_with_an_explicit_user_namespace(tmp_path):
+    """bubblewrap 0.9 rejects --disable-userns unless --unshare-user is given explicitly."""
+    settings = config(tmp_path)
+    value = request()
+    args = BubblewrapSandbox(settings).argv(value, "/private/script.py", "/private/job")
+    assert "--disable-userns" in args
+    assert "--unshare-user" in args
+    assert args.index("--unshare-user") < args.index("--disable-userns")
+
+
 def test_spawn_has_real_descendant_cgroup_preexec_and_no_shell(tmp_path, monkeypatch):
     settings = config(tmp_path)
     seen = {}
@@ -336,16 +349,23 @@ def test_spawn_has_real_descendant_cgroup_preexec_and_no_shell(tmp_path, monkeyp
         return "process fixture"
 
     monkeypatch.setattr(subprocess, "Popen", fixture_popen)
-    result = BubblewrapSandbox(settings)._spawn(
-        request(),
-        "/private/script.py",
-        "/private/job",
-        SimpleNamespace(procs=999),
-    )
+    root = Path(settings.workspace_root)
+    (root / "script.py").write_bytes(b"print('fixture')\n")
+    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        result = BubblewrapSandbox(settings)._spawn(
+            request(),
+            AnchoredPath(directory, "script.py"),
+            AnchoredPath(directory),
+            SimpleNamespace(procs=999),
+        )
+    finally:
+        os.close(directory)
     assert result == "process fixture"
     assert seen["shell"] is False and seen["env"] == {}
     assert seen["close_fds"] and seen["start_new_session"]
-    assert seen["pass_fds"] == (999,) and callable(seen["preexec_fn"])
+    assert seen["pass_fds"][:2] == (999, directory)
+    assert len(seen["pass_fds"]) == 3 and callable(seen["preexec_fn"])
 
 
 @pytest.mark.parametrize("scenario", ["exit", "cancel", "timeout", "output", "unstarted"])
@@ -766,7 +786,7 @@ def test_helper_errors_never_publish_raw_exception_text(tmp_path, monkeypatch):
 
 
 def test_optional_actual_disposable_confined_script(tmp_path):
-    """No auto-provisioning/probing: opt in only with a disposable operator setup."""
+    """Positive execution and SC-30 namespace isolation; explicit disposable setup only."""
     config_path = os.environ.get("COMMONPLACE_COMPUTE_SANDBOX_FIXTURE")
     if not config_path:
         pytest.skip("no explicitly provisioned disposable cgroup/tmpfs/read-only runtime fixture")
@@ -779,7 +799,22 @@ def test_optional_actual_disposable_confined_script(tmp_path):
         b"assert os.environ.get('SSH_AUTH_SOCK') is None\n"
         b"assert not os.path.exists(sys.argv[1])\n"
         b"assert sys.argv[2]=='; literal $(id)'\n"
-        b"open('result.txt','wb').write(b'confined artifact')\n"
+        b"names=('net','mnt','pid','user','uts','ipc')\n"
+        b"assert len(sys.argv[3:])==len(names)\n"
+        b"for name,outer in zip(names,sys.argv[3:]):\n"
+        b"    assert os.readlink('/proc/self/ns/'+name)!=outer\n"
+        b"with open('/proc/net/dev') as stream:\n"
+        b"    devices=stream.read().splitlines()[2:]\n"
+        b"assert {line.split(':')[0].strip() for line in devices}=={'lo'}\n"
+        b"with open('/proc/net/route') as stream:\n"
+        b"    assert not stream.read().splitlines()[1:]\n"
+        b"with open('/proc/net/ipv6_route') as stream:\n"
+        b"    routes=[line.split() for line in stream]\n"
+        b"assert routes and all(route[-1]=='lo' for route in routes)\n"
+        b"assert not os.path.exists('/etc/resolv.conf')\n"
+        b"assert not os.path.exists('/sys')\n"
+        b"with open('result.txt','wb') as stream:\n"
+        b"    stream.write(b'confined artifact')\n"
         b"print('confined result')\n"
     )
     sentinel = tmp_path / "host-private.txt"
@@ -787,12 +822,17 @@ def test_optional_actual_disposable_confined_script(tmp_path):
     current = replace(
         binding(), workspace=settings.workspace, gateway=settings.gateway, node=settings.node
     )
+    namespace_names = ("net", "mnt", "pid", "user", "uts", "ipc")
     value = ScriptManifest.create(
         current,
         "disposable-bundle",
         script,
         runtime_digest=settings.runtime_digest,
-        arguments=(str(sentinel), "; literal $(id)"),
+        arguments=(
+            str(sentinel),
+            "; literal $(id)",
+            *(os.readlink("/proc/self/ns/" + name) for name in namespace_names),
+        ),
         output_paths=("result.txt",),
     )
     BubblewrapSandbox(settings).check(value)

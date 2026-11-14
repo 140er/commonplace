@@ -3,9 +3,10 @@
 No passwords and no email. ``commonplace login-link <email>`` prints a link
 that works once within 15 minutes. Opening it sets an HttpOnly session
 cookie for 30 days. Only the SHA-256 of each link token and session id is
-stored. A signed-in person acts as ``user:<id>`` with the owner's full view
-of their workspace (people see everything in a workspace they belong to;
-scopes limit agents, not owners). Provider sign-in (:mod:`commonplace.social`)
+stored. A signed-in person acts as ``user:<id>`` with shared workspace
+access. Only a proven workspace owner receives private read access; other
+people cannot read even their own private wings. Provider sign-in
+(:mod:`commonplace.social`)
 ends in the same session through :func:`start_session`.
 """
 
@@ -59,10 +60,22 @@ def ensure_schema(db: ControlDB) -> None:
         db._conn.executescript(SCHEMA)
 
 
-def person_policy() -> Policy:
+def person_policy(role: Optional[str] = None) -> Policy:
+    """Only explicit workspace ownership proves private read authority."""
+    excluded = {
+        "admin",
+        "memory:import",
+        "memory:import:read",
+        "cards:decide",
+        "bots:chat",
+        "bots:confirm",
+        "bots:learned",
+    }
+    if role != "owner":
+        excluded.add("private:read")
     return Policy.build(
         profile="full",
-        scopes=[s for s in SCOPES if s not in ("admin", "memory:import", "memory:import:read")],
+        scopes=[s for s in SCOPES if s not in excluded],
         read_wings=["*"],
         write_wings=["*"],
         trust="trusted",
@@ -85,7 +98,7 @@ def person_principal(db: ControlDB, user_id: str, workspace_id: str) -> Optional
         client="web",
         auth="session",
         role=role,
-        policy=person_policy(),
+        policy=person_policy(role),
         person=True,
     )
 
@@ -95,7 +108,7 @@ def home_workspace(db: ControlDB, user_id: str) -> Optional[str]:
     with db._lock:
         row = db._conn.execute(
             "SELECT w.id FROM workspaces w JOIN memberships m ON m.workspace_id = w.id "
-            "WHERE m.user_id = ? ORDER BY w.personal_of IS ? DESC, w.created_at LIMIT 1",
+            "WHERE m.user_id = ? ORDER BY w.personal_of IS ? DESC, w.created_at, w.rowid LIMIT 1",
             (user_id, user_id),
         ).fetchone()
     return row["id"] if row else None
@@ -209,9 +222,37 @@ def session_principal(db: ControlDB, session: str) -> Optional[Principal]:
     return person_principal(db, row["user_id"], row["workspace_id"])
 
 
+def session_created_at(db: ControlDB, session: Optional[str]) -> Optional[datetime]:
+    """When a live session was started: how recently its person proved who they are."""
+    ensure_schema(db)
+    if not session or len(session) > 200:
+        return None
+    with db._lock:
+        row = db._conn.execute(
+            "SELECT * FROM sessions WHERE id_hash = ?", (_hash(session),)
+        ).fetchone()
+    if row is None or row["revoked_at"] or row["expires_at"] <= _now().strftime(_FMT):
+        return None
+    return datetime.strptime(row["created_at"], _FMT).replace(tzinfo=timezone.utc)
+
+
 def end_session(db: ControlDB, session: str) -> None:
     ensure_schema(db)
     with db._lock:
+        # Signing out withdraws every outstanding deletion proof for this account.
+        if db._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_delete_tokens'"
+        ).fetchone():
+            db._conn.execute(
+                "UPDATE account_delete_tokens SET revoked_at = strftime('%s','now') "
+                "WHERE user_id IN (SELECT user_id FROM sessions WHERE id_hash = ?)",
+                (_hash(session),),
+            )
+            db._conn.execute(
+                "DELETE FROM account_delete_checks WHERE user_id IN "
+                "(SELECT user_id FROM sessions WHERE id_hash = ?)",
+                (_hash(session),),
+            )
         db._conn.execute(
             "UPDATE sessions SET revoked_at = ? WHERE id_hash = ? AND revoked_at IS NULL",
             (_now().strftime(_FMT), _hash(session)),

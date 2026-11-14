@@ -60,7 +60,7 @@ def enabled(db, ws):
 
 def set_enabled(db, principal, value):
     if not principal.person or principal.role != "owner":
-        raise PermissionError("Only workspace owners can configure orchestration")
+        raise PermissionError("Only workspace owners can configure Coworker management")
     if type(value) is not bool:
         raise ValueError("enabled must be a boolean")
     with db._lock, db._tx():

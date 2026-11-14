@@ -17,6 +17,7 @@ Every write and every refusal goes to the audit log (ids only, never text).
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import copy
 import hashlib
 import http.client
@@ -27,6 +28,7 @@ import os
 import re
 import secrets
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from time import monotonic, sleep
 from typing import Callable, Optional
@@ -37,7 +39,18 @@ from mempalace.config import normalize_wing_name
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
-from . import events, extensions, plans, privacy, ratelimit, sessions, urls
+from . import (
+    backfill_allowance,
+    db_busy,
+    events,
+    extensions,
+    plans,
+    privacy,
+    ratelimit,
+    sessions,
+    tool_policy,
+    urls,
+)
 from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
@@ -52,6 +65,9 @@ HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
 STARTUP_TIMEOUT_S = 0.08
 MAX_FANOUT_WINGS = 64
+# The public worker schema caps each ranked prefix at 100 hits. Doubling
+# from a minimum limit of one takes at most eight searches per request.
+MAX_SEARCH_CANDIDATES = 100
 _FORWARDED_METHODS = ("initialize", "ping")
 _DROP = object()
 
@@ -71,11 +87,72 @@ def _with_search_facts(result, facts):
     return out
 
 
+def _scoped_cli_search_error(args):
+    """Retain the CLI argument contract when acquiring structured drawer hits."""
+    from mempalace.query_sanitizer import sanitize_query
+
+    if args.get("include_media") or args.get("query_task", "search") != "search":
+        return "cli_compatible cannot be combined with media/code task search"
+    if args.get("source_file") is not None:
+        return "cli-compatible search does not support source_file"
+    unsupported = [
+        key for key in ("min_similarity", "max_distance", "context") if args.get(key) is not None
+    ]
+    if unsupported:
+        return "cli-compatible search does not support " + ", ".join(unsupported)
+    query = args.get("query")
+    if isinstance(query, str):
+        sanitized = sanitize_query(query)
+        if sanitized["clean_query"] != query or sanitized["was_sanitized"]:
+            return "cli-compatible search requires an unchanged query"
+    return None
+
+
+def _render_scoped_cli_search(result, args):
+    """Render only structured hits and facts that passed the final drawer gate."""
+    from mempalace.searcher import render_cli_search
+
+    out = {
+        "query": result.get("query", args.get("query", "")),
+        "cli_output": render_cli_search(
+            result.get("query", args.get("query", "")),
+            result.get("results", []),
+            wing=args.get("wing"),
+            room=args.get("room"),
+            since=args.get("since"),
+            before=args.get("before"),
+            metric=result.get("distance_metric", "cosine"),
+            facts=result.get("facts", []),
+            vector_disabled=bool(result.get("vector_disabled")),
+            flat=True,
+        ),
+        "results": [],
+    }
+    if "wings_searched" in result:
+        out["wings_searched"] = result["wings_searched"]
+    if result.get("facts"):
+        out["facts"] = result["facts"]
+    return out
+
+
 def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> dict:
     error = {"code": code, "message": message}
     if data is not None:
         error["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": error}
+
+
+# JSON-RPC server-error range: a busy database is retryable, unlike -32603.
+BUSY_RPC_CODE = -32001
+_LABEL = re.compile(r"[A-Za-z0-9_.\-/]{1,64}")
+
+
+def _call_label(request) -> str:
+    """The tool (or method) name for a log line; never arguments or other user content."""
+    params = request.get("params") if isinstance(request, dict) else None
+    method = request.get("method") if isinstance(request, dict) else None
+    name = params.get("name") if isinstance(params, dict) and method == "tools/call" else method
+    return f"call={name}" if isinstance(name, str) and _LABEL.fullmatch(name) else "call=?"
 
 
 def _kg_argument_error(req_id, name, args):
@@ -130,6 +207,12 @@ class Hidden(Exception):
     def __init__(self, result: dict):
         super().__init__(result.get("error", ""))
         self.result = result
+
+
+# Write-side room checks share one reader per gateway call.
+_WRITE_ACCESS = contextvars.ContextVar("commonplace_write_access", default=None)
+# Same bound as drawer batches.
+CHECKPOINT_MAX_ITEMS = 500
 
 
 class WorkerUnavailable(Exception):
@@ -437,25 +520,9 @@ class Mediator:
             "result": {"content": [{"type": "text", "text": text}]},
         }
 
-    # ── tools/call ──
-    def _tools_call(self, principal: Principal, request: dict) -> dict:
-        req_id = request.get("id")
-        params = request.get("params")
-        params = params if isinstance(params, dict) else {}
-        name = params.get("name")
-        args = params.get("arguments")
-        from mempalace.stored_text import user_tool_arguments
-
-        from .handoff.drawer_pages import PageArgumentError
-
-        args = user_tool_arguments(dict(args), tool_name=name) if isinstance(args, dict) else {}
-        supplied_rules_seq = args.pop("rules_seq", None)
-        policy = principal.policy
-        if not isinstance(name, str):
-            return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
-
-        local = extensions.get(name)
-        refusal = policy.refusal(name)
+    def _admit(self, principal: Principal, req_id, name: str, args: dict, local):
+        """The response that refuses this call before it is looked at further, or ``None``."""
+        refusal = principal.policy.refusal(name)
         # Visibility and owner gates precede freshness, so hidden tools
         # keep the same refusal regardless of the supplied rules version.
         if (
@@ -468,6 +535,37 @@ class Mediator:
             self._audit(principal, name, "deny", refusal)
             # A hidden tool looks exactly like a tool that doesn't exist.
             return _rpc_error(req_id, -32601, f"Unknown tool: {name}")
+        # The owner's per-action policy, after the connection's own: it only narrows.
+        return tool_policy.check_call(self, principal, req_id, name, args)
+
+    # ── tools/call ──
+    def _tools_call(self, principal: Principal, request: dict) -> dict:
+        # One room-check reader per call, shared by every write-side check.
+        token = _WRITE_ACCESS.set({})
+        try:
+            return self._tools_call_scoped(principal, request)
+        finally:
+            _WRITE_ACCESS.reset(token)
+
+    def _tools_call_scoped(self, principal: Principal, request: dict) -> dict:
+        req_id = request.get("id")
+        params = request.get("params")
+        params = params if isinstance(params, dict) else {}
+        name = params.get("name")
+        args = params.get("arguments")
+        from mempalace.stored_text import user_tool_arguments
+
+        from .handoff.drawer_pages import PageArgumentError
+
+        args = user_tool_arguments(dict(args), tool_name=name) if isinstance(args, dict) else {}
+        supplied_rules_seq = args.pop("rules_seq", None)
+        if not isinstance(name, str):
+            return _rpc_error(req_id, -32602, "Invalid params: tool name must be a string")
+
+        local = extensions.get(name)
+        held = self._admit(principal, req_id, name, args, local)
+        if held is not None:
+            return held
 
         from commonplace.rules import enforce
 
@@ -525,6 +623,7 @@ class Mediator:
             forwarded = dict(request)
             forwarded["params"] = {"name": name, "arguments": args}
             response = self.workers.post(principal, forwarded)
+            response = self._refill_search_response(principal, name, args, response, plan)
             response = self._after(principal, name, rule, args, response)
             if isinstance(plan, dict) and "facts" in plan:
                 result = _tool_result(response)
@@ -581,7 +680,18 @@ class Mediator:
             committed_result = _tool_result(response)
         else:
             response, committed_result = self._gate_response(
-                principal, name, rule, req_id, response
+                principal,
+                name,
+                rule,
+                req_id,
+                response,
+                # CLI text is rendered only from gated rows, for every principal:
+                # a see-all reader may still lack a thread that a room names.
+                cli_args=(
+                    import_filters
+                    if name == "mempalace_search" and import_filters.get("cli_compatible")
+                    else None
+                ),
             )
 
         if classify_tool(name) != "read":
@@ -597,7 +707,7 @@ class Mediator:
             )
         return response
 
-    def _gate_response(self, principal, name, rule, req_id, response):
+    def _gate_response(self, principal, name, rule, req_id, response, *, cli_args=None):
         """Apply the final read boundary while retaining the committed result for audit."""
         from .handoff.mirror_access import gate
 
@@ -605,6 +715,8 @@ class Mediator:
         if isinstance(response, dict) and "result" in response:
             result = committed_result = _tool_result(response)
             cleaned = gate(self.gateway, principal, rule, result)
+            if cli_args is not None and isinstance(cleaned, dict) and not cleaned.get("error"):
+                cleaned = _render_scoped_cli_search(cleaned, cli_args)
             if name == "mempalace_list_drawers":
                 from .handoff.drawer_pages import finish_page
 
@@ -676,9 +788,33 @@ class Mediator:
             return {"respond": project(self.gateway, principal, self.workers, name, args)}
 
         if name == "mempalace_status":
+            from .web.admin import ReadContext, instance_authorized
+
+            try:
+                authorized = instance_authorized(
+                    self.gateway, principal, ReadContext(self.gateway.admin_clock)
+                )
+            except Exception:
+                logger.warning(
+                    "index figure authority check failed; omitting index_stats", exc_info=True
+                )
+                authorized = False
             from .handoff.overview import summary
 
-            return {"respond": summary(self.gateway, principal, self.workers, name)}
+            result = summary(self.gateway, principal, self.workers, name)
+            if authorized:
+                from .index_stats import scoped, workspace
+
+                figures = workspace(
+                    self.gateway, principal.workspace_id, deadline=time.monotonic() + 2.0
+                )
+                if not principal.policy.has_scope("private:read"):
+                    figures = scoped(figures)
+                result = {
+                    **result,
+                    "index_stats": {"workspace_id": principal.workspace_id, **figures},
+                }
+            return {"respond": result}
         if name == "mempalace_delete_by_source":
             return self._scope_delete_by_source(principal, name, args)
         if name == "mempalace_delete_tunnel":
@@ -687,9 +823,14 @@ class Mediator:
             return self._scope_delete_hallway(principal, name, args)
         if name == "mempalace_checkpoint":
             items = args.get("items")
+            if isinstance(items, list) and len(items) > CHECKPOINT_MAX_ITEMS:
+                raise Denied(f"checkpoint takes at most {CHECKPOINT_MAX_ITEMS} items")
             for item in items if isinstance(items, list) else ():
                 if isinstance(item, dict):
                     self._check_thread_room(principal, item.get("wing"), item.get("room"))
+            diary = args.get("diary")
+            if isinstance(diary, dict):
+                self._check_thread_room(principal, None, diary.get("topic"))
         return None  # Policy.refusal already required every wing.
 
     def _before_wing_list(self, principal, name, args, notes):
@@ -727,11 +868,13 @@ class Mediator:
         ):
             return self._before_import_listing(principal, name, args)
         if name == "mempalace_list_drawers":
+            # The existing projection filters physical identities before paging,
+            # so wildcard shared readers do not need private read authority.
             if not policy.sees_all_wings:
                 wing = args.get("wing") or _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
-                if not policy.can_read_wing(wing):
+                if wing and not policy.can_read_wing(wing):
                     raise Denied(f"this connection can't read wing {wing!r}")
                 args["wing"] = wing
             from .handoff.drawer_pages import finish_page, project
@@ -743,10 +886,10 @@ class Mediator:
             wing = args.get("wing")
             if not wing:
                 wing = _only_literal_wing(policy)
-                if not wing:
+                if not wing and "*" not in policy.read_wings:
                     raise Denied(f"pass a wing: this connection reads {_wings_text(policy)}")
                 args["wing"] = wing
-            if not policy.can_read_wing(wing):
+            if wing and not policy.can_read_wing(wing):
                 raise Denied(f"this connection can't read wing {wing!r}")
         if name == "mempalace_list_rooms":
             from .handoff.overview import summary
@@ -850,6 +993,10 @@ class Mediator:
             return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
         if wing and not policy.sees_all_wings and not policy.can_read_wing(wing):
             raise Denied(f"this connection can't read wing {wing!r}")
+        if cli:
+            error = _scoped_cli_search_error(args)
+            if error:
+                return {"respond": {"error": error}}
         fact_result = (
             self._search_facts(principal, args)
             if args.get("include_facts", True)
@@ -863,6 +1010,14 @@ class Mediator:
                 canonical_wing(wing) == canonical_wing(w) for w in requested
             ):
                 return {"respond": {"query": args.get("query", ""), "results": [], "facts": []}}
+            if cli:
+                args["cli_compatible"] = False
+            if (
+                getattr(self.gateway, "handoff", None) is not None
+                and not policy.sees_all_wings
+                and not args.get("cli_compatible")
+            ):
+                return {**fact_result, "search_deadline": monotonic() + WORKER_TIMEOUT_S}
             return fact_result
         return {
             "respond": _with_search_facts(
@@ -986,25 +1141,85 @@ class Mediator:
         return None
 
     def _before_diary_write(self, principal, name, args, notes):
+        self._check_thread_room(principal, None, args.get("topic"))
         wing = args.get("wing") or _agent_wing(args.get("agent_name"))
         self._pin_write_wing(principal.policy, args, wing, notes)
         return None
 
     def _before_diary_read(self, principal, name, args, notes):
         policy = principal.policy
-        if policy.sees_all_wings:
-            return None
-        wing = args.get("wing") or _agent_wing(args.get("agent_name"))
-        if not wing or not policy.can_read_wing(wing):
-            raise Denied(f"this connection can't read wing {wing!r}")
-        args["wing"] = wing
+        if not policy.sees_all_wings:
+            wing = args.get("wing") or _agent_wing(args.get("agent_name"))
+            if not wing or not policy.can_read_wing(wing):
+                raise Denied(f"this connection can't read wing {wing!r}")
+            args["wing"] = wing
+        return self._scope_diary_topics(principal, name, args)
+
+    def _scope_diary_topics(self, principal, name, args):
+        """Exclude entries whose topic names an unreadable thread before the
+        worker counts or windows them, so totals describe only visible entries.
+
+        The probe names the store that served it, and the read is pinned to
+        that store so the excluded topics and the counted rows agree. A read
+        never falls back to an unscoped count.
+        """
+        from .handoff.mirror_access import private_thread_reference, reader
+
+        # Server-only: a client value was already dropped; never forward one.
+        args.pop("thread_scope", None)
+        try:
+            probe = self.workers.call_tool(
+                principal, name, {**args, "thread_scope": {"probe": True}}
+            )
+        except WorkerUnavailable:
+            raise  # Paused or unavailable memory is reported as such, never as empty.
+        except Exception as exc:
+            return self._diary_probe_fault(type(exc).__name__)
+        if isinstance(probe, dict) and set(probe) == {"error"}:
+            return {"respond": probe}  # The same answer an unscoped read gives.
+        if (
+            isinstance(probe, dict)
+            and set(probe) == {"error", "probe_fault", "topic_limit"}
+            and type(probe["topic_limit"]) is int
+        ):
+            # Fails closed until the agent's diary has fewer distinct topics.
+            limit = probe["topic_limit"]
+            return {
+                "respond": {
+                    "error": f"This agent has too many diary topics to check (more than {limit});"
+                    " diary entries are not shown"
+                }
+            }
+        topics = probe.get("topics") if isinstance(probe, dict) else None
+        if (
+            not isinstance(probe, dict)
+            or set(probe) != {"topics", "source"}
+            or not isinstance(topics, list)
+            or probe["source"] not in ("sqlite", "collection")
+        ):
+            return self._diary_probe_fault("malformed probe reply")
+        access = reader(self.gateway, principal)
+        hidden = [topic for topic in topics if private_thread_reference(access, topic)]
+        args["thread_scope"] = {"exclude_topics": hidden, "source": probe["source"]}
         return None
+
+    def _diary_probe_fault(self, kind):
+        """Log the fault class only and answer with an explicit error: never an
+        unscoped read whose totals could count hidden entries, never an empty
+        diary that hides the fault."""
+        logger.warning("Diary topic probe failed (%s)", kind)
+        return {"respond": {"error": "Diary entries could not be checked; retry later"}}
 
     def _before_tunnel_write(self, principal, name, args, notes):
         policy = principal.policy
         for key in ("source_wing", "target_wing"):
             wing = args.get(key)
-            if not wing or not policy.can_write_wing(wing):
+            if (
+                not wing
+                or not policy.can_write_wing(wing)
+                or not policy.sees_all_wings
+                and not policy.can_read_wing(wing)
+            ):
                 raise Denied(f"this connection can't link wing {wing!r}")
         for prefix in ("source", "target"):
             self._check_thread_room(
@@ -1310,11 +1525,19 @@ class Mediator:
             # A retry into a wing the caller can't read must not show whose
             # chat the first copy came from.
             result = _tool_result(response)
-            if isinstance(result, dict) and "source_kept" in result:
-                result = {k: v for k, v in result.items() if k != "source_kept"}
+            if isinstance(result, dict):
+                result = {k: v for k, v in result.items() if k not in {"source_kept", "reason"}}
                 return _replace_result(response, result)
             return response
-        if rule not in ("wing_list", "read_wing", "search", "drawer_read", "diary_read", "kg_read"):
+        if rule not in (
+            "wing_list",
+            "read_wing",
+            "search",
+            "drawer_read",
+            "diary_read",
+            "kg_read",
+            "tunnel_write",
+        ):
             return response
         result = _tool_result(response)
         if result is None:
@@ -1349,19 +1572,16 @@ class Mediator:
 
     # ── helpers that ask the worker ──
     def _check_thread_room(self, principal, wing, room):
-        from .handoff.mirror_access import _THREAD_ROOM
-        from .handoff.models import MIRROR_WING
+        from .handoff.mirror_access import reader, unreadable_room
 
-        mirror = isinstance(wing, str) and canonical_wing(wing) == MIRROR_WING
-        if mirror or (isinstance(room, str) and _THREAD_ROOM.fullmatch(room)):
-            try:
-                allowed = isinstance(room, str) and self.gateway.handoff.recall.can_read(
-                    principal, room
-                )
-            except Exception:
-                allowed = False
-            if not allowed:
-                raise Hidden({"success": False, "error": "Room not found"})
+        scope = _WRITE_ACCESS.get()
+        access = None if scope is None else scope.get(id(principal))
+        if access is None:
+            access = reader(self.gateway, principal)
+            if scope is not None:
+                scope[id(principal)] = access
+        if unreadable_room(access, wing, room):
+            raise Hidden({"success": False, "error": "Room not found"})
 
     def _drawer_wings(self, principal, ids: list) -> dict:
         if not ids:
@@ -1394,8 +1614,83 @@ class Mediator:
         except TimeoutError:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
 
+    def _refill_search_response(self, principal, name, args, response, plan):
+        """Preserve the first worker reply unless it carries structured search hits."""
+        deadline = plan.get("search_deadline") if isinstance(plan, dict) else None
+        if deadline is None:
+            return response
+        result = _tool_result(response)
+        if (
+            not isinstance(result, dict)
+            or result.get("error")
+            or not isinstance(result.get("results"), list)
+        ):
+            return response
+        return _replace_result(
+            response,
+            self._readable_search(principal, name, args, initial=result, deadline=deadline),
+        )
+
+    def _readable_search(self, principal, name, args, *, initial=None, deadline=None) -> dict:
+        """Fill from gated ranked prefixes, bounded by 100 candidates and one deadline."""
+        from .handoff.mirror_access import gate
+        from .rules import checks
+
+        end = deadline if deadline is not None else monotonic() + WORKER_TIMEOUT_S
+        # Deadline-bound drawer checks reuse only open stores, as in overview
+        # projection. Pinned-wing searches do not pass through that projection.
+        context = getattr(self.gateway, "handoff", None)
+        if context is not None:
+            with contextlib.suppress(Exception):
+                context.store_for(principal.workspace_id)
+        try:
+            with checks.deadline(max(0, end - monotonic())):
+                worker_args = dict(args)
+                result = initial
+                while True:
+                    checks.remaining(0)
+                    if result is None:
+                        result = self.workers.call_tool(principal, name, worker_args)
+                    if not isinstance(result, dict):
+                        raise WorkerUnavailable()
+                    if result.get("error") or not isinstance(result.get("results"), list):
+                        return result
+                    limit = max(1, min(int(args.get("limit", 5)), MAX_SEARCH_CANDIDATES))
+                    fetched = max(1, min(int(worker_args.get("limit", 5)), MAX_SEARCH_CANDIDATES))
+                    candidates = result["results"]
+                    result = gate(
+                        self.gateway,
+                        principal,
+                        "search",
+                        {
+                            **result,
+                            "results": [
+                                h
+                                for h in candidates
+                                if _scrub(h, principal.policy.can_read_wing) is not _DROP
+                            ],
+                        },
+                    )
+                    result = {**result, "results": result.get("results", [])[:limit]}
+                    # Worker diagnostics describe candidates before authorization.
+                    for key in ("total", "total_before_filter", "filtered_by_max_distance"):
+                        result.pop(key, None)
+                    if "count" in result:
+                        result["count"] = len(result["results"])
+                    checks.remaining(0)
+                    if (
+                        len(result["results"]) >= limit
+                        or len(candidates) < fetched
+                        or fetched == MAX_SEARCH_CANDIDATES
+                    ):
+                        return result
+                    worker_args["limit"] = min(fetched * 2, MAX_SEARCH_CANDIDATES)
+                    result = None
+        except TimeoutError:
+            return {"query": args.get("query", ""), "results": []}
+
     def _scoped_fan_out_search(self, principal, name, args) -> dict:
-        """One worker search and one ranking over the readable wing union."""
+        """Rank the readable wing union, refilling after drawer authorization."""
         from .handoff.models import MIRROR_WING
         from .handoff.overview import project
 
@@ -1414,7 +1709,19 @@ class Mediator:
             raise Denied(f"pass a wing: this connection reads {len(wings)} wings")
         if not wings:
             return {"query": args.get("query", ""), "results": [], "wings_searched": []}
-        result = self.workers.call_tool(principal, name, {**args, "wings": wings})
+        worker_args = {**args, "wings": wings}
+        if args.get("cli_compatible"):
+            worker_args["cli_compatible"] = False
+        search = (
+            self._readable_search
+            if (
+                getattr(self.gateway, "handoff", None) is not None
+                and not principal.policy.sees_all_wings
+                and not worker_args.get("cli_compatible")
+            )
+            else self.workers.call_tool
+        )
+        result = search(principal, name, worker_args)
         if not isinstance(result, dict):
             raise WorkerUnavailable()
         if result.get("error"):
@@ -1639,13 +1946,22 @@ def _host_name(authority: str) -> str:
 
 
 def _public_route(method: str, path: str) -> bool:
+    if path.startswith("/api/bridge/in/"):
+        return True  # chat-platform intake: the platform's signature is the credential
     if method == "GET":
         return path in ("/app", "/app/login", "/oauth/authorize") or path.startswith(
             ("/app/", "/s/", "/.well-known/", "/skills/decks/")
         )
     return method == "POST" and (
         path.startswith("/app/auth/")
-        or path in ("/oauth/register", "/oauth/token", "/oauth/revoke")
+        or path
+        in (
+            "/oauth/register",
+            "/oauth/token",
+            "/oauth/revoke",
+            "/api/runner-enrollment/exchange",
+            "/api/runner-enrollment/recover",
+        )
     )
 
 
@@ -1669,16 +1985,29 @@ def _rest_tool(method, path):
         return {"POST": "card_start", "GET": "card_start_status"}.get(method)
     if len(parts) == 4 and parts[:2] == ["api", "card-starts"] and method == "POST":
         return {"cancel": "card_start_cancel", "resolve": "card_start_resolve"}.get(parts[3])
+    if parts == ["api", "topology", "proposals"] and method == "POST":
+        return "topology_propose"
     if parts == ["api", "spaces"]:
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 3 and parts[:2] == ["api", "spaces"] and method == "GET":
         return "board_list"
+    if len(parts) == 4 and parts[:2] == ["api", "spaces"]:
+        return {
+            "cards": {"GET": "task_list", "POST": "task_add"},
+            "chat": {"GET": "space_read", "POST": "space_post"},
+        }.get(parts[3], {}).get(method)
     if parts == ["api", "boards"]:
         return {"GET": "board_list", "POST": "board_add"}.get(method)
     if len(parts) == 4 and parts[:2] == ["api", "boards"] and parts[3] == "cards":
         return {"GET": "task_list", "POST": "task_add"}.get(method)
     if parts == ["api", "needs-me"] and method == "GET":
         return "needs_me"
+    if parts == ["api", "costs"] and method == "GET":
+        return "costs_summary"
+    if parts == ["api", "topology"] and method == "GET":
+        return "topology_get"
+    if parts == ["api", "topology", "route"] and method == "GET":
+        return "topology_route"
     if parts[:2] == ["api", "cards"]:
         if len(parts) == 3:
             return {"GET": "task_show", "PATCH": "task_update"}.get(method)
@@ -1706,6 +2035,24 @@ def _rest_tool(method, path):
             if method == "POST" and parts[3] == "test":
                 return "webhook_test"
     return None
+
+
+def _rest_tool_refusal(gateway, principal, tool, method, path, handler=None):
+    """Why a connection's REST alias is refused: its own policy first, then the owner's."""
+    if principal is None or principal.person:
+        return None
+    from . import person_actions
+
+    if (
+        handler is not None
+        and person_actions.chat_post_path(method, path)
+        and person_actions.chat_person(gateway, handler) is not None
+    ):
+        return None
+    if tool and not principal.policy.tool_visible(tool):
+        return {"error": "tool not allowed for this connection"}
+    held = tool_policy.rest_refusal(gateway, principal, tool, method, path)
+    return None if held is None else {"error": held, "code": "tool_policy"}
 
 
 def _origin(value):
@@ -1778,6 +2125,9 @@ class Gateway:
         self.prefix_routes: list = []
         self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
         self.limiter = ratelimit.TokenBuckets()
+        self.write_limit, self.backfill = ratelimit.limits_from_env()
+        self.wall_clock = time.time
+        backfill_allowance.ensure_schema(db)
         self.storage_meter = plans.StorageMeter()
         allowed = os.environ.get("COMMONPLACE_ALLOWED_HOSTS")
         self.allowed_hosts = (
@@ -1937,6 +2287,9 @@ class Gateway:
         finally:
             stop.set()
             try:
+                # Database-polling workers go first, so none can settle a row
+                # or claim a job while the rest of the gateway is closing.
+                self._stop_db_workers()
                 if self.pause_server is not None:
                     self.pause_server.stop()
             finally:
@@ -1947,6 +2300,16 @@ class Gateway:
                     handoff.close()
             finally:
                 self.supervisor.close()
+
+    def _stop_db_workers(self) -> None:
+        """Stop the answer-hold and chat workers; one failing never skips the rest."""
+        for name in ("hold_worker", "chat_worker"):
+            worker = getattr(self, name, None)
+            try:
+                if worker is not None:
+                    worker.stop()
+            except Exception:
+                logger.exception("could not stop %s", name)
 
     def shutdown(self) -> None:
         """Stop a running ``serve`` (from another thread); it then cleans up."""
@@ -2038,7 +2401,14 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             MAX_REQUEST_BYTES
             if path == "/mcp"
             else HANDOFF_REQUEST_BYTES
-            if path in ("/api/handoff", "/api/import", "/api/capture")
+            if path
+            in (
+                "/api/handoff",
+                "/api/import",
+                "/api/capture",
+                "/api/memory/import/preview",
+                "/api/memory/import/confirm",
+            )
             else 1_920_000
             if path == "/api/voice/transcribe"
             else 65536
@@ -2057,10 +2427,11 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         forwarded = ",".join(self.headers.get_all("X-Forwarded-For", []))
         ip = ratelimit.client_ip(self.client_address[0], forwarded)
         policies = []
+        topup = False
         if (
             path.startswith("/app/auth/")
             and path != "/app/auth/providers"
-            or path == "/app/login"
+            or path in ("/app/login", "/app/join")
             or self.command == "POST"
             and path in ("/oauth/token", "/oauth/register", "/oauth/authorize")
         ):
@@ -2076,23 +2447,77 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 (ratelimit.UNTRUSTED if untrusted else ratelimit.AUTHENTICATED, identity)
             )
             if untrusted and _write_request(self.command, path, request):
-                policies.append((ratelimit.WRITES, identity))
+                policies.append((self.server.gateway.write_limit, identity))
+                topup = (
+                    not principal.person
+                    and self.command == "POST"
+                    and path in ("/api/capture", "/api/import")
+                )
         # Short links replace the anonymous policy with their own budget.
         if self.command == "GET" and path.startswith("/s/"):
             policies.append((ratelimit.SHORT_LINKS, ip))
         elif principal is None:
-            policies.append((ratelimit.ANONYMOUS, ip))
-        retry = self.server.gateway.limiter.check(policies)
+            # Only shell reads use this budget. Credential routes keep BOTH
+            # their original anonymous and sensitive limits, including GETs.
+            shell = self.command == "GET" and (
+                path == "/app/auth/providers"
+                or path in ("/app", "/app/")
+                or path.startswith("/app/")
+                and not path.startswith("/app/auth/")
+                and path not in ("/app/login", "/app/join")
+            )
+            policies.append((ratelimit.APP_SHELL if shell else ratelimit.ANONYMOUS, ip))
+        gateway = self.server.gateway
+        retry = gateway.limiter.check(policies)
         if not retry:
             return False
+        if topup:
+            # A per-minute refusal wins: waiting that out, not the hourly limit, is what helps.
+            wait = self._backfill_allowance(principal, policies)
+            if wait == 0:
+                return False
+            retry = wait if wait > 0 else retry
         self.close_connection = True
-        self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
+        if (
+            path.startswith("/app/")
+            and (ratelimit.CREDENTIALS, ip) in policies
+            and "text/html" in self.headers.get("Accept", "")
+        ):
+            from .web import signin_recovery
+
+            signin_recovery(self, "throttled", 429, {"Retry-After": str(retry)})
+        else:
+            self._send_json(429, {"error": "slow down"}, {"Retry-After": str(retry)})
         return True
+
+    def _backfill_allowance(self, principal, policies):
+        """Spend one first-backfill write when only the steady write limit refused.
+
+        Returns 0 on admission, the Retry-After of another budget that refused,
+        or -1 when the allowance is spent. Every other budget (per-minute
+        included) is still charged, and refunded if the allowance is spent.
+        """
+        gateway = self.server.gateway
+        others = [(limit, ident) for limit, ident in policies if limit is not gateway.write_limit]
+        wait = gateway.limiter.check(others)
+        if wait:
+            return wait
+        if backfill_allowance.admit(
+            gateway.db,
+            workspace_id=principal.workspace_id,
+            connection_id=principal.connection_id,
+            now=gateway.wall_clock(),
+            limits=gateway.backfill,
+        ):
+            return 0
+        gateway.limiter.refund(others)
+        return -1
 
     def _dispatch(self):
         self._response_started = False
         # The stdlib reuses this object for keepalive requests.
         self.__dict__.pop("_commonplace_principal", None)
+        self.__dict__.pop("_instance_context", None)
         try:
             self._handle()
         except (BrokenPipeError, ConnectionResetError):
@@ -2102,6 +2527,59 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             if not self._response_started:
                 self._send_json(500, {"error": "internal error"})
+
+    def _instance_admission(self, path, principal):
+        self._instance_charged = False
+        if not path.startswith("/api/instance-admin/") or principal is None:
+            return False
+        from . import instance_admin
+        from .web.admin import ReadContext
+
+        if self._rate_limit(path, principal):
+            return True
+        context = ReadContext(self.server.gateway.admin_clock)
+        self._instance_context = context
+        try:
+            allowed = instance_admin.flag(self.server.gateway, principal, context)
+        except Exception:
+            self.close_connection = True
+            self._send_json(503, {"error": "source_unavailable"})
+            return True
+        if not allowed:
+            self.close_connection = True
+            try:
+                instance_admin.audit(
+                    self.server.gateway,
+                    principal,
+                    context,
+                    "instance_admin.denied",
+                    decision="deny",
+                    reason="access_required",
+                )
+            except Exception:
+                logger.error("Instance denial audit unavailable")
+            self._send_json(403, {"error": instance_admin.DENIAL})
+            return True
+        self._instance_charged = True
+        return False
+
+    def _account_plan_admission(self, path, principal, request, parse_error):
+        if (
+            principal is None
+            or parse_error
+            or path.startswith("/api/instance-admin/")
+            or not plans.enabled()
+        ):
+            return False
+        account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
+        plan = plans.get_plan(self.server.gateway.db, account) if account else None
+        if self._plan_limit(path, principal, request, plan):
+            return True
+        if path == "/mcp" or path.startswith("/api/"):
+            delay = plans.load_delay(plan)
+            if delay:
+                sleep(delay)
+        return False
 
     def _handle(self):
         path = urlparse(self.path).path
@@ -2127,6 +2605,20 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
+        if self._instance_admission(path, principal):
+            return
+        from .runner import enrollment_api
+
+        if enrollment_api.preflight(self.server.gateway, self, path, principal):
+            return
+        if (
+            principal is not None
+            and not principal.person
+            and path.startswith("/api/card-starts/")
+            and path.endswith("/launch-output")
+        ):
+            self._send_json(404, {"error": "not found"})
+            return
         if (
             principal is not None
             and getattr(principal, "runner", None) == "machine"
@@ -2173,16 +2665,12 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                     request = json.loads(raw.decode("utf-8"))
                 except (ValueError, UnicodeError, RecursionError):
                     parse_error = (400, _rpc_error(None, -32700, "Parse error"))
-        if self._rate_limit(path, principal, request):
+        if not self._instance_charged and self._rate_limit(path, principal, request):
             return
-        if (
-            principal is not None
-            and not principal.person
-            and tool
-            and not principal.policy.tool_visible(tool)
-        ):
+        refused = _rest_tool_refusal(self.server.gateway, principal, tool, self.command, path, self)
+        if refused is not None:
             self.close_connection = True
-            self._send_json(403, {"error": "tool not allowed for this connection"})
+            self._send_json(403, refused)
             return
         # OAuth POST has a browser-bound login-token stage. Its handler
         # checks sign-in before validating the authorization form.
@@ -2201,15 +2689,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             )
             self._send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": challenge})
             return
-        if principal is not None and not parse_error and plans.enabled():
-            account = plans.workspace_account(self.server.gateway.db, principal.workspace_id)
-            plan = plans.get_plan(self.server.gateway.db, account) if account else None
-            if self._plan_limit(path, principal, request, plan):
-                return
-            if path == "/mcp" or path.startswith("/api/"):
-                delay = plans.load_delay(plan)
-                if delay:
-                    sleep(delay)
+        if self._account_plan_admission(path, principal, request, parse_error):
+            return
         if path == "/mcp":
             if self.command != "POST":
                 self.close_connection = True
@@ -2230,7 +2711,13 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         handler(self)
 
     def _plan_limit(self, path, principal, request, plan):
-        if path in ("/api/import", "/api/capture", "/api/settings/capture"):
+        if path in (
+            "/api/import",
+            "/api/capture",
+            "/api/settings/capture",
+            "/api/memory/import/preview",
+            "/api/memory/import/confirm",
+        ):
             # Ingest checks projected storage per thread inside the store
             # transaction, and permits no-op reimports even at the limit.
             return False
@@ -2270,9 +2757,20 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         try:
             response = self.server.gateway.mediator.handle(principal, request)
         except Exception as exc:
-            log_failure(logger, "gateway MCP request failed", exc)
-            self.close_connection = True
             req_id = request.get("id") if isinstance(request, dict) else None
+            log_failure(logger, f"gateway MCP request failed ({_call_label(request)})", exc)
+            if db_busy.is_busy(exc):
+                self._send_json(
+                    200,
+                    _rpc_error(
+                        req_id,
+                        BUSY_RPC_CODE,
+                        "The workspace database is busy right now; retry shortly",
+                        {"retryable": True, "retry_after_s": db_busy.RETRY_AFTER_S},
+                    ),
+                )
+                return
+            self.close_connection = True
             self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
             return
         if response is None:

@@ -1,7 +1,7 @@
 """Durable real authority/custody with synthetic outer SSH and cache bytes only.
 
 No live endpoints, current host caches, operator keys or production participation
-claims. Parent runs these tests in its grouped verification; builder runs lint only.
+claims. The integration maintainer runs grouped verification; the component author runs lint only.
 """
 
 import json

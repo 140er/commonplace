@@ -1,7 +1,7 @@
 import { escape as e } from "./api.js";
 
 const languages = ["en", "nl"], storageKey = "commonplace-voice-language";
-const inputs = 'form[data-form="space-message"] textarea[data-draft], form[data-form="comment"] input[data-draft], form[data-form="reply"] input[data-draft]';
+const inputs = 'form[data-form="space-message"] textarea[data-draft], form[data-form="comment"] input[data-draft], form[data-form="reply"] input[data-draft], [data-deck-voice-input]';
 const block = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M9 2h6v10H9z"/><path d="M5 9h2.5v4.5h9V9H19v7h-5.75v3H16v3H8v-3h2.75v-3H5z"/></svg>';
 
 export function languagePicker(storage) {
@@ -182,5 +182,13 @@ export function voiceInput(root, api, failed, browser = window) {
       if (items.length) { event.preventDefault(); items[(items.indexOf(event.target) + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
     }
   });
-  return { load, reset, stop, view, remember, settings };
+  async function start(input) {
+    if (!config.available || !config.enabled) { failed("Enable voice input in Settings to record a message."); return; }
+    if (!input?.form) { failed("Open a conversation to record a message."); return; }
+    input.dataset.deckVoiceInput = "";
+    input.dataset.draft ||= `deck-voice-${input.name || 'message'}`;
+    input.focus?.();
+    await toggle(input);
+  }
+  return { load, reset, stop, view, remember, settings, start };
 }

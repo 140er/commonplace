@@ -1,18 +1,18 @@
 # Compute control and UI build contract
 
-2026-11-09. Continue real reversible feature implementation. This fixes the next
-integration surface; it grants no remote effect or review verdict. Isolated
-custody/protocol/transport modules are present. Public execution remains disabled
-until the parent wires authenticated current authority and enrollment verification.
+2026-11-09. This contract describes the control API and UI integration surface.
+It grants no remote effect or review verdict. Public execution requires authenticated
+current authority and enrollment verification in addition to the isolated
+custody/protocol/transport components.
 
-## Ownership
+## Components
 
-Control/API builder: `commonplace/compute/control.py`, `routes.py` and
-`tests/test_compute_control.py`, `tests/test_compute_api.py`. No edits to existing
-protocol, transport, credentials, scopes or chat code. Parent integrates extension
-installation and shared docs/dependencies. UI builder: new
-`commonplace/web/static/compute.js`, `compute.css`, isolated UI tests and minimal
-existing app/rail/palette/index glue. Preserve Coworkers/project chat and unrelated
+Control/API: `commonplace/compute/control.py`, `routes.py`,
+`tests/test_compute_control.py` and `tests/test_compute_api.py`. Preserve existing
+protocol, transport, credentials, scopes and chat interfaces. Extension installation,
+shared documentation and dependency declarations must remain consistent.
+UI: `commonplace/web/static/compute.js`, `compute.css`, isolated UI tests and the
+app/rail/palette/index integration. Preserve Coworkers/project chat and unrelated
 surfaces. Do not use concept sample data as production state.
 
 ## Authority and storage
@@ -37,7 +37,7 @@ scan files/directories, start threads, open networks or silently enable transpor
 ## REST (exact version-one surface)
 
 All paths are under `/api/compute`. API module exports `install(gateway)` and
-`handle(gateway, handler)`; parent installs it in the extension list. Export
+`handle(gateway, handler)`; register the module in the extension list. Export
 `open_store(gateway, workspace_id)` from control.py for service integration.
 Store mutation methods take an actual principal and revalidate it through the
 existing control DB; not a boolean authority claim. Document public methods.
@@ -115,6 +115,6 @@ Meaningful synthetic tests: persistence/reopen, owner/session/PAT/Origin/foreign
 workspace failures, current board/task/connection authority, immutable pins and
 finite bounds, idempotent proposal/conflicting replay, digest tamper/stale epoch,
 expiry/revocation/cancel, no network/key access in routes, UI escaping and stale
-response isolation. Only quick syntax/lint/normal commit hooks per child; parent
-runs grouped tests and real browser integration. No child tests/builds or live
-connections. No independent review/gate claims.
+response isolation. Run syntax/lint checks, focused integration tests and real
+browser checks for affected interfaces, using isolated fixtures rather than live
+connections. These checks do not constitute independent review or release approval.

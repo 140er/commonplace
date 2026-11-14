@@ -12,6 +12,7 @@ import pytest
     "case",
     [
         "escaping",
+        "presentation",
         "payloads",
         "enrollment",
         "scopes",
@@ -20,7 +21,6 @@ import pytest
         "isolation",
         "lifecycle",
         "failures",
-        "routing",
         "discovery",
         "discovery-cancellation",
         "scripts",

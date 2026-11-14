@@ -1,0 +1,2 @@
+- **Promises:** The installed skill instructions and CLI descriptions call the role Coworker while preserving command names, historical handoff aliases and protocol keys.
+- **Tests:** `tests/test_coworker_tool_copy.py` scans the skill and descriptions alongside the emitted reasons and prompts.

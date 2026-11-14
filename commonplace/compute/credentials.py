@@ -378,9 +378,7 @@ class CredentialStore:
             # Read before database creation: missing keys must not create state.
             wrapping = _read_key(store._key_path)
             store._open_database(create=True)
-            with store._transaction(write=True):
-                for statement in _SCHEMA:
-                    store._conn.execute(statement)
+            with store._transaction(write=True, initialize=True):
                 store_id = uuid.uuid4().hex
                 key_id = hashlib.sha256(wrapping).hexdigest()
                 verifier = _seal(wrapping, b"compute-custody-v1", _aad("store", store_id, key_id))
@@ -463,17 +461,17 @@ class CredentialStore:
             os.close(directory)
 
     @contextmanager
-    def _transaction(self, *, write=False):
+    def _transaction(self, *, write=False, initialize=False):
         from .fence import _mutation
 
         # Authority callback may acquire ControlDB; always take its coordinator
         # before the custody lock, including final handle-to-key conversion.
         with _mutation(self._database_path):
-            with self._fenced_transaction(write=write):
+            with self._fenced_transaction(write=write, initialize=initialize):
                 yield
 
     @contextmanager
-    def _fenced_transaction(self, *, write=False):
+    def _fenced_transaction(self, *, write=False, initialize=False):
         from .fence import _coordinator
 
         with self._lock:
@@ -483,6 +481,11 @@ class CredentialStore:
                 self._check_files()
                 self._conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 try:
+                    # First attachment needs the tables; schema and guards must
+                    # still commit together under the same coordinator lock.
+                    if initialize:
+                        for statement in _SCHEMA:
+                            self._conn.execute(statement)
                     coordinator = _coordinator(self._database_path)
                     guard = (
                         coordinator.custody_write(self._conn, str(self._database_path))

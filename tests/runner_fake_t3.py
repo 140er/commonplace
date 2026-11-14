@@ -64,10 +64,26 @@ def main():
     if mode == "bad-json":
         print("not JSON")
         return 0
+    if mode == "leaky":
+        print(
+            "refused: " + os.environ.get("T3_ACP_MCP_AUTHORIZATION", "") + " " + "x" * 60,
+            file=sys.stderr,
+        )
+        return 1
+    if mode == "diagnostic-flood":
+        for stream, label in ((sys.stdout, "stdout"), (sys.stderr, "stderr")):
+            print("progress first\n" + "progress\n" * 2500, file=stream)
+            print("api_key=" + "sk-" + "S" * 24, file=stream)
+            print(label + " tail: runtime_mode_escalation_denied", file=stream)
+        return 1
+    if mode == "is-error":
+        print("runtime_mode_escalation_denied", file=sys.stderr)
     result = {
         "isError": mode == "is-error",
         "structuredContent": {"threadId": "demo-thread", "runId": "demo-run", "status": "running"},
     }
+    if mode == "is-error":
+        result["error"] = {"code": "runtime_mode_escalation_denied"}
     if mode == "no-thread-id":
         del result["structuredContent"]["threadId"]
     if mode == "no-run-id":

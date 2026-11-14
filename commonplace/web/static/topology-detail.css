@@ -1,0 +1,41 @@
+/* The Compute map's node detail panel (topology-detail.js): a side panel over the canvas, below the
+   toolbar so zoom stays reachable, on a wide screen and a sheet over its lower part on a phone.
+   Workbench tokens only. A stale value is dashed, faded and says "stale" in words; colour is never
+   the only signal. */
+.topo { position: relative; }
+.topo-detail { position: absolute; z-index: 5; top: 49px; right: 0; bottom: 0; width: min(400px, 100%); display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line-strong); font-size: 13px; line-height: 19px; color: var(--text); }
+.topo-detail[hidden] { display: none; }
+.topo-detail button { font: inherit; }
+.td-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 12px 14px 8px; }
+.td-title { margin: 0; font-size: 16px; line-height: 22px; font-weight: 650; overflow-wrap: anywhere; }
+.td-sub { margin: 0; color: var(--text-2); }
+.td-tabs { flex: none; display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.td-tabs [role="tab"] { min-height: 36px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-2); cursor: pointer; }
+.td-tabs [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.td-tabs [role="tab"]:focus-visible, .td-body:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px; }
+.td-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 14px; }
+.td-body h3 { margin: 14px 0 6px; font-size: 12px; line-height: 16px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--text-2); }
+.td-body h3:first-child { margin-top: 0; }
+.td-list, .td-items, .td-hops, .td-where { margin: 0; padding: 0; list-style: none; }
+.td-row { display: grid; grid-template-columns: 96px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.td-row dt { color: var(--text-2); }
+.td-row dd { margin: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.td-val { font-weight: 500; }
+.td-meta { font-size: 12px; line-height: 17px; color: var(--text-3); }
+.td-meta.stale, .stale > .td-val, li.stale { color: var(--text-2); }
+.td-row.stale, .td-site.stale { border-left: 2px dashed var(--line-strong); padding-left: 8px; opacity: .85; }
+.td-flag { justify-self: start; padding: 0 6px; border: 1px dashed var(--line-strong); border-radius: var(--r); font-size: 11px; line-height: 16px; color: var(--text-2); }
+.td-last { margin: 0 0 6px; color: var(--text-2); }
+.td-empty { margin: 4px 0 0; color: var(--text-2); }
+.td-items > li { padding: 6px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.td-items ul { margin: 4px 0 0 12px; padding: 0; list-style: none; }
+.td-where { margin: 2px 0; color: var(--text-2); }
+.td-hops { margin: 6px 0; counter-reset: hop; }
+.td-hops li { padding: 3px 0; overflow-wrap: anywhere; }
+.td-answer { margin: 0 0 4px; font-weight: 500; overflow-wrap: anywhere; }
+.td-copy { margin: 6px 0 0; padding: 8px; max-height: 160px; overflow: auto; white-space: pre-wrap; background: var(--pane); border: 1px solid var(--line); border-radius: var(--r); font: 12px/17px var(--mono); }
+.td-foot { flex: none; margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3); }
+.td-body .btn { margin-top: 6px; }
+@media (max-width: 640px) {
+  .topo-detail { top: auto; width: 100%; height: 68%; border-left: 0; border-top: 1px solid var(--line-strong); box-shadow: 0 -8px 24px rgba(0, 0, 0, .12); }
+}

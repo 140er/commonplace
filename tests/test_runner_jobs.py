@@ -153,6 +153,10 @@ def test_p1_machine_dispatch_default_deny(signup_hub, owners):  # noqa: F811
         if path.startswith("/api/runner/"):
             continue
         status, body = http(hub.port, method, path, token=machine["machine_token"], body={})
+        if path.startswith("/api/instance-admin/"):
+            # The instance console answers every non-session credential with an audited 403.
+            assert (status, body) == (403, {"error": "Instance administrator access required"})
+            continue
         assert status == 404, (method, path, status, body)
         assert body == {"error": "not found"}
 
