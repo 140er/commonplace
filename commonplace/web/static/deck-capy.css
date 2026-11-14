@@ -2,6 +2,7 @@
 :root[data-ui="deck"] {
   --ground: #09090c;
   --rail: #111015;
+  --tree-line: #302e3a;
   --stage: #08080b;
   --surface-a: .94;
   --s1: rgba(20,19,25,var(--surface-a));

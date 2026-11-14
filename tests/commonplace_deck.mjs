@@ -42,7 +42,7 @@ for (const [label, base, route, drawer] of [
       assert.match(mount.innerHTML, new RegExp(`href="#/${destination}"`));
       assert.ok(closes.length + 1 <= 2, "close drawer, then choose a tab");
     }
-    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>3<span/);
+    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>2<span/);
   }
   state.deck = undefined;
   runInNewContext(`({${callback}}).phone()`, context);
@@ -98,8 +98,8 @@ test("the bar offers Bots and Settings, and a Deck screen only once it is regist
   assert.match(bare, /href="#\/bots" data-nav="bots" aria-current="page"/);
   const full = deck.renderDeckBar({ hash: "#/today", needs: 3, screens: { today() {}, compute() {} } });
   assert.deepEqual([...full.matchAll(/data-nav="([a-z]+)"/g)].map((m) => m[1]), ["today", "bots", "compute", "settings"]);
-  assert.match(full, /data-nav="today" aria-current="page">Today<span class="count need">3/);
-  assert.match(full, /class="deck-brand" href="#\/today"/);
+  assert.match(full, /data-nav="today" aria-current="page">[\s\S]*?Today<span class="count need">3/);
+  assert.match(full, /class="deck-brand" href="#\/"/);
   assert.equal(deck.deckHome({}), "#/bots");
   assert.equal(deck.deckHome({ today() {} }), "#/today");
   for (const [hash, section] of [["#/rules", "settings"], ["#/admin", "settings"], ["#/settings", "settings"], ["#/compute", "compute"], ["#/board/x", ""], ["#/memory?q=a", ""], ["", ""]]) assert.equal(deck.deckSection(hash), section, hash);
@@ -121,11 +121,11 @@ test("phone: a title bar and one tab per offered section", () => {
   assert.deepEqual([...tabs.matchAll(/href="#\/([a-z]+)"/g)].map((m) => m[1]), ["bots", "compute", "settings"]);
   assert.match(tabs, /data-count="3"/);
   assert.match(tabs, /data-nav="settings" aria-current="page"/);
-  assert.match(tabs, /Bots<span class="count need">2/);
-  assert.match(deck.renderDeckTabs({ needs: 2, botsWaiting: 5, screens: {} }), /Bots<span class="count need">5/);
-  assert.match(deck.renderDeckBar({ needs: 2, botsWaiting: 5, screens: {} }), /Bots<span class="count need">5/);
+  assert.doesNotMatch(tabs, /class="count /, 'no waiting badge moves to Bots when Today is absent');
+  assert.doesNotMatch(deck.renderDeckTabs({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
+  assert.doesNotMatch(deck.renderDeckBar({ needs: 2, botsWaiting: 5, screens: {} }), /class="count /);
   assert.match(deck.renderDeckTop({ hash: "#/bots" }), /<b>Bots<\/b>/);
-  assert.match(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Commonplace<\/b>/);
+  assert.match(deck.renderDeckTop({ hash: "#/board/x" }), /<b>Board<\/b>/);
   assert.match(deck.renderDeckTop(), /data-action="palette"/);
 });
 
@@ -201,7 +201,8 @@ test("Settings carries the workspace tools in the Deck look only, with Admin for
   const on = make(true, { can_admin: true });
   assert.deepEqual(on.map(([where]) => where), ["afterbegin", "beforeend"]);
   assert.deepEqual([...on[0][1].matchAll(/href="(#\/[a-z]+)"/g)].map((m) => m[1]), ["#/needs", "#/boards", "#/memory", "#/console", "#/rules", "#/admin"]);
-  assert.match(on[0][1], /Needs me<span class="count need">3/);
+  assert.match(on[0][1], />Needs me<\/a>/);
+  assert.doesNotMatch(on[0][1], /class="count /, "counts belong to the action navigation only");
   for (const can_admin of [false, undefined, "true"]) assert.doesNotMatch(make(true, { can_admin })[0][1], /#\/admin/);
   assert.doesNotMatch(deck.toolsHTML(), /<style|style="/);
 });

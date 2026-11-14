@@ -1,0 +1,91 @@
+/* 252 rail + the remaining stage width = the viewport. Classic selectors stay untouched. */
+@media (min-width: 700px) {
+  :root[data-ui="deck"] .shell.two { grid-template-columns: 252px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell, :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 252px minmax(0, 1fr) 396px; grid-template-rows: minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell > .rail { grid-column: 1; grid-row: 1; }
+  :root[data-ui="deck"] .shell > :is(.center, .context) { grid-row: 1; }
+}
+:root[data-ui="deck"] .rail[data-deck="bar"] { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; overflow: hidden; border-right: 1px solid var(--line); background: var(--rail); }
+:root[data-ui="deck"] .deck-brand-row { display: flex; align-items: center; height: 56px; flex: none; padding: 0 16px; gap: 4px; }
+:root[data-ui="deck"] .deck-brand { gap: 10px; margin: 0; min-width: 0; font-size: 14px; }
+:root[data-ui="deck"] .deck-mark { width: 24px; height: 24px; color: var(--violet); }
+:root[data-ui="deck"] .deck-brand-row .iconbtn { width: 28px; min-height: 32px; margin-left: auto; color: var(--ink3); }
+:root[data-ui="deck"] .rail .i { width: 16px; height: 16px; flex: none; }
+:root[data-ui="deck"] .rail .nav { min-height: 32px; border-radius: var(--radius-control); color: var(--ink2); font-size: 13.5px; font-weight: 500; gap: 10px; box-shadow: none; }
+:root[data-ui="deck"] .rail .nav .i { color: var(--ink3); }
+:root[data-ui="deck"] .rail .deck-new-thread { flex: none; width: auto; margin: 0 10px 8px; height: 34px; background: var(--s2); color: var(--ink); font-weight: 600; }
+:root[data-ui="deck"] .deck-links { display: flex; flex-direction: column; align-items: stretch; gap: 1px; margin: 0 10px 12px; }
+:root[data-ui="deck"] .rail .deck-links .nav { width: 100%; min-height: 32px; padding: 0 10px; gap: 10px; }
+:root[data-ui="deck"] .rail .nav[aria-current], :root[data-ui="deck"] .rail .deck-links .nav[aria-current], :root[data-ui="deck"] :is(.deck-bot-row, .deck-tree-row)[aria-current] { background: var(--s2); box-shadow: none; color: var(--ink); }
+:root[data-ui="deck"] .rail .nav[aria-current]::before { content: none; }
+:root[data-ui="deck"] .rail :is(.nav, .deck-bot-row, .deck-tree-row, .deck-thread-row):hover { background: var(--s2); color: var(--ink); }
+:root[data-ui="deck"] [data-deck-unread] { margin-left: auto; }
+:root[data-ui="deck"] .deck-links .count { margin-left: auto; }
+:root[data-ui="deck"] :is(.rail, .m-tabs) .count { min-width: 18px; height: 18px; padding: 0 5px; font-size: 11px; line-height: 18px; box-shadow: none; }
+:root[data-ui="deck"] .rail .count.unread { background: var(--violet); color: var(--ink); }
+:root[data-ui="deck"] .deck-rail-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 12px; scrollbar-width: thin; }
+:root[data-ui="deck"] .deck-rail-heading, :root[data-ui="deck"] .rail[data-deck="bar"] .deck-rail-heading.ws { display: flex; align-items: center; min-height: 32px; padding: 0 10px; margin: 12px 0 2px; color: var(--ink3); font-size: 12.5px; font-weight: 500; letter-spacing: 0; width: 100%; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .deck-rail-heading.ws { margin-top: 0; }
+:root[data-ui="deck"] .deck-bot-folder > summary { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; list-style: none; cursor: pointer; color: var(--ink3); font-size: 13px; }
+:root[data-ui="deck"] .deck-bot-folder > summary::-webkit-details-marker { display: none; }
+:root[data-ui="deck"] .deck-bot-folder > summary .i:first-child { width: 10px; margin-left: -8px; transition: transform 160ms; }
+:root[data-ui="deck"] .deck-bot-folder[open] > summary .i:first-child { transform: rotate(90deg); }
+:root[data-ui="deck"] .deck-bot-tree { margin-bottom: 4px; }
+:root[data-ui="deck"] .deck-bot-row { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; color: var(--ink); text-decoration: none; border-radius: var(--radius-control); }
+:root[data-ui="deck"] .deck-bot-avatar { display: grid; place-items: center; width: 20px; height: 20px; flex: none; background: var(--s3); border-radius: 5px; color: var(--violet-ink); font-size: 11px; font-weight: 600; }
+:root[data-ui="deck"] .deck-bot-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+:root[data-ui="deck"] .deck-private { color: var(--ink4); display: flex; }
+:root[data-ui="deck"] .deck-private .i { width: 12px; height: 12px; }
+:root[data-ui="deck"] .deck-bot-tree ul { list-style: none; padding: 0 0 0 18px; margin: 0; }
+:root[data-ui="deck"] .deck-bot-tree li { position: relative; }
+:root[data-ui="deck"] .deck-bot-tree li::before { content: ""; position: absolute; left: 1px; top: -6px; height: 19px; width: 11px; border-left: 1.5px solid var(--tree-line); border-bottom: 1.5px solid var(--tree-line); border-bottom-left-radius: 6px; pointer-events: none; }
+:root[data-ui="deck"] .deck-bot-tree li:not(:last-child)::after { content: ""; position: absolute; left: 1px; top: 13px; bottom: -6px; border-left: 1.5px solid var(--tree-line); pointer-events: none; }
+:root[data-ui="deck"] .deck-tree-row { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px 0 18px; color: var(--ink2); text-decoration: none; font-size: 12.5px; border-radius: var(--radius-control); }
+:root[data-ui="deck"] .deck-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-ui="deck"] .deck-tree-state { flex: none; color: var(--ink3); font-size: 12px; white-space: nowrap; }
+:root[data-ui="deck"] .deck-tree-state::before { content: '· '; }
+:root[data-ui="deck"] .deck-bot-row .deck-tree-state { display: none; }
+:root[data-ui="deck"] .deck-state-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink4); flex: none; margin-left: auto; }
+:root[data-ui="deck"] .deck-state-dot[data-state="live"] { background: var(--cyan); }
+:root[data-ui="deck"] .deck-state-dot[data-state="busy"] { background: var(--violet); animation: deck-shell-busy 1.8s infinite; }
+:root[data-ui="deck"] .deck-state-dot[data-state="waiting"] { background: var(--amber); }
+:root[data-ui="deck"] .deck-thread-row { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-height: 32px; padding: 6px 10px; color: var(--ink2); font-size: 12.5px; text-decoration: none; border-radius: var(--radius-control); }
+:root[data-ui="deck"] :is(.deck-rail-empty, .deck-rail-error) { margin: 4px 10px; color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .deck-rail-error button { color: var(--ink2); background: none; border: 0; text-decoration: underline; }
+:root[data-ui="deck"] .rail .rail-foot { flex: none; margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .rail[data-deck="bar"] .me { min-height: 42px; padding: 0; gap: 10px; cursor: pointer; }
+:root[data-ui="deck"] .rail .me .mark { width: 30px; height: 30px; background: var(--s3); color: var(--violet-ink); }
+:root[data-ui="deck"] .deck-owner { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+:root[data-ui="deck"] .deck-owner b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-ui="deck"] .deck-owner small { color: var(--ink3); font-size: 12px; }
+:root[data-ui="deck"] .rail[data-deck="bar"] .user-links { top: auto; bottom: 48px; left: 0; right: 0; min-width: 0; border: 1px solid var(--line2); background: var(--s2); border-radius: var(--radius-card); }
+:root[data-ui="deck"] .deck-phone-avatar { position: relative; width: 28px; height: 28px; border: 0; border-radius: var(--radius-control); background: var(--s3); color: var(--violet-ink); font-size: 12px; font-weight: 600; }
+:root[data-ui="deck"] .deck-phone-avatar[data-deck-waiting="true"]::after { content: ""; position: absolute; top: 0; right: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+@media (max-width: 1099px) and (min-width: 700px) {
+  :root[data-ui="deck"] .shell, :root[data-ui="deck"] .shell.two, :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 252px minmax(0, 1fr); }
+}
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell .rail[data-deck="bar"] { display: none; }
+  :root[data-ui="deck"] .m-top[data-deck="top"] { height: 52px; min-height: 52px; padding: 0 16px; gap: 10px; border-bottom: 1px solid var(--line); background: var(--ground); }
+  :root[data-ui="deck"] .m-top .deck-brand { margin: 0; }
+  :root[data-ui="deck"] .m-top > b { font-size: 17px; font-weight: 600; }
+  :root[data-ui="deck"] .m-top .deck-phone-avatar { flex: none; width: 44px; height: 44px; background: none; }
+  :root[data-ui="deck"] .deck-phone-avatar::before { content: ""; position: absolute; inset: 8px; z-index: -1; border-radius: var(--radius-control); background: var(--s3); }
+  :root[data-ui="deck"] .deck-phone-avatar[data-deck-waiting="true"]::after { top: 6px; right: 6px; }
+  :root[data-ui="deck"] .m-top .deck-brand { min-height: 44px; min-width: 24px; }
+  :root[data-ui="deck"] .shell .center { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs { height: calc(68px + env(safe-area-inset-bottom)); padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); background: var(--ground); gap: 4px; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs[data-mic="true"] { grid-template-columns: repeat(4, minmax(0, 1fr)) 46px; }
+  :root[data-ui="deck"] .m-tabs a { min-height: 52px; font-size: 11px; gap: 3px; color: var(--ink3); }
+  :root[data-ui="deck"] .m-tabs a[aria-current] { color: var(--ink); }
+  :root[data-ui="deck"] .m-tabs a .i { width: 22px; height: 22px; }
+  :root[data-ui="deck"] .m-tabs .count { position: absolute; top: 0; right: calc(50% - 22px); }
+  :root[data-ui="deck"] .deck-tab-mic { display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 0; border-radius: 15px; background: var(--violet); color: var(--ink); }
+  :root[data-ui="deck"] .deck-tab-mic .i { width: 22px; height: 22px; }
+  :root[data-ui="deck"] .shell .center h1 { display: none; }
+}
+@keyframes deck-shell-busy { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-ui="deck"] .deck-state-dot[data-state="busy"] { animation: none; }
+  :root[data-ui="deck"] .deck-bot-folder > summary .i:first-child { transition: none; }
+}

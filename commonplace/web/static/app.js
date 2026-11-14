@@ -406,12 +406,13 @@ function navigation() {
   const rail = { can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true, workspace: state.me.workspace_name || "Commonplace", user: state.me.people?.[state.me.actor] || state.me.email, view, needs, rulesWaiting: state.rulesWaiting, botsWaiting: state.botsWaiting };
   // The Deck look draws its own bar, phone title and tabs; each is "" while that look is off.
   boardNav.outerHTML = (state.deck?.bar(rail) || renderRail(rail)).replace('<nav class="rail"', '<nav class="rail" id="board-nav"');
-  root.querySelector("#phone-bar").innerHTML = state.deck?.top({ board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
+  root.querySelector("#phone-bar").innerHTML = state.deck?.top({ ...rail, board: view === "board" ? board : null }) || renderPhoneBar({ board: view === "bots" ? null : board, needs, rulesWaiting: state.rulesWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true });
   root.querySelector("#phone-tabs").innerHTML = state.deck?.tabs(rail) || renderPhoneTabs({ view, botsWaiting: state.botsWaiting });
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
   root.querySelector(".shell")?.setAttribute("data-view", view);
   state.deck?.appearance?.sync(state.base);
+  void state.deck?.shell?.sync();
   state.shellSync?.();
 }
 function showError(text) {
@@ -1042,14 +1043,15 @@ function clearWorkbenchChat() {
   chatUI?.stop(); chatUI = null;
   if (typeof Event === "function") document.dispatchEvent?.(new Event("signout"));
 }
-function setBotsWaiting(total) {
+function setBotsWaiting(total, bots) {
+  state.deck?.shell?.roster(bots);
   if (total === state.botsWaiting) return;
   state.botsWaiting = total;
   if (state.me) navigation();
 }
 function botsScreen() {
   // The roster the screen already loads also feeds the rail badge, so the screen adds no second poll.
-  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => setBotsWaiting(waitingTotal(bots)) });
+  botsUI ??= createBots({ mount: () => root.querySelector("#content"), api, e, onRoster: (bots) => setBotsWaiting(waitingTotal(bots), bots) });
   const [path, query] = state.base.split("?");
   const create = new URLSearchParams(query).get("new") === "1";
   if (create) {
@@ -1104,7 +1106,7 @@ async function refresh({ background = false, events = [] } = {}) {
     const [boards, needs, rules, roster] = await Promise.all([read("/api/boards"), ownerNeeds, read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count").catch((error) => { if (["#/rules", "#/settings"].includes(state.base)) throw error; return null; }), state.base.startsWith("#/bots") ? null : api("/api/bots").catch(() => null)]);
     if (!current()) return;
     state.boards = boards.boards; state.needs = needs || { count: 0 };
-    if (roster?.bots) state.botsWaiting = waitingTotal(roster.bots);
+    if (roster?.bots) { state.botsWaiting = waitingTotal(roster.bots); state.deck?.shell?.roster(roster.bots); }
     if (rules) state.rulesWaiting = rules.waiting;
     if (/^#\/(board|space)\//.test(state.base)) {
       const slug = decodeURIComponent(state.base.split("/")[2]);
