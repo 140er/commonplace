@@ -1,5 +1,5 @@
 // Capy Bot lists and Coworker detail. Optional projections never invent work.
-import { escape as e } from './api.js';
+import { escape as e, elapsed } from './api.js';
 import { botPage, workspaceRoute } from './routes.js';
 import { scrollFades } from './deck-coworker-sharing.js';
 import { setupText } from './bot-setup.js';
@@ -93,27 +93,61 @@ export function stepDescription(step) {
 const stepHTML = (steps, depth = 0) => depth > 12 ? '' : `<ul class="cb-tree">${steps.map(step => `<li><div><b>${e(name(step.name || step.subagent || step.assignee))}</b><span class="cb-state" data-tone="${stateView(step.state).tone}">${e(stateView(step.state).word)}</span>${stepDescription(step) ? `<span class="cb-step-summary">${e(stepDescription(step))}</span>` : ''}</div>${list(step.children).length ? stepHTML(step.children, depth + 1) : ''}</li>`).join('')}</ul>`;
 const RUN_NOW = ['pending', 'running'];
 const RUN_WORD = { pending: 'Queued', running: 'Working now', done: 'Last ran: finished', failed: 'Last ran: failed', interrupted: 'Last ran: interrupted', uncertain: 'Last ran: result unconfirmed', cancelled: 'Last ran: cancelled' };
-/** One plain line: what the Coworker does now, what it last did, or that it is idle. Existing projections only. */
-export function workStatus(worker = {}, detail = {}, checkpoint = {}) {
+const ago = value => { const age = value ? elapsed(value) : '—'; return age === '—' ? '' : age === 'now' ? 'just now' : `${age} ago`; };
+const boardLink = bot => bot?.board ? { href: `#/board/${enc(bot.board)}`, label: 'Open the board' } : { href: '' };
+/** What the bot's own roster row says: frozen, waiting on you, working, or its last message. Null when it says nothing. */
+export function botStatus(bot) {
+  if (!bot) return null;
+  if (bot.frozen) return bot.frozen_reason === 'owner_left' ? { tone: 'idle', headline: 'Needs a new owner', text: 'Its owner left, so it does not run until someone takes it over.' } : { tone: 'idle', headline: 'Disabled', text: 'It is switched off and does not run.' };
+  const waiting = positive(bot.waiting);
+  if (waiting || bot.state === 'needs_you') return { tone: 'waiting', headline: 'Waiting on you', text: waiting ? `${waiting} ${waiting === 1 ? 'decision is' : 'decisions are'} waiting for your answer.` : 'It needs an answer from you.', href: '#/today', label: 'Open Today' };
+  if (bot.state === 'working') return { tone: 'working', headline: 'Working now', text: 'A card it filed is in progress, or it is answering a message.', ...boardLink(bot) };
+  const said = displayCopy(bot.last?.text), when = ago(bot.last?.at);
+  return said ? { tone: 'idle', headline: 'Last activity', text: `${bot.last.role === 'user' ? 'You wrote' : 'It replied'}${when ? ` ${when}` : ''}: ${said}`, href: '' } : null;
+}
+// Why nothing is recorded, by who is looking: a member sees only their own conversation with a shared bot.
+const noRun = bot => bot?.mine === false ? `Nothing of yours is recorded with this bot yet.${bot.perms?.see_shared ? '' : " Its work in the owner's other conversations is not shared with you."}` : 'No run recorded for this bot yet.';
+/** One plain line: what the Coworker does now, what it last did, or why that is not known. Existing projections only. */
+export function workStatus(worker = {}, detail = {}, checkpoint = {}, view = {}) {
   const id = detail.conversation?.id;
+  const unread = worker.conversation && String(id) !== String(worker.conversation.id);
+  if (unread && view.failed) return { tone: 'idle', headline: 'Not available', text: "This Coworker's work could not be read just now.", href: '' };
+  if (unread && view.loading) return { tone: 'idle', headline: 'Loading', text: 'Reading what this Coworker did last…', href: '' };
   const jobs = list(detail.jobs).filter(job => job && (id == null || String(job.conversation_id) === String(id)));
   const job = jobs.find(row => RUN_NOW.includes(row.state)) || jobs.reduce((latest, row) => !latest || Number(row.id) > Number(latest.id) ? row : latest, null);
   const progress = job?.task_progress?.availability === 'available' ? job.task_progress : null;
   const number = positive(Number(progress?.number ?? (typeof job?.task === 'object' ? job.task?.number : job?.task)));
   const href = number ? `#/card/${number}` : '';
   const text = displayCopy(progress?.status_line || progress?.title || worker.summary || worker.last?.text);
-  if (job) return { tone: RUN_NOW.includes(job.state) ? 'working' : 'idle', headline: RUN_WORD[job.state] || 'Last ran', text, href };
+  const bot = botStatus(worker.bot), running = job && RUN_NOW.includes(job.state);
+  if (running) return { tone: 'working', headline: RUN_WORD[job.state] || 'Working now', text, href };
+  if (bot && (bot.tone === 'waiting' || bot.headline === 'Disabled' || bot.headline === 'Needs a new owner')) return bot;
+  if (job) {
+    const when = ago(job.updated_at || job.created_at);
+    return { tone: 'idle', headline: `${RUN_WORD[job.state] || 'Last ran'}${when ? ` · ${when}` : ''}`, text: text || (job.task_progress?.availability === 'unavailable' ? 'The card it worked on is not shared with you.' : 'No summary was recorded for that run.'), href };
+  }
+  if (bot) return bot;
   const tone = stateView(worker.state).tone;
   if (tone === 'working') return { tone, headline: 'Working now', text, href: '' };
   if (tone === 'waiting') return { tone, headline: 'Waiting on you', text, href: '' };
   if (text || workingSteps(worker, detail, checkpoint).length) return { tone: 'idle', headline: 'Last activity', text, href: '' };
-  return { tone: 'idle', headline: 'Idle', text: 'Nothing is running and no earlier work is recorded.', href: '' };
+  return { tone: 'idle', headline: 'Idle', text: noRun(worker.bot), ...boardLink(worker.bot) };
 }
-const statusHTML = status => `<p class="cb-now" data-cb-now data-tone="${e(status.tone)}"><b>${e(status.headline)}</b>${status.text ? ` <span>${e(status.text)}</span>` : ''}${status.href ? ` <a href="${e(status.href)}">Open the card</a>` : ''}</p>`;
-export function panelsHTML(worker, detail = {}, checkpoint = {}) {
+/** The short line under a Coworker in the list: its own summary, else what the page would say about it. */
+export function rowSummary(worker, detail = {}) {
+  const own = displayCopy(worker.summary);
+  if (own) return own;
+  const loaded = worker.conversation && String(detail.conversation?.id) === String(worker.conversation.id);
+  const status = workStatus(worker, loaded ? detail : {}, {});
+  if (worker.conversation && !loaded && status.headline === 'Idle') return 'Open it to see what it did last.';
+  const line = status.text ? `${status.headline} · ${status.text}` : status.headline;
+  return line.length > 100 ? `${line.slice(0, 99)}…` : line;
+}
+const statusHTML = status => `<p class="cb-now" data-cb-now data-tone="${e(status.tone)}"><b>${e(status.headline)}</b>${status.text ? ` <span>${e(status.text)}</span>` : ''}${status.href ? ` <a href="${e(status.href)}">${e(status.label || 'Open the card')}</a>` : ''}</p>`;
+export function panelsHTML(worker, detail = {}, checkpoint = {}, view = {}) {
   const steps = workingSteps(worker, detail, checkpoint), owns = ownedPaths(worker, detail), log = liveLog(worker, detail);
   const paths = (owns || []).filter(row => typeof row === 'string' || typeof (row.path || row.glob) === 'string');
-  return `<div class="cb-panels"><section class="cb-panel"><h3>Working on</h3>${statusHTML(workStatus(worker, detail, checkpoint))}${steps.length ? stepHTML(steps) : ''}</section>${paths.length ? `<section class="cb-panel"><h3>Owns <small>${paths.length} ${paths.length === 1 ? 'file' : 'files'}</small></h3><ul class="cb-paths">${paths.map(row => `<li><code>${e(typeof row === 'string' ? row : row.path || row.glob)}</code>${row.shared || row.shared_lock || row.lock?.shared ? `<span class="cb-shared">${lock('Shared lock')}<span>shared</span></span>` : ''}</li>`).join('')}</ul></section>` : ''}</div>${log !== null ? '<section class="cb-panel cb-log"><h3>Live log</h3><pre data-cb-log tabindex="0" aria-label="Live log"></pre></section>' : ''}`;
+  return `<div class="cb-panels"><section class="cb-panel"><h3>Working on</h3>${statusHTML(workStatus(worker, detail, checkpoint, view))}${steps.length ? stepHTML(steps) : ''}</section>${paths.length ? `<section class="cb-panel"><h3>Owns <small>${paths.length} ${paths.length === 1 ? 'file' : 'files'}</small></h3><ul class="cb-paths">${paths.map(row => `<li><code>${e(typeof row === 'string' ? row : row.path || row.glob)}</code>${row.shared || row.shared_lock || row.lock?.shared ? `<span class="cb-shared">${lock('Shared lock')}<span>shared</span></span>` : ''}</li>`).join('')}</ul></section>` : ''}</div>${log !== null ? '<section class="cb-panel cb-log"><h3>Live log</h3><pre data-cb-log tabindex="0" aria-label="Live log"></pre></section>' : ''}`;
 }
 export function logLine(text) {
   const match = /^(\d{2}:\d{2}(?::\d{2})?)(\s+)(\S+)(\s+)(.*)$/.exec(text);
@@ -176,7 +210,7 @@ export function composerHTML(detail = {}, { mode = 'chat', text = '', busy = fal
 /** Deck-only, while the classic workspace and the conversation controller keep their routes. */
 export function mount(context) {
   let ctx = context, stopped = false, epoch = 0, controller = null, selected = null, workers = [], parent = null;
-  let detail = {}, project = {}, checkpoint = {}, mode = 'chat', text = '', busy = false, notice = '', setup = '', canConfigure = false, attempt = null, refreshing = false;
+  let detail = {}, project = {}, checkpoint = {}, mode = 'chat', text = '', busy = false, loadFailed = false, notice = '', setup = '', canConfigure = false, attempt = null, refreshing = false;
   const root = ctx.root, doc = root.ownerDocument || globalThis.document, page = workspaceRoute(ctx.route);
   const identity = `${ctx.me?.workspace}:${ctx.me?.actor}`;
   const timers = ctx.timers || globalThis;
@@ -208,7 +242,7 @@ export function mount(context) {
     const worker = activeWorker(), botName = parent ? name(parent.name) : 'Coworkers';
     const focused = doc?.activeElement?.id === 'cb-draft', selection = focused ? [doc.activeElement.selectionStart, doc.activeElement.selectionEnd] : null;
     const summary = displayCopy(detail.conversation?.summary || worker?.summary), model = displayCopy(workerModel(worker, detail, project));
-    body().innerHTML = `<nav class="cb-crumbs" aria-label="Breadcrumb"><a href="#/bots">Bots</a><span>›</span><span>${e(displayCopy(parent?.section?.name || parent?.section) || botName)}</span></nav><header class="cb-heading">${parent ? avatar(parent.name) : ''}<div><h1>${e(botName)}</h1><p>${e(displayCopy(parent?.job) || 'Coworkers and their recorded work')}</p></div></header><nav class="cb-tabs" data-cb-scroll aria-label="Bot views"><a href="${page.bot ? `#/bots/${enc(page.bot)}/coworkers` : '#/bots/-/coworkers'}" aria-current="page">Coworkers <span>${workers.length}</span></a><a href="${worker?.conversation ? `#/bots/-/coworkers/conversations/${enc(worker.conversation.id)}` : parent && !parent.coworkerOnly ? `#/bots/${enc(parent.id)}` : '#/bots/-/coworkers/conversations'}">Conversation</a>${parent && !parent.coworkerOnly ? '<button type="button" data-cb-share>Shared</button>' : ''}</nav><div class="cb-layout"><aside class="cb-worker-list" aria-label="Coworkers">${workers.map(row => `<button type="button" class="cb-worker" data-cb-worker="${e(row.key)}"${row.key === selected ? ' aria-current="true"' : ''}>${avatar(row.name)}<span><b>${e(name(row.name))} ${dot(row.state)}</b><small>${e(displayCopy(row.summary) || 'No summary recorded')}</small></span></button>`).join('')}${!workers.length ? '<p class="cb-empty">No Coworkers recorded yet.</p>' : ''}<a class="cb-new-worker" href="#/bots/-/coworkers/conversations"><span aria-hidden="true">+</span><span>New coworker<small>Give it a goal and the files it owns</small></span></a></aside><section class="cb-detail" aria-label="Coworker detail">${worker ? `<header class="cb-detail-head"><h2>${e(name(worker.name))}</h2><p>${e(model ? `Runs on ${model}${summary ? ' · ' : ''}` : '')}${e(summary)}</p></header>${panelsHTML(worker, detail, checkpoint)}` : ''}<p class="cb-notice" role="status">${e(notice)}</p>${setup ? `<p class="cb-setup" role="status">${e(setup)}${canConfigure ? ' <a href="#/settings">Open settings</a>' : ''}</p>` : ''}<div data-cb-composer>${composerHTML(detail, { mode, text, busy, pending: Boolean(attempt), coworker: worker?.name })}</div></section></div>`;
+    body().innerHTML = `<nav class="cb-crumbs" aria-label="Breadcrumb"><a href="#/bots">Bots</a><span>›</span><span>${e(displayCopy(parent?.section?.name || parent?.section) || botName)}</span></nav><header class="cb-heading">${parent ? avatar(parent.name) : ''}<div><h1>${e(botName)}</h1><p>${e(displayCopy(parent?.job) || 'Coworkers and their recorded work')}</p></div></header><nav class="cb-tabs" data-cb-scroll aria-label="Bot views"><a href="${page.bot ? `#/bots/${enc(page.bot)}/coworkers` : '#/bots/-/coworkers'}" aria-current="page">Coworkers <span>${workers.length}</span></a><a href="${worker?.conversation ? `#/bots/-/coworkers/conversations/${enc(worker.conversation.id)}` : parent && !parent.coworkerOnly ? `#/bots/${enc(parent.id)}` : '#/bots/-/coworkers/conversations'}">Conversation</a>${parent && !parent.coworkerOnly ? '<button type="button" data-cb-share>Shared</button>' : ''}</nav><div class="cb-layout"><aside class="cb-worker-list" aria-label="Coworkers">${workers.map(row => `<button type="button" class="cb-worker" data-cb-worker="${e(row.key)}"${row.key === selected ? ' aria-current="true"' : ''}>${avatar(row.name)}<span><b>${e(name(row.name))} ${dot(row.state)}</b><small>${e(rowSummary(row, row.key === selected ? detail : {}))}</small></span></button>`).join('')}${!workers.length ? '<p class="cb-empty">No Coworkers recorded yet.</p>' : ''}<a class="cb-new-worker" href="#/bots/-/coworkers/conversations"><span aria-hidden="true">+</span><span>New coworker<small>Give it a goal and the files it owns</small></span></a></aside><section class="cb-detail" aria-label="Coworker detail">${worker ? `<header class="cb-detail-head"><h2>${e(name(worker.name))}</h2><p>${e(model ? `Runs on ${model}${summary ? ' · ' : ''}` : '')}${e(summary)}</p></header>${panelsHTML(worker, detail, checkpoint, { loading: !loadFailed, failed: loadFailed })}` : ''}<p class="cb-notice" role="status">${e(notice)}</p>${setup ? `<p class="cb-setup" role="status">${e(setup)}${canConfigure ? ' <a href="#/settings">Open settings</a>' : ''}</p>` : ''}<div data-cb-composer>${composerHTML(detail, { mode, text, busy, pending: Boolean(attempt), coworker: worker?.name })}</div></section></div>`;
     renderLiveLog(root.querySelector('[data-cb-log]'), liveLog(worker, detail));
     scrollFades(root);
     if (focused) { const field = root.querySelector('#cb-draft'); field?.focus({ preventScroll: true }); if (selection) field?.setSelectionRange(...selection); }
@@ -236,7 +270,7 @@ export function mount(context) {
     ctx = { ...ctx, ...next };
     if (!current()) { stop(); return; }
     if (busy || attempt || refreshing) return;
-    refreshing = true;
+    refreshing = true; loadFailed = false;
     const mine = ++epoch; controller?.abort(); controller = new AbortController();
     try {
       const [roster, directory] = await Promise.all([ctx.api('/api/bots', options()), ctx.api('/api/coworkers', options())]);
@@ -245,25 +279,27 @@ export function mount(context) {
       const bots = overviewBots(list(roster.bots), list(directory.bots));
       parent = bots.find(bot => String(bot.id) === String(page.bot)) || null;
       const conversations = list(directory.conversations).filter(row => !page.bot || parent && belongs(row, parent));
-      workers = conversations.map(row => ({ ...row, key: `conversation:${row.id}`, conversation: row, name: row.title || 'Coworker', summary: row.summary || row.last?.text || '', board: row.board, state: row.state || 'idle' }));
+      const botOf = row => (parent && belongs(row, parent) ? parent : null) || bots.find(bot => list(row.bot_ids).some(id => String(id) === String(bot.id))) || bots.find(bot => bot.board && bot.board === row.board) || null;
+      // The Coworker directory sends no state or summary per conversation; the bot's own row does.
+      workers = conversations.map(row => { const bot = botOf(row); return { ...row, key: `conversation:${row.id}`, conversation: row, bot, name: row.title || 'Coworker', summary: row.summary || row.last?.text || '', board: row.board, state: row.state || bot?.state || 'idle' }; });
       // Older hubs only recorded a project's main Coworker and checkpoint.
       for (const bot of bots.filter(bot => bot.board && (!page.bot || String(bot.id) === String(page.bot)))) {
-        if (!workers.some(row => row.board === bot.board)) workers.push({ key: `project:${bot.board}`, board: bot.board, name: `${(ctx.boards || []).find(board => board.slug === bot.board)?.name || name(bot.name)} Coworker`, summary: bot.summary || bot.job, state: bot.state });
+        if (!workers.some(row => row.board === bot.board)) workers.push({ key: `project:${bot.board}`, board: bot.board, name: `${(ctx.boards || []).find(board => board.slug === bot.board)?.name || name(bot.name)} Coworker`, bot, summary: bot.summary || '', state: bot.state });
       }
       if (!workers.some(row => row.key === selected)) selected = workers[0]?.key || null;
       paint(); await readWorker(activeWorker(), mine);
     } catch (error) {
       if (!current() || mine !== epoch || error.name === 'AbortError') return;
-      detail = {}; project = {}; checkpoint = {}; notice = 'Coworkers could not be loaded. Reopen this page to try again.'; paint();
+      detail = {}; project = {}; checkpoint = {}; loadFailed = true; notice = 'Coworkers could not be loaded. Reopen this page to try again.'; paint();
     } finally { refreshing = false; schedule(); }
   }
   async function choose(key) {
     if (busy || attempt || !workers.some(row => row.key === key) || key === selected) return;
     drafts.set(draftKey(activeWorker()), text);
     selected = key; const mine = ++epoch; controller?.abort(); controller = new AbortController();
-    detail = {}; text = ''; notice = ''; paint();
+    detail = {}; text = ''; notice = ''; loadFailed = false; paint();
     try { await readWorker(activeWorker(), mine); }
-    catch (error) { if (current() && mine === epoch && error.name !== 'AbortError') { detail = {}; checkpoint = {}; notice = 'This Coworker is unavailable.'; paint(); } }
+    catch (error) { if (current() && mine === epoch && error.name !== 'AbortError') { detail = {}; checkpoint = {}; loadFailed = true; notice = 'This Coworker is unavailable.'; paint(); } }
   }
   function chooseMode(value) {
     if (busy || attempt || !['chat', 'steer'].includes(value) || value === 'steer' && !canSteer(detail)) return;

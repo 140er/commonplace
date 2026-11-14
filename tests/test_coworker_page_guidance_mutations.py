@@ -9,10 +9,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECK = "deck_coworker_page_guidance.mjs"
+STATES = "deck_coworker_empty_states.mjs"
 MUTATIONS = {
     "status line gone": (
         "deck-coworkers.js",
-        "${statusHTML(workStatus(worker, detail, checkpoint))}",
+        "${statusHTML(workStatus(worker, detail, checkpoint, view))}",
         "",
     ),
     "running job not recognised": (
@@ -23,7 +24,7 @@ MUTATIONS = {
     "card link dropped": ("deck-coworkers.js", "const href = number ?", "const href = false ?"),
     "idle sentence dropped": (
         "deck-coworkers.js",
-        "Nothing is running and no earlier work is recorded.",
+        "No run recorded for this bot yet.",
         "No work recorded yet.",
     ),
     "unavailable progress leaks": (
@@ -77,6 +78,67 @@ MUTATIONS = {
         "setup && /no chat model/i.test(summary)",
         "false",
     ),
+    "waiting count dropped": (
+        "deck-coworkers.js",
+        "text: waiting ? `",
+        "text: false ? `",
+        STATES,
+    ),
+    "list row back to no summary": (
+        "deck-coworkers.js",
+        "${e(rowSummary(row, row.key === selected ? detail : {}))}",
+        "${e(displayCopy(row.summary) || 'No summary recorded')}",
+        STATES,
+    ),
+    "conversation ignores the bot state": (
+        "deck-coworkers.js",
+        "state: row.state || bot?.state || 'idle'",
+        "state: row.state || 'idle'",
+        STATES,
+    ),
+    "loading shown as idle": (
+        "deck-coworkers.js",
+        "if (unread && view.loading)",
+        "if (false)",
+        STATES,
+    ),
+    "failed read shown as idle": (
+        "deck-coworkers.js",
+        "if (unread && view.failed)",
+        "if (false)",
+        STATES,
+    ),
+    "member reason dropped": (
+        "deck-coworkers.js",
+        " Its work in the owner's other conversations is not shared with you.",
+        "",
+        STATES,
+    ),
+    "disabled bot ignored": (
+        "deck-coworkers.js",
+        "if (bot.frozen) return",
+        "if (false) return",
+        STATES,
+    ),
+    "last reply dropped": ("deck-coworkers.js", "return said ? {", "return false ? {", STATES),
+    "unshared card claim dropped": (
+        "deck-coworkers.js",
+        "'The card it worked on is not shared with you.'",
+        "'No summary was recorded for that run.'",
+        STATES,
+    ),
+    "waiting loses to an old run": (
+        "deck-coworkers.js",
+        "if (bot && (bot.tone === 'waiting' ||",
+        "if (bot && (false ||",
+        STATES,
+    ),
+    "board link dropped": (
+        "deck-coworkers.js",
+        "const boardLink = bot => bot?.board ?",
+        "const boardLink = bot => false ?",
+        STATES,
+    ),
 }
 
 
@@ -84,17 +146,18 @@ MUTATIONS = {
 def test_mutation_is_caught(name, tmp_path):
     node = shutil.which("node")
     assert node, "Node is required"
-    filename, old, new = MUTATIONS[name]
+    filename, old, new, *named = MUTATIONS[name]
+    check = named[0] if named else CHECK
     scratch = Path(tempfile.mkdtemp(dir=tmp_path))
     shutil.copytree(ROOT / "commonplace/web/static", scratch / "commonplace/web/static")
     (scratch / "tests").mkdir()
-    shutil.copy(ROOT / "tests" / CHECK, scratch / "tests" / CHECK)
+    shutil.copy(ROOT / "tests" / check, scratch / "tests" / check)
     target = scratch / "commonplace/web/static" / filename
     source = target.read_text(encoding="utf-8")
     assert old in source, f"mutation anchor missing: {name}"
     target.write_text(source.replace(old, new, 1), encoding="utf-8")
     clean = subprocess.run(
-        [node, "--test", str(ROOT / "tests" / CHECK)],
+        [node, "--test", str(ROOT / "tests" / check)],
         capture_output=True,
         text=True,
         timeout=60,
@@ -102,7 +165,7 @@ def test_mutation_is_caught(name, tmp_path):
     )
     assert clean.returncode == 0, clean.stdout[-3000:] + clean.stderr[-1000:]
     mutated = subprocess.run(
-        [node, "--test", str(scratch / "tests" / CHECK)],
+        [node, "--test", str(scratch / "tests" / check)],
         capture_output=True,
         text=True,
         timeout=60,

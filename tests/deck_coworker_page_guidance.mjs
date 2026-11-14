@@ -36,7 +36,7 @@ test('without jobs the Coworker state decides: working, waiting on you, last act
   assert.equal(workStatus({ state: 'needs_you' }).headline, 'Waiting on you');
   assert.deepEqual([workStatus({ state: 'idle', summary: 'Merged the change' }).headline, workStatus({ state: 'idle', summary: 'Merged the change' }).text], ['Last activity', 'Merged the change']);
   const idle = workStatus({ state: 'idle' }, {}, {});
-  assert.deepEqual([idle.headline, idle.href], ['Idle', '']); assert.match(idle.text, /Nothing is running/);
+  assert.deepEqual([idle.headline, idle.href], ['Idle', '']); assert.match(idle.text, /No run recorded for this bot yet/);
   assert.equal(workStatus({}, {}, { finished: [{ name: 'Build', state: 'done' }] }).headline, 'Last activity');
 });
 test('the panel always carries the status line and never the old empty sentence; copy is escaped', () => {

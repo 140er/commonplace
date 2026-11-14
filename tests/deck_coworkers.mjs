@@ -22,7 +22,7 @@ test('absent owns and log never produce simulated rows or panels', () => {
   assert.equal(ownedPaths(), null); assert.equal(liveLog(), null);
   const html = panelsHTML({}, {}, {});
   assert.match(html, />Working on</); assert.doesNotMatch(html, />Owns|>Live log/);
-  assert.match(html, /data-cb-now[^>]*><b>Idle<\/b> <span>Nothing is running and no earlier work is recorded\.<\/span>/); assert.doesNotMatch(html, /No work recorded yet/);
+  assert.match(html, /data-cb-now[^>]*><b>Idle<\/b> <span>No run recorded for this bot yet\.<\/span>/); assert.doesNotMatch(html, /No work recorded yet/);
   assert.doesNotMatch(panelsHTML({}, { owns: [] }), />Owns/);
 });
 test('present projections win over legacy data, including explicit empty trees and cleared ownership', () => {
