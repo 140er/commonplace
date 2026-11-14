@@ -117,7 +117,8 @@ def test_u3_b_job_bounds_and_draining(world, monkeypatch):
     monkeypatch.setattr(search_index, "sweep", record)
     world.service.index_later(world.ws)
     drain(world)
-    assert jobs == [20, 3]
+    full, rest = divmod(23, search_index.MAX_THREADS)
+    assert jobs == [search_index.MAX_THREADS] * full + ([rest] if rest else [])
     assert world.service.index_status(world.ws)["threads_pending"] == 0
     # One large thread also spans jobs, with no job exceeding the unit bound.
     put(world, "import:large", text="x" * 4000, count=1100)
@@ -125,7 +126,7 @@ def test_u3_b_job_bounds_and_draining(world, monkeypatch):
     world.service.index_later(world.ws)
     drain(world)
     assert len(jobs) >= 2
-    assert max(jobs) <= 2000
+    assert max(jobs) <= search_index.MAX_UNITS
     assert world.service.index_status(world.ws)["threads_pending"] == 0
 
 
