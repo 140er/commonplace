@@ -1,0 +1,4 @@
+- **Owns:** `cardTitle` in `commonplace/web/static/deck-board.js` is the display copy for a card title: it hides paths, evidence lines and model names but keeps a typed "#NNN". The Deck board card, its "Added" notice, the card menu heading and the drawer heading use it; `boardCopy` still hides references in summaries and bodies.
+- **Promises:** A card title is shown in the Deck exactly as it was typed and stored, "#NNN" tokens included.
+- **How it fails:** A title with a file path or a model name still has that part hidden in the Deck; the stored title is unchanged.
+- **Tests:** `tests/deck_board.mjs` (Deck title cases) and `tests/test_card_title_verbatim.py` cover the verbatim display and the create/read round trip.

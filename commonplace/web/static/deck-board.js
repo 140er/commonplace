@@ -18,10 +18,14 @@ export function stateWord(card, me, needs) {
   return card.snoozed ? 'On hold' : 'Ready';
 }
 // Display copy only: stored text and action values are never changed.
-export function boardCopy(value) {
-  return hideReferences(value, /\bEvidence\s*:[^\n]*/gi, /(?:~\/|\/(?:home|Users|tmp|var|work)\/|[A-Z]:\\)[^\s<>]*/g, /(?:\bPR\s*)?(?<!&)#\d+\b/gi,
+const REFERENCE = /(?:\bPR\s*)?(?<!&)#\d+\b/gi;
+function copy(value, references) {
+  return hideReferences(value, /\bEvidence\s*:[^\n]*/gi, /(?:~\/|\/(?:home|Users|tmp|var|work)\/|[A-Z]:\\)[^\s<>]*/g, ...(references ? [REFERENCE] : []),
     /\b(?:Sonnet|Opus|Haiku|GPT|Claude)[ -]?\d+(?:\.\d+)*(?:[- ](?:high|low|medium))?\b/gi).replace(/\n{3,}/g, '\n\n').trim();
 }
+export const boardCopy = value => copy(value, true);
+// A card title is the person's own words: a "#599" they typed stays visible (only paths and model names are hidden).
+export const cardTitle = value => copy(value, false);
 export function cardBot(card, { board = {}, bots = [] } = {}) {
   return bots.find(bot => bot.id === card.bot_id) || bots.find(bot => bot.board === (card.board || board.slug)) || null;
 }
@@ -32,11 +36,11 @@ export const boardGroup = (card, me, needs) => needsOwner(card, me, needs) ? 'to
 const columns = [['todo', 'Needs you', 'waiting'], ['doing', 'Active', 'busy'], ['review', 'In review', 'idle'], ['done', 'Shipped', 'live']];
 function cardHTML(card, options, first) {
   const selected = options.selected === card.number, name = botName(card, options);
-  return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(boardCopy(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(boardCopy(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span></div></article>`;
+  return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(cardTitle(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(cardTitle(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span></div></article>`;
 }
 // Just after Add card: say which column holds the new card and the state the server gave it (the Deck has no
 // Todo column), read from the card itself so a queue that has not caught up cannot name another place; else the usual intro.
-export const addedNotice = (card, me) => `Added “${boardCopy(card.title)}” to ${columns.find(([status]) => status === boardGroup(card, me, null))[1]} (${stateWord(card, me, null)}).`;
+export const addedNotice = (card, me) => `Added “${cardTitle(card.title)}” to ${columns.find(([status]) => status === boardGroup(card, me, null))[1]} (${stateWord(card, me, null)}).`;
 function boardNotice(cards, columns, { added, me }) {
   const card = added == null ? null : cards.find(item => item.number === added);
   return card ? `<p class="deck-board-intro" role="status" data-board-added>${e(addedNotice(card, me))}</p>` : '<p class="deck-board-intro">Every card follows its change from idea to live.</p>';
@@ -80,7 +84,12 @@ export function drawerActions(card, me) {
   return `<div class="deck-card-actions" data-version="${e(card.version)}">${approve}${hold ? decision(hold,'Hold') : '<button class="btn" data-action="close-panel" title="Keep this waiting for your decision">Hold</button>'}${move}${reply}</div>`;
 }
 // Clean only text nodes. Links, IDs, exact decision values and mutation versions remain untouched.
-export const drawerCopy = (html, id = '') => html.replace(/(^|>)([^<]+)(?=<|$)/g, (_all, prefix, text) => /^\s*$/.test(text) ? prefix + text : prefix + boardCopy(id ? text.replaceAll(e(id), 'this card') : text).replace(/Needs me|Needs a decision/g, 'Needs you'));
+// The drawer heading is the card title, so it keeps the person's own "#NNN" like the board does.
+export const drawerCopy = (html, id = '') => html.replace(/(^|>)([^<]+)(?=<|$)/g, (_all, prefix, text, at) => {
+  if (/^\s*$/.test(text)) return prefix + text;
+  const clean = html.slice(0, at + prefix.length).endsWith('data-details-title>') ? cardTitle : boardCopy;
+  return prefix + clean(id ? text.replaceAll(e(id), 'this card') : text).replace(/Needs me|Needs a decision/g, 'Needs you');
+});
 
 // Keep the phone state pills aligned with swipes and board refreshes.
 export function bindDeckBoard(root) {

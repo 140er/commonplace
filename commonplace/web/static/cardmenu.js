@@ -1,6 +1,6 @@
 import { api as request, escape as e } from './api.js';
 import { cardId } from './board.js';
-import { boardCopy } from './deck-board.js';
+import { cardTitle } from './deck-board.js';
 import { moveOptions, putMove } from './cardmove.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
@@ -41,7 +41,7 @@ export function renderCardMenu(card, { board = {}, editing = false, me = '' } = 
     ? moveOptions(card, me).map((option) => choice(option.status || option.column, option.name, option)).join('')
     : columns.map((status) => choice(status, label(status), { current: status === card.status, note: status === card.status ? 'now here' : '' })).join('');
   const actions = `<p class="move-label">Move to…</p><div role="group" aria-label="Move to column">${moves}</div><div role="group" aria-label="Other actions"><button type="button" class="opt" data-menu-action="edit">${icon('<path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z"/><path d="m9 4.5 2.5 2.5"/>')}Edit title</button><button type="button" class="opt" data-menu-action="copy">${icon('<path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.5.5"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.5-.5"/>')}Copy link</button></div>`;
-  return `<dialog class="sheet menu-sheet card-menu" aria-modal="true" aria-labelledby="cm-h" data-return-focus="more-${e(id)}"><div class="menu-body"><span class="grab" aria-hidden="true"></span><h2 id="cm-h">${e(deck ? boardCopy(card.title) : `${id} ${card.title}`)}</h2>${editing ? `<form data-menu-title><label>Title<input name="title" value="${e(card.title)}" maxlength="5000" required></label><button class="btn primary" type="submit">Save title</button><button class="btn" type="button" data-menu-action="cancel-edit">Cancel</button></form>` : actions}<p role="alert" data-menu-error></p><button type="button" class="btn menu-close" data-menu-action="close">Close</button></div></dialog>`;
+  return `<dialog class="sheet menu-sheet card-menu" aria-modal="true" aria-labelledby="cm-h" data-return-focus="more-${e(id)}"><div class="menu-body"><span class="grab" aria-hidden="true"></span><h2 id="cm-h">${e(deck ? cardTitle(card.title) : `${id} ${card.title}`)}</h2>${editing ? `<form data-menu-title><label>Title<input name="title" value="${e(card.title)}" maxlength="5000" required></label><button class="btn primary" type="submit">Save title</button><button class="btn" type="button" data-menu-action="cancel-edit">Cancel</button></form>` : actions}<p role="alert" data-menu-error></p><button type="button" class="btn menu-close" data-menu-action="close">Close</button></div></dialog>`;
 }
 
 /** Mount outside the shell's modal regions. onChange refreshes the board before focus returns.

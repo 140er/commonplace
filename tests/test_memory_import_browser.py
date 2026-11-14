@@ -66,6 +66,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         groupGaps: groups.slice(1).map((group, i) => rect(group).top - rect(groups[i]).bottom),
                         buttonGap: groups.length ? rect(actions).top - rect(groups.at(-1)).bottom : null,
                         gutter: rect(el).left,
+                        titleSize: style(el.querySelector('#memory-import-title')).fontSize,
                         ghostLeft: el.querySelector('.ghost') ? rect(el.querySelector('.ghost')).left : null,
                         ghostTop: el.querySelector('.ghost') ? rect(el.querySelector('.ghost')).top : null,
                         firstButtonTop: actions ? rect(actions.firstElementChild).top : null,
@@ -90,7 +91,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                 if metrics["buttonGap"] is not None:
                     assert metrics["buttonGap"] == 24
                 if viewport[0] == 390:
-                    assert 16 <= metrics["gutter"] <= 40
+                    assert metrics["gutter"] == 16
                     if metrics["ghostLeft"] is not None:
                         assert metrics["ghostPadding"] == "0px"
                         if metrics["ghostTop"] > metrics["firstButtonTop"]:
@@ -114,12 +115,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         json.dumps(metrics, indent=2) + "\n"
                     )
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-                assert (
-                    await page.locator("#memory-import-title").evaluate(
-                        "el => getComputedStyle(el).fontSize"
-                    )
-                    == "17px"
-                )
+                assert metrics["titleSize"] == ("24px" if viewport[0] == 390 else "17px")
 
             async def choose():
                 await page.click('[data-memory-action="import"]')
@@ -224,9 +220,12 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         document.querySelector('#phone-tabs').getBoundingClientRect().top -
                         document.querySelector('.memory-import-actions').lastElementChild.getBoundingClientRect().bottom
                     """)
-                    # The Deck look leaves about 12px here (the classic design asked for 24px);
-                    # the actions must at least stay clear of the tab bar.
-                    assert clearance >= 8
+                    output = os.environ.get("IMPORT_SCREENSHOT_DIR")
+                    if output:
+                        (Path(output) / "memory-import-overflow-phone.json").write_text(
+                            json.dumps({"clearance": clearance}) + "\n"
+                        )
+                    assert clearance >= 24
                     await page.set_viewport_size({"width": 390, "height": 844})
                 await page.click('[data-import-action="close"]')
                 assert await page.locator('[data-memory-action="import"]').evaluate(

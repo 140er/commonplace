@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { renderMemory, renderMemoryPanel, createMemory } from '../commonplace/web/static/memory.js';
 import { createMemoryImport, renderImport } from '../commonplace/web/static/memory-import.js';
@@ -161,4 +162,20 @@ test('release nits shorten Deck retry copy while retaining Classic presentation'
   assert.ok(renderImport(state, {}, 'deck').includes('Importing the same file here again adds nothing.'));
   assert.ok(!renderImport(state, {}, 'deck').includes('same destination'));
   assert.ok(renderImport(state, {}, 'classic').includes('Importing the same file to the same destination again adds nothing.'));
+});
+test('phone import dialog is a 16px-gutter sheet that ends on the tab bar with 24px below the actions', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-memory.css', import.meta.url), 'utf8');
+  const phone = css.slice(css.lastIndexOf('@media (max-width: 699px)'));
+  const rule = selector => {
+    const start = phone.indexOf(`${selector} {`);
+    return start < 0 ? '' : phone.slice(start, phone.indexOf('}', start));
+  };
+  const dialog = rule(':root[data-ui="deck"] .deck-memory-dialog');
+  assert.match(dialog, /width: 100%/);
+  assert.match(dialog, /margin: auto 0 calc\(68px \+ env\(safe-area-inset-bottom\)\)/);
+  assert.match(dialog, /padding: 16px 16px 24px/);
+  assert.match(dialog, /max-height: calc\(100dvh - 84px - env\(safe-area-inset-bottom\)\)/);
+  assert.match(rule(':root[data-ui="deck"] .deck-memory-dialog .memory-import h1'), /font-size: 24px/);
+  assert.match(css, /\.deck-memory-dialog \.memory-import h1 \{[^}]*font-size: 17px/);
+  assert.match(css, /\.deck-memory-dialog \{ width: min\(540px, calc\(100vw - 32px\)\)[^}]*padding: 20px/);
 });
