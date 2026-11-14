@@ -84,7 +84,7 @@
 :root[data-ui="deck"] .cb-composer > a { display: block; margin-top: 10px; color: var(--ink2); font-size: 12.5px; }
 :root[data-ui="deck"] .capy-coworkers :is(a, button, textarea):focus-visible, :root[data-ui="deck"] .cb-bot-row:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
 :root[data-ui="deck"] .cb-composer button:disabled { opacity: 1; cursor: default; }
-:root[data-ui="deck"] .cb-send:disabled { background: var(--s3); color: var(--ink3); }
+:root[data-ui="deck"] .cb-send:disabled { background: var(--s3); color: var(--ink2); }
 /* Reuse the complete settings controller, including its permission previews. */
 :root[data-ui="deck"] .cb-sharing-root > .bots { display: contents; }
 :root[data-ui="deck"] .cb-sharing-root .bot-settings-sheet { position: fixed; inset: 0; z-index: 30; display: flex; justify-content: flex-end; padding: 8px; background: transparent; }
