@@ -1,9 +1,32 @@
 ### Common Settings in Deck
 
-Deck Settings starts with Notifications, Connections, Workspace and Action permissions shortcuts. The shortcuts stay visible while scrolling; the current destination is white, and the phone uses one horizontally scrolling row. Each shortcut moves focus to its existing section without changing the route or discarding form state. Notifications and Connections appear before the longer configuration sections. Workspace navigation is available on desktop and phone.
+Deck Settings has two columns: Bot sharing, What bots may do without asking,
+Second review and Connected apps in the main column, with sticky Appearance at
+the right. On narrow screens the sections stack and Appearance comes last.
+Notifications, Workspace, plan, voice, chat, schedules, webhooks, sign out and the
+classic-look switch remain reachable below the primary sections. The original
+section shortcuts still move focus without discarding form state.
 
-Action permissions are grouped by purpose and searchable by human label, purpose or technical name. Each row keeps its original action identity and Allowed, Ask first and Off behavior. Technical names appear only in a disclosure; unknown or retired actions remain reachable. Unavailable phone notifications explain that the workspace owner must connect a notification service and enable notifications on the server.
+Action permissions remain grouped by purpose and searchable by human label,
+purpose or technical name. Allow, Ask and Deny use the existing server values;
+Ask sends requests to Today, and only selected Deny uses red text. Unknown stored values keep
+their exact identity behind the nearest label until another state is selected.
+Technical names appear only in row titles; retired actions remain reachable.
+Connected apps use plain labels, with scope IDs as grey monospace suffixes.
 
-The presentation is opt-in through the Deck handle. Classic keeps its existing section order, policy markup and styling; the server routes are unchanged.
+The sharing switch uses the existing workspace setting. Private defaults, access
+logs and owner-managed grants are listed under Always on, with explanations below
+their names. Workspace subtitles distinguish owners from members, whose workspace
+mutation controls stay disabled. Second review opens
+project settings and preserves their existing controls. Appearance reuses its
+live preview, dithered thumbnails and person-scoped saved preferences.
 
-The permission explanation is brief, followed by a separate grey status line. Read/change hints and the technical-name disclosure share one secondary line. Notification action labels name the notification outcome. Delayed Voice completion can refresh only the still-active Settings epoch, and notification setup guidance distinguishes owners from other viewers.
+The member restriction targets owner-only control groups. Sign out, navigation,
+personal Appearance, notification subscriptions, webhooks and own bot grants keep
+their existing controllers and server checks. Arranging Settings repeatedly uses
+one scroll listener per box, including when a render replaces its navigation.
+
+The presentation is opt-in through Deck. Classic keeps its existing section
+order, policy markup and styling; server authority and save routes are unchanged.
+Delayed Voice completion can refresh only the still-active Settings epoch, and
+notification setup guidance distinguishes owners from other viewers.

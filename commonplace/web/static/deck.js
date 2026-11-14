@@ -5,8 +5,9 @@
 // only for what waits on you). Screens that exist only in Deck register in SCREENS.
 import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
-import { arrangeSettings, policyPresentation, selectSettings } from './deck-settings.js';
+import { arrangeCapySettings, capyPolicyPresentation } from './deck-settings-capy.js';
 import { createDeckAppearance } from './deck-appearance.js';
+import { arrangeSettings, selectSettings } from './deck-settings.js';
 
 export const UI_KEY = 'cmmn.ui';
 // Deck-only screens by route name: name -> loader of a module exporting TITLE and mount(context).
@@ -127,6 +128,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     if (deckOn(storage)) arrangeSettings(box, { owner: context()?.me?.role === 'owner' });
     if (!box.querySelector('#look')) box.insertAdjacentHTML('beforeend', lookHTML(deckOn(storage)));
     appearance.settings(box);
+    if (deckOn(storage)) arrangeCapySettings(box, { api, context });
   }
   function toggle() {
     setDeck(!deckOn(storage), storage);
@@ -142,7 +144,7 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
       const scroller = target?.closest?.('.settings');
       if (scroller) {
         const nav = scroller.querySelector('#deck-settings-nav');
-        scroller.scrollBy({ top: target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - (nav?.offsetHeight || 0) - 12 });
+        scroller.scrollBy({ top: target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - (scroller.classList?.contains('capy-settings') ? 0 : nav?.offsetHeight || 0) - 12 });
         selectSettings(scroller, jump.dataset.deckSetting);
       }
       target?.setAttribute?.('tabindex', '-1');
@@ -150,5 +152,5 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     }
   });
   const drawn = (render) => (options = {}) => deckOn(storage) ? render({ ...options, screens }) : '';
-  return { appearance, policyPresentation: () => deckOn(storage) ? policyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
+  return { appearance, policyPresentation: () => deckOn(storage) ? capyPolicyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
 }
