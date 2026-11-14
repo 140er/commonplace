@@ -1,6 +1,8 @@
 // Capy presentation for the existing topology canvas. No enrollment or discovery writes live here.
 import { escape as e } from './api.js';
 import { panelHTML } from './topology-detail.js';
+import { stateHTML, effectiveState } from './deck-compute-state.js';
+import { linkName } from './deck-compute-scene.js';
 
 export const ENROLL_ROUTE = '#/admin';
 export const COMPUTE_COPY = {
@@ -36,11 +38,12 @@ export function inspectorModel({ record = {}, detail = {}, node = {} } = {}) {
   add('Memory kills', number(values.oom_kill));
   add('Version', words(values.version));
   if (Array.isArray(values.bots)) add('Bots', values.bots.filter(v => typeof v === 'string').join(', '));
-  return { name: words(node.name) || words(values.name), role: words(values.role), metrics, fields, stale: !!record.stale || !!detail.stale };
+  const healthState = ({ healthy:'up', ok:'up', up:'up', degraded:'degraded', down:'down', unreachable:'down' })[String(values.health || '').toLowerCase()] || effectiveState(node);
+  return { healthState, name: words(node.name) || words(values.name), role: words(values.role), metrics, fields, stale: !!record.stale || !!detail.stale };
 }
 
 export function inspectorHTML(model) {
-  return `<div class="dc-inspector">${model.stale ? '<p class="dc-observed">Some observations are out of date.</p>' : ''}${model.metrics.map(metric => `<div class="dc-metric"><div><span>${e(metric.label)}</span><strong>${e(metric.text)}</strong></div>${metric.percent === null ? '' : `<meter min="0" max="100" value="${metric.percent}" aria-label="${e(metric.label)}">${e(metric.text)}</meter>`}</div>`).join('')}<dl class="dc-facts">${model.fields.map(field => `<div><dt>${e(field.label)}</dt><dd${field.label === 'Version' ? ' class="dc-version"' : ''}>${e(field.value)}</dd></div>`).join('')}</dl></div>`;
+  return `<div class="dc-inspector">${model.stale ? '<p class="dc-observed">Some observations are out of date.</p>' : ''}${model.metrics.map(metric => `<div class="dc-metric"><div><span>${e(metric.label)}</span><strong>${e(metric.text)}</strong></div>${metric.percent === null ? '' : `<meter min="0" max="100" value="${metric.percent}" aria-label="${e(metric.label)}">${e(metric.text)}</meter>`}</div>`).join('')}<dl class="dc-facts">${model.fields.map(field => `<div><dt>${e(field.label)}</dt><dd${field.label === 'Version' ? ' class="dc-version"' : ''}>${field.label === 'Health' ? stateHTML(model.healthState,field.value) : e(field.value)}</dd></div>`).join('')}</dl></div>`;
 }
 
 export function computePanel(options, record, phone = false) {
@@ -106,4 +109,32 @@ export function computeStyles(doc) {
   const link = doc.createElement('link');
   link.rel = 'stylesheet'; link.href = new URL('./deck-compute-capy.css', import.meta.url).href;
   link.setAttribute('data-compute-capy', ''); doc.head.append(link);
+}
+
+
+export function summaryStatesHTML(nodes) {
+  return ' '+nodes.filter(n => n.status !== 'up' || n.stale || n.missing).filter(n=>n.status !== 'none').map(n => `<span class="dc-summary-state"> · ${stateHTML(effectiveState(n),`${n.name} ${effectiveState(n)}`)}</span>`).join(' ');
+}
+
+export function computeLinkPanel({ link, names, compact = false }) {
+  const states = [link.status.from,link.status.to];
+  const state = link.stale || link.missing ? 'unknown' : states.includes('down') ? 'down' : states.includes('degraded') ? 'degraded' : states.every(s=>s === 'up') ? 'up' : 'unknown';
+  const close = compact ? 'Back' : '×';
+  const observed = link.observedAt;
+  const seen = observed && Number.isFinite(Date.parse(observed)) ? `<time datetime="${e(observed)}">${e(new Date(observed).toLocaleString('en',{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'}))} UTC</time>` : 'Not reported';
+  return `<header class="td-head"><h2 class="td-title">${e(names.get(link.from) || link.from)} to ${e(names.get(link.to) || link.to)}</h2><button type="button" class="${compact ? 'dc-back' : 'iconbtn'}" data-td="close" aria-label="${compact ? 'Back to machines' : 'Close details'}">${close}</button></header><dl class="dc-facts dc-link-facts"><div><dt>Route</dt><dd>${e(linkName(link.method) || 'Not reported')}</dd></div><div><dt>State</dt><dd>${stateHTML(state)}</dd></div><div><dt>Last seen</dt><dd>${seen}</dd></div></dl>`;
+}
+
+
+export function mountComputeTopAction(shell, go) {
+  const bar = shell?.querySelector('#phone-bar');
+  if (!bar || !globalThis.MutationObserver) return { stop() {} };
+  const button = bar.ownerDocument.createElement('button');
+  button.type = 'button'; button.className = 'iconbtn dc-top-add';
+  button.setAttribute('aria-label','Add a machine'); button.title = 'Add a machine';
+  button.innerHTML = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 3v12M3 9h12"/></svg>';
+  button.addEventListener('click',()=>go(ENROLL_ROUTE));
+  const place = () => { const top = bar.querySelector('.m-top'); if (top && button.parentNode !== top) top.append(button); };
+  const observer = new MutationObserver(place); observer.observe(bar,{childList:true,subtree:true}); place();
+  return { stop() { observer.disconnect(); button.remove(); } };
 }

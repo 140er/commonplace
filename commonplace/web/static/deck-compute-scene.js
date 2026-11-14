@@ -3,6 +3,7 @@ import { escape as e } from './api.js';
 import { KINDS } from './topology-icons.js';
 import { textWidth, wrapLines } from './topology-text.js';
 import { fitLabelled } from './topology-layout.js';
+import { nodeStatusMark } from './deck-compute-state.js';
 
 export const linkName = method => ({ tailscale: 'Tailscale', direct: 'Direct', lan: 'LAN' })[method] || String(method || '').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
 export function cardSize(node, phone = false) {
@@ -18,6 +19,7 @@ export function directLinks(model, positions, phone = false, k = 1) {
     const { width, height } = cardSize(node, phone), p = positions[node.key];
     return { key: node.key, x: p.x-width/(2*k)-6, y: p.y-height/(2*k)-6, width: width/k+12, height: height/k+12 };
   });
+  const lanes = [];
   return new Map((model.links || []).filter(link => positions[link.from] && positions[link.to]).map(link => {
     const a = positions[link.from], b = positions[link.to], obstacles = boxes.filter(box => box.key !== link.from && box.key !== link.to);
     const hits = control => {
@@ -26,6 +28,16 @@ export function directLinks(model, positions, phone = false, k = 1) {
       return count;
     };
     let control = null, best = hits(null);
+    const parallel = phone && model.links.some(other => other.id !== link.id && ((other.from === link.from && other.to === link.to) || (other.from === link.to && other.to === link.from)));
+    if (phone && (best || parallel)) {
+      const low = Math.min(a.y,b.y), high = Math.max(a.y,b.y);
+      let lane = 0;
+      while (lanes.some(other => other.lane === lane && Math.min(high,other.high)-Math.max(low,other.low) > 40/k)) lane++;
+      lanes.push({lane,low,high});
+      const x = Math.min(...boxes.map(box=>box.x))-(20+lane*16)/k, turn = Math.min(16/k, Math.abs(b.y-a.y)/3), sign = Math.sign(b.y-a.y) || 1;
+      const label = {x,y:(a.y+b.y)/2};
+      return [link.id, { d: `M${a.x} ${a.y}Q${x} ${a.y} ${x} ${a.y+turn*sign}L${x} ${b.y-turn*sign}Q${x} ${b.y} ${b.x} ${b.y}`, lane:x, label, points:[a,{x,y:a.y},{x,y:b.y},b] }];
+    }
     const distance = Math.hypot(b.x-a.x,b.y-a.y) || 1;
     if (best) for (let offset = 32; offset <= 320 && best; offset += 24) for (const sign of [1,-1]) {
       const trial = { x: (a.x+b.x)/2 - (b.y-a.y)/distance*offset*sign, y: (a.y+b.y)/2 + (b.x-a.x)/distance*offset*sign };
@@ -34,6 +46,7 @@ export function directLinks(model, positions, phone = false, k = 1) {
       if (!best) break;
     }
     const midpoint = pointAt(a,b,control,.5);
+    if (phone) return [link.id, { d:`M${a.x} ${a.y}L${b.x} ${b.y}`, label:midpoint, points:[a,b] }];
     const half = (textWidth(linkName(link.method),11)+10)/(2*k);
     const candidates = [[0,-12],[0,-28],[0,28],[-36,-12],[36,-12],[-72,0],[72,0]];
     const label = candidates.map(([x,y]) => ({ x: midpoint.x+x/k, y: midpoint.y+y/k })).find(p => !boxes.some(box => p.x+half > box.x && p.x-half < box.x+box.width && p.y+9/k > box.y && p.y-9/k < box.y+box.height)) || { x: midpoint.x, y: midpoint.y-12/k };
@@ -41,39 +54,34 @@ export function directLinks(model, positions, phone = false, k = 1) {
   }));
 }
 
-function statusMark(node, x) {
-  if (node.status === 'none') return '';
-  const shape = node.stale || node.missing ? 'ring' : ({ up: 'disc', degraded: 'triangle', down: 'diamond' })[node.status] || 'ring';
-  const geometry = {
-    disc: '<circle r="3"/>',
-    ring: '<circle r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/>',
-    triangle: '<path d="M0 -4L4 3H-4Z"/>',
-    diamond: '<path d="M0 -4L4 0L0 4L-4 0Z"/>',
-  }[shape];
-  return `<g class="dc-node-status" data-shape="${shape}" transform="translate(${x} 0)">${geometry}</g>`;
-}
-
-function nodeHTML(node, at, { sel, on, dim, words }, phone) {
+function nodeHTML(node, at, { sel, on, dim, words, linkEnd }, phone) {
   const { width, height } = cardSize(node, phone), left = -width/2, textX = left+(phone ? 12 : 50), room = width-(phone ? 40 : 78);
   const name = wrapLines(node.name,room,13,1)[0], role = wrapLines(node.role || '',room,12,1)[0];
   const kind = KINDS[node.kind] || KINDS.unknown;
   const label = `${node.name}${node.role ? `, ${node.role}` : ''}${node.status === 'none' ? '' : `. ${words[node.status] || 'Not reported'}`}${node.stale ? '. Stale' : ''}${node.missing ? '. Not recorded' : ''}`;
-  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${statusMark(node, width/2-12)}</g></g>`;
+  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${linkEnd ? ' dc-link-end' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${nodeStatusMark(node, width/2-16, phone)}</g></g>`;
 }
 function linkHTML(link, at, names, { on, dim, sel, words }) {
   const states = [...new Set([words[link.status.from],words[link.status.to]].filter(Boolean))].join('; ');
   const label = `${names.get(link.from)} to ${names.get(link.to)}, ${linkName(link.method)}${states ? `. ${states}` : ''}`;
   const live = !link.stale && !link.missing && link.status.from === 'up' && link.status.to === 'up';
   const caption = linkName(link.method), width = textWidth(caption,11)+10;
-  return `<g class="topo-link dc-link${on ? ' on' : ''}${dim ? ' dim' : ''}${link.stale || link.missing ? ' stale' : ''}" data-link="${e(link.id)}" data-method="${e(link.method)}" data-active="${live}" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><path class="dc-link-hit" d="${at.d}"/><path class="topo-route" d="${at.d}"/><g class="dc-link-label" transform="translate(${at.label.x} ${at.label.y})"><g class="dc-link-caption"><rect x="${-width/2}" y="-9" width="${width}" height="18" rx="3"/><text class="topo-method" x="0" y="4">${e(caption)}</text></g></g></g>`;
+  return `<g class="topo-link dc-link${on ? ' on' : ''}${sel ? ' selected' : ''}${dim ? ' dim' : ''}${link.stale || link.missing ? ' stale' : ''}" data-link="${e(link.id)}" data-method="${e(link.method)}" data-active="${live}" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><path class="dc-link-hit" d="${at.d}"/><path class="topo-route" d="${at.d}"/><g class="dc-link-label" transform="translate(${at.label.x} ${at.label.y})"><g class="dc-link-caption"><rect x="${-width/2}" y="-9" width="${width}" height="18" rx="3"/><text class="topo-method" x="0" y="4">${e(caption)}</text></g></g></g>`;
 }
 
-export function computePresentation(phone = false) {
+export function computePresentation(phone = false, availableHeight = null) {
   return {
     node: (node, at, options) => nodeHTML(node, at, options, phone),
     link: linkHTML,
     links: (model, positions, k) => directLinks(model,positions,phone,k),
     fit(model, positions, width, height) {
+      if (phone) {
+        const rows = model.nodes.filter(n => positions[n.key]).map(n => positions[n.key]);
+        const top = Math.min(0,...rows.map(p=>p.y)), bottom = Math.max(0,...rows.map(p=>p.y));
+        const cardHeight = Math.max(288, availableHeight?.() || height || 400);
+        const k = Math.min(1, Math.max(.05,(cardHeight-96)/(bottom-top || 1)));
+        return { x: width/2, y: 48-top*k, k, height: cardHeight };
+      }
       const points = model.nodes.filter(n => positions[n.key]).map(node => ({ ...positions[node.key], rx: cardSize(node,phone).width/2, top: 24, bottom: 24 }));
       const curves = [...directLinks(model,positions,phone).values()].filter(link => link.control).map(link => ({ ...pointAt(link.points[0],link.points[2],link.control,.5), rx: 4, top: 20, bottom: 4 }));
       return fitLabelled([...points,...curves],width,height,{ pad: 48, most: 1, minHeight: phone ? 240 : 360 });
