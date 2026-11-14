@@ -259,6 +259,10 @@ _WRITE_ACCESS = contextvars.ContextVar("commonplace_write_access", default=None)
 CHECKPOINT_MAX_ITEMS = 500
 
 
+# How often a page that is about to search may ask for the memory worker to start.
+_WARM_MEMORY_EVERY_S = 30.0
+
+
 class WorkerUnavailable(Exception):
     pass
 
@@ -2258,6 +2262,8 @@ class Gateway:
         self.mediator.gateway = self
         self.routes: dict = {}
         self.prefix_routes: list = []
+        self._warmed: dict = {}
+        self._warm_lock = threading.Lock()
         self.rate_limits = os.environ.get("COMMONPLACE_RATE_LIMITS", "").lower() != "off"
         self.limiter = ratelimit.TokenBuckets()
         self.write_limit, self.backfill = ratelimit.limits_from_env()
@@ -2293,6 +2299,30 @@ class Gateway:
             if m == method and (path == prefix.rstrip("/") or path.startswith(prefix)):
                 return h
         return None
+
+    def warm_memory(self, workspace_id: str) -> None:
+        """Start the workspace's memory worker in the background, if it is not running.
+
+        A caller that is about to search (the Memory page opening) gets the
+        worker's start and warm-up a head start, so its first search does not
+        pay them alone. Never blocks, never raises, and asks at most once per
+        workspace every ``_WARM_MEMORY_EVERY_S`` seconds.
+        """
+        now = monotonic()
+        with self._warm_lock:
+            if now - self._warmed.get(workspace_id, -_WARM_MEMORY_EVERY_S) < _WARM_MEMORY_EVERY_S:
+                return
+            self._warmed[workspace_id] = now
+
+        def start():
+            try:
+                self.supervisor.get(workspace_id)
+            except Exception as exc:
+                # A backup pause, a closing gateway or a failed start: the
+                # search that follows reports it in the usual way.
+                logger.debug("memory worker warm-up start skipped: %s", exc)
+
+        threading.Thread(target=start, name="memory-warm", daemon=True).start()
 
     def workspace_dir(self, workspace_id: str) -> str:
         from .admission import GATE

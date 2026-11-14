@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import pytest
 
-from commonplace import events, memory_tools, sessions
+from commonplace import events, gateway as gateway_module, memory_tools, sessions
 from commonplace.extensions import ToolContext, ToolError
 from mempalace import provenance
 from mempalace.knowledge_graph import KnowledgeGraph
@@ -515,6 +515,85 @@ def test_http_auth_invalid_json_and_denied_write(hub):
     )
     assert _http(hub, token, "/api/memory", {"text": "refused"})[0] == 403
     assert events.after(hub.db, hub.workspace) == []
+
+
+def test_search_says_only_while_the_memory_worker_is_warming_up(hub, monkeypatch):
+    from mempalace import mcp_server
+
+    owner = hub.owner_token()
+    memory_id = _save(hub, owner, "Warming kettle canary", theme="shared")
+    path = "/api/memory/search?q=Warming%20kettle%20canary"
+
+    monkeypatch.setattr(mcp_server, "_worker_warmup_state", "running")
+    status, warming = _http(hub, owner, path)
+    assert status == 200 and warming["warming_up"] is True
+    assert [memory["id"] for memory in warming["results"]] == [memory_id]
+
+    monkeypatch.setattr(mcp_server, "_worker_warmup_state", "done")
+    status, ready = _http(hub, owner, path)
+    assert status == 200 and "warming_up" not in ready
+    assert ready["results"] == warming["results"]
+
+
+def _warm_starts(hub, monkeypatch):
+    """Record the workspaces the gateway asks its supervisor to start, without starting one."""
+    started = []
+    monkeypatch.setattr(hub.supervisor, "get", lambda workspace_id: started.append(workspace_id))
+    return started
+
+
+def _wait_for(predicate, seconds=5.0):
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not predicate():
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_opening_the_memory_page_starts_the_worker_once_per_window(hub, monkeypatch):
+    owner = hub.owner_token()
+    started = _warm_starts(hub, monkeypatch)
+
+    assert _http(hub, owner, "/api/memory/rooms")[0] == 200
+    assert _wait_for(lambda: started == [hub.workspace])
+    for _ in range(3):
+        assert _http(hub, owner, "/api/memory/rooms")[0] == 200
+    assert started == [hub.workspace], "a burst of page opens must start the worker once"
+
+    monkeypatch.setattr(gateway_module, "monotonic", lambda: 1e9)
+    assert _http(hub, owner, "/api/memory/rooms")[0] == 200
+    assert _wait_for(lambda: len(started) == 2), "a later visit asks again"
+
+
+def test_a_failed_worker_start_never_fails_the_rooms_request(hub, monkeypatch):
+    import threading
+
+    owner = hub.owner_token()
+    attempts, escaped = [], []
+
+    def refuse(workspace_id):
+        attempts.append(workspace_id)
+        raise RuntimeError("worker restart circuit cooling down")
+
+    monkeypatch.setattr(hub.supervisor, "get", refuse)
+    monkeypatch.setattr(threading, "excepthook", lambda args: escaped.append(args.exc_value))
+
+    status, body = _http(hub, owner, "/api/memory/rooms")
+
+    assert status == 200 and "rooms" in body
+    assert _wait_for(lambda: attempts)
+    assert not _wait_for(lambda: escaped, seconds=0.3), "the failed start must be handled"
+
+
+def test_a_refused_caller_does_not_start_the_worker(hub, monkeypatch):
+    started = _warm_starts(hub, monkeypatch)
+    no_search = hub.token(
+        "no-search", profile="standard", scopes=["kg:read"], read_wings=["shared"], trust="standard"
+    )
+
+    assert _http(hub, no_search, "/api/memory/rooms")[0] == 403
+    assert not _wait_for(lambda: started, seconds=0.5), started
 
 
 def test_empty_workspace_map_and_search_are_empty(hub):

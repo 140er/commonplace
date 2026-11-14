@@ -65,11 +65,22 @@ _PASSED_ENV = frozenset(
 # default, and an empty value counts as unset.
 DEFAULT_MALLOC_ARENA_MAX = "2"
 DEFAULT_IDLE_STOP_S = 15 * 60
+# A worker warms its palace up in a background thread right after it binds, so
+# the first search does not pay the cold loads alone and the second does not
+# repeat the capacity probe. The gateway sets it for the worker; the operator's
+# environment never reaches the worker. ``COMMONPLACE_WORKER_WARMUP=0`` on the
+# gateway turns it off (lazy loading, as before).
+WARMUP_ENV = "MEMPALACE_WORKER_WARMUP"
+WARMUP_SWITCH = "COMMONPLACE_WORKER_WARMUP"
 # A memory call that meets a backup pause waits this long, then is refused
 # with a retry hint (COMMONPLACE_BACKUP_MEMORY_WAIT_S overrides the wait).
 DEFAULT_PAUSE_WAIT_S = 20.0
 PAUSE_RETRY_AFTER_S = 30
 STOP_WAIT_S = 10.0
+
+
+def _warmup_enabled() -> bool:
+    return os.environ.get(WARMUP_SWITCH, "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 class WorkersPaused(RuntimeError):
@@ -232,6 +243,8 @@ class SubprocessLauncher:
         )
         if not env.get("MALLOC_ARENA_MAX"):
             env["MALLOC_ARENA_MAX"] = DEFAULT_MALLOC_ARENA_MAX
+        if _warmup_enabled():
+            env[WARMUP_ENV] = "1"
         from mempalace.worker_lifecycle import ControlPipes
 
         control = ControlPipes()

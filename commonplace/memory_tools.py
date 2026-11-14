@@ -205,6 +205,11 @@ def _quote(memory):
 
 
 def _search(ctx, args, store=None):
+    return _search_page(ctx, args, store)[0]
+
+
+def _search_page(ctx, args, store=None):
+    """The matching memories, and whether the palace worker was still warming up."""
     params = {
         "query": _string(args, "query"),
         "limit": _limit(args.get("limit"), 5, 100),
@@ -213,11 +218,12 @@ def _search(ctx, args, store=None):
     if args.get("theme"):
         params["wing"] = _string(args, "theme")
     result = _memory(ctx, "mempalace_search", params)
+    warming = result.get("warming_up") is True
     ids = list(dict.fromkeys(hit["drawer_id"] for hit in result.get("results", [])))
     if not ids:
-        return []
+        return [], warming
     if not (_available(ctx, "mempalace_get_drawer") and _available(ctx, "mempalace_get_drawers")):
-        return [_get(ctx, memory_id, store) for memory_id in ids]
+        return [_get(ctx, memory_id, store) for memory_id in ids], warming
     records = _memory(ctx, "mempalace_get_drawers", {"drawer_ids": ids}).get("results", [])
     if len(records) != len(ids):
         raise ToolError("no: memory not found")
@@ -229,7 +235,7 @@ def _search(ctx, args, store=None):
             ):
                 raise ToolError("no: memory not found")
             raise ToolError("no: memory request refused or unavailable")
-    return [_record(ctx, record, store) for record in records]
+    return [_record(ctx, record, store) for record in records], warming
 
 
 def _available(ctx, name):
@@ -763,9 +769,15 @@ def install(gateway):
                 params = query(h)
                 args = {"query": params.get("q"), "theme": params.get("theme")}
                 args["limit"] = params.get("limit")
-                send_json(h, 200, {"results": _search(ctx, args, _boards(ctx))})
+                results, warming = _search_page(ctx, args, _boards(ctx))
+                # Additive: set only while the memory worker is warming up.
+                send_json(h, 200, {"results": results, **({"warming_up": True} if warming else {})})
             elif h.command == "GET" and parts == ["rooms"]:
-                send_json(h, 200, {"rooms": note_rooms(principal)})
+                rooms = note_rooms(principal)
+                if not principal.policy.refusal("memory_search"):
+                    # The Memory page asks for its rooms before it searches.
+                    gateway.warm_memory(principal.workspace_id)
+                send_json(h, 200, {"rooms": rooms})
             elif h.command == "GET" and parts == ["map"]:
                 params = query(h)
                 send_json(h, 200, memory_map(ctx, params.get("limit"), params.get("theme")))
