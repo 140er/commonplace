@@ -1,4 +1,4 @@
 - **Owns:** The bounded wait of a search on a background index write (`tests/test_search_lock_bounded_wait.py`, the busy-route case in `tests/test_commonplace_memory.py`).
-- **Promises:** A stuck exclusive lock, a write queued behind a slow search and a reader that never ends each end in a bounded, retryable answer; an idle palace still writes whole batches.
+- **Promises:** A stuck exclusive lock, a write queued behind a slow search, a reader that never ends, and a lock that cannot be taken back between index units or after embedding each end in a bounded, retryable answer with the lock left intact; the gateway keeps that answer retryable; an idle palace still writes whole batches.
 - **How it fails:** A search or an index write that waits past its bound, or a write that blocks a later search, fails these tests.
 - **Tests:** The two files above.

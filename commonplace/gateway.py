@@ -36,6 +36,7 @@ from urllib.parse import unquote, urlparse
 
 from mempalace import provenance
 from mempalace.config import normalize_wing_name
+from mempalace.deadline import BUSY_INDEXING
 from mempalace.knowledge_graph import strictest
 from mempalace.tool_capabilities import classify_tool
 
@@ -267,6 +268,14 @@ class WorkerUnavailable(Exception):
     pass
 
 
+class WorkerBusy(WorkerUnavailable):
+    """The worker could not take a palace call within its bound (an index write held it)."""
+
+    def __init__(self, retry_after_s: int = 2):
+        super().__init__("memory is busy indexing")
+        self.retry_after_s = retry_after_s
+
+
 class ProvenRecycling(WorkerUnavailable):
     """The authenticated generation explicitly declined dispatch."""
 
@@ -451,6 +460,11 @@ class WorkerClient:
                 "params": params,
             },
         )
+        error = response.get("error") if isinstance(response, dict) else None
+        if isinstance(error, dict) and error.get("code") == BUSY_RPC_CODE:
+            data = error.get("data")
+            wait = data.get("retry_after_s") if isinstance(data, dict) else None
+            raise WorkerBusy(wait if isinstance(wait, int) and 0 < wait <= 60 else 2)
         if not isinstance(response, dict) or "error" in response:
             raise WorkerUnavailable()
         return _tool_result(response)
@@ -509,6 +523,13 @@ class Mediator:
                 -32603,
                 "This workspace's memory is unavailable right now",
                 {"retry_after_s": exc.retry_after_s},
+            )
+        except WorkerBusy as exc:
+            return _rpc_error(
+                req_id,
+                BUSY_RPC_CODE,
+                f"{BUSY_INDEXING}; try again in a moment",
+                {"retryable": True, "retry_after_s": exc.retry_after_s},
             )
         except WorkerUnavailable:
             return _rpc_error(req_id, -32603, "This workspace's memory is unavailable right now")
@@ -2361,6 +2382,8 @@ class Gateway:
             raise extensions.ToolError(
                 f"Memory is paused for a backup; retry in {exc.retry_after_s} s"
             ) from None
+        except WorkerBusy:
+            raise extensions.ToolError(f"{BUSY_INDEXING}; try again in a moment") from None
         except WorkerUnavailable:
             raise extensions.ToolError("Memory is unavailable right now") from None
         if "error" in response:

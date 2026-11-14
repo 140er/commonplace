@@ -21,6 +21,9 @@ class _RWLock:
         self._writer_ident = None
         self._waiting_writers = 0
         self._waiting_readers = 0
+        # Background writers waiting politely (acquire_write_polite); they never
+        # hold a reader back, and this count is only for observers.
+        self._waiting_polite = 0
         # True while a yielding writer lets queued readers in (yield_write).
         self._handoff = False
 
@@ -87,14 +90,18 @@ class _RWLock:
         """
         end = None if timeout is None else time.monotonic() + timeout
         with self._cond:
-            while self._writer or self._readers or self._waiting_readers:
-                if end is None:
-                    self._cond.wait()
-                    continue
-                left = end - time.monotonic()
-                if left <= 0:
-                    return False
-                self._cond.wait(left)
+            self._waiting_polite += 1
+            try:
+                while self._writer or self._readers or self._waiting_readers:
+                    if end is None:
+                        self._cond.wait()
+                        continue
+                    left = end - time.monotonic()
+                    if left <= 0:
+                        return False
+                    self._cond.wait(left)
+            finally:
+                self._waiting_polite -= 1
             self._writer = True
             self._writer_ident = threading.get_ident()
             return True
@@ -105,7 +112,7 @@ class _RWLock:
             self._writer_ident = None
             self._cond.notify_all()
 
-    def yield_write(self, polite: bool = False) -> bool:
+    def yield_write(self, polite: bool = False, timeout=None) -> bool:
         """Let the requests queued behind a held write lock run, then take it back.
 
         For a writer that works in steps, a mine between files. Plain writer
@@ -115,6 +122,11 @@ class _RWLock:
         calling thread is not the one holding the write lock; True when other
         requests ran, so the caller knows backend handles it holds may have
         been closed under it.
+
+        ``polite`` takes the lock back without queueing as a writer, so it never
+        holds a later reader back; ``timeout`` (seconds) then bounds that wait and
+        ``TimeoutError`` says the lock was NOT taken back (the caller no longer
+        holds it).
         """
         with self._cond:
             if not self._writer or self._writer_ident != threading.get_ident():
@@ -135,8 +147,15 @@ class _RWLock:
                 self._handoff = False
             if polite:
                 # A background writer takes its turn back without queueing.
+                end = None if timeout is None else time.monotonic() + timeout
                 while self._writer or self._readers or self._waiting_readers:
-                    self._cond.wait()
+                    if end is None:
+                        self._cond.wait()
+                        continue
+                    left = end - time.monotonic()
+                    if left <= 0:
+                        raise TimeoutError("the palace did not go quiet in time")
+                    self._cond.wait(left)
                 self._writer = True
                 self._writer_ident = threading.get_ident()
                 return True
@@ -185,6 +204,34 @@ _HTTP_READ_LOCK_WAIT_S = env_float("MEMPALACE_READ_LOCK_WAIT_S", 5.0)
 _HTTP_MIRROR_LOCK_WAIT_S = env_float("MEMPALACE_MIRROR_LOCK_WAIT_S", 10.0)
 _HTTP_BUSY_RPC_CODE = -32001  # retryable, as the gateway's busy-database answer
 _HTTP_BUSY_RETRY_AFTER_S = 2
+
+
+class _LockWaitExpired(BaseException):
+    """A read or an index write waited out its bound to take the request lock back.
+
+    Raised where the lock was given up on purpose (around embedding inference, or
+    between index units) and could not be taken again in time. It is a
+    ``BaseException`` so that a broad ``except Exception`` in the embedding or
+    write code cannot swallow it and carry on without the lock; the dispatch
+    that owns the request answers busy. ``_http_lock_tls.lost`` tells it the lock
+    is no longer held, so it does not release it a second time.
+    """
+
+
+_http_lock_tls = threading.local()
+
+
+def _http_lock_lost() -> bool:
+    return getattr(_http_lock_tls, "lost", False)
+
+
+def _http_mirror_yield() -> bool:
+    """The yield point of an index batch: give way to reads, take the lock back politely."""
+    try:
+        return _HTTP_REQUEST_LOCK.yield_write(polite=True, timeout=_HTTP_MIRROR_LOCK_WAIT_S)
+    except TimeoutError:
+        _http_lock_tls.lost = True
+        raise _LockWaitExpired from None
 
 
 def _http_busy_response(req_id, advice):
@@ -676,11 +723,16 @@ def _http_release_request_lock_for_embedding(mode: str):
                 # Reacquire even when inference raises, before reconnect can
                 # obtain lifecycle protection and close the captured handle.
                 if mode == "read":
-                    _HTTP_REQUEST_LOCK.acquire_read()
+                    taken = _HTTP_REQUEST_LOCK.acquire_read(_HTTP_READ_LOCK_WAIT_S)
                 elif mode == "mirror":
-                    _HTTP_REQUEST_LOCK.acquire_write_polite()
+                    taken = _HTTP_REQUEST_LOCK.acquire_write_polite(_HTTP_MIRROR_LOCK_WAIT_S)
                 else:
                     _HTTP_REQUEST_LOCK.acquire_write()
+                    taken = True
+                if not taken:
+                    # Not holding the lock any more: the request ends busy.
+                    _http_lock_tls.lost = True
+                    raise _LockWaitExpired
         finally:
             _HTTP_EMBEDDING_LIFECYCLE_LOCK.release()
     finally:
@@ -761,12 +813,13 @@ def _http_dispatch_unobserved(request):
         # An index write is background work: it never makes a search wait for it
         # (it takes the lock only when no read runs or queues), and when the
         # palace does not go quiet it gives way and asks to be retried.
+        _http_lock_tls.lost = False
         if not _HTTP_REQUEST_LOCK.acquire_write_polite(_HTTP_MIRROR_LOCK_WAIT_S):
             return _http_busy_response(req_id, "retry the index write in a moment")
         try:
             with (
                 _http_embedding_release_installed("mirror"),
-                mine_yield_hook(lambda: _HTTP_REQUEST_LOCK.yield_write(polite=True)),
+                mine_yield_hook(_http_mirror_yield),
             ):
                 refusal = _mcp_tool_preflight_refusal(req_id, "mempalace_add_drawer")
                 if refusal is not None:
@@ -776,8 +829,12 @@ def _http_dispatch_unobserved(request):
                 except (TypeError, ValueError):
                     return _json_rpc_error(req_id, -32602, "Invalid mirror units")
                 return _tool_call_response(req_id, result)
+        except _LockWaitExpired:
+            # Units already written stay; the batch is idempotent and replays whole.
+            return _http_busy_response(req_id, "retry the index write in a moment")
         finally:
-            _HTTP_REQUEST_LOCK.release_write()
+            if not _http_lock_lost():
+                _HTTP_REQUEST_LOCK.release_write()
     if method in _HTTP_PROTOCOL_METHODS or method.startswith("notifications/"):
         return handle_request(request)
     tool_name = None
@@ -789,6 +846,7 @@ def _http_dispatch_unobserved(request):
         return handle_request(request)
     if _tool_capabilities.classify_tool(tool_name) == "read":
         release_mode = _embedding_release_mode(tool_name, request, "read")
+        _http_lock_tls.lost = False
         if not _HTTP_REQUEST_LOCK.acquire_read(_HTTP_READ_LOCK_WAIT_S):
             return _http_busy_response(request.get("id"), "try again in a moment")
         try:
@@ -796,8 +854,11 @@ def _http_dispatch_unobserved(request):
                 with _http_embedding_release_installed(release_mode):
                     return _handle_read_with_retry(request)
             return _handle_read_with_retry(request)
+        except _LockWaitExpired:
+            return _http_busy_response(request.get("id"), "try again in a moment")
         finally:
-            _HTTP_REQUEST_LOCK.release_read()
+            if not _http_lock_lost():
+                _HTTP_REQUEST_LOCK.release_read()
     if tool_name in _HTTP_YIELDING_TOOLS:
         # A mine held the exclusive lock for its whole run, so every other
         # palace request, status included, waited for all of it. It still runs
