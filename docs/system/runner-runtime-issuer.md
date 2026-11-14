@@ -8,7 +8,7 @@
   status. The grant uses only private stdin, and the hub retains its independent
   issuer, scope, nonce and watchdog checks. Lifecycle state exists before service
   activation; settings-worker lock contention cannot prevent supervisor startup.
-- **T:** The separate host implementation and existing enrollment issuer pin are
-  prerequisites for live host verification. No pin is invented. The owner alone
+- **T:** The separate host implementation and explicitly owner-supplied issuer
+  pin are prerequisites for live host verification. Enrollment supplies no pin. The owner alone
   performs Claude's one-time terminal code exchange; Commonplace never sees that
   code. A browser needing a person session leaves Codex authorization unproved.

@@ -7,8 +7,11 @@ No download or package installation is performed by this slice.
 """
 
 import argparse
+import hashlib
+import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,6 +19,71 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+
+def parse_issuer_pin(value):
+    if value is None:
+        return None
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"issuer", "public_key"}
+        or not isinstance(value["issuer"], str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,79}", value["issuer"])
+        or not isinstance(value["public_key"], str)
+    ):
+        raise ValueError("invalid owner issuer pin")
+    key = serialization.load_pem_public_key(value["public_key"].encode("ascii"))
+    if not isinstance(key, Ed25519PublicKey):
+        raise ValueError("invalid owner issuer pin")
+    return {
+        "issuer": value["issuer"],
+        "public_key": key.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode("ascii"),
+    }
+
+
+def read_issuer_pin(path):
+    if path is None:
+        return None
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid not in (0, os.getuid())
+            or info.st_mode & 0o022
+            or info.st_nlink != 1
+            or info.st_size > 16384
+        ):
+            raise ValueError("invalid owner issuer pin")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(16385)
+        if len(raw) > 16384:
+            raise ValueError("invalid owner issuer pin")
+        pin = parse_issuer_pin(json.loads(raw))
+        if pin is None:
+            raise ValueError("invalid owner issuer pin")
+        return pin
+    finally:
+        os.close(fd)
+
+
+def describe_issuer_pin(pin):
+    if pin is None:
+        return "Host issuer pin: not supplied; verification and execution stay disabled."
+    key = serialization.load_pem_public_key(pin["public_key"].encode("ascii"))
+    fingerprint = hashlib.sha256(
+        key.public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    ).hexdigest()
+    return (
+        "Host issuer pin: "
+        + pin["issuer"]
+        + "; SHA-256 "
+        + " ".join(re.findall(".{8}", fingerprint))
+    )
 
 
 def verified_release(archive, signature, trusted_key):
@@ -47,9 +115,12 @@ def main(argv=None, *, launch=None):
         parser.add_argument("--accept", action="store_true")
         parser.add_argument("--plan", action="store_true")
         parser.add_argument("--approval-key")
+        parser.add_argument("--host-issuer-pin")
         args = parser.parse_args(argv)
         raw = verified_release(args.release, args.release_signature, args.release_key)
+        pin = read_issuer_pin(args.host_issuer_pin)
         if args.plan or not args.accept:
+            print(describe_issuer_pin(pin))
             print(
                 "Verify the pinned release; create a temporary private archive only after acceptance."
             )
@@ -75,6 +146,15 @@ def main(argv=None, *, launch=None):
                 stream.write(raw)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if pin is not None:
+                print(describe_issuer_pin(pin))
+                snapshot = Path(directory) / "issuer-pin.json"
+                fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "w") as stream:
+                    json.dump(pin, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                args.host_issuer_pin = str(snapshot)
             command = [sys.executable, "-I", str(archive), "runner", "install"]
             for flag, value in vars(args).items():
                 if value is None:

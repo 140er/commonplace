@@ -9,11 +9,12 @@ import subprocess
 import sys
 import time
 
+from . import host_authority
 from .install_files import digest
 from .install_host import InstallError
 from .install_receipts import canonical
-from .runtime_install import HOME, Runtime
-from .setup_client import GRANT, Setup
+from .runtime_install import HOME
+from .setup_client import GRANT
 
 
 def invoke(command, fd, home, payload=b"", *, seconds=0.5):
@@ -78,39 +79,16 @@ class HostStatus:
         self.unsupported = None
 
     def __call__(self, nonce):
-        from .installer import CONFIG
-
         install = self.install
+        if host_authority.load(install) is None:
+            return None
         if install.fs.info(GRANT) is None:
             return None
         value = json.loads(install.fs.read(GRANT))
         if value == {}:
             return None
         try:
-            runtime = Runtime(
-                install,
-                json.loads(install.fs.read(CONFIG)),
-                install.transport,
-                install.runtime_host,
-            )
-            current = runtime._receipt()
-            scope = value["signed"]["receipt"]["scope"]
-            metadata = {
-                "version",
-                "approved_by",
-                "approved_at",
-                "attested_at",
-                "nonce",
-                "issued_at",
-                "expires_at",
-                "agent_ready",
-            }
-            if scope != {k: v for k, v in current.items() if k not in metadata}:
-                raise ValueError
-            request_id = value["signed"]["receipt"]["request_id"]
-            Setup(install, runtime)._check_grant(
-                {"id": request_id, "scope_digest": digest(canonical(scope))}, scope
-            )
+            runtime, scope, value = host_authority.context(install)
             component = runtime.read()["components"]["host"]
             release = scope["runtime"]["components"]["host"]
             if component["sha256"] == self.unsupported:
@@ -160,7 +138,8 @@ class HostStatus:
                     or envelope["receipt"]["nonce"] != nonce
                 ):
                     raise ValueError
-                # The hub verifies the actual signature under its independent pin.
+                host_authority.accept(install, envelope, nonce)
+                # The hub also verifies under its independently configured pin.
                 return envelope
             finally:
                 os.close(fd)

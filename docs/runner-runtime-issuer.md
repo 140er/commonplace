@@ -50,12 +50,12 @@ issuer key, accepts a response-selected key or stores a previous signed status.
 A host without the command reports verification unavailable; a malformed producer
 or invalid grant stops renewal. Shutdown never invokes the producer.
 
-The current host has no compatible issuer. The enrollment schema also supplies
-no host-issuer pin that can be reused. The separate host change therefore remains
-pending: implement exact project/topic/ceiling enforcement, revocation and a
-maximum five-second watchdog at the host boundary; add the stdin producer above;
-use the existing independently trusted enrollment issuer pin when available.
-Until that pin source exists, stop rather than create a new trust root. Acceptance
+The current host has no compatible issuer. The [owner's explicit installer
+pin](runner-issuer-pin.md) is the local trust source; enrollment never supplies
+one. The separate S9 host change remains pending: implement exact
+project/topic/ceiling enforcement, revocation and a maximum five-second watchdog
+at the host boundary; add the stdin producer above; establish custody of the
+signing key corresponding to the owner-selected public key. Acceptance
 requires live pinned signatures, wrong-pin/replay/stale-scope refusal, direct
 out-of-scope host denial, and connected/offline stop proof. A discovery check or
 synthetic signing test does not satisfy those live criteria.
