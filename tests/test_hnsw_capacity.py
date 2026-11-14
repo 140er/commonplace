@@ -961,10 +961,67 @@ class TestCapacityProbeCache:
         monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
 
         first = hnsw_capacity_status(str(tmp_path), COLLECTION)
-        for gap in (11.0, 60.0, 3_600.0):
+        for gap in (11.0, 60.0, 200.0):
             clock[0] += gap
             assert hnsw_capacity_status(str(tmp_path), COLLECTION)["status"] == first["status"]
         assert len(probe_runs) == 1, "an unchanged palace must be probed once, not once per gap"
+
+    def test_fine_stamp_verdict_is_still_bounded_by_a_ceiling(
+        self, tmp_path, probe_runs, monkeypatch
+    ):
+        """A fine timestamp comes from a coarse kernel clock, so reuse stays finite."""
+        from mempalace.backends import chroma as chroma_mod
+
+        _seed_chroma_db(str(tmp_path), sqlite_count=20_000, segment_id="seg-level")
+        _write_pickle(str(tmp_path), "seg-level", hnsw_count=20_000)
+        self._stamp_files(tmp_path, fine=True)
+        clock = [1_000.0]
+        monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
+
+        hnsw_capacity_status(str(tmp_path), COLLECTION)
+        clock[0] += chroma_mod._CAPACITY_FINE_STAMP_MAX_AGE_SECONDS - 1
+        hnsw_capacity_status(str(tmp_path), COLLECTION)
+        assert len(probe_runs) == 1, "inside the ceiling the verdict is served"
+
+        clock[0] += 2
+        hnsw_capacity_status(str(tmp_path), COLLECTION)
+        assert len(probe_runs) == 2, "past the ceiling even identical stamps re-probe"
+
+    def test_same_size_write_in_the_same_timestamp_tick_is_noticed(
+        self, tmp_path, probe_runs, monkeypatch
+    ):
+        """A rewrite that keeps size and mtime leaves the stat signature unchanged.
+
+        Deleting a row frees space inside the file, so it keeps its size; putting
+        the old mtime back models a second write landing in the same clock tick.
+        SQLite's change counter still moves, so the verdict must not be served.
+        """
+        from mempalace.backends import chroma as chroma_mod
+
+        _seed_chroma_db(str(tmp_path), sqlite_count=20_000, segment_id="seg-level")
+        _write_pickle(str(tmp_path), "seg-level", hnsw_count=20_000)
+        self._stamp_files(tmp_path, fine=True)
+        db_path = os.path.join(str(tmp_path), "chroma.sqlite3")
+        clock = [1_000.0]
+        monkeypatch.setattr(chroma_mod.time, "monotonic", lambda: clock[0])
+        assert hnsw_capacity_status(str(tmp_path), COLLECTION)["sqlite_count"] == 20_000
+        before = os.stat(db_path)
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("DELETE FROM embeddings WHERE id = (SELECT min(id) FROM embeddings)")
+            conn.commit()
+        finally:
+            conn.close()
+        os.utime(db_path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        after = os.stat(db_path)
+        assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns), (
+            "precondition: the stat signature must not see this write"
+        )
+
+        clock[0] += 30.0  # well inside the ceiling
+        assert hnsw_capacity_status(str(tmp_path), COLLECTION)["sqlite_count"] == 19_999
+        assert len(probe_runs) == 2
 
     def test_fine_timestamps_still_reprobe_when_a_file_changes_after_a_long_gap(
         self, tmp_path, probe_runs, monkeypatch
