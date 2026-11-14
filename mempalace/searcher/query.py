@@ -214,6 +214,40 @@ def _scaled_pool_limits(limits: tuple, scale: int) -> tuple:
     )
 
 
+def _lexical_candidates_without_embeddings(
+    exc, drawers_col, query, n_results, where, stop_words, window_active
+):
+    """``(no vector hits, lexical candidates)`` when the embedding service is down, else None.
+
+    None for any other failure, and when this backend cannot bound a lexical
+    search for this filter: then the caller reports the error as before.
+    """
+    from ..embedding_service import EmbeddingServiceUnavailableError
+
+    if not isinstance(exc, EmbeddingServiceUnavailableError):
+        return None
+    if _resolve_candidate_strategy(None, drawers_col, where) != "union":
+        return None
+    lexical = _fetch_union_lexical_candidates(
+        drawers_col, query, n_results, where, stop_words, window_active
+    )
+    empty = {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+    return empty, lexical
+
+
+def _embedding_service_down_notice(refused: dict) -> dict:
+    """What a lexically ranked result says about why it has no vector scores."""
+    return {
+        "degraded": "lexical",
+        "embedding_service_unavailable": True,
+        "warning": (
+            "The embedding service is unavailable, so these results are ranked by "
+            "keyword match only (no semantic similarity). " + refused["hint"]
+        ),
+        "embedding_service_error": refused["details"].splitlines()[0],
+    }
+
+
 def _pool_left_results_short(
     hits, n_results, candidates_fetched, pool_size, bookkeeping_dropped=0
 ) -> bool:
@@ -413,9 +447,19 @@ def _search_drawer_memories(
         # The configured embedding function could not be built: the
         # read-only open succeeded, but embedding the query refused (C).
         refused = model_error_result(e, palace_path=palace_path, log=logger)
-        if refused is not None:
+        degraded = _lexical_candidates_without_embeddings(
+            e, drawers_col, query, n_results, where, stop_words, date_window_active
+        )
+        if degraded is not None:
+            # The shared embedding service is down: rank what the lexical
+            # index finds and say so, instead of failing the search.
+            drawer_results, lexical_result = degraded
+            candidate_strategy = "union"
+            strategy_stats.update(_embedding_service_down_notice(refused))
+        elif refused is not None:
             return _search_error_result(refused.pop("error"), **refused)
-        return _search_error_result(f"Search error: {e}")
+        else:
+            return _search_error_result(f"Search error: {e}")
 
     # Gather closet hits (best-per-source) to build a boost lookup.
     closet_boost_by_source: dict = {}  # source_file -> (rank, closet_dist, preview)
@@ -487,6 +531,7 @@ def _search_drawer_memories(
             "source_path": source,
             **_result_date_fields(meta),
             **_result_author_fields(meta),
+            **_result_topic_fields(meta),
             # Similarity is the raw vector score. Closet boost ranks via
             # effective_distance but must not inflate the advertised score.
             "similarity": round(_distance_to_similarity(dist, metric), 3),

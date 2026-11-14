@@ -1,12 +1,14 @@
 """Contract REST routes; all policy and state changes run in BoardService."""
 
 import sqlite3
+from contextlib import nullcontext
 from dataclasses import dataclass
 from urllib.parse import quote
 
 from commonplace.extensions import ToolContext, ToolError
 from commonplace.rules.enforce import RulesRefresh, rest_write
 
+from . import lifecycle
 from ._http import (
     HTTPError,
     path_parts,
@@ -18,6 +20,8 @@ from ._http import (
 )
 from .digest import ssml
 from .display import NEEDS, with_urls
+from .priority import rank
+from .refusals import explained
 from .service import BoardService, ParentError, SpaceError, VersionClash
 from .store import CardRefused
 
@@ -47,6 +51,48 @@ def space_projection(service, row):
     }
 
 
+LEGACY_REFUSALS = (
+    sqlite3.OperationalError,
+    CardRefused,
+    RulesRefresh,
+    VersionClash,
+    HTTPError,
+    ParentError,
+    ToolError,
+    TypeError,
+)
+
+
+def _send_refusal(h, service, exc):
+    """The legacy status and body for a refusal; anything else is not ours to catch."""
+    if isinstance(exc, sqlite3.OperationalError):
+        from commonplace.projects import orchestration
+
+        orchestration.require_lock_timeout(exc)
+        send_json(h, 409, {"error": "busy", "code": "busy"})
+    elif isinstance(exc, CardRefused):
+        send_json(
+            h, exc.status, {"error": str(exc).removeprefix("no: "), "code": exc.code, **exc.details}
+        )
+    elif isinstance(exc, RulesRefresh):
+        send_json(h, 428, exc.payload)
+    elif isinstance(exc, VersionClash):
+        send_json(h, 409, {"error": "card changed", "current": with_urls(service.ctx, exc.current)})
+    elif isinstance(exc, HTTPError):
+        send_json(h, exc.status, {"error": str(exc)})
+    elif isinstance(exc, ParentError):
+        send_json(h, 400, {"error": str(exc).removeprefix("no: ")})
+    elif isinstance(exc, ToolError):
+        message = str(exc).removeprefix("no: ")
+        send_json(
+            h,
+            404 if message in ("card not found", "board not found") else 403,
+            {"error": message},
+        )
+    else:
+        send_json(h, 400, {"error": "invalid arguments"})
+
+
 def install(gateway):
     def route(h):
         principal = require_principal(gateway, h)
@@ -64,49 +110,18 @@ def install(gateway):
                 send_json(h, exc.status, {"error": exc.code})
             except HTTPError as exc:
                 send_json(h, exc.status, {"error": str(exc)})
+            except LEGACY_REFUSALS as exc:
+                if len(parts) != 3:
+                    raise
+                _send_refusal(h, service, exc)
             else:
                 send_json(h, response.status, response.payload, response.headers)
             return
         try:
             service = BoardService(ToolContext(principal=principal, gateway=gateway))
             status, result = dispatch(service, h, parts, method)
-        except sqlite3.OperationalError as exc:
-            from commonplace.projects import orchestration
-
-            orchestration.require_lock_timeout(exc)
-            send_json(h, 409, {"error": "busy", "code": "busy"})
-            return
-        except CardRefused as exc:
-            send_json(
-                h,
-                exc.status,
-                {"error": str(exc).removeprefix("no: "), "code": exc.code, **exc.details},
-            )
-            return
-        except RulesRefresh as exc:
-            send_json(h, 428, exc.payload)
-            return
-        except VersionClash as exc:
-            send_json(
-                h, 409, {"error": "card changed", "current": with_urls(service.ctx, exc.current)}
-            )
-            return
-        except HTTPError as exc:
-            send_json(h, exc.status, {"error": str(exc)})
-            return
-        except ParentError as exc:
-            send_json(h, 400, {"error": str(exc).removeprefix("no: ")})
-            return
-        except ToolError as exc:
-            message = str(exc).removeprefix("no: ")
-            send_json(
-                h,
-                404 if message in ("card not found", "board not found") else 403,
-                {"error": message},
-            )
-            return
-        except TypeError:
-            send_json(h, 400, {"error": "invalid arguments"})
+        except LEGACY_REFUSALS as exc:
+            _send_refusal(h, service, exc)
             return
         format = query(h).get("format")
         if parts == ["cards"]:
@@ -131,7 +146,7 @@ def open_cards(cards, limit=None):
         raise HTTPError(400, "limit must be a number") from None
     if not 1 <= limit <= OPEN_LIMIT_MAX:
         raise HTTPError(400, f"limit must be 1 to {OPEN_LIMIT_MAX}")
-    cards = sorted(cards, key=lambda c: (NEEDS.index(c["need"]), c["number"]))
+    cards = sorted(cards, key=lambda c: (NEEDS.index(c["need"]), rank(c["priority"]), c["number"]))
     return {
         "cards": [{k: v for k, v in c.items() if k != "body"} for c in cards[:limit]],
         "total": len(cards),
@@ -151,6 +166,11 @@ def _space_route(service, h, parts, method):
     elif len(parts) == 3 and parts[2] == "chat":
         tool = {"GET": "space_read", "POST": "space_post"}.get(method)
     if tool:
+        if tool == "space_post" and parts[0] == "boards":
+            from commonplace import person_actions
+
+            if person_actions.chat_person(service.ctx.gateway, h) is not None:
+                return 201, person_actions.post_chat(service.ctx.gateway, h, parts[1], read_json(h))
         # These new aliases enforce MCP visibility here, keeping gateway/handoff untouched.
         p = service.principal
         if not p.person and not p.policy.tool_visible(tool):
@@ -174,6 +194,32 @@ def _space_route(service, h, parts, method):
     return None
 
 
+def _explained(kind, service):
+    """Refusals of a Done move or a handoff carry a reason and a next step; other routes are as is."""
+    return explained(kind, person=service.principal.person) if kind else nullcontext()
+
+
+def _lifecycle_route(service, h, parts, method):
+    """Archive, restore, carry on and Pocket: signed-in people only, refused in the service.
+
+    These are person-only writes (the service refuses connections), so they sit outside the
+    rules-freshness inventory, which covers agent writes."""
+    if len(parts) != 3 or method != "POST" or parts[2] not in lifecycle.ACTIONS:
+        return None
+    task, action = parts[1], parts[2]
+    body = read_json(h)
+    body.pop("task", None)
+    if action == "follow-up":
+        return 201, service.task_follow_up(task, **body)
+    handler = {
+        "archive": service.task_archive,
+        "restore": service.task_restore,
+        "pocket": service.pocket_pin,
+        "unpocket": service.pocket_unpin,
+    }[action]
+    return 200, handler(task, **body)
+
+
 def _card_route(service, h, parts, method):
     task = parts[1]
     if len(parts) == 2:
@@ -181,11 +227,15 @@ def _card_route(service, h, parts, method):
             return 200, service.task_show(task)
         if method == "PATCH":
             body = read_json(h)
-            with rest_write(service.ctx, h, "task_update", body):
-                if "version" not in body or body["version"] is None:
-                    raise HTTPError(400, "version is required")
-                body.pop("task", None)
-                return 200, service.task_update(task, **body)
+            with _explained("done" if body.get("status") == "done" else None, service):
+                with rest_write(service.ctx, h, "task_update", body):
+                    if "version" not in body or body["version"] is None:
+                        raise HTTPError(400, "version is required")
+                    body.pop("task", None)
+                    return 200, service.task_update(task, **body)
+    routed = _lifecycle_route(service, h, parts, method)
+    if routed:
+        return routed
     if len(parts) == 3 and method == "POST":
         handlers = {
             "comments": service.task_comment,
@@ -203,55 +253,110 @@ def _card_route(service, h, parts, method):
                 "heartbeat": "task_heartbeat",
                 "approve": "task_approve",
             }[parts[2]]
-            with rest_write(service.ctx, h, tool, body):
-                # A decision answers the ask the person saw; a newer ask is a 409.
-                if parts[2] == "decide" and body.get("version") is None:
-                    raise HTTPError(400, "version is required")
-                body.pop("task", None)
-                return 200, handlers[parts[2]](task, **body)
+            with _explained("handoff" if parts[2] == "handoff" else None, service):
+                with rest_write(service.ctx, h, tool, body):
+                    # A decision answers the ask the person saw; a newer ask is a 409.
+                    if parts[2] == "decide" and body.get("version") is None:
+                        raise HTTPError(400, "version is required")
+                    body.pop("task", None)
+                    return 200, handlers[parts[2]](task, **body)
     raise HTTPError(404, "not found")
+
+
+def _space_item_route(service, h, slug, resource, method):
+    """Cards and chat of one exact space, through the same service calls as the board routes."""
+    # Exact slug only: the board routes also accept a repo reference or a sole visible board.
+    service.space_metadata(slug)
+    try:
+        body = {} if method == "GET" else _read_json(h)
+    except HTTPError as exc:
+        if exc.status == 400:
+            raise HTTPError(400, "invalid_arguments") from exc
+        raise
+    if "rules_seq" in body or body.pop("space", slug) != slug or body.pop("board", slug) != slug:
+        raise HTTPError(400, "invalid_arguments")
+    try:
+        if resource == "cards":
+            if method == "GET":
+                cards = service.task_list(
+                    board=slug, status=query(h).get("status") or None, all_statuses=True
+                )
+                return SpaceResponse(
+                    200,
+                    with_urls(
+                        service.ctx,
+                        {
+                            "cards": [c for c in cards if c["parent"] is None],
+                            "linked": [c for c in cards if c["message_id"] is not None],
+                            "children": [c for c in cards if c["parent"] is not None],
+                        },
+                    ),
+                )
+            if method == "POST":
+                with rest_write(service.ctx, h, "task_add", body):
+                    card = service.task_add(board=slug, **body)
+                return SpaceResponse(201, with_urls(service.ctx, card))
+        if method == "GET":
+            cursors = {k: v for k, v in query(h).items() if k in ("after", "last", "before")}
+            try:
+                cursors = {k: int(v) for k, v in cursors.items()}
+            except ValueError:
+                raise HTTPError(400, "invalid_arguments") from None
+            page = service.space_read(slug, **cursors)
+            return SpaceResponse(200, {"space": page.pop("board"), **page})
+        if method == "POST":
+            with rest_write(service.ctx, h, "space_post", body):
+                return SpaceResponse(201, service.space_post(slug, **body))
+    except TypeError:
+        raise HTTPError(400, "invalid_arguments") from None
+    raise HTTPError(404, "not_found")
+
+
+def _space_dispatch(service, h, parts, method):
+    item = len(parts) == 3 and parts[2] in ("cards", "chat")
+    if len(parts) not in (1, 2) and not item:
+        raise HTTPError(404, "not_found")
+    collection = len(parts) == 1
+    if (collection or item) and method not in ("GET", "POST"):
+        return SpaceResponse(405, {"error": "method_not_allowed"}, {"Allow": "GET, POST"})
+    if not (collection or item) and method != "GET":
+        return SpaceResponse(405, {"error": "method_not_allowed"}, {"Allow": "GET"})
+    if "Idempotency-Key" in h.headers:
+        raise HTTPError(400, "unsupported_idempotency")
+    if "include_deleted" in query(h):
+        raise HTTPError(400, "unsupported_include_deleted")
+    if item:
+        return _space_item_route(service, h, parts[1], parts[2], method)
+    if method == "POST":
+        try:
+            body = _read_json(h)
+        except HTTPError as exc:
+            if exc.status == 400:
+                raise HTTPError(400, "invalid_arguments") from exc
+            raise
+        if (
+            set(body) - {"slug", "name", "wing", "repo"}
+            or not isinstance(body.get("slug"), str)
+            or any(value is not None and not isinstance(value, str) for value in body.values())
+        ):
+            raise HTTPError(400, "invalid_arguments")
+        with rest_write(service.ctx, h, "board_add", body):
+            return SpaceResponse(201, space_projection(service, service.board_add(**body)))
+    if collection:
+        return SpaceResponse(
+            200,
+            {
+                "spaces": [
+                    space_projection(service, row) for row in service.board_list(top_level=True)
+                ]
+            },
+        )
+    return SpaceResponse(200, space_projection(service, service.space_metadata(parts[1])))
 
 
 def dispatch(service, h, parts, method):
     if parts and parts[0] == "spaces":
-        if len(parts) not in (1, 2):
-            raise HTTPError(404, "not_found")
-        collection = len(parts) == 1
-        if (collection and method not in ("GET", "POST")) or (not collection and method != "GET"):
-            return SpaceResponse(
-                405,
-                {"error": "method_not_allowed"},
-                {"Allow": "GET, POST" if collection else "GET"},
-            )
-        if "Idempotency-Key" in h.headers:
-            raise HTTPError(400, "unsupported_idempotency")
-        if "include_deleted" in query(h):
-            raise HTTPError(400, "unsupported_include_deleted")
-        if method == "POST":
-            try:
-                body = _read_json(h)
-            except HTTPError as exc:
-                if exc.status == 400:
-                    raise HTTPError(400, "invalid_arguments") from exc
-                raise
-            if (
-                set(body) - {"slug", "name", "wing", "repo"}
-                or not isinstance(body.get("slug"), str)
-                or any(value is not None and not isinstance(value, str) for value in body.values())
-            ):
-                raise HTTPError(400, "invalid_arguments")
-            with rest_write(service.ctx, h, "board_add", body):
-                return SpaceResponse(201, space_projection(service, service.board_add(**body)))
-        if collection:
-            return SpaceResponse(
-                200,
-                {
-                    "spaces": [
-                        space_projection(service, row) for row in service.board_list(top_level=True)
-                    ]
-                },
-            )
-        return SpaceResponse(200, space_projection(service, service.space_metadata(parts[1])))
+        return _space_dispatch(service, h, parts, method)
     if len(parts) in (2, 3) and parts[0] == "boards":
         routed = _space_route(service, h, parts, method)
         if routed:
@@ -266,7 +371,10 @@ def dispatch(service, h, parts, method):
     if len(parts) == 3 and parts[0] == "boards" and parts[2] == "cards":
         if method == "GET":
             cards = service.task_list(
-                board=parts[1], status=query(h).get("status") or None, all_statuses=True
+                board=parts[1],
+                status=query(h).get("status") or None,
+                all_statuses=True,
+                archived=query(h).get("archived") in ("1", "true"),
             )
             return 200, {
                 "cards": [c for c in cards if c["parent"] is None],
@@ -281,7 +389,10 @@ def dispatch(service, h, parts, method):
     if parts == ["cards"] and method == "GET":
         return 200, open_cards(service.task_list(top_level=True), query(h).get("limit"))
     if parts == ["needs-me"] and method == "GET":
-        return 200, service.needs_me()
+        from commonplace import person_actions
+
+        projected = person_actions.needs_me(service.ctx.gateway, h)
+        return 200, projected if projected is not None else service.needs_me()
     if parts == ["needs-me", "digest"] and method == "GET":
         if query(h).get("format", "json") not in ("json", "text", "ssml"):
             raise HTTPError(400, "format must be json, text or ssml")

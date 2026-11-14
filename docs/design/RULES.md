@@ -96,6 +96,7 @@ Rules tools are registered by `commonplace.rules` and are in every profile. The 
 | `session_start` | `memory:read` | read | `query?`, `board?`, `repo?`, `limit?` (default 3, maximum 5) | Effective rules plus relevant quoted memories. Underlying tool allowlists and memory visibility apply. Explicit reads follow normal served rules behavior. |
 | `rules_get` | `memory:read` | read | `board?`, `repo?`, `format?: "text" \| "md"`, `include_retired?: bool`, `effective?: bool` | The rules that apply to me: my own plus `*`, global plus the given board and repo, with `status`, `source`, `version` and the effective text. `format=md` gives a Markdown rules file grouped by kind, with retired rules left out. The last line is `seq N`. |
 | `rules_changed` | `memory:read` | read | `since: int` | `seq N` plus `key status own\|all` lines for changes after `since` (`own` for the caller's rules, `all` for `*` rules). If `since` exceeds the current sequence, returns `reset` then `seq N`. It does no text work; meant to run on every session start. |
+| `rules_feedback` | `memory:write` | write | `rule?: key`, `kind?: followed\|helped\|violated\|conflict\|outdated\|unclear\|note`, `note?: text (500)` | With `kind`, records one evidence event on a rule you can see and returns its counters. With only `rule`, returns your own events (newest 50) and the rule's counters; with neither, counters for every visible rule that has evidence. Evidence never changes a rule or `seq`. Events are capped (50 per writer, 200 per rule); counters keep the full history. People read all events at `GET /api/rules/<id>/feedback` and `GET /api/rules/feedback`; owners write with `POST /api/rules/<id>/feedback`. |
 
 Untrusted tokens may publish: what they publish starts as a proposal for the owner, and nothing else is written. Rule text is stored verbatim, and replies quote it as data the way board tools do.
 
@@ -127,7 +128,7 @@ Without a summary, `display_summary` is the first sentence of `text`, trimmed to
 
 The UI uses look B: the tokens, Geist Mono, tiles on the 6px gap and the v2 block logo from `app.css`/`ui.css`. No new colours.
 
-- **Nav:** "Rules" in the sidebar under Memory and in the phone tabs (`#/rules`). Its count is the number of rules that wait on the owner (`proposed`, or `pending=1`, excluding retired rows except owner-retired rows with pending proposals), shown the same way Home shows its count.
+- **Nav:** "Rules" in the account menu, on desktop and on a phone (`#/rules`). Its count is the number of rules that wait on the owner (`proposed`, or `pending=1`, excluding retired rows except owner-retired rows with pending proposals), shown the same way Home shows its count.
 - **Screen:** the title is "Rules". There is one tile per agent (the connection name, with "All agents" for `*`), ordered by how many rules wait on the owner. The header row holds the agent's name, its waiting count and a "Help me clarify" button for the whole set.
 - **Rule row:** a kind chip, a scope chip (only when it isn't global, e.g. `board commonplace`), a short display summary and a status chip. The summary is a native button with `aria-expanded` and `aria-controls`; clicking it or using Enter/Space reveals the full verbatim text, diffs and suggestions, and toggling again collapses them. Orange marks only what waits on the owner, the same as on the board. Proposed rows show Accept, Edit and Retire. Edited rows show the diff between the agent's wording and the owner's text: removed words struck through in the quiet step, added words in ink. Rows with `pending` show the agent's new wording as a diff (headed with the writing agent's name when the rule now applies to someone else) with "Use agent's" and "Keep mine". Owner-retired rows with pending proposals appear in the active list; other retired rows sit folded at the bottom of each tile.
 - **Applies to:** active rows have an "Applies to…" menu that moves the rule to All agents or another agent's tile. Proposed rows also show "Accept for all agents" next to Accept. History shows the move as its note.
@@ -302,6 +303,13 @@ guidance. Hooks warn about managed local-only instruction/memory edits without
 uploading them. [Onboarding](../agent-onboarding.md) covers exact imports,
 recovery and owner approval of imported proposals.
 
+The hook presents its context as complete only when it opens with a complete
+effective rule set (`effective rules: N` through a `rules_seq` number or `off`).
+For an unreadable or lost store, an over-cap set or a reply without a rules
+section it adds a notice ahead of the context: workspace rules may apply, and
+the agent must call `rules_get(effective=true, format=md)` before it plans or
+writes. A session never starts as if no rules applied.
+
 ### Write sequence checks
 
 Owners opt individual connections or the workspace into `warn` or `enforce`.
@@ -313,8 +321,11 @@ exempt on every route; the owner's agent tokens remain checked.
 
 Checked MCP tools are `task_add`, `task_update`, `task_comment`, `task_take_next`,
 `task_handoff`, `task_approve`, `ask`, `space_post`, `board_add`, `board_set`,
-`decide`, `memory_save`, `memory_link`, `fact_save`, `handoff_start` and
-`rules_publish`. Their schemas gain a `rules_seq` integer or decimal string in
+`decide`, `goal_set`, `card_goal`, `memory_save`, `memory_link`, `fact_save`,
+`handoff_start` and `rules_publish`. The goals writes are checked because the
+goals tree and a card's goal become instructions in every agent's card context.
+Their REST routes (`/api/goals`, `/api/goals/card`) accept signed-in owners
+only, who are exempt like every person. Their schemas gain a `rules_seq` integer or decimal string in
 warn/enforce; it is required in enforce except for `ask`. Schemas are copied
 per caller. Every MCP call strips the argument before dispatch. Existing
 visibility and owner-only gates run first.
@@ -348,6 +359,7 @@ The Rules screen's incident-count projection is a separate follow-up.
 The following paths deliberately remain open, retaining existing authorization:
 
 - `task_heartbeat`: mechanical claim renewal.
+- `rules_feedback`: evidence about a rule is a report, not an instruction; it never changes work or rules.
 - `orch_heartbeat`, `orch_release`: mechanical orchestrator lease renewal and release.
 - `webhook_add`, `webhook_remove`, `webhook_test`: configuration and outbound automation.
 - `mempalace_add_drawer`, `mempalace_update_drawer`, `mempalace_diary_write`,
@@ -370,9 +382,43 @@ checklist: verify that inventory and preserve the documented exemptions.
 
 ### Reviewer checks
 
-Review blocks and review attestations are delivered separately. An orchestrator
-must fetch its own complete effective rules before posting attestations when
-write checks are enforced.
+A reviewer often has no connection of its own, so the party that builds its
+prompt fetches the rules for it. `commonplace review-rules [--url URL]
+[--token-env NAME]` reads `rules_get effective=true format=md` with the given
+token and prints a block for the reviewer's prompt: the instruction to check
+the change against every rule, the rules as quoted data, and one closing line
+the reviewer must repeat at the end of its verdict, `Rules checked: rules_seq N`
+(`Rules checked: seq N` while checking is off). The rules are those of the
+token's connection, so review a change with the token of the connection that
+made it. Reading the block counts as that connection's full read.
+
+The block is never empty. With no rules it says that none apply. An over-cap
+set prints the rules that fit, says the set is incomplete and asks for
+`Rules checked: incomplete`. A lost store, an unreadable reply, a missing token
+or an unreachable hub prints that the rules could not be loaded, that the
+change must not be reported as checked against them, and asks for
+`Rules checked: no`; only fixed wording is printed, never the failure text.
+Exit status is 0 for a complete set and 2 otherwise.
+
+`commonplace review-rules --verify VERDICT_FILE` reads the rules again and
+checks the last `Rules checked:` line of the verdict against the current
+version: exit 0 when it matches a complete set, 1 when the verdict names no
+or another version (review again with the current block), 2 when the rules
+are incomplete or unavailable. The line proves which rule set the reviewer
+was given, not that it applied each rule.
+
+An orchestrator records the verdict with `orch_gate_record`, a checked write:
+under `enforce` it must pass the same `rules_seq`, and a rule change after the
+review refuses the record until the rules are read again.
+
+### Enforcement points and their tests
+
+| Point | Where | Fails when the point is skipped |
+|---|---|---|
+| Rules injected at connect | `gateway.Mediator._initialize_context`, `rules/service.py` `instructions_for` | `tests/test_commonplace_rules_inject.py`, `tests/test_commonplace_session_initialize.py`; a failed read keeps the explicit follow-up: `tests/test_rules_enforcement_points.py` |
+| Session-start hook | `client_install.py` (install), `client_hooks.py` (fetch), `session.py` (`session_start`) | `tests/test_commonplace_client_install.py`, `tests/test_commonplace_client_hooks.py`, `tests/test_commonplace_agent_defaults.py`, `tests/test_commonplace_session.py`; incomplete rules get a notice: `tests/test_rules_enforcement_points.py` |
+| Write sequence check | `gateway.Mediator._tools_call`, `rules/enforce.py` `check` and `rest_write` | `tests/test_commonplace_rules_enforce.py` (every checked MCP tool and REST shape, the served requirement, the inventory) |
+| Rules for reviewers | `review_rules.py` | `tests/test_rules_enforcement_points.py` |
 
 ## Out of scope
 

@@ -14,7 +14,7 @@ from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
 from mempalace.sqlite_crypto import connect, row_factory
 
-from . import registry
+from . import budgets, launch_output as diagnostics, ledger, registry
 
 QUEUE_LIMIT = 8
 STARTED_HOLD_SECONDS = 3600
@@ -28,6 +28,8 @@ PRESPAWN_CODES = frozenset(
         "binding_not_acked",
         "job_invalid",
         "t3_missing",
+        "low_memory",
+        "low_cpu",
         "busy",
     )
 )
@@ -65,7 +67,7 @@ CONFIG_COLUMNS = {
     "model_provider": "TEXT",
     "model": "TEXT",
 }
-SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER"}
+SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER", "launch_output": "TEXT"}
 # Conflict messages of create/create_in and the stable refusal code of each.
 CONFLICT_CODES = {
     "request_key reused with different arguments": "request_conflict",
@@ -77,6 +79,18 @@ CONFLICT_CODES = {
 
 class Conflict(Exception):
     """A requested job transition conflicts with its current state."""
+
+
+class BudgetExceeded(Conflict):
+    """A new start is refused because a budget of its scope is spent (see ``budgets``).
+
+    The message names the scope, the budget and the window; it carries no amounts."""
+
+    code = "budget_exceeded"
+
+    def __init__(self, stop):
+        self.stop = stop
+        super().__init__("budget_exceeded: " + budgets.describe(stop))
 
 
 def _now() -> str:
@@ -99,6 +113,7 @@ class JobStore:
         with self.connection() as conn:
             conn.executescript(SCHEMA)
             _migrate(conn)
+            ledger.ensure(conn)
 
     @contextmanager
     def connection(self):
@@ -146,7 +161,7 @@ def open_store(gateway, ws):
 
 def conflict_code(exc) -> str:
     """Stable refusal code of a create/create_in Conflict."""
-    return CONFLICT_CODES.get(str(exc), "conflict")
+    return getattr(exc, "code", None) or CONFLICT_CODES.get(str(exc), "conflict")
 
 
 def job_object(row, *, tokens=False):
@@ -197,7 +212,9 @@ def _update(conn, row, values, *, token=False):
     ).rowcount
     if changed != 1:
         raise Conflict("start changed")
-    return dict(_row(conn, row["id"]))
+    updated = dict(_row(conn, row["id"]))
+    ledger.sync(conn, updated)
+    return updated
 
 
 def sweep(store, db, ws):
@@ -285,10 +302,15 @@ def create(
     runtime_mode="approval-required",
     request_key=None,
     person=False,
+    guard=None,
 ):
     """Return (HTTP status, stored row); machine is the resolved registry row.
 
     requested_by is user:<id> or conn:<connection_id>, never a connection name.
+    ``guard(conn, now)``, when given, runs inside the write transaction after the other
+    guards and may raise to refuse the start. It is opt-in: ``card_start`` is the only
+    caller and passes the path-contract check (``runner_bridge.contract_refusal``); a new
+    caller that starts cards must pass it too, or contracts are silently skipped.
     """
     from commonplace.projects import orchestration as orch
 
@@ -301,6 +323,15 @@ def create(
         if on
         else store.transaction() as conn
     ):
+
+        def admission_check():
+            if on:
+                orch.check_start(
+                    store.gateway, store.workspace_id, conn, board_slug, task_number, workers, now
+                )
+            if guard is not None:
+                guard(conn, now)
+
         return create_in(
             conn,
             now=now,
@@ -313,13 +344,7 @@ def create(
             runtime_mode=runtime_mode,
             request_key=request_key,
             person=person,
-            admission_check=(
-                lambda: orch.check_start(
-                    store.gateway, store.workspace_id, conn, board_slug, task_number, workers, now
-                )
-            )
-            if on
-            else None,
+            admission_check=admission_check if on or guard is not None else None,
         )
 
 
@@ -378,6 +403,15 @@ def create_in(
         raise Conflict("busy")
     if admission_check is not None:
         admission_check()
+    stop = budgets.stop_reason(
+        conn,
+        now,
+        agent=machine["worker_connection_id"],
+        project=project,
+        task_number=task_number,
+    )
+    if stop is not None:
+        raise BudgetExceeded(stop)
     job = "job_" + secrets.token_hex(8)
     conn.execute(
         "INSERT INTO runner_jobs(id,task_number,board_slug,machine_id,project,topic,"
@@ -407,7 +441,9 @@ def create_in(
             + " WHERE id=?",
             (*(config.get(key) for key in CONFIG_COLUMNS), job),
         )
-    return 201, dict(_row(conn, job))
+    row = dict(_row(conn, job))
+    ledger.sync(conn, row, agent=machine["worker_connection_id"])
+    return 201, row
 
 
 def lease(store, machine):
@@ -477,6 +513,20 @@ def lease(store, machine):
                         return None
                     capped_boards.add(row["board_slug"])
                     continue
+            if budgets.stop_reason(
+                conn,
+                now,
+                agent=machine["worker_connection_id"],
+                project=row["project"],
+                task_number=row["task_number"],
+            ):
+                # Queued, not running: a spent budget cancels it. Running work is never touched.
+                _update(
+                    conn,
+                    row,
+                    dict(state="cancelled", outcome_code="budget_exceeded", updated_at=now),
+                )
+                continue
             authority.enter_context(store.gateway.db._lock)
             current = registry.get_machine(store.gateway.db, store.workspace_id, machine["id"])
             refusal = binding_problem(current, row)
@@ -484,6 +534,14 @@ def lease(store, machine):
                 _update(conn, row, dict(state="cancelled", outcome_code=refusal, updated_at=now))
                 authority.pop_all().close()
                 continue
+            from . import capacity
+
+            if (
+                len(in_flight) >= current["max_in_flight"]
+                or capacity.available(conn, current, now, max_agents=capacity.job_limit(conn, row))
+                <= 0
+            ):
+                return None
             # A switch flip requires another admission pass; never use an OFF read
             # as authority for an ON lease. Release control only after commit.
             if orch.enabled(store.gateway.db, store.workspace_id) != on:
@@ -554,7 +612,7 @@ def starting(store, machine, lease_token, *, validate):
     return updated
 
 
-def result(store, machine, lease_token, outcome, thread_id=None, code=None):
+def result(store, machine, lease_token, outcome, thread_id=None, code=None, launch_output=None):
     _sweep(store)
     if outcome not in ("started", "uncertain", "failed"):
         raise ValueError("invalid outcome")
@@ -573,6 +631,15 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None):
         not isinstance(code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code)
     ):
         raise ValueError("invalid outcome code")
+    if launch_output is not None:
+        if (
+            outcome != "uncertain"
+            or code != "launch_unknown"
+            or not isinstance(launch_output, str)
+            or not 1 <= len(launch_output) <= diagnostics.MAX_CHARS
+        ):
+            raise ValueError("invalid launch output")
+        launch_output = diagnostics.clean(launch_output)
     now = _now()
     with store.transaction() as conn:
         row = _fenced(conn, machine["id"], lease_token)
@@ -588,9 +655,14 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None):
         if not allowed:
             raise Conflict("result conflicts with start state")
         values = dict(state=outcome, thread_id=thread_id, outcome_code=code, updated_at=now)
+        if launch_output is not None:
+            values["launch_output"] = launch_output
         if outcome == "started":
             values["started_at"] = now
-        return _update(conn, row, values, token=True)
+        updated = _update(conn, row, values, token=True)
+        if outcome == "started":
+            budgets.after_run(conn, row["id"], now)
+        return updated
 
 
 def cancel(store, job, principal, *, conn=None, now=None, actor=None):
@@ -615,7 +687,7 @@ def cancel(store, job, principal, *, conn=None, now=None, actor=None):
         owner = internal or (principal.person and principal.role == "owner")
         if row["step_key"] is not None and not owner:
             # An orchestrator step's start: only a signed-in workspace owner cancels it.
-            raise ToolError("no: only a workspace owner may cancel an orchestrator start")
+            raise ToolError("no: only a workspace owner may cancel a Coworker start")
         if not owner and row["requested_by"] != requester_ref(principal):
             raise ToolError("no: only the requester or a workspace owner may cancel")
         if row["state"] == "uncertain":
@@ -670,15 +742,22 @@ def status(store, task, principal):
         rows = conn.execute(
             "SELECT * FROM runner_jobs WHERE task_number=? ORDER BY created_at,rowid", (task,)
         ).fetchall()
+        runs = ledger.views(conn, [row["id"] for row in rows])
     return [
         dict(
             job=row["id"],
+            run=runs.get(row["id"]),
             machine_label=machines[row["machine_id"]]["label"]
             if row["machine_id"] in machines
             else None,
             **{key: row[key] for key in ("state", "thread_id", "outcome_code", "updated_at")},
+            **({"reason": launch_reason(row)} if principal.person and row["launch_output"] else {}),
         )
         for row in rows
         if (principal.person and principal.role == "owner")
         or row["requested_by"] == requester_ref(principal)
     ]
+
+
+def launch_reason(row):
+    return {"code": "launch_unknown", "detail": row["launch_output"]}

@@ -261,13 +261,16 @@ def test_rejected_shapes_and_domain_calls(env, http, monkeypatch):
         ("PATCH", "/api/spaces/work", "GET"),
         ("DELETE", "/api/spaces/work", "GET"),
         ("POST", "/api/spaces/work", "GET"),
+        ("PATCH", "/api/spaces/work/cards", "GET, POST"),
+        ("DELETE", "/api/spaces/work/chat", "GET, POST"),
     ):
         response = http(method, path, {})
         assert response[0] == 405, response
         assert response[1] == {"error": "method_not_allowed"}
         assert response[2]["Allow"] == allow
         assert not calls
-    for suffix in ("cards", "chat", "settings", "conversation"):
+    # Cards and chat are canonical adapters now (tests/test_spaces_adapters.py).
+    for suffix in ("settings", "conversation"):
         for method in ("GET", "POST", "PATCH", "DELETE"):
             assert_error(http(method, "/api/spaces/work/" + suffix, {}), 404, "not_found")
             assert not calls
@@ -444,6 +447,7 @@ def test_inventory_and_visibility_contract(env, http):
         r.path == "/api/spaces" and r.tool == "board_add" and r.kind == "checked"
         for r in enforce.REST_ROUTES
     )
+    # Display descriptions are deliberately refreshed; tool names and schemas remain pinned.
     expected = json.loads(Path(__file__).with_name("spaces_surfaces.json").read_text())
     assert surfaces(env) == expected
 

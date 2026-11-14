@@ -65,26 +65,60 @@ def _check_request_key(request_key):
         raise ToolError("no: invalid request_key")
 
 
+def _config_defaults(ctx, task, machine, project, topic, config_ref):
+    """Fill machine, project and topic from the board's accepted ``[runner]`` config.
+
+    Only a signed-in owner on a configured board may leave them out; every other caller
+    keeps the old "<name> is required" refusal, or is told to use ``orch_card_start``."""
+    from commonplace.orch import runner_bridge
+
+    _service, _row, board = _card(ctx, task)
+    if not runner_bridge.configured(ctx.gateway, ctx.principal.workspace_id, board["slug"]):
+        key = next(
+            k
+            for k, v in (("machine", machine), ("project", project), ("topic", topic))
+            if v is None
+        )
+        raise ToolError(f"no: {key} is required")
+    if not person_owner(ctx.principal):
+        _requester(ctx)
+        raise runner_bridge.StartRefused(
+            "use_orch_card_start",
+            "use orch_card_start: this board's starts run from its Coworker config",
+        )
+    config = runner_bridge.resolve_version(
+        ctx.gateway, ctx.principal.workspace_id, board["slug"], config_ref
+    ).config()
+    role = config.runner_role
+    if role is None or role.topic is None:
+        raise runner_bridge.StartRefused("unknown_role", "the config has no role for this start")
+    return (
+        config.runner.machine if machine is None else machine,
+        config.runner.project if project is None else project,
+        role.topic if topic is None else topic,
+    )
+
+
 def card_start(
     ctx,
     task,
-    machine,
-    project,
-    topic,
+    machine=None,
+    project=None,
+    topic=None,
     runtime_mode=None,
     request_key=None,
     config_ref=None,
 ):
     """On a board with an accepted live ``[runner]`` config only a signed-in workspace
     owner may call this (anyone else is told to use ``orch_card_start``); the start then
-    runs the config's pinned role through the orchestrator's fenced, capped start."""
-    for key, value in (("machine", machine), ("project", project), ("topic", topic)):
-        if not isinstance(value, str) or not value:
-            raise ToolError(f"no: {key} is required")
+    runs the config's pinned role through the orchestrator's fenced, capped start. There
+    the owner may send the card alone: machine, project and topic come from the config."""
     if runtime_mode is not None and not isinstance(runtime_mode, str):
         raise ToolError("no: runtime mode not allowed")
     if config_ref is not None and (not isinstance(config_ref, str) or not config_ref):
         raise ToolError("no: invalid config_ref")
+    if None in (machine, project, topic):
+        machine, project, topic = _config_defaults(ctx, task, machine, project, topic, config_ref)
     from commonplace.projects import orchestration as orch
 
     # Fail closed on a settings read error before resolving the start.
@@ -111,7 +145,7 @@ def card_start(
         if not person_owner(ctx.principal):
             raise runner_bridge.StartRefused(
                 "use_orch_card_start",
-                "use orch_card_start: this board's starts run from its orchestrator config",
+                "use orch_card_start: this board's starts run from its Coworker config",
             )
         return runner_bridge.person_start(
             ctx,
@@ -132,7 +166,7 @@ def card_start(
         if refusal:
             raise orch.AdmissionRefused(refusal)
     if config_ref is not None:
-        raise ToolError("no: config_ref needs a board with an orchestrator config")
+        raise ToolError("no: config_ref needs a board with a Coworker config")
     runtime_mode = "approval-required" if runtime_mode is None else runtime_mode
     startable(ctx.gateway, machine, row, board)
     if project not in grant_values(machine, "projects"):
@@ -144,6 +178,22 @@ def card_start(
     ):
         raise ToolError("no: runtime mode not allowed")
     _check_request_key(request_key)
+    card_id = row["id"]
+
+    def contract_guard(conn, now):
+        # No orchestrator config here, so ``_fenced`` does not run: the same path-contract
+        # check applies before the job is inserted.
+        refusal = runner_bridge.contract_refusal(
+            conn,
+            workspace_dir=ctx.workspace_dir(),
+            board_slug=board["slug"],
+            board_id=board["id"],
+            card=card_id,
+            now=now,
+        )
+        if refusal is not None:
+            raise refusal
+
     status, row = jobs.create(
         store,
         machine=machine,
@@ -159,6 +209,7 @@ def card_start(
         topic=topic,
         runtime_mode=runtime_mode,
         request_key=request_key,
+        guard=contract_guard,
     )
     return status, jobs.job_object(row, tokens=False)
 
@@ -209,10 +260,11 @@ OPERATIONS = {
             "request_key": {**STRING, "maxLength": 128},
             "config_ref": {**STRING, "maxLength": 40},
         },
-        ("task", "machine", "project", "topic"),
-        "Request an attested machine to start a worker for a claimable card. On a board "
-        "with an orchestrator config only a signed-in workspace owner may call it; "
-        "config_ref (live or exp:<name>) picks the config version.",
+        ("task",),
+        "Request an attested machine to start a worker for a claimable card. machine, "
+        "project and topic are required unless the board has a Coworker config; then "
+        "only a signed-in workspace owner may call it, may leave them out (the config "
+        "fills them) and config_ref (live or exp:<name>) picks the config version.",
     ),
     "card_start_cancel": (
         card_start_cancel,

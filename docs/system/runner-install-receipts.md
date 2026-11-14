@@ -1,0 +1,5 @@
+### Approved runner acknowledgement fetch, slice 3
+
+- **M:** [The installer guide](../runner-installer.md#approved-settings-and-acknowledgement-cache-slice-3) documents machine-self receipt fetch, the owner-only settings extension to attestation, current grant/epoch fencing, pinned signature verification and private compatibility generation. A fresh challenge prevents response replay; a stale or damaged cache cannot substitute for a sync.
+- **M:** Grant changes surface as owner-only Needs me reminders through the existing settings navigation. The setup-only service updates the private cache after browser approval, without a machine configuration edit. New control records are workspace-classified for account export/deletion.
+- **T:** Receipt signing and the separately trusted approval pin are explicit provisioning seams pending the independent approval format. Missing trust or approval fails closed. This slice installs no execution runtime, authorizes no provider login or host grant, adds no final attestation UI and never enables agent-ready work. Later lifecycle and stop proofs remain required.

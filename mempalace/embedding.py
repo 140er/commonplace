@@ -1115,6 +1115,7 @@ MODEL_ERROR_CLASS_NAMES = frozenset(
         "UnknownEmbeddingModelError",
         "EmbeddingFunctionUnavailableError",
         "EmbeddingAPIError",
+        "EmbeddingServiceUnavailableError",
         "EmbedderIdentityMismatchError",
         "EmbedderIdentityRecordError",
         "DimensionMismatchError",
@@ -1148,11 +1149,13 @@ def _model_error_class(exc: BaseException) -> Optional[type]:
         EmbedderIdentityRecordError,
         EmbeddingFunctionMismatchError,
     )
+    from .embedding_service import EmbeddingServiceUnavailableError
 
     for cls in (
         UnknownEmbeddingModelError,
         EmbeddingFunctionUnavailableError,
         EmbeddingAPIError,
+        EmbeddingServiceUnavailableError,
         EmbedderIdentityRecordError,
         EmbedderIdentityMismatchError,
         DimensionMismatchError,
@@ -1200,6 +1203,10 @@ def model_error_result(exc: BaseException, *, palace_path=None, log=None) -> Opt
         kind, hint = EMBEDDING_FUNCTION_UNAVAILABLE_ERROR, _UNAVAILABLE_EF_HINT
     elif cls is EmbeddingAPIError:
         kind, hint = EMBEDDING_API_UNAVAILABLE_ERROR, _EMBEDDING_API_HINT
+    elif cls.__name__ == "EmbeddingServiceUnavailableError":
+        from .embedding_service import EMBEDDING_SERVICE_HINT, EMBEDDING_SERVICE_UNAVAILABLE_ERROR
+
+        kind, hint = EMBEDDING_SERVICE_UNAVAILABLE_ERROR, EMBEDDING_SERVICE_HINT
     elif cls.__name__ == "EmbedderIdentityRecordError":
         kind, hint = model_mismatch_error_kind(exc), _IDENTITY_NOT_RECORDED_HINT
     else:
@@ -1335,13 +1342,20 @@ def _embeddinggemma2_device(device: Optional[str]) -> str:
     return mapped
 
 
-def get_embedding_function(device: Optional[str] = None, model: Optional[str] = None):
+def get_embedding_function(
+    device: Optional[str] = None, model: Optional[str] = None, *, local: bool = False
+):
     """Return a cached embedding function for the requested device + model.
 
     ``device=None`` reads :attr:`MempalaceConfig.embedding_device`;
     ``model=None`` reads :attr:`MempalaceConfig.embedding_model`.
     The returned function is shared across calls with the same resolved
     provider list + model so we only pay model-load cost once per process.
+
+    With the opt-in ``embedding_service`` switch set, the local ONNX models
+    embed through the shared :mod:`mempalace.embedding_service` instead of
+    loading in this process. ``local=True`` (the service itself) always
+    builds the in-process function.
     """
     if device is None or model is None:
         from .config import MempalaceConfig
@@ -1420,6 +1434,9 @@ def get_embedding_function(device: Optional[str] = None, model: Optional[str] = 
         selected(model=model)
         return ef
 
+    service = None if local else _embedding_service_address(model)
+    if service is not None:
+        return _service_embedding_function(service, model)
     providers, effective = _resolve_providers(device, model)
     cache_key = (model, tuple(providers))
     cached = _EF_CACHE.get(cache_key)  # lock-free fast path; dict.get is GIL-atomic
@@ -1455,6 +1472,45 @@ def get_embedding_function(device: Optional[str] = None, model: Optional[str] = 
         effective,
         providers,
     )
+    from .worker_observation import selected
+
+    selected(model=model)
+    return ef
+
+
+def _embedding_service_address(model: str) -> Optional[str]:
+    """The shared embedding service's socket path for ``model``, or None.
+
+    None when the ``embedding_service`` switch is off (the default) and for
+    models the service does not hold.
+    """
+    from .embedding_service import SERVICE_MODELS, configured_address
+
+    return configured_address() if model in SERVICE_MODELS else None
+
+
+def _service_embedding_function(address: str, model: str):
+    """The cached embedding function that embeds ``model`` through the service at ``address``.
+
+    The device is the service's to choose; this process runs no model, so
+    the function is built for the CPU provider and never opens a session.
+    """
+    from .embedding_service import service_embedding_function
+
+    cache_key = ("embedding-service", address, model)
+    with _EF_CACHE_LOCK:
+        ef = _EF_CACHE.get(cache_key)
+        if ef is None:
+            local_class = EmbeddinggemmaONNX if model == "embeddinggemma" else _build_ef_class()
+            ef = service_embedding_function(
+                local_class, address, model, preferred_providers=["CPUExecutionProvider"]
+            )
+            _EF_CACHE[cache_key] = ef
+            logger.info(
+                "Embedding function initialized (model=%s via the embedding service at %s)",
+                model,
+                address,
+            )
     from .worker_observation import selected
 
     selected(model=model)

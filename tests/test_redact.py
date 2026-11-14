@@ -50,6 +50,21 @@ def test_kinds_never_shrink():
     assert redactor.MAX_CHARS == 16_000
 
 
+def test_diagnostic_tail_redacts_before_cutting_long_input():
+    text = (
+        "progress\n" * 3000
+        + "-----BEGIN PRIVATE KEY-----\n"
+        + "synthetic private material\n" * 200
+        + "-----END PRIVATE KEY-----\n"
+        + "password=synthetic-secret\n"
+        + "runtime_mode_escalation_denied"
+    )
+    tail = redactor.redact_tail(text, 100)
+    assert len(tail) <= 100 and tail.endswith("runtime_mode_escalation_denied")
+    assert "synthetic-secret" not in tail and "synthetic private material" not in tail
+    assert redactor.redact(text) == ("[omitted:too_long]", ["too_long"])
+
+
 def expand(template):
     values = []
 

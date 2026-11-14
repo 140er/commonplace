@@ -133,8 +133,8 @@ class Hub:
             trust="trusted",
         )
 
-    def raw(self, token, body, headers=None, method="POST", path="/mcp"):
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
+    def raw(self, token, body, headers=None, method="POST", path="/mcp", timeout=30):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=timeout)
         try:
             raw = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
             hdrs = {"Content-Type": "application/json"}
@@ -147,12 +147,12 @@ class Hub:
         finally:
             conn.close()
 
-    def rpc(self, token, method, params=None):
+    def rpc(self, token, method, params=None, timeout=30):
         self._ids += 1
         body = {"jsonrpc": "2.0", "id": self._ids, "method": method}
         if params is not None:
             body["params"] = params
-        status, text = self.raw(token, body)
+        status, text = self.raw(token, body, timeout=timeout)
         assert status == 200, (status, text)
         return json.loads(text)
 

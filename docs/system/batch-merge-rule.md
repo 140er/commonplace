@@ -1,0 +1,3 @@
+### Batch merge rule (tests are never the bottleneck)
+
+- A PR into `develop` merges on a review/gate PASS plus its affected tests and the repo-wide guard files on the exact head. No full test suite runs anywhere (owner decision, 13 Nov): not per PR, not per batch, not for a release; a release is a small smoke set, and breaks found in development are fixed when found (bisect only when the culprit is unclear). Global changes (lock and build files, `tests/conftest.py`, migrations) run the same affected tests plus guards. The rule lives in `CLAUDE.md` and is pinned by `tests/test_agent_docs_batch_rule.py`.

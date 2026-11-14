@@ -90,6 +90,31 @@ async function rejectOnly(kind) {
 const cases = {
   proposal_reject_only: () => rejectOnly('proposal'),
   plan_reject_only: () => rejectOnly('plan'),
+  // #404: an unmapped model role is one Set up row whose button opens that board's setting.
+  model_roles() {
+    const item = { kind: 'model_role', board: 'atlas', board_name: 'Atlas', role: 'main', message: 'Atlas has no model set for the main role, so its cards cannot start.', action: { label: 'Set the model', type: 'project_models', board: 'atlas', role: 'main' } };
+    const html = renderNeeds({ needs: { model_roles: [item] }, boards: [board], now });
+    assert.equal((html.match(/data-model-role-item=/g) || []).length, 1);
+    assert.match(html, /data-model-role-item="atlas:main"/);
+    assert.match(html, /<button class="btn primary" data-action="project-models" data-board="atlas" data-role="main">Set the model<\/button>/);
+    assert.match(visible(html), /Atlas has no model set for the main role/);
+    assert.match(visible(html), /1 item, 1 project/);
+    assert.doesNotMatch(html, /Nothing needs you right now/);
+    assert.doesNotMatch(renderNeeds({ needs: { model_roles: [item] }, boards: [board], filter: 'approvals', now }), /data-model-role-item/);
+    // Mapped: the server sends no item and the row is gone.
+    const cleared = renderNeeds({ needs: { model_roles: [] }, boards: [board], now });
+    assert.doesNotMatch(cleared, /data-model-role-item/);
+    assert.match(cleared, /Nothing needs you right now/);
+    // A malformed item draws nothing and never a button without a board and role.
+    assert.doesNotMatch(renderNeeds({ needs: { model_roles: [{ kind: 'model_role', message: 'x' }] }, now }), /data-action="project-models"/);
+    // A role the board config leaves without a model_role has no button: the row says what to fix.
+    const config = { kind: 'model_role', board: 'atlas', board_name: 'Atlas', role: null, config_roles: ['main'], message: 'Starts that use the main role on Atlas cannot run: the role names no model_role.', action: null };
+    const bare = renderNeeds({ needs: { model_roles: [config] }, boards: [board], now });
+    assert.equal((bare.match(/data-model-role-item=/g) || []).length, 1);
+    assert.doesNotMatch(bare, /data-action="project-models"/);
+    assert.match(visible(bare), /names no model_role/);
+    assert.match(visible(bare), /board config/);
+  },
   async approve() {
     const s = setup(); await s.ui.show({ needs, boards: [board], selected: 21 });
     s.detailMount.controls.get('[data-needs-note]').value = '  Send tomorrow\n';
@@ -105,7 +130,7 @@ const cases = {
   context() {
     let html = renderNeedDetail(proposal, { board, now });
     assert.ok(html.includes('Context (exact words)')); assert.equal(context(html), proposal.body);
-    assert.ok(html.includes('— Atlas orchestrator')); assert.ok(!html.includes('Wrong context'));
+    assert.ok(html.includes('— Atlas Coworker')); assert.ok(!html.includes('Wrong context'));
     html = renderNeedDetail(decision, { board, now }); assert.equal(context(html), decision.events[0].context); assert.ok(html.includes('— Maya'));
     const agent = renderNeedDetail({ ...proposal, events: [{ kind: 'add', actor: 'conn:iris' }] }, { board }); assert.ok(agent.includes('— Iris (agent)'));
     assert.ok(!renderNeedDetail({ ...proposal, events: [] }, { board }).includes('— —'));
@@ -128,7 +153,7 @@ const cases = {
   },
   settling() {
     for (const hold of [{ ...waiting, state: 'settling' }, waiting]) {
-      const html = renderNeedDetail(proposal, { board, hold, now: now + 48000 }); assert.ok(html.includes('Sending now…')); assert.ok(!html.includes('data-needs-stop=')); assert.ok(!html.includes('Released to the orchestrator'));
+      const html = renderNeedDetail(proposal, { board, hold, now: now + 48000 }); assert.ok(html.includes('Sending now…')); assert.ok(!html.includes('data-needs-stop=')); assert.ok(!html.includes('Released to the Coworker'));
     }
     assert.equal(holdState({ ...waiting, state: 'settling' }, now).canStop, false);
   },
@@ -141,9 +166,9 @@ const cases = {
   async too_late() {
     const s = setup({ api: (path) => { if (path.endsWith('/stop')) throw Object.assign(new Error('too_late'), { status: 409, payload: { error: 'too_late', released_at: waiting.release_at } }); } });
     s.setHolds([waiting]); await s.ui.show({ needs, boards: [board], selected: 21 }); await s.ui.stopHold(waiting.id);
-    assert.ok(s.detailMount.innerHTML.includes("this can't be stopped here anymore")); assert.ok(s.detailMount.innerHTML.includes('Ask the orchestrator'));
+    assert.ok(s.detailMount.innerHTML.includes("this can't be stopped here anymore")); assert.ok(s.detailMount.innerHTML.includes('Ask the Coworker'));
     assert.ok(!s.detailMount.innerHTML.includes('data-needs-stop=')); assert.ok(!s.detailMount.innerHTML.includes('Nothing was sent')); s.ui.stop();
-    const released = renderNeedDetail(proposal, { board, hold: { ...waiting, state: 'released' }, now }); assert.ok(released.includes('Released to the orchestrator')); assert.ok(!released.includes('reported “'));
+    const released = renderNeedDetail(proposal, { board, hold: { ...waiting, state: 'released' }, now }); assert.ok(released.includes('Released to the Coworker')); assert.ok(!released.includes('reported “'));
   },
   async decline() {
     const actions = [], s = setup({ onAction: (...args) => actions.push(args) }); await s.ui.show({ needs, selected: 21 });
@@ -175,7 +200,7 @@ const cases = {
     assert.ok(s.requests.some((r) => r.path === '/api/holds')); assert.ok(s.requests.some((r) => r.path === '/api/cards/21'));
     assert.ok(s.mount.innerHTML.includes(proposal.title)); assert.ok(visible(s.detailMount.innerHTML).includes('Stop · 0:48'));
     s.setTime(now + 48000); await s.timers.get(1)(); assert.ok(s.detailMount.innerHTML.includes('Sending now…'));
-    s.setHolds([{ ...waiting, state: 'released' }]); await s.ui.refreshHolds(); assert.ok(s.detailMount.innerHTML.includes('Released to the orchestrator'));
+    s.setHolds([{ ...waiting, state: 'released' }]); await s.ui.refreshHolds(); assert.ok(s.detailMount.innerHTML.includes('Released to the Coworker'));
     s.doc.hidden = true; const count = s.requests.length; await s.timers.get(1)(); assert.equal(s.requests.length, count);
     s.ui.stop(); assert.equal(s.timers.size, 0); assert.equal(s.events.size, 0); assert.equal(s.mount.handlers.size, 0); assert.equal(s.detailMount.handlers.size, 0);
   },
@@ -194,7 +219,7 @@ const cases = {
     await s.ui.show({ needs, selected: 21 }); s.ui.approve(); await s.ui.confirm();
     assert.ok(s.detailMount.innerHTML.includes('Could not confirm approval')); assert.ok(!s.detailMount.innerHTML.includes('nothing has been sent'));
     assert.equal(s.requests.filter((r) => r.method === 'POST').length, 1); s.ui.stop();
-    const failed = renderNeedDetail(proposal, { board, hold: { ...waiting, state: 'failed', code: 'stale_version' } }); assert.ok(failed.includes('card changed')); assert.ok(!failed.includes('Released to the orchestrator'));
+    const failed = renderNeedDetail(proposal, { board, hold: { ...waiting, state: 'failed', code: 'stale_version' } }); assert.ok(failed.includes('card changed')); assert.ok(!failed.includes('Released to the Coworker'));
   },
   async decision() {
     const s = setup(); await s.ui.show({ needs, selected: 22 });

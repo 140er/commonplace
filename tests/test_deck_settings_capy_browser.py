@@ -1,0 +1,298 @@
+"""Optional Settings screens with the production shell and browser-free companion tests."""
+
+import os
+from pathlib import Path
+
+import pytest
+
+from tests.test_deck_settings_browser import browser as browser_fixture, open_settings
+
+browser = browser_fixture
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)])
+def test_settings_columns_preserve_entries_and_policy_writes(browser, width, height):
+    context, page = open_settings(browser, width)
+    page.set_viewport_size({"width": width, "height": height})
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    writes = []
+    actions = [
+        {
+            "name": name,
+            "kind": "write",
+            "mode": mode,
+            **({"limit": "Never on production"} if name == "shell.exec" else {}),
+        }
+        for name, mode in [
+            ("shell.exec", "ask"),
+            ("git.push", "allowed"),
+            ("deploy.preview", "off"),
+            ("memory_save", "allowed"),
+        ]
+    ]
+
+    def policy(route):
+        if route.request.method == "POST":
+            body = route.request.post_data_json
+            writes.append(body)
+            for action in actions:
+                action["mode"] = body["actions"].get(action["name"], action["mode"])
+        route.fulfill(
+            json={
+                "actions": actions,
+                "modes": ["allowed", "ask", "off"],
+                "approval": {"approval_ttl_s": 600},
+            }
+        )
+
+    sharing = {"sharing": False, "can_configure": True}
+
+    def share(route):
+        if route.request.method == "PATCH":
+            sharing.update(route.request.post_data_json)
+            writes.append(route.request.post_data_json)
+        route.fulfill(json=sharing)
+
+    page.route("**/api/tool-policy", policy)
+    page.route("**/api/bots/settings", share)
+    try:
+        page.reload()
+        page.wait_for_selector(".capy-policy")
+        page.wait_for_selector("[data-capy-sharing] input")
+        page.evaluate("document.fonts.ready")
+        rows = page.locator("[data-tool-policy-row]").all()
+        assert len(rows) == 4
+        for first, second in zip(rows, rows[1:]):
+            before, after = first.bounding_box(), second.bounding_box()
+            assert after["y"] == pytest.approx(before["y"] + before["height"], abs=1)
+            assert first.evaluate("el=>getComputedStyle(el).borderBottomWidth") == "1px"
+        assert rows[-1].evaluate("el=>getComputedStyle(el).borderBottomWidth") == "0px"
+        assert page.locator(".settings > .deck-settings-main").count() == 1
+        assert page.locator(".settings > :last-child").get_attribute("data-deck-appearance") == ""
+        titles = page.locator(".deck-settings-main > section > h2").all_text_contents()
+        assert titles[:4] == [
+            "Bot sharing",
+            "What bots may do without asking",
+            "Second review",
+            "Connected apps",
+        ]
+        for title in [
+            "Free plan",
+            "Coworker management",
+            "Chat",
+            "Scheduled prompts",
+            "Phone notifications",
+            "Webhooks",
+            "Look",
+        ]:
+            assert title in titles
+        for selector in [
+            '[data-form="agent"]',
+            "[data-schedule-form]",
+            '[data-form="webhook"]',
+            '[data-action="logout"]',
+            '[data-deck-action="toggle"]',
+            "[data-orchestration-enabled]",
+            '[data-voice="enabled"]',
+        ]:
+            entry = page.locator(".settings").locator(selector)
+            entry.scroll_into_view_if_needed()
+            assert entry.is_visible(), selector
+        for option in page.locator(
+            '#deck-connections select[name="client"] option'
+        ).all_text_contents():
+            assert not any(name in option.lower() for name in ["claude", "codex", "cursor", "grok"])
+        main = page.locator(".deck-settings-main").bounding_box()
+        panel = page.locator(".deck-appearance").bounding_box()
+        if width == 1440:
+            assert panel["x"] > main["x"] + main["width"]
+            assert (
+                page.locator(".deck-appearance").evaluate("el=>getComputedStyle(el).position")
+                == "sticky"
+            )
+        else:
+            assert panel["y"] >= main["y"] + main["height"]
+            assert (
+                page.locator(".deck-appearance").evaluate("el=>getComputedStyle(el).position")
+                == "static"
+            )
+        assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
+        assert page.locator(".settings").evaluate("el=>el.scrollWidth <= el.clientWidth")
+        row = page.locator('[data-tool-policy-row="shell.exec"]')
+        row.get_by_role("button", name="Allow", exact=True).click()
+        page.wait_for_function(
+            "document.querySelector('[data-tool-policy-mode=\"shell.exec\"]').value==='allowed'"
+        )
+        assert writes[-1] == {"actions": {"shell.exec": "allowed"}}
+        row.get_by_role("button", name="Ask", exact=True).click()
+        page.wait_for_function(
+            "document.querySelector('[data-tool-policy-mode=\"shell.exec\"]').value==='ask'"
+        )
+        assert writes[-1] == {"actions": {"shell.exec": "ask"}}
+        page.wait_for_function(
+            "!document.querySelector('[data-tool-policy-mode=\"shell.exec\"]').disabled"
+        )
+        deny = row.get_by_role("button", name="Deny", exact=True)
+        assert deny.evaluate("el=>getComputedStyle(el).color") == "rgb(133, 131, 154)"
+        denied = page.locator('[data-tool-policy-row="deploy.preview"] [data-policy-state="deny"]')
+        assert denied.evaluate("el=>getComputedStyle(el).color") == "rgb(251, 113, 133)"
+        assert row.get_attribute("title") == "shell.exec"
+        assert row.locator(".capy-policy-limit").inner_text() == "Never on production"
+        assert page.get_by_text("Technical name", exact=True).count() == 0
+        assert page.locator(".capy-always h3").inner_text() == "Always on"
+        assert page.locator(".capy-always input").count() == 0
+        assert (
+            page.locator(".capy-settings-subtitle").inner_text()
+            == "For the Example workspace. Only you can change these."
+        )
+        assert (
+            page.locator("[data-tool-policy] > p").first.inner_text()
+            == "Ask sends the request to Today first. Deny refuses it."
+        )
+        assert "denied" in page.locator("[data-tool-policy-status]").inner_text()
+        assert (
+            page.locator("[data-tool-policy] > p").first.evaluate(
+                "el=>getComputedStyle(el).fontSize"
+            )
+            == "14px"
+        )
+        assert page.locator("#deck-bot-sharing > p").evaluate(
+            "el=>getComputedStyle(el).fontSize"
+        ) == page.locator("[data-tool-policy] > p").first.evaluate(
+            "el=>getComputedStyle(el).fontSize"
+        )
+        assert (
+            page.locator(".appearance-send").evaluate("el=>getComputedStyle(el).backgroundColor")
+            == "rgb(157, 92, 255)"
+        )
+        assert page.locator('[data-appearance-output="vignette"]').inner_text() == "60%"
+        for canvas in page.locator(".appearance-scenes canvas, [data-appearance-preview]").all():
+            assert canvas.get_attribute("data-dot") == "2"
+        slider = page.locator('[data-appearance="surface"]')
+        assert float(
+            slider.evaluate("el=>el.style.getPropertyValue('--range-fill')").rstrip("%")
+        ) == pytest.approx(85)
+        slider.evaluate("el=>{el.value='.7';el.dispatchEvent(new Event('input',{bubbles:true}));}")
+        assert float(
+            slider.evaluate("el=>el.style.getPropertyValue('--range-fill')").rstrip("%")
+        ) == pytest.approx(25)
+        slider.evaluate("el=>{el.value='.94';el.dispatchEvent(new Event('input',{bubbles:true}));}")
+        if width == 390:
+            assert deny.bounding_box()["height"] >= 44
+            label = row.locator(".deck-permission-label").bounding_box()
+            control = row.locator(".capy-policy").bounding_box()
+            assert control["x"] > label["x"] + label["width"]
+            assert control["y"] < label["y"] + label["height"]
+            assert (
+                page.locator("#content").evaluate("el=>getComputedStyle(el).paddingTop") == "16px"
+            )
+            assert (
+                page.locator(".deck-appearance").evaluate(
+                    "el=>getComputedStyle(el).borderTopLeftRadius"
+                )
+                == "12px"
+            )
+        page.get_by_role("switch", name="Allow bot sharing").check()
+        assert writes[-1] == {"sharing": True}
+        field = page.get_by_role("searchbox", name="Search permissions")
+        assert field.get_attribute("placeholder") == "Search actions"
+        field.fill("memory_save")
+        assert page.locator('[data-tool-policy-row="memory_save"]').count() == 1
+        field.fill("")
+        assert (
+            page.locator('[data-tool-policy-row="shell.exec"]').get_attribute("title")
+            == "shell.exec"
+        )
+        page.locator('[data-scene="palace-gate"]').click()
+        assert page.locator("[data-appearance-preview]").evaluate(
+            "c=>c.getContext('2d').getImageData(0,0,c.width,c.height).data.some(x=>x!==0)"
+        )
+        page.locator('[data-scene="capy-cyber"]').click()
+        page.locator(".settings").evaluate("el=>el.scrollTop=0")
+        output = os.environ.get("CAPY_SETTINGS_SHOTS")
+        if output:
+            folder = Path(output)
+            folder.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(folder / f"settings-{width}x{height}.png"))
+            page.locator("#tool-policy").scroll_into_view_if_needed()
+            page.screenshot(path=str(folder / f"policies-{width}x{height}.png"))
+            page.locator(".settings").evaluate(
+                "el=>{const panel=el.querySelector('.deck-appearance');el.scrollBy({top:panel.getBoundingClientRect().top-el.getBoundingClientRect().top});}"
+            )
+            page.screenshot(path=str(folder / f"appearance-{width}x{height}.png"))
+        assert not errors, errors
+    finally:
+        context.close()
+
+
+def test_phone_appearance_saved_note_has_bottom_space(browser):
+    context, page = open_settings(browser, 390)
+    try:
+        page.locator(".settings").evaluate("el=>el.scrollTop=el.scrollHeight")
+        card = page.locator(".deck-appearance")
+        note = card.locator(".appearance-save")
+        assert card.evaluate("el=>getComputedStyle(el).paddingBottom") == "20px"
+        card_box, note_box = card.bounding_box(), note.bounding_box()
+        assert card_box["y"] + card_box["height"] - note_box["y"] - note_box["height"] >= 20
+        frame = page.locator(".settings").bounding_box()
+        assert note_box["y"] >= frame["y"]
+        assert note_box["y"] + note_box["height"] <= frame["y"] + frame["height"]
+        output = os.environ.get("CAPY_SETTINGS_SHOTS")
+        if output:
+            page.screenshot(path=str(Path(output) / "appearance-end-390x844.png"))
+    finally:
+        context.close()
+
+
+def test_member_settings_keep_mutation_controls_disabled(browser):
+    context, page = open_settings(browser, 390, role="member")
+    try:
+        page.route(
+            "**/api/connections",
+            lambda route: route.fulfill(
+                json={
+                    "connections": [
+                        {
+                            "id": "personal-app",
+                            "name": "My app",
+                            "client": "generic",
+                            "auth": "pat",
+                            "bots_chat": True,
+                            "bots_confirm": True,
+                            "bots_learned": True,
+                        }
+                    ],
+                    "wings": [],
+                }
+            ),
+        )
+        page.reload()
+        page.wait_for_selector("[data-capy-sharing] input")
+        grants = page.locator('[data-action="agent-bots"]')
+        assert grants.count() == 3
+        for scope in ["chat", "confirm", "learned"]:
+            assert page.locator(
+                f'[data-action="agent-bots"][data-bots-{scope}="false"]'
+            ).is_enabled()
+        assert page.locator('[data-action="agent-revoke"]').is_disabled()
+        assert (
+            page.locator(".capy-settings-subtitle").inner_text()
+            == "For the Example workspace. Only the owner can change these."
+        )
+        assert page.get_by_role("switch", name="Allow bot sharing").is_disabled()
+        assert page.locator("[data-policy-state]").count() > 0
+        assert page.locator("[data-policy-state]:not(:disabled)").count() == 0
+        assert page.locator('[data-form="agent"] button').is_disabled()
+        for selector in [
+            '[data-action="logout"]',
+            '[data-deck-action="toggle"]',
+            '[data-action="switch-workspace"]',
+            '[data-deck-setting="phone-push"]',
+            '[data-form="webhook"] button',
+            '[data-appearance="vignette"]',
+        ]:
+            assert page.locator(".settings").locator(selector).is_enabled(), selector
+        assert page.locator("[data-orchestration-enabled]").is_disabled()
+    finally:
+        context.close()
