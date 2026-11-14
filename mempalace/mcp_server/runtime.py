@@ -425,6 +425,9 @@ def _run_http_loop() -> None:
         _start_idle_exit_watchdog()
         _start_write_stall_watchdog()
 
+        if env_bool(_WORKER_WARMUP_ENV, False):
+            _start_worker_warmup()
+
         if env_bool("MEMPALACE_EAGER_WARMUP", False):
 
             def _warmup_with_lock():

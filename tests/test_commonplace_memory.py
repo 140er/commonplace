@@ -517,6 +517,24 @@ def test_http_auth_invalid_json_and_denied_write(hub):
     assert events.after(hub.db, hub.workspace) == []
 
 
+def test_search_says_only_while_the_memory_worker_is_warming_up(hub, monkeypatch):
+    from mempalace import mcp_server
+
+    owner = hub.owner_token()
+    memory_id = _save(hub, owner, "Warming kettle canary", theme="shared")
+    path = "/api/memory/search?q=Warming%20kettle%20canary"
+
+    monkeypatch.setattr(mcp_server, "_worker_warmup_state", "running")
+    status, warming = _http(hub, owner, path)
+    assert status == 200 and warming["warming_up"] is True
+    assert [memory["id"] for memory in warming["results"]] == [memory_id]
+
+    monkeypatch.setattr(mcp_server, "_worker_warmup_state", "done")
+    status, ready = _http(hub, owner, path)
+    assert status == 200 and "warming_up" not in ready
+    assert ready["results"] == warming["results"]
+
+
 def test_empty_workspace_map_and_search_are_empty(hub):
     owner = hub.owner_token()
     assert _http(hub, owner, "/api/memory/map") == (

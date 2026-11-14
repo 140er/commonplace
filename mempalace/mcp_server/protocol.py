@@ -1129,6 +1129,61 @@ def _describe_device_safe() -> str:
         return "unknown"
 
 
+# Background warm-up of a gateway-launched worker. The launcher turns it on by
+# setting ``MEMPALACE_WORKER_WARMUP``; an operator variable never reaches a
+# worker (see ``_PASSED_ENV``), so ``MEMPALACE_EAGER_WARMUP`` keeps its scope.
+# off -> running -> done | failed. Only a request that arrives while it is
+# ``running`` is told the worker is warming up.
+_WORKER_WARMUP_ENV = "MEMPALACE_WORKER_WARMUP"
+_worker_warmup_state = "off"
+
+
+def _warm_worker_for_search() -> None:
+    """Pay what a worker's first search pays, off the request path. Never raises.
+
+    The first search opens the Chroma client and collection (which writes to
+    ``chroma.sqlite3``), loads the embedder and the vector segment, and reads
+    the lexical index; its capacity verdict is recorded before those writes and
+    is therefore invalid again by the second search. This runs the same search
+    path once with a sentinel query, then records the verdict against the files
+    as the warm-up left them, so the first real search starts warm.
+    """
+    global _worker_warmup_state
+    _worker_warmup_state = "running"
+    try:
+        if _backend_db_exists():
+            # The files-only probe goes first: a diverged segment must never be
+            # opened through Chroma (see tool_search).
+            _refresh_vector_disabled_flag()
+            with _HTTP_REQUEST_LOCK.read_lock():
+                search_memories(
+                    _WARMUP_PROBE_TEXT,
+                    palace_path=_config.palace_path,
+                    n_results=1,
+                    vector_disabled=_vector_disabled,
+                    collection_name=_config.collection_name,
+                    include_facts=False,
+                )
+            _refresh_vector_disabled_flag()
+        _worker_warmup_state = "done"
+    except Exception:
+        logger.warning("Worker warm-up failed; the first search pays for it", exc_info=True)
+        _worker_warmup_state = "failed"
+
+
+def _start_worker_warmup() -> None:
+    """Warm up in a background thread; never blocks startup or a request."""
+    global _worker_warmup_state
+    # Set before the listener binds, so a request that arrives first is told.
+    _worker_warmup_state = "running"
+
+    def run():
+        with _worker_phase("eager_warmup"):
+            _warm_worker_for_search()
+
+    threading.Thread(target=run, name="mcp-http-worker-warmup", daemon=True).start()
+
+
 def _maybe_eager_warmup_embedder() -> None:
     """Pre-load embedder + HNSW segment at startup when ``MEMPALACE_EAGER_WARMUP`` is truthy.
 
