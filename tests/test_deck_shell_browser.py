@@ -110,6 +110,19 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                             "() => document.querySelector('.today-compose:not([hidden])') && !document.querySelector('[data-deck=tabs] [data-deck-shell-action=mic]')"
                         )
                         assert await page.locator(".today-compose .deck-composer-mic").is_visible()
+                        await page.locator(".today-compose").evaluate(
+                            "e => e.insertAdjacentHTML('beforeend', '<button type=button data-voice=mic aria-label=Record></button>')"
+                        )
+                        await page.wait_for_function(
+                            "() => !document.querySelector('.today-compose .deck-composer-mic')"
+                        )
+                        assert await page.locator(".today-compose [data-voice=mic]").count() == 1
+                        await page.locator(".today-compose [data-voice=mic]").evaluate(
+                            "e => e.remove()"
+                        )
+                        await page.locator(".today-compose .deck-composer-mic").wait_for(
+                            state="visible"
+                        )
                         for entry in ["bots", "compute", "settings", "today"]:
                             await tabs.locator(f'[data-nav="{entry}"]').click()
                             await page.wait_for_function(
