@@ -16,7 +16,9 @@
 
   - Requests with no new composer fields preserve the legacy message response shape and idempotency. Composer retries pin the applied mode and target, never turning a retry into a different run or duplicating a control. Changed text, mode, fallback, target or overrides under the same retry key return 409 `request_conflict`. Unknown models return 400 `unknown_model`; bad efforts return 400 `invalid_reasoning_effort`; malformed mode/fallback/fields return 400 `invalid_request`.
 
-  - Person sessions, same-origin JSON, membership, private conversation audiences, board/task authority, originating-session and runtime publication fences are unchanged. A readable shared run does not grant steering authority, and authority refusals cannot fall back to Chat. Existing tokens gain no tools or authority. Audit actions `coworker.create` and `coworker.turn` record approved model/effort and applied turn mode, with no conversation text or credentials.
+  - Intake validates only model/effort fields explicitly supplied in that request. A stored conversation selection may have been removed from the catalog since creation: omitted fields still permit saving the original message and preserve its legacy response shape. Inherited selections remain journaled and are revalidated at dispatch; a revoked model fails the job without a provider call. Explicitly requesting that revoked model still returns 400 `unknown_model`. The same request-only validation keeps existing Steer/control aliases available; they do not apply model/effort to a live worker.
+
+  - Person sessions, same-origin JSON, membership, private conversation audiences, board/task authority, originating-session and runtime publication fences are unchanged. A readable shared run does not grant steering authority, and authority refusals cannot fall back to Chat. Existing tokens gain no tools or authority. Audit actions `coworker.create` and `coworker.turn` record selected model/effort and applied turn mode, with no conversation text or credentials.
 
   - Explicit effort is sent as `reasoning_effort` to the configured compatible transport and `output_config.effort` to the configured Anthropic transport. Omitted effort adds no payload field. The closed enum follows the [provider effort contract](https://platform.claude.com/docs/en/build-with-claude/effort); model-specific provider refusals remain bounded errors without retries or fallback providers.
 
@@ -24,7 +26,7 @@
 
   - The conversation directory retains its section, unread, state, ownership and audience projections alongside model/effort. It joins persisted selections into the existing bounded directory query, then uses the resolved settings snapshot; no per-conversation model-policy or selection query is added.
 
-  - Steer checks all task-origin candidates against current canonical run state rather than a recent chat history window. Effort transport failures use the bounded model-error contract and never leak an HTTP store error into the provider layer.
+  - Steer checks up to 256 task-origin candidates against current canonical run state, excluding ordinary completed chat jobs. A 257th candidate returns 409 `task_history_limit` before canonical projections; it never guesses a target or falls back to Chat on a truncated history. Explicit job controls remain available. Effort transport failures use the bounded model-error contract and never leak an HTTP store error into the provider layer.
 
 - **Tests:**
 

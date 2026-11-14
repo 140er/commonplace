@@ -7,7 +7,8 @@ import pytest
 from commonplace import sessions
 from commonplace.chat import settings
 from commonplace.chat.coworkers import routes, runtime
-from commonplace.chat.coworkers.store import Store
+from commonplace.chat.coworkers.model_effort import apply_effort
+from commonplace.chat.coworkers.store import Store, StoreError
 from commonplace.projects import models
 from tests.test_coworker_api import API, api as api
 from tests.test_coworker_dispatch import dispatch as dispatch
@@ -125,6 +126,54 @@ def test_omission_uses_default_and_legacy_message_shape_stays_compatible(configu
     status, turn = api.post(cid, mode="chat", request_id="explicit")
     assert status == 201 and turn["mode"] == "chat"
     assert turn["model"] == "fixture-default" and turn["reasoning_effort"] is None
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"mode": "chat"},
+        {"mode": "chat", "reasoning_effort": "low"},
+        {"mode": "steer", "fallback": True},
+    ],
+)
+def test_revoked_conversation_model_preserves_intake_but_is_fenced_at_dispatch(env, options):
+    env.store._authority = routes.Authority(env.gateway, env.wid)
+    env.gateway._coworker_stores = {env.wid: env.store}
+    env.gateway.secure_cookies = False
+    models.catalog_add(
+        env.db, env.principal, "*", {"provider": "openai_compatible", "model": "alternate"}
+    )
+    cid = env.conversation(model="alternate", reasoning_effort="high")["id"]
+    with env.db._lock:
+        env.db._conn.execute("DELETE FROM project_model_catalog WHERE model='alternate'")
+    api = API(env.gateway, env.wid, env.uid, env.other, "outsider")
+    api.sessions[env.uid] = env.session
+
+    status, turn = api.post(cid, **options)
+    assert status == 201, turn
+    if not options:
+        assert set(turn) == {"message", "job"}
+    else:
+        assert turn["mode"] == "chat" and turn["model"] == "alternate"
+        assert turn["reasoning_effort"] == options.get("reasoning_effort", "high")
+    assert api.post(cid, **options) == (status, turn)
+    assert api.post(cid, request_id="explicit", model="alternate") == (
+        400,
+        {"error": "unknown_model"},
+    )
+    with pytest.raises(StoreError, match="^unknown_model$") as error:
+        env.store.post_message(env.uid, cid, "Explicit revoked model", "direct", model="alternate")
+    assert error.value.status == 400
+    assert api.post(cid, request_id="bad-effort", reasoning_effort="invalid") == (
+        400,
+        {"error": "invalid_reasoning_effort"},
+    )
+    # The runtime fixture rejects any provider call: stale inherited choices
+    # must fail the queued job without losing the accepted original message.
+    assert env.worker().run_once(env.wid)
+    assert env.store.list_jobs(env.uid, cid)[0]["state"] == "failed"
+    assert env.store.list_messages(env.uid, cid) == [turn["message"]]
 
 
 @pytest.mark.parametrize(
@@ -422,6 +471,46 @@ def test_control_alias_validates_overrides_and_audits_selections(env, dispatch, 
     }
 
 
+@pytest.mark.parametrize("route", ["steer", "alias"])
+def test_stored_model_revocation_does_not_block_existing_controls(env, dispatch, route):
+    models.catalog_add(
+        env.db, env.principal, "*", {"provider": "openai_compatible", "model": "alternate"}
+    )
+    cid = dispatch.conversation(model="alternate", reasoning_effort="high")
+    dispatch.post(cid)
+    assert env.worker().run_once(env.wid)
+    job = dispatch.outcome(cid)
+    with env.db._lock:
+        env.db._conn.execute("DELETE FROM project_model_catalog WHERE model='alternate'")
+    env.gateway._coworker_stores = {env.wid: env.store}
+    api = API(env.gateway, env.wid, env.uid, env.other, "outsider")
+    api.sessions[env.uid] = env.session
+    path = f"/conversations/{cid}/messages" if route == "steer" else f"/jobs/{job['id']}/controls"
+    body = {
+        "text": "Exact control",
+        **({"mode": "steer"} if route == "steer" else {"operation": "follow_up"}),
+    }
+    assert api.request("POST", path, {**body, "request_id": "bad", "model": "alternate"}) == (
+        400,
+        {"error": "unknown_model"},
+    )
+    status, result = api.request("POST", path, {**body, "request_id": "control"})
+    assert status == 200, result
+    assert result["receipt"]["code"] == "comment_saved_application_unsupported"
+    assert len(env.store.list_messages(env.uid, cid)) == 1
+    assert len(dispatch.runner_jobs()) == 1
+    audit = next(
+        row
+        for row in env.db.audit_entries(env.wid)
+        if row["action"] == "coworker.turn" and json.loads(row["reason"])["mode"] == "steer"
+    )
+    assert json.loads(audit["reason"]) == {
+        "mode": "steer",
+        "model": "alternate",
+        "reasoning_effort": "high",
+    }
+
+
 @pytest.fixture
 def lock_order(monkeypatch):
     """Record physical lock order and forbid all model reads in writer scopes."""
@@ -590,11 +679,56 @@ def test_steer_finds_active_origins_behind_over_100_finished_jobs(
         assert result == {"error": "ambiguous_running_job"}
 
 
-def effort_helper():
-    from commonplace.chat.coworkers import model_effort
+def test_steer_refuses_truncated_task_history_without_chat_fallback(
+    env, dispatch, progress, monkeypatch
+):
+    from commonplace.chat.coworkers import turn_mode
 
-    # Exercise the same provider-error contract on the prior implementation too.
-    return getattr(model_effort, "apply_effort", None) or model_effort.payload
+    item = progress.start()
+    monkeypatch.setattr(turn_mode, "MAX_TASK_CANDIDATES", 2)
+    with env.store._transaction() as conn:
+        for index in range(2):
+            mid = conn.execute(
+                "INSERT INTO messages(conversation_id,actor,bot_id,text,created_at,request_id) VALUES (?,?,?,?,?,?)",
+                (
+                    item.cid,
+                    "user:" + env.uid,
+                    env.bot["id"],
+                    "/task Finished",
+                    "now",
+                    f"task-{index}",
+                ),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO jobs(conversation_id,message_id,bot_id,user_id,state,created_at,updated_at) VALUES (?,?,?,?,'done','now','now')",
+                (item.cid, mid, env.bot["id"], env.uid),
+            )
+    api = API(env.gateway, env.wid, env.uid, env.other, "outsider")
+    api.sessions[env.uid] = env.session
+    original_messages = env.store.list_messages(env.uid, item.cid)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            env.store,
+            "_progress_job",
+            lambda *args, **kwargs: pytest.fail(
+                "truncated history must not trigger canonical projections"
+            ),
+        )
+        for fallback in (False, True):
+            assert api.post(item.cid, mode="steer", fallback=fallback) == (
+                409,
+                {"error": "task_history_limit"},
+            )
+    assert env.store.list_messages(env.uid, item.cid) == original_messages
+    # Explicit job controls remain available when automatic targeting is capped.
+    assert (
+        api.request(
+            "POST",
+            f"/jobs/{item.job['id']}/controls",
+            {"operation": "follow_up", "request_id": "bounded-alias", "text": "Exact instruction"},
+        )[0]
+        == 200
+    )
 
 
 @pytest.mark.parametrize(
@@ -605,7 +739,7 @@ def test_effort_payload_failures_are_bounded_provider_errors(provider, effort):
     from commonplace.chat.types import ModelError
 
     with pytest.raises(ModelError, match="^bad_response$"):
-        effort_helper()({}, provider, effort)
+        apply_effort({}, provider, effort)
 
 
 def test_runtime_handles_effort_provider_failure_as_model_error(env, monkeypatch):
@@ -613,7 +747,7 @@ def test_runtime_handles_effort_provider_failure_as_model_error(env, monkeypatch
     env.post(cid)
 
     def refused(*args, **kwargs):
-        effort_helper()({}, "unsupported", "high")
+        apply_effort({}, "unsupported", "high")
 
     monkeypatch.setattr(runtime.model, "complete", refused)
     assert env.worker().run_once(env.wid)

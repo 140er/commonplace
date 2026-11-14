@@ -489,9 +489,10 @@ class Store:
             ).fetchone()
             if turn is not None and turn["mode"] != "chat":
                 raise StoreError("request_conflict", 409)
+            overrides = model_effort.options(model, reasoning_effort)
             choices = {
                 **model_effort.requested(conn, "conversation", conversation_id),
-                **model_effort.options(model, reasoning_effort),
+                **overrides,
             }
             existing = conn.execute(
                 "SELECT m.*,i.requested_bot FROM messages m JOIN intake i ON i.message_id=m.id WHERE m.conversation_id=? AND m.actor=? AND m.request_id=?",
@@ -512,7 +513,9 @@ class Store:
                         session_hash=session_hash,
                     ),
                 }
-            _, selected = model_effort.resolve(self._model_settings, conversation["board"], choices)
+            _, selected = model_effort.effective(
+                conn, self._model_settings, conversation, overrides, choices=choices
+            )
             target = self._target(conn, conversation_id, text, bot_id)
             if (
                 target is not None
@@ -730,9 +733,10 @@ class Store:
         with self._transaction() as conn:
             job, target = self._control_context(conn, user_id, job_id, session_hash)
             conversation = self._conversation(conn, user_id, job["conversation_id"])
+            overrides = model_effort.options(model, reasoning_effort)
             choices = {
                 **model_effort.requested(conn, "conversation", conversation["id"]),
-                **model_effort.options(model, reasoning_effort),
+                **overrides,
             }
             if operation == "stop" and target["runner_job"] is None:
                 raise StoreError("not_found", 404)
@@ -755,7 +759,9 @@ class Store:
                 >= MAX_CONTROLS
             ):
                 raise StoreError("at_capacity", 409)
-            _, selected = model_effort.resolve(self._model_settings, conversation["board"], choices)
+            _, selected = model_effort.effective(
+                conn, self._model_settings, conversation, overrides, choices=choices
+            )
             stamp = _stamp()
             receipt_id = conn.execute(
                 "INSERT INTO task_controls(job_id,actor,operation,request_id,text,target,state,code,created_at,updated_at) "

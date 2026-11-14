@@ -155,9 +155,13 @@ def requested(conn, kind, object_id):
     return json.loads(row[0]) if row else {}
 
 
-def effective(conn, resolved, conversation, overrides):
-    choices = {**requested(conn, "conversation", conversation["id"]), **overrides}
-    return choices, resolve(resolved, conversation["board"], choices)[1]
+def effective(conn, resolved, conversation, overrides, *, choices=None):
+    # Validate this request only. Persist inherited choices for the dispatch
+    # fence, so catalog changes cannot reject otherwise valid legacy intake.
+    resolve(resolved, conversation["board"], overrides)
+    if choices is None:
+        choices = {**requested(conn, "conversation", conversation["id"]), **overrides}
+    return choices, describe(conn, resolved, conversation, choices=choices)
 
 
 def save(conn, kind, object_id, choices, selected):

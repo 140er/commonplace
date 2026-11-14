@@ -4,6 +4,8 @@ import json
 
 from . import model_effort
 
+MAX_TASK_CANDIDATES = 256
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS coworker_turns (
  conversation_id TEXT NOT NULL REFERENCES conversations(id), actor TEXT NOT NULL,
@@ -26,16 +28,20 @@ def _running(store, conn, user_id, cid, text, bot_id, session_hash):
     target = store._target(conn, cid, text, bot_id)
     if target is None:
         model_effort.deny("bot_required")
-    active = []
-    for row in conn.execute(
+    rows = conn.execute(
         # A front job may be done while its canonical worker is still active.
-        # Ignore ordinary finished chat jobs, but inspect every task origin.
+        # Ignore ordinary finished chat jobs. Bound canonical projections and
+        # refuse a truncated origin set rather than guess or fall back to chat.
         "SELECT j.* FROM jobs j JOIN messages m ON m.id=j.message_id "
         "WHERE j.conversation_id=? AND j.bot_id=? AND (j.task IS NOT NULL OR "
         "(j.state IN ('done','failed','interrupted','uncertain') AND m.text LIKE '/task %')) "
-        "ORDER BY j.id DESC",
-        (cid, target),
-    ):
+        "ORDER BY j.id DESC LIMIT ?",
+        (cid, target, MAX_TASK_CANDIDATES + 1),
+    ).fetchall()
+    if len(rows) > MAX_TASK_CANDIDATES:
+        model_effort.deny("task_history_limit", 409)
+    active = []
+    for row in rows:
         view = store._progress_job(conn, row, user_id, session_hash=session_hash)
         progress = view.get("task_progress", {})
         if progress.get("availability") != "available":
