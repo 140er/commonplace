@@ -16,7 +16,8 @@ and conversations nest under the bot that their recorded IDs name.
 Today carries the owner queue count in amber. Bots carries the unread total in
 violet on desktop. Folders, bots, workspace tools and the account menu have no
 count pills. The phone header includes the screen title and an account wait dot;
-the microphone item appears on every route except Home. Desktop tree rows are
+the microphone item appears on every route except Home and uses the existing
+default-off voice controller for the current composer. Desktop tree rows are
 26px; phone navigation targets remain at least 44px. Classic markup is unchanged.
 
 Directory refreshes coalesce, preserve folder disclosure state, and discard stale

@@ -24,7 +24,7 @@ const icon = name => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="cur
 const brand = '<svg class="deck-mark" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="8" fill="currentColor"/><path d="M7 17v-6a5 5 0 0 1 10 0v6m-7 0v-6a2 2 0 0 1 4 0v6" fill="none" stroke="var(--ink)" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const badge = (n, type, label) => count(n) ? `<span class="count ${type}">${n}<span class="sr"> ${label}</span></span>` : '';
 const waiting = options => Number.isSafeInteger(options.needs) ? count(options.needs) : count(options.botsWaiting);
-const initials = user => String(user || '?').trim().split(/\s+/u).slice(0, 2).map(word => Array.from(word)[0]).join('');
+const initials = user => String(user || '?').trim().split(/\s+/u).slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase();
 const words = { live: 'Ready', busy: 'Working', working: 'Working', waiting: 'Needs you', idle: 'Idle' };
 const stateHTML = row => words[row.state] ? `<small class="deck-tree-state">${words[row.state]}</small><span class="deck-state-dot" data-state="${row.state === 'working' ? 'busy' : row.state}" aria-hidden="true"></span>` : '';
 const conversationHref = id => `#/bots/-/coworkers/conversations/${enc(id)}`;
@@ -132,7 +132,7 @@ export function createDeckShell({ root, api, context, on }) {
     if (action === 'mic') {
       event.preventDefault();
       const mic = [...(root.querySelectorAll?.('#content [data-voice="mic"], #content [data-today="mic"], #content [data-bot-action="mic"]') || [])].find(button => !button.disabled);
-      if (mic) mic.click(); else { context?.()?.go?.('#/'); }
+      if (mic) mic.click(); else if (context?.()?.voice) void context().voice(); else context?.()?.go?.('#/');
     }
   });
   root?.ownerDocument?.addEventListener?.('signout', () => { reset(); paint(); });

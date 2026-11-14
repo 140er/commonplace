@@ -82,7 +82,7 @@ const state = {
 // The opt-in Deck look: its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
   root, api, title: (text) => title(text), screen: () => state.screen,
-  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, go: (hash) => { location.hash = hash; } }),
+  context: () => ({ me: state.me, boards: state.boards, needs: state.needs, voice: () => voice.start(root.querySelector('#content textarea[name="text"], #content input[name="text"], #content textarea[data-draft], #content input[data-draft]')), go: (hash) => { location.hash = hash; } }),
   reload: () => { if (state.me) void route(); },
 });
 let adminUI = null, instanceAdminUI = null;

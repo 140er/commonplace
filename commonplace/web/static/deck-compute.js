@@ -174,7 +174,7 @@ export function mount(context) {
   root.classList.add('deck-compute');
   // The screen owns its title row; restore the shared header on departure.
   const shell = context.shell || root.parentElement;
-  const shellHeaders = ['.head', '#phone-bar'].map(selector => shell?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
+  const shellHeaders = (doc?.documentElement?.dataset?.ui === 'deck' ? ['.head'] : ['.head', '#phone-bar']).map(selector => shell?.querySelector(selector)).filter(Boolean).map(node => ({ node, hidden: node.hidden }));
   for (const { node } of shellHeaders) node.hidden = true;
   // Keep the shell's phone destinations reachable while the long map/details page scrolls.
   const phoneTabs = shell?.querySelector('#phone-tabs');

@@ -1,6 +1,7 @@
 """Optional browser evidence using the real shell, gateway and readable directory."""
 
 import asyncio
+import json
 import os
 import shutil
 from pathlib import Path
@@ -8,7 +9,11 @@ from pathlib import Path
 import pytest
 
 from commonplace.chat.coworkers.store import open_store
-from tests._commonplace_helpers import hub_fixture  # noqa: F401
+from tests._commonplace_helpers import (
+    REVIEW_CONTEXT,
+    REVIEW_OPTIONS,
+    hub_fixture,  # noqa: F401
+)
 from tests.test_commonplace_board_authority import fresh as fresh
 from tests.test_deck_phone_navigation_browser import open_app
 
@@ -18,6 +23,13 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
         pytest.skip("optional browser checks disabled")
     playwright = pytest.importorskip("playwright.async_api", reason="optional browser dependency")
     hub.gateway.rate_limits = False
+    worker = fresh.connect("release")
+    worker.work.ask(
+        "Approve the release checklist?",
+        board="work",
+        context=REVIEW_CONTEXT,
+        options=REVIEW_OPTIONS,
+    )
     store = open_store(hub.gateway, fresh.workspace)
     bot = store.create_bot(fresh.user, "Research")
     store.create_conversation(fresh.user, "dm", title="Plan the next release", bot_ids=[bot["id"]])
@@ -51,20 +63,17 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         if width >= 700
                         else "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
                     )
+                    await page.wait_for_function(
+                        "document.querySelectorAll('.deck-tree-row').length === 1"
+                    )
                     await page.evaluate("document.fonts.ready")
                     assert await page.evaluate("document.documentElement.scrollWidth") == width
                     if width >= 700:
-                        rail = page.locator('[data-deck="bar"]')
-                        assert (await rail.bounding_box())["width"] == 252
-                        assert (
-                            await rail.evaluate("e=>getComputedStyle(e).backgroundColor")
-                            == "rgb(17, 16, 21)"
-                        )
-                        assert (
-                            await page.locator('[data-deck-folder="Bots"] .deck-tree-row').count()
-                            == 1
-                        )
-                        assert (await page.locator(".deck-tree-row").bounding_box())["height"] == 26
+                        measured = await page.wait_for_function("""() => {
+                          const rail=document.querySelector('[data-deck=bar]'), row=document.querySelector('.deck-tree-row');
+                          return rail?.getBoundingClientRect().width===252 && getComputedStyle(rail).backgroundColor==='rgb(17, 16, 21)' && row?.getBoundingClientRect().height===26;
+                        }""")
+                        assert await measured.json_value()
                         await page.locator('[data-deck-folder="Bots"] summary').click()
                         await page.locator('.deck-links [data-nav="bots"]').click()
                         await page.wait_for_function(
@@ -73,8 +82,11 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.locator('[data-deck-folder="Bots"] summary').click()
                     else:
                         top = page.locator('[data-deck="top"]')
-                        assert (await top.bounding_box())["height"] == 52
+                        await page.wait_for_function(
+                            "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
+                        )
                         assert await top.locator("b").text_content() == "Today"
+                        await page.locator('[data-deck-waiting="true"]').wait_for(state="visible")
                         tabs = page.locator('[data-deck="tabs"]')
                         assert await tabs.locator("a").count() == 4
                         assert await tabs.locator('[data-deck-shell-action="mic"]').is_visible()
@@ -84,7 +96,9 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                                 "hash => location.hash === hash", arg=f"#/{entry}"
                             )
                             await top.wait_for(state="visible")
-                            assert (await top.bounding_box())["height"] == 52
+                            await page.wait_for_function(
+                                "document.querySelector('[data-deck=top]')?.getBoundingClientRect().height === 52"
+                            )
                             assert (
                                 await page.evaluate("document.documentElement.scrollWidth") == width
                             )
@@ -97,7 +111,25 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                         await page.locator('[data-deck="tabs"]').wait_for(state="visible")
                         await page.goto(url + "#/today")
                         await page.locator('[data-deck="top"]').wait_for(state="visible")
+                    if width == 390:
+                        await page.wait_for_selector(".today-question", state="visible")
+                    else:
+                        await page.wait_for_selector(".bots-list .bot-row", state="visible")
+                    if width == 390:
+                        await page.wait_for_function("""() => {
+                          const tabs=document.querySelector('[data-deck=tabs]');
+                          return tabs?.getBoundingClientRect().bottom===innerHeight && document.elementFromPoint(350, innerHeight-30)?.closest('[data-deck=tabs]');
+                        }""")
                     await page.screenshot(path=str(output / f"shell-{name}.png"))
+                    if width == 390:
+                        await page.locator('[data-deck-shell-action="mic"]').click()
+                        metrics = await page.evaluate("""() => {
+                          const tabs=document.querySelector('#phone-tabs'), error=document.querySelector('#screen-error');
+                          return {tabs:tabs?.getBoundingClientRect().toJSON(), tabsStyle:tabs?.getAttribute('style'), error:error?.textContent, errorHidden:error?.hidden, errorBox:error?.getBoundingClientRect().toJSON(), scrollY, height:innerHeight};
+                        }""")
+                        (output / "phone-chrome.json").write_text(json.dumps(metrics, indent=2))
+                        assert "Enable voice input" in metrics["error"], metrics
+                        assert metrics["errorBox"]["height"] > 0, metrics
                     assert not errors, errors
                     await context.close()
             finally:
