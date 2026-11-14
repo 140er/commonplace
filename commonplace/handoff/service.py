@@ -434,11 +434,12 @@ class HandoffService:
 
     def _index_job(self, workspace_id):
         state = self._index_states[workspace_id]
+        search_index.lower_priority()
         again = search_index.sweep(self, workspace_id, state)
         with self._mirror_condition:
             if (again or state.dirty) and not self._background_closed and search_index.enabled():
                 timer = threading.Timer(
-                    search_index.PAUSE_SECONDS, self._resume_index, args=(workspace_id,)
+                    search_index.next_pause(state), self._resume_index, args=(workspace_id,)
                 )
                 timer.daemon = True
                 self._index_timers[workspace_id] = timer
