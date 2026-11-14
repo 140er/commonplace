@@ -72,6 +72,17 @@ class ToolError(Exception):
     """A refusal or bad input; the message goes back to the agent."""
 
 
+class RetryableToolError(ToolError):
+    """Memory could not answer right now (paused for a backup, starting, busy): retry.
+
+    ``reason`` is ``paused``, ``starting`` or ``busy``; ``retry_after_s`` is a hint."""
+
+    def __init__(self, message: str, retry_after_s: int, reason: str):
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class LocalTool:
     name: str

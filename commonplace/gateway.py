@@ -58,7 +58,15 @@ from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
 from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
 from .vector_diagnostics import public_vector_diagnostics, sees_raw_vector_reason
-from .workers import SupervisorClosed, Worker, WorkersPaused, WorkerSupervisor
+from .workers import (
+    DEFAULT_REQUEST_WAIT_S,
+    SupervisorClosed,
+    Worker,
+    WorkersPaused,
+    WorkersStarting,
+    WorkerSupervisor,
+    memory_wait,
+)
 
 logger = logging.getLogger("commonplace.gateway")
 
@@ -268,6 +276,23 @@ class WorkerUnavailable(Exception):
     pass
 
 
+class WorkerStarting(WorkerUnavailable):
+    """The workspace's worker is still starting and the request's wait budget ran out."""
+
+    def __init__(self, retry_after_s: int = 5):
+        super().__init__("memory is starting")
+        self.retry_after_s = retry_after_s
+
+
+def _request_wait_s() -> float:
+    """What one person's request may wait for a pause or a worker start, in all (seconds)."""
+    try:
+        value = float(os.environ.get("COMMONPLACE_MEMORY_WAIT_S", DEFAULT_REQUEST_WAIT_S))
+    except (TypeError, ValueError):
+        return DEFAULT_REQUEST_WAIT_S
+    return min(max(value, 0.0), 60.0)
+
+
 class WorkerBusy(WorkerUnavailable):
     """The worker could not take a palace call within its bound (an index write held it)."""
 
@@ -313,19 +338,25 @@ class WorkerClient:
         # Background index writes wait for people's requests and rest after each
         # write; a person's request never waits for them (foreground_load).
         if isinstance(request, dict) and request.get("method") == "internal/write_mirror_units":
-            return foreground_load.background_call(lambda: self._post_to_worker(principal, request))
+            # Index work never waits for a backup pause: it is refused at once and tries again.
+            return foreground_load.background_call(
+                lambda: self._post_to_worker(principal, request, pause_wait_s=0.0)
+            )
         with foreground_load.request():
             return self._post_to_worker(principal, request)
 
-    def _post_to_worker(self, principal: Principal, request: dict) -> Optional[dict]:
+    def _post_to_worker(
+        self, principal: Principal, request: dict, pause_wait_s: Optional[float] = None
+    ) -> Optional[dict]:
         # One in-flight slot covers the worker start and the whole call, so
         # an online backup's pause drains it and never cuts it.
         slot = getattr(self.supervisor, "call", None)
         try:
-            with slot() if slot is not None else contextlib.nullcontext():
+            held = slot() if pause_wait_s is None else slot(wait_s=pause_wait_s)
+            with held if slot is not None else contextlib.nullcontext():
                 try:
                     worker = self.supervisor.get(principal.workspace_id)
-                except (WorkersPaused, SupervisorClosed):
+                except (WorkersPaused, WorkersStarting, SupervisorClosed):
                     raise
                 except Exception as exc:
                     log_failure(logger, "worker start failed", exc)
@@ -344,7 +375,7 @@ class WorkerClient:
                             raise WorkerUnavailable() from None
                         try:
                             worker = self.supervisor.replace(worker, timeout_s=30)
-                        except (WorkersPaused, SupervisorClosed):
+                        except (WorkersPaused, WorkersStarting, SupervisorClosed):
                             raise
                         except Exception as exc:
                             raise WorkerUnavailable() from exc
@@ -354,6 +385,8 @@ class WorkerClient:
                         return result
         except WorkersPaused as exc:
             raise WorkerPaused(exc.retry_after_s) from None
+        except WorkersStarting as exc:
+            raise WorkerStarting(exc.retry_after_s) from None
         except SupervisorClosed as exc:
             raise WorkerUnavailable() from exc
 
@@ -492,6 +525,11 @@ class Mediator:
 
     # ── entry point ──
     def handle(self, principal: Principal, request) -> Optional[dict]:
+        # One budget for every pause and worker-start wait this request makes.
+        with memory_wait(_request_wait_s()):
+            return self._handle(principal, request)
+
+    def _handle(self, principal: Principal, request) -> Optional[dict]:
         if not isinstance(request, dict):
             return _rpc_error(None, -32600, "Batch requests are not supported")
         req_id = request.get("id")
@@ -530,6 +568,13 @@ class Mediator:
                 BUSY_RPC_CODE,
                 f"{BUSY_INDEXING}; try again in a moment",
                 {"retryable": True, "retry_after_s": exc.retry_after_s},
+            )
+        except WorkerStarting as exc:
+            return _rpc_error(
+                req_id,
+                BUSY_RPC_CODE,
+                "This workspace's memory is starting; try again in a moment",
+                {"retryable": True, "retry_after_s": exc.retry_after_s, "warming_up": True},
             )
         except WorkerUnavailable:
             return _rpc_error(req_id, -32603, "This workspace's memory is unavailable right now")
@@ -2376,18 +2421,35 @@ class Gateway:
         try:
             from commonplace.rules.checks import internal_call
 
-            with internal_call():
+            with internal_call(), memory_wait(_request_wait_s()):
                 response = self.mediator._tools_call(principal, request)
         except WorkerPaused as exc:
-            raise extensions.ToolError(
-                f"Memory is paused for a backup; retry in {exc.retry_after_s} s"
+            raise extensions.RetryableToolError(
+                f"Memory is paused for a backup; retry in {exc.retry_after_s} s",
+                exc.retry_after_s,
+                "paused",
             ) from None
-        except WorkerBusy:
-            raise extensions.ToolError(f"{BUSY_INDEXING}; try again in a moment") from None
+        except WorkerBusy as exc:
+            raise extensions.RetryableToolError(
+                f"{BUSY_INDEXING}; try again in a moment", exc.retry_after_s, "busy"
+            ) from None
+        except WorkerStarting as exc:
+            raise extensions.RetryableToolError(
+                "Memory is starting; try again in a few seconds", exc.retry_after_s, "starting"
+            ) from None
         except WorkerUnavailable:
             raise extensions.ToolError("Memory is unavailable right now") from None
         if "error" in response:
-            raise extensions.ToolError(response["error"].get("message", "refused"))
+            error = response["error"]
+            if error.get("code") == BUSY_RPC_CODE:
+                data = error.get("data")
+                wait = data.get("retry_after_s") if isinstance(data, dict) else None
+                raise extensions.RetryableToolError(
+                    error.get("message", BUSY_INDEXING),
+                    wait if isinstance(wait, int) and 0 < wait <= 60 else 2,
+                    "starting" if isinstance(data, dict) and data.get("warming_up") else "busy",
+                )
+            raise extensions.ToolError(error.get("message", "refused"))
         result = _tool_result(response)
         if response.get("result", {}).get("isError") or (
             isinstance(result, dict) and result.get("error")

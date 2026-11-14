@@ -8,8 +8,10 @@ the resolved active workspace generation, so no two workspaces share a file.
 
 from __future__ import annotations
 
+import contextvars
 import http.client
 import json
+import logging
 import os
 import secrets
 import socket
@@ -64,6 +66,8 @@ _PASSED_ENV = frozenset(
 # operator ``MALLOC_ARENA_MAX`` passes through unchanged; ``0`` restores glibc's
 # default, and an empty value counts as unset.
 DEFAULT_MALLOC_ARENA_MAX = "2"
+logger = logging.getLogger(__name__)
+
 DEFAULT_IDLE_STOP_S = 15 * 60
 # A worker warms its palace up in a background thread right after it binds, so
 # the first search does not pay the cold loads alone and the second does not
@@ -76,6 +80,10 @@ WARMUP_SWITCH = "COMMONPLACE_WORKER_WARMUP"
 # with a retry hint (COMMONPLACE_BACKUP_MEMORY_WAIT_S overrides the wait).
 DEFAULT_PAUSE_WAIT_S = 20.0
 PAUSE_RETRY_AFTER_S = 30
+START_RETRY_AFTER_S = 5
+# What one person's request (a search) may spend waiting for a backup pause to end or a
+# worker to start, in all its worker calls together; COMMONPLACE_MEMORY_WAIT_S overrides.
+DEFAULT_REQUEST_WAIT_S = 5.0
 STOP_WAIT_S = 10.0
 
 
@@ -89,6 +97,38 @@ class WorkersPaused(RuntimeError):
     def __init__(self, retry_after_s: int = PAUSE_RETRY_AFTER_S):
         super().__init__("memory is paused for a backup")
         self.retry_after_s = retry_after_s
+
+
+class WorkersStarting(RuntimeError):
+    """A worker is still starting and the caller's wait budget ran out; retry shortly."""
+
+    def __init__(self, retry_after_s: int = START_RETRY_AFTER_S):
+        super().__init__("memory is starting")
+        self.retry_after_s = retry_after_s
+
+
+class MemoryWait:
+    """What one request may still spend waiting on a backup pause or a worker start."""
+
+    def __init__(self, seconds: float):
+        self.left = max(0.0, float(seconds))
+        self.paused = False  # a pause was met: later calls of this request do not wait
+
+
+_wait_budget = contextvars.ContextVar("commonplace_memory_wait", default=None)
+
+
+@contextmanager
+def memory_wait(seconds: float):
+    """Bound the pause and start waits of everything this request does.
+
+    Without it a call waits up to ``pause_wait_s`` for a backup pause and up to the
+    start time of a worker, once per worker call, and a search makes several."""
+    token = _wait_budget.set(MemoryWait(seconds))
+    try:
+        yield
+    finally:
+        _wait_budget.reset(token)
 
 
 class DrainTimeout(RuntimeError):
@@ -363,9 +403,31 @@ class WorkerSupervisor:
         depth = getattr(self._local, "depth", 0)
         if depth == 0:
             wait_s = self.pause_wait_s if wait_s is None else wait_s
+            budget = _wait_budget.get()
+            bound = wait_s
+            if budget is not None:
+                bound = 0.0 if budget.paused else min(wait_s, budget.left)
+            started = time.monotonic()
             with self._cond:
-                if not self._cond.wait_for(lambda: not self._paused or self._closed, wait_s):
+                resumed = self._cond.wait_for(lambda: not self._paused or self._closed, bound)
+                waited = time.monotonic() - started
+                if budget is not None:
+                    budget.left = max(0.0, budget.left - waited)
+                if not resumed:
+                    if budget is not None:
+                        budget.paused = True
+                    logger.info(
+                        "memory call refused: backup pause (waited %.1fs, bound %.1fs)",
+                        waited,
+                        bound,
+                    )
                     raise WorkersPaused()
+                if waited >= 1.0:
+                    logger.info(
+                        "memory call waited %.1fs for a backup pause to end (bound %.1fs)",
+                        waited,
+                        bound,
+                    )
                 if self._closed:
                     raise SupervisorClosed("worker supervisor is closed")
                 self._in_flight += 1
@@ -469,6 +531,7 @@ class WorkerSupervisor:
 
     def _get(self, workspace_id: str, timeout_s=30) -> Worker:
         deadline = time.monotonic() + timeout_s
+        budget = _wait_budget.get()
         old = None
         while True:
             with self._cond:
@@ -500,8 +563,49 @@ class WorkerSupervisor:
                     gate = self._starting[workspace_id] = threading.Event()
                     old = self._workers.pop(workspace_id, None)
                     break
-            if not gate.wait(max(0, deadline - time.monotonic())):
+            patience = max(0, deadline - time.monotonic())
+            if budget is not None:
+                patience = min(patience, budget.left)
+            waited = time.monotonic()
+            started = gate.wait(patience)
+            if budget is not None:
+                budget.left = max(0.0, budget.left - (time.monotonic() - waited))
+            if not started:
+                if budget is not None:
+                    logger.info(
+                        "memory call refused: worker still starting (waited %.1fs)",
+                        time.monotonic() - waited,
+                    )
+                    raise WorkersStarting()
                 raise DrainTimeout("generation replacement still pending")
+
+        def start() -> Worker:
+            return self._start_worker(workspace_id, old, circuit, gate, deadline)
+
+        if budget is None:
+            return start()
+        # The start runs on, in its own thread, when this request's budget ends:
+        # the person gets a "starting" answer, and the next call finds the worker.
+        box: dict = {}
+
+        def run() -> None:
+            try:
+                box["worker"] = start()
+            except BaseException as exc:  # handed to the waiting request, or dropped
+                box["error"] = exc
+
+        thread = threading.Thread(target=run, name="worker-start", daemon=True)
+        thread.start()
+        thread.join(budget.left)
+        if thread.is_alive():
+            budget.left = 0.0
+            logger.info("memory call refused: worker still starting (this call began it)")
+            raise WorkersStarting()
+        if "error" in box:
+            raise box["error"]
+        return box["worker"]
+
+    def _start_worker(self, workspace_id, old, circuit, gate, deadline) -> Worker:
         try:
             if old is not None:
                 if old.control is not None:
