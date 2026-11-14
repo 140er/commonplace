@@ -1,0 +1,4 @@
+- **Owns:** The bounded answers of a search while memory is paused for a backup or a worker starts, and the index job's handling of such refusals (`tests/test_search_stall_round2.py`).
+- **Promises:** A search during a pause or a slow worker start answers a retryable 503 within the request budget and the same search returns its results afterwards; a paused, busy or starting refusal is not an index failure.
+- **How it fails:** A search that waits past the budget per call, a generic 403 for a pause, or a failure count after a pause fails these tests.
+- **Tests:** The file above, plus the busy-route case in `tests/test_commonplace_memory.py`.

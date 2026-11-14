@@ -554,8 +554,11 @@ def test_search_answers_busy_within_a_bound_while_an_index_write_holds_the_palac
     finally:
         lock.release_write()
     assert waited < 5, waited
-    assert status == 403
-    assert busy == {"error": "no: memory is busy indexing; try again in a few seconds"}
+    assert status == 503
+    assert busy == {
+        "error": "no: memory is busy indexing; try again in a few seconds",
+        "retry_after_s": 2,
+    }
     # Nothing is hidden for good: the same search answers once the write is done.
     status, ready = _http(hub, owner, path)
     assert status == 200 and [memory["id"] for memory in ready["results"]] == [memory_id]

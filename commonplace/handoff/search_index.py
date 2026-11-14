@@ -52,7 +52,9 @@ def lower_priority():
 
 def next_pause(state):
     """Rest before the next sweep: the base pause, doubled per recent failure."""
-    return min(MAX_BACKOFF_SECONDS, PAUSE_SECONDS * (2 ** min(state.failures, 5)))
+    pause = min(MAX_BACKOFF_SECONDS, PAUSE_SECONDS * (2 ** min(state.failures, 5)))
+    hold, state.hold = state.hold, 0.0
+    return max(pause, hold)
 
 
 def enabled():
@@ -71,6 +73,8 @@ class State:
     dirty: bool = False
     enrolled: bool = False
     failures: int = 0
+    # Seconds memory asked us to wait (paused for a backup, starting, busy): not a failure.
+    hold: float = 0.0
 
 
 class _JobFull(Exception):
@@ -226,7 +230,13 @@ def _sweep(service, workspace_id, state):
                         break
             except _JobFull:
                 return True
-            except palace_mirror.MirrorError:
+            except palace_mirror.MirrorError as exc:
+                hint = getattr(exc.__cause__, "retry_after_s", None)
+                if hint is not None and not deferred:
+                    # Memory is paused for a backup, starting or busy and said when to come
+                    # back. Not a failure: no backoff, and the same thread is tried first.
+                    state.hold = min(max(float(hint), PAUSE_SECONDS), 30.0)
+                    return True
                 if deferred:
                     with service._mirror_lock:
                         state.blocked_threads.add(stored.id)

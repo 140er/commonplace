@@ -20,7 +20,7 @@ from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
 from . import events
 from ._http import BadRequest, path_parts, query, read_json, require_principal, send_json
-from .extensions import LocalTool, ToolContext, ToolError, register
+from .extensions import LocalTool, RetryableToolError, ToolContext, ToolError, register
 from .http_util import log_failure
 from .policy import canonical_wing, is_private_wing
 from .rules.enforce import RulesRefresh, rest_write
@@ -80,6 +80,8 @@ def _memory(ctx, name, args):
     """Translate storage errors without exposing legacy product vocabulary."""
     try:
         result = ctx.memory(name, args)
+    except RetryableToolError:
+        raise
     except ToolError as exc:
         if str(exc) in ("No palace found", "Chroma database missing"):
             if name == "mempalace_list_wings":
@@ -98,6 +100,15 @@ def _memory(ctx, name, args):
     if not isinstance(result, dict) or result.get("error") or result.get("success") is False:
         raise ToolError("no: memory request failed")
     return result
+
+
+def _retry_sentence(exc):
+    wait = max(1, int(exc.retry_after_s))
+    if exc.reason == "paused":
+        return f"no: memory is paused for a backup; try again in about {wait} seconds"
+    if exc.reason == "starting":
+        return f"no: memory is starting; try again in about {wait} seconds"
+    return "no: memory is busy indexing; try again in a few seconds"
 
 
 def _boards(ctx, required=False):
@@ -802,6 +813,18 @@ def install(gateway):
             pass
         except RulesRefresh as exc:
             send_json(h, 428, exc.payload)
+        except RetryableToolError as exc:
+            # Not a refusal and not an empty memory: the palace is paused for a backup,
+            # starting or busy. The Memory page already offers "Try again" for an error.
+            send_json(
+                h,
+                503,
+                {
+                    "error": _retry_sentence(exc),
+                    "retry_after_s": exc.retry_after_s,
+                    **({"warming_up": True} if exc.reason == "starting" else {}),
+                },
+            )
         except ToolError as exc:
             status = 404 if str(exc) == "no: memory not found" else 403
             send_json(h, status, {"error": str(exc)})

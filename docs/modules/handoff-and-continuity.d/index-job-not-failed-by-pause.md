@@ -1,0 +1,4 @@
+- **Owns:** How the search-index job treats a worker call that memory refused with a retry hint (paused for a backup, starting, busy): not a failure.
+- **Promises:** The sweep stops, keeps its cursor on the same thread so it is tried first, does not count a failure and rests for the hint (at least the base pause, at most 30 s) instead of the 3 to 60 s failure backoff, so indexing resumes right after a pause. Any other worker error is a failure as before.
+- **How it fails:** A refusal that carries no hint, or one with a storage deferral, keeps the failure path.
+- **Tests:** `tests/test_search_stall_round2.py`.
