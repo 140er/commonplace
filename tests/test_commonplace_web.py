@@ -207,6 +207,7 @@ def test_bearer_access_and_connection_secrets(hub):
     assert request(hub, "/api/connections", headers=cookie)[0] == 403
 
 
+@pytest.mark.timing
 def test_connections_wings_deadline(hub, monkeypatch):
     """Connection management must answer while its optional worker read is blocked."""
     cookie, _, _ = login(hub)
@@ -257,6 +258,7 @@ def test_connections_wings_deadline(hub, monkeypatch):
     assert payload["mcp_url"].endswith("/mcp")
 
 
+@pytest.mark.timing
 def test_connections_wings_deadline_slow_worker(hub, monkeypatch):
     cookie, _, _ = login(hub)
     workers = []
