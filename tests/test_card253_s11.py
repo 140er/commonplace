@@ -546,6 +546,10 @@ def test_card253_s11_closet_preview(file_search, monkeypatch, role, mode):
     assert raw and any(secret in h.get("closet_preview", "") for h in raw[0]["results"])
     hits = reply["results"]
     assert hits, reply
+    if role == "owner":
+        # Card 399: the person owner session keeps the preview.
+        assert any(secret in hit.get("closet_preview", "") for hit in hits)
+        return
     assert secret not in json.dumps(hits), "gateway search exposed hidden closet preview"
     assert all("closet_preview" not in hit for hit in hits)
 

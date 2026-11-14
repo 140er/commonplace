@@ -1,6 +1,6 @@
 ### Gateway search closet preview refusal
 
-- Authenticated gateway search removes closet_preview from every result, including
+- Authenticated gateway search removes closet_preview from every result for non-owner callers (an unrestricted person owner session keeps it), including
   readable closets. Matching a drawer's source_file does not prove the closet's
   wing and room, so the gateway omits the preview without extending the worker
   descriptor protocol. Local unscoped search retains its existing previews.
