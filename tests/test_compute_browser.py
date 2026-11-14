@@ -63,6 +63,9 @@ def test_compute_browser_enrollment_scope_and_exact_approval(tmp_path, monkeypat
                         return heading && getComputedStyle(heading).fontSize === '24px';
                     }"""
                 )
+                # The technical settings start behind one "Advanced" label; opening it stays open across saves.
+                assert not page.locator('[data-compute-action="gateway"]').is_visible()
+                page.locator("[data-compute-advanced] > summary").click()
                 page.locator('[data-compute-action="gateway"]').click()
                 page.locator('select[name="board"]').select_option("compute")
                 _enrollment(

@@ -1,22 +1,20 @@
 // Shared Home/Today presentation and action contracts. No new write authority.
 import { elapsed } from './api.js';
+import { BUCKETS, needsCards, needsMeCount, hasQueue, hideReferences, setNeedsQueue } from './needs-me.js';
 
-const BUCKETS = ['approvals', 'backlog_from_agents', 'asks', 'done_review', 'ready_to_merge', 'plans', 'stale'];
+export { needsCards, needsMeCount };
 const positive = text => /^(?:yes\b|accept\b|approve\b|ship\b|start\b|send\b|publish\b|proceed\b|go ahead\b)/i.test(String(text));
 const holding = text => /^(?:hold\b|wait\b|not now\b|later\b)/i.test(String(text));
 const actionable = card => Number.isSafeInteger(card.number) && card.number > 0 && Number.isSafeInteger(card.version) && card.version > 0;
 export const stamp = card => `${card.number}:${card.version}`;
 // Display copy only; the source card and submitted choice are kept verbatim.
-export const displayText = value => String(value ?? '').replace(/\bPR\s*#\d+\b|#\d+\b/gi, '').replace(/(?:~\/|\/(?:home|Users|tmp|var|srv|opt|etc|mnt|work|api)\/|[A-Z]:\\)\S+/g, '').replace(/\s+/g, ' ').trim();
-export function needsCards(needs = {}) {
-  return [...new Map(BUCKETS.flatMap(bucket => Array.isArray(needs[bucket]) ? needs[bucket] : []).filter(card => Number.isSafeInteger(card?.number) && card.number > 0).map(card => [card.number, card])).values()];
-}
+export const displayText = value => hideReferences(String(value ?? '').replace(/\s+/g, ' '), /\bPR\s*#\d+\b|#\d+\b/gi, /(?:~\/|\/(?:home|Users|tmp|var|srv|opt|etc|mnt|work|api)\/|[A-Z]:\\)\S+/g);
 export function removeNeed(needs = {}, card) {
   const matches = item => item.number === card.number && item.version === card.version;
   const found = needsCards(needs).some(matches);
   const next = { ...needs };
   for (const bucket of BUCKETS) if (Array.isArray(needs[bucket])) next[bucket] = needs[bucket].filter(item => !matches(item));
-  next.count = Math.max(0, (Number.isSafeInteger(needs.count) ? needs.count : needsCards(needs).length) - (found ? 1 : 0));
+  next.count = hasQueue(next) ? needsCards(next).length : Math.max(0, needsMeCount(needs) - (found ? 1 : 0));
   return next;
 }
 /** Keep a pre-decision read from restoring a badge, scoped to one signed-in person. */
@@ -28,7 +26,14 @@ export function createNeedLedger() {
   }
   return {
     settle(card, me) { scope(me); settled.set(stamp(card), card); },
-    apply(needs, me) { scope(me); for (const card of settled.values()) needs = removeNeed(needs, card); return needs; },
+    // The shell's one entry for a queue it read: settled cards removed, `count` derived from the listed cards, and
+    // the Board told which queue is current. Everything the shell shows as a count comes out of here.
+    apply(needs, me) {
+      scope(me); for (const card of settled.values()) needs = removeNeed(needs, card);
+      const next = { ...needs, count: needsMeCount(needs) };
+      setNeedsQueue(next);
+      return next;
+    },
   };
 }
 export function todayKey(event, enabled = true) {
@@ -66,11 +71,18 @@ export function canApprove(card) {
   return actions.includes('approve') || (actions.includes('accept') && !options.length) ||
     (actions.some(action => action === 'accept' || action === 'answer') && options.some(positive));
 }
+/** The card's one main button: Approve when an approval is on offer, otherwise Answer when it asks a question,
+ *  otherwise Open (the card page). Hold and Reply stay beside it. */
+export function primaryAction(card) {
+  if (canApprove(card)) return { action: 'approve', label: 'Approve' };
+  if ((card.actions || []).some(action => action === 'answer' || action === 'accept')) return { action: 'reply', label: 'Answer' };
+  return { action: 'reply', label: 'Open' };
+}
 export function actionRow(card, { busy = false } = {}, e) {
   const disabled = busy ? ' disabled' : '';
-  const approve = canApprove(card);
+  const main = primaryAction(card);
   const reject = (card.actions || []).includes('reject');
-  return `<div class="bt-actions">${approve ? `<button type="button" class="bt-approve" data-bt-action="approve"${disabled}>Approve</button>` : ''}<button type="button" class="bt-hold" data-bt-action="hold"${disabled}>Hold</button><button type="button" class="bt-desktop-reply" data-bt-action="reply"${disabled}>Reply</button><details class="bt-more"><summary aria-label="More">⋯</summary><div role="menu" aria-label="More actions"><button type="button" role="menuitem" data-bt-action="reply">Reply</button>${reject ? `<button type="button" role="menuitem" data-bt-action="reject"${disabled}>Turn down</button>` : ''}</div></details></div>`;
+  return `<div class="bt-actions"><button type="button" class="bt-approve bt-primary" data-bt-action="${main.action}"${disabled}>${main.label}</button><button type="button" class="bt-hold" data-bt-action="hold"${disabled}>Hold</button><button type="button" class="bt-desktop-reply" data-bt-action="reply"${disabled}>Reply</button><details class="bt-more"><summary aria-label="More">⋯</summary><div role="menu" aria-label="More actions"><button type="button" role="menuitem" data-bt-action="reply">Reply</button>${reject ? `<button type="button" role="menuitem" data-bt-action="reject"${disabled}>Turn down</button>` : ''}</div></details></div>`;
 }
 /** Keep an opened card menu inside the viewport: shift it sideways when it overhangs an edge, flip it above its button
  *  when the space below is taken by the tab bar. Inline offsets are cleared first so every open measures afresh. */

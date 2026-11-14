@@ -49,7 +49,7 @@ test('writes use only offered actions, exact versions and a stable idempotency k
 });
 test('phone row has one primary, Hold and More; Reply and Turn down are in the menu', () => {
   const html = actionRow(card, {}, e);
-  assert.match(html, /class="bt-approve"[^>]*>Approve/);
+  assert.match(html, /class="bt-approve bt-primary"[^>]*>Approve/);
   assert.match(html, /data-bt-action="hold"[^>]*>Hold/);
   assert.match(html, /aria-label="More"/);
   assert.match(html, /role="menuitem"[^>]*data-bt-action="reply"/);

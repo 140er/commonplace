@@ -45,7 +45,8 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
     const request = requests.find(item => !item.taken && !item.settled && item.path === path && (item.options.method || 'GET') === method);
     assert.ok(request, `${method} ${path} was requested`); request.taken = true; return request;
   };
-  const click = (action, id) => listeners.get('click')?.({ target: { closest: () => ({ dataset: { computeAction: action, id } }) } });
+  const click = (action, id) => listeners.get('click')?.({ target: { closest: selector => selector === '[data-compute-action]' ? { dataset: { computeAction: action, id } } : null } });
+  const toggleAdvanced = () => listeners.get('click')?.({ target: { closest: selector => selector === '[data-compute-advanced] > summary' ? {} : null } });
   const submit = (kind, values) => {
     const form = { dataset: { computeForm: kind }, entries: Object.entries(values) };
     listeners.get('submit')?.({ target: { closest: () => form }, preventDefault() {}, stopPropagation() {} });
@@ -55,7 +56,7 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
     take('/api/compute').resolve(data); take('/api/boards').resolve({ boards }); await flush();
   };
   const open = async (data, boards) => { ui.show(); await respond(data, boards); };
-  return { ui, host, doc, events, requests, listeners, boardsSeen, confirmation, take, click, submit, input, open, respond, setUser(value) { user = value; }, setRoute(value) { hash = value; } };
+  return { ui, host, doc, events, requests, listeners, boardsSeen, confirmation, take, click, toggleAdvanced, submit, input, open, respond, setUser(value) { user = value; }, setRoute(value) { hash = value; } };
 }
 
 const cases = {
@@ -71,6 +72,25 @@ const cases = {
       assert.ok(!text.startsWith('·') && !text.endsWith('·'), text);
     }
     assert.match(f.host.innerHTML, /<details[^>]*>[\s\S]*?full public host key/);
+    f.ui.stop();
+  },
+  async advanced() {
+    const f = fixture();
+    await f.open(inventory({ executions: [] }));
+    const html = f.host.innerHTML, at = text => html.indexOf(text);
+    // The three technical sections sit inside one closed "Advanced" disclosure, each with a plain one-line explanation.
+    assert.match(html, /<details class="compute-advanced compute-wide" data-compute-advanced><summary class="compute-advanced-summary">Advanced<\/summary>/);
+    assert.ok(at('data-compute-advanced') < at('id="compute-gateways"') && at('id="compute-gateways"') < at('id="compute-nodes"') && at('id="compute-nodes"') < at('id="compute-scopes"'));
+    assert.match(html, /<\/div><\/details><section class="compute-inventory" aria-labelledby="compute-scripts"/, 'scripts, observations and proposals stay outside');
+    for (const sentence of ['A gateway is the door into one project’s network; agents reach your machines through it.', 'A target is one machine behind a gateway that agents may work on.', 'A passive scope is a time-limited permission to look at a network, never to change it.']) assert.ok(html.includes(`<p class="compute-plain">${sentence}</p>`), sentence);
+    assert.match(html, /Most people never need these\./);
+    // What the person chose survives a re-render: open stays open, and it starts closed again on a fresh screen.
+    f.toggleAdvanced(); f.click('refresh'); f.take('/api/compute').resolve(inventory({ executions: [] })); f.take('/api/boards').resolve({ boards: [{ slug: 'demo', name: 'Fixture project' }] }); await flush();
+    assert.match(f.host.innerHTML, /data-compute-advanced open>/);
+    f.toggleAdvanced(); f.click('refresh'); f.take('/api/compute').resolve(inventory({ executions: [] })); f.take('/api/boards').resolve({ boards: [{ slug: 'demo', name: 'Fixture project' }] }); await flush();
+    assert.doesNotMatch(f.host.innerHTML, /data-compute-advanced open>/);
+    // The add buttons are still the same actions.
+    f.click('gateway'); assert.match(f.host.innerHTML, /data-compute-form="gateway"/);
     f.ui.stop();
   },
   async escaping() {

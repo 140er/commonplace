@@ -4,6 +4,7 @@
 :root[data-ui="deck"] .deck-board-heading { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 26px; }
 :root[data-ui="deck"] .deck-board-heading h1 { margin: 0 0 6px; font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -.02em; }
 :root[data-ui="deck"] .deck-board-intro { margin: 0; color: var(--ink2); font-size: 13.5px; }
+:root[data-ui="deck"] .deck-board-needs-note { margin: 6px 0 0; color: var(--ink2); font-size: 12.5px; }
 :root[data-ui="deck"] .deck-board .board-tools { display: flex; flex: none; gap: 8px; padding: 0; margin: 0; align-items: center; }
 :root[data-ui="deck"] .deck-board .deck-board-add { background: var(--s2); color: var(--ink); border: 0; border-radius: 8px; white-space: nowrap; }
 :root[data-ui="deck"] .deck-board-phone-tools, :root[data-ui="deck"] .deck-board-phone-actions { display: none; }

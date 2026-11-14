@@ -250,3 +250,52 @@ def test_home_today_live_actions(hub, fresh, width):
                 await browser.close()
 
     asyncio.run(check())
+
+
+def test_today_cards_are_short_and_every_count_agrees(hub, fresh):
+    if os.environ.get("COMMONPLACE_BROWSER_TESTS") == "off":
+        pytest.skip("optional browser checks disabled")
+    playwright = pytest.importorskip("playwright.async_api", reason="optional browser dependency")
+    expect = playwright.expect
+    hub.gateway.rate_limits = False
+    long_body = "A long request that explains every step of the release journey in detail. " * 12
+    for title in ("First plan", "Second plan"):
+        fresh.owner.task_add(board="work", title=title, body=long_body, labels=["plan"])
+
+    async def check():
+        async with playwright.async_playwright() as manager:
+            try:
+                browser = await manager.chromium.launch(
+                    executable_path=shutil.which("google-chrome")
+                )
+            except playwright.Error as exc:
+                if "Executable doesn't exist" in str(exc):
+                    pytest.skip("optional browser executable unavailable")
+                raise
+            context, page, url = await open_app(browser, hub, fresh, width=1440)
+            try:
+                await page.goto(url + "#/today")
+                await page.wait_for_selector(".bt-card")
+                first = page.locator(".bt-card").first
+                # The main action and Hold are on the card before anything is opened.
+                await expect(first.locator(".bt-primary")).to_be_visible()
+                await expect(first.locator(".bt-hold")).to_be_visible()
+                preview = await first.locator(".bt-preview").text_content()
+                assert len(preview) <= 141
+                await first.locator(".bt-full summary").click()
+                await expect(first.locator(".bt-full-text")).to_have_text(long_body.strip())
+                today = await page.locator(".bt-title p").text_content()
+                assert "2 waiting on you" in today
+                await expect(
+                    page.locator('[data-deck="bar"] [data-nav="today"] .count')
+                ).to_have_text("2 waiting on you")
+                await page.goto(url + "#/")
+                await expect(page.locator(".bh-hint")).to_contain_text("2 waiting on you")
+                await page.goto(url + "#/board/work")
+                await page.wait_for_selector(".workbench-board")
+                await expect(page.locator("#col-todo .col-h .n")).to_have_text("2")
+            finally:
+                await context.close()
+                await browser.close()
+
+    asyncio.run(check())
