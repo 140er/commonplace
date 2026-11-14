@@ -32,6 +32,8 @@ CONFIG = STATE + "/config.json"
 LOCK = STATE + "/install.lock"
 SIGN_IN = STATE + "/sign-in"
 FILES = {
+    STATE + "/lifecycle.json",
+    STATE + "/lifecycle.lock",
     SIGN_IN,
     APPROVAL_KEY,
     CACHE,
@@ -108,6 +110,22 @@ class Transport:
                 return result
         except Exception:
             raise InstallError("runtime status unavailable") from None
+
+    def lifecycle(self, body):
+        request = urllib.request.Request(
+            self.origin + RECOVER,
+            data=encoded(body),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self.opener.open(request, timeout=1) as response:
+                raw = response.read(8193)
+                if len(raw) > 8192:
+                    raise ValueError
+                return json.loads(raw)
+        except Exception:
+            raise InstallError("lifecycle unavailable") from None
 
     def setup(self, token, route, body=None, *, nonce=None):
         from .setup_approvals import MACHINE_PATHS
@@ -200,10 +218,15 @@ def service_text(home, archive=False):
         ]
     else:
         command += ["-m", "commonplace.runner.installer", "--serve", str(home)]
+    from .supervisor import command as setup_command
+
+    cleanup = setup_command(home, "_setup-stopped")
     return (
         "[Unit]\nDescription=Commonplace runner setup (execution disabled)\n\n"
         "[Service]\nType=simple\nExecStart=" + " ".join(map(quote, command)) + "\n"
-        "UMask=0077\nNoNewPrivileges=yes\nRestart=on-failure\n"
+        "ExecStopPost=" + " ".join(map(quote, cleanup)) + "\n"
+        "UMask=0077\nNoNewPrivileges=yes\nRestart=no\nKillMode=control-group\n"
+        "TimeoutStopSec=1\nSendSIGKILL=yes\n"
         "StandardOutput=null\nStandardError=null\n\n[Install]\nWantedBy=default.target\n"
     ).encode()
 
@@ -594,6 +617,7 @@ class Installer:
                     RUNTIME_CACHE,
                     STATE + "/host-grant.json",
                     STATE + "/setup-status.json",
+                    STATE + "/lifecycle.json",
                 )
                 and digest(self.fs.read(item["path"])) != item["digest"]
             ):
@@ -609,8 +633,13 @@ class Installer:
             self.out("not installed")
             return 0
         phase = self.journal["phase"]
+        lifecycle = {}
+        if self.fs.info(STATE + "/lifecycle.json") is not None:
+            lifecycle = json.loads(self.fs.read(STATE + "/lifecycle.json"))
         if phase == "installed":
-            self.verify()
+            self.verify(check_service=not lifecycle.get("stopped"))
+        if lifecycle.get("stopped"):
+            self.out("Runner service: Stopped; execution disabled")
         if self.fs.info(RUNTIME_CACHE) is not None:
             from .runtime_install import Runtime
 
@@ -731,6 +760,7 @@ class Installer:
                             RUNTIME_CACHE,
                             STATE + "/host-grant.json",
                             STATE + "/setup-status.json",
+                            STATE + "/lifecycle.json",
                         )
                         and digest(self.fs.read(item["path"])) != item["digest"]
                     ):
@@ -760,7 +790,7 @@ class Installer:
         return 0
 
 
-def serve(home):
+def sync_worker(home):
     """Sync approved settings when a trust pin exists; never lease or launch work."""
     fs = Files(home)
     config = json.loads(fs.read(CONFIG))
@@ -785,10 +815,34 @@ def serve(home):
     return 0
 
 
+def serve(home):
+    from .supervisor import serve as supervised
+
+    return supervised(home)
+
+
 def run(args, *, host=None, transport=None, code_source=None):
     try:
         if args.action == "_setup-service":
             return serve(args.home)
+        if args.action == "_setup-sync":
+            return sync_worker(args.home)
+        if args.action == "_setup-stopped":
+            from .supervisor import stopped
+
+            return stopped(args.home)
+        if args.action == "stop":
+            from .supervisor import Channel, bounded, stopped
+
+            installer = Installer(args.home, host, transport)
+            try:
+                channel = Channel(installer)
+                bounded(lambda: channel.exchange("revoke"))
+            except Exception:
+                pass
+            finally:
+                installer.host.change("disable")
+            return stopped(args.home, transport=transport, host=installer.host)
         installer = Installer(args.home, host, transport)
         if args.action == "status":
             return installer.status()

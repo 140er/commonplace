@@ -102,9 +102,10 @@ def owner_view(db, row):
             "SELECT version,snapshot FROM runner_install_manifests WHERE machine_id=? AND workspace_id=?",
             (row["id"], row["workspace_id"]),
         ).fetchone()
-        from . import setup_approvals
+        from . import lifecycle, setup_approvals
 
         return {
+            **lifecycle.owner_view(db, row),
             **setup_approvals.owner_view(db, row),
             "install_settings": {
                 "settings_version": approved["version"] if approved else 0,
@@ -249,11 +250,12 @@ def attention(db, owner):
             "SELECT r.id,r.machine_id,r.grant_version,r.binding_epoch FROM runner_setup_requests r JOIN runner_machines m ON m.id=r.machine_id JOIN runner_enrollments e ON e.id=r.enrollment_id WHERE r.workspace_id=? AND r.state='pending' AND m.revoked_at IS NULL AND e.revoked_at IS NULL AND r.grant_version=m.grant_version AND r.binding_epoch=m.binding_epoch ORDER BY r.created_at,r.id",
             (owner.workspace_id,),
         ).fetchall()
-    from . import runtime_status, setup_approvals
+    from . import lifecycle, runtime_status, setup_approvals
 
     return (
         setup_approvals.attention(db, owner)
         + runtime_status.attention(db, owner)
+        + lifecycle.attention(db, owner)
         + [
             {
                 **dict(row),

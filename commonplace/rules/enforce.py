@@ -143,6 +143,14 @@ REST_ROUTES = (
 # write. Keep every shape explicit; the dedicated consent tests prove each gate.
 RUNNER_SETUP_ROUTES = (
     RestRoute(
+        "runner.enrollment_api",
+        "POST",
+        "/api/runner-enrollment/recover",
+        "",
+        "exempt",
+        "Recovery challenge or replay-fenced enrolled-key lifecycle; after revoke only stop and acknowledgement, never approval",
+    ),
+    RestRoute(
         "runner.setup_api",
         "POST",
         "/api/runners/<machine>/setup-requests/<request>/refuse",

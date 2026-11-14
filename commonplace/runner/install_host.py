@@ -45,6 +45,9 @@ class FakeHost:
     def has_other_services(self):
         return self.other_services
 
+    def termination_confirmed(self):
+        return not self.active
+
 
 class LiveHost:
     """No shell, inherited credential environment, password or authorization prompt."""
@@ -76,6 +79,19 @@ class LiveHost:
 
     def _unit(self, action):
         return self._run(["/usr/bin/systemctl", "--user", action, UNIT], check=False)
+
+    def termination_confirmed(self):
+        main = self._run(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "show",
+                UNIT,
+                "--property=MainPID",
+                "--value",
+            ]
+        )
+        return main.stdout.strip() == "0" and self._unit("is-active").returncode != 0
 
     def state(self):
         linger = self._run(
