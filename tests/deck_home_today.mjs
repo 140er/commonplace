@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { escape as e } from '../commonplace/web/static/api.js';
-import { todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText, runUpdate, retryIntent, quietSelector } from '../commonplace/web/static/deck-home-today.js';
+import { placeMenu, todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText, runUpdate, retryIntent, quietSelector } from '../commonplace/web/static/deck-home-today.js';
 import { cardHTML, activityText } from '../commonplace/web/static/deck-today-capy.js';
 import { modelControls } from '../commonplace/web/static/deck-home.js';
 
@@ -117,4 +118,32 @@ test('quiet selector keeps native keyboard behavior and an adjacent chevron', ()
   const html = quietSelector('bot', 'Bot', 'bh-bot');
   assert.match(html, /class="bh-choice-text"/); assert.match(html, /viewBox="0 0 12 12"/);
   assert.match(html, /<select name="bot" aria-label="Bot">/);
+});
+
+const menu = (rect, parentTop = 400) => ({ style: {}, parentElement: { getBoundingClientRect: () => ({ top: parentTop }) },
+  getBoundingClientRect() { const shift = Number.parseFloat(this.style.translate) || 0, flipped = this.style.bottom ? -(rect.bottom - rect.top + 50) : 0; return { left: rect.left + shift, right: rect.right + shift, top: rect.top + flipped, bottom: rect.bottom + flipped, height: rect.bottom - rect.top }; } });
+test('a card menu is moved inside the viewport: right overhang, left overhang and a tab-bar collision', () => {
+  const view = { innerWidth: 390, innerHeight: 844 };
+  const left = menu({ left: -120, right: 100, top: 500, bottom: 600 });
+  placeMenu(left, view);
+  assert.equal(left.style.translate, '128px 0');
+  const right = menu({ left: 250, right: 470, top: 500, bottom: 600 });
+  placeMenu(right, view);
+  assert.equal(right.style.translate, '-88px 0');
+  const fine = menu({ left: 100, right: 320, top: 300, bottom: 400 });
+  placeMenu(fine, view);
+  assert.equal(fine.style.translate, '');
+  const low = menu({ left: 100, right: 320, top: 780, bottom: 880 }, 740);
+  placeMenu(low, view);
+  assert.equal(low.style.bottom, '42px');
+  const cramped = menu({ left: 100, right: 320, top: 780, bottom: 880 }, 60);
+  placeMenu(cramped, view);
+  assert.equal(cramped.style.bottom, '', 'no flip when there is no room above');
+});
+test('phone: Reply is an inline button and the menu only keeps what has no button', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-home-today.css', import.meta.url), 'utf8');
+  const phone = css.slice(css.indexOf('@media (max-width: 699px)'));
+  assert.doesNotMatch(phone, /\.bt-desktop-reply\) \{ display: none/);
+  assert.match(phone, /\.bt-more:not\(:has\(\[data-bt-action="reject"\]\)\) \{ display: none/);
+  assert.match(phone, /\.bt-more \[role="menuitem"\]\[data-bt-action="reply"\] \{ display: none/);
 });

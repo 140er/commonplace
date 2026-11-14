@@ -8,7 +8,7 @@ import { escape as e } from './api.js';
 import { workspaceRoute } from './routes.js';
 import { arrangeCapySettings, capyPolicyPresentation } from './deck-settings-capy.js';
 import { createDeckAppearance } from './deck-appearance.js';
-import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, createDeckShell } from './deck-shell.js';
+import { SECTIONS, renderShellBar, renderShellTop, renderShellTabs, renderShellMore, createDeckShell } from './deck-shell.js';
 import { arrangeSettings, selectSettings } from './deck-settings.js';
 
 export const UI_KEY = 'cmmn.ui';
@@ -62,6 +62,7 @@ const shellOptions = (options = {}) => ({ ...options, hash: options.hash ?? here
 export const renderDeckBar = options => renderShellBar(shellOptions(options));
 export const renderDeckTop = options => renderShellTop(shellOptions(options));
 export const renderDeckTabs = options => renderShellTabs(shellOptions(options));
+export const renderDeckMore = options => renderShellMore(shellOptions(options));
 
 /** The Look section appended to Settings: one switch, saved in this browser only. */
 export function lookHTML(on) {
@@ -127,5 +128,5 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     }
   });
   const drawn = (render) => (options = {}) => deckOn(storage) ? render({ ...shell.options(), ...options, screens }) : '';
-  return { appearance, shell, policyPresentation: () => deckOn(storage) ? capyPolicyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(renderDeckTabs) };
+  return { appearance, shell, policyPresentation: () => deckOn(storage) ? capyPolicyPresentation : null, on: () => deckOn(storage), home: () => deckHome(screens), owns, show, leave, settings, toggle, bar: drawn(renderDeckBar), top: drawn(renderDeckTop), tabs: drawn(options => renderDeckTabs(options) + renderDeckMore(options)) };
 }

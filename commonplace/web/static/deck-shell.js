@@ -18,6 +18,7 @@ const paths = {
   folder: '<path d="M2 4h5l1.5 2H14v7H2z"/>',
   chevron: '<path d="m6 4 4 4-4 4"/>',
   lock: '<rect x="3.5" y="7" width="9" height="7" rx="1.5"/><path d="M5.5 7V4a2.5 2.5 0 0 1 5 0v3"/>',
+  more: '<circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/>',
   mic: '<rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7v1a4.5 4.5 0 0 0 9 0V7M8 12.5V15m-3 0h6"/>',
 };
 const icon = name => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.bots}</svg>`;
@@ -86,7 +87,7 @@ export function shellTrees(options = {}) {
 export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');
 }
-const accountLinks = ({ can_admin, can_manage_instance }) => `<a href="#/needs">Needs me</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`;
+const accountLinks = (options, { count = false } = {}) => { const { can_admin, can_manage_instance } = options; return `<a href="#/needs">Needs me${count ? badge(waiting(options), 'need', 'waiting on you') : ''}</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`; };
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '', sections, section } = options;
   const role = { owner: 'Owner', member: 'Member' }[options.role];
@@ -105,9 +106,13 @@ export function renderShellTop(options) {
   const boardPage = label === 'Board' && (!!board?.slug || /^#\/board(?:\/[^/?#]+)?(?:\?.*)?$/.test(hash));
   return `<header class="m-top" data-deck="top"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}</a>${boardPage ? '' : `<b>${label}</b>`}<span class="spacer"></span>${board?.slug ? `<button class="iconbtn" data-action="coordinator" data-board="${e(board.slug)}" aria-label="Project settings">${icon('settings')}</button>` : ''}<button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button><button class="deck-phone-avatar" data-action="switch-workspace" aria-label="Account and workspace" data-deck-waiting="${waiting(options) > 0}">${e(initials(user))}</button></header>`;
 }
+// The phone has no rail, so every destination the rail and account menu offer lives in this sheet (rendered beside the tabs).
+// Any click inside it (a link, a button or the scrim) closes it; the shell's click handler does the work.
+export const renderShellMore = options => `<div class="deck-more" id="deck-more" role="dialog" aria-label="More" data-deck-shell-action="more-close"${options.moreOpen === true ? '' : ' hidden'}><div class="deck-more-panel"><a href="#/board">${icon('board')}Board</a><a href="#/memory">${icon('memory')}Memory</a>${accountLinks(options, { count: true })}<button data-action="switch-workspace">Switch workspace</button></div></div>`;
 export function renderShellTabs(options) {
   const { sections, section, hash } = options, mic = !['#/', '#/home'].includes(hash) && !options.hasComposer;
-  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}${mic ? micButton('deck-tab-mic') : ''}</nav>`;
+  const more = !section && !['#/', '#/home'].includes(hash);
+  return `<nav class="m-tabs" data-deck="tabs" data-count="${sections.length}" data-mic="${mic}" aria-label="Main">${sections.map(([id, label]) => `<a href="#/${id}" data-nav="${id}"${current(section === id)}>${icon(id)}${label}${id === 'today' ? badge(waiting(options), 'need', 'waiting on you') : ''}</a>`).join('')}<button type="button" class="deck-tab-more" data-deck-shell-action="more" aria-haspopup="dialog" aria-expanded="${options.moreOpen === true}" aria-controls="deck-more"${current(more)}>${icon('more')}More</button>${mic ? micButton('deck-tab-mic') : ''}</nav>`;
 }
 const micButton = className => `<button type="button" class="${className}" data-deck-shell-action="mic" aria-label="Voice input">${icon('mic')}</button>`;
 const composerSelector = ':is(#content, #card-panel) :is(.bh-form, .bt-reply form, .today-compose, .bots-compose, .cw-composer, .cb-composer, .composer:has([name="text"]), .space-compose, .space-composer, [data-form="comment"], [data-form="reply"])';
@@ -116,7 +121,11 @@ export function createDeckShell({ root, api, context, on }) {
   let bots = [], directory = {}, identity = '', generation = 0, pending = null, error = '';
   const closed = new Set();
   const composer = () => [...(root?.querySelectorAll?.(composerSelector) || [])].find(form => !form.closest('[hidden]') && form.getClientRects().length);
-  const options = () => ({ bots, directory, closed, hash: globalThis.location?.hash || '', hasComposer: !!composer() });
+  // The sheet stays open across the shell's refreshes, and closes when the route changes.
+  let moreAt = null;
+  const hashNow = () => globalThis.location?.hash || '';
+  const moreOpen = () => moreAt !== null && moreAt === hashNow();
+  const options = () => ({ bots, directory, closed, hash: hashNow(), hasComposer: !!composer(), moreOpen: moreOpen() });
   function chrome() {
     if (!on()) return;
     const form = composer(), tabs = root?.querySelector?.('[data-deck="tabs"]');
@@ -170,6 +179,15 @@ export function createDeckShell({ root, api, context, on }) {
   root?.addEventListener?.('click', event => {
     const action = event.target?.closest?.('[data-deck-shell-action]')?.dataset.deckShellAction;
     if (!action || !on()) return;
+    const sheet = root.querySelector('#phone-tabs .deck-more'), opener = root.querySelector('.deck-tab-more');
+    if (action === 'more' && sheet) {
+      event.preventDefault();
+      const open = sheet.hidden;
+      moreAt = open ? hashNow() : null;
+      sheet.hidden = !open; opener?.setAttribute('aria-expanded', String(open));
+      if (open) sheet.querySelector('a, button')?.focus();
+    }
+    if (action === 'more-close' && sheet) { moreAt = null; sheet.hidden = true; opener?.setAttribute('aria-expanded', 'false'); }
     if (action === 'retry') { event.preventDefault(); void sync(); }
     if (action === 'new-thread' && globalThis.location?.hash === '#/') {
       event.preventDefault(); root.querySelector('#content textarea, #content input')?.focus();
@@ -179,6 +197,11 @@ export function createDeckShell({ root, api, context, on }) {
       const mic = [...(root.querySelectorAll?.('#content [data-voice="mic"], #content [data-today="mic"], #content [data-bot-action="mic"]') || [])].find(button => !button.disabled);
       if (mic) mic.click(); else if (context?.()?.voice) void context().voice(composer()?.querySelector('[name="text"], [name="reply"], textarea[data-draft], input[data-draft], .cb-composer textarea')); else context?.()?.go?.('#/');
     }
+  });
+  root?.addEventListener?.('keydown', event => {
+    const sheet = root.querySelector('#phone-tabs .deck-more');
+    if (event.key !== 'Escape' || !sheet || sheet.hidden) return;
+    moreAt = null; sheet.hidden = true; const opener = root.querySelector('.deck-tab-more'); opener?.setAttribute('aria-expanded', 'false'); opener?.focus();
   });
   root?.ownerDocument?.addEventListener?.('signout', () => { reset(); paint(); });
   return { options, sync, reset, roster(value) { identify(); bots = rows(value); paint(); } };
