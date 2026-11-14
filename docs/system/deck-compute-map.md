@@ -1,3 +1,5 @@
 ### Compute map in the Deck look
 
 - In the Deck look the Compute screen is the only map: it draws the shared topology canvas from `GET /api/topology`, and `#/compute-map` resolves to it. When the topology is empty or unavailable it draws the hub and the enrolled runner machines instead, in the states Ready, Waiting for attestation and Off, with nothing about liveness, sites or routes.
+
+The Capy Compute view extends this same canvas with token-based card styling and a 300px inspector. Its phone layout follows recorded directed links and shows a selected device in place of the map until Back is chosen. Recorded capacities and current usage remain distinct; missing service, health counters, version or bot facts are never invented. Runner readiness remains an enrollment fact, not liveness. The existing workspace administration flow owns Add a machine. Recorded link methods drive colour and live ends drive motion; idle links stay still and system reduced motion disables every dash animation. The optional panel renderer and layout function leave the classic view's defaults intact.

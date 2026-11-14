@@ -485,7 +485,7 @@ function fakeRoot() {
   const doc = { activeElement: null, hidden: false, adoptedStyleSheets: [], createElement: () => { const panel = element(doc); panels.push(panel); return panel; } };
   const header = { hidden: false }, phoneBar = { hidden: false }, phoneTabs = { style: { position: '', bottom: '', left: '', right: '', zIndex: '' } };
   const root = {
-    ownerDocument: doc, parentElement: { querySelector: selector => ({ '.head': header, '#phone-bar': phoneBar, '#phone-tabs': phoneTabs })[selector] },
+    dataset: {}, ownerDocument: doc, parentElement: { querySelector: selector => ({ '.head': header, '#phone-bar': phoneBar, '#phone-tabs': phoneTabs })[selector] },
     classList: { add: x => classes.add(x), remove: (...names) => names.forEach(x => classes.delete(x)), toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) },
     addEventListener: (type, handler) => handlers.set(type, handler),
     removeEventListener: type => handlers.delete(type),
@@ -648,9 +648,9 @@ test('empty workspace keeps just the hub, and an unavailable general bot hides o
   assert.match(f.root.html, /No machines yet/);
   assert.equal(f.regions.get('empty').hidden, false);
   assert.equal(f.regions.get('summary').textContent, '0 of 0 machines ready.');
-  assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-machine">Add machine/);
+  assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-machine">Add a machine/);
   assert.match(f.regions.get('actions').innerHTML, /data-compute-action="add-site">Add site/);
-  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot|href=/);
+  assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot/);
   f.ui.stop();
 });
 
@@ -725,7 +725,7 @@ test('failed bot discovery leaves the real map and Add machine available', async
   const ui = compute.mount({ root: f.root, e, api: async path => { if (path === '/api/bots') throw new Error('network'); if (path === '/api/topology') return EMPTY; return { machines }; } });
   await flush(); assert.match(f.regions.get('map').querySelector('[data-topology]').querySelector('[data-topo="world"]').innerHTML, /Build box/);
   assert.doesNotMatch(f.regions.get('actions').innerHTML, /Let a bot/);
-  assert.match(f.regions.get('actions').innerHTML, /Add machine/); assert.match(f.regions.get('actions').innerHTML, /Add site/); ui.stop();
+  assert.match(f.regions.get('actions').innerHTML, /Add a machine/); assert.match(f.regions.get('actions').innerHTML, /Add site/); ui.stop();
 });
 
 test('one map: Deck resolves the old map address to Compute, the account menu has one entry, no duplicate files', async () => {
@@ -746,30 +746,19 @@ test('one map: Deck resolves the old map address to Compute, the account menu ha
   assert.ok(MAP_PATH && mapModel(EMPTY));
 });
 
-test('Add machine and Add site are one button each: one request, the answer in the notice, no form', async () => {
-  const f = fakeRoot(), seen = [];
-  const answer = { kind: 'machine', mode: 'started', machines: [{ machine: 'mach_1', label: 'Build box', outcome: 'started', card: 7 }] };
-  const api = async (path, options) => {
-    if (path === '/api/bots') return { bots: [] };
-    if (path === '/api/topology') return EMPTY;
-    if (path === '/api/runners') return { machines };
-    seen.push([path, options]); return answer;
-  };
-  const ui = compute.mount({ root: f.root, api, e });
-  await flush();
-  assert.doesNotMatch(f.root.html + f.regions.get('actions').innerHTML, /<form|<input/);
-  const button = { disabled: false, dataset: { computeAction: 'add-machine' } };
-  f.handlers.get('click')({ target: { closest: () => button } });
-  await flush();
-  assert.deepEqual(seen, [['/api/topology/add-machine', { method: 'POST', body: {} }]]);
-  assert.match(f.regions.get('notice').textContent, /Started on Build box \(card #7\)/);
-  assert.equal(button.disabled, false);
-  ui.stop();
+test('Add a machine navigates to the existing enrollment screen without a discovery write', async () => {
+  const f = harness(); await flush();
+  const before = f.calls.length;
+  f.click({ computeAction: 'add-machine' }); await flush();
+  assert.deepEqual(f.nav, ['#/admin']);
+  assert.equal(f.calls.length, before);
+  assert.doesNotMatch(f.root.html, /<form|<input/);
+  f.ui.stop();
 });
 
 test('a member without rights is shown no add buttons at all', async () => {
   const f = harness({ error: Object.assign(new Error('forbidden'), { status: 403 }) }); await flush();
   assert.match(f.root.html, /Only workspace owners/);
-  assert.doesNotMatch(f.root.html + (f.regions.get('actions')?.innerHTML || ''), /add-machine|add-site|Add machine|Add site/);
+  assert.doesNotMatch(f.root.html + (f.regions.get('actions')?.innerHTML || ''), /add-machine|add-site|Add a machine|Add site/);
   f.ui.stop();
 });

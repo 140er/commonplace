@@ -1,0 +1,87 @@
+/* Slice E: the existing map and inspector on the dimmed Capy stage. */
+:root[data-ui="deck"] .shell #content.deck-workspace.dw-map { padding: 36px 40px 88px; }
+:root[data-ui="deck"] .dw-map > .dw-tabs { margin: 0 0 18px; }
+:root[data-ui="deck"] .deck-compute#content { padding: 0; background: transparent; }
+:root[data-ui="deck"] .deck-compute .dc-title { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px 16px; margin-bottom: 24px; }
+:root[data-ui="deck"] .deck-compute h1 { font-size: 22px; line-height: 28px; }
+:root[data-ui="deck"] .deck-compute .dc-summary { grid-column: 1; font-size: 13.5px; color: var(--ink2); }
+:root[data-ui="deck"] .deck-compute .dc-actions { grid-area: 1 / 2 / 3 / 3; align-self: end; }
+:root[data-ui="deck"] .deck-compute .dc-action { min-height: 36px; padding: 0 12px; border-radius: var(--radius-control); background: var(--s2); color: var(--ink); font-size: 13.5px; }
+:root[data-ui="deck"] .deck-compute .dc-action:hover { background: var(--s3); }
+/* Available width = canvas + 14px gutter + 300px inspector. */
+:root[data-ui="deck"] .deck-compute .topo { grid-template-columns: minmax(0,1fr) 300px; gap: 0 14px; }
+:root[data-ui="deck"] .deck-compute :is(.topo-stage,.topo-detail,.dc-enroll) { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-card); box-shadow: none; }
+:root[data-ui="deck"] .deck-compute .topo-stage { min-height: 440px; }
+:root[data-ui="deck"] .deck-compute .topo-detail { max-height: none; padding: 18px; }
+:root[data-ui="deck"] .deck-compute .td-head { padding: 0; gap: 8px; }
+:root[data-ui="deck"] .deck-compute .td-title { font-size: 15px; }
+:root[data-ui="deck"] .deck-compute .td-sub { color: var(--ink3); font: 12.5px/1.5 var(--font); }
+:root[data-ui="deck"] .deck-compute .topo-detail .iconbtn { width: 32px; min-width: 32px; height: 32px; border-radius: var(--radius-control); }
+/* Card nodes reuse the canvas labels, selection, drag targets and route geometry. */
+:root[data-ui="deck"] .deck-compute .topo-node > :is(.topo-plate,.topo-icon) { display: none; }
+:root[data-ui="deck"] .deck-compute .topo-node:not(.k-hub) .topo-label { transform: translate(0, -27px) scale(var(--inv,1)); }
+:root[data-ui="deck"] .deck-compute .topo-node:not(.k-hub) .topo-label-plate { y: 0; height: 54px; rx: 10px; }
+:root[data-ui="deck"] .deck-compute .topo-node > .topo-dot { transform: translate(52px, 0); }
+:root[data-ui="deck"] .deck-compute .topo-plate { fill: var(--s3); rx: 8px; ry: 8px; }
+:root[data-ui="deck"] .deck-compute .topo-node.sel { color: var(--ink2); }
+:root[data-ui="deck"] .deck-compute .topo-node.sel .topo-plate { fill: var(--s3); stroke: var(--violet); stroke-width: 1.5; }
+:root[data-ui="deck"] .deck-compute .topo-label-plate { fill: var(--s2); }
+:root[data-ui="deck"] .deck-compute .topo-node.sel .topo-label-plate { stroke: var(--violet); stroke-width: 1.5; }
+:root[data-ui="deck"] .deck-compute :is(.topo-name,.topo-role,.topo-method) { font-family: var(--font); stroke: none; font-variant-numeric: tabular-nums; }
+:root[data-ui="deck"] .deck-compute .topo-name { fill: var(--ink); font-weight: 600; }
+:root[data-ui="deck"] .deck-compute .topo-role { fill: var(--ink3); }
+:root[data-ui="deck"] .deck-compute .topo-dot.s-up { fill: var(--cyan); }
+:root[data-ui="deck"] .deck-compute .topo-dot.s-degraded { fill: var(--ink3); }
+:root[data-ui="deck"] .deck-compute .topo-dot.s-down { fill: var(--ink3); }
+:root[data-ui="deck"] .deck-compute.dc-runners .topo-dot.s-degraded { fill: var(--amber); }
+:root[data-ui="deck"] .deck-compute .topo-link { --link-ink: var(--ink4); }
+:root[data-ui="deck"] .deck-compute .topo-link[data-method="tailscale"] { --link-ink: var(--cyan); }
+:root[data-ui="deck"] .deck-compute .topo-link[data-method="lan"] { --link-ink: var(--violet); }
+:root[data-ui="deck"] .deck-compute .topo-link :is(line,.topo-route) { stroke: var(--link-ink); stroke-width: 1.5; stroke-dasharray: 4 6; }
+:root[data-ui="deck"] .deck-compute .topo-link[data-active="true"] :is(line,.topo-route) { animation: dc-link 1.4s linear infinite; }
+:root[data-ui="deck"] .deck-compute .topo-link.on :is(line,.topo-route) { stroke-width: 2.5; }
+:root[data-ui="deck"] .deck-compute .topo-link[data-active="true"] .topo-method { display: inline; fill: var(--ink3); font-size: 11px; }
+:root[data-ui="deck"] .deck-compute .topo-link[data-active="false"] .topo-method { display: none; }
+:root[data-ui="deck"] .deck-compute[data-compute-motion="reduced"] .topo-link :is(line,.topo-route) { animation: none; }
+:root[data-ui="deck"] .dc-inspector { margin-top: 20px; }
+:root[data-ui="deck"] .dc-metric { margin: 16px 0; }
+:root[data-ui="deck"] .dc-metric > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+:root[data-ui="deck"] .dc-metric span { color: var(--ink3); }
+:root[data-ui="deck"] .dc-metric strong { font-weight: 600; color: var(--ink); }
+:root[data-ui="deck"] .dc-metric meter { appearance: none; display: block; width: 100%; height: 4px; margin-top: 8px; background: var(--s3); border: 0; border-radius: 4px; }
+:root[data-ui="deck"] .dc-metric meter::-webkit-meter-bar { background: var(--s3); border: 0; height: 4px; }
+:root[data-ui="deck"] .dc-metric meter::-webkit-meter-optimum-value { background: var(--violet); border-radius: 4px; }
+:root[data-ui="deck"] .dc-metric meter::-moz-meter-bar { background: var(--violet); }
+:root[data-ui="deck"] .dc-facts { margin: 20px 0; }
+:root[data-ui="deck"] .dc-facts > div { display: grid; grid-template-columns: 98px minmax(0,1fr); gap: 10px; margin: 10px 0; font-size: 13.5px; }
+:root[data-ui="deck"] .dc-facts dt { color: var(--ink3); }
+:root[data-ui="deck"] .dc-facts dd { margin: 0; overflow-wrap: anywhere; }
+:root[data-ui="deck"] .dc-version { font: 12px/1.5 var(--mono); }
+:root[data-ui="deck"] .dc-more > summary { min-height: 44px; align-content: center; cursor: pointer; color: var(--ink2); font-size: 13.5px; }
+:root[data-ui="deck"] .dc-enroll { width: calc(100% - 314px); padding: 18px; margin-top: 14px; }
+:root[data-ui="deck"] .dc-enroll h2 { font-size: 13.5px; font-weight: 600; }
+:root[data-ui="deck"] .dc-enroll p { font-size: 13.5px; line-height: 1.5; color: var(--ink2); margin: 10px 0; }
+:root[data-ui="deck"] .dc-enroll .dc-observed, :root[data-ui="deck"] .dc-observed { font-size: 12.5px; color: var(--ink3); }
+@keyframes dc-link { to { stroke-dashoffset: -10; } }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-ui="deck"] .deck-compute .topo-link :is(line,.topo-route) { animation: none; }
+}
+@media (max-width: 999px) {
+  :root[data-ui="deck"] .deck-compute .topo { grid-template-columns: minmax(0,1fr); }
+  :root[data-ui="deck"] .dc-enroll { width: 100%; }
+}
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell #content.deck-workspace.dw-map { padding: 16px 16px 88px; }
+  :root[data-ui="deck"] .dw-map > .dw-tabs { margin: 0; }
+  :root[data-ui="deck"] .deck-compute .dc-title h1 { display: none; }
+  :root[data-ui="deck"] .deck-compute .dc-title { grid-template-columns: minmax(0,1fr); margin-bottom: 18px; }
+  :root[data-ui="deck"] .deck-compute .dc-actions { grid-area: auto; margin-left: 0; }
+  :root[data-ui="deck"] .deck-compute .dc-action { min-height: 44px; }
+  :root[data-ui="deck"] .deck-compute .topo-stage { min-height: 440px; }
+  :root[data-ui="deck"] .deck-compute .topo-node :is(.topo-plate,.topo-icon) { display: none; }
+  :root[data-ui="deck"] .deck-compute .topo-label-plate { rx: 12px; }
+  :root[data-ui="deck"] .deck-compute .topo-node > .topo-dot { transform: translate(50px, 0); }
+  :root[data-ui="deck"] .deck-compute .topo-detail { grid-area: 1 / 1; margin: 0; min-height: 440px; }
+  :root[data-ui="deck"] .deck-compute:has(.topo-detail:not([hidden])) :is(.topo-stage,.topo-foot,.topo-bar,.dc-enroll) { display: none; }
+  :root[data-ui="deck"] .deck-compute .topo-detail .iconbtn { width: 44px; min-width: 44px; height: 44px; }
+}

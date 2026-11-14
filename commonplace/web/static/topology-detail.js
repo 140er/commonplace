@@ -198,7 +198,7 @@ export function panelHTML({ key, node, tab, detail, links, answer, routeFailure,
 /** Mounts the panel in `section` (the map's root). `model()` is the canvas's current drawable
  * model; `api` reads JSON. It reads the node on selection and again every `interval` ms while
  * the device stays selected and the page is visible, and removes itself with the markup. */
-export function createNodePanel({ section, api, model, interval = 5000, own = null, compact = false, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
+export function createNodePanel({ section, api, model, interval = 5000, own = null, compact = false, render = panelHTML, copy = (text) => globalThis.navigator.clipboard.writeText(text) }) {
   const doc = section.ownerDocument;
   // The panel's element exists from the first selection on, so a map nobody selects on pays nothing.
   let panel = null;
@@ -209,7 +209,7 @@ export function createNodePanel({ section, api, model, interval = 5000, own = nu
     if (!key) { if (panel) { panel.hidden = true; panel.innerHTML = ""; } shown = ""; return; }
     panel ??= mountPanel();
     const current = model();
-    const html = panelHTML({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure, own: own?.(key) || null, compact });
+    const html = render({ key, node: node(), tab, detail: detail || detailModel(null), links: current.links.filter((link) => !link.missing), answer, routeFailure, names: new Map(current.nodes.map((item) => [item.key, item.name])), loading, failure, own: own?.(key) || null, compact });
     if (html === shown) return;
     const focused = panel.contains(doc.activeElement) ? doc.activeElement.getAttribute("data-td-tab") || doc.activeElement.getAttribute("data-td") : null;
     const scroll = panel.querySelector(".td-body")?.scrollTop || 0;
