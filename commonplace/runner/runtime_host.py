@@ -51,14 +51,19 @@ class FakeRuntimeHost:
 class LiveRuntimeHost:
     """Supported self-contained releases only; unknown wrappers are never run.
 
-    Native artifacts stay 0600 on disk. Verified bytes execute through a sealed,
-    anonymous Linux descriptor, rather than adding execute bits to stored files.
+    Owned native artifacts stay 0600 on disk. Provider and issuer bytes execute
+    through sealed anonymous descriptors. Read-only host discovery can use a
+    separately installed, rehashed inode for embedded runtimes needing a filename.
     Every probe has closed stdin and a private home, without inherited credentials.
     A successful login status is unverified until a later account/scope approval.
     """
 
     def locate(self, name):
         path = shutil.which(COMMANDS[name])
+        if path is None:
+            # A user unit can have a smaller PATH than the installation shell.
+            candidate = Path.home() / ".local/bin" / COMMANDS[name]
+            path = str(candidate) if candidate.is_file() else None
         if path is None:
             return None
         try:
@@ -115,14 +120,51 @@ class LiveRuntimeHost:
             raise InstallError("runtime integrity verification failed")
         if release["format"] == "native" and not raw.startswith(b"\x7fELF"):
             return {"availability": "unsupported", "login": "unknown"}
-        fd = os.memfd_create("runner-runtime", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
+        fd = None
+        if name == "host" and release["format"] == "native":
+            # Embedded runtimes can require their real module filename even for
+            # help. Discovery alone may use a separately installed, pinned inode;
+            # it receives no grant, provider credential or inherited environment.
+            candidate = self.locate(name)
+            if candidate and digest(candidate["raw"]) == release["sha256"]:
+                fd = os.open(candidate["path"], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    before = os.fstat(fd)
+                    with os.fdopen(fd, "rb", closefd=False) as stream:
+                        checked = stream.read(MAX_ARTIFACT + 1)
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or before.st_uid not in (0, os.getuid())
+                        or before.st_mode & 0o022
+                        or any(
+                            getattr(os.fstat(fd), field) != getattr(before, field)
+                            for field in (
+                                "st_dev",
+                                "st_ino",
+                                "st_mode",
+                                "st_uid",
+                                "st_size",
+                                "st_mtime_ns",
+                                "st_ctime_ns",
+                            )
+                        )
+                        or digest(checked) != release["sha256"]
+                    ):
+                        raise ValueError
+                except Exception:
+                    os.close(fd)
+                    raise InstallError("runtime integrity verification failed") from None
+        backed = fd is not None
+        if not backed:
+            fd = os.memfd_create("runner-runtime", os.MFD_ALLOW_SEALING | os.MFD_CLOEXEC)
         try:
-            with os.fdopen(fd, "wb", closefd=False) as stream:
-                stream.write(raw)
-                stream.flush()
-            os.fchmod(fd, 0o700 if release["format"] == "native" else 0o600)
-            # Linux UAPI values: some supported Python builds omit these names.
-            fcntl.fcntl(fd, getattr(fcntl, "F_ADD_SEALS", 1033), 0x0F)
+            if not backed:
+                with os.fdopen(fd, "wb", closefd=False) as stream:
+                    stream.write(raw)
+                    stream.flush()
+                os.fchmod(fd, 0o700 if release["format"] == "native" else 0o600)
+                # Linux UAPI values: some supported Python builds omit these names.
+                fcntl.fcntl(fd, getattr(fcntl, "F_ADD_SEALS", 1033), 0x0F)
             path = f"/proc/self/fd/{fd}"
             command = [path] if release["format"] == "native" else [sys.executable, "-I", path]
 
@@ -149,12 +191,14 @@ class LiveRuntimeHost:
 
             code, version = run(["--version"])
             if code or re.findall(
-                r"(?<![\w.])\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", version.strip()
+                r"(?<![\w.])v?(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)", version.strip()
             ) != [release["version"]]:
                 return {"availability": "unsupported", "login": "unknown"}
             code, help_text = run(["--help"])
             required = {
-                "host": ("acp-mcp-call", "serve"),
+                # The bridge command is intentionally hidden by current hosts.
+                # Discovery is separate from issuer verification and readiness.
+                "host": ("serve",),
                 "claude": ("--print", "auth"),
                 "codex": ("exec", "login"),
             }[name]
