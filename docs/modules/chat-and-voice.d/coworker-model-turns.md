@@ -20,12 +20,10 @@
 
   - Explicit effort is sent as `reasoning_effort` to the configured compatible transport and `output_config.effort` to the configured Anthropic transport. Omitted effort adds no payload field. The closed enum follows the [provider effort contract](https://platform.claude.com/docs/en/build-with-claude/effort); model-specific provider refusals remain bounded errors without retries or fallback providers.
 
+- Model settings and scoped catalogs are snapshotted under the outer control guard before taking a coworker writer lock. Views and runtime selection consume that snapshot without taking the control lock; selection audits publish after the private transaction closes. Dispatch/publication refresh policy before checking queued choices.
+
+  - Steer checks all task-origin candidates against current canonical run state rather than a recent chat history window. Effort transport failures use the bounded model-error contract and never leak an HTTP store error into the provider layer.
+
 - **Tests:**
 
   - `tests/test_coworker_model_turns.py` covers persistent creation/detail/list defaults, the validation and mode matrices, catalog isolation, per-turn runtime selection, non-sticky overrides, canonical control alias/idempotency and person/member/agent authority. Existing coworker API/store/runtime/control tests protect compatibility.
-
-- **Promises:**
-
-  - Model settings and scoped catalogs are snapshotted under the outer control guard before taking a coworker writer lock. Views and runtime selection consume that snapshot without taking the control lock; selection audits publish after the private transaction closes. Dispatch/publication refresh policy before checking queued choices.
-
-  - Steer checks all task-origin candidates against current canonical run state rather than a recent chat history window. Effort transport failures use the bounded model-error contract and never leak an HTTP store error into the provider layer.
