@@ -2287,6 +2287,9 @@ class Gateway:
         finally:
             stop.set()
             try:
+                # Database-polling workers go first, so none can settle a row
+                # or claim a job while the rest of the gateway is closing.
+                self._stop_db_workers()
                 if self.pause_server is not None:
                     self.pause_server.stop()
             finally:
@@ -2297,6 +2300,16 @@ class Gateway:
                     handoff.close()
             finally:
                 self.supervisor.close()
+
+    def _stop_db_workers(self) -> None:
+        """Stop the answer-hold and chat workers; one failing never skips the rest."""
+        for name in ("hold_worker", "chat_worker"):
+            worker = getattr(self, name, None)
+            try:
+                if worker is not None:
+                    worker.stop()
+            except Exception:
+                logger.exception("could not stop %s", name)
 
     def shutdown(self) -> None:
         """Stop a running ``serve`` (from another thread); it then cleans up."""
