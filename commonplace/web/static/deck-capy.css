@@ -39,9 +39,11 @@
 }
 :root[data-ui="deck"] body { font-variant-numeric: tabular-nums; font-feature-settings: "cv11", "ss01"; }
 :root[data-ui="deck"] .center { position: relative; isolation: isolate; background: var(--ground); }
-:root[data-ui="deck"] .deck-stage { position: absolute; inset: 8px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-float); background: var(--stage); pointer-events: none; z-index: -1; }
-:root[data-ui="deck"] .stage-dither { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
-:root[data-ui="deck"] .deck-stage::after { content: ""; position: absolute; inset: 0; background: rgba(8,8,11,.5); }
+:root[data-ui="deck"] .deck-stage { position: absolute; inset: 8px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-float); background: var(--stage); pointer-events: none; z-index: -1; isolation: isolate; }
+:root[data-ui="deck"] .stage-dither { position: absolute; inset: 0; z-index: 0; display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+/* Match the exposed-dot brightness of the reviewed non-home artwork. */
+:root[data-ui="deck"] .deck-stage[data-dimmed="true"] .stage-dither { opacity: .68; }
+:root[data-ui="deck"] .deck-stage::after { content: ""; position: absolute; inset: 0; z-index: 1; background: rgba(8,8,11,.5); }
 :root[data-ui="deck"] .deck-stage[data-dimmed="false"]::after { display: none; }
 :root[data-ui="deck"] :is(.deck-today, .workbench-board, .bots-page, .memory-page, .deck-workspace, .settings) { background: transparent; }
 :root[data-ui="deck"] .center > #content { background: transparent; }
@@ -68,6 +70,7 @@
 :root[data-ui="deck"] .appearance-preview { position: relative; height: 168px; margin: 14px 0; overflow: hidden; border-radius: var(--radius-control); border: 1px solid var(--line); background: var(--stage); }
 :root[data-ui="deck"] .appearance-preview canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
 :root[data-ui="deck"] .appearance-sample { position: absolute; left: 18%; right: 12%; top: 42%; height: 36px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--card); }
+:root[data-ui="deck"] .appearance-send { position: absolute; right: 5px; top: 5px; width: 24px; height: 24px; border-radius: var(--radius-control); background: var(--violet); }
 :root[data-ui="deck"] .appearance-scenes { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin-bottom: 16px; }
 :root[data-ui="deck"] .appearance-scenes button { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 44px; padding: 4px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink3); font-size: 12px; text-align: left; }
 :root[data-ui="deck"] .appearance-scenes button[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
@@ -87,6 +90,9 @@
 }
 @media (max-width: 699px) {
   :root[data-ui="deck"] { --page-top: 16px; --page-side: 16px; }
+  :root[data-ui="deck"] .deck-stage { inset: 0; border: 0; border-radius: 0; }
+  :root[data-ui="deck"] .settings:has(> .deck-appearance) { gap: 12px; border: 0; border-radius: 0; box-shadow: none; }
+  :root[data-ui="deck"] .deck-settings-main { gap: 12px; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
   :root[data-ui="deck"] .appearance-pattern button { min-height: 44px; }
   :root[data-ui="deck"] .appearance-slider input { height: 44px; }
 }
