@@ -26,7 +26,7 @@ import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, roveTo } from "./board.js";
-import { createDetails } from "./details.js";
+import { createDetails, canRemoveAssignment, assignmentPickup } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
@@ -415,13 +415,14 @@ function navigation() {
   void state.deck?.shell?.sync();
   state.shellSync?.();
 }
-function showError(text) {
-  state.error = text;
+function showError(text, { drawer = false } = {}) {
+  state.error = drawer ? "" : text;
   const box = root.querySelector("#screen-error");
-  if (box) { box.hidden = !text; box.innerHTML = `<div class="message error">${e(text)}<button data-action="retry">Retry</button></div>`; }
+  if (box) { box.hidden = drawer || !text; box.innerHTML = drawer ? "" : `<div class="message error">${e(text)}<button data-action="retry">Retry</button></div>`; }
   const panel = root.querySelector("#card-panel");
   panel?.querySelector("[data-panel-error]")?.remove();
-  if (panel && !panel.hidden && text) panel.insertAdjacentHTML("afterbegin", `<div class="message error" role="alert" data-panel-error>${e(text)}</div>`);
+  const target = drawer ? panel?.querySelector(".ctx-body, form.assignment-removal") || panel : panel;
+  if (target && !panel.hidden && text) target.insertAdjacentHTML("afterbegin", `<div class="message${drawer ? "" : " error"}" role="alert" data-panel-error>${e(text)}</div>`);
 }
 function title(text, actions = "") {
   root.querySelector("#title").textContent = text;
@@ -715,7 +716,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     const shown = detailsUI.show(card, { board, me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
-    panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="panel-priority"], [data-action="panel-reviewer"], [data-action="handoff"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
+    panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="panel-priority"], [data-action="panel-reviewer"], [data-action="handoff"], [data-action="remove-assignment"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
     // Keep the existing versioned ask actions and call tree reachable on card routes.
     // Only an ask waiting on this person needs these versioned answer controls; Activity already lists the rest (m10).
     const asks = card.ask != null && card.ask_to === state.me.actor ? `<ol class="log">${conversation({ ...card, events: (card.events || []).filter((ev) => ev.options || ev.kind === "decide") })}</ol>` : "";
@@ -807,6 +808,13 @@ function cancelCard() {
 function reviewForm() {
   const panel = root.querySelector("#card-panel"); panel.hidden = false;
   panel.innerHTML = `<form class="form-tile" data-form="review"><h2>Ask for a decision</h2><label>Question<textarea name="question" minlength="24" required></textarea></label><label>Context<textarea name="context" minlength="20" required>${e(state.card.status_line || state.card.body)}</textarea></label><label>Options (one per line)<textarea name="options" required></textarea></label><button class="blockbtn">Ask</button><button type="button" class="opt" data-action="cancel-form">Cancel</button></form>`;
+}
+function removeAssignmentForm(card) {
+  if (!canRemoveAssignment(card)) return;
+  detailsUI?.stop(); detailsUI = null;
+  const panel = root.querySelector("#card-panel");
+  panel.innerHTML = `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Remove assignment</h2><p>Remove the assignment from #${card.number} ${e(card.title)}?</p><p>${e(assignmentPickup(card))}</p><label>Reason (required)<textarea name="note" required></textarea></label><p class="set-note">The reason will be saved in the card's activity.</p><button class="btn confirm-removal" type="submit">Remove assignment</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></form>`;
+  panel.querySelector('textarea[name="note"]').focus();
 }
 function handoffForm(card, prefill = {}) {
   voice.stop();
@@ -1460,14 +1468,14 @@ function findCard(number) {
   const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.children, state.linked, state.open, needsCards()] : [state.open, needsCards(), state.cards, state.children, state.linked];
   return lists.flat().find((c) => c.number === number);
 }
-async function mutate(key, action) {
+async function mutate(key, action, { serverReason = false } = {}) {
   if (state.pending.has(key)) return;
   state.pending.add(key);
   root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = true; });
   try { await action(); await refresh(); }
   catch (error) {
-    if (error.status === 409) { await refresh(); showError("Card changed. Review it and try again."); }
-    else showError(error.message);
+    if (error.status === 409) { await refresh(); showError(serverReason ? error.message : "Card changed. Review it and try again.", { drawer: serverReason }); }
+    else showError(error.message, { drawer: serverReason });
   } finally {
     state.pending.delete(key);
     root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = false; });
@@ -1656,6 +1664,7 @@ root.addEventListener("click", async (event) => {
     } else if (action === "new-card") newCardForm();
     else if (action === "edit-card") newCardForm(state.card);
     else if (action === "handoff") handoffForm(state.card);
+    else if (action === "remove-assignment") removeAssignmentForm(state.card);
     else if (action === "unblock") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { blocked_by: removeBlocker(state.card, Number(b.dataset.blocker)), version: state.card.version } }));
     else if (["archive", "restore", "carry-on", "unpin"].includes(action)) await mutate(`card-${state.card.number}`, async () => {
       const request = lifecycleRequest(state.card, action, { pin: b.dataset.pin });
@@ -1691,6 +1700,7 @@ root.addEventListener("submit", async (event) => {
   if (kind === "reply" && !payload.reply?.trim()) { showError("Enter a reply."); return; }
   const blockerNumbers = kind === "blockers" ? parseBlockerNumbers(payload.blockers) : null;
   if (kind === "blockers" && !blockerNumbers) { showError("Enter the card number that blocks this card."); return; }
+  if (kind === "remove-assignment" && !payload.note?.trim()) { showError("Enter a reason for removing the assignment.", { drawer: true }); return; }
   if (kind === "handoff" && (!payload.note?.trim() || !payload.to?.trim())) { showError("Enter a recipient and a note."); return; }
   if (kind === "handoff" && form.dataset.connectionsOnly === "true" && !/^conn:\S+$/.test(payload.to)) {
     showError("Choose an agent using conn: followed by its name.");
@@ -1743,6 +1753,7 @@ root.addEventListener("submit", async (event) => {
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "review") await move(state.card.number, "review", { ...payload, options: payload.options.split("\n").map((v) => v.trim()).filter(Boolean) });
     else if (kind === "release-origin") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/approve`, { method: "POST", body: { approve: true, version: state.card.version, reason: payload.reason } }));
+    else if (kind === "remove-assignment") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { to: "anyone", note: payload.note, version: Number(payload.version) } }), { serverReason: true });
     else if (kind === "handoff") await mutate(`card-${Number(form.dataset.card)}`, async () => {
       await api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { ...payload, version: Number(payload.version), options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } });
       if (onNeeds()) state.needsUI?.pause(false);
