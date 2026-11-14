@@ -105,3 +105,20 @@ for (const [status,payload,expected] of known) {
   assert.equal((panel.innerHTML.match(/<button/g)||[]).length,1);
 }
 console.log('Deck ownership, blank/filled reason, three refusal states and unknown fallback pass');
+
+// A read started before the refusal must not replace it, even if it was foreground.
+const savedCard = state.card;
+state.route = '#/card/1'; state.screen = 0; state.panelRequest = 0;
+panel.innerHTML = 'refusal stays until Close';
+panel.querySelector = selector => selector === '.assignment-refusal' ? {} : null;
+context.api = async()=>({...card,version:8,status:'doing'});
+runInNewContext(slice('async function cardPanel(', 'function newCardForm('), context);
+await context.cardPanel(1, 0);
+assert.equal(panel.innerHTML,'refusal stays until Close');
+assert.equal(state.card,savedCard);
+let dismissed = false;
+context.root.querySelector = ()=>({remove(){dismissed=true;}});
+context.onNeeds = ()=>false;
+await context.click({target:{closest:()=>({dataset:{action:'cancel-form'}})}});
+assert.equal(dismissed,true,'Only explicit dismissal removes the refusal');
+console.log('An in-flight foreground read preserves the refusal until Close');
