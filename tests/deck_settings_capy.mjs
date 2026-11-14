@@ -136,6 +136,22 @@ test('policy rows expose only hub limits, keep wire names in titles and omit the
   assert.doesNotMatch(bare,/capy-policy-limit|<small/);
 });
 
+test('a hidden miscellaneous heading leaves its rows in the preceding group', () => {
+  const actions=[{name:'memory_save',kind:'write',mode:'allowed'}, {name:'deploy.preview',kind:'write',mode:'off'}];
+  const html=capyPermissionRows(actions,modes,'',e);
+  const groups=[...html.matchAll(/<section class="deck-permission-group">([\s\S]*?)<\/section>/g)];
+  assert.equal(groups.length,1,'no empty group boundary between adjacent rows');
+  for (const {name} of actions) assert.ok(groups[0][1].includes(`data-tool-policy-row="${name}"`));
+  assert.doesNotMatch(html,/<h3>Other actions/);
+  const named=capyPermissionRows([...actions,{name:'task_add',kind:'write',mode:'ask'}],modes,'',e);
+  assert.equal((named.match(/class="deck-permission-group"/g)||[]).length,3);
+  assert.match(named,/<h3>Other actions<\/h3>/,'keep labels when several named groups need separation');
+});
+
+test('permission search uses the short action placeholder', () => {
+  assert.equal(capyPolicyPresentation.placeholder,'Search actions');
+});
+
 test('policy copy uses Today and denied; subtitles distinguish owners and members', async () => {
   const { policySummary, settingsSubtitle }=await import('../commonplace/web/static/deck-settings-capy.js');
   assert.equal(capyPolicyPresentation.introduction(),'Ask sends the request to Today first. Deny refuses it.');

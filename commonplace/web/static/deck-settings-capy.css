@@ -4,7 +4,7 @@
 :root[data-ui="deck"] .capy-settings .deck-settings-main { gap: 14px; }
 :root[data-ui="deck"] .capy-settings .settings-section { padding: 20px; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
 :root[data-ui="deck"] .capy-settings .settings-section h2 { margin: 0 0 4px; color: var(--ink); font-size: 15px; font-weight: 600; line-height: 22px; }
-:root[data-ui="deck"] .capy-settings .settings-section > p { color: var(--ink3); font-size: 13.5px; line-height: 1.5; margin: 0 0 12px; }
+:root[data-ui="deck"] .capy-settings .settings-section > p { color: var(--ink3); font-size: 14px; line-height: 1.5; margin: 0 0 12px; }
 :root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { flex-direction: column; align-items: stretch; gap: 4px; padding: 36px max(40px, calc((100% - 1000px) / 2)) 4px; }
 :root[data-ui="deck"] .capy-settings-subtitle { grid-column: 1 / -1; margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
 :root[data-ui="deck"] .capy-settings small { color: var(--ink3); font-size: 12.5px; line-height: 1.5; }
@@ -19,13 +19,13 @@
 :root[data-ui="deck"] .capy-settings #deck-settings-nav { position: static; background: transparent; flex-wrap: wrap; overflow: visible; }
 :root[data-ui="deck"] .capy-settings #deck-settings-nav button { background: var(--s2); color: var(--ink2); border-radius: var(--radius-control); }
 :root[data-ui="deck"] .capy-settings #deck-settings-nav button[aria-current] { background: var(--s3); color: var(--ink); }
-:root[data-ui="deck"] .capy-settings [data-tool-policy] > p:first-child { margin: 0 0 12px; color: var(--text-2); font-size: 15px; line-height: 1.5; }
+:root[data-ui="deck"] .capy-settings [data-tool-policy] > p:first-child { margin: 0 0 12px; color: var(--text-2); font-size: 14px; line-height: 1.5; }
 :root[data-ui="deck"] .capy-settings .deck-permission-group { margin: 24px 0 0; padding: 0; }
 :root[data-ui="deck"] .capy-settings .deck-permission-group h3 { margin: 0 0 8px; color: var(--ink2); font-size: 13.5px; font-weight: 600; line-height: 20px; }
 :root[data-ui="deck"] .capy-settings .deck-permission-group .setting-row { display: grid; grid-template-columns: minmax(0,1fr) auto; padding-block: 14px; gap: 2px 12px; align-items: center; border-bottom: 1px solid var(--line); }
 :root[data-ui="deck"] .capy-settings .deck-permission-group > .setting-row:first-child,
 :root[data-ui="deck"] .capy-settings .deck-permission-group h3 + .setting-row { padding-top: 0; }
-:root[data-ui="deck"] .capy-settings .deck-permission-group .setting-row:last-child { border-bottom: 0; }
+:root[data-ui="deck"] .capy-settings .deck-permission-group:last-child .setting-row:last-child { border-bottom: 0; }
 :root[data-ui="deck"] .capy-settings .deck-permission-label { display: block; min-width: 0; }
 :root[data-ui="deck"] .capy-settings .deck-permission-label > span { font-size: 13.5px; }
 :root[data-ui="deck"] .capy-settings .capy-policy-limit { display: block; margin-top: 2px; color: var(--ink3); }
@@ -62,6 +62,7 @@
   :root[data-ui="deck"] .shell .center:has(.capy-settings) > .head { display: none; }
   :root[data-ui="deck"] .shell .center:has(.capy-settings) > .head h1 { display: none; }
   :root[data-ui="deck"] .capy-settings .settings-section { padding: 16px; border-radius: var(--radius-card); }
+  :root[data-ui="deck"] .capy-settings .deck-appearance { padding-bottom: 20px; }
   :root[data-ui="deck"] .capy-policy button { min-height: 44px; min-width: 44px; padding-inline: 8px; }
   :root[data-ui="deck"] .capy-settings :is(button, select, input:not([type=checkbox]), summary) { min-height: 44px; }
   :root[data-ui="deck"] .capy-settings .appearance-slider input[type="range"] { min-height: 44px; }

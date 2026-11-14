@@ -13,6 +13,10 @@ Ask sends requests to Today, and only selected Deny uses red text. Unknown store
 their exact identity behind the nearest label until another state is selected.
 Technical names appear only in row titles; retired actions remain reachable.
 Connected apps use plain labels, with scope IDs as grey monospace suffixes.
+When the miscellaneous heading is omitted, its rows join the preceding group;
+adjacent action rows retain one divider. Card subtitles share a 14px size and
+action search uses the short Search actions placeholder. Phone Appearance keeps
+20px bottom padding so its saved note remains visible at the scroll end.
 
 The sharing switch uses the existing workspace setting. Private defaults, access
 logs and owner-managed grants are listed under Always on, with explanations below
