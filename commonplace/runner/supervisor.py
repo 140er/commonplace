@@ -47,6 +47,14 @@ def bounded(call, seconds=1):
 def prepare(install):
     if not install.load():
         raise InstallError("installation missing")
+    if all(
+        install.fs.info(path) is not None
+        and any(i["path"] == path and i["kind"] == "file" for i in install.journal["items"])
+        for path in (CONTROL, CONTROL_LOCK)
+    ):
+        # Existing control state belongs to its separate sequence lock. Reading
+        # it must not race a settings worker that holds the installer lock.
+        return
     with install.locked():
         install.load()
         for path, raw in (
@@ -68,6 +76,9 @@ class Channel:
         self.config = json.loads(self.fs.read(CONFIG))
         self.transport = install.transport or Transport(self.config["hub_url"])
         self.key = public_key(self.fs.read(APPROVAL_KEY))
+        from .host_interface import HostStatus
+
+        self.host_status = HostStatus(install)
 
     def exchange(self, operation="pulse", host_status=None):
         with self.fs.parent(CONTROL_LOCK) as (parent, name):
@@ -95,6 +106,8 @@ class Channel:
                     "nonce": secrets.token_hex(16),
                     "host_status": host_status,
                 }
+                if operation == "pulse" and host_status is None:
+                    body["host_status"] = self.host_status(body["nonce"])
                 signature = self.install._key().sign(
                     canonical(body),
                     padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),

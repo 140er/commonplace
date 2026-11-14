@@ -86,8 +86,10 @@ class Runtime:
                 staged[name] = (path, source, raw)
             for directory in (PREFIX, HOME, CHECKOUTS):
                 self._directory(directory)
-            if "claude" in releases:
-                self._directory(HOME + "/.claude")
+            # Even a read-only status command may initialize its private home.
+            # Record ownership before invoking either subscription CLI.
+            for provider in set(releases) - {"host"}:
+                self._directory(HOME + "/." + provider)
             for name, (_, _, raw) in staged.items():
                 report[name] = facts_valid(
                     self.host.probe(name, releases[name], raw, self.fs.home / HOME), name

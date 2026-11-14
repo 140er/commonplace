@@ -26,3 +26,10 @@ Send alignment is measured from the arrow path to the button centre at both
 viewport sizes. Disabled opacity changes the same violet fill. Approval keeps
 its primary rest colour through hover so a stationary pointer cannot make the
 next card look busy or dim after the preceding decision exits.
+
+Activity groups only request events attributed to the same authorized bot within
+a five-second burst anchored to its first event. The individual titles remain in
+a native disclosure. Creation and review events for the same request count once. The earliest receipt identifies the group as new requests
+arrive, and open state survives view refreshes. Requests retain their classification
+when the decision queue changes; decisions and other event kinds stay separate.
+Grouping is display-only and adds no endpoint or broader read authority.

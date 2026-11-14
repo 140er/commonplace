@@ -3,8 +3,11 @@
 import subprocess
 import sys
 import textwrap
+import threading
 
 import pytest
+
+from mempalace.backends import chroma
 
 _COMMON = """
 import os
@@ -531,7 +534,7 @@ with chroma._CLIENT_REGISTRY_LOCK:
     )
 
 
-def test_pending_worker_failure_is_logged_and_later_closes_restart_it(tmp_path):
+def test_pending_worker_failure_is_logged_and_retries_without_another_close(tmp_path):
     _run_probe(
         tmp_path,
         """
@@ -561,6 +564,8 @@ if worker is not None:
 assert failed.is_set()
 assert chroma._pending_close_worker is None
 assert 'Pending Chroma client cleanup failed' in output.getvalue()
+assert closed == [first]
+assert not chroma._PENDING_CLIENT_CLOSES
 with chroma._CLIENT_REGISTRY_LOCK:
     chroma._PENDING_CLIENT_CLOSES[id(second)] = (paths[1], second)
 chroma._schedule_pending_closes()
@@ -622,3 +627,35 @@ with _inproc_sqlite.palace_db_lock(key):
 backend.close()
 """,
     )
+
+
+@pytest.mark.parametrize("queue", ["clients", "guards"])
+def test_pending_close_failures_retry_automatically_with_capped_backoff(monkeypatch, queue):
+    pending = {1: ("palace", object())} if queue == "clients" else {}
+    guards = {"palace"} if queue == "guards" else set()
+    monkeypatch.setattr(chroma, "_PENDING_CLIENT_CLOSES", pending)
+    monkeypatch.setattr(chroma, "_PENDING_GUARD_RELEASES", guards)
+    monkeypatch.setattr(chroma, "_pending_close_worker", threading.current_thread())
+    attempts, waits = [], []
+
+    def drain(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) <= 7:
+            raise RuntimeError("transient cleanup failure")
+        pending.clear()
+        guards.clear()
+        return 1
+
+    if queue == "clients":
+        monkeypatch.setattr(chroma, "_drain_pending_clients", drain)
+        monkeypatch.setattr(chroma, "_drain_pending_guard_releases", lambda **kw: 0)
+    else:
+        monkeypatch.setattr(chroma, "_drain_pending_guard_releases", drain)
+    event = threading.Event()
+    monkeypatch.setattr(event, "wait", waits.append)
+    monkeypatch.setattr(chroma.threading, "Event", lambda: event)
+    chroma._close_pending_clients()
+    assert len(attempts) == 8
+    assert waits == [0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0]
+    assert not pending and not guards
+    assert chroma._pending_close_worker is None

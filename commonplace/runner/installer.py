@@ -550,6 +550,7 @@ class Installer:
                     pass  # durable local delivery is complete; expiry also purges the relay
                 if archive is not None:
                     self.file(STATE + "/runner.pyz", archive)
+                self._initialize_lifecycle()
                 for directory in (".config", ".config/systemd", ".config/systemd/user"):
                     self.directory(directory)
                 self.file(
@@ -578,6 +579,18 @@ class Installer:
         )
         self.out("installed; setup-only; execution disabled")
         return 0
+
+    def _initialize_lifecycle(self):
+        from .supervisor import CONTROL, CONTROL_LOCK
+
+        for path, raw in (
+            (CONTROL, encoded({"sequence": 0, "stopped": False})),
+            (CONTROL_LOCK, b""),
+        ):
+            if self.fs.info(path) is None:
+                self.file(path, raw)
+            elif not any(i["path"] == path for i in self.journal["items"]):
+                raise InstallError("lifecycle path is unmanaged")
 
     def _remove_unit(self):
         item = next((i for i in self.journal["items"] if i["path"] == UNIT_PATH), None)

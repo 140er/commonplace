@@ -1,18 +1,11 @@
+import { activityEvent, groupActivity, activityHTML } from './deck-home-activity.js';
+export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
 import { addStyles, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone } from './deck-home-today.js';
 
 export const TITLE = 'Today';
 const enc = encodeURIComponent;
-export function activityText(event, bots = [], needs = {}) {
-  if (event.summary) return event.summary;
-  const title = event.data?.title, name = bots.find(bot => bot.board && bot.board === event.data?.board)?.name;
-  const waiting = needsCards(needs).some(card => card.number === event.data?.number);
-  if (!title) return event.kind === 'memory.saved' ? 'Memory was saved' : '';
-  if (event.kind === 'card.review_needed' || (event.kind === 'card.created' && waiting)) return name ? `${name} asked: ${title}` : `Waiting for your decision: ${title}`;
-  const verbs = { 'card.created': 'added', 'card.updated': 'updated', 'card.moved': 'made progress on', 'card.commented': 'replied to', 'card.decided': 'recorded a decision on' };
-  const verb = verbs[event.kind];
-  return verb ? `${name ? `${name} ${verb}` : verb[0].toUpperCase() + verb.slice(1)} ${title}` : '';
-}
+
 
 export function cardHTML(card, bots, { busy, errors, held, exiting }, escape = e) {
   const bot = bots.find(bot => bot.board && bot.board === card.board);
@@ -33,7 +26,7 @@ export function mount(context) {
   const region = name => root.querySelector(`[data-bt="${name}"]`);
   const dialog = root.querySelector('dialog'), form = dialog.querySelector('form');
   let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', focused = null, needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
-  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [];
+  const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set();
   function cards() {
     const list = needsCards(needs).filter(card => !settled.has(stamp(card)));
     for (const { card, index } of [...leaving.values()].sort((a, b) => a.index - b.index)) if (!list.some(item => item.number === card.number)) list.splice(Math.min(index, list.length), 0, card);
@@ -54,8 +47,8 @@ export function mount(context) {
       node?.getBoundingClientRect(); node?.classList.add('bt-exiting');
     }
     region('bots').innerHTML = botsHTML(bots);
-    const rows = [...activity, ...events.map(event => ({ at: event.at, text: activityText(event, bots, needs), fresh: false }))].filter(row => row.text).slice(0, 12);
-    region('activity').innerHTML = rows.length ? rows.map(row => `<li${row.fresh && Date.now() - Date.parse(row.at) < 4000 ? ` class="bt-new-activity" data-at="${e(row.at)}"` : ''}>${timeHTML(row.at, e)}<span>${e(displayText(row.text))}</span></li>`).join('') : '<li class="bt-empty">No recent activity.</li>';
+    const rows = groupActivity([...activity, ...events.map(event => event.activity)].filter(row => row?.text)).slice(0, 12);
+    region('activity').innerHTML = rows.length ? rows.map(row => activityHTML(row, e, openGroups.has(row.id))).join('') : '<li class="bt-empty">No recent activity.</li>';
     for (const row of region('activity').querySelectorAll('.bt-new-activity')) for (const animation of row.getAnimations()) animation.currentTime = Math.max(0, Date.now() - Date.parse(row.dataset.at));
     if (mark && list.some(card => String(card.number) === mark)) focus(Number(mark));
   }
@@ -81,7 +74,7 @@ export function mount(context) {
     else if ([401, 403, 404].includes(roster.reason?.status)) bots = [];
     if (feed.status === 'fulfilled') {
       if (feed.value.reset) events = [];
-      events = [...new Map([...events, ...(feed.value.events || [])].map(event => [event.seq || event.id, event])).values()].sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 12).map(event => ({ ...event, summary: activityText(event, bots, needs) }));
+      events = [...new Map([...events, ...(feed.value.events || [])].map(event => [event.seq || event.id, event])).values()].sort((a, b) => String(b.at).localeCompare(String(a.at)) || (b.seq || 0) - (a.seq || 0)).slice(0, 12).map(event => ({ ...event, activity: event.activity || activityEvent(event, bots, needs) }));
       seq = feed.value.seq || 0; eventEpoch = feed.value.epoch || '';
     } else if ([401, 403].includes(feed.reason?.status)) events = [];
     region('error').hidden = queue.status === 'fulfilled' && roster.status === 'fulfilled';
@@ -154,10 +147,12 @@ export function mount(context) {
     const choice = current.ask_options?.[Number(form.elements.choice.value)];
     void act(current, 'reply', { submit: true, reply: form.elements.reply.value, ...(form.elements.choice.value !== '' ? { choice } : {}) });
   }
+  function onGroupToggle(event) { const group = event.target; if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
+  root.addEventListener('toggle', onGroupToggle, true);
   root.addEventListener('click', onClick); form.addEventListener('submit', onSubmit); doc?.addEventListener('keydown', onKey, true);
   paint(); void refresh();
   return { refresh, stop() {
     active = false; generation++; read?.abort(); writes.forEach(controller => controller.abort()); timers.forEach(clearTimeout);
-    dialog.close(); root.removeEventListener('click', onClick); form.removeEventListener('submit', onSubmit); doc?.removeEventListener('keydown', onKey, true); host.classList.remove('deck-today-capy');
+    dialog.close(); root.removeEventListener('toggle', onGroupToggle, true); root.removeEventListener('click', onClick); form.removeEventListener('submit', onSubmit); doc?.removeEventListener('keydown', onKey, true); host.classList.remove('deck-today-capy');
   } };
 }

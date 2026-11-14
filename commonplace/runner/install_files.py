@@ -142,3 +142,14 @@ class Files:
                 self.read(path)
                 os.unlink(name, dir_fd=fd)
             os.fsync(fd)
+
+    def check_link(self, info):
+        """Validate the link itself, never its destination, for private cleanup."""
+        if not stat.S_ISLNK(info.st_mode) or info.st_uid != self.uid or info.st_nlink != 1:
+            raise InstallError("unsafe installation link ownership or type")
+
+    def remove_link(self, path):
+        with self.parent(path) as (fd, name):
+            self.check_link(os.stat(name, dir_fd=fd, follow_symlinks=False))
+            os.unlink(name, dir_fd=fd)
+            os.fsync(fd)
