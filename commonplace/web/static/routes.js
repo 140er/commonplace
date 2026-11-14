@@ -27,6 +27,11 @@ export function resolveRoute(hash, { boards = [], last, deck = false } = {}) {
   return route;
 }
 
+/** The one page a bot opens to, from the Bots list and from the rail alike: its own thread, or
+ * the Coworkers view for a bot only the Coworker registry knows.
+ */
+export const botPage = (id, coworkerOnly = false) => `#/bots/${encodeURIComponent(id)}${coworkerOnly ? "/coworkers" : ""}`;
+
 /** Nested workspace pages, separate from the existing single-segment bot IDs. */
 export function workspaceRoute(hash = "") {
   if (hash === "#/compute" || hash === "#/compute/management") return { screen: "compute", management: hash.endsWith("/management") };

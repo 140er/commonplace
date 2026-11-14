@@ -88,10 +88,8 @@
 :root[data-ui="deck"] .cb-modes [aria-pressed="true"] { background: var(--s3); color: var(--ink); }
 :root[data-ui="deck"] .cb-compose-hint { font-size: 12px; color: var(--ink3); }
 :root[data-ui="deck"] .cb-send { margin-left: auto; min-height: 34px; padding: 0 12px; border: 0; border-radius: var(--radius-control); background: var(--violet); color: var(--ink); font-size: 12.5px; }
-:root[data-ui="deck"] .cb-composer > a { display: block; margin-top: 10px; color: var(--ink2); font-size: 12.5px; }
 :root[data-ui="deck"] .capy-coworkers :is(a, button, textarea):focus-visible, :root[data-ui="deck"] .cb-bot-row:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
 :root[data-ui="deck"] .cb-composer button:disabled { opacity: 1; cursor: default; }
-:root[data-ui="deck"] .cb-send:disabled { background: var(--violet); color: var(--ink); opacity: .65; }
 /* Reuse the complete settings controller, including its permission previews. */
 :root[data-ui="deck"] .cb-sharing-root > .bots { display: contents; }
 :root[data-ui="deck"] .cb-sharing-root .bot-settings-sheet { position: fixed; inset: 0; z-index: 30; display: flex; justify-content: flex-end; padding: 8px; background: transparent; }
@@ -162,3 +160,10 @@
   :root[data-ui="deck"] .cb-sharing-root .cb-share-people li > div { flex-basis: 0; }
   :root[data-ui="deck"] .cb-share-footer .bb-opt, :root[data-ui="deck"] .cb-share-top button { min-height: 44px; }
 }
+:root[data-ui="deck"] .cb-now { margin: 0 0 8px; font-size: 13.5px; line-height: 20px; color: var(--ink2); }
+:root[data-ui="deck"] .cb-now b { color: var(--ink); }
+:root[data-ui="deck"] .cb-now a, :root[data-ui="deck"] .cb-setup a, :root[data-ui="deck"] .cb-compose-reason a { color: var(--ink2); text-decoration: underline; }
+:root[data-ui="deck"] .cb-setup, :root[data-ui="deck"] .cb-next, :root[data-ui="deck"] .cb-compose-reason { margin: 6px 0 0; color: var(--ink3); font-size: 12.5px; line-height: 20px; }
+:root[data-ui="deck"] .cb-next { display: block; }
+:root[data-ui="deck"] .cb-mode-help { margin: 8px 0 0; padding: 0; list-style: none; color: var(--ink3); font-size: 12px; line-height: 18px; }
+:root[data-ui="deck"] .cb-send:disabled { background: var(--s3); color: var(--ink3); opacity: 1; }

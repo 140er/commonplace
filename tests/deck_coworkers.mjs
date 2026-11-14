@@ -14,7 +14,7 @@ test('overview groups one divided list per section, counts real coworkers and ma
   assert.equal((html.match(/class="cb-folder"/g) || []).length, 2);
   assert.equal((html.match(/aria-label="Private bot"/g) || []).length, 1);
   assert.match(html, /1 coworker</); assert.match(html, /3 coworkers</); assert.match(html, /2<span class="sr"> unread/);
-  assert.match(html, /href="#\/bots\/a\/coworkers"/);
+  assert.match(html, /href="#\/bots\/a"/); assert.doesNotMatch(html, /href="#\/bots\/a\/coworkers"/);
   assert.doesNotMatch(capyRosterHTML({ bots: [{ id: 'x', name: 'X' }] }), /Private bot|cb-unread/);
   assert.match(capyRosterHTML({ bots: [{ id: 'p', name: 'Project', board: 'p' }] }), /1 coworker</);
 });
@@ -22,7 +22,7 @@ test('absent owns and log never produce simulated rows or panels', () => {
   assert.equal(ownedPaths(), null); assert.equal(liveLog(), null);
   const html = panelsHTML({}, {}, {});
   assert.match(html, />Working on</); assert.doesNotMatch(html, />Owns|>Live log/);
-  assert.match(html, /No work recorded yet/);
+  assert.match(html, /data-cb-now[^>]*><b>Idle<\/b> <span>Nothing is running and no earlier work is recorded\.<\/span>/); assert.doesNotMatch(html, /No work recorded yet/);
   assert.doesNotMatch(panelsHTML({}, { owns: [] }), />Owns/);
 });
 test('present projections win over legacy data, including explicit empty trees and cleared ownership', () => {
