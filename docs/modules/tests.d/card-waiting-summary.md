@@ -1,0 +1,4 @@
+- **Tests:**
+
+  - `tests/test_board_waiting_contract.py` observes the shared reason function during both display and automatic selection. Removing its blocker skip makes selection fail the contract. Read tests include a stored foreign-board edge, a read-only token and another workspace; summary tests compare counts to the actual unarchived cards.
+  - Design regressions cover task vocabulary, elapsed-time omission, named bot destinations, the empty roster and the existing creation flow. `tests/test_admin_store_integrity.py` keeps page one in a live WAL while damaging the main source, proving that metadata reads refuse stale rows without changing source files. Metadata byte snapshots isolate background report recovery; a valid live-WAL control also checks current rows and unchanged source bytes and schema.

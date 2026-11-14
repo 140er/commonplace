@@ -24,12 +24,12 @@ from commonplace.chat.types import (
 from commonplace.extensions import ToolContext, ToolError
 
 logger = logging.getLogger(__name__)
-FRONT_SYSTEM = """You are the fast front desk for this project's orchestrator.
+FRONT_SYSTEM = """You are the fast front desk for this project's Coworker.
 Answer the person's newest question or request within these front-desk limits.
 Reply in the language of the person's newest message.
 Answer in no more than four short sentences.
 You cannot start agents, change cards or make decisions.
-The orchestrator has already received the person's message; if it does not pick up a work request, the system files it as a card.
+The Coworker has already received the person's message; if it does not pick up a work request, the system files it as a card.
 Report status only from the given data.
 Point to the Decisions queue if decisions wait.
 Never ask for secrets.
@@ -215,7 +215,7 @@ def _build_context(gateway, principal, job, *, full, runner=False):
     orchestrator = front.orchestrator(gateway, principal, job.board)
     parts = ["Project: " + clean(project["name"])]
     if orchestrator is not None:
-        parts.append("Orchestrator: " + clean(orchestrator.name))
+        parts.append("Coworker: " + clean(orchestrator.name))
         parts.append(
             "Status: " + clean(orchestrator.status if orchestrator.visible else "status private")
         )

@@ -153,7 +153,7 @@ def http(env, tmp_path, monkeypatch):
         _Service(data, calls),
         _Recall(env.workspace, "other-workspace", calls),
     )
-    monkeypatch.setattr(memory_tools, "_save", lambda _ctx, args: ("memory", args["text"]))
+    monkeypatch.setattr(memory_tools, "_save", lambda _ctx, args: ("memory", args["text"], ""))
     monkeypatch.setattr(memory_tools, "_file_fact", lambda _ctx, _args: {"triple_id": 1})
     server = env.gateway.build_server("127.0.0.1", 0)
     thread = threading.Thread(
@@ -531,6 +531,11 @@ def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route):
         "memory_save": {"text": "Exact memory", "theme": "shared"},
         "fact_save": {"subject": "Avery", "predicate": "likes", "object": "tea"},
         "relaunch": {},
+        "topology_propose": {
+            "items": [{"node": "web1", "fields": {"kind": "server"}}],
+            "evidence": "hostname: web1",
+        },
+        "project_panel_set": {"panel": {"format": "commonplace.panel/1", "highlights": ["Beta"]}},
     }
     if route.tool == "card_split_done":
         from commonplace.projects import orchestration
@@ -568,9 +573,12 @@ def test_checked_rest_shapes_refuse_then_accept_fresh_header(env, http, route):
     owner_board = BoardService(env.owner.ctx)
     original_card = owner_board.task_show(card["number"])
     before = events.latest_seq(env.db, env.workspace)
+    # Canonical Space routes take the rules sequence from the header only.
     body = (
         {**bodies[route.tool], "slug": "canonical-new"}
         if route.path == "/api/spaces"
+        else dict(bodies[route.tool])
+        if route.path.startswith("/api/spaces/")
         else {**bodies[route.tool], "rules_seq": seq}
     )
     status, response, _ = http(route.method, path, body)
@@ -706,7 +714,13 @@ def test_rest_route_inventory_matches_ast_write_branches():
     from commonplace.handoff import api as handoff_api
 
     functions = {
-        "boards.rest": (rest.dispatch, rest._space_route, rest._card_route),
+        "boards.rest": (
+            rest.dispatch,
+            rest._space_dispatch,
+            rest._space_item_route,
+            rest._space_route,
+            rest._card_route,
+        ),
         "memory_tools": (memory_tools.install,),
         "handoff.api": (
             handoff_api._API.dispatch,

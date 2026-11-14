@@ -16,7 +16,7 @@ export function inertTargets(mode) {
 }
 
 export function toggleLabel({ label = "Chat", unread = 0, hasOrchestrator = true, open = false } = {}) {
-  if (!hasOrchestrator) return `${label} · no orchestrator yet`;
+  if (!hasOrchestrator) return `${label} · no Coworker yet`;
   const count = Number.isSafeInteger(unread) && unread > 0 ? unread : 0;
   return !open && count ? `${label} ${count} new ${count === 1 ? "reply" : "replies"}` : label;
 }

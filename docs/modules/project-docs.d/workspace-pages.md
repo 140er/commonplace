@@ -1,0 +1,1 @@
+- **Owns:** `docs/system/deck-workspace-pages.md` documents nested Compute management, Bot-parented Coworkers, legacy route redirects and the distinction between existing project association and a future explicit ownership model. The module's workspace-pages fragment records the complete deep-link contract.

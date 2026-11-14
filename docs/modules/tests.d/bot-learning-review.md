@@ -1,0 +1,3 @@
+- **Tests:**
+
+  - `tests/test_bots_learning_review.py` covers the review of learned items (see the `bots` module block): the list with group, source and scope, accept, reject and edit from the list, proposals and learned blocks in the thread after a run (ask and auto, nothing announced when off, repeated or dropped), the tools (not offered by default, forget needs a tap, a foreign id gets no chip, forget-everything chip, pause only pauses, the asker's own items only), the read-only app scope (lists, writes 403, only-chat 404, granting rules) and agent tokens getting 404; `tests/commonplace_bots_view.mjs` (run by `tests/test_commonplace_bots_view.py`) covers the block markup, the review sheet and every tap.

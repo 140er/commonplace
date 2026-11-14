@@ -1,6 +1,6 @@
 # Optional machine runner
 
-The owner [Admin overview](admin.md) shows recorded machine and worker contact separately, unverified attestation, and machine grants. It sends no runner probe or control request.
+The owner [Admin overview](admin.md) shows recorded machine and worker contact separately, unverified attestation, and machine grants. Its overview sends no runner probe or control request; the separate [runner block](#owner-screen) manages machines through the owner routes below. The owner can add and remove a machine's requesters in the overview's runtime panel; each edit adds or removes one requester through the owner-only `POST /api/runners/<machine-id>/requesters` and `DELETE /api/runners/<machine-id>/requesters/<connection-id>`. Both must send `If-Match: <grant_version>` (428 when it is missing, 409 when it is stale); see [Admin](admin.md) for the rules.
 
 The runner lets a signed-in workspace owner or a granted coordinator request an agent start for a card the machine's worker could claim. It is inert by default: no machine means no change; an `unbound` machine refuses every start, including the owner's, and leases return 204. No config or service activation ships enabled. D1–D3 below remain open.
 
@@ -8,11 +8,47 @@ The runner lets a signed-in workspace owner or a granted coordinator request an 
 
 Only a signed-in person owner can enroll, attest, change grants, rotate credentials or revoke a machine through `/api/runners`. Enrollment returns separate machine and worker tokens once. Attestation records an owner statement as `owner_attested`, always with `verified:false`: **attested, not verified**. Topic or wing changes, worker rotation and revocation reset the binding to `unbound`; queued and leased jobs are cancelled on the next sweep. Each reset increments a binding epoch once; reattestation cannot revive jobs carrying the old epoch. Changing an already-attested provider returns 409 `provider_change_requires_reset`: explicitly reset by changing topics/wings, review the grant, then confirm the new provider. Same-provider confirmation and project-only edits preserve the epoch. Stop old hub processes before upgrading and restarting; mixed-version reset writers cannot uphold the epoch fence.
 
-Coordinators are CLI-created trusted PATs explicitly listed in the machine's `requesters`; OAuth and ordinary standard or untrusted connections do not qualify. A start checks both the requester's card access and whether the worker could claim the unassigned, released `todo` card in its write wing. It does not assign or claim the card.
+Coordinators are CLI-created trusted PATs explicitly listed in the machine's `requesters`; OAuth and ordinary standard or untrusted connections do not qualify. A start checks both the requester's card access and whether the worker could claim the unassigned, released `todo` card on a board whose wing is in the machine's grant. It does not assign or claim the card.
 
-The worker PAT bounds tools and wing access. Its tools are `task_show`, `task_take_next`, `task_update`, `task_comment`, `task_heartbeat`, `task_handoff` and `ask`; it cannot coordinate starts or perform owner actions. The fixed `SPAWN_MESSAGE` tells the agent to claim only the requested card, stop if refused, and touch no other card. Card scope from the spawn message is guidance only. A worker can claim any startable todo card in its write wing. Also, a card manually assigned to the worker by an owner remains editable outside its write wing under the existing assigned-card rule. The runner never assigns cards.
+Persistent Coworker sessions use a separate job and thread binding from
+per-card starts. The existing runner loop watches boards with owner-accepted
+`[runner]` configs, without a `card.todo` trigger or splitting switch. See
+[persistent board sessions](orchestrator.md#persistent-board-session) for owner
+stop/resume, explicit blockers and uncertainty handling. No service is activated
+automatically and the host retains its existing credential scope.
+
+The worker PAT bounds tools and wing access (the card tools, `ask`, and `topology_propose` and `topology_discover_site`, which work only when the grant includes the `topology` wing; see `docs/topology.md`): it reads and writes exactly the wings in its machine grant (the first is its default write wing) and nothing else, through any tool. A start on a board outside the grant is refused with `no: card is not startable: outside_worker_wing: board wing '<wing>' is not in the machine's granted wings '<a>', '<b>'`. Its tools are `task_show`, `task_take_next`, `task_update`, `task_comment`, `task_heartbeat`, `task_handoff` and `ask`; it cannot coordinate starts or perform owner actions. The fixed `SPAWN_MESSAGE` tells the agent to claim only the requested card, stop if refused, and touch no other card. Card scope from the spawn message is guidance only. A worker can claim any startable todo card on a granted wing's boards. Also, a card manually assigned to the worker by an owner remains editable outside its granted wings under the existing assigned-card rule. The runner never assigns cards.
+
+### Card context in the launch message
+
+Every lease also carries `card_context`: the card as the machine's worker connection may read it (`task_show` under the worker's own policy), which the runner appends to the launch message after a blank line. A started agent therefore begins with the real card, not only its number. The text is built in one place, `commonplace/runner/start_context.py`:
+
+- The card's fields, title and body are always there, verbatim.
+- Then, in this order and only while the block stays inside the budget: asks, decisions and handoff notes; comments; blockers and related cards; linked evidence (repository, branch and pull request fields, linked memories); the text of up to five linked memories, when the worker connection is allowed to read memories (the default worker has card tools only, so it gets the memory's id and title). Comments and decisions are listed newest first.
+- Nothing is shortened or summarised. An item that does not fit is left out whole, and its section ends with a line such as `[cut: 9 of 12 comments left out to fit the start budget; read them with task_show(task=57)]`.
+- User text is JSON-quoted, as `memory_get` does, so every byte is recoverable and stored text cannot pose as part of the launch message.
+
+The budget is `COMMONPLACE_START_CONTEXT_TOKENS` on the hub (default `6000`; `0` sends no card context), counted as four UTF-8 bytes per token. A title and body larger than the budget are still sent whole. The launch message limit of 120,000 characters is a hard bound: if the title and body do not fit next to the role prompt, the body is cut whole and the marker says so. If the card cannot be read when the job is leased, the lease still succeeds and the context is one line telling the agent to read the card with `task_show`. A runner that does not know `card_context` ignores it and launches as before.
+
+This is the one place where user content reaches the machine credential: before, a lease held identifiers only and the card was read by the worker token alone. The context is limited to the started card, to what that machine's worker may read, and to the single lease response. Set the budget to `0` to keep leases identifier-only.
+
+A machine enrolled before multi-wing grants keeps a worker PAT limited to its first wing until the owner saves its wings once (the screen's "Save wings", or `PATCH` with the same wings): that rewrites the worker policy without resetting the binding.
 
 The T3 grant supplied through `t3_grant_env` is outside the worker PAT ceiling. It reaches whatever T3 permits; local runtime ceilings constrain an honest runner only. The default runtime ceiling is `approval-required`; a higher local ceiling needs `runtime_ack == "<label>:<mode>"`, and requests must also fit the hub grant.
+
+## Owner screen
+
+A workspace owner manages machines in the **Runner machines** block at the bottom of the Admin page (`#/admin`), using only the owner routes above; nobody else sees it.
+
+- **List.** `GET /api/runners` shows each machine's label, state, binding, projects, topics and wings. Credentials are never listed.
+- **Add runner.** Label, projects, topics, wings (picked from the readable, non-private wings), maximum runtime mode and maximum in flight go to `POST /api/runners`. The machine and worker tokens appear once in a panel with copy buttons and a warning that they are not shown again. The page keeps them only in that panel: nothing goes to storage or logs, they are not part of any list redraw, and **Done** (or leaving the page, signing out or an expired session) removes them.
+- **Attest.** Per machine: topics, provider instance id and the worker connection id (prefilled) go to `POST /api/runners/<id>/attest`. The result is still your statement, not verified.
+- **Setup note.** The token panel also says where each token goes (`token_env` for the machine token, the worker's Commonplace MCP entry for the worker token), to set `hub_url` and to run `runner check`. The note contains no token.
+- **Revoke.** Per live machine: **Revoke** asks once, naming the machine; **Revoke machine** sends `DELETE /api/runners/<id>`. Both tokens stop working at once and queued and leased starts are cancelled; a revoked row offers nothing further, and a token panel still open for that machine is cleared.
+- **Edit projects and runtime.** Per live machine: the current projects and maximum runtime mode are shown and saved with `PATCH /api/runners/<id>` and a **partial** body of just `{projects, max_runtime_mode}`, with `If-Match` set to the `grant_version` the page read. No `wings` or `topics` key is sent, so the machine stays `owner_attested` (a binding reset fires only when topics or wings change); the grant version still goes up by one. A stale version is a 409 (the list is reloaded; save again), an invalid value a 400, and both show the server's message. The form warns that in `auto` and `full-access` the machine's agents run without per-command approval.
+- **Edit wings.** Per machine: `PATCH /api/runners/<id>` with the chosen wings. Changing wings (or topics) resets the machine to `unbound`, cancels its queued and leased starts and requires a new attestation; saving the same wings only refreshes the worker's access.
+
+Requesters and model choices are managed elsewhere ([projects](projects.md)).
 
 ## Local checks and checkout
 
@@ -26,20 +62,79 @@ The fixed workspace strategy is `{"type":"root"}`, **unverified until D2**. Its 
 
 `max_in_flight` (default 1, range 1–4) counts this machine's `leased`, `starting` and `uncertain` jobs, plus `started` jobs held for `STARTED_HOLD_SECONDS = 3600` after `started_at`. Lease selection enforces both that machine cap and one in-flight agent per project. This bounds “agents started in the last hour or starting.” An agent running past the one-hour hold is uncounted, so another agent may start in its checkout. A real end-of-thread bound needs D3. The hold is fixed, not a config key; hourly starts and the queue have separate limits.
 
-An ambiguous launch becomes `uncertain`, never automatically queued again. Starting and its retries serialize fresh binding checks through the guarded write and commit in both orchestration modes. A reset committed first refuses the start (409); one committed after the write makes that already-starting job uncertain on the next sweep, without cancellation or relaunch. NULL legacy job epochs are also refused. It keeps its machine/project slot and blocks another start on the card. An owner sees it with `card_start_status(task)` (or `GET /api/card-starts?task=<n>`), and inspects the machine's grant and binding through `GET /api/runners`. A person owner must investigate and use `card_start_resolve(job, outcome, thread_id?)`: `started` requires a thread id; `failed` releases the slot. A late `started` result from the same machine with its stored lease token can also resolve uncertainty.
+For accepted agent limits through 20, the existing memory guard below retains its behavior.
+
+**Memory guard.** Before it reports `starting`, the runner reads the machine's available memory (`MemAvailable` on Linux). Under the optional config key `min_free_memory_mb` (default 256, `0` disables, up to 1048576) it reports `failed` with code `low_memory` and launches nothing. This is a point-in-time check of card starts only: it reads memory once per start, reserves nothing for an agent that has just started (several starts can pass together) and does not cover chat answers, so it lowers the risk of overloading a machine but does not rule out the OOM killer. The refusal is the job's `outcome_code`, visible through `card_start_status`; the card stays in Todo. An unreadable probe (non-Linux hosts) never blocks a start. Existing configs without the key use the default.
+
+For accepted limits above 20, additional startup headroom checks apply only to known measurements. The runner reserves 512 MiB and one idle CPU core for 120 seconds across clients sharing its private journal, including uncertain launch outcomes. This also covers Coworker session launches and continuations. Missing or expired measurements do not count as resource shortages, and reporting failures do not block legacy starts. Machine grants and hourly limits still apply. These checks reduce startup overload risk without imposing process memory limits or guaranteeing protection from later memory growth.
+
+An ambiguous launch becomes `uncertain`, never automatically queued again. The runner keeps what the launch bridge printed (exit code, stdout and stderr, credentials and long token-like strings redacted, 4,000 characters at most) in `<journal_dir>/<job_id>.launch.log`, mode 0600, so the reason (for example `runtime_mode_escalation_denied`: the T3 grant's ceiling is below the job's runtime mode) can be read afterwards; the journal ignores the file. Starting and its retries serialize fresh binding checks through the guarded write and commit in both Coworker management modes. A reset committed first refuses the start (409); one committed after the write makes that already-starting job uncertain on the next sweep, without cancellation or relaunch. NULL legacy job epochs are also refused. It keeps its machine/project slot and blocks another start on the card. An owner sees it with `card_start_status(task)` (or `GET /api/card-starts?task=<n>`), and inspects the machine's grant and binding through `GET /api/runners`. A person owner must investigate and use `card_start_resolve(job, outcome, thread_id?)`: `started` requires a thread id; `failed` releases the slot. A late `started` result from the same machine with its stored lease token can also resolve uncertainty.
 
 `card_start_cancel` on `uncertain` returns 409 for everyone, including the owner: `start outcome is uncertain; a workspace owner must resolve it`. Cancelling a `starting` job only records the request; it does not stop a remote thread or free the slot. Resolve spans the control and workspace databases: the control audit commits before the runner resolution, so a crash between commits can leave an audit entry without the resolution. A completed resolution retains `resolved_by` and `resolved_at`.
 
-## Boards with an orchestrator config
+## Run ledger
 
-A board whose owner accepted a live orchestrator config with a `[runner]`
+Every start is one run and has one ledger row in the workspace's `runner.sqlite3` (`run_ledger`), written in the same transaction as the start itself. The row carries the card, board, project, topic, machine, worker connection, requester and (for a config-driven start) the pinned model. Its status follows the start (`queued`, `leased`, `starting`, `started`, `failed`, `uncertain`, `cancelled`) until the machine reports how the run ended. Starts made before the ledger existed get their row when the store is next opened; their usage stays unknown.
+
+The hub never measures or estimates usage. Only the run's own enabled machine can report it, for a run in `started`:
+
+```
+POST /api/runner/usage
+{"job_id": "<job>", "status": "completed", "log_ref": "<url or id>",
+ "input_tokens": 5000, "output_tokens": 800, "cost_micros": 420000, "currency": "USD"}
+```
+
+- Every field except `job_id` is optional, and at least one is needed. A field left out keeps its stored value; a value nobody reported stays `null` and the app says "not reported".
+- `input_tokens` and `output_tokens` are the run's totals so far (whole numbers, 0 to 10^15) and replace the stored totals.
+- `cost_micros` is the cost in millionths of the currency unit and always comes with `currency`, three capital letters. The hub holds no prices: the cost is whatever the agent or its provider told the machine.
+- `log_ref` (up to 512 printable characters) points at the run's log: a web address or an id such as a thread id. The hub stores the pointer, never the log.
+- `status` is the run's end: `completed`, `errored` or `stopped`. It is set once, with `ended_at` as the time the hub received it. The same status again is accepted; another one answers 409 `run already ended`. Totals may still be corrected after the end.
+- A run that has not started answers 409 `run has not started`. A job of another machine answers 404, as does any caller that is not an enabled machine. An invalid report answers 400 and changes nothing.
+
+On the machine, whatever starts or watches the agent reports with the runner's own config and machine credential:
+
+```
+python -m commonplace runner report --config F --job <job> \
+  [--status completed|errored|stopped] [--log-ref R] \
+  [--input-tokens N] [--output-tokens N] [--cost-micros N --currency CUR]
+```
+
+It exits 0 when recorded, 4 for an invalid config or report, 3 for a revoked credential and 5 when the hub refuses or cannot be reached. The runner itself does not watch threads (D3), so nothing is reported unless this command or the route is called.
+
+`card_start_status(task)` and `GET /api/card-starts?task=<n>` return the ledger of each start under `run` (`status`, `started_at`, `ended_at`, `log_ref`, `input_tokens`, `output_tokens`, `cost_micros`, `currency`, `reported_at`, `model_provider`, `model`), with the same visibility as the start: the owner sees all, a requester its own. The card panel's Runs list shows it next to each started run. A reported end does not change the start job, capacity or the card.
+
+## Start from the card panel
+
+The Runs section of a card has a **Start agent**
+button for a signed-in owner. What it offers comes from `GET /api/card-starts/options?task=<n>`
+(owner only, read-only; anyone else gets 403 and sees no button):
+
+- On a board with an accepted `[runner]` config: one button. The start uses the config's machine,
+  project and topic.
+- On a board without one: a machine select, and the projects and topics that machine allows. A
+  machine that is revoked, not attested, not usable by the owner, or whose wings do not cover the
+  card is not offered.
+- When nothing can be started the answer carries a `refusal` code (`no_machine`,
+  `machine_unavailable`, `origin_not_released`, `not_writable`, ...) and the panel says what to do
+  next. A card that is not Todo, is assigned, blocked, waiting on a person or has an open proposal
+  gets no button and no message. Refusals of the start itself (an active start, the 24-hour rule,
+  the hourly limit, the agent cap) show in words too, using the `code` of the response.
+
+<a id="boards-with-an-orchestrator-config"></a>
+
+## Boards with a Coworker config
+
+A board whose owner accepted a live Coworker config with a `[runner]`
 table ([orchestrator.md](orchestrator.md)) changes how starts reach this
 runner. Boards without one behave exactly as described above.
 
 - **Requests.** `card_start` (MCP and `POST /api/card-starts`) is accepted only
   from the person owner; a coordinator PAT gets `no: use orch_card_start` and
-  uses the orchestrator lease instead. Cancelling a job that belongs to an
-  orchestrator step through `card_start_cancel` is person-owner only.
+  uses the Coworker lease instead. The owner may send the card alone
+  (`{"task": <n>}`): machine, project and topic then come from the config, and
+  values that are sent must still equal it (`config_mismatch`). A refused start
+  answers `{"error", "code"}` where the refusal has a stable code. Cancelling a job that belongs to a
+  Coworker step through `card_start_cancel` is person-owner only.
   Separately, an owner or the local CLI can void the step: this atomically
   cancels a queued or leased job and permanently retires the old step key.
   Starting, uncertain and started jobs are left untouched; a fresh attempt
@@ -56,7 +151,8 @@ runner. Boards without one behave exactly as described above.
   channel, the step key and the resolved model provider and model. Its lease
   payload adds `message` (`SPAWN_MESSAGE`, then the role's prompt, then its
   workflow steps) and `modelSelection {instanceId: provider, model}`; the runner
-  sends both to `t3_thread_launch`. When the runner reports `starting`, its
+  sends both to `t3_thread_launch`, with `card_context` appended to the message
+  (see *Card context in the launch message*). When the runner reports `starting`, its
   pre-transaction card snapshot refuses an existing `plan` label with a cancelled
   job and outcome `plan_pending`. A label added after that snapshot can miss this
   check. Whether T3 honours `modelSelection` at runtime is part
@@ -222,9 +318,9 @@ guarantee that every sensitive detail is detected.
 Chat answers require front answers enabled with `provider: "none"`. An
 explicit server provider takes precedence, with no fallback in either direction;
 server-key mode stays off by default. The relay steps aside while the project's
-main orchestrator is connected, wakeable through a space webhook and used within
+main Coworker is connected, wakeable through a space webhook and used within
 the last 600 seconds. Local `"relay_always": true` overrides that precedence;
-its default is false. A later public orchestrator reply can coexist with the
+its default is false. A later public Coworker reply can coexist with the
 private runner answer.
 
 | Limit | Value |
@@ -254,20 +350,20 @@ config and 5 for a hub failure in `--once` mode.
 ## Owner checklists (open; no agent performs any item)
 
 **D1–D3 (decisions).**
-- [ ] **D1 worker identity.** The owner decides whether "attested, not verified" is acceptable. The setup would be a dedicated T3 provider instance whose Commonplace MCP entry uses the worker token, mapped to the granted topics, recorded through attest. Anything stronger needs a future T3 per-thread credential field. The card goal is not done until D1 is decided. Until then every runner child shares the machine's worker PAT, so orchestrator evidence and project limits cannot tell children apart.
+- [ ] **D1 worker identity.** The owner decides whether "attested, not verified" is acceptable. The setup would be a dedicated T3 provider instance whose Commonplace MCP entry uses the worker token, mapped to the granted topics, recorded through attest. Anything stronger needs a future T3 per-thread credential field. The card goal is not done until D1 is decided. Until then every runner child shares the machine's worker PAT, so Coworker evidence and project limits cannot tell children apart.
 - [ ] **D2 launch shape.** One owner-approved real `t3_thread_launch` capture on an owner machine. It settles `structuredContent.threadId/runId/status`, `workspaceStrategy` `root` vs. `existing_worktree`, `modelSelection`, and what "modes cannot exceed yours" means for the T3 grant. Record the artifact path. An optional later detective read-back (the `t3.py:115–148` pattern) is design only.
-- [ ] **D3 recovery.** Capture the `thread list --json` keys before any reconcile. Until then, `uncertain` goes to a person resolve, and an orchestrator that finds no thread titled `[commonplace-job:<id>]` treats that as no proof: the step goes to `needs_person`.
+- [ ] **D3 recovery.** Capture the `thread list --json` keys before any reconcile. Until then, `uncertain` goes to a person resolve, and a Coworker that finds no thread titled `[commonplace-job:<id>]` treats that as no proof: the step goes to `needs_person`.
 
 **Activation (F10; strict order, each a separate owner act).**
 1. [ ] D1 decision recorded.
 2. [ ] D2 capture artifact path recorded; the parser contract **and the `root` workspace strategy** re-checked against it (OD-B).
 3. [ ] T3 provider instance and topic mapping set up by the owner; T3 grant scoping known, or its absence accepted.
-4. [ ] Only then: a real `POST /api/runners` enrollment and `attest` in the owner's own session.
+4. [ ] Only then: a real enrollment (`POST /api/runners`, or the Admin runner block) and `attest` in the owner's own session.
 5. [ ] Runner config written by the owner (0600), with `shared_checkout_ack` for each project only after the owner accepts that agents work in that project's checkout (or points the project at a dedicated clone, OD-B); `runner check` exit 0. Any service install or activation is a separate approval.
 
 ### Optional workspace admission
 
-When agent orchestration is enabled, claims, start creation and configured starts
+When agent Coworker management is enabled, claims, start creation and configured starts
 share a runner `BEGIN IMMEDIATE` lock and a deduplicated project count. Claims hold
 that lock until their card transaction commits or rolls back, including before any
 machine is enrolled. Admission reads control settings and worker identities before
@@ -300,4 +396,8 @@ snapshot precedes the sweep and runner-lock wait. Card/label, requester write-po
 coordinator or switch changes in that gap can therefore allow a launch that the
 worker later refuses when it tries to claim the card. A switch from off to on in
 the gap also uses the earlier snapshot for the coordinator check.
-See [project orchestration](projects.md#opt-in-agent-orchestration) for owner consent.
+See [project Coworker management](projects.md#opt-in-agent-orchestration) for owner consent.
+
+## Cost events and sums
+
+Each usage report that touches tokens or cost, and each report that ends a run, appends a cost event (`cost_events`, same file as the ledger); `{"job_id": "<job>", "cost_unknown": true}` (or `runner report --cost-unknown`) says the machine cannot tell the cost, excludes `cost_micros`, and answers 409 `cost already reported` once a cost exists. A run that ends with no cost is recorded as unknown. `costs_summary` and `GET /api/costs[?since=&until=]` return sums per workspace, agent connection, project, board and card over the workspace window (default: UTC calendar month; the owner changes it with `PUT /api/settings/costs`), with unknown-cost runs counted and listed apart, never as zero. Readers see the runs of boards their token can read. Design and slice 2 choices: `docs/system/cost-ledger.md`.

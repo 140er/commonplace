@@ -19,6 +19,10 @@ from commonplace.gateway import Gateway
 from commonplace.workers import WorkerSupervisor
 from tests.test_commonplace_mailer import smtp_env as smtp_env, smtp_server as smtp_server
 
+# Ends a hung request or a wait that never comes true. It is not a budget: a
+# host busy with other work must not count as a hung gateway or mail worker.
+HANG_GUARD_S = 30
+
 
 class Mailbox:
     configured = True
@@ -38,7 +42,7 @@ class Mailbox:
             delivered(self.auth)
         with self.changed:
             count = index + 1 if index >= 0 else -index
-            assert self.changed.wait_for(lambda: len(self.messages) >= count, timeout=3)
+            assert self.changed.wait_for(lambda: len(self.messages) >= count, timeout=HANG_GUARD_S)
         return re.search(r"https?://\S+", self.messages[index][2])[0]
 
 
@@ -46,7 +50,9 @@ def delivered(auth):
     """Wait for processing, including failure cleanup, with a finite watchdog."""
     pending = auth._pending
     with pending.all_tasks_done:
-        assert pending.all_tasks_done.wait_for(lambda: pending.unfinished_tasks == 0, timeout=3)
+        assert pending.all_tasks_done.wait_for(
+            lambda: pending.unfinished_tasks == 0, timeout=HANG_GUARD_S
+        )
 
 
 @contextmanager
@@ -118,7 +124,7 @@ class Client:
             hdrs["Content-Type"] = "application/json"
         if cookie:
             hdrs["Cookie"] = cookie
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=HANG_GUARD_S)
         try:
             conn.request(method, path, body=raw, headers=hdrs)
             response = conn.getresponse()
@@ -218,7 +224,9 @@ def refused(response):
     assert "Set-Cookie" not in headers and "Location" not in headers
     assert headers["Cache-Control"] == "no-store"
     assert headers["Referrer-Policy"] == "no-referrer"
-    assert content == b"Sign in link is invalid or expired"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"This sign-in link is invalid or expired" in content
+    assert b'href="/app/?signin=expired">Retry</a>' in content
 
 
 def test_fresh_signup_isolation_logout_and_closed_signup_relogin(fresh, monkeypatch, caplog):
@@ -608,12 +616,48 @@ class SQLBoundary:
 
 
 def observe_sql(client):
-    # Stop unrelated dispatch before measuring the email-delivery lifecycle.
+    # Stop unrelated dispatch before measuring the email-delivery lifecycle:
+    # webhook delivery, and the answer-hold worker, which reads answer_holds
+    # once a second until the database closes. Either could otherwise run SQL
+    # inside the window a test declares closed.
     client.gateway.webhooks.stop()
+    hold_worker = getattr(client.gateway, "hold_worker", None)
+    if hold_worker is not None:
+        hold_worker.stop()
     with client.db._lock:
         boundary = SQLBoundary(client.db._conn)
         client.db._conn = boundary
     return boundary
+
+
+def test_sql_boundary_window_gets_no_background_hold_tick(fresh, monkeypatch):
+    client, _ = fresh()
+    worker = client.gateway.hold_worker
+    window = {"open": False}
+    ticked_inside = threading.Event()
+    original = worker.run_once
+
+    def run_once(*args, **kwargs):
+        inside = window["open"]
+        try:
+            return original(*args, **kwargs)
+        finally:
+            if inside:
+                ticked_inside.set()
+
+    monkeypatch.setattr(worker, "run_once", run_once)
+    boundary = observe_sql(client)
+    boundary.forbidden = True
+    window["open"] = True
+    # observe_sql() stops the worker, so on this helper nothing is left to
+    # tick. With a helper that left it running (as an earlier version did),
+    # the wake below forces the tick a loaded host produces at random, inside
+    # the window, and its SELECT shows up as late SQL.
+    if worker.thread is not None and worker.thread.is_alive():
+        worker._wake.set()
+        assert ticked_inside.wait(HANG_GUARD_S)
+    assert not boundary.late
+    assert worker.thread is None or not worker.thread.is_alive()
 
 
 def test_known_and_unknown_return_before_held_delivery(fresh, monkeypatch):
@@ -1084,3 +1128,27 @@ def test_close_with_revocation_sql_failure_reports_error_and_never_uses_late_sql
         with closing(sqlite3.connect(client.db.path)) as conn:
             # Failed cleanup is reported, never described as successful revocation.
             assert conn.execute("SELECT token_hash FROM email_challenges").fetchone()[0] == active
+
+
+def test_browser_email_requests_keep_sent_and_throttled_recovery_in_the_app(fresh):
+    client, _mailbox = fresh()
+    for _ in range(3):
+        status, headers, content = client.request(
+            "/app/auth/email",
+            method="POST",
+            data={"email": "reader@example.test"},
+            headers={"Accept": "text/html"},
+        )
+        assert status == 202
+        assert headers["Content-Type"] == "text/html; charset=utf-8"
+        assert b"Check your email" in content and b'href="/app/">Retry</a>' in content
+    status, headers, content = client.request(
+        "/app/auth/email",
+        method="POST",
+        data={"email": "reader@example.test"},
+        headers={"Accept": "text/html"},
+    )
+    assert status == 429 and headers["Retry-After"] == "300"
+    assert b"Too many sign-in attempts" in content
+    assert b'href="/app/?signin=throttled">Retry</a>' in content
+    assert "Set-Cookie" not in headers

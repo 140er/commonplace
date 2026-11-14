@@ -1,0 +1,3 @@
+### Reservation removal in the card drawer
+
+- Reserved Todo cards use the existing versioned handoff to `anyone` with its required reason and unchanged audit event. Active claims and unapproved proposals do not offer removal. Deck offers the action only to workspace owners, uses a white confirmation pill and empty required Reason, and shows Nobody yet with project pickup guidance after removal. Refusals replace the form with one Close button: known authority/origin reasons use plain copy, concurrent starts name the current worker, and unknown errors retain server text. Closing rereads the card; background updates preserve the refusal until dismissal. Classic presentation is unchanged.

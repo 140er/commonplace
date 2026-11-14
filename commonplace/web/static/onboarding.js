@@ -28,7 +28,7 @@ export function onboardingView({ first = true, name = "" } = {}) {
       <h2 id="create-project-heading">${first ? "Create your first project" : "Create project"}</h2>
       <p class="lead" id="create-project-intro">A project is one board, one chat and one memory. You can make more later.</p>
       <label class="lbl">Project name<input class="field" name="name" value="${e(name)}" maxlength="1000" required autofocus></label>
-      <div class="callout"><h3>No agent yet? That's fine.</h3><span>You can add cards and write in chat right away. When you connect your first agent, it becomes this project's orchestrator (its lead agent) automatically.</span></div>
+      <div class="callout"><h3>No agent yet? That's fine.</h3><span>You can add cards and write in chat right away. When you connect your first agent, it becomes this project's Coworker (its lead agent) automatically.</span></div>
       <p role="alert" hidden></p>
       <div class="acts"><button class="btn ghost" type="button" data-action="cancel-project">Cancel <kbd>Esc</kbd></button><button class="btn primary" type="submit">Create project <kbd>↵</kbd></button></div>
     </form>

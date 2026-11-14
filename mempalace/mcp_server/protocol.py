@@ -735,10 +735,18 @@ def _tool_catalog_entry(name: str, tool: dict) -> dict:
     ``annotations.readOnlyHint`` to admit inspection tools without a
     host-side allowlist.
     """
+    schema = tool["input_schema"]
+    properties = schema.get("properties", {})
+    hidden = [key for key, prop in properties.items() if prop.get(SERVER_ONLY_SCHEMA_KEY)]
+    if hidden:
+        schema = {
+            **schema,
+            "properties": {k: v for k, v in properties.items() if k not in hidden},
+        }
     entry = {
         "name": name,
         "description": tool["description"],
-        "inputSchema": tool["input_schema"],
+        "inputSchema": schema,
     }
     if _tool_capabilities.classify_tool(name) == "read":
         entry["annotations"] = {"readOnlyHint": True}
@@ -836,6 +844,8 @@ _COERCERS = {
 # not read as true or as absent. For switches that widen what is mined or
 # searched, a sloppy value must not opt in.
 STRICT_SCHEMA_KEY = "x-mempalace-strict"
+# A property the Commonplace gateway sets; accepted on calls, never listed.
+SERVER_ONLY_SCHEMA_KEY = "x-mempalace-server-only"
 _STRICT_TYPES = {
     "boolean": bool,
     "string": str,
@@ -1121,6 +1131,10 @@ def _describe_device_safe() -> str:
 
 def _maybe_eager_warmup_embedder() -> None:
     """Pre-load embedder + HNSW segment at startup when ``MEMPALACE_EAGER_WARMUP`` is truthy.
+
+    Applies only to directly launched workers (stdio or a local server).
+    The gateway excludes this variable from spawned workspace workers, so
+    setting it on the gateway or container does not enable their warmup.
 
     The first MCP tool call that touches chromadb (``diary_write``,
     ``add_drawer``, ``search``) otherwise pays two compounding cold-load

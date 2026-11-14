@@ -17,7 +17,7 @@ from html import escape
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import urlsplit
 
-from .. import import_grant, sessions, urls
+from .. import bots_grant, decide_grant, import_grant, person_actions, sessions, urls
 from . import store
 from .http import OAuthError, body, callback, query, redirect, send, send_error, send_json
 from .store import OAuthAuthenticator
@@ -37,11 +37,14 @@ a.provider+form{margin-top:24px}a.provider:focus-visible{outline:2px solid #e8e9
 """
 
 
-def _page(h, content: str, *, status=200, headers=()) -> None:
+def _page(
+    h, content: str, *, status=200, headers=(), form_origin=None, referrer_policy="no-referrer"
+) -> None:
     style_hash = base64.b64encode(hashlib.sha256(_CSS.encode()).digest()).decode("ascii")
+    form_action = "'self'" + (" " + form_origin if form_origin else "")
     csp = (
         "default-src 'none'; style-src 'sha256-" + style_hash + "'; "
-        "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        f"form-action {form_action}; base-uri 'none'; frame-ancestors 'none'"
     )
     html = (
         '<!doctype html><html lang="en"><meta charset="utf-8">'
@@ -53,8 +56,51 @@ def _page(h, content: str, *, status=200, headers=()) -> None:
         status,
         html.encode("utf-8"),
         media="text/html; charset=utf-8",
+        referrer_policy=referrer_policy,
         headers=(("Content-Security-Policy", csp), ("X-Frame-Options", "DENY"), *headers),
     )
+
+
+# Private-use redirect of the cmmn iOS app (RFC 8252 section 7.1): this exact string only, never a
+# scheme or pattern. Clients here are public and PKCE S256 is required for every authorization.
+NATIVE_REDIRECTS = frozenset({"cmmn://auth/callback"})
+
+
+def _redirect_origin(uri) -> str | None:
+    """Serialize parsed URL parts, never untrusted authority text, into CSP."""
+    if uri in NATIVE_REDIRECTS:
+        return urlsplit(uri).scheme + ":"
+    try:
+        parts = urlsplit(uri)
+        host = parts.hostname
+        port = parts.port
+        if not host or parts.username is not None or parts.password is not None:
+            return None
+        if port is not None and not 0 < port < 65536:
+            return None
+        # urlsplit accepts an empty port and punctuation in DNS hostnames.
+        if parts.netloc.endswith(":"):
+            return None
+        host = host.lower()
+        # CSP host-source has no IPv6-literal syntax. Do not allow a redirect
+        # that would need a broader scheme source to complete browser consent.
+        if len(host) > 253 or not all(
+            re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in host.removesuffix(".").split(".")
+        ):
+            return None
+        last_label = host.removesuffix(".").rsplit(".", 1)[-1]
+        if parts.scheme == "https" and re.fullmatch(r"[0-9]+|0x[0-9a-f]*", last_label):
+            if str(ipaddress.IPv4Address(host)) != host:
+                return None
+        if parts.scheme != "https":
+            if parts.scheme != "http":
+                return None
+            if host != "localhost" and not ipaddress.ip_address(parts.hostname).is_loopback:
+                return None
+        return f"{parts.scheme}://{host}" + (f":{port}" if port is not None else "")
+    except ValueError:
+        return None
 
 
 def _valid_redirect(uri) -> bool:
@@ -67,22 +113,7 @@ def _valid_redirect(uri) -> bool:
         or any(ord(c) <= 32 or ord(c) >= 127 for c in uri)
     ):
         return False
-    try:
-        parts = urlsplit(uri)
-        host = parts.hostname
-        if not host or parts.username is not None or parts.password is not None:
-            return False
-        if parts.port is not None and not 0 < parts.port < 65536:
-            return False
-        if parts.scheme == "https":
-            return True
-        if parts.scheme != "http":
-            return False
-        if host == "localhost":
-            return True
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return uri in NATIVE_REDIRECTS or _redirect_origin(uri) is not None
 
 
 def _register(db, data: dict) -> dict:
@@ -92,7 +123,12 @@ def _register(db, data: dict) -> dict:
         or not 1 <= len(redirects) <= 20
         or not all(_valid_redirect(uri) for uri in redirects)
     ):
-        raise OAuthError("invalid_redirect_uri")
+        raise OAuthError(
+            "invalid_redirect_uri",
+            "Use HTTPS or loopback HTTP with a valid DNS hostname or canonical IPv4 address "
+            "and optional numeric port; IPv6 and empty ports are not supported. "
+            "The only native redirect is cmmn://auth/callback",
+        )
     name = data.get("client_name", "Application")
     if (
         not isinstance(name, str)
@@ -151,8 +187,13 @@ def _response(parameters, **values):
 
 def _validate_authorization(db, parameters):
     client = store.client(db, parameters.get("client_id", ""))
-    if parameters.get("redirect_uri") not in json.loads(client["redirect_uris"]):
+    uri = parameters.get("redirect_uri")
+    if uri not in json.loads(client["redirect_uris"]):
         raise OAuthError("invalid_request", "Redirect URI is not registered")
+    if not _valid_redirect(uri):
+        raise OAuthError(
+            "invalid_request", "Redirect URI no longer passes validation; register the client again"
+        )
     # Only errors after exact client/redirect validation may leave this server.
     try:
         if parameters.get("response_type") != "code":
@@ -193,6 +234,11 @@ def _show_authorize(gateway, h, *, status=200):
     if error_url:
         redirect(h, error_url)
         return
+    if "purpose" in parameters:
+        from commonplace.account import person_token
+
+        person_token.authorize(gateway, h, parameters, client)
+        return
     principal = _person(gateway, h)
     session = sessions.cookie_value(h.headers.get("Cookie")) or ""
     browser = _browser_cookie(h) or secrets.token_urlsafe(32)
@@ -219,6 +265,9 @@ def _show_authorize(gateway, h, *, status=200):
         )
     hidden = f'<input type="hidden" name="request" value="{escape(request, quote=True)}">'
     action = escape(authorize_path, quote=True)
+    form_origin = _redirect_origin(parameters["redirect_uri"]) if principal else None
+    native = parameters["redirect_uri"] in NATIVE_REDIRECTS
+    destination = parameters["redirect_uri"] if native else form_origin
     if principal:
         workspace = gateway.db.workspace(principal.workspace_id)["name"]
         consent = ""
@@ -239,8 +288,39 @@ def _show_authorize(gateway, h, *, status=200):
                 )
             else:
                 consent += f"<p>{escape(import_grant.OWNER_ONLY_TEXT)}</p>"
+        if decide_grant.DECIDE_SCOPE in parameters["scope"].split():
+            if decide_grant.eligible(gateway.db, principal.user_id, principal.workspace_id):
+                consent += (
+                    '<label><input type="checkbox" name="grant_decide" value="1"> '
+                    f"{escape(decide_grant.SCOPE_TEXT)}</label>"
+                )
+            else:
+                consent += f"<p>{escape(decide_grant.OWNER_ONLY_TEXT)}</p>"
+        requested = parameters["scope"].split()
+        if native and "memory:read" in requested and person_actions.eligible(gateway.db, principal):
+            for _, field, text in person_actions.CONSENT:
+                consent += (
+                    f'<label><input type="checkbox" name="{field}" value="1"> '
+                    f"{escape(text)}</label>"
+                )
+        if bots_grant.CHAT_SCOPE in requested:
+            consent += (
+                '<label><input type="checkbox" name="grant_bots_chat" value="1"> '
+                f"{escape(bots_grant.CHAT_TEXT)}</label>"
+            )
+            if bots_grant.CONFIRM_SCOPE in requested:
+                consent += (
+                    '<label><input type="checkbox" name="grant_bots_confirm" value="1"> '
+                    f"{escape(bots_grant.CONFIRM_TEXT)}</label>"
+                )
+            if bots_grant.LEARNED_SCOPE in requested:
+                consent += (
+                    '<label><input type="checkbox" name="grant_bots_learned" value="1"> '
+                    f"{escape(bots_grant.LEARNED_TEXT)}</label>"
+                )
         content = (
             f"<h1>{escape(client['client_name'])}</h1><p>{escape(workspace)}</p>"
+            f"<p>Code destination: {escape(destination, quote=True)}</p>"
             f'<form method="post" action="{action}">{hidden}{consent}'
             '<button name="decision" value="allow">Allow</button>'
             '<button name="decision" value="deny">Deny</button></form>'
@@ -261,10 +341,40 @@ def _show_authorize(gateway, h, *, status=200):
             '<button type="submit">Sign in</button></form>'
         )
         headers = (("Set-Cookie", cookie),)
-    _page(h, content, status=status, headers=headers)
+    _page(
+        h,
+        content,
+        status=status,
+        headers=headers,
+        form_origin=form_origin,
+    )
+
+
+def _keep_bots_grants(db, principal, data, granted) -> None:
+    """Drop every bots scope the person did not tick (or may not grant); the confirm and learned
+    scopes also need the chat scope."""
+    for scope, field in (
+        (bots_grant.CHAT_SCOPE, "grant_bots_chat"),
+        (bots_grant.CONFIRM_SCOPE, "grant_bots_confirm"),
+        (bots_grant.LEARNED_SCOPE, "grant_bots_learned"),
+    ):
+        if scope in granted and not (
+            data.get(field) == "1"
+            and bots_grant.eligible(db, principal.user_id, principal.workspace_id)
+        ):
+            granted.remove(scope)
+    if bots_grant.CHAT_SCOPE not in granted:
+        for scope in (bots_grant.CONFIRM_SCOPE, bots_grant.LEARNED_SCOPE):
+            if scope in granted:
+                granted.remove(scope)
 
 
 def _submit_authorize(gateway, h):
+    if "purpose" in query(h.path):
+        from commonplace.account import person_token
+
+        person_token.submit(gateway, h)
+        return
     principal = _person(gateway, h)
     if principal is None and not _browser_cookie(h):
         raise OAuthError("invalid_request", "Sign in required", 401)
@@ -320,6 +430,15 @@ def _submit_authorize(gateway, h):
                 and "memory:read" not in parameters["scope"].split()
             ):
                 location = _response(parameters, error="invalid_scope")
+            elif decide_grant.DECIDE_SCOPE in parameters["scope"].split() and not {
+                "memory:read",
+                "memory:write",
+            }.issubset(parameters["scope"].split()):
+                location = _response(parameters, error="invalid_scope")
+            elif {bots_grant.CONFIRM_SCOPE, bots_grant.LEARNED_SCOPE} & set(
+                parameters["scope"].split()
+            ) and (bots_grant.CHAT_SCOPE not in parameters["scope"].split()):
+                location = _response(parameters, error="invalid_scope")
             elif data["decision"] == "deny":
                 location = _response(parameters, error="access_denied")
             else:
@@ -334,11 +453,29 @@ def _submit_authorize(gateway, h):
                     and import_grant.eligible(db, principal.user_id, principal.workspace_id)
                 ):
                     granted.remove(import_grant.READER_SCOPE)
+                if decide_grant.DECIDE_SCOPE in granted and not (
+                    data.get("grant_decide") == "1"
+                    and decide_grant.eligible(db, principal.user_id, principal.workspace_id)
+                ):
+                    granted.remove(decide_grant.DECIDE_SCOPE)
+                _keep_bots_grants(db, principal, data, granted)
+                person_capabilities = [
+                    capability
+                    for capability, field, _ in person_actions.CONSENT
+                    if data.get(field) == "1"
+                    and parameters["redirect_uri"] in NATIVE_REDIRECTS
+                    and "memory:read" in granted
+                    and person_actions.eligible(db, principal)
+                ]
                 if not granted:
                     location = _response(parameters, error="invalid_scope")
                 else:
                     code = store.create_code(
-                        conn, client, principal, dict(parameters, scope=" ".join(granted))
+                        conn,
+                        client,
+                        principal,
+                        dict(parameters, scope=" ".join(granted)),
+                        person_capabilities=person_capabilities,
                     )
                     location = _response(parameters, code=code)
             login = False

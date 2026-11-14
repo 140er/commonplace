@@ -415,6 +415,7 @@ def _run_http_loop() -> None:
         owns_writer_lease = True
 
     try:
+        _activate_worker_observation()
         # The HTTP transport exists for long-lived deployments. Do the cheap
         # filesystem-only probe before binding, but never make the listener wait on
         # optional embedder/HNSW warmup. Operators and tests should see /healthz as

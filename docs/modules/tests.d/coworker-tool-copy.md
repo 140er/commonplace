@@ -1,0 +1,3 @@
+- **Owns:** `tests/test_coworker_tool_copy.py` and description-only expectations in `tests/spaces_surfaces.json`.
+- **Promises:** The copy guard permits documented schema identifiers and internal comments, while scanning MCP descriptions, prompts and skill instructions.
+- **Tests:** Assignment-shaped instruction text has no blanket kind/schema/topic exemption; regressions exercise all three keys. Needs-me refusal and connection-conflict assertions use the displayed Coworker wording; historical names and protocol fixtures retain their original spelling.
