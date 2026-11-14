@@ -1040,7 +1040,7 @@ function mountWorkbenchChat() {
     service = state.workbenchChat = { dock, board, unread: 0, pollUnread,
       phone() {
         const mount = root.querySelector("#phone-tabs");
-        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me.can_admin === true, can_manage_instance: state.me.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
+        if (mount) mount.innerHTML = state.deck?.tabs({ needs: state.needs.count || 0, botsWaiting: state.botsWaiting, can_admin: state.me?.can_admin === true, can_manage_instance: state.me?.can_manage_instance === true }) || renderPhoneTabs({ view: state.base.startsWith("#/memory") ? "memory" : state.base.startsWith("#/bots") ? "bots" : "", botsWaiting: state.botsWaiting });
       },
       dispose() {
         disposed = true; clearTimeout(timer); observer.disconnect(); wake();
