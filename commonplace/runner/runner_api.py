@@ -18,6 +18,7 @@ from . import jobs, launch_output, predicate, registry, start_context
 
 MAX_BODY_BYTES = 4096
 BODY_KEYS = {
+    "resources": {"memory_available_mb", "cpu_free", "memory_floor_mb"},
     "sessions/lease": set(),
     "sessions/starting": {"lease_token"},
     "sessions/result": {"lease_token", "outcome", "thread_id", "code"},
@@ -65,6 +66,8 @@ def _install_manifest(gateway, h):
 
 
 def _body(h, action):
+    if urlsplit(h.path).query:
+        raise HTTPError(400, "invalid query")
     media = (h.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
     if media != "application/json":
         raise HTTPError(415, "application/json required")
@@ -81,6 +84,10 @@ def _body(h, action):
         raise HTTPError(400, "invalid JSON") from None
     if not isinstance(value, dict) or value.keys() - BODY_KEYS[action]:
         raise HTTPError(400, "invalid request body")
+    if action == "resources":
+        from .headroom import validate
+
+        return validate(value)
     required = set() if action in ("lease", "sessions/lease") else {"lease_token"}
     if action in ("result", "sessions/result"):
         required.add("outcome")
@@ -261,8 +268,11 @@ def register(gateway):
                 payload = _listing(store, machine, url.query)
             else:
                 body = _body(h, action)
-                if url.query:
-                    raise HTTPError(400, "invalid query")
+                if action == "resources":
+                    from . import capacity
+
+                    send_json(h, 200, capacity.report(store, machine, body))
+                    return
                 if action.startswith("sessions/"):
                     from . import sessions
 
@@ -333,6 +343,10 @@ def register(gateway):
                             launch = runner_bridge.launch_fields(conn, row)
                     # An invalid pinned config launches nothing, so it gets no card.
                     if row["config_version"] is None or launch:
+                        from . import capacity
+
+                        with store.connection() as conn:
+                            launch.update(capacity.lease_fields(conn, row))
                         launch.update(
                             start_context.lease_fields(gateway, machine, row, launch.get("message"))
                         )
