@@ -266,9 +266,9 @@ def complete(
     else:
         body.update(stream=False, messages=[{"role": "system", "content": system}, *turns])
     if reasoning_effort is not None:
-        from commonplace.chat.coworkers.model_effort import payload
+        from commonplace.chat.coworkers.model_effort import apply_effort
 
-        payload(body, settings.provider, reasoning_effort)
+        apply_effort(body, settings.provider, reasoning_effort)
     payload = json.dumps(body).encode()
     with Call(settings, endpoint, timeout) as call:
         response = call.open(payload, on_sent)

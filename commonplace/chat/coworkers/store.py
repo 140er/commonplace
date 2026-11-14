@@ -166,11 +166,11 @@ class Store:
         self._ready_path = None
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self, *, model_settings=None):
         # Lock current control authority until publication commits. Never hold a
         # workspace writer lock while waiting for the control authority lock.
         guard = self._authority.guard() if self._authority else nullcontext()
-        with guard, self._lock:
+        with guard, model_effort.context(self, model_settings):
             path = Path(self._path() if callable(self._path) else self._path).resolve()
             existed = path.is_file()
             with GATE.creating(path):
@@ -230,7 +230,7 @@ class Store:
     def _conversation_view(self, conn, row):
         return {
             **{key: row[key] for key in ("id", "kind", "title", "board", "created_at")},
-            **model_effort.describe(conn, self._authority, row),
+            **model_effort.describe(conn, self._model_settings, row),
             "member_ids": [
                 r[0]
                 for r in conn.execute(
@@ -361,7 +361,7 @@ class Store:
             if board is not None and self._authority:
                 board = self._authority.board(user_id, board)
             choices = model_effort.options(model, reasoning_effort)
-            _, selected = model_effort.resolve(self._authority, board, choices)
+            _, selected = model_effort.resolve(self._model_settings, board, choices)
             if (
                 conn.execute("SELECT count(*) FROM members WHERE user_id=?", (user_id,)).fetchone()[
                     0
@@ -381,7 +381,7 @@ class Store:
                 "INSERT INTO conversation_bots VALUES (?,?)", [(conversation_id, b) for b in bots]
             )
             model_effort.save(conn, "conversation", conversation_id, choices, selected)
-            model_effort.audit(self._authority, user_id, "coworker.create", selected)
+            model_effort.audit(self._model_settings, user_id, "coworker.create", selected)
             return self._conversation_view(
                 conn,
                 conn.execute(
@@ -494,7 +494,7 @@ class Store:
                         session_hash=session_hash,
                     ),
                 }
-            _, selected = model_effort.resolve(self._authority, conversation["board"], choices)
+            _, selected = model_effort.resolve(self._model_settings, conversation["board"], choices)
             target = self._target(conn, conversation_id, text, bot_id)
             if (
                 target is not None
@@ -511,7 +511,7 @@ class Store:
             ).lastrowid
             conn.execute("INSERT INTO intake VALUES (?,?)", (mid, bot_id))
             model_effort.save(conn, "message", mid, choices, selected)
-            model_effort.audit(self._authority, user_id, "coworker.turn", selected, "chat")
+            model_effort.audit(self._model_settings, user_id, "coworker.turn", selected, "chat")
             if target is not None:
                 conn.execute(
                     "INSERT INTO jobs(conversation_id,message_id,bot_id,user_id,state,created_at,updated_at,session_hash,requested_bot) VALUES (?,?,?,?,'pending',?,?,?,?)",
@@ -737,7 +737,7 @@ class Store:
                 >= MAX_CONTROLS
             ):
                 raise StoreError("at_capacity", 409)
-            _, selected = model_effort.resolve(self._authority, conversation["board"], choices)
+            _, selected = model_effort.resolve(self._model_settings, conversation["board"], choices)
             stamp = _stamp()
             receipt_id = conn.execute(
                 "INSERT INTO task_controls(job_id,actor,operation,request_id,text,target,state,code,created_at,updated_at) "
@@ -754,7 +754,7 @@ class Store:
                 ),
             ).lastrowid
             model_effort.save(conn, "control", receipt_id, choices, selected)
-            model_effort.audit(self._authority, user_id, "coworker.turn", selected, "steer")
+            model_effort.audit(self._model_settings, user_id, "coworker.turn", selected, "steer")
 
         def authorize():
             # No broad control/conversation lock spans the canonical mutation.

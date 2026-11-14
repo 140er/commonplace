@@ -395,3 +395,197 @@ def test_control_alias_validates_overrides_and_audits_selections(env, dispatch, 
         "model": "fixture",
         "reasoning_effort": "max",
     }
+
+
+@pytest.fixture
+def lock_order(monkeypatch):
+    """Record physical lock order and forbid all model reads in writer scopes."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    recorder = SimpleNamespace(transaction=0, view=0, events=[], model_reads=0)
+    transaction, view = Store._transaction, Store._conversation_view
+    front, catalog = settings.front, models.catalog
+
+    def install(db):
+        original = db._lock
+
+        class RecordingLock:
+            depth = 0
+
+            def acquire(self, *args, **kwargs):
+                # Existing authority checks may reenter the outer guard, but
+                # a physical control-lock wait must never start in a writer.
+                assert recorder.view == 0, "control lock acquired while building a view"
+                assert not recorder.transaction or self.depth, "store -> control lock inversion"
+                acquired = original.acquire(*args, **kwargs)
+                if acquired:
+                    self.depth += 1
+                    recorder.events.append(("control", recorder.transaction))
+                return acquired
+
+            def release(self):
+                self.depth -= 1
+                original.release()
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, *_):
+                self.release()
+
+        lock = RecordingLock()
+        monkeypatch.setattr(db, "_lock", lock)
+
+        @contextmanager
+        def recorded_transaction(store, *args, **kwargs):
+            with transaction(store, *args, **kwargs) as conn:
+                assert lock.depth > 0, "writer acquired before control guard"
+                recorder.events.append(("store", lock.depth))
+                recorder.transaction += 1
+                try:
+                    yield conn
+                finally:
+                    recorder.transaction -= 1
+
+        def recorded_view(*args, **kwargs):
+            recorder.view += 1
+            try:
+                return view(*args, **kwargs)
+            finally:
+                recorder.view -= 1
+
+        def read_front(*args, **kwargs):
+            assert recorder.transaction == 0, "front resolved inside a writer"
+            recorder.model_reads += 1
+            return front(*args, **kwargs)
+
+        def read_catalog(*args, **kwargs):
+            assert recorder.transaction == 0, "catalog resolved inside a writer"
+            recorder.model_reads += 1
+            return catalog(*args, **kwargs)
+
+        monkeypatch.setattr(Store, "_transaction", recorded_transaction)
+        monkeypatch.setattr(Store, "_conversation_view", recorded_view)
+        monkeypatch.setattr(settings, "front", read_front)
+        monkeypatch.setattr(models, "catalog", read_catalog)
+        return recorder
+
+    return install
+
+
+def test_model_lock_order_on_all_view_routes_and_runtime(
+    env, dispatch, progress, lock_order, monkeypatch
+):
+    item = progress.start(group=True)
+    api = API(env.gateway, env.wid, env.uid, env.other, "outsider")
+    api.sessions[env.uid] = env.session
+    recorder = lock_order(env.db)
+    for method, path, body in [
+        ("GET", "", None),
+        ("GET", "/conversations", None),
+        ("GET", f"/conversations/{item.cid}", None),
+        ("GET", f"/conversations/{item.cid}/messages", None),
+        ("POST", "/conversations", {"kind": "dm", "bot_ids": [env.bot["id"]], "model": "fixture"}),
+        (
+            "POST",
+            f"/conversations/{item.cid}/messages",
+            {"text": "Exact legacy chat", "request_id": "legacy"},
+        ),
+        (
+            "POST",
+            f"/conversations/{item.cid}/messages",
+            {
+                "text": "Exact chat",
+                "request_id": "chat",
+                "mode": "chat",
+                "reasoning_effort": "high",
+            },
+        ),
+        (
+            "POST",
+            f"/conversations/{item.cid}/messages",
+            {"text": "Exact instruction", "request_id": "steer", "mode": "steer"},
+        ),
+        (
+            "POST",
+            f"/jobs/{item.job['id']}/controls",
+            {"text": "Exact alias instruction", "request_id": "alias", "operation": "follow_up"},
+        ),
+    ]:
+        status, result = api.request(method, path, body)
+        assert status in (200, 201), result
+    assert recorder.model_reads > 0
+    recorder.events.clear()
+    monkeypatch.setattr(runtime.model, "complete", lambda *args, **kwargs: "Synthetic reply")
+    assert env.worker().run_once(env.wid)
+    assert recorder.events[0][0] == "control"
+    assert any(event[0] == "store" for event in recorder.events)
+    assert recorder.transaction == 0 and recorder.view == 0
+
+
+@pytest.mark.parametrize("active_count,expected", [(1, 200), (2, 409)])
+def test_steer_finds_active_origins_behind_over_100_finished_jobs(
+    env, dispatch, progress, active_count, expected
+):
+    item = progress.start()
+    if active_count == 2:
+        dispatch.post(item.cid, text="/task Another active origin", key="another-origin")
+        assert env.worker().run_once(env.wid)
+    with env.store._transaction() as conn:
+        for index in range(101):
+            mid = conn.execute(
+                "INSERT INTO messages(conversation_id,actor,bot_id,text,created_at,request_id) VALUES (?,?,?,?,?,?)",
+                (
+                    item.cid,
+                    "user:" + env.uid,
+                    env.bot["id"],
+                    "Finished chat",
+                    "now",
+                    f"finished-{index}",
+                ),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO jobs(conversation_id,message_id,bot_id,user_id,state,created_at,updated_at) VALUES (?,?,?,?,'done','now','now')",
+                (item.cid, mid, env.bot["id"], env.uid),
+            )
+    api = API(env.gateway, env.wid, env.uid, env.other, "outsider")
+    api.sessions[env.uid] = env.session
+    code, result = api.post(item.cid, mode="steer")
+    assert code == expected, result
+    if expected == 200:
+        assert result["receipt"]["job_id"] == item.job["id"]
+    else:
+        assert result == {"error": "ambiguous_running_job"}
+
+
+def effort_helper():
+    from commonplace.chat.coworkers import model_effort
+
+    # Exercise the same provider-error contract on the prior implementation too.
+    return getattr(model_effort, "apply_effort", None) or model_effort.payload
+
+
+@pytest.mark.parametrize(
+    "provider,effort",
+    [("unsupported", "high"), ("anthropic", "invalid"), ("openai_compatible", [])],
+)
+def test_effort_payload_failures_are_bounded_provider_errors(provider, effort):
+    from commonplace.chat.types import ModelError
+
+    with pytest.raises(ModelError, match="^bad_response$"):
+        effort_helper()({}, provider, effort)
+
+
+def test_runtime_handles_effort_provider_failure_as_model_error(env, monkeypatch):
+    cid = env.conversation()["id"]
+    env.post(cid)
+
+    def refused(*args, **kwargs):
+        effort_helper()({}, "unsupported", "high")
+
+    monkeypatch.setattr(runtime.model, "complete", refused)
+    assert env.worker().run_once(env.wid)
+    job = env.store.list_jobs(env.uid, cid)[0]
+    assert (job["state"], job["code"]) == ("failed", "bad_response")

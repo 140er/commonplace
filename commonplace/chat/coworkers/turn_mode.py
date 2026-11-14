@@ -28,7 +28,12 @@ def _running(store, conn, user_id, cid, text, bot_id, session_hash):
         model_effort.deny("bot_required")
     active = []
     for row in conn.execute(
-        "SELECT * FROM jobs WHERE conversation_id=? AND bot_id=? ORDER BY id DESC LIMIT 100",
+        # A front job may be done while its canonical worker is still active.
+        # Ignore ordinary finished chat jobs, but inspect every task origin.
+        "SELECT j.* FROM jobs j JOIN messages m ON m.id=j.message_id "
+        "WHERE j.conversation_id=? AND j.bot_id=? AND (j.task IS NOT NULL OR "
+        "(j.state IN ('done','failed','interrupted','uncertain') AND m.text LIKE '/task %')) "
+        "ORDER BY j.id DESC",
         (cid, target),
     ):
         view = store._progress_job(conn, row, user_id, session_hash=session_hash)
@@ -108,7 +113,9 @@ def post(
                 (conversation_id, actor, request_id),
             ).fetchone():
                 model_effort.deny("request_conflict", 409)
-            _, selected = model_effort.effective(conn, store._authority, conversation, overrides)
+            _, selected = model_effort.effective(
+                conn, store._model_settings, conversation, overrides
+            )
             job_id = (
                 _running(store, conn, user_id, conversation_id, text, bot_id, session_hash)
                 if mode == "steer"

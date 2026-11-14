@@ -455,9 +455,10 @@ class CoworkerWorker:
                 return
             board = snapshot["conversation"].get("board")
             baseline = settings.front(self.gateway.db, wid, board)
-            with store._transaction() as conn:
+            resolved = model_effort.snapshot(Authority(self.gateway, wid))
+            with store._transaction(model_settings=resolved) as conn:
                 config, selected = model_effort.runtime_config(
-                    Authority(self.gateway, wid), board, conn, job["message_id"]
+                    resolved, board, conn, job["message_id"]
                 )
             if (
                 not config.enabled
@@ -481,7 +482,11 @@ class CoworkerWorker:
                 if settings.front(
                     self.gateway.db, wid, board
                 ) != baseline or not model_effort.current(
-                    store, Authority(self.gateway, wid), board, job["message_id"], config
+                    store,
+                    model_effort.snapshot(Authority(self.gateway, wid)),
+                    board,
+                    job["message_id"],
+                    config,
                 ):
                     raise _Withheld("configuration_changed")
                 self._reserve(wid, job, config)
@@ -510,7 +515,11 @@ class CoworkerWorker:
                 if settings.front(
                     self.gateway.db, wid, board
                 ) != baseline or not model_effort.current(
-                    store, Authority(self.gateway, wid), board, job["message_id"], config
+                    store,
+                    model_effort.snapshot(Authority(self.gateway, wid)),
+                    board,
+                    job["message_id"],
+                    config,
                 ):
                     raise _Withheld("configuration_changed")
                 store.add_bot_reply(
