@@ -7,7 +7,7 @@ import { renderDetails } from '../commonplace/web/static/details.js';
 const board = {slug:'product',name:'Product',coordinator:'conn:coordinator'};
 const bot = {id:'shipping',name:'Shipping',board:'product'};
 const base = {number:7,version:3,board:'product',title:'Ship the change',body:'Review the change.',events:[],status:'doing',need:'working',assignee:'conn:worker'};
-const options = {board,me:'user:owner',bots:[bot],deck:true};
+const options = {board,me:'user:owner',bots:[bot],deck:true,canRemove:true};
 const htmlFor = card => boardView({...options,cards:[{...base,...card}]});
 const visible = html => html.replace(/<[^>]*>/g,'');
 test('Deck cards use exactly one state phrase from live card state', () => {
