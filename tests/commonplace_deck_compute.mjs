@@ -566,10 +566,10 @@ test('empty or failed topology: the runners through the same canvas, in honest s
     const words = [...scene.matchAll(/<(?:title|text)[^>]*>([^<]*)</g)].map(m => m[1]).join(' | ');
     for (const word of ['Commonplace', 'Build box', 'Studio machine', 'Old tower', 'Ready', 'Waiting for attestation', 'Off']) assert.ok(words.includes(word), word);
     assert.doesNotMatch(words, /Revoked machine|online|\bUp\b|Degraded|Unknown|\bDown\b|agents working|proxy|CDN|website|route/i);
-    assert.match(f.map().innerHTML + f.regions.get('map').innerHTML, /Ready<\/li><li>[^]*Waiting for attestation<\/li><li>[^]*Off<\/li>/);
+    assert.doesNotMatch(f.map().innerHTML, /topo-legend/); // Approved compact view keeps status on nodes.
     assert.doesNotMatch(f.regions.get('map').innerHTML, /Up<\/li>|Degraded<\/li>/);
     assert.equal(f.regions.get('summary').textContent, '1 of 3 machines ready.');
-    assert.equal((scene.match(/class="topo-dot /g) || []).length, 3, 'one mark per machine, none at the hub or on a link');
+    assert.equal((scene.match(/class="dc-node-status"/g) || []).length, 3, 'one mark per machine, none at the hub or on a link');
     f.ui.stop();
   }
 });

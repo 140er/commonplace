@@ -4,6 +4,8 @@ import { discoveryAction } from './map-discovery.js';
 import { addAction } from './map-add.js';
 import { ENROLL_ROUTE, computePanel, addMachineHTML, watchComputeMotion, computeStyles, phoneTree } from './deck-compute-capy.js';
 
+import { computePresentation, computeFrame, routePreference } from './deck-compute-scene.js';
+
 export const TITLE = 'Compute';
 const HUB = 'commonplace-hub';
 const STATES = { ready: 'Ready', waiting: 'Waiting for attestation', off: 'Off' };
@@ -211,14 +213,13 @@ export function mount(context) {
   }
   const resized = () => {
     if (stopped || !map) return;
-    const metrics = narrow() ? METRICS.phone : METRICS.desktop;
-    if (phone !== narrow() || (narrow() ? 1 : layoutColumns(cardWidth(), metrics, mode === 'runners' ? rows.length : null)) !== builtColumns) build();
+    if (phone !== narrow() || (narrow() ? 1 : Math.max(1,Math.floor((cardWidth()-96)/308))) !== builtColumns) build();
   };
   function build() {
     map?.stop();
     phone = narrow();
-    const metrics = { ...(phone ? METRICS.phone : METRICS.desktop) };
-    metrics.columns = phone ? 1 : layoutColumns(cardWidth(), metrics, mode === 'runners' ? rows.length : null);
+    const metrics = { ...(phone ? METRICS.phone : METRICS.desktop), gx: 308, lane: 0 };
+    metrics.columns = phone ? 1 : Math.max(1,Math.floor((cardWidth()-96)/308));
     builtColumns = metrics.columns;
     const runners = mode === 'runners';
     built = mode;
@@ -229,7 +230,7 @@ export function mount(context) {
       workspace: () => `deck:${phone ? 'phone:' : ''}${runners ? 'runners:' : ''}${ctx.me?.workspace || ''}`,
       onStartWork: discoveryAction({ api: (path, options) => ctx.api(path, options), root: () => region('map') }),
       interval: 0,
-      look: { cards: true, labels: metrics.labels, pad: metrics.pad, grow: true, preselect, compact: true, panel: options => computePanel(runners ? { ...options, node: { ...options.node, status: undefined } } : options, latest?.nodes?.find(record => record.key === options.key), phone), layout: phone ? phoneTree : 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
+      look: { presentation: computePresentation(phone), frame: computeFrame, site: routePreference, cards: true, labels: metrics.labels, pad: 48, grow: true, preselect, compact: true, panel: options => computePanel(runners ? { ...options, node: { ...options.node, status: undefined } } : options, latest?.nodes?.find(record => record.key === options.key), phone), layout: phone ? phoneTree : 'layered', metrics, route: true, ...(runners ? { words: RUNNER_WORDS, legend: ['up', 'degraded', 'unknown'], none: true, own } : {}) },
     });
     map.show();
     if (globalThis.ResizeObserver && !observer && region('map')) { observer = new ResizeObserver(resized); observer.observe(region('map')); }
@@ -238,9 +239,11 @@ export function mount(context) {
     const host = region('actions');
     if (host) host.innerHTML = '<button class="dc-action" type="button" data-compute-action="add-machine">Add a machine</button><button class="dc-action" type="button" data-compute-action="add-site">Add site</button>' + (general ? '<button class="dc-action dc-primary" type="button" data-compute-action="map">Let a bot map it</button>' : '');
   }
+  const tabs = root.parentElement?.querySelector(':scope > .dw-tabs');
   function frame() {
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
     root.innerHTML = '<header class="dc-title"><h1>Compute</h1><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
+    if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
     framed = true; actions();
   }
   function apply(read) {

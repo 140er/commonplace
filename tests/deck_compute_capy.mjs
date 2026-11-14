@@ -36,7 +36,8 @@ test('current observations override graph values, stale observations cannot impl
 
 test('Add a machine leads to the existing Admin enrollment, with no second setup form', () => {
   const html = addMachineHTML();
-  assert.match(html, /Add a machine/); assert.match(html, /href="#\/admin"/); assert.match(html, /Add runner/);
+  assert.match(html, /Add a machine/); assert.match(html, /href="#\/admin"/); assert.match(html, /Then choose which bots may use it/);
+  assert.doesNotMatch(html, /Add runner|workspace administration/);
   assert.doesNotMatch(html, /<form|<input|curl|token|POST/);
 });
 
@@ -66,7 +67,7 @@ test('motion is one 4/6 dash per 1.4 seconds with idle and reduced-motion fallba
   assert.match(css, /stroke-dasharray: 4 6/); assert.match(css, /1\.4s linear infinite/);
   assert.match(css, /stroke-dashoffset: -10/); assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /data-compute-motion="reduced"[\s\S]*?animation: none/);
-  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|green|data-method="direct"/i);
+  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|green/i);
 });
 
 test('phone tree follows real links, fits peer nodes, and keeps isolated nodes and cycles', async () => {
@@ -87,4 +88,34 @@ test('phone inspector has a visible Back control and preserves the existing deta
   assert.match(html, /Device details/);
   assert.match(html, /data-td-tab="physical"/);
   assert.match(html, /Healthy/);
+});
+
+test('compact presentation uses straight links, local curves for blockers, no end marks or loose counts', async () => {
+  const { computePresentation, directLinks, cardSize, computeFrame, linkName } = await import('../commonplace/web/static/deck-compute-scene.js');
+  const nodes = ['a','b','blocker'].map(key => ({ key, name: key, kind: 'server', role: 'Builds', status: 'up' }));
+  const link = { id:'ab', from:'a',to:'b',method:'tailscale',status:{from:'up',to:'up'} };
+  const positions = {a:{x:0,y:0},b:{x:400,y:0},blocker:{x:200,y:160}};
+  let places = directLinks({nodes,links:[link]},positions);
+  assert.equal(places.get('ab').d,'M0 0L400 0');
+  positions.blocker.y=0;
+  places=directLinks({nodes,links:[link]},positions);
+  assert.ok(places.get('ab').control);
+  assert.ok(Math.abs(places.get('ab').control.y / 2) > 30, 'curve clears the intervening 48px card');
+  assert.match(places.get('ab').d,/Q/);
+  const core=createMapCore({route:true,presentation:computePresentation()});
+  core.apply({nodes:nodes.map(n=>({key:n.key,values:{kind:n.kind,name:n.name}})),links:[link]});
+  const scene=core.scene();
+  assert.doesNotMatch(scene,/data-end=|topo-bundle/);
+  assert.match(scene,/dc-node-tile/);
+  assert.match(scene,/dc-link-caption/);
+  assert.equal(linkName('tailscale'),'Tailscale'); assert.equal(linkName('direct'),'Direct');
+  const phone = computePresentation(true).node({...nodes[0],name:'Build machine'},positions.a,{words:{up:'Healthy'},sel:false});
+  assert.doesNotMatch(phone,/dc-node-tile|tspan/);
+  assert.match(phone,/>Build machine<\/text>/);
+  assert.equal(cardSize(nodes[0]).height,48);
+  const fit=computePresentation().fit({nodes},positions,900,600);
+  assert.ok(fit.height>=360); assert.equal(fit.k,1);
+  const frame=computeFrame();
+  assert.doesNotMatch(frame,/topo-legend|zoom-in|zoom-out|<label>Route/);
+  assert.equal((frame.match(/<button/g)||[]).length,2);
 });

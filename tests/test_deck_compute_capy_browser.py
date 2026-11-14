@@ -52,7 +52,7 @@ def open_compute(page):
       const graph={nodes:nodes.map(([key,name,kind,role])=>({key,values:{kind,name,role,resources:{memory_gb:32,storage_gb:240}}})),
         links:[['hub','runner','tailscale'],['runner','build','direct'],['runner','laptop','tailscale'],['runner','bench','tailscale']]
           .map(([from,to,method],i)=>({id:'link-'+i,from,to,method})),
-        routes:[],status:{nodes:{hub:'up',runner:'up',build:'up',laptop:'unknown',bench:'up'},links:{
+        routes:[{site:'workspace.example',hops:[{link:'link-0',from:'hub',to:'runner',method:'tailscale',status:'up'}]}],status:{nodes:{hub:'up',runner:'up',build:'up',laptop:'unknown',bench:'up'},links:{
           'link-0':{from:'up',to:'up'},'link-1':{from:'up',to:'up'},'link-2':{from:'unknown',to:'unknown'},'link-3':{from:'up',to:'up'}}}};
       const api=async path=>{
         if(path==='/api/topology')return graph;
@@ -118,17 +118,14 @@ def test_compute_capy_screen(browser, size):
         idle = page.locator('.topo-link[data-active="false"] :is(line,.topo-route)').first
         assert idle.evaluate("el=>getComputedStyle(el).animationName") == "none"
         assert (
-            page.locator('.topo-link[data-active="false"] .topo-method').evaluate(
+            page.locator('.topo-link[data-active="false"] .dc-link-label').evaluate(
                 "el=>getComputedStyle(el).display"
             )
             == "none"
         )
         if size[0] == 390:
             assert page.locator(".topo-detail:not([hidden])").count() == 0
-            assert (
-                page.locator(".topo-icon").first.evaluate("el=>getComputedStyle(el).display")
-                == "none"
-            )
+            assert page.locator(".dc-node-tile").count() == 0
             capture(page, "compute-phone.png")
             page.locator('.topo-node[data-key="hub"]').click()
             page.get_by_role("button", name="Back to machines").wait_for()
@@ -145,11 +142,28 @@ def test_compute_capy_screen(browser, size):
             assert panel.get_by_text("32 GB capacity").is_visible()
             assert panel.get_by_text("Healthy", exact=True).is_visible()
             capture(page, "compute-desktop.png")
+        assert live.evaluate("el=>getComputedStyle(el).strokeWidth") == "1px"
+        assert page.locator(".topo-link [data-end]").count() == 0
+        assert page.locator(".topo-bundle").count() == 0
+        assert page.locator(".dc-map-controls button").count() == 2
+        if size[0] == 1440:
+            page.locator(".topo-link").first.focus()
+            page.keyboard.press("Enter")
+            assert page.locator('.topo-link[aria-pressed="true"]').count() == 1
+            capture(page, "compute-link-selected.png")
         page.emulate_media(reduced_motion="reduce")
         assert live.evaluate("el=>getComputedStyle(el).animationName") == "none"
         assert page.locator(".deck-compute").get_attribute("data-compute-motion") == "reduced"
         page.get_by_role("button", name="Add a machine", exact=True).click()
         assert page.evaluate("window.destination") == "#/admin"
+        await_route = """async () => { await ui.show('#/compute/management'); }"""
+        page.evaluate(await_route)
+        page.locator("[data-compute-route]").wait_for()
+        page.locator("[data-compute-route]").select_option("workspace.example")
+        page.get_by_role("button", name="Show on map").click()
+        assert page.evaluate("window.destination") == "#/compute"
+        page.evaluate("async () => { await ui.show('#/compute'); }")
+        page.wait_for_selector(".topo-link.on")
         assert not errors, errors
     finally:
         page.close()

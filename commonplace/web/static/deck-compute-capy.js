@@ -46,13 +46,13 @@ export function inspectorHTML(model) {
 export function computePanel(options, record, phone = false) {
   const summary = options.failure ? '' : inspectorHTML(inspectorModel({ record, detail: options.detail, node: options.node }));
   // Keep the existing physical/config/agents/sites controllers available behind one disclosure.
-  let html = panelHTML(options);
+  let html = panelHTML(options).replace('Read-only. Changes go through agent proposals.', 'Bots propose changes here. You approve them in Today.');
   if (phone) html = html.replace(/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/, '<button type="button" class="dc-back" data-td="close" aria-label="Back to machines">Back</button>');
   return html.replace('</header>', `</header>${summary}<details class="dc-more"><summary>Device details</summary>`).replace('<p class="td-foot">', '</details><p class="td-foot">');
 }
 
 export function addMachineHTML() {
-  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p><a class="dc-action" href="${ENROLL_ROUTE}">Add runner</a><p class="dc-observed">Choose which bots may use it in workspace administration.</p></section>`;
+  return `<section class="dc-enroll"><h2>${COMPUTE_COPY.add}</h2><p>${COMPUTE_COPY.setup}</p><a class="dc-action" href="${ENROLL_ROUTE}">Add a machine</a><p class="dc-observed">Then choose which bots may use it.</p></section>`;
 }
 
 /** The media query is observable without a browser. CSS is a second, immediate fallback. */
@@ -86,11 +86,7 @@ export function phoneTree(nodes, links) {
   const positions = {}; let row = 0;
   for (const depth of [...new Set(depths.values())].sort((a,b) => a-b)) {
     const members = sorted.filter(key => depths.get(key) === depth);
-    for (let start = 0; start < members.length; start += 2) {
-      const group = members.slice(start, start + 2);
-      group.forEach((key, i) => { positions[key] = { x: (i - (group.length - 1) / 2) * 165, y: row * 150 }; });
-      row++;
-    }
+    for (const key of members) { positions[key] = { x: 0, y: row * 112 }; row++; }
   }
   return positions;
 }
