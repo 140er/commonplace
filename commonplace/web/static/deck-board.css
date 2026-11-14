@@ -72,8 +72,8 @@
 :root[data-ui="deck"] .deck-card-controls { color: var(--ink2); font-size: 13.5px; }
 :root[data-ui="deck"] .deck-card-controls summary { cursor: pointer; min-height: 44px; display: list-item; align-content: center; }
 :root[data-ui="deck"] .deck-card-controls[open] > :not(summary) { margin-top: 16px; }
-:root[data-ui="deck"] .deck-card-controls .sec-h h3 { text-transform: none; letter-spacing: 0; font-size: 13.5px; }
-:root[data-ui="deck"] .deck-card-controls :is(.callout,.quote) { box-shadow: none; border: 0; background: var(--s2); }
+:root[data-ui="deck"] .deck-card-drawer .sec-h h3 { text-transform: none; letter-spacing: 0; font-size: 13.5px; }
+:root[data-ui="deck"] .deck-card-drawer :is(.callout,.quote) { box-shadow: none; border: 0; background: var(--s2); }
 :root[data-ui="deck"] .deck-card-drawer .ctx-foot { border: 0; padding: 16px 18px; }
 :root[data-ui="deck"] .deck-card-actions { display: flex; gap: 8px; margin-bottom: 0; }
 /* Recorded file locations stay out of this product view; run/start controls remain available. */
@@ -119,3 +119,5 @@
 }
 
 :root[data-ui="deck"] .deck-card-controls .tag.wait { color: var(--ink3); background: var(--s2); }
+
+:root[data-ui="deck"] .deck-card-drawer .callout h3 { font-size: 13.5px; font-weight: 600; text-transform: none; letter-spacing: 0; }
