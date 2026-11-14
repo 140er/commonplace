@@ -74,8 +74,8 @@ export function scopeHTML(scope) {
 }
 
 export function settingsOrder(sections) {
-  const rank = id => ['deck-bot-sharing', 'tool-policy', 'deck-second-review', 'deck-connections'].indexOf(id);
-  return [...sections].sort((a, b) => (rank(a.id) < 0 ? 4 : rank(a.id)) - (rank(b.id) < 0 ? 4 : rank(b.id)));
+  const rank = id => ['look', 'deck-bot-sharing', 'tool-policy', 'deck-second-review', 'deck-connections'].indexOf(id);
+  return [...sections].sort((a, b) => (rank(a.id) < 0 ? 5 : rank(a.id)) - (rank(b.id) < 0 ? 5 : rank(b.id)));
 }
 export const settingsLayout = width => width >= 1100 ? 'columns' : 'stack';
 
