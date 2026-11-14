@@ -67,6 +67,14 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         buttonGap: groups.length ? rect(actions).top - rect(groups.at(-1)).bottom : null,
                         gutter: rect(el).left,
                         titleSize: style(el.querySelector('#memory-import-title')).fontSize,
+                        titleShown: (() => {
+                            const title = el.querySelector('#memory-import-title');
+                            const box = rect(title), dialog = rect(el.closest('dialog'));
+                            const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                            return box.height > 0 && box.top > dialog.top && box.bottom < dialog.bottom &&
+                                box.left >= dialog.left && box.right <= dialog.right &&
+                                !!hit && title.contains(hit);
+                        })(),
                         ghostLeft: el.querySelector('.ghost') ? rect(el.querySelector('.ghost')).left : null,
                         ghostTop: el.querySelector('.ghost') ? rect(el.querySelector('.ghost')).top : null,
                         firstButtonTop: actions ? rect(actions.firstElementChild).top : null,
@@ -115,6 +123,7 @@ def test_file_journey_cancel_progress_report_and_safe_retry(surface, viewport):
                         json.dumps(metrics, indent=2) + "\n"
                     )
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                assert metrics["titleShown"] is True
                 assert metrics["titleSize"] == ("24px" if viewport[0] == 390 else "17px")
 
             async def choose():
