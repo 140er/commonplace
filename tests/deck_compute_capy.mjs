@@ -67,7 +67,8 @@ test('motion is one 4/6 dash per 1.4 seconds with idle and reduced-motion fallba
   assert.match(css, /stroke-dasharray: 4 6/); assert.match(css, /1\.4s linear infinite/);
   assert.match(css, /stroke-dashoffset: -10/); assert.match(css, /prefers-reduced-motion: reduce/);
   assert.match(css, /data-compute-motion="reduced"[\s\S]*?animation: none/);
-  assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|green/i);
+  // The approved failure rose is the only slice-local colour; all other hues remain Deck tokens.
+  assert.doesNotMatch(css.replace('#f0708a',''), /#[0-9a-f]{3,8}\b|green/i);
 });
 
 test('phone tree follows real links, fits peer nodes, and keeps isolated nodes and cycles', async () => {
@@ -159,4 +160,64 @@ test('panel decoration falls back intact if any upstream marker changes', async 
   assert.match(decorated, /Bots propose changes here. You approve them in Today./);
   const reordered = '<p class="td-foot">Read-only. Changes go through agent proposals.</p><header>Machine</header>';
   assert.equal(decorateComputePanel(reordered, ''), reordered);
+});
+
+
+test('follow-up status sizes, selection exclusivity and endpoint rings', async () => {
+  const { computePresentation } = await import('../commonplace/web/static/deck-compute-scene.js');
+  for (const phone of [false, true]) {
+    const presentation = computePresentation(phone);
+    const draw = status => presentation.node({ key:'a',name:'Hub',role:'Production',kind:'server',status },{x:0,y:0},{words:{up:'Up'}});
+    assert.match(draw('up'), new RegExp(`r="${phone ? 5 : 4}"`));
+    assert.match(draw('up'), /translate\([^ ]+ 0\)/);
+    assert.match(draw('degraded'), /data-shape="triangle"/);
+    const core = createMapCore({route:true,presentation});
+    core.apply({nodes:['a','b'].map(key=>({key,values:{name:key}})),links:[{id:'ab',from:'a',to:'b',method:'tailscale'}]});
+    core.choose('a'); core.selectLink('ab');
+    assert.equal(core.selected,null,'link selection clears the node');
+    assert.equal(core.selectedLink,'ab');
+    assert.equal((core.scene().match(/dc-link-end/g)||[]).length,2);
+    core.select('b'); assert.equal(core.selectedLink,null,'node selection clears the link');
+    assert.doesNotMatch(core.scene(),/dc-link-end/);
+  }
+});
+
+test('phone curves use separate lanes with captions at their own midpoint and fit above bottom navigation', async () => {
+  const { computePresentation, directLinks } = await import('../commonplace/web/static/deck-compute-scene.js');
+  const nodes = ['hub','runner','bench','build','laptop'].map(key=>({key,name:key,kind:'server'}));
+  const positions = Object.fromEntries(nodes.map((n,i)=>[n.key,{x:0,y:i*112}]));
+  const links = [{id:'a',from:'runner',to:'build',method:'direct'}, {id:'b',from:'runner',to:'laptop',method:'tailscale'}];
+  const places = directLinks({nodes,links},positions,true);
+  const a=places.get('a'),b=places.get('b');
+  assert.ok(Math.abs(a.lane-b.lane)>=16);
+  for(const link of links) {
+    const place=places.get(link.id);
+    assert.equal(place.label.x,place.lane);
+    assert.equal(place.label.y,(positions[link.from].y+positions[link.to].y)/2);
+  }
+  const pair = directLinks({nodes,links:[{id:'forward',from:'hub',to:'runner'},{id:'back',from:'runner',to:'hub'}]},positions,true,.5);
+  assert.ok(Math.abs(pair.get('forward').lane-pair.get('back').lane)*.5 >= 16);
+  const straight = directLinks({nodes,links:[{id:'single',from:'hub',to:'runner'}]},positions,true).get('single');
+  assert.deepEqual(straight.label,{x:0,y:56});
+  const fit=computePresentation(true).fit({nodes,links},positions,358,400);
+  assert.ok(fit.height<=400);
+  for(const p of Object.values(positions)) {
+    assert.ok(p.y*fit.k+fit.y-24>=24-1e-6);
+    assert.ok(p.y*fit.k+fit.y+24<=fit.height-24+1e-6);
+  }
+});
+
+test('health, summary and selected-link facts use the same shapes and honest observations', async () => {
+  const mod=await import('../commonplace/web/static/deck-compute-capy.js');
+  assert.match(inspectorHTML(inspectorModel({node:{status:'degraded'}})),/dc-state[^>]*>[\s\S]*data-shape="triangle"[\s\S]*Degraded/);
+  assert.match(mod.summaryStatesHTML([{name:'Laptop',status:'unknown'}]),/data-shape="ring"[\s\S]*Laptop unknown/);
+  const options={link:{from:'runner',to:'hub',method:'tailscale',status:{from:'up',to:'degraded'}},names:new Map([['runner','Runner'],['hub','Hub']])};
+  const html=mod.computeLinkPanel(options);
+  assert.match(html,/Runner to Hub/); assert.match(html,/>Route<\/dt><dd>Tailscale/);
+  assert.match(html,/>State<\/dt><dd>[\s\S]*Degraded/);
+  assert.match(html,/>Last seen<\/dt><dd>Not reported/);
+  assert.doesNotMatch(html,/undefined|Healthy/);
+  const recorded=mod.computeLinkPanel({...options,link:{...options.link,observedAt:'2026-01-01T12:00:00Z',stale:true},names:new Map([['runner','<script>'],['hub','Hub']])});
+  assert.match(recorded,/<time datetime="2026-01-01T12:00:00Z">/);
+  assert.match(recorded,/data-shape="ring"/); assert.doesNotMatch(recorded,/<script>/);
 });

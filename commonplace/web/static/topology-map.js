@@ -65,7 +65,7 @@ export function mapModel(payload, { none = false } = {}) {
   };
   for (const record of graph.links || []) {
     const ends = status.links?.[record?.id];
-    link(record?.id, record?.from, record?.to, record?.method, { via: text(record?.values?.via), stale: !!record?.stale, conflicted: !!record?.conflicted, missing: false, status: { from: stateOf(ends?.from ?? ends, none), to: stateOf(ends?.to ?? ends, none) } });
+    link(record?.id, record?.from, record?.to, record?.method, { via: text(record?.values?.via), ...(record?.fields?.status?.observed_at || record?.fields?.method?.observed_at ? { observedAt:text(record.fields.status?.observed_at || record.fields.method?.observed_at) } : {}), stale: !!record?.stale, conflicted: !!record?.conflicted, missing: false, status: { from: stateOf(ends?.from ?? ends, none), to: stateOf(ends?.to ?? ends, none) } });
   }
   const routes = [];
   for (const record of graph.routes || []) {
@@ -154,6 +154,7 @@ function linkMarkup(link, at, names, { on, dim, words, interactive, sel, bundles
 export function renderScene(model, positions, { route = null, selected = null, selectedLink = null, interactiveLinks = false, words = STATUS_TEXT, labels = 0, places: given = null, cards = false, presentation = null } = {}) {
   const onLinks = new Set(route?.hops.map((hop) => hop.link));
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
+  const selectedEnds = new Set(presentation ? model.links.filter(link => link.id === selectedLink).flatMap(link => [link.from,link.to]) : []);
   const names = new Map(model.nodes.map((node) => [node.key, node.name]));
   const places = given || layoutLinks(model.links, positions);
   // Count incident ends before removing the selected link: a four-link bundle stays
@@ -174,7 +175,7 @@ export function renderScene(model, positions, { route = null, selected = null, s
     }
   }
   const links = model.links.filter((link) => places.has(link.id)).map((link) => (presentation?.link || linkMarkup)(link, places.get(link.id), names, { on: onLinks.has(link.id) || selectedLink === link.id, dim: !!route && !onLinks.has(link.id) && selectedLink !== link.id, words, interactive: interactiveLinks, sel: selectedLink === link.id, bundles }));
-  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => (presentation?.node || nodeMarkup)(node, positions[node.key], { on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, cards, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
+  const nodes = model.nodes.filter((node) => positions[node.key]).map((node) => (presentation?.node || nodeMarkup)(node, positions[node.key], { linkEnd: selectedEnds.has(node.key), on: onNodes.has(node.key), dim: !!route && !onNodes.has(node.key), sel: node.key === selected, words, labels, cards, bundle: bundles.get(node.key)?.state !== "none" ? bundles.get(node.key) : null }));
   return `<g class="topo-links">${links.join("")}</g><g class="topo-nodes">${nodes.join("")}</g>`;
 }
 
@@ -259,6 +260,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     get loaded() { return raw !== null; },
     get route() { return route(); },
     get selected() { return selected; },
+    get selectedLink() { return selectedLink; },
     /** Take a read; false when it is the read already shown. */
     apply(payload) {
       const next = JSON.stringify(payload ?? null);
@@ -292,10 +294,10 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     /** Forget every dragged place: back to the automatic layout. */
     reset() { placed = {}; place(); save(); },
     setRoute(next) { site = model.routes.some((item) => item.site === next) ? next : ""; },
-    selectLink(id) { selectedLink = model.links.some((link) => link.id === id) && selectedLink !== id ? id : null; },
-    select(key) { selected = positions[key] && key !== selected ? key : null; return selected; },
+    selectLink(id) { selectedLink = model.links.some((link) => link.id === id) && selectedLink !== id ? id : null; if (presentation) selected = null; return selectedLink; },
+    select(key) { if (presentation) selectedLink = null; selected = positions[key] && key !== selected ? key : null; return selected; },
     /** Make `key` the selected node (not a toggle); false when the map has no such node. */
-    choose(key) { if (!positions[key]) return false; selected = key; return true; },
+    choose(key) { if (!positions[key]) return false; if (presentation) selectedLink = null; selected = key; return true; },
     clear() { selected = null; },
     scene() { return renderScene(model, positions, { route: route(), selected, selectedLink, interactiveLinks: routed, words, labels, places: routed ? linkPlaces() : null, cards, presentation }); },
     links() { return linkPlaces(); },
@@ -378,6 +380,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     redraw = false;
     const focused = section.ownerDocument.activeElement?.closest?.("[data-key]")?.dataset.key;
     const focusedLink = section.ownerDocument.activeElement?.closest?.("[data-link]")?.dataset.link;
+    if (look.presentation && core.loaded && core.model.nodes.length && !core.view) { grow(core.fit(...size(), { remember:false }, { pad:fitPad, reach })); fitted = true; }
     world.innerHTML = core.scene();
     nodeEls = new Map([...world.querySelectorAll("[data-key]")].map((el) => [el.dataset.key, el]));
     linkEls = new Map([...world.querySelectorAll("[data-link]")].map((el) => [el.dataset.link, el]));
@@ -411,8 +414,10 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
       const payload = await api(path);
       if (mine !== run) return;
       error = ""; stalled = false;
-      const before = core.selected;
+      const before = core.selected, beforeLink = core.selectedLink;
       const changed = core.apply(payload);
+      if (look.linkPanel && beforeLink && !core.selectedLink) section.dispatchEvent(new CustomEvent("topology:link", { detail: { id:null } }));
+      if (look.linkPanel && core.selectedLink) panel?.refresh();
       if (look.site) core.setRoute(look.site());
       // A device that left the map takes its details with it.
       if (before !== null && core.selected === null) { chosen = false; announce(null); }
@@ -443,7 +448,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     fitted = false;
     paintView();
   }
-  function fit(options) { grow(core.fit(...size(), options, { pad: fitPad, reach })); fitted = true; paintView(); }
+  function fit(options) { grow(core.fit(...size(), options, { pad: fitPad, reach })); fitted = true; paintView(); if (look.presentation) draw(); }
   function announce(key) { section.dispatchEvent(new CustomEvent("topology:select", { bubbles: true, detail: { key } })); }
   function select(key) {
     const selected = core.select(key);
@@ -454,6 +459,7 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
   }
   function selectLink(id) {
     core.selectLink(id);
+    if (look.linkPanel) { chosen = true; announce(null); section.dispatchEvent(new CustomEvent("topology:link", { detail: { id:core.selectedLink } })); }
     draw();
     linkEls.get(id)?.focus({ preventScroll: true });
   }
@@ -586,7 +592,8 @@ export function createTopologyMap({ mount, api, storage = browserStorage(), work
     on(stage, "wheel", wheel, { passive: false });
     on(stage, "keydown", keys);
     on(section, "click", click);
-    panel = createNodePanel({ section, api, model: () => core.model, interval, own, compact, render: look.panel });
+    panel = createNodePanel({ section, api, model: () => core.model, interval, own, compact, render: look.panel, renderLink: look.linkPanel });
+    on(section, "topology:link-close", () => { if (core.selectedLink) selectLink(core.selectedLink); });
     on(part("route"), "change", (event) => { core.setRoute(event.target.value); draw(); });
     if (typeof ResizeObserver === "function") {
       sizes = new ResizeObserver(() => { if (fitted && core.view && !gesture) fit({ remember: false }); });
