@@ -148,6 +148,19 @@ def tick(hub, config, journal, env, secrets):
         _save(path, entry)
         _deliver(hub, path, entry)
         return
+    if command["action"] in ("launch", "continue"):
+        from . import headroom
+
+        code = (
+            headroom.reserve(config, journal, "session:" + token)
+            if headroom.required(command)
+            else None
+        )
+        if code:
+            entry = {"lease_token": token, "outcome": "refused", "code": code}
+            _save(path, entry)
+            _deliver(hub, path, entry)
+            return
     if not hub.post("sessions/starting", {"lease_token": token})["proceed"]:
         return
     entry = {"lease_token": token, "outcome": "spawning"}

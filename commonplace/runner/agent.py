@@ -482,6 +482,12 @@ def _start(hub, config, job, journal, env, secrets):
         # Invalid ids must never become local paths. The fence identifies the job.
         hub.post("result", {"lease_token": job["lease_token"], "outcome": "failed", "code": code})
         return
+    from . import headroom
+
+    code = headroom.reserve(config, journal, job["job_id"]) if headroom.required(job) else None
+    if code:
+        hub.post("result", {"lease_token": job["lease_token"], "outcome": "failed", "code": code})
+        return
     for attempt in range(2):
         try:
             hub.post("starting", {"lease_token": job["lease_token"]})
@@ -533,7 +539,14 @@ def _run(config, once):
                     print("runner: invalid journal quarantined", file=sys.stderr)
                     continue
                 _deliver(hub, path, entry, replay=True)
-            from . import session_agent
+            from . import headroom, session_agent
+
+            try:
+                hub.post("resources", headroom.snapshot(config))
+            except _HubError as exc:
+                if exc.kind == "credential":
+                    raise
+                exc.report()  # Optional reporting must not gate legacy launches.
 
             session_error = None
             try:
