@@ -103,7 +103,11 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
                         await page.wait_for_selector(".needs-me")
                         await assert_gutters(page, "#content")
                     else:
-                        await assert_gutters(page, ".workbench-board .board")
+                        await page.wait_for_function("""() => {
+                          const board = document.querySelector('.deck-board .board');
+                          const box = board?.getBoundingClientRect();
+                          return box?.left === 16 && box.right === innerWidth - 16;
+                        }""")
                     await assert_tabs(page)
                     await page.locator(f'[data-deck="tabs"] a[href="#/{destination}"]').click()
                     await page.wait_for_function(

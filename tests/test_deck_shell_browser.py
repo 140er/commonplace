@@ -96,6 +96,9 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                             await page.locator(".deck-owner small").text_content()
                             == "Owner · " + (await me.json())["workspace_name"]
                         )
+                        await page.locator('[data-deck=bar] a[href="#/board"]').click()
+                        await page.locator(".deck-board .board").wait_for(state="visible")
+                        assert await page.evaluate("location.hash") == "#/board/work"
                         await page.locator(".deck-rail-heading.ws").click()
                         await page.locator(".workspace-switch").wait_for(state="visible")
                         assert await page.get_by_role(

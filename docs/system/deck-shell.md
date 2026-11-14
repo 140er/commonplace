@@ -36,6 +36,7 @@ The desktop content stays inside the stage at an 8px inset, with a 12px radius a
 the existing dimmed artwork and veil. Child states are feature-detected; absent
 state fields render nothing. The Bots heading links to the existing New bot action.
 The account footer shows the authenticated workspace role beside the workspace name.
+The bare Board alias resolves only in Deck; classic routing stays unchanged.
 
 Home and New thread use the registered root hero; Today uses its registered screen.
 The shell shares the existing roster callback and retains the personal queue ledger,

@@ -116,8 +116,9 @@ test('shell refreshes only readable lists, keeps folder collapse and rejects sta
 
  test('the workspace Board link resolves through the existing readable-board selection', async () => {
   const { resolveRoute } = await import('../commonplace/web/static/routes.js');
-  assert.equal(resolveRoute('#/board', { boards: [{ slug: 'one' }, { slug: 'two' }], last: 'two' }), '#/board/two');
-  assert.equal(resolveRoute('#/board', { boards: [] }), '#/start');
+  assert.equal(resolveRoute('#/board', { deck: true, boards: [{ slug: 'one' }, { slug: 'two' }], last: 'two' }), '#/board/two');
+  assert.equal(resolveRoute('#/board', { deck: true, boards: [] }), '#/start');
+  assert.equal(resolveRoute('#/board', { deck: false, boards: [{ slug: 'one' }] }), '#/board');
 });
 
  test('bot tails prefer unread over recorded time; child states and real roles are optional', () => {

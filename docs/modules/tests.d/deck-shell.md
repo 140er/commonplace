@@ -16,3 +16,5 @@
   dialog, raised surface, ink and border tokens; authority assertions remain.
   Home/Today integration verifies the registered root and Today loaders, palette
   hooks, live queue counts, rail links and composer-aware microphone placement.
+  Board integration checks the rail alias, unchanged classic routing and the
+  divided Board's phone inset alongside existing drawer navigation.
