@@ -6,7 +6,9 @@
 :root[data-ui="deck"] .deck-board-intro { margin: 0; color: var(--ink2); font-size: 13.5px; }
 :root[data-ui="deck"] .deck-board .board-tools { display: flex; flex: none; gap: 8px; padding: 0; margin: 0; align-items: center; }
 :root[data-ui="deck"] .deck-board .deck-board-add { background: var(--s2); color: var(--ink); border: 0; border-radius: 8px; white-space: nowrap; }
-:root[data-ui="deck"] .deck-board-phone-tools { display: none; }
+:root[data-ui="deck"] .deck-board-phone-tools, :root[data-ui="deck"] .deck-board-phone-actions { display: none; }
+:root[data-ui="deck"] .deck-board-title { min-width: 0; }
+:root[data-ui="deck"] .deck-board-filters { margin-right: 12px; }
 :root[data-ui="deck"] .deck-board-filters span, :root[data-ui="deck"] .deck-board-states span { color: var(--ink3); margin-left: 4px; }
 :root[data-ui="deck"] .deck-board-menu { position: relative; flex: none; }
 :root[data-ui="deck"] .deck-board-menu summary { display: grid; place-items: center; width: 32px; height: 32px; list-style: none; background: var(--s2); border-radius: 8px; cursor: pointer; }
@@ -90,16 +92,18 @@
   :root[data-ui="deck"] .shell .deck-board { padding: 16px 16px 24px; }
   :root[data-ui="deck"] .shell[data-view="board"] .head { display: none; }
   :root[data-ui="deck"] .deck-board-heading { display: block; margin-bottom: 16px; }
-  :root[data-ui="deck"] .deck-board-heading h1 { display: block; }
+  :root[data-ui="deck"] .shell .center .deck-board-heading h1 { display: block; margin: 0; }
+  :root[data-ui="deck"] .deck-board-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  :root[data-ui="deck"] .deck-board-phone-actions { display: flex; flex: none; align-items: center; gap: 8px; }
   :root[data-ui="deck"] .deck-board-heading .board-tools { display: none; }
-  :root[data-ui="deck"] .deck-board-phone-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; min-width: 0; }
-  :root[data-ui="deck"] .deck-board-states { display: flex; overflow-x: auto; overscroll-behavior-x: contain; gap: 6px; min-width: 0; flex: 1; }
+  :root[data-ui="deck"] .deck-board-phone-tools { display: block; margin-bottom: 16px; min-width: 0; }
+  :root[data-ui="deck"] .deck-board-states { display: flex; width: 100%; box-sizing: border-box; overflow-x: auto; overscroll-behavior-x: contain; gap: 6px; min-width: 0; padding-right: 16px; scroll-padding-right: 16px; -webkit-mask-image: linear-gradient(to right,var(--ground) calc(100% - 16px),transparent); mask-image: linear-gradient(to right,var(--ground) calc(100% - 16px),transparent); }
   :root[data-ui="deck"] .deck-board-states button { flex: none; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 8px; background: var(--s2); color: var(--ink2); white-space: nowrap; }
   :root[data-ui="deck"] .deck-board-states button[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
   :root[data-ui="deck"] .deck-board-add, :root[data-ui="deck"] .deck-board-menu summary { min-height: 44px; }
   :root[data-ui="deck"] .deck-board-menu summary { width: 44px; }
   :root[data-ui="deck"] .deck-board-menu :is(button,a) { min-height: 44px; display: flex; align-items: center; }
-  :root[data-ui="deck"] .deck-board-intro { max-width: none; margin-bottom: 16px; }
+  :root[data-ui="deck"] .deck-board-intro { max-width: none; margin-top: 8px; }
   :root[data-ui="deck"] .deck-board .board-tools { position: static; justify-content: flex-start; }
   :root[data-ui="deck"] .deck-board .seg { max-width: 100%; overflow-x: auto; }
   :root[data-ui="deck"] .deck-board .seg button { min-height: 44px; }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { createNeedLedger } from '../commonplace/web/static/deck-home-today.js';
 
 const read = name => readFileSync(new URL(`../commonplace/web/static/${name}`, import.meta.url), 'utf8');
 const app = read('app.js');
@@ -13,6 +14,7 @@ const content = { children: [], innerHTML: '', querySelector: () => null };
 const values = { '/api/boards': { boards: [{ slug: 'project' }] }, '/api/needs-me': queue,
   '/api/rules/count': { waiting: 0 }, '/api/bots': { bots: [] } };
 const context = {
+  deckNeedsLedger: createNeedLedger(),
   state: { me: { actor: 'user:reader', can_admin: role === 'owner' }, base: '#/boards', route: '#/boards', screen: 0, refreshRequest: 0, needs: { count: 99 } },
   root: { querySelector: selector => selector === '#content' ? content : null },
   document: { dispatchEvent: () => expired++ }, Event, AbortController, setTimeout, clearTimeout,
@@ -30,7 +32,7 @@ const context = {
   showError(text) { error = text; }, message: text => `${text} Retry`, waitingTotal: () => 0,
 };
 if (look === 'deck') context.state.deck = { owns: () => false };
-runInNewContext(read('api.js').replace(/export /g, '') + '\n' + slice('async function refresh(', 'function decideStart('), context);
+runInNewContext(read('api.js').replace(/export /g, '') + '\n' + slice('function rememberDeckBots(', 'function setBotsWaiting(') + slice('async function refresh(', 'function decideStart('), context);
 const retry = app.match(/else if \(action === "retry"\) ([^\n]+)/);
 assert.ok(retry, 'Production Retry handler exists');
 runInNewContext('async function clickRetry() { ' + retry[1] + ' }', context);

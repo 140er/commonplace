@@ -164,3 +164,38 @@ test('optional Deck binding preserves minimal classic roots and tolerates partia
     assert.doesNotThrow(cleanup);
   }
 });
+
+test('phone Board actions share the title row and state pills have their own full-width row', () => {
+  const html = htmlFor({});
+  const title = html.match(/class="deck-board-title-row">([\s\S]*?)<\/header>/)?.[1];
+  assert.ok(title, 'title row exists');
+  assert.match(title, /<h1>Board<\/h1>[\s\S]*class="deck-board-phone-actions"[\s\S]*data-action="new-card"/);
+  const pills = html.match(/class="deck-board-phone-tools">([\s\S]*?)<div class="board"/)?.[1];
+  assert.ok(pills);
+  assert.doesNotMatch(pills, /data-action="new-card"|class="deck-board-menu"/);
+  const css = readFileSync(new URL('../commonplace/web/static/deck-board.css',import.meta.url),'utf8');
+  assert.match(css, /mask-image:[^;]*16px/);
+  assert.match(css, /deck-board-states\s*\{[^}]*width:\s*100%/);
+});
+test('Board phone chrome keeps the mark and controls while the page carries its title', async () => {
+  const {renderDeckTop} = await import('../commonplace/web/static/deck.js');
+  for (const options of [{hash:'#/board/product'},{hash:'#/board'},{board:{slug:'product'}}]) {
+    const top = renderDeckTop(options);
+    assert.doesNotMatch(top, /<b>Board<\/b>/);
+    assert.match(top, /class="deck-mark"/);
+    assert.match(top, /data-action="palette"/);
+  }
+  assert.match(renderDeckTop({hash:'#/board/product/chat'}), /<b>Board<\/b>/, 'chat chrome stays unchanged');
+  assert.match(htmlFor({}), /<h1>Board<\/h1>/);
+});
+test('drawer progress parent uses its state text without a duplicate state dot', () => {
+  const html = renderDetails({...base,need:'you'},options);
+  const parent = html.match(/<li class="current">([\s\S]*?)<\/li>/)?.[1];
+  assert.ok(parent);
+  assert.doesNotMatch(parent, /deck-board-dot|<i/);
+  assert.match(parent, /class="waiting">Needs you/);
+});
+test('desktop filter group gets twelve extra pixels before Add card', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-board.css',import.meta.url),'utf8');
+  assert.match(css, /\.deck-board-filters\s*\{[^}]*margin-right:\s*12px/);
+});

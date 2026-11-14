@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
+import { createNeedLedger } from '../commonplace/web/static/deck-home-today.js';
 
 let raw = ''; for await (const part of process.stdin) raw += part;
 const sources = JSON.parse(raw);
@@ -50,9 +51,10 @@ async function main() {
       const nodes={'#content':f.mount,'#card-panel':{hidden:true},'#shell-dialog':{close(){}}};
       f.mount.children=[];
       let shared=0;
-      const context={state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},markOpenCard(){},message:x=>x,showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:f.ui,createAdmin,api(){shared++;return new Promise(()=>{});},e:escapeHTML,title(){},navigation(){},currentBoard:()=>null,consoleScreen(){}};
+      const context={deckNeedsLedger:createNeedLedger(),state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},markOpenCard(){},message:x=>x,showError(){},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,adminUI:f.ui,createAdmin,api(){shared++;return new Promise(()=>{});},e:escapeHTML,title(){},navigation(){},currentBoard:()=>null,consoleScreen(){}};
       // adminScreen is production shell glue; use the real controller with the same mount.
-      runInNewContext(appSlice('function adminScreen(', 'function consoleScreen(')+appSlice('async function refresh(', 'function decideStart(')+appSlice('async function route()', '// The current view'),context);
+      // Execute the complete refresh dependency contract, including the production roster helper.
+      runInNewContext(appSlice('function rememberDeckBots(', 'function setBotsWaiting(')+appSlice('function adminScreen(', 'function consoleScreen(')+appSlice('async function refresh(', 'function decideStart(')+appSlice('async function route()', '// The current view'),context);
       context.adminUI=f.ui;
       void context.route(); await flush();
       assert.equal(state.base,'#/admin','Admin must survive the hash allowlist');
@@ -74,11 +76,12 @@ async function main() {
     const nodes={'#content':f.mount,'#card-panel':panel,'#shell-dialog':{close(){}}};
     f.mount.children=[];
     let stops=0, shows=0;
-    const context={state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},restore(){},capture:()=>()=>{},markOpenCard(){},message:x=>x,showError(x){if(x) errors.push(x);},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,
+    const context={deckNeedsLedger:createNeedLedger(),state,root:{querySelector:s=>nodes[s]||null},location:{hash:'#/admin'},history:{replaceState(){}},localStorage:{getItem:()=>null},resolveRoute,boardRoute,boardPreference:()=>'',decideStart:()=>undefined,clearAgentSecret(){},voice:{stop(){}},speech:{stop(){}},remember(){},restore(){},capture:()=>()=>{},markOpenCard(){},message:x=>x,showError(x){if(x) errors.push(x);},queueFlush(){},queueStop(){},boardDispose:null,consoleUI:null,detailsUI:null,
       adminUI:{show(){shows++;f.ui.show();},stop(){stops++;f.ui.stop();}},createAdmin,e:escapeHTML,enc:encodeURIComponent,title(){},navigation(){},currentBoard:()=>null,placeLifecycle(){},consoleScreen(){},needsView(){},boardsView(){},boardView(){},mountWorkbenchChat(){},callTree:()=>'',
       createDetails:({mount})=>({show(card){mount.innerHTML=`Card ${card.number}: ${card.title}`;},stop(){}}),
       api(path,options={}){calls.push({path,options}); if(path==='/api/boards') return Promise.resolve({boards:[]}); if(path==='/api/cards/5') return Promise.resolve({number:5,title:'Requested card',board:'demo'}); return Promise.resolve({});}};
-    runInNewContext(appSlice('async function cardPanel(', 'function newCardForm(')+appSlice('function adminScreen(', 'function consoleScreen(')+appSlice('async function refresh(', 'function decideStart(')+appSlice('async function route()', '// The current view'),context);
+    // Execute the complete refresh dependency contract, including the production roster helper.
+    runInNewContext(appSlice('function rememberDeckBots(', 'function setBotsWaiting(')+appSlice('async function cardPanel(', 'function newCardForm(')+appSlice('function adminScreen(', 'function consoleScreen(')+appSlice('async function refresh(', 'function decideStart(')+appSlice('async function route()', '// The current view'),context);
     await context.route(); await flush();
     assert.equal(f.requests.length,6);
     const pending=[...f.requests], before=f.requests.length;

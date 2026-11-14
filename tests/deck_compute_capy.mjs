@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { inspectorModel, inspectorHTML, computePanel, addMachineHTML, watchComputeMotion } from '../commonplace/web/static/deck-compute-capy.js';
+import { inspectorModel, inspectorHTML, computePanel, addMachineHTML, watchComputeMotion, computeLinkPanel } from '../commonplace/web/static/deck-compute-capy.js';
 import { mapModel, createMapCore } from '../commonplace/web/static/topology-map.js';
 
 test('inspector uses recorded fields, honest capacity and exact label copy', () => {
@@ -193,7 +193,7 @@ test('phone curves use separate lanes with captions at their own midpoint and fi
   for(const link of links) {
     const place=places.get(link.id);
     assert.equal(place.label.x,place.lane);
-    assert.equal(place.label.y,(positions[link.from].y+positions[link.to].y)/2);
+    assert.equal(place.label.y,(place.points[0].y+place.points.at(-1).y)/2);
   }
   const pair = directLinks({nodes,links:[{id:'forward',from:'hub',to:'runner'},{id:'back',from:'runner',to:'hub'}]},positions,true,.5);
   assert.ok(Math.abs(pair.get('forward').lane-pair.get('back').lane)*.5 >= 16);
@@ -215,9 +215,63 @@ test('health, summary and selected-link facts use the same shapes and honest obs
   const html=mod.computeLinkPanel(options);
   assert.match(html,/Runner to Hub/); assert.match(html,/>Route<\/dt><dd>Tailscale/);
   assert.match(html,/>State<\/dt><dd>[\s\S]*Degraded/);
-  assert.match(html,/>Last seen<\/dt><dd>Not reported/);
+  assert.match(html,/>Last seen<\/dt><dd>Unknown/);
   assert.doesNotMatch(html,/undefined|Healthy/);
   const recorded=mod.computeLinkPanel({...options,link:{...options.link,observedAt:'2026-01-01T12:00:00Z',stale:true},names:new Map([['runner','<script>'],['hub','Hub']])});
   assert.match(recorded,/<time datetime="2026-01-01T12:00:00Z">/);
   assert.match(recorded,/data-shape="ring"/); assert.doesNotMatch(recorded,/<script>/);
+});
+
+
+test('phone curves attach twelve screen pixels apart on the node left edge', async () => {
+  const {directLinks,cardSize} = await import('../commonplace/web/static/deck-compute-scene.js');
+  const nodes=['runner','middle','a','b'].map(key=>({key,name:key}));
+  const positions=Object.fromEntries(nodes.map((n,i)=>[n.key,{x:0,y:i*112}]));
+  const links=[{id:'a',from:'runner',to:'a'},{id:'b',from:'runner',to:'b'}];
+  for(const k of [1,.5]) {
+    const places=directLinks({nodes,links},positions,true,k);
+    const starts=links.map(link=>places.get(link.id).points[0]);
+    assert.equal(Math.abs(starts[0].y-starts[1].y)*k,12);
+    assert.equal(starts[0].x*k,-cardSize(nodes[0],true).width/2);
+  }
+});
+
+test('summary separators wrap with their item and stay outside the text', async () => {
+  const {summaryStatesHTML} = await import('../commonplace/web/static/deck-compute-capy.js');
+  const html=summaryStatesHTML([{name:'Laptop',status:'unknown'}]);
+  assert.doesNotMatch(html,/·/,'separators are clipped outside a wrapped item, never orphaned text');
+  const css=await readFile(new URL('../commonplace/web/static/deck-compute-capy.css', import.meta.url),'utf8');
+  assert.match(css,/dc-summary[^}]*flex-wrap:\s*wrap/);
+  assert.match(css,/dc-summary-state::before[^}]*content:\s*['"]\\00b7['"]/);
+});
+
+test('summary sorts effective status worst first without reordering the input', async () => {
+  const {summaryStatesHTML} = await import('../commonplace/web/static/deck-compute-capy.js');
+  const nodes=[{name:'Unknown',status:'unknown'},{name:'Stale',status:'down',stale:true},{name:'Busy',status:'degraded'},{name:'Down',status:'down'}];
+  const html=summaryStatesHTML(nodes);
+  assert.ok(html.indexOf('Down down')<html.indexOf('Busy degraded'));
+  assert.ok(html.indexOf('Busy degraded')<html.indexOf('Unknown unknown'));
+  assert.ok(html.indexOf('Busy degraded')<html.indexOf('Stale unknown'));
+  assert.equal(nodes[0].name,'Unknown');
+});
+
+test('link detail forwards both compact modes to the shared node close control', () => {
+  const close=html=>/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/.exec(html)[0];
+  for (const compact of [false,true]) {
+    const options={key:'runner',node:{name:'Runner',status:'up'},tab:'physical',detail:{fields:{},sites:[]},links:[],names:new Map(),compact};
+    const node=computePanel(options,{});
+    const link=computeLinkPanel({link:{from:'a',to:'b',method:'direct',status:{from:'up',to:'up'}},names:new Map(),compact});
+    assert.match(link,/>Last seen<\/dt><dd>Unknown/);
+    assert.equal(close(link),close(node),`same close control with compact=${compact}`);
+  }
+});
+
+
+test('phone node and link inspectors share their separate Back treatment', () => {
+  const options={key:'runner',node:{name:'Runner',status:'up'},tab:'physical',detail:{fields:{},sites:[]},links:[],names:new Map(),compact:true};
+  const node=computePanel(options,{},true);
+  const link=computeLinkPanel({link:{from:'a',to:'b',status:{from:'up',to:'up'}},names:new Map(),compact:true,phone:true});
+  const close=html=>/<button[^>]*data-td="close"[^>]*>[\s\S]*?<\/button>/.exec(html)[0];
+  assert.equal(close(link),close(node));
+  assert.match(close(link),/>Back<\/button>/);
 });

@@ -151,6 +151,18 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             )
             assert geometry["x"] == 16 and geometry["width"] == 358
             assert geometry["scroll"] > geometry["width"]
+            pills = page.locator(".deck-board-states")
+            pill_box = pills.bounding_box()
+            actions = page.locator(".deck-board-phone-actions").bounding_box()
+            title = page.locator(".deck-board-heading h1").bounding_box()
+            assert pill_box["x"] == 16 and pill_box["width"] == 358
+            review = pills.locator('[data-board-column="review"]').bounding_box()
+            assert review["x"] + review["width"] <= pill_box["x"] + pill_box["width"] - 16
+            assert pill_box["y"] >= actions["y"] + actions["height"]
+            assert abs(actions["y"] + actions["height"] / 2 - title["y"] - title["height"] / 2) < 1
+            assert "16px" in pills.evaluate("el=>getComputedStyle(el).maskImage")
+            assert page.locator("#phone-bar b").count() == 0
+            assert page.locator("#phone-bar .deck-mark").is_visible()
             assert page.locator("#col-todo").bounding_box()["width"] == 358
             page.locator('[data-board-column="done"]').click()
             page.wait_for_function(
@@ -163,6 +175,9 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         suffix = "phone" if size[0] == 390 else "desktop"
         assert page.locator(".deck-board-heading h1").inner_text() == "Board"
         if size[0] == 1440:
+            filters = page.locator(".deck-board-filters").bounding_box()
+            add = page.locator(".board-tools .deck-board-add").bounding_box()
+            assert abs(add["x"] - filters["x"] - filters["width"] - 20) < 1
             page.locator('[data-board-filter="state:review"]').click()
             assert page.locator(".deck-board .card").count() == 1
             assert page.locator(".deck-board .card").get_attribute("data-card") == "4"
@@ -209,6 +224,7 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
             assert drawer.locator(f".deck-card-controls {marker}").count() == 0
         assert drawer.get_by_role("button", name="Close card").is_visible()
         assert drawer.locator(".deck-card-progress .child").count() == 3
+        assert drawer.locator(".deck-card-progress .current .deck-board-dot").count() == 0
         assert drawer.locator(".deck-card-progress span.waiting").inner_text() == "Needs you"
         if size[0] == 390:
             label = drawer.locator(".deck-card-facts dt").first.bounding_box()
