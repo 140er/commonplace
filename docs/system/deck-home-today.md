@@ -21,3 +21,8 @@ Activity reads as sentences, highlights neutral for four seconds, and keeps the
 same chronology and authorized event source. Deck palette descriptors use the
 existing shell dispatcher and workspace-scoped roster; the classic palette keeps
 its descriptors. Phone dismissal remains in the field row without a footer.
+
+Send alignment is measured from the arrow path to the button centre at both
+viewport sizes. Disabled opacity changes the same violet fill. Approval keeps
+its primary rest colour through hover so a stationary pointer cannot make the
+next card look busy or dim after the preceding decision exits.

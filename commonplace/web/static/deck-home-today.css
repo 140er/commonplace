@@ -41,7 +41,8 @@
 :root[data-ui="deck"] .bh-toolbar .bh-choice { max-width: 40%; font-size: 13.5px; }
 :root[data-ui="deck"] .bh-toolbar button > svg { width: 20px; height: 20px; vertical-align: middle; }
 :root[data-ui="deck"] .bh-spacer { flex: 1; }
-:root[data-ui="deck"] .bh-toolbar .bh-send { flex: none; background: var(--violet); color: white; border-radius: 11px; }
+:root[data-ui="deck"] .bh-toolbar .bh-send { display: flex; align-items: center; justify-content: center; flex: none; gap: 0; padding: 0; line-height: 1; background: var(--violet); color: white; opacity: 1; filter: none; border-radius: 11px; }
+:root[data-ui="deck"] .bh-toolbar .bh-send > svg { display: block; flex: none; margin: 0; }
 :root[data-ui="deck"] .bh-toolbar .bh-send:disabled { background: var(--violet); color: white; opacity: .4; }
 :root[data-ui="deck"] .bh-hint { display: flex; justify-content: center; margin-top: 18px; color: var(--ink3); font-size: 12.5px; }
 :root[data-ui="deck"] .bh-hint a { display: flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; min-height: 24px; }
@@ -81,10 +82,10 @@
 :root[data-ui="deck"] .bt-fact { color: var(--ink3); font-size: 12.5px; margin-top: 5px; }
 :root[data-ui="deck"] .bt-actions { display: flex; align-items: center; gap: 6px; margin-top: 14px; }
 :root[data-ui="deck"] .bt-actions button { min-height: 32px; padding: 0 12px; background: transparent; font-weight: 500; }
-:root[data-ui="deck"] .bt-actions .bt-approve { background: var(--ink); color: var(--ground); }
+:root[data-ui="deck"] .bt-actions .bt-approve { background: var(--ink); color: var(--ground); filter: none; }
 :root[data-ui="deck"] .bt-actions .bt-hold { background: var(--s2); color: var(--ink); }
 :root[data-ui="deck"] .bt-actions button:hover:not(:disabled) { background: var(--s3); color: var(--ink); }
-:root[data-ui="deck"] .bt-actions .bt-approve:hover:not(:disabled) { background: var(--ink2); color: var(--ground); }
+:root[data-ui="deck"] .bt-actions .bt-approve:is(:hover, :active):not(:disabled) { background: var(--ink); color: var(--ground); filter: none; }
 :root[data-ui="deck"] .bt-more { display: none; position: relative; }
 :root[data-ui="deck"] .bt-more summary { display: grid; place-items: center; min-width: 44px; min-height: 44px; border-radius: var(--radius-control); list-style: none; cursor: pointer; color: var(--ink2); font-size: 20px; }
 :root[data-ui="deck"] .bt-more summary::-webkit-details-marker { display: none; }

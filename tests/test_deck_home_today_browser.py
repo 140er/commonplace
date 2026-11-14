@@ -86,6 +86,23 @@ def test_home_today_live_actions(hub, fresh, width):
                     "e=>({bg:getComputedStyle(e).backgroundColor,opacity:getComputedStyle(e).opacity})"
                 )
                 assert send_style == {"bg": "rgb(157, 92, 255)", "opacity": "0.4"}
+
+                async def send_measurement():
+                    return await page.locator(".bh-send").evaluate("""button => {
+                      const box = button.getBoundingClientRect(), arrow = button.querySelector('path').getBoundingClientRect();
+                      const style = getComputedStyle(button), ink = getComputedStyle(button.querySelector('svg'));
+                      return { dx: arrow.x + arrow.width / 2 - box.x - box.width / 2,
+                        dy: arrow.y + arrow.height / 2 - box.y - box.height / 2,
+                        background: style.backgroundColor, opacity: style.opacity, filter: style.filter, ink: ink.color };
+                    }""")
+
+                send_measurements = [await send_measurement()]
+                await capture("hero-empty")
+                await page.locator(".bh-composer textarea").fill("Check this release")
+                send_measurements.append(await send_measurement())
+                await page.locator(".bh-send").hover()
+                send_measurements.append(await send_measurement())
+                await page.mouse.move(0, 0)
                 await capture("hero")
                 await page.locator(".bh-composer textarea").fill("/")
                 await page.wait_for_selector(".workbench-palette[open]")
@@ -197,7 +214,35 @@ def test_home_today_live_actions(hub, fresh, width):
                     "work asked: Ship consent for the phone feed"
                     in await page.locator('[data-bt="activity"]').text_content()
                 )
+                # Leave the pointer where the removed card's Approve button was.
+                # The next primary must retain its white rest appearance, even under hover.
+                primary = page.locator(".bt-approve").first
+                await expect(primary).to_be_enabled()
+                primary_style = await primary.evaluate("""button => {
+                  const style = getComputedStyle(button);
+                  return { background: style.backgroundColor, opacity: style.opacity, filter: style.filter };
+                }""")
                 await capture("approved")
+                issues = []
+                for index, measurement in enumerate(send_measurements):
+                    if abs(measurement["dx"]) > 1 or abs(measurement["dy"]) > 1:
+                        issues.append(f"send state {index}: arrow centre {measurement}")
+                    expected_opacity = "0.4" if index == 0 else "1"
+                    expected = {
+                        "background": "rgb(157, 92, 255)",
+                        "opacity": expected_opacity,
+                        "filter": "none",
+                        "ink": "rgb(255, 255, 255)",
+                    }
+                    if {key: measurement[key] for key in expected} != expected:
+                        issues.append(f"send state {index}: colour {measurement}")
+                if primary_style != {
+                    "background": "rgb(237, 237, 242)",
+                    "opacity": "1",
+                    "filter": "none",
+                }:
+                    issues.append(f"next Approve must rest white: {primary_style}")
+                assert not issues, issues
                 if width == 1440:
                     await page.keyboard.press("j")
                     assert await page.evaluate("document.activeElement.matches('[data-bt-card]')")
