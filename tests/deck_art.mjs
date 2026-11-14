@@ -9,6 +9,8 @@ import { capyRosterHTML } from '../commonplace/web/static/deck-coworkers.js';
 import { deckBoardView } from '../commonplace/web/static/deck-board.js';
 import { renderDeckMemory } from '../commonplace/web/static/deck-memory.js';
 import { showLoading } from '../commonplace/web/static/loading.js';
+import { renderImport } from '../commonplace/web/static/memory-import.js';
+import { shellTrees } from '../commonplace/web/static/deck-shell.js';
 
 const text = html => html.replace(/<svg[^]*?<\/svg>/g, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 // Every art element in the markup is hidden from assistive tech and holds a text-free drawing.
@@ -16,12 +18,12 @@ const arts = html => [...html.matchAll(/<span class="cp-art"[^>]*>[^]*?<\/span>/
 function assertArt(html, name) {
   const found = arts(html).filter(item => item.includes(`data-art="${name}"`));
   assert.equal(found.length, 1, `${name} art missing from ${html.slice(0, 120)}`);
-  assert.match(found[0], /^<span class="cp-art" data-art="[a-z]+" aria-hidden="true"><svg /);
+  assert.match(found[0], /^<span class="cp-art" data-art="[a-z-]+" aria-hidden="true"><svg /);
   assert.doesNotMatch(found[0], /<(text|title|desc|image|script)\b|href=|\bon\w+=/i);
 }
 
 test('the art helper is hidden, text-free and refuses names it does not know', () => {
-  assert.deepEqual(Object.keys(ART).sort(), ['bots', 'clear', 'column', 'loading', 'search']);
+  assert.deepEqual(Object.keys(ART).sort(), ['bots', 'clear', 'column', 'header', 'loading', 'rail', 'rule', 'search', 'step-choose', 'step-preview', 'step-progress', 'step-report']);
   for (const name of Object.keys(ART)) {
     assertArt(artHTML(name), name);
     assert.equal(text(artHTML(name)), '');
@@ -73,7 +75,7 @@ test('Memory shows search art only after a search found nothing', () => {
   assertArt(none, 'search');
   assert.match(text(none), /No exact words match Try fewer or different words, or search every room\./);
   const idle = view({ searched: false });
-  assert.equal(arts(idle).length, 0);
+  assert.equal(arts(idle).filter(item => item.includes('data-art="search"')).length, 0);
   assert.match(text(idle), /Search your memory Exact words from chats, cards and notes\. Never summarised\./);
 });
 
@@ -96,4 +98,51 @@ test('the stylesheet is linked, never animates, and keeps art from stretching it
   assert.match(index, /href="\/app\/deck-art\.css"/);
   assert.doesNotMatch(css.replace(/\/\*[^]*?\*\//g, ''), /animation|transition|@keyframes/);
   assert.match(css, /\.cp-art svg \{[^}]*max-width: 100%/);
+});
+
+test('the Memory page title row carries one small piece; the title and line stay', () => {
+  const html = renderDeckMemory({ boards: [], results: [], filters: {} }, { highlighted: String });
+  const heading = html.match(/<header class="memory-heading">[^]*?<\/header>/)[0];
+  assertArt(heading, 'header');
+  assert.equal(text(heading), 'Memory Your exact words, and which bot saved them.');
+});
+
+test('each import step shows one small cue beside its title and the words stay the same', () => {
+  const preview = { total: 1, messages: 3, source: 'chatgpt', source_bytes: 900, scope: 'threads' };
+  const report = { processed: 1, total: 1, imported: 3, accepted: 3, duplicates: 0, errors: 0, results: [] };
+  const cases = [
+    [{ phase: 'choose' }, 'step-choose', 'Import memory files'],
+    [{ phase: 'previewing' }, 'step-progress', 'Checking file'],
+    [{ phase: 'importing', preview }, 'step-progress', 'Importing memory'],
+    [{ phase: 'preview', preview, filename: 'a.json' }, 'step-preview', 'Review import'],
+    [{ phase: 'report', preview, report, filename: 'a.json' }, 'step-report', 'Import report'],
+  ];
+  for (const [state, name, title] of cases) {
+    const html = renderImport(state, {}, 'deck');
+    const header = html.match(/<header>[^]*?<\/header>/)[0];
+    assertArt(header, name);
+    assert.equal(arts(html).length, 1, `${state.phase}: one piece`);
+    assert.equal(text(header), title);
+    assert.match(header, /^<header><h1 id="memory-import-title" tabindex="-1">/);
+    // The same step in the classic look has no art and the same words.
+    const classic = renderImport(state, {}, 'classic');
+    assert.equal(arts(classic).length, 0);
+  }
+  assert.equal(arts(renderImport({ phase: 'error', error: 'Nope' }, {}, 'deck')).length, 0);
+});
+
+test('the rail note and Today section lines keep their words and gain art', () => {
+  const rail = shellTrees({});
+  assertArt(rail, 'rail');
+  assert.equal(text(rail), 'No bots yet');
+  const bots = botsHTML([]);
+  const header = bots.match(/<header>[^]*?<\/header>/)[0];
+  assertArt(header, 'rule');
+  assert.equal(text(header), 'Your bots Latest from each');
+});
+
+test('the section line and the Memory title piece stay off the phone and cost no height', () => {
+  const css = readFileSync(new URL('../commonplace/web/static/deck-art.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(max-width: 699px\) \{[^}]*data-art="rule"[^}]*display: none/);
+  assert.match(css, /data-art="rule"\], \.cp-art\[data-art="header"\], \.cp-art\[data-art\^="step-"\] \{ margin: 0; flex: none; \}/);
 });

@@ -1,6 +1,7 @@
 // Deck home. Reads the person's bots; answers use the existing versioned decision route.
 import { elapsed } from './api.js';
 import { agentStatus } from './waiting.js';
+import { artHTML } from './deck-art.js';
 
 export const TITLE = 'Today';
 const enc = encodeURIComponent;
@@ -156,7 +157,7 @@ export function mount(context) {
     if (!active) return;
     const open = s.questions.filter((q) => !s.settled.has(key(q)));
     region('summary').textContent = s.loaded ? summary(open, s.bots, ctx.boards || []) : 'Loading…';
-    region('waiting').innerHTML = `<h2>Waiting on you <span>${open.length}</span></h2>${s.error ? `<p class="today-error" role="alert">${e(s.error)} <button type="button" class="today-option" data-today-retry>Retry</button></p>` : ''}${s.questions.length ? s.questions.map((q) => questionHTML(q, s, e)).join('') : `<p class="today-empty">${s.error ? 'Questions are unavailable.' : s.loaded ? 'Nothing waits on you.' : 'Loading questions…'}</p>`}`;
+    region('waiting').innerHTML = `<h2>Waiting on you <span>${open.length}</span></h2>${s.error ? `<p class="today-error" role="alert">${e(s.error)} <button type="button" class="today-option" data-today-retry>Retry</button></p>` : ''}${s.questions.length ? s.questions.map((q) => questionHTML(q, s, e)).join('') : `<p class="today-empty">${s.error ? 'Questions are unavailable.' : s.loaded ? `${artHTML('clear')}Nothing waits on you.` : 'Loading questions…'}</p>`}`;
     region('working').innerHTML = workingHTML(s.bots, ctx.boards || [], e);
     // Keep both controls alive: text, selection and focus never pass through a redraw.
     const signature = JSON.stringify(s.bots.map((b) => [b.id, b.name]));
