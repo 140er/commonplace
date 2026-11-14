@@ -52,15 +52,18 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
   let card, settings, dialog, opener, busy = false, generation = 0;
   const controls = () => [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled)')];
   const error = (text) => { dialog.querySelector('[data-menu-error]').textContent = text; };
-  function close() {
-    if (!dialog) return;
+  // Closes at once. `later` hands focus back to the caller (after a refresh has redrawn the actions button).
+  function close(later = false) {
+    if (!dialog) return () => {};
     generation++;
-    const target = doc.getElementById(`more-${cardId(settings.board || {}, card.number)}`) || opener;
+    const id = `more-${cardId(settings.board || {}, card.number)}`, from = opener;
     dialog.close();
     dialog = null;
     mount.innerHTML = '';
     busy = false;
-    target?.focus();
+    const focus = () => (doc.getElementById(id) || from)?.focus();
+    if (!later) focus();
+    return focus;
   }
   function paint(editing = false) {
     dialog?.close();
@@ -78,7 +81,8 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
     opener = options.from || doc.activeElement;
     paint();
   }
-  async function run(action, failure, moved = false) {
+  // `moved` is the status a move asked for, so the notice can say when the card landed elsewhere.
+  async function run(action, failure, moved = '') {
     if (busy || !dialog) return;
     busy = true;
     const current = generation;
@@ -90,8 +94,12 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
     try {
       const result = await action();
       if (current !== generation) return;
-      if (result !== undefined) await onChange(result, { moved });
-      if (current === generation) close();
+      if (result === undefined) { close(); return; }
+      // The menu leaves as soon as the server answers; the board refresh that follows can take seconds.
+      const focus = close(true);
+      try { await onChange(result, { moved: Boolean(moved), asked: moved || undefined }); }
+      catch { /* the move happened; the next refresh shows it */ }
+      finally { focus(); }
     } catch (err) {
       if (current === generation) error(err.plain ? err.message : err.status === 409 ? 'This card changed. Close and reopen its actions before trying again.' : failure);
     } finally {
@@ -111,7 +119,7 @@ export function createCardMenu({ mount, api = request, onChange = () => {},
     if (status) {
       if (!columns.includes(status) || card.proposal_status === 'pending') return;
       if (status === card.status) { close(); return; }
-      await run(() => putMove(api, card, status), 'Could not move this card. Try again.', true);
+      await run(() => putMove(api, card, status), 'Could not move this card. Try again.', status);
     } else if (action === 'edit') paint(true);
     else if (action === 'cancel-edit') { paint(); dialog.querySelector('[data-menu-action="edit"]').focus(); }
     else if (action === 'copy') await run(async () => {

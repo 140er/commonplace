@@ -1,6 +1,6 @@
 import { escape as e, actor, elapsed } from './api.js';
 import { whyStrip, waitingText } from './waiting.js';
-import { deckBoardView, bindDeckBoard, boardGroup } from './deck-board.js';
+import { deckBoardView, bindDeckBoard, boardGroup, addedNotice } from './deck-board.js';
 
 const columns = ['todo', 'doing', 'review', 'done'];
 const ITEM = '.card[data-card]';
@@ -249,7 +249,7 @@ export function bindBoard(root, { api, board, me = '', onAdded = () => {}, onFil
     addPending = true; addFailure = null; button.disabled = true;
     // The board may have re-rendered while the request was out: the live form is the one to update.
     const live = () => root.querySelector?.('[data-board-add]') || form;
-    try { const card = await submitCard({ api, board, me, values:Object.fromEntries(new FormData(form)) }); const status = live().querySelector('[data-add-status]'); if (status) status.textContent = `Card ${cardId(board, card.number)} added to Todo`; onAdded(card); }
+    try { const card = await submitCard({ api, board, me, values:Object.fromEntries(new FormData(form)) }); const status = live().querySelector('[data-add-status]'); if (status) status.textContent = globalThis.document?.documentElement?.dataset?.ui === 'deck' ? addedNotice(card, me) : `Card ${cardId(board, card.number)} added to Todo`; onAdded(card); }
     catch (error) {
       addFailure = { slug:board.slug, text:addFailureText(error) };
       const status = live().querySelector('[data-add-status]');
