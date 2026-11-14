@@ -4,6 +4,7 @@ import { discoveryAction } from './map-discovery.js';
 import { addAction } from './map-add.js';
 import { ENROLL_ROUTE, computePanel, addMachineHTML, watchComputeMotion, computeStyles, phoneTree, computeLinkPanel, summaryStatesHTML, mountComputeTopAction } from './deck-compute-capy.js';
 
+import { runnerNodes, workModel, statusText, jobsHTML } from './deck-compute-work.js';
 import { computePresentation, computeFrame, routePreference } from './deck-compute-scene.js';
 
 export const TITLE = 'Compute';
@@ -40,6 +41,13 @@ function styles(doc) {
 .deck-compute .dc-action:hover { background: var(--well); }
 .deck-compute .dc-primary:hover { background: var(--text-2); }
 .deck-compute .dc-action:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.deck-compute .dc-work { margin: 0 0 16px; }
+.deck-compute .dc-status { margin: 0; font-size: 15px; line-height: 22px; color: var(--text); }
+.deck-compute .dc-jobs { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; font-size: 14px; color: var(--text-2); }
+.deck-compute .dc-jobs:empty { display: none; }
+.deck-compute .dc-job a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.deck-compute .dc-stuck { margin: 4px 0 0; color: var(--text); }
+.deck-compute .dc-stuck strong { color: var(--block); }
 .deck-compute .dc-notice:empty { display: none; }
 .deck-compute .dc-notice { margin: 12px 0; font-size: 14px; color: var(--text-2); }
 .deck-compute .dc-empty { margin: 0 0 16px; color: var(--text-2); }
@@ -169,7 +177,7 @@ export function summaryText({ mode, rows, payload }) {
 }
 
 export function mount(context) {
-  let ctx = context, rows = [], general = null, mode = '', latest = null, map = null, built = '';
+  let ctx = context, rows = [], general = null, bots = [], work = workModel([]), mode = '', latest = null, map = null, built = '';
   let stopped = false, epoch = 0, request = null, framed = false, phone = false, builtColumns = 0, observer = null;
   let topAdd = null;
   const root = context.root, doc = root.ownerDocument || globalThis.document;
@@ -251,7 +259,7 @@ export function mount(context) {
   function frame() {
     if (tabs && !tabsHome) tabsHome = { parent: tabs.parentNode, next: tabs.nextSibling };
     map?.stop(); map = null; built = ''; observer?.disconnect(); observer = null;
-    root.innerHTML = '<header class="dc-title"><h1>Compute</h1><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
+    root.innerHTML = '<header class="dc-title"><h1>Compute</h1><p class="dc-summary" data-compute-region="summary"></p><div class="dc-actions" data-compute-region="actions"></div></header><section class="dc-work" aria-label="What is running"><p class="dc-status" data-compute-region="status" role="status">Checking what is running…</p><ul class="dc-jobs" data-compute-region="jobs"></ul></section><p class="dc-empty" data-compute-region="empty" hidden>No machines yet. Add a machine to begin.</p><p class="dc-notice" data-compute-region="notice" role="status"></p><div class="dc-map" data-compute-region="map"></div>' + addMachineHTML();
     if (tabs) root.querySelector('.dc-title')?.after?.(tabs);
     topAdd ??= mountComputeTopAction(shell, hash=>ctx.go(hash));
     placeActions(); framed = true; actions();
@@ -276,6 +284,19 @@ export function mount(context) {
     const machines = (Array.isArray(result?.machines) ? result.machines : []).filter(m => !m.revoked_at).map(m => ({ ...m, id: String(m.id ?? m.machine_id) }));
     return { mode: 'runners', rows: machines, payload: runnerGraph(machines) };
   }
+  function paintWork() {
+    const status = region('status'), jobs = region('jobs');
+    if (status) status.textContent = statusText(work);
+    if (jobs) jobs.innerHTML = jobsHTML(work, bots);
+  }
+  /** What is running: the agents part of each runner machine's node read. Only the topology names runner machines, so
+   * the enrollment fallback has no jobs to count and says so. */
+  async function loadWork(options, mine) {
+    const keys = mode === 'topology' ? runnerNodes(latest) : [];
+    const reads = await Promise.all(keys.map(key => ctx.api(`/api/topology/node?key=${encodeURIComponent(key)}`, options).then(result => ({ ok: true, agents: result?.agents }), error => { if (options.signal.aborted) throw error; return { ok: false }; })));
+    if (stopped || mine !== epoch) return;
+    work = workModel(reads); paintWork();
+  }
   async function refresh(next = {}) {
     ctx = { ...ctx, ...next }; const mine = ++epoch;
     request?.abort(); request = new AbortController();
@@ -285,16 +306,18 @@ export function mount(context) {
       if (stopped || mine !== epoch) return;
       apply(result);
       try {
-        const bots = await ctx.api('/api/bots', options);
+        const roster = await ctx.api('/api/bots', options);
         if (stopped || mine !== epoch) return;
-        general = (Array.isArray(bots?.bots) ? bots.bots : []).find(b => b.kind === 'general') || null;
-      } catch { if (stopped || mine !== epoch) return; general = null; }
+        bots = Array.isArray(roster?.bots) ? roster.bots : [];
+        general = bots.find(b => b.kind === 'general') || null;
+      } catch { if (stopped || mine !== epoch) return; general = null; bots = []; }
       actions();
+      await loadWork(options, mine);
     } catch (error) {
       if (stopped || mine !== epoch) return;
       if (error?.status === 403) {
         topAdd?.stop(); topAdd = null;
-        map?.stop(); map = null; built = ''; framed = false; rows = []; general = null; latest = null;
+        map?.stop(); map = null; built = ''; framed = false; rows = []; general = null; bots = []; work = workModel([]); latest = null;
         root.innerHTML = '<h1>Compute</h1><p class="dc-notice">Only workspace owners can see the machines.</p>';
       } else if (!note(GENERIC_FAILURE)) root.innerHTML = `<h1>Compute</h1><p class="dc-notice" role="status">${GENERIC_FAILURE}</p>`;
     }
