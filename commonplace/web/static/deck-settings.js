@@ -95,6 +95,7 @@ export function arrangeSettings(box, { owner = false } = {}) {
   if (nav) { box.prepend?.(nav); return; }
   box.insertAdjacentHTML('afterbegin', `<nav id="deck-settings-nav" aria-label="Settings sections"><button type="button" data-deck-setting="phone-push" aria-current="location">Notifications</button><button type="button" data-deck-setting="deck-connections">Connections</button><button type="button" data-deck-setting="deck-tools">Workspace</button>${owner ? '<button type="button" data-deck-setting="tool-policy">Action permissions</button>' : ''}</nav>`);
   box.addEventListener?.('scroll', () => {
+    if (box.classList?.contains('capy-settings')) return;
     const nav = box.querySelector('#deck-settings-nav');
     if (!nav) return;
     let current = 'phone-push';
