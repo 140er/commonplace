@@ -115,8 +115,8 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
                 for href in ["#/boards", "#/memory", "#/needs"]:
                     assert await page.locator(f'#deck-tools a[href="{href}"]').is_visible()
                 await page.locator('#deck-tools [data-action="switch-workspace"]').click()
-                await page.wait_for_selector("#shell-dialog[open]")
-                assert "Switch workspace" in await page.locator("#shell-dialog").inner_text()
+                await page.locator(".workspace-switch").wait_for(state="visible")
+                assert "Switch workspace" in await page.locator(".workspace-switch").inner_text()
                 await context.close()
             finally:
                 await browser.close()
