@@ -147,7 +147,7 @@
 
   - Incomplete pair proof still returns zero counts. Tunnel/drawer/other replies retain the gate and malformed scalar provenance remains omitted.
 
-  - Unproved citations disappear without removing readable fact text; plain-file proof remains a separate decision.
+  - Unproved citations disappear without removing readable fact text; plain-file proof uses the locked exact-match policy.
 
   - Incomplete drawer membership proof returns an empty pagination envelope; changed metadata cannot authorize a sibling chunk.
 

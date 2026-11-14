@@ -134,6 +134,12 @@ def write_serverinfo(
         "search_config_fingerprint": search_config_fingerprint,
         "palace_path": paths.canonical_palace_path(palace_path),
     }
+    from .worker_lifecycle import CHILD_ENV, GENERATION_ENV, process_identity
+
+    payload["start_identity"] = process_identity(os.getpid())
+    if os.environ.get(CHILD_ENV) == "1":
+        payload["managed"] = True
+        payload["generation"] = os.environ.get(GENERATION_ENV)
     atomic_write_text(path, json.dumps(payload) + "\n")
     return path
 
@@ -226,18 +232,25 @@ def read_live_serverinfo(palace_path: str):
     None when no record exists, the record is unreadable, or the recorded
     pid is no longer alive (crashed hub — stale file, ignore it).
     """
+    marker = read_monitor_marker(palace_path)
+    if marker is not None and marker.get("state") != "running":
+        return {**marker, "hub_unavailable": True}
     path = serverinfo_path(palace_path)
     try:
         info = json.loads(read_published_bytes(path).decode("utf-8"))
     except (OSError, ValueError):
-        return None
+        return {**marker, "hub_unavailable": True} if marker else None
     if not isinstance(info, dict):
-        return None
+        return {**marker, "hub_unavailable": True} if marker else None
     if not _pid_alive(info.get("pid")):
-        return None
-    if not isinstance(info.get("port"), int) or not info.get("host"):
-        return None
-    return info
+        return {**marker, "hub_unavailable": True} if marker else None
+    if (
+        not isinstance(info.get("port"), int)
+        or not isinstance(info.get("host"), str)
+        or not info.get("host")
+    ):
+        return {**marker, "hub_unavailable": True} if marker else None
+    return {**info, "managed": True} if marker else info
 
 
 def client_base_url(info: dict) -> str:
@@ -268,3 +281,78 @@ def load_server_tokens(palace_path: str) -> tuple[str, ...]:
         if token and token not in candidates:
             candidates.append(token)
     return tuple(candidates)
+
+
+def monitor_path(palace_path: str) -> Path:
+    return server_state_dir(palace_path) / "monitor.json"
+
+
+def write_monitor_marker(
+    palace_path: str, state: str, child=None, *, host="127.0.0.1", port=0, scheme="http"
+):
+    """Parent-owned publication; credentials and request data never enter it."""
+    from .worker_lifecycle import process_identity
+
+    path = monitor_path(palace_path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # A child may still be starting and have only the dead parent's marker.
+    # Preserve that identity when publishing the new parent's orphan state;
+    # otherwise the next cadence tick could mistake the orphan for no child.
+    orphan = live_child_record(palace_path) if state == "orphan_draining" else None
+    child_pid = getattr(child, "pid", None)
+    child_identity = getattr(child, "start_identity", None)
+    if orphan is not None:
+        child_pid = orphan.get("child_pid", orphan.get("pid"))
+        child_identity = orphan.get("child_start_identity", orphan.get("start_identity"))
+    payload = {
+        "pid": os.getpid(),
+        "start_identity": process_identity(os.getpid()),
+        "state": state,
+        "host": host,
+        "port": port,
+        "scheme": scheme,
+        "managed": True,
+        "child_pid": child_pid,
+        "child_start_identity": child_identity,
+    }
+    atomic_write_text(path, json.dumps(payload) + "\n")
+
+
+def read_monitor_marker(palace_path: str):
+    from .worker_lifecycle import identity_alive
+
+    try:
+        info = json.loads(read_published_bytes(monitor_path(palace_path)))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict) or not identity_alive(
+        info.get("pid"), info.get("start_identity")
+    ):
+        return None
+    return info
+
+
+def clear_monitor_marker(palace_path: str):
+    info = read_monitor_marker(palace_path)
+    if info is not None and info.get("pid") == os.getpid():
+        try:
+            monitor_path(palace_path).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def live_child_record(palace_path: str):
+    """An orphan is never reclaimed by parent-marker expiry alone."""
+    from .worker_lifecycle import identity_alive
+
+    for path, pid_key, identity_key in (
+        (serverinfo_path(palace_path), "pid", "start_identity"),
+        (monitor_path(palace_path), "child_pid", "child_start_identity"),
+    ):
+        try:
+            info = json.loads(read_published_bytes(path))
+        except (OSError, ValueError):
+            continue
+        if isinstance(info, dict) and identity_alive(info.get(pid_key), info.get(identity_key)):
+            return info
+    return None

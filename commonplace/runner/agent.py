@@ -609,6 +609,7 @@ def _run(config, once):
         journal.chmod(0o700)
     hub = _Hub(config, token)
     while True:
+        reported = set()  # one stderr line per distinct hub error per pass
         try:
             for path in sorted(journal.glob("*.json")):
                 if path.name == "session-command.json":
@@ -635,7 +636,9 @@ def _run(config, once):
             except _HubError as exc:
                 if exc.kind == "credential":
                     raise
-                exc.report()  # Optional reporting must not gate legacy launches.
+                # Optional reporting must not gate legacy launches.
+                reported.add((exc.kind, exc.status))
+                exc.report()
 
             session_error = None
             try:
@@ -648,10 +651,14 @@ def _run(config, once):
             job = hub.post("lease", {})
             if job is not None:
                 _start(hub, config, job, journal, env, (token, grant))
-            if session_error is not None:
+            if (
+                session_error is not None
+                and (session_error.kind, session_error.status) not in reported
+            ):
                 session_error.report()
         except _HubError as exc:
-            exc.report()
+            if (exc.kind, exc.status) not in reported:
+                exc.report()
             if exc.kind == "credential":
                 return 3
             if exc.kind != "fenced" and once:

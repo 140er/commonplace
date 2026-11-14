@@ -22,6 +22,7 @@ class _ResponseAccess:
     def __init__(self, gateway, principal):
         self.gateway, self.principal = gateway, principal
         self.rooms, self.records, self.parsed, self.private = {}, {}, {}, {}
+        self.associations, self.scrubbed = {}, {}
 
     def recall(self):
         ctx = self.gateway.handoff
@@ -191,6 +192,13 @@ class _ResponseAccess:
         return self.private[key]
 
     def association(self, kind, identifier):
+        """Memoize one revalidated proof per concrete selector in this response."""
+        key = (kind, identifier)
+        if key not in self.associations:
+            self.associations[key] = self._association(kind, identifier)
+        return self.associations[key]
+
+    def _association(self, kind, identifier):
         """Authorize current metadata in this workspace, then revalidate it."""
         try:
             checks.remaining(0)
@@ -334,36 +342,66 @@ _THREAD_FIELDS = frozenset(
 )
 
 
-def scrub_provenance(node, access):
+def _association_proved(node, key, value, parsed, access):
+    """Local metadata proof of a citation whose references are already readable."""
+    if key in {"source_file", "source_path"} and not parsed.tokens:
+        if not parsed.text or not access.association("source_file", (value, parsed.text)):
+            return False
+    if key in {"source_drawer_id", "source_closet"}:
+        kind = "drawer" if key == "source_drawer_id" else "closet"
+        if not parsed.text or not access.association(kind, parsed.text):
+            return False
+    if key == "source_path":
+        if "source_file" in node and node["source_file"] not in (value, Path(value).name):
+            return False
+        if node.get("result_type") == "asset" and "path" in node and node["path"] != value:
+            return False
+    return True
+
+
+def scrub_provenance(node, access, *, import_alias=False, import_file_alias=False):
+    if access.scrubbed.get(id(node)) is node:
+        return node
     out = node
+    paired = "source_path" in node and not import_alias
     fields = provenance_refs.PROVENANCE_FIELDS | provenance_refs.DERIVED_FIELDS
     if node.get("result_type") == "asset":
         fields |= {"path", "title"}  # Media search also displays source_path under these aliases.
     for key in fields:
+        # Search's display basename is authorized by its complete raw path.
+        if (
+            (paired and key == "source_file")
+            or (import_alias and key == "source_path")
+            or (import_file_alias and key == "source_file")
+        ):
+            continue
         value = node.get(key)
-        if value is None:
+        if value is None and key != "source_path":
             continue
-        if not isinstance(value, str):
-            if out is node:
-                out = dict(node)
-            out.pop(key, None)
+        if key == "source_path" and key not in node:
             continue
-        parsed = access.parse(value)
-        allowed = parsed is not provenance_refs.REFUSE and all(
-            access.reference(t) for t in parsed.tokens
-        )
-        if allowed and key in _THREAD_FIELDS:
-            # Any spelling of an mcp: source ID, not only thr_ tokens, follows
-            # the room rule: shown only to readers of every matching thread.
-            allowed = not private_thread_reference(access, value)
-        if allowed and key in {"source_drawer_id", "source_closet"}:
-            allowed = access.association(
-                "drawer" if key == "source_drawer_id" else "closet", parsed.text
+        allowed = False
+        if isinstance(value, str):
+            parsed = access.parse(value)
+            allowed = parsed is not provenance_refs.REFUSE and all(
+                access.reference(t) for t in parsed.tokens
             )
+            if allowed and key in _THREAD_FIELDS:
+                # Any spelling of an mcp: source ID, not only thr_ tokens, follows
+                # the room rule: shown only to readers of every matching thread.
+                allowed = not private_thread_reference(access, value)
+            if allowed:
+                allowed = _association_proved(node, key, value, parsed, access)
         if not allowed:
             if out is node:
                 out = dict(node)
             out.pop(key, None)
+            if key == "source_path":
+                out.pop("source_file", None)
+                if node.get("result_type") == "asset":
+                    # Media search exposes the same citation through these aliases.
+                    for alias in ("path", "title", "available"):
+                        out.pop(alias, None)
     # Flat ranges follow the existing provenance pass, preserving token-free
     # legacy parents. Nested aliases require a complete protected reference.
     if out.get("source_thread") is None:
@@ -396,6 +434,8 @@ def scrub_provenance(node, access):
                 or not access.association("drawer", identifier)
             ):
                 out = {name: value for name, value in out.items() if name != key}
+    # Keep a strong reference so a recycled object id cannot skip authorization.
+    access.scrubbed[id(out)] = out
     return out
 
 
@@ -485,7 +525,7 @@ def gate(gateway, principal, rule, result, *, access=None):
     reader_recall = access.recall
     reader_scope = principal.policy.has_scope("memory:import:read")
 
-    def scrub(node):
+    def scrub(node, *, import_file_alias=False):
         if isinstance(node, dict):
             fact = _is_fact(node)
             if reader_scope and not access.preview_allowed(node):
@@ -516,7 +556,9 @@ def gate(gateway, principal, rule, result, *, access=None):
                 )
                 if node is _DROP:
                     return _DROP
-            node = scrub_provenance(node, access)
+            node = scrub_provenance(
+                node, access, import_alias=import_row, import_file_alias=import_file_alias
+            )
             if _hidden_place(can_read, node, fact, import_row):
                 return _DROP
             if "connected_wing" in node and unreadable_room(
@@ -536,11 +578,17 @@ def gate(gateway, principal, rule, result, *, access=None):
                 return _DROP
             out = {}
             for key, value in node.items():
-                cleaned = scrub(value)
+                if rule == "search" and key == "closet_preview":
+                    # Source-file agreement does not prove the closet's authority.
+                    continue
+                # Only the source_file alias constructed after exact import
+                # proof is exempt; other metadata still passes through the gate.
+                cleaned = scrub(value, import_file_alias=import_row and key == "metadata")
                 if cleaned is _DROP:
                     return _DROP
                 if (
                     key == "metadata"
+                    and not import_row
                     and isinstance(cleaned, dict)
                     and isinstance(cleaned.get("source_file"), str)
                 ):
@@ -567,19 +615,7 @@ def gate(gateway, principal, rule, result, *, access=None):
         and isinstance(result, dict)
         and isinstance(result.get("results"), list)
     ):
-        items = []
-        errors = 0
-        for item in result["results"]:
-            cleaned = scrub(item)
-            if cleaned is _DROP:
-                cleaned = {"drawer_id": item.get("drawer_id"), **missing(item)}
-            errors += bool(isinstance(cleaned, dict) and cleaned.get("error"))
-            items.append(cleaned)
-        if all(a is b for a, b in zip(items, result["results"])):
-            return _filter_fact_links(result)
-        out = {**result, "results": items, "count": len(items), "errors": errors}
-        out.pop("total", None)
-        return _filter_fact_links(out)
+        return _gate_drawer_batch(result, scrub, missing)
     if isinstance(result, dict) and isinstance(result.get("hallways"), list):
         return _gate_hallways(result, access, principal.policy)
     result = filter_room_keys(rule, result, can_read)
@@ -587,6 +623,23 @@ def gate(gateway, principal, rule, result, *, access=None):
     if cleaned is _DROP:
         return _dropped_result(rule, result)
     return _filter_fact_links(cleaned)
+
+
+def _gate_drawer_batch(result, scrub, missing):
+    """Reuse the response scrubber and preserve ordered batch error envelopes."""
+    items = []
+    errors = 0
+    for item in result["results"]:
+        cleaned = scrub(item)
+        if cleaned is _DROP:
+            cleaned = {"drawer_id": item.get("drawer_id"), **missing(item)}
+        errors += bool(isinstance(cleaned, dict) and cleaned.get("error"))
+        items.append(cleaned)
+    if all(a is b for a, b in zip(items, result["results"])):
+        return _filter_fact_links(result)
+    out = {**result, "results": items, "count": len(items), "errors": errors}
+    out.pop("total", None)
+    return _filter_fact_links(out)
 
 
 def _gate_hallways(result, access, policy):
@@ -738,6 +791,7 @@ def _scrub_fact(node, can_read, access=None):
             "source_link",
             "source_drawer_id",
             "source_file",
+            "source_path",
             "source_closet",
             "origin_id",
             "origin_link",

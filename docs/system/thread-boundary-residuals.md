@@ -1,6 +1,6 @@
 ### Thread-boundary residuals
 
-- Token-free plain-file provenance still has no local association proof on read.
+- Token-free plain-file citations require complete exact local association proof on read.
   Typed drawer/closet citations now resolve current local metadata as described
   below; foreign identifiers already stored before this change are not purged.
 - Non-canonical spellings outside the token grammar remain possible, including

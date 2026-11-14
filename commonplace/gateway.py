@@ -260,6 +260,10 @@ class WorkerUnavailable(Exception):
     pass
 
 
+class ProvenRecycling(WorkerUnavailable):
+    """The authenticated generation explicitly declined dispatch."""
+
+
 class WorkerPaused(WorkerUnavailable):
     """Memory is paused for an online backup; the caller may retry later."""
 
@@ -297,10 +301,30 @@ class WorkerClient:
             with slot() if slot is not None else contextlib.nullcontext():
                 try:
                     worker = self.supervisor.get(principal.workspace_id)
+                except (WorkersPaused, SupervisorClosed):
+                    raise
                 except Exception as exc:
                     log_failure(logger, "worker start failed", exc)
                     raise WorkerUnavailable() from exc
-                return _public_worker_response(self._post(worker, principal, request))
+                for attempt in range(2):
+                    pin = getattr(self.supervisor, "pin", None)
+                    try:
+                        with pin(worker) if pin is not None else contextlib.nullcontext():
+                            result = _public_worker_response(self._post(worker, principal, request))
+                    except ProvenRecycling:
+                        self.supervisor.retire(worker)
+                        if attempt:
+                            raise WorkerUnavailable() from None
+                        try:
+                            worker = self.supervisor.replace(worker, timeout_s=30)
+                        except (WorkersPaused, SupervisorClosed):
+                            raise
+                        except Exception as exc:
+                            raise WorkerUnavailable() from exc
+                    else:
+                        if worker.retiring:
+                            self.supervisor.retire(worker)
+                        return result
         except WorkersPaused as exc:
             raise WorkerPaused(exc.retry_after_s) from None
         except SupervisorClosed as exc:
@@ -342,7 +366,7 @@ class WorkerClient:
                     break
                 chunks.append(chunk)
             raw = b"".join(chunks)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             raise WorkerUnavailable() from exc
         finally:
             if resp is not None:
@@ -351,10 +375,47 @@ class WorkerClient:
                 conn.close()
         if resp.status == 202:
             return None
+        from mempalace.worker_lifecycle import (
+            ADMITTED_HEADER,
+            GENERATION_HEADER,
+            STATE_HEADER,
+            proven_refusal,
+        )
+
+        getheader = getattr(resp, "getheader", lambda *args: None)
+        try:
+            payload = json.loads(raw.decode("utf-8")) if raw else None
+        except (ValueError, UnicodeError) as exc:
+            raise WorkerUnavailable() from exc
+        if (
+            worker.token
+            and isinstance(payload, dict)
+            and payload.get("jsonrpc") == "2.0"
+            and "id" in payload
+            and payload.get("id") in (None, request.get("id"))
+            and proven_refusal(resp.status, getheader, payload, worker.generation) == "recycling"
+        ):
+            raise ProvenRecycling()
+        if getheader(GENERATION_HEADER) == worker.generation:
+            try:
+                admitted = int(getheader(ADMITTED_HEADER))
+                if 0 <= admitted < 2**63:
+                    worker.admitted = admitted
+            except (TypeError, ValueError):
+                pass
+            if resp.status == 200 and getheader(STATE_HEADER) == "DRAINING":
+                worker.retiring = True
+            if resp.status == 200 and isinstance(payload, dict) and "error" not in payload:
+                if request.get("method") in {
+                    "tools/call",
+                    "internal/write_mirror_units",
+                    "internal/read_associations",
+                }:
+                    worker.completed = (worker.completed or 0) + 1
         if resp.status != 200:
             logger.error("worker answered HTTP %s for %s", resp.status, principal.workspace_id)
             raise WorkerUnavailable()
-        return json.loads(raw.decode("utf-8"))
+        return payload
 
     def call_tool(self, principal: Principal, name: str, arguments: dict):
         """Run one tool internally and return its parsed result."""
@@ -640,9 +701,10 @@ class Mediator:
         rule = TOOL_RULES[name][1]
         import_filters = dict(args)
         notes: list = []
+        before_options = self._kg_access_options(principal, name)
         try:
             _check_argument_types(args, name=name)
-            plan = getattr(self, f"_before_{rule}")(principal, name, args, notes)
+            plan = getattr(self, f"_before_{rule}")(principal, name, args, notes, **before_options)
         except PageArgumentError as exc:
             return {"jsonrpc": "2.0", "id": req_id, "error": exc.error}
         except Hidden as exc:
@@ -726,6 +788,7 @@ class Mediator:
                 rule,
                 req_id,
                 response,
+                access=before_options.get("access"),
                 # CLI text is rendered only from gated rows, for every principal:
                 # a see-all reader may still lack a thread that a room names.
                 cli_args=(
@@ -748,14 +811,29 @@ class Mediator:
             )
         return response
 
-    def _gate_response(self, principal, name, rule, req_id, response, *, cli_args=None):
+    def _kg_access_options(self, principal, name):
+        if name not in (
+            "mempalace_kg_query",
+            "mempalace_kg_timeline",
+            "mempalace_kg_stats",
+            "mempalace_kg_list_wings",
+        ):
+            return {}
+        from .handoff.mirror_access import reader
+
+        return {"access": reader(self.gateway, principal)}
+
+    def _gate_response(
+        self, principal, name, rule, req_id, response, *, access=None, cli_args=None
+    ):
         """Apply the final read boundary while retaining the committed result for audit."""
         from .handoff.mirror_access import gate
 
         committed_result = None
         if isinstance(response, dict) and "result" in response:
             result = committed_result = _tool_result(response)
-            cleaned = gate(self.gateway, principal, rule, result)
+            options = {} if access is None else {"access": access}
+            cleaned = gate(self.gateway, principal, rule, result, **options)
             if cli_args is not None and isinstance(cleaned, dict) and not cleaned.get("error"):
                 cleaned = _render_scoped_cli_search(cleaned, cli_args)
             if name == "mempalace_list_drawers":
@@ -788,7 +866,7 @@ class Mediator:
     def _before_none(self, principal, name, args, notes):
         return None
 
-    def _before_all_wings(self, principal, name, args, notes):
+    def _before_all_wings(self, principal, name, args, notes, *, access=None):
         if name in ("mempalace_traverse", "mempalace_find_tunnels", "mempalace_graph_stats"):
             from .handoff.graph import GraphArgumentError, empty_result, project, validate_arguments
             from .rules import checks
@@ -826,7 +904,9 @@ class Mediator:
         if name in ("mempalace_kg_stats", "mempalace_kg_list_wings"):
             from .handoff.kg_projection import project
 
-            return {"respond": project(self.gateway, principal, self.workers, name, args)}
+            return {
+                "respond": project(self.gateway, principal, self.workers, name, args, access=access)
+            }
 
         if name == "mempalace_status":
             from .web.admin import ReadContext, instance_authorized
@@ -1276,7 +1356,7 @@ class Mediator:
                 raise Denied(f"this connection can't link drawers in wing {wing!r}")
         return None
 
-    def _before_kg_read(self, principal, name, args, notes):
+    def _before_kg_read(self, principal, name, args, notes, *, access=None):
         policy = principal.policy
         assert name in ("mempalace_kg_query", "mempalace_kg_timeline")
         from .handoff.kg_projection import project
@@ -1303,7 +1383,9 @@ class Mediator:
                 and policy.can_read_wing(wing)
                 and (asked is None or canonical_wing(wing) in asked)
             ]
-        return {"respond": project(self.gateway, principal, self.workers, name, args)}
+        return {
+            "respond": project(self.gateway, principal, self.workers, name, args, access=access)
+        }
 
     def _before_kg_write(self, principal, name, args, notes):
         policy = principal.policy
@@ -1586,10 +1668,8 @@ class Mediator:
         import_allowed = None
         recall = self._reader_recall(principal)
         if recall is not None:
-            from .handoff.mirror_access import gate
-
-            result = gate(self.gateway, principal, rule, result)
-
+            # Every caller reaches _gate_response after this wing-policy pass.
+            # Keep raw provenance here: the final gate proves it before display.
             def import_allowed(node):
                 try:
                     return recall.import_record_allowed(principal, node)
