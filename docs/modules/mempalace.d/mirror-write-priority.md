@@ -1,0 +1,4 @@
+- **Owns:** The HTTP worker lowers the CPU priority of the request thread that runs an index write (`internal/write_mirror_units`) to niceness 10 (`MEMPALACE_MIRROR_NICE`, `0` turns it off; Linux only, never the main thread). A palace read that fails with a SQLite `OperationalError` is run again up to three times with short delays (0.05, 0.15, 0.4 s) before the caller sees an error.
+- **Promises:** Reads change nothing, so a replay is safe; writes are never retried here. Other read errors are returned at once.
+- **How it fails:** The priority change is best effort: a platform or permission refusal is ignored, and the embedding runtime's own thread pool keeps the priority it was created with.
+- **Tests:** `tests/test_search_index_contention.py` covers the priority call (and the switch that disables it), a read that succeeds on its third attempt, the bounded give-up and that other errors are not retried.
