@@ -22,7 +22,11 @@ the database and so invalidated the verdict recorded before it) has settled. The
 state (`off`, `running`, `done`, `failed`) is in the worker's status payload, and
 a search that arrives while it runs carries `warming_up: true`, which
 `GET /api/memory/search` passes on. The field is additive; results are never
-changed. `COMMONPLACE_WORKER_WARMUP=0` on the gateway turns the warm-up off. The
+changed. The Memory page asks for its rooms before it searches, so that request
+now starts the workspace's worker in the background (at most once per workspace
+every 30 seconds), which gives the worker's start and warm-up a head start before
+the first search after an idle stop or a deploy. The idle stop itself (15
+minutes) is unchanged. `COMMONPLACE_WORKER_WARMUP=0` on the gateway turns the warm-up off. The
 operator's own warm-up variables still never reach a worker, so the decision in
 `eager-warmup-scope` stands for them.
 

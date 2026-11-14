@@ -567,15 +567,23 @@ def test_opening_the_memory_page_starts_the_worker_once_per_window(hub, monkeypa
 
 
 def test_a_failed_worker_start_never_fails_the_rooms_request(hub, monkeypatch):
+    import threading
+
     owner = hub.owner_token()
+    attempts, escaped = [], []
 
     def refuse(workspace_id):
+        attempts.append(workspace_id)
         raise RuntimeError("worker restart circuit cooling down")
 
     monkeypatch.setattr(hub.supervisor, "get", refuse)
+    monkeypatch.setattr(threading, "excepthook", lambda args: escaped.append(args.exc_value))
 
     status, body = _http(hub, owner, "/api/memory/rooms")
+
     assert status == 200 and "rooms" in body
+    assert _wait_for(lambda: attempts)
+    assert not _wait_for(lambda: escaped, seconds=0.3), "the failed start must be handled"
 
 
 def test_a_refused_caller_does_not_start_the_worker(hub, monkeypatch):
