@@ -1,7 +1,7 @@
 /* 252 rail + the remaining stage width = the viewport. Classic selectors stay untouched. */
 @media (min-width: 700px) {
   :root[data-ui="deck"] .shell.two { grid-template-columns: 252px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-  :root[data-ui="deck"] .shell, :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 252px minmax(0, 1fr) 396px; grid-template-rows: minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell:not(.two), :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 252px minmax(0, 1fr) 396px; grid-template-rows: minmax(0, 1fr); }
   :root[data-ui="deck"] .shell > .rail { grid-column: 1; grid-row: 1; }
   :root[data-ui="deck"] .shell > :is(.center, .context) { grid-row: 1; }
 }
@@ -62,17 +62,17 @@
 :root[data-ui="deck"] .deck-phone-avatar { position: relative; width: 28px; height: 28px; border: 0; border-radius: var(--radius-control); background: var(--s3); color: var(--violet-ink); font-size: 12px; font-weight: 600; }
 :root[data-ui="deck"] .deck-phone-avatar[data-deck-waiting="true"]::after { content: ""; position: absolute; top: 0; right: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
 @media (max-width: 1099px) and (min-width: 700px) {
-  :root[data-ui="deck"] .shell, :root[data-ui="deck"] .shell.two, :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 252px minmax(0, 1fr); }
+  :root[data-ui="deck"] .shell:not(.two), :root[data-ui="deck"] .shell.two, :root[data-ui="deck"] .shell.two.chat-open, :root[data-ui="deck"] .shell.ctx-pushed { grid-template-columns: 252px minmax(0, 1fr); }
 }
 @media (max-width: 699px) {
   :root[data-ui="deck"] .shell .rail[data-deck="bar"] { display: none; }
   :root[data-ui="deck"] .m-top[data-deck="top"] { height: 52px; min-height: 52px; padding: 0 16px; gap: 10px; border-bottom: 1px solid var(--line); background: var(--ground); }
   :root[data-ui="deck"] .m-top .deck-brand { margin: 0; }
   :root[data-ui="deck"] .m-top > b { font-size: 17px; font-weight: 600; }
-  :root[data-ui="deck"] .m-top .deck-phone-avatar { flex: none; width: 44px; height: 44px; background: none; }
-  :root[data-ui="deck"] .deck-phone-avatar::before { content: ""; position: absolute; inset: 8px; z-index: -1; border-radius: var(--radius-control); background: var(--s3); }
-  :root[data-ui="deck"] .deck-phone-avatar[data-deck-waiting="true"]::after { top: 6px; right: 6px; }
-  :root[data-ui="deck"] .m-top .deck-brand { min-height: 44px; min-width: 24px; }
+  :root[data-ui="deck"] .m-top .deck-phone-avatar { flex: none; width: 44px; height: 44px; border: 8px solid var(--ground); border-radius: 16px; background: var(--s3); background-clip: padding-box; }
+  :root[data-ui="deck"] .deck-phone-avatar::before { content: none; }
+  :root[data-ui="deck"] .deck-phone-avatar[data-deck-waiting="true"]::after { top: -2px; right: -2px; }
+  :root[data-ui="deck"] .m-top .deck-brand { min-height: 44px; min-width: 44px; justify-content: center; margin-inline: -10px; }
   :root[data-ui="deck"] .shell .center { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs { height: calc(68px + env(safe-area-inset-bottom)); padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); background: var(--ground); gap: 4px; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; }
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs[data-mic="true"] { grid-template-columns: repeat(4, minmax(0, 1fr)) 46px; }
@@ -83,9 +83,16 @@
   :root[data-ui="deck"] .deck-tab-mic { display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 0; border-radius: 15px; background: var(--violet); color: var(--ink); }
   :root[data-ui="deck"] .deck-tab-mic .i { width: 22px; height: 22px; }
   :root[data-ui="deck"] .shell .center h1 { display: none; }
+  :root[data-ui="deck"] .shell .head:has(#head-actions:empty) { display: none; }
 }
 @keyframes deck-shell-busy { 50% { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) {
   :root[data-ui="deck"] .deck-state-dot[data-state="busy"] { animation: none; }
   :root[data-ui="deck"] .deck-bot-folder > summary .i:first-child { transition: none; }
+}
+/* Screen controllers may hide their own classic header; Deck keeps its phone chrome. */
+@media (max-width: 699px) {
+  :root[data-ui="deck"] .shell .center > #phone-bar { display: block; flex: none; }
+  :root[data-ui="deck"] #phone-bar .m-top[data-deck="top"] { display: flex; }
+  :root[data-ui="deck"] #phone-tabs .m-tabs[data-deck="tabs"] { display: grid; }
 }

@@ -83,6 +83,15 @@ def test_shell_desktop_and_phone_chrome(hub, fresh, tmp_path):
                             assert (
                                 await page.evaluate("document.documentElement.scrollWidth") == width
                             )
+                    if width == 390:
+                        roster = await page.request.get(url.split("/app/")[0] + "/api/bots")
+                        personal = (await roster.json())["bots"][0]
+                        await page.goto(url + "#/bots/" + personal["id"])
+                        await page.wait_for_selector('.bots[data-pane="thread"]')
+                        await page.locator('[data-deck="top"]').wait_for(state="visible")
+                        await page.locator('[data-deck="tabs"]').wait_for(state="visible")
+                        await page.goto(url + "#/today")
+                        await page.locator('[data-deck="top"]').wait_for(state="visible")
                     await page.screenshot(path=str(output / f"shell-{name}.png"))
                     assert not errors, errors
                     await context.close()
