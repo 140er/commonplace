@@ -108,6 +108,8 @@ test('compact presentation uses straight links, local curves for blockers, no en
   assert.doesNotMatch(scene,/data-end=|topo-bundle/);
   assert.match(scene,/dc-node-tile/);
   assert.match(scene,/dc-link-caption/);
+  const unclaimed = computePresentation().link({...link,status:{from:'none',to:'none'}},places.get('ab'),new Map([['a','Hub'],['b','Machine']]),{words:{},sel:false});
+  assert.doesNotMatch(unclaimed,/undefined|Healthy/);
   assert.equal(linkName('tailscale'),'Tailscale'); assert.equal(linkName('direct'),'Direct');
   const phone = computePresentation(true).node({...nodes[0],name:'Build machine'},positions.a,{words:{up:'Healthy'},sel:false});
   assert.doesNotMatch(phone,/dc-node-tile|tspan/);
