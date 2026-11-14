@@ -63,7 +63,9 @@ def capture(page, label, size):
     assert panel.count() == 1
     assert panel.evaluate("el => getComputedStyle(el.querySelector('h2')).fontSize") == "24px"
     for card in page.locator(".bot-access-card").all():
-        assert card.evaluate("el => getComputedStyle(el).backgroundColor") == "rgb(17, 17, 17)"
+        assert (
+            card.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(20, 19, 25, 0.94)"
+        )
         assert card.evaluate("el => getComputedStyle(el).borderRadius") == "20px"
     if size[0] == 390:
         assert panel.evaluate("el => getComputedStyle(el).paddingLeft") == "16px"
@@ -90,11 +92,11 @@ def capture(page, label, size):
         };
     }""")
     assert abs(measurements["titleTop"] - measurements["expectedTop"]) < 1, measurements
-    assert measurements["surface"] == "rgb(0, 0, 0)"
+    assert measurements["surface"] == "rgb(9, 9, 12)"
     if measurements["sectionCount"]:
         assert measurements["sectionRows"] == 1
         assert measurements["selectedVisible"]
-        assert measurements["selected"] == ["rgb(255, 255, 255)"]
+        assert measurements["selected"] == ["rgb(237, 237, 242)"]
         if measurements["sectionCount"] == 4 and size[0] == 390:
             assert measurements["tabsOverflow"]
     if measurements["checks"]:
@@ -102,17 +104,17 @@ def capture(page, label, size):
         for check in measurements["checks"]:
             assert check["size"] == check["height"] == 20
             assert check["radius"] == "6px"
-            assert check["background"] in {"rgb(30, 30, 30)", "rgb(255, 255, 255)"}
-            if check["background"] == "rgb(30, 30, 30)":
-                assert check["border"] == "rgb(74, 74, 74)"
+            assert check["background"] in {"rgb(27, 26, 33)", "rgb(237, 237, 242)"}
+            if check["background"] == "rgb(27, 26, 33)":
+                assert check["border"] == "rgba(255, 255, 255, 0.1)"
     assert all(gap == 20 for gap in measurements["entryGaps"])
     for time in measurements["times"]:
         assert time["title"] == time["at"]
         assert time["text"].startswith(("Today ", "Yesterday ")) or ", " in time["text"]
     for button in measurements["primary"]:
         assert button["width"] < button["cardWidth"] / 2
-        assert button["background"] == "rgb(255, 255, 255)"
-        assert button["color"] == "rgb(0, 0, 0)"
+        assert button["background"] == "rgb(237, 237, 242)"
+        assert button["color"] == "rgb(9, 9, 12)"
         assert button["radius"] == "999px"
         assert button["left"] == button["parentLeft"]
     target = os.environ.get("CP_UI_SHOTS")
@@ -148,7 +150,7 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
             page.get_by_label("Find a person by name").evaluate(
                 "el => getComputedStyle(el).outlineColor"
             )
-            == "rgb(74, 74, 74)"
+            == "rgba(255, 255, 255, 0.1)"
         )
         capture(page, "picker", size)
         page.locator("[data-people-picker] li:not([hidden]) button").click()
@@ -240,13 +242,13 @@ def test_owner_and_member_sharing_journey(browser, team, fake, size):  # noqa: F
             == 404
         )
         page.get_by_role("button", name="Access log", exact=True).click()
+        expect(page.locator("[data-access-log]")).to_contain_text(f"You gave {LONG_NAME} access")
         expect(page.locator("[data-access-log]")).to_contain_text(
-            f"Workspace owner gave {LONG_NAME} access"
+            f"You changed {LONG_NAME}’s permissions"
         )
         expect(page.locator("[data-access-log]")).to_contain_text(
-            f"changed {LONG_NAME}’s permissions"
+            f"You removed {LONG_NAME}’s access"
         )
-        expect(page.locator("[data-access-log]")).to_contain_text(f"removed {LONG_NAME}’s access")
         expect(page.get_by_role("button", name="Disable bot", exact=True)).to_have_count(0)
         capture(page, "log", size)
         assert not errors
@@ -278,7 +280,7 @@ def test_frozen_adoption_and_enable(browser, team, size):
         expect(page.locator(".bot-access")).not_to_contain_text("Loading memory")
         disable = page.get_by_role("button", name="Disable bot", exact=True)
         expect(disable).to_be_visible()
-        assert disable.evaluate("el => getComputedStyle(el).color") == "rgb(240, 112, 138)"
+        assert disable.evaluate("el => getComputedStyle(el).color") == "rgb(251, 113, 133)"
         assert disable.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
         page.locator(".bot-access").evaluate("el => el.scrollTop = 0")
         capture(page, "name-job-memory", size)

@@ -173,6 +173,7 @@ def test_home_today_live_actions(hub, fresh, width):
                     )
                     assert all(size >= 44 for size in sizes)
                 assert "Awaiting plan review" not in await page.locator(".bt-page").text_content()
+                await page.wait_for_selector(".bt-bots li a")
                 heights = await page.locator(".bt-bots li a").evaluate_all(
                     "es=>es.map(e=>e.getBoundingClientRect().height)"
                 )

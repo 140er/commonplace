@@ -204,6 +204,10 @@ def test_compute_capy_screen(browser, size):
             assert panel.get_by_text("Healthy", exact=True).is_visible()
             node_close = panel.locator('[data-td="close"]').evaluate("el=>el.outerHTML")
             capture(page, "compute-desktop.png")
+        for _ in range(30):  # the map is redrawn after Back to machines
+            if live.evaluate("el=>getComputedStyle(el).strokeWidth") == "1px":
+                break
+            page.wait_for_timeout(100)
         assert live.evaluate("el=>getComputedStyle(el).strokeWidth") == "1px"
         assert page.locator(".topo-link [data-end]").count() == 0
         assert page.locator(".topo-bundle").count() == 0
@@ -241,6 +245,9 @@ def test_compute_capy_screen(browser, size):
             assert page.locator(".topo-detail").get_by_text("Healthy", exact=True).is_visible()
         page.emulate_media(reduced_motion="reduce")
         assert live.evaluate("el=>getComputedStyle(el).animationName") == "none"
+        page.wait_for_function(
+            "document.querySelector('.deck-compute')?.dataset.computeMotion === 'reduced'"
+        )
         assert page.locator(".deck-compute").get_attribute("data-compute-motion") == "reduced"
         page.locator('.dc-actions [data-compute-action="add-machine"]').click()
         assert page.evaluate("window.destination") == "#/admin"
