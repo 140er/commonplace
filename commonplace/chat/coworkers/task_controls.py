@@ -1,8 +1,8 @@
 """Controls for an existing canonical origin, never a second task/run registry.
 
 The coworker receipt is a conservative one-attempt outbox across two stores.
-Only canonical runner cancellation can fence admission. Its ledger currently
-has no ongoing-worker stop/follow-up or termination-evidence protocol. Preserve
+Only canonical runner cancellation can fence admission or request a run stop.
+Confirmed termination is recorded by the runner's attempt-fenced protocol. Preserve
 follow-ups as exact existing task comments and report unsupported application.
 Never resolve uncertain starts, approve cards, or launch replacement workers.
 """
@@ -50,7 +50,8 @@ def _runner(authority, job, task):
     origin = f"coworker:{job['conversation_id']}:{job['id']}"
     with _read(path) as conn:
         row = conn.execute(
-            "SELECT id,state,requested_by,request_key,request_hash,machine_id,binding_epoch "
+            "SELECT id,state,requested_by,request_key,request_hash,machine_id,binding_epoch,"
+            "stop_status,stop_confirmed_at,attempt "
             "FROM runner_jobs WHERE task_number=? AND board_slug=? AND requested_by=? "
             "AND request_key=? LIMIT 1",
             (
@@ -102,6 +103,7 @@ def target(authority, job, task, user_id):
                     "request_hash",
                     "machine_id",
                     "binding_epoch",
+                    "attempt",
                 )
             },
         }
@@ -163,6 +165,7 @@ def apply(authority, binding, operation, text, authorize):
                     ("request_key", "request_key"),
                     ("machine_id", "machine_id"),
                     ("binding_epoch", "binding_epoch"),
+                    ("attempt", "attempt"),
                 )
             ):
                 raise StoreError("not_found", 404)
@@ -190,7 +193,10 @@ def apply(authority, binding, operation, text, authorize):
         if result["state"] != "cancelled":
             return "uncertain", "runner_outcome_unknown"
     if result["state"] == "cancelled":
+        if result["stop_status"] == "confirmed" and result["stop_confirmed_at"]:
+            return "applied", "worker_stop_confirmed"
         return "applied", "queued_start_cancelled"
-    # A starting request is only intent. No existing worker termination evidence
-    # is available in this ledger, including when the front turn/task is done.
+    if result["state"] == "started" and result["stop_status"] == "unsupported":
+        return "unsupported", "worker_stop_unsupported"
+    # A request remains intent until the host supplies matching terminal evidence.
     return "received", "stop_requested_termination_unconfirmed"

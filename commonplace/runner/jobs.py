@@ -15,6 +15,7 @@ from commonplace.http_util import log_failure
 from mempalace.sqlite_crypto import connect, row_factory
 
 from . import budgets, launch_output as diagnostics, ledger, registry
+from .stop import terminal_evidence
 
 QUEUE_LIMIT = 8
 STARTED_HOLD_SECONDS = 3600
@@ -68,6 +69,15 @@ CONFIG_COLUMNS = {
     "model": "TEXT",
 }
 SNAPSHOT_COLUMNS = {"binding_epoch": "INTEGER", "launch_output": "TEXT"}
+STOP_COLUMNS = {
+    "run_id": "TEXT",
+    "stop_request_id": "TEXT",
+    "stop_status": "TEXT",
+    "stop_code": "TEXT",
+    "stop_accepted_at": "TEXT",
+    "stop_ended_at": "TEXT",
+    "stop_confirmed_at": "TEXT",
+}
 # Conflict messages of create/create_in and the stable refusal code of each.
 CONFLICT_CODES = {
     "request_key reused with different arguments": "request_conflict",
@@ -140,13 +150,14 @@ class JobStore:
 def _migrate(conn):
     """Add the config run-record columns to a runner_jobs table that lacks them."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
-    missing = [name for name in (CONFIG_COLUMNS | SNAPSHOT_COLUMNS) if name not in columns]
+    additions = CONFIG_COLUMNS | SNAPSHOT_COLUMNS | STOP_COLUMNS
+    missing = [name for name in additions if name not in columns]
     if not missing:
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(runner_jobs)")}
-        for name, datatype in (CONFIG_COLUMNS | SNAPSHOT_COLUMNS).items():
+        for name, datatype in additions.items():
             if name not in columns:
                 conn.execute(f"ALTER TABLE runner_jobs ADD COLUMN {name} {datatype}")
         conn.execute("COMMIT")
@@ -612,7 +623,9 @@ def starting(store, machine, lease_token, *, validate):
     return updated
 
 
-def result(store, machine, lease_token, outcome, thread_id=None, code=None, launch_output=None):
+def result(
+    store, machine, lease_token, outcome, thread_id=None, code=None, run_id=None, launch_output=None
+):
     _sweep(store)
     if outcome not in ("started", "uncertain", "failed"):
         raise ValueError("invalid outcome")
@@ -621,10 +634,14 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None, laun
             not isinstance(thread_id, str)
             or THREAD_ID.fullmatch(thread_id) is None
             or code is not None
+            or (
+                run_id is not None
+                and (not isinstance(run_id, str) or not THREAD_ID.fullmatch(run_id))
+            )
         ):
             raise ValueError("invalid started result")
-    elif thread_id is not None:
-        raise ValueError("thread_id is only valid for started")
+    elif thread_id is not None or run_id is not None:
+        raise ValueError("thread_id and run_id are only valid for started")
     if outcome == "failed" and code not in PRESPAWN_CODES:
         raise ValueError("invalid pre-spawn code")
     if code is not None and (
@@ -643,8 +660,10 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None, laun
     now = _now()
     with store.transaction() as conn:
         row = _fenced(conn, machine["id"], lease_token)
-        if row["state"] == "started" and outcome == "started" and row["thread_id"] == thread_id:
-            return dict(row)
+        if row["state"] in ("started", "cancelled") and outcome == "started":
+            if row["thread_id"] == thread_id and row["run_id"] == run_id:
+                return dict(row)
+            raise Conflict("launch identity changed")
         if row["state"] == "uncertain" and outcome == "uncertain":
             return dict(row)
         allowed = (
@@ -654,11 +673,15 @@ def result(store, machine, lease_token, outcome, thread_id=None, code=None, laun
         )
         if not allowed:
             raise Conflict("result conflicts with start state")
-        values = dict(state=outcome, thread_id=thread_id, outcome_code=code, updated_at=now)
+        values = dict(
+            state=outcome, thread_id=thread_id, run_id=run_id, outcome_code=code, updated_at=now
+        )
         if launch_output is not None:
             values["launch_output"] = launch_output
         if outcome == "started":
             values["started_at"] = now
+            if row["cancel_requested_at"]:
+                values.update(_stop_request(row, run_id))
         updated = _update(conn, row, values, token=True)
         if outcome == "started":
             budgets.after_run(conn, row["id"], now)
@@ -692,7 +715,9 @@ def cancel(store, job, principal, *, conn=None, now=None, actor=None):
             raise ToolError("no: only the requester or a workspace owner may cancel")
         if row["state"] == "uncertain":
             raise Conflict("start outcome is uncertain; a workspace owner must resolve it")
-        if row["state"] in ("started", "failed", "cancelled"):
+        if row["state"] == "cancelled" and row["stop_status"] == "confirmed":
+            return dict(row)
+        if row["state"] in ("failed", "cancelled"):
             raise Conflict("start is already finished")
         values = dict(
             cancel_requested_at=row["cancel_requested_at"] or now,
@@ -701,6 +726,87 @@ def cancel(store, job, principal, *, conn=None, now=None, actor=None):
         )
         if row["state"] in ("queued", "leased"):
             values["state"] = "cancelled"
+        elif row["state"] == "started":
+            values.update(_stop_request(row, row["run_id"]))
+        return _update(conn, row, values)
+
+
+def _stop_request(row, run_id):
+    if not run_id:
+        return dict(stop_status="unsupported", stop_code="run_id_missing")
+    return dict(
+        stop_request_id=row["stop_request_id"] or "stop_" + secrets.token_hex(16),
+        stop_status="pending",
+        stop_code=None,
+    )
+
+
+def stop(store, machine):
+    """Poll one requested stop; replay always targets the same immutable run."""
+    with store.connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM runner_jobs WHERE machine_id=? AND state='started' "
+            "AND cancel_requested_at IS NOT NULL AND stop_status IN ('pending','unconfirmed') "
+            "ORDER BY updated_at,rowid LIMIT 1",
+            (machine["id"],),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(
+        job_id=row["id"],
+        attempt=str(row["attempt"]),
+        thread_id=row["thread_id"],
+        run_id=row["run_id"],
+        stop_request_id=row["stop_request_id"],
+    )
+
+
+def stop_result(
+    store,
+    machine,
+    job_id,
+    attempt,
+    thread_id,
+    run_id,
+    stop_request_id,
+    outcome,
+    accepted_at=None,
+    ended_at=None,
+    code=None,
+):
+    """Commit only matching attempt evidence; intent and transport success cannot cancel."""
+    if outcome not in ("confirmed", "unconfirmed", "unsupported"):
+        raise ValueError("invalid stop outcome")
+    if outcome == "confirmed" and not terminal_evidence(accepted_at, ended_at):
+        raise ValueError("stop needs later terminal evidence")
+    if code is not None and code not in ("stop_unconfirmed", "host_unsupported"):
+        raise ValueError("invalid stop code")
+    with store.transaction() as conn:
+        row = _row(conn, job_id)
+        if (
+            row["machine_id"] != machine["id"]
+            or not row["cancel_requested_at"]
+            or not row["stop_request_id"]
+            or row["run_id"] != run_id
+            or row["thread_id"] != thread_id
+            or row["stop_request_id"] != stop_request_id
+        ):
+            raise Conflict("stop is no longer current")
+        if str(row["attempt"]) != attempt:
+            raise Conflict("stop attempt is no longer current")
+        if row["stop_status"] == "confirmed":
+            return dict(row)
+        if row["state"] != "started":
+            raise Conflict("stop has no launched run")
+        now = _now()
+        values = dict(stop_status=outcome, stop_code=code, updated_at=now)
+        if outcome == "confirmed":
+            values.update(
+                state="cancelled",
+                stop_accepted_at=accepted_at,
+                stop_ended_at=ended_at,
+                stop_confirmed_at=now,
+            )
         return _update(conn, row, values)
 
 
@@ -750,7 +856,20 @@ def status(store, task, principal):
             machine_label=machines[row["machine_id"]]["label"]
             if row["machine_id"] in machines
             else None,
-            **{key: row[key] for key in ("state", "thread_id", "outcome_code", "updated_at")},
+            **{
+                key: row[key]
+                for key in (
+                    "state",
+                    "thread_id",
+                    "run_id",
+                    "outcome_code",
+                    "updated_at",
+                    "cancel_requested_at",
+                    "stop_status",
+                    "stop_code",
+                    "stop_confirmed_at",
+                )
+            },
             **({"reason": launch_reason(row)} if principal.person and row["launch_output"] else {}),
         )
         for row in rows

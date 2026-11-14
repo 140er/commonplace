@@ -25,7 +25,19 @@ BODY_KEYS = {
     "lease": set(),
     "renew": {"lease_token"},
     "starting": {"lease_token"},
-    "result": {"lease_token", "outcome", "thread_id", "code", "launch_output"},
+    "result": {"lease_token", "outcome", "thread_id", "run_id", "code", "launch_output"},
+    "stop": set(),
+    "stop-result": {
+        "job_id",
+        "attempt",
+        "thread_id",
+        "run_id",
+        "stop_request_id",
+        "outcome",
+        "accepted_at",
+        "ended_at",
+        "code",
+    },
 }
 
 
@@ -88,7 +100,9 @@ def _body(h, action):
         from .headroom import validate
 
         return validate(value)
-    required = set() if action in ("lease", "sessions/lease") else {"lease_token"}
+    required = set() if action in ("lease", "stop", "sessions/lease") else {"lease_token"}
+    if action == "stop-result":
+        required = {"job_id", "attempt", "thread_id", "run_id", "stop_request_id", "outcome"}
     if action in ("result", "sessions/result"):
         required.add("outcome")
     if required - value.keys():
@@ -240,6 +254,51 @@ def _dispatch(gateway, h, route):
         route(h)
 
 
+def _session_action(h, gateway, principal, machine, action, body):
+    from . import sessions
+
+    if action == "sessions/lease":
+        payload = sessions.lease(gateway, principal.workspace_id, machine["id"])
+        if payload is None:
+            h.send_response(204)
+            h.send_header("Content-Length", "0")
+            h.send_header("Cache-Control", "no-store")
+            h.end_headers()
+            return
+    elif action == "sessions/starting":
+        payload = {
+            "proceed": sessions.starting(
+                gateway, principal.workspace_id, machine["id"], body["lease_token"]
+            )
+        }
+    else:
+        payload = sessions.result(
+            gateway,
+            principal.workspace_id,
+            machine["id"],
+            body["lease_token"],
+            body["outcome"],
+            body.get("thread_id"),
+            body.get("code"),
+        )
+    send_json(h, 200, payload)
+
+
+def _stop_action(h, store, machine, action, body):
+    """Poll the next durable stop request, or report host stop evidence."""
+    if action == "stop":
+        row = jobs.stop(store, machine)
+        if row is None:
+            h.send_response(204)
+            h.send_header("Content-Length", "0")
+            h.send_header("Cache-Control", "no-store")
+            h.end_headers()
+            return
+        send_json(h, 200, row)
+        return
+    send_json(h, 200, jobs.job_object(jobs.stop_result(store, machine, **body), tokens=False))
+
+
 def register(gateway):
     def route(h):
         try:
@@ -274,33 +333,10 @@ def register(gateway):
                     send_json(h, 200, capacity.report(store, machine, body))
                     return
                 if action.startswith("sessions/"):
-                    from . import sessions
-
-                    if action == "sessions/lease":
-                        payload = sessions.lease(gateway, principal.workspace_id, machine["id"])
-                        if payload is None:
-                            h.send_response(204)
-                            h.send_header("Content-Length", "0")
-                            h.send_header("Cache-Control", "no-store")
-                            h.end_headers()
-                            return
-                    elif action == "sessions/starting":
-                        payload = {
-                            "proceed": sessions.starting(
-                                gateway, principal.workspace_id, machine["id"], body["lease_token"]
-                            )
-                        }
-                    else:
-                        payload = sessions.result(
-                            gateway,
-                            principal.workspace_id,
-                            machine["id"],
-                            body["lease_token"],
-                            body["outcome"],
-                            body.get("thread_id"),
-                            body.get("code"),
-                        )
-                    send_json(h, 200, payload)
+                    _session_action(h, gateway, principal, machine, action, body)
+                    return
+                if action in ("stop", "stop-result"):
+                    _stop_action(h, store, machine, action, body)
                     return
                 if action == "lease":
                     row = jobs.lease(store, machine)

@@ -20,6 +20,7 @@ from ..handoff.hook import _atomic_text, _NoRedirect
 from ..http_util import log_failure
 from ..mailer import _loopback
 from . import grant_scope, launch_output
+from .stop import terminal_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -355,7 +356,15 @@ class _Hub:
                 else "fenced"
                 if status == 409
                 and route
-                in {"starting", "result", "answer", "fail", "sessions/starting", "sessions/result"}
+                in {
+                    "starting",
+                    "result",
+                    "answer",
+                    "fail",
+                    "stop-result",
+                    "sessions/starting",
+                    "sessions/result",
+                }
                 else "transient"
             )
         except (
@@ -388,16 +397,17 @@ def _parse_launch(result, secrets):
     if not isinstance(content, dict):
         return uncertain
     thread = content.get("threadId")
+    run = content.get("runId")
     if (
         not isinstance(thread, str)
         or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}", thread)
-        or not isinstance(content.get("runId"), str)
-        or not content["runId"]
+        or not isinstance(run, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}", run)
         or content.get("status") in ("failed", "cancelled", "interrupted", "rolled_back")
-        or any(secret in thread for secret in secrets)
+        or any(secret in thread or secret in run for secret in secrets)
     ):
         return uncertain
-    return {"outcome": "started", "thread_id": thread}
+    return {"outcome": "started", "thread_id": thread, "run_id": run}
 
 
 def _spawn(config, job, env, secrets):
@@ -458,7 +468,7 @@ def _save(path, entry):
 def _deliver(hub, path, entry, replay=False):
     body = {
         key: entry[key]
-        for key in ("lease_token", "outcome", "thread_id", "code", "launch_output")
+        for key in ("lease_token", "outcome", "thread_id", "run_id", "code", "launch_output")
         if key in entry
     }
     if body["outcome"] == "spawning":
@@ -512,6 +522,85 @@ def _start(hub, config, job, journal, env, secrets):
     _deliver(hub, path, entry)
 
 
+def _stop_run(config, command, env):
+    """A versioned host receipt must bind observed termination to this request."""
+    uncertain = dict(outcome="unconfirmed", code="stop_unconfirmed")
+    request = dict(
+        contractVersion=1,
+        threadId=command["thread_id"],
+        runId=command["run_id"],
+        stopRequestId=command["stop_request_id"],
+    )
+    try:
+        result = subprocess.run(
+            [*config["t3_executable"], "acp-mcp-call", "t3_run_stop", json.dumps(request)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=config["t3_timeout_seconds"],
+            check=False,
+        )
+        if result.returncode != 0:
+            return uncertain
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict):
+            return uncertain
+        content = data.get("structuredContent")
+        if not isinstance(content, dict):
+            return uncertain
+        if data.get("isError") is True and content.get("code") == "unsupported":
+            return dict(outcome="unsupported", code="host_unsupported")
+        if (
+            data.get("isError", False) is not False
+            or type(content.get("contractVersion")) is not int
+            or any(content.get(key) != value for key, value in request.items())
+            or content.get("status") != "stopped"
+            or not terminal_evidence(content.get("acceptedAt"), content.get("endedAt"))
+        ):
+            return uncertain
+        return dict(
+            outcome="confirmed", accepted_at=content["acceptedAt"], ended_at=content["endedAt"]
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError, UnicodeError, RecursionError):
+        return uncertain
+
+
+def _deliver_stop(hub, path, entry):
+    try:
+        hub.post("stop-result", entry)
+    except _HubError as exc:
+        if exc.kind not in ("fenced", "refused"):
+            raise
+        exc.report()
+    path.unlink()
+
+
+def _stops(hub, config, journal, env):
+    directory = journal / "stops"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    for path in sorted(directory.glob("*.json")):
+        _deliver_stop(hub, path, json.loads(path.read_text(encoding="utf-8")))
+    command = hub.post("stop", {})
+    if command is None:
+        return
+    keys = {"job_id", "attempt", "run_id", "thread_id", "stop_request_id"}
+    if (
+        not isinstance(command, dict)
+        or set(command) != keys
+        or any(
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}", value)
+            for value in command.values()
+        )
+        or not re.fullmatch(r"stop_[0-9a-f]{32}", command["stop_request_id"])
+    ):
+        raise _HubError("transient")
+    entry = dict(command, **_stop_run(config, command, env))
+    path = directory / (command["stop_request_id"] + ".json")
+    _save(path, entry)
+    _deliver_stop(hub, path, entry)
+
+
 def _run(config, once):
     token, grant, env = _environment(config)
     journal = Path(config["journal_dir"]).expanduser()
@@ -558,6 +647,7 @@ def _run(config, once):
                 session_error = exc
             except Exception as exc:
                 log_failure(logger, "orchestrator session pass failed", exc)
+            _stops(hub, config, journal, env)
             job = hub.post("lease", {})
             if job is not None:
                 _start(hub, config, job, journal, env, (token, grant))
