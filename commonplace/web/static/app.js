@@ -552,7 +552,7 @@ function boardView() {
     const id = top.querySelector(".cid")?.textContent || cardId(board, Number(top.closest("[data-card]").dataset.card));
     top.insertAdjacentHTML("beforeend", `<button type="button" class="iconbtn card-more" id="more-${e(id)}" data-action="card-menu" data-card="${e(top.closest("[data-card]").dataset.card)}" aria-label="${state.deck?.on() ? "Move to…" : `Actions for ${e(id)}: move, edit`}">${state.deck?.on() ? "Move to…" : '<svg class="i" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="4" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12" cy="8" r=".9"/></svg>'}</button>`);
   });
-  boardDispose = bindBoard(content, { api, board,
+  boardDispose = bindBoard(content, { api, board, me: state.me.actor,
     onFilter(filter) { const saved = remember(); state.boardFilter = filter; boardView(); restore(saved); },
     onAdded(card) { state.addingCard = false; state.drafts.delete("board-title"); state.drafts.delete("board-body"); state.drafts.delete("board-assignee"); state.drafts.delete("board-label"); location.hash = `#/card/${card.number}`; },
     onSelect(number) { state.selected = number; markOpenCard(); },
