@@ -109,7 +109,44 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         )
         shot("memory")
         if size[0] == 390:
-            expect(page.locator(".m-top .deck-brand b")).to_have_text("Memory")
+            scroll = page.locator(".memory-chip-scroll")
+            status = page.locator(".memory-status")
+            row_box, status_box = scroll.bounding_box(), status.bounding_box()
+            assert status_box["y"] >= row_box["y"] + row_box["height"]
+            assert status_box["x"] == row_box["x"]
+            assert status.evaluate("el => getComputedStyle(el).fontSize") == "13px"
+            assert status.evaluate("el => getComputedStyle(el).color") == page.locator(
+                ".memory-room-count"
+            ).first.evaluate("el => getComputedStyle(el).color")
+            assert (
+                page.locator(".memory-filterbar").evaluate(
+                    "el => getComputedStyle(el, '::after').width"
+                )
+                == "16px"
+            )
+            assert scroll.evaluate("el => getComputedStyle(el).overflowX") == "auto"
+            assert scroll.locator(":scope > :last-child").get_attribute("class") == "memory-filters"
+            if role == "owner":
+                private = page.locator('[data-memory-room="private-work"]')
+                private.evaluate(
+                    "el => { const row = el.closest('.memory-chip-scroll'); row.scrollLeft += el.getBoundingClientRect().left - row.getBoundingClientRect().left; }"
+                )
+                box = private.bounding_box()
+                assert box["x"] >= row_box["x"]
+                assert box["x"] + box["width"] <= row_box["x"] + row_box["width"] - 15
+                expect(private).to_have_text("Private notes 1")
+            scroll.evaluate("el => el.scrollLeft = el.scrollWidth")
+            more = scroll.locator("summary")
+            box = more.bounding_box()
+            assert box["x"] + box["width"] <= row_box["x"] + row_box["width"] - 15
+            more.click()
+            expect(page.locator('.memory-filters select[name="source"]')).to_be_visible()
+            # The popup must escape the horizontal scroll's clipping area.
+            page.locator('.memory-filters select[name="source"]').click()
+            page.keyboard.press("Escape")
+            more.click()
+            scroll.evaluate("el => el.scrollLeft = 0")
+            expect(page.locator(".m-top > b")).to_have_text("Memory")
             metrics = page.locator(".memory-rooms button").evaluate_all(
                 "nodes => nodes.map(n => n.getBoundingClientRect().height)"
             )
@@ -137,6 +174,17 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         dialog = page.get_by_role("dialog", name="Import memory files")
         expect(dialog).to_be_visible()
         expect(dialog).to_contain_text("Each memory is marked with the file it came from.")
+        # A user's translucent card setting cannot make either import step see-through.
+        page.evaluate("document.documentElement.style.setProperty('--surface-a', '.4')")
+        surface = dialog.evaluate("el => getComputedStyle(el).backgroundColor")
+        assert surface.startswith("rgb("), surface
+        page.evaluate("document.documentElement.style.removeProperty('--surface-a')")
+        if size[0] == 1440:
+            intro = dialog.locator(".memory-import-intro").bounding_box()
+            hint = dialog.locator(".memory-import-intro + .memory-import-hint").bounding_box()
+            label = dialog.locator('label[for="import-format"]').bounding_box()
+            assert hint["y"] - intro["y"] - intro["height"] == 20
+            assert label["y"] - hint["y"] - hint["height"] == 20
         if role == "member":
             expect(dialog.locator('option[value="private"]')).to_have_count(0)
         shot("import")
@@ -156,6 +204,10 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         confirm = page.locator('[data-import-action="confirm"]')
         expect(confirm).to_be_visible()
         expect(confirm).to_be_disabled()
+        review = page.get_by_role("dialog", name="Review import")
+        expect(review).to_be_visible()
+        assert review.evaluate("el => getComputedStyle(el).backgroundColor") == surface
+        expect(review).to_contain_text("Importing the same file here again adds nothing.")
         expect(page.locator(".memory-import-summary")).to_contain_text(
             "ChatGPT conversation (.json)"
         )
@@ -172,6 +224,7 @@ def test_memory_views_restore_rooms_and_consent(memory_browser, chat_hub, size, 
         expect(confirm).to_be_enabled()
         consent.uncheck()
         expect(confirm).to_be_disabled()
+        review.evaluate("el => el.scrollTop = 0")
         shot("preview")
         consent.check()
         shot("consent")
