@@ -177,6 +177,9 @@ def test_board_drawer_and_existing_controls(browser, size, tmp_path):
         if size[0] == 390:
             box = drawer.bounding_box()
             assert box == {"x": 0, "y": 0, "width": 390, "height": 844}
+            for control in drawer.locator("button, a, input, select, textarea").all():
+                if control.is_visible():
+                    assert control.bounding_box()["height"] >= 44
         else:
             assert drawer.evaluate("el=>getComputedStyle(el).borderRadius") == "14px"
         page.screenshot(path=str(shots / f"drawer-{suffix}.png"))

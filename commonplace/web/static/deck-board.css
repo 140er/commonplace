@@ -78,7 +78,7 @@
   :root[data-ui="deck"] .deck-board .card h3 { padding-right: 30px; }
   :root[data-ui="deck"] .shell #card-panel:has(.deck-card-drawer) { inset: 0; max-width: none; width: 100%; height: 100dvh; border: 0; border-radius: 0; }
   :root[data-ui="deck"] .deck-card-drawer .ctx-body { padding: 16px; }
-  :root[data-ui="deck"] .deck-card-facts a { display: inline-flex; align-items: center; min-height: 44px; }
+  :root[data-ui="deck"] .deck-card-drawer a { display: inline-flex; align-items: center; min-height: 44px; }
   :root[data-ui="deck"] .deck-card-drawer .ctx-foot { padding: 16px 16px max(16px,env(safe-area-inset-bottom)); }
   :root[data-ui="deck"] .deck-card-drawer :is(button,a.btn,select,input,textarea) { min-height: 44px; }
 }
