@@ -65,7 +65,7 @@ test("Deck preview preserves the chosen source name and explains where the file 
 test("Deck report groups results without redundant counts or zero errors", () => {
   const state = { phase: "report", preview: checked, filename: "export.json", source: "cursor", format: "messages", report: { processed: 1, total: 1, imported: 0, duplicates: 1, errors: 0, results: [] } };
   const html = renderImport(state, {}, "deck");
-  for (const label of ["File", "Source", "Destination", "Added", "Already imported"]) assert.ok(html.includes(`<dt>${label}</dt>`), label);
+  for (const label of ["File", "Source", "Save into", "Added", "Already imported"]) assert.ok(html.includes(`<dt>${label}</dt>`), label);
   for (const label of ["Count", "Size", "Files processed", "Errors"]) assert.ok(!html.includes(`<dt>${label}</dt>`), label);
   const failed = renderImport({ ...state, report: { ...state.report, errors: 1, results: [{ status: "error", error: "Retry safely." }] } }, {}, "deck");
   assert.ok(failed.includes("<dt>Errors</dt><dd>1</dd>"));

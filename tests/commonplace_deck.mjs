@@ -42,7 +42,7 @@ for (const [label, base, route, drawer] of [
       assert.match(mount.innerHTML, new RegExp(`href="#/${destination}"`));
       assert.ok(closes.length + 1 <= 2, "close drawer, then choose a tab");
     }
-    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>3<span/);
+    assert.match(mount.innerHTML, /data-nav="today"[\s\S]*>2<span/);
   }
   state.deck = undefined;
   runInNewContext(`({${callback}}).phone()`, context);

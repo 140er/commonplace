@@ -1,6 +1,7 @@
 import { api as request, escape as e, actor } from "./api.js";
 import { cardId, isBlocked } from "./board.js";
 import { createMemoryImport } from "./memory-import.js";
+import { renderDeckMemory, savedMarkup, rememberRoomCounts, memoryRoom, memoryDetails, queryHistory, memoryStyles } from "./deck-memory.js";
 
 const enc = encodeURIComponent;
 const exact = (value) => e(value).replaceAll("\r", "&#13;");
@@ -135,6 +136,7 @@ export async function linkMemory({ result, destination, card, api = request }) {
 }
 
 export function renderMemory(state) {
+  if (state.look === "deck") return renderDeckMemory(state, { highlighted });
   const { boards = [], results = [], filters = {}, selected, busy, error, searched } = state;
   const options = (rows, selected) => rows.map(([value, label]) => `<option value="${e(value)}"${value === (selected || "") ? " selected" : ""}>${e(label)}</option>`).join("");
   const status = busy ? `Searching…${searched ? ` showing results for “${state.completedQuery}” until done` : ""}` : searched ? `${results.length} results${state.truncated ? " · more matches available; narrow your search" : ""}` : "";
@@ -148,25 +150,34 @@ export function renderMemory(state) {
     <div class="keys"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open source</span><span><kbd>Y</kbd> copy exact words</span>${memoryActions(selected, state.destination).link ? '<span><kbd>L</kbd> link to a card</span>' : ""}</div></section>`;
 }
 
-export function renderMemoryPanel({ result, destination, source, cards = [], me, neighbours = [], loading, panelError, notice, linking, chatOpen }) {
+export function renderMemoryPanel({ result, destination, source, cards = [], me, neighbours = [], loading, panelError, notice, linking, chatOpen, look, people = {}, boards = [] }) {
   if (!result) return "";
+  const deck = look === "deck";
+  const label = (card) => deck ? card.title || "Selected card" : cardId(destination, card.number);
   const actions = memoryActions(result, destination, cards, me);
   const thread = neighbours.length ? neighbours : [{ ...result, hit: true }];
   const message = (row) => row.hit ? result : { ...row, author: memoryAuthor(row, source || destination) };
   const linkCards = cards.filter((card) => card.board === destination?.slug && !card.restricted);
-  return `<section class="memory-panel" aria-label="Memory source"><header class="ctx-head"><h2>Memory</h2><button class="btn ghost" data-memory-action="hide">Hide <kbd>]</kbd></button></header><div class="ctx-body"><div class="detail-h"><span class="verbatim">Exact words, as saved.${["chat", "reply"].includes(result.kind) ? " Shown with the messages around it." : ""}</span><div class="src"><b>${e(result.sourceLabel)}</b><time>${e(result.at)}</time></div></div>
+  return `<section class="memory-panel" aria-label="Memory source"><header class="ctx-head"><h2>Memory</h2><button class="btn ghost" data-memory-action="hide">Hide <kbd>]</kbd></button></header><div class="ctx-body"><div class="detail-h"><span class="verbatim">Exact words, as saved.${["chat", "reply"].includes(result.kind) ? " Shown with the messages around it." : ""}</span><div class="src">${deck ? savedMarkup(result, { people, boards, viewer: me }) : `<b>${e(result.sourceLabel)}</b>`}${deck ? "" : `<time>${e(result.at)}</time>`}</div></div>
+    ${deck ? memoryDetails(result) : ""}
     ${loading ? '<p role="status">Loading source…</p>' : ""}${panelError ? `<p role="alert">${e(panelError)}</p><button class="btn" data-memory-action="source-retry">Try again</button>` : ""}
-    <div class="thread">${thread.map((row) => { const msg = message(row); return `<article class="msg ${row.hit ? "hit" : "ctxmsg"}"><div class="msg-h"><b>${e(msg.author)}</b>${stamp(msg)}</div><p class="msg-b">${exact(msg.text)}</p></article>`; }).join("")}</div>
-    ${actions.post.map((card) => `<div class="callout wait"><h3>This may answer blocked card ${e(cardId(destination, card.number))}</h3><p>Post this message, word for word, as a comment on ${e(cardId(destination, card.number))} in ${e(name(destination))}:</p><p class="quote">${exact(result.text)}</p><p>The comment is saved on the card. The request stays open until it is answered or closed.</p><button class="btn primary" data-memory-post="${card.number}">Post on ${e(cardId(destination, card.number))}</button></div>`).join("")}
-    ${linking && actions.link ? `<form data-memory-link><label>Link note to a card in ${e(name(destination))}<select name="card" required>${linkCards.map((card) => `<option value="${card.number}">${e(cardId(destination, card.number))} · ${e(card.title)}</option>`).join("")}</select></label><button class="btn"${linkCards.length ? "" : " disabled"}>Link note</button></form>` : ""}
+    <div class="thread">${thread.map((row) => { const msg = message(row); return `<article class="msg ${row.hit ? "hit" : "ctxmsg"}"><div class="msg-h">${deck ? savedMarkup(msg, { people, boards, viewer: me }) : `<b>${e(msg.author)}</b>`}${deck ? "" : stamp(msg)}</div><p class="msg-b">${exact(msg.text)}</p></article>`; }).join("")}</div>
+    ${actions.post.map((card) => `<div class="callout wait"><h3>This may answer blocked card ${e(label(card))}</h3><p>Post this message, word for word, as a comment on ${e(label(card))} in ${e(name(destination))}:</p><p class="quote">${exact(result.text)}</p><p>The comment is saved on the card. The request stays open until it is answered or closed.</p><button class="btn primary" data-memory-post="${card.number}">Post on ${e(label(card))}</button></div>`).join("")}
+    ${linking && actions.link ? `<form data-memory-link><label>Link note to a card in ${e(name(destination))}<select name="card" required>${linkCards.map((card) => `<option value="${card.number}">${e(deck ? label(card) : `${label(card)} · ${card.title}`)}</option>`).join("")}</select></label><button class="btn"${linkCards.length ? "" : " disabled"}>Link note</button></form>` : ""}
     ${notice ? `<p role="status">${e(notice)}</p>` : ""}</div><footer class="memory-panel-actions">${actions.quote ? `<p class="memory-destination">Message to ${e(name(destination))} chat</p><button class="btn sm" id="open-in-chat" data-memory-action="chat"${loading || panelError ? " disabled" : ""} aria-controls="chat" aria-expanded="${Boolean(chatOpen)}">Open in chat, ask about it <kbd>↵</kbd></button>` : ""}<button class="btn sm" data-memory-action="copy" aria-keyshortcuts="Y">Copy exact words <kbd>Y</kbd></button>${actions.link ? '<button class="btn sm" data-memory-action="link" aria-keyshortcuts="L">Link to card <kbd>L</kbd></button>' : ""}</footer></section>`;
 }
 
 // The shell supplies the two mounts and its dock. It owns route and header wiring.
 export function createMemory({ mount, panel, api = request, boards = [], me = {}, destination = null, dock, clipboard = globalThis.navigator?.clipboard, onSelect = () => {}, singleKeys = () => true } = {}) {
-  const state = { boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
+  const look = mount.ownerDocument?.documentElement?.dataset.ui || "classic";
+  let storage;
+  try { storage = globalThis.sessionStorage; } catch { /* Optional saved query. */ }
+  const history = queryHistory(me, storage);
+  const saved = look === "deck" ? history.read() : "";
+  if (look === "deck") memoryStyles(mount.ownerDocument);
+  const state = { look, viewer: typeof me === "string" ? me : me.actor, boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
   let searchEpoch = 0, sourceEpoch = 0, stopped = false, writing = false, returnKey = "";
-  let importer = null;
+  let importer = null, importDialog = null;
   const person = typeof me === "string" ? me : me.actor;
   const draw = () => {
     if (stopped || importer) return;
@@ -174,11 +185,13 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     let restore = null;
     if (focused && (mount.contains(focused) || panel?.contains(focused))) {
       const selector = focused.matches("[data-memory-result]") ? `[data-memory-result="${focused.dataset.memoryResult}"]`
+        : focused.matches("[data-memory-room]") ? `[data-memory-room="${focused.dataset.memoryRoom}"]`
         : focused.matches("[data-memory-action]") ? `[data-memory-action="${focused.dataset.memoryAction}"]`
         : focused.matches("[data-memory-post]") ? `[data-memory-post="${focused.dataset.memoryPost}"]`
         : focused.name && ["query", "project", "source", "from", "when", "card"].includes(focused.name) ? `[name="${focused.name}"]` : null;
       if (selector) { const owner = panel?.contains(focused) ? panel : mount; restore = () => owner.querySelector(selector)?.focus(); }
     }
+    if (look === "deck") state.filtersOpen = mount.querySelector(".memory-filters")?.open ?? state.filtersOpen;
     mount.innerHTML = renderMemory(state);
     if (panel) {
       panel.hidden = !state.selected;
@@ -186,7 +199,9 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     }
     restore?.();
   };
-  async function search(filters = state.filters) {
+  async function search(filters = state.filters, { restored = false } = {}) {
+    state.restoredQuery = restored;
+    if (look === "deck") history.save(filters.query || "");
     const epoch = ++searchEpoch;
     ++sourceEpoch;
     state.filters = { ...filters };
@@ -197,6 +212,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     try {
       const page = await searchMemory({ api, boards: state.boards, ...filters, query: filters.query || "", since: filters.when ? new Date(Date.now() - Number(filters.when) * 86400000).toISOString() : "" });
       if (stopped || epoch !== searchEpoch) return;
+      if (look === "deck") rememberRoomCounts(state, page.results, filters);
       Object.assign(state, page, { completedQuery: filters.query, searched: true });
     } catch (error) {
       if (stopped || epoch !== searchEpoch) return;
@@ -231,7 +247,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     returnKey = key(state.selected);
     state.chatOpen = true;
     draw();
-    const opening = dock.open({ from: panel?.querySelector("#open-in-chat"), board: state.destination, at: state.destination.slug === state.selected.board ? state.at : null, quote: quoteDraft(state.selected), composerLabel: `Message to ${name(state.destination)} chat`, strip: { text: `Opened from ${state.selected.sourceLabel}. Your question takes the quote along, word for word.`, backLabel: "Back to the source" } });
+    const opening = dock.open({ from: panel?.querySelector("#open-in-chat"), board: state.destination, at: state.destination.slug === state.selected.board ? state.at : null, quote: { ...quoteDraft(state.selected), ...(look === "deck" ? { sourceLabel: memoryRoom(state.selected, state.boards) } : {}) }, composerLabel: `Message to ${name(state.destination)} chat`, strip: { text: `Opened from ${look === "deck" ? memoryRoom(state.selected, state.boards) : state.selected.sourceLabel}. Your question takes the quote along, word for word.`, backLabel: "Back to the source" } });
     const selected = state.selected;
     void Promise.resolve(opening).catch(() => { if (!stopped && state.selected === selected) { state.chatOpen = false; state.notice = "Chat could not be opened. Try again."; draw(); } });
     return true;
@@ -257,20 +273,39 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
           const updated = await postMemory(args);
           if (epoch === sourceEpoch) state.cards = state.cards.map((row) => row.number === card.number ? updated : row);
         } else await linkMemory(args);
-        if (epoch === sourceEpoch) state.notice = action === "post" ? `Posted on ${cardId(destination, card.number)}` : "Note linked";
+        if (epoch === sourceEpoch) state.notice = action === "post" ? `Posted on ${look === "deck" ? card.title || "the card" : cardId(destination, card.number)}` : "Note linked";
       }
     } catch { if (epoch === sourceEpoch) state.notice = "That action could not be completed. Try again."; }
     finally { writing = false; if (epoch === sourceEpoch) draw(); }
   }
   function click(event) {
+    const room = event.target.closest("[data-memory-room]");
+    if (room?.dataset.memoryRoom !== undefined) {
+      const filters = { ...state.filters, project: room.dataset.memoryRoom };
+      if (filters.query?.trim()) void search(filters);
+      else { state.filters = filters; draw(); }
+      return;
+    }
     const importButton = event.target.closest("[data-memory-action]");
     if (importButton?.dataset.memoryAction === "import") {
       ++searchEpoch; ++sourceEpoch;
       state.busy = false; state.selected = null;
       if (panel) { panel.hidden = true; panel.innerHTML = ""; }
-      importer = createMemoryImport({ mount, me, api, onClose() {
-        importer?.stop(); importer = null; draw();
-        mount.querySelector('[data-memory-action="import"]')?.focus();
+      if (look === "deck" && mount.ownerDocument?.createElement) {
+        importDialog = mount.ownerDocument.createElement("dialog");
+        importDialog.className = "deck-memory-dialog";
+        importDialog.setAttribute("aria-labelledby", "memory-import-title");
+        mount.append(importDialog);
+        importDialog.addEventListener("cancel", event => { event.preventDefault(); closeImport(); });
+        importDialog.showModal();
+      }
+      function closeImport() {
+        importer?.stop(); importer = null;
+        importDialog?.close(); importDialog?.remove(); importDialog = null;
+        draw(); mount.querySelector('[data-memory-action="import"]')?.focus();
+      }
+      importer = createMemoryImport({ mount: importDialog || mount, me, api, look, onClose() {
+        closeImport();
       } });
       return;
     }
@@ -291,6 +326,13 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       void search(Object.fromEntries(new FormData(form)));
     } else if (form.matches("[data-memory-link]")) { event.preventDefault(); void action("link-note", new FormData(form).get("card")); }
   }
+  function input(event) {
+    if (look !== "deck" || event.target.name !== "query") return;
+    state.filters.query = event.target.value;
+    state.restoredQuery = false;
+    history.save(event.target.value);
+    mount.querySelector(".memory-restored")?.remove();
+  }
   function change(event) {
     const form = event.target.closest("[data-memory-search]");
     if (form && event.target.tagName === "SELECT" && form.elements.query.value.trim()) void search(Object.fromEntries(new FormData(form)));
@@ -309,18 +351,20 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     }
   }
   for (const node of new Set([mount, panel].filter(Boolean))) {
-    node.addEventListener("click", click); node.addEventListener("submit", submit); node.addEventListener("change", change); node.addEventListener("keydown", keydown);
+    node.addEventListener("input", input); node.addEventListener("click", click); node.addEventListener("submit", submit); node.addEventListener("change", change); node.addEventListener("keydown", keydown);
   }
   draw();
+  if (saved.trim()) void search({ query: saved }, { restored: true });
   return {
     search, select, openInChat, backToSource,
     setDestination(board) { state.destination = board; state.linking = false; draw(); },
     restoreSource() { if (state.selected && returnKey === key(state.selected)) backToSource(); },
     stop() {
       importer?.stop(); importer = null;
+      importDialog?.close(); importDialog?.remove(); importDialog = null;
       stopped = true; ++searchEpoch; ++sourceEpoch;
       for (const node of new Set([mount, panel].filter(Boolean))) {
-        node.removeEventListener("click", click); node.removeEventListener("submit", submit); node.removeEventListener("change", change); node.removeEventListener("keydown", keydown);
+        node.removeEventListener("input", input); node.removeEventListener("click", click); node.removeEventListener("submit", submit); node.removeEventListener("change", change); node.removeEventListener("keydown", keydown);
       }
     },
   };

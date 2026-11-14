@@ -1,0 +1,3 @@
+### Person-scoped coworker directory metadata
+
+The rail reads additive section, lock, unread and activity facts from the coworker directory. Workspace personas and person-owned/shared team bots remain separate registries: the latter appear only in a read-only `team_bots` array, authorized by the existing bot roster. No name matching, content copying or new team-bot read marks are introduced. Coworker cursors belong to one person and conversation and leave with the account even when the shared workspace stays. State summaries use fixed words and counts from readable activity, with no task identifiers or model tags. Owner section changes retain the existing person-session and same-origin write boundary.

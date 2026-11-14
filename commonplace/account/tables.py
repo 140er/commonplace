@@ -41,6 +41,10 @@ _U = ("user_id",)
 _W = ("workspace_id",)
 _C = ("connection_id",)
 
+# Workspace files have their own schemas; these person-owned cursors must also
+# leave a retained workspace when the account is purged.
+WORKSPACE_RULES = {"coworkers.sqlite3": {"coworker_reads": Rule(user=_U)}}
+
 RULES = {
     "account_delete_checks": Rule(user=_U, workspace=_W, connection=_C, credential=True),
     "account_delete_tokens": Rule(user=_U, workspace=_W, connection=_C, credential=True),
