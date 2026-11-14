@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from mempalace import fact_provenance
+from mempalace.deadline import BUSY_INDEXING
 from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
@@ -89,6 +90,10 @@ def _memory(ctx, name, args):
                 raise ToolError("no: memory not found") from None
         if "not found" in str(exc).lower():
             raise ToolError("no: memory not found") from None
+        if str(exc).startswith(BUSY_INDEXING):
+            # A palace read that could not get in within the worker's bound; a
+            # retry succeeds once the index write ends. Not an empty memory.
+            raise ToolError("no: memory is busy indexing; try again in a few seconds") from None
         raise ToolError("no: memory request refused or unavailable") from None
     if not isinstance(result, dict) or result.get("error") or result.get("success") is False:
         raise ToolError("no: memory request failed")

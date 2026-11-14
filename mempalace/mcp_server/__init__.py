@@ -119,6 +119,7 @@ from ..config import (  # noqa: E402
     wing_aliases,
 )
 from ..date_window import filed_at_in_window, parse_date_bound  # noqa: E402
+from ..deadline import BUSY_INDEXING  # noqa: E402
 from ..embedding import (  # noqa: E402
     MODEL_ERROR_CLASS_NAMES,
     EmbeddingFunctionUnavailableError,

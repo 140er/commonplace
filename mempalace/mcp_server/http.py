@@ -24,17 +24,28 @@ class _RWLock:
         # True while a yielding writer lets queued readers in (yield_write).
         self._handoff = False
 
-    def acquire_read(self) -> None:
+    def acquire_read(self, timeout=None) -> bool:
+        """Take the read side; False when ``timeout`` seconds passed without it."""
+        end = None if timeout is None else time.monotonic() + timeout
         with self._cond:
             self._waiting_readers += 1
             try:
                 while self._writer or (self._waiting_writers and not self._handoff):
-                    self._cond.wait()
+                    if end is None:
+                        self._cond.wait()
+                        continue
+                    left = end - time.monotonic()
+                    if left <= 0:
+                        # A writer that yields, or waits politely, counts this reader.
+                        self._cond.notify_all()
+                        return False
+                    self._cond.wait(left)
             finally:
                 self._waiting_readers -= 1
             self._readers += 1
             if self._handoff:
                 self._cond.notify_all()
+            return True
 
     def try_acquire_read(self) -> bool:
         """Take the read side only if that needs no wait."""
@@ -64,13 +75,37 @@ class _RWLock:
             finally:
                 self._waiting_writers -= 1
 
+    def acquire_write_polite(self, timeout=None) -> bool:
+        """Take the write side without ever making a reader wait for it.
+
+        For background writes (the search-index backfill). A plain writer that
+        queues keeps every later reader out until it has run (writer
+        preference), so one slow search ahead of it holds up all the searches
+        behind it. This writer is not counted as waiting: readers keep entering
+        while it waits, and it takes the lock only at a moment when none runs and
+        none is queued. False when ``timeout`` seconds passed (None: no limit).
+        """
+        end = None if timeout is None else time.monotonic() + timeout
+        with self._cond:
+            while self._writer or self._readers or self._waiting_readers:
+                if end is None:
+                    self._cond.wait()
+                    continue
+                left = end - time.monotonic()
+                if left <= 0:
+                    return False
+                self._cond.wait(left)
+            self._writer = True
+            self._writer_ident = threading.get_ident()
+            return True
+
     def release_write(self) -> None:
         with self._cond:
             self._writer = False
             self._writer_ident = None
             self._cond.notify_all()
 
-    def yield_write(self) -> bool:
+    def yield_write(self, polite: bool = False) -> bool:
         """Let the requests queued behind a held write lock run, then take it back.
 
         For a writer that works in steps, a mine between files. Plain writer
@@ -98,6 +133,13 @@ class _RWLock:
                     self._cond.wait()
             finally:
                 self._handoff = False
+            if polite:
+                # A background writer takes its turn back without queueing.
+                while self._writer or self._readers or self._waiting_readers:
+                    self._cond.wait()
+                self._writer = True
+                self._writer_ident = threading.get_ident()
+                return True
             self._waiting_writers += 1
             try:
                 while self._writer or self._readers:
@@ -132,6 +174,30 @@ class _RWLock:
 
 
 _HTTP_REQUEST_LOCK = _RWLock()
+# How long a person's palace read waits for the request lock before it answers
+# that the palace is busy indexing (retryable), instead of queueing behind a
+# background write for as long as the write runs. The gateway's own wait for a
+# worker is 11 minutes, so without this bound a stuck lock stalls every search.
+# How long an index write waits for the palace to go quiet before it gives
+# way and asks to be retried. Both: seconds; MEMPALACE_READ_LOCK_WAIT_S and
+# MEMPALACE_MIRROR_LOCK_WAIT_S override.
+_HTTP_READ_LOCK_WAIT_S = env_float("MEMPALACE_READ_LOCK_WAIT_S", 5.0)
+_HTTP_MIRROR_LOCK_WAIT_S = env_float("MEMPALACE_MIRROR_LOCK_WAIT_S", 10.0)
+_HTTP_BUSY_RPC_CODE = -32001  # retryable, as the gateway's busy-database answer
+_HTTP_BUSY_RETRY_AFTER_S = 2
+
+
+def _http_busy_response(req_id, advice):
+    """A retryable answer for a call that could not get the palace in time."""
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "error": {
+            "code": _HTTP_BUSY_RPC_CODE,
+            "message": f"{BUSY_INDEXING}; {advice}",
+            "data": {"retryable": True, "retry_after_s": _HTTP_BUSY_RETRY_AFTER_S},
+        },
+    }
 
 
 def _lower_mirror_priority() -> None:
@@ -581,8 +647,9 @@ def _http_release_request_lock_for_embedding(mode: str):
     """Release the held request lock only around embedding inference.
 
     ``mode`` is ``"read"`` or ``"write"`` and must match how ``_http_dispatch``
-    acquired ``_HTTP_REQUEST_LOCK`` for this request. Nested embedding calls
-    on the same thread do not double-release.
+    acquired ``_HTTP_REQUEST_LOCK`` for this request; ``"mirror"`` is a write that
+    took it politely (``acquire_write_polite``) and takes it back the same way.
+    Nested embedding calls on the same thread do not double-release.
 
     Reserve lifecycle protection before dropping the request lease. If it is
     already held, keep the request lease through inference: its owner may be
@@ -610,6 +677,8 @@ def _http_release_request_lock_for_embedding(mode: str):
                 # obtain lifecycle protection and close the captured handle.
                 if mode == "read":
                     _HTTP_REQUEST_LOCK.acquire_read()
+                elif mode == "mirror":
+                    _HTTP_REQUEST_LOCK.acquire_write_polite()
                 else:
                     _HTTP_REQUEST_LOCK.acquire_write()
         finally:
@@ -689,19 +758,26 @@ def _http_dispatch_unobserved(request):
 
         req_id = request.get("id")
         _lower_mirror_priority()
-        with (
-            _http_embedding_release_installed("write"),
-            _HTTP_REQUEST_LOCK,
-            mine_yield_hook(_HTTP_REQUEST_LOCK.yield_write),
-        ):
-            refusal = _mcp_tool_preflight_refusal(req_id, "mempalace_add_drawer")
-            if refusal is not None:
-                return refusal
-            try:
-                result = write_mirror_units(**params)
-            except (TypeError, ValueError):
-                return _json_rpc_error(req_id, -32602, "Invalid mirror units")
-            return _tool_call_response(req_id, result)
+        # An index write is background work: it never makes a search wait for it
+        # (it takes the lock only when no read runs or queues), and when the
+        # palace does not go quiet it gives way and asks to be retried.
+        if not _HTTP_REQUEST_LOCK.acquire_write_polite(_HTTP_MIRROR_LOCK_WAIT_S):
+            return _http_busy_response(req_id, "retry the index write in a moment")
+        try:
+            with (
+                _http_embedding_release_installed("mirror"),
+                mine_yield_hook(lambda: _HTTP_REQUEST_LOCK.yield_write(polite=True)),
+            ):
+                refusal = _mcp_tool_preflight_refusal(req_id, "mempalace_add_drawer")
+                if refusal is not None:
+                    return refusal
+                try:
+                    result = write_mirror_units(**params)
+                except (TypeError, ValueError):
+                    return _json_rpc_error(req_id, -32602, "Invalid mirror units")
+                return _tool_call_response(req_id, result)
+        finally:
+            _HTTP_REQUEST_LOCK.release_write()
     if method in _HTTP_PROTOCOL_METHODS or method.startswith("notifications/"):
         return handle_request(request)
     tool_name = None
@@ -713,11 +789,15 @@ def _http_dispatch_unobserved(request):
         return handle_request(request)
     if _tool_capabilities.classify_tool(tool_name) == "read":
         release_mode = _embedding_release_mode(tool_name, request, "read")
-        if release_mode:
-            with _http_embedding_release_installed(release_mode), _HTTP_REQUEST_LOCK.read_lock():
-                return _handle_read_with_retry(request)
-        with _HTTP_REQUEST_LOCK.read_lock():
+        if not _HTTP_REQUEST_LOCK.acquire_read(_HTTP_READ_LOCK_WAIT_S):
+            return _http_busy_response(request.get("id"), "try again in a moment")
+        try:
+            if release_mode:
+                with _http_embedding_release_installed(release_mode):
+                    return _handle_read_with_retry(request)
             return _handle_read_with_retry(request)
+        finally:
+            _HTTP_REQUEST_LOCK.release_read()
     if tool_name in _HTTP_YIELDING_TOOLS:
         # A mine held the exclusive lock for its whole run, so every other
         # palace request, status included, waited for all of it. It still runs
