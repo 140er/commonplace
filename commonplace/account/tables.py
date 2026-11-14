@@ -160,6 +160,7 @@ RULES = {
         user=("accepted_by",), workspace=_W, email=("email",), sent=("created_by",)
     ),
     "workspace_voice": Rule(workspace=_W),
+    "workspace_creations": Rule(user=_U, workspace=_W),
     "workspaces": Rule(user=("personal_of",), workspace=("id",)),
 }
 

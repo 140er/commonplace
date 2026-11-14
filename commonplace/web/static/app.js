@@ -26,7 +26,7 @@ import { createDock } from "./chatdock.js";
 import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, cardId, chatTag, loadChatTimes, roveTo } from "./board.js";
-import { createDetails, canRemoveAssignment, assignmentPickup } from "./details.js";
+import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
@@ -244,6 +244,7 @@ function restore(saved) {
   if (tasks && saved.spaceTasks != null) tasks.scrollTop = saved.spaceTasks;
 }
 async function signin(code = null) {
+  state.deck?.appearance?.stop();
   queueStop(); state.queue = null; state.queueFocus = "";
   speech.stop(); voice.reset();
   clearWorkbenchChat();
@@ -410,6 +411,7 @@ function navigation() {
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
   root.querySelector(".shell")?.setAttribute("data-view", view);
+  state.deck?.appearance?.sync(state.base);
   state.shellSync?.();
 }
 function showError(text, { drawer = false } = {}) {
@@ -687,7 +689,7 @@ function releaseControl(card) {
 // Needs me draws on `#/needs`, and on `#/` for a hash the router does not recognise.
 const onNeeds = () => state.base === "#/needs" || state.base === "#/";
 // A form in the panel (edit, hand off, ask) belongs to the person filling it in: only they replace it.
-const panelForm = () => root.querySelector("#card-panel form.form-tile");
+const panelForm = () => root.querySelector("#card-panel form.form-tile, #card-panel .assignment-refusal");
 async function cardPanel(number, epoch, { keepForm = false } = {}) {
   const panel = root.querySelector("#card-panel");
   panel.hidden = false;
@@ -700,7 +702,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     const card = await api(`/api/cards/${number}`);
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
-    if (keepForm && !opening && panelForm()) return;
+    if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
     state.card = card;
     // A shared card link draws its own board behind the card, once.
     const rebase = state.rebase === number && card.board && state.base !== `#/board/${enc(card.board)}`;
@@ -710,7 +712,7 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     // A refresh of the open card reuses the component, so focus stays where the user left it.
     if (opening || !detailsUI) { detailsUI?.stop(); detailsUI = createDetails({ mount: panel, api, afterDraw: placeLifecycle }); }
     const board = state.boards.find((board) => board.slug === card.board) || { slug: card.board };
-    const shown = detailsUI.show(card, { board, me: state.me.actor, people: state.me.people, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
+    const shown = detailsUI.show(card, { board, me: state.me.actor, people: state.me.people, deck: state.deck?.on() === true, canRemove: state.me.can_admin === true, messages: state.chatBoard === card.board ? state.chat : [], strip: chatOrigin ? { kind: "chat", row: chatOrigin.id, source: chatOrigin.dataset.src } : state.base.startsWith("#/board/") && state.workbenchChat?.dock.isOpen() ? { kind: "board" } : null });
     if (tab !== "details") detailsUI.selectTab(tab);
     panel.querySelector('form[data-form="comment"]')?.setAttribute("aria-busy", String(state.pending.has(`card-${number}`)));
     panel.querySelectorAll('[data-action="edit-card"], [data-action="panel-move"], [data-action="panel-priority"], [data-action="panel-reviewer"], [data-action="handoff"], [data-action="remove-assignment"]').forEach((button) => { button.disabled = state.pending.has(`card-${number}`); });
@@ -807,10 +809,10 @@ function reviewForm() {
   panel.innerHTML = `<form class="form-tile" data-form="review"><h2>Ask for a decision</h2><label>Question<textarea name="question" minlength="24" required></textarea></label><label>Context<textarea name="context" minlength="20" required>${e(state.card.status_line || state.card.body)}</textarea></label><label>Options (one per line)<textarea name="options" required></textarea></label><button class="blockbtn">Ask</button><button type="button" class="opt" data-action="cancel-form">Cancel</button></form>`;
 }
 function removeAssignmentForm(card) {
-  if (!canRemoveAssignment(card)) return;
+  if (!canRemoveAssignment(card) || (state.deck?.on() && !state.me.can_admin)) return;
   detailsUI?.stop(); detailsUI = null;
   const panel = root.querySelector("#card-panel");
-  panel.innerHTML = `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Remove assignment</h2><p>Remove the assignment from #${card.number} ${e(card.title)}?</p><p>${e(assignmentPickup(card))}</p><label>Reason (required)<textarea name="note" required></textarea></label><p class="set-note">The reason will be saved in the card's activity.</p><button class="btn confirm-removal" type="submit">Remove assignment</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></form>`;
+  panel.innerHTML = state.deck?.on() ? deckAssignmentForm(card) : `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Remove assignment</h2><p>Remove the assignment from #${card.number} ${e(card.title)}?</p><p>${e(assignmentPickup(card))}</p><label>Reason (required)<textarea name="note" required></textarea></label><p class="set-note">The reason will be saved in the card's activity.</p><button class="btn confirm-removal" type="submit">Remove assignment</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></form>`;
   panel.querySelector('textarea[name="note"]').focus();
 }
 function handoffForm(card, prefill = {}) {
@@ -1464,13 +1466,14 @@ function findCard(number) {
   const lists = /^#\/(board|space)\//.test(state.base) ? [state.cards, state.children, state.linked, state.open, needsCards()] : [state.open, needsCards(), state.cards, state.children, state.linked];
   return lists.flat().find((c) => c.number === number);
 }
-async function mutate(key, action, { serverReason = false } = {}) {
+async function mutate(key, action, { serverReason = false, onError = null } = {}) {
   if (state.pending.has(key)) return;
   state.pending.add(key);
   root.querySelectorAll(`button[data-card="${key.replace("card-", "")}"], [data-card="${key.replace("card-", "")}"] button`).forEach((b) => { b.disabled = true; });
   try { await action(); await refresh(); }
   catch (error) {
-    if (error.status === 409) { await refresh(); showError(serverReason ? error.message : "Card changed. Review it and try again.", { drawer: serverReason }); }
+    if (onError) onError(error);
+    else if (error.status === 409) { await refresh(); showError(serverReason ? error.message : "Card changed. Review it and try again.", { drawer: serverReason }); }
     else showError(error.message, { drawer: serverReason });
   } finally {
     state.pending.delete(key);
@@ -1510,6 +1513,9 @@ async function move(number, status, extra = {}) {
   await mutate(`card-${number}`, () => api(`/api/cards/${number}`, { method: "PATCH", body: { version: card.version, status, ...extra } }));
 }
 root.addEventListener("input", (event) => {
+  const removal = event.target.closest('[data-form="remove-assignment"]');
+  if (removal && state.deck?.on()) removal.querySelector('[type="submit"]').disabled = !event.target.value.trim() || state.pending.has(`card-${removal.dataset.card}`);
+
   if (event.target.dataset.draft) {
     const key = event.target.dataset.draft;
     state.drafts.set(key, event.target.value);
@@ -1638,6 +1644,7 @@ root.addEventListener("click", async (event) => {
     } else if (action === "backlog") { state.backlog = !state.backlog; const saved = remember(); boardView(); restore(saved); }
     else if (action === "retry") await refresh({ background: state.base === "#/rules" && rulesUI.busy() });
     else if (action === "cancel-form") {
+      root.querySelector("#card-panel .assignment-refusal")?.remove();
       // Needs me redraws the item's detail; a card route reads the card again.
       const needs = onNeeds() ? state.needsUI : null;
       if (needs?.paused()) needs.pause(false); else await refresh();
@@ -1749,7 +1756,11 @@ root.addEventListener("submit", async (event) => {
     else if (kind === "edit-card") await mutate(`card-${state.card.number}`, () => api(`/api/cards/${state.card.number}`, { method: "PATCH", body: { ...payload, version: state.card.version } }));
     else if (kind === "review") await move(state.card.number, "review", { ...payload, options: payload.options.split("\n").map((v) => v.trim()).filter(Boolean) });
     else if (kind === "release-origin") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/approve`, { method: "POST", body: { approve: true, version: state.card.version, reason: payload.reason } }));
-    else if (kind === "remove-assignment") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { to: "anyone", note: payload.note, version: Number(payload.version) } }), { serverReason: true });
+    else if (kind === "remove-assignment") await mutate(`card-${Number(form.dataset.card)}`, () => api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { to: "anyone", note: payload.note, version: Number(payload.version) } }), { serverReason: true, onError: state.deck?.on() ? (error) => {
+      const panel = root.querySelector("#card-panel");
+      panel.innerHTML = assignmentRefusal(error);
+      panel.querySelector(".assignment-refusal").focus();
+    } : null });
     else if (kind === "handoff") await mutate(`card-${Number(form.dataset.card)}`, async () => {
       await api(`/api/cards/${Number(form.dataset.card)}/handoff`, { method: "POST", body: { ...payload, version: Number(payload.version), options: payload.options.split(",").map((s) => s.trim()).filter(Boolean) } });
       if (onNeeds()) state.needsUI?.pause(false);

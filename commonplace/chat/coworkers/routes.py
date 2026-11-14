@@ -186,7 +186,7 @@ def handle(gateway, h):
                 200,
                 {
                     "bots": store.list_bots(),
-                    "conversations": store.list_conversations(principal.user_id),
+                    "conversations": store.list_conversations(principal.user_id, owns=True),
                     "user_id": principal.user_id,
                     "can_manage_bots": principal.role == "owner",
                 },
@@ -205,7 +205,9 @@ def handle(gateway, h):
         if parts == ["conversations"]:
             if h.command == "GET":
                 return send_json(
-                    h, 200, {"conversations": store.list_conversations(principal.user_id)}
+                    h,
+                    200,
+                    {"conversations": store.list_conversations(principal.user_id, owns=True)},
                 )
             if h.command == "POST":
                 body = _body(h)
@@ -270,7 +272,9 @@ def handle(gateway, h):
 def _conversation_route(gateway, h, principal, session, store, parts, params):
     conversation_id = _id(parts[1])
     # Authorize the object before parsing any subordinate body or IDs.
-    conversation = store.get_conversation(principal.user_id, conversation_id)
+    conversation = store.get_conversation(
+        principal.user_id, conversation_id, owns=len(parts) == 2 and h.command == "GET"
+    )
     if h.command == "GET" and (parts[2:] == ["log"] or parts[2:] == ["log", "stream"]):
         from . import livelog
 

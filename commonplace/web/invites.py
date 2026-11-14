@@ -265,6 +265,48 @@ def _workspaces(gateway, h):
     _send(h, 200, body, "application/json", headers)
 
 
+def _create_workspace(gateway, h):
+    from commonplace.gateway import _same_origin_allowed
+
+    principal = require_principal(gateway, h)
+    if principal is None:
+        return
+    # An app grant may represent a person too. Creation requires their browser session.
+    if (
+        not principal.person
+        or principal.auth != "session"
+        or h.headers.get("Authorization")
+        or not sessions.cookie_value(h.headers.get("Cookie"))
+    ):
+        send_json(h, 403, {"error": "Sign in in your browser to create a workspace."})
+        return
+    if not h.headers.get_all("Origin", []) or not _same_origin_allowed(gateway, h):
+        send_json(h, 403, {"error": "Open Commonplace in this browser and try again."})
+        return
+    try:
+        data = read_json(h)
+    except ValueError:
+        return
+    try:
+        if set(data) != {"name", "request_id"}:
+            raise ValueError("Use a workspace name and request id only.")
+        workspace, created = invites.create_workspace(
+            gateway.db, principal.user_id, name=data["name"], request_id=data["request_id"]
+        )
+    except (ValueError, ControlError) as exc:
+        gateway.db.audit(
+            action="workspace.create",
+            decision="deny",
+            workspace_id=principal.workspace_id,
+            user_id=principal.user_id,
+            auth="session",
+            reason="creation_refused",
+        )
+        send_json(h, getattr(exc, "status", 400), {"error": str(exc)})
+        return
+    send_json(h, 201 if created else 200, {"workspace": workspace})
+
+
 def install(gateway):
     invites.ensure_schema(gateway.db)
 
@@ -277,4 +319,5 @@ def install(gateway):
     gateway.add_route("GET", JOIN_PATH, bound(_join))
     gateway.add_route("POST", JOIN_PATH, bound(_join))
     gateway.add_route("GET", "/api/workspaces", bound(_workspaces))
+    gateway.add_route("POST", "/api/workspaces", bound(_create_workspace))
     gateway.add_route("POST", "/api/workspaces/switch", bound(_workspaces))

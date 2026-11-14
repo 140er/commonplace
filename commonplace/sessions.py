@@ -108,7 +108,7 @@ def home_workspace(db: ControlDB, user_id: str) -> Optional[str]:
     with db._lock:
         row = db._conn.execute(
             "SELECT w.id FROM workspaces w JOIN memberships m ON m.workspace_id = w.id "
-            "WHERE m.user_id = ? ORDER BY w.personal_of IS ? DESC, w.created_at LIMIT 1",
+            "WHERE m.user_id = ? ORDER BY w.personal_of IS ? DESC, w.created_at, w.rowid LIMIT 1",
             (user_id, user_id),
         ).fetchone()
     return row["id"] if row else None
