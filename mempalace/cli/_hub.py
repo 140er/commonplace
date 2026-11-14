@@ -19,6 +19,20 @@ _HUB_SEARCH_TIMEOUT_S = 600.0
 _HUB_SEARCH_MAX_RESULTS = 100
 
 
+def _refuse_unavailable_hub(hub):
+    if hub is not None and getattr(hub, "info", {}).get("hub_unavailable"):
+        print(
+            "mempalace: palace hub temporarily unavailable; retry later. "
+            "No operation was run locally.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def _check_hub_availability(palace_path):
+    _refuse_unavailable_hub(HubClient.discover(palace_path, include_self=True))
+
+
 def _search_args_forwardable(args) -> bool:
     """Return whether ``mempalace_search`` preserves this CLI search exactly."""
     if getattr(args, "include_media", False) or getattr(args, "query_task", "search") != "search":
@@ -134,6 +148,7 @@ def _forward_search_to_hub(args, palace_path: str) -> bool:
     import urllib.error
 
     hub = HubClient.discover(palace_path, include_self=True)
+    _refuse_unavailable_hub(hub)
     if hub is None or "search_cli_compatible" not in hub.capabilities:
         return False
     strategy = getattr(args, "candidate_strategy", None)
@@ -240,6 +255,7 @@ def _forward_mine_to_hub(args, palace_path: str, *, include_ignored=None) -> boo
     import urllib.error
 
     hub = HubClient.discover(palace_path, include_self=True)
+    _refuse_unavailable_hub(hub)
     if hub is None or hub.read_only or not hub.healthy():
         return False
 

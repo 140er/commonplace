@@ -1077,6 +1077,9 @@ class TestServeHttpRegistersServerinfo:
         observed = {}
 
         class DummyHTTPd:
+            from mempalace.worker_lifecycle import Coordinator
+
+            coordinator = Coordinator()
             scheme = "http"
             server_address = ("127.0.0.1", 12345)
 

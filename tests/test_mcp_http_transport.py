@@ -1203,7 +1203,14 @@ def test_read_only_off_exposes_mutating_tools(http_server):
     assert "mempalace_add_drawer" in names
 
 
-def test_writable_http_refuses_startup_without_writer_lease(monkeypatch):
+@pytest.fixture
+def runtime_child(monkeypatch):
+    """Writer-lease unit tests exercise the child, not its restart owner."""
+    monkeypatch.setenv("MEMPALACE_HTTP_CHILD", "1")
+    monkeypatch.setattr(mcp, "_http_coordinator", None, raising=False)
+
+
+def test_writable_http_refuses_startup_without_writer_lease(monkeypatch, runtime_child):
     monkeypatch.setenv("MEMPALACE_MCP_WRITER_WAIT_SECONDS", "0")
     monkeypatch.setattr(mcp, "_READ_ONLY", False)
     monkeypatch.setattr(
@@ -1239,6 +1246,8 @@ class _FakeClock:
 
 
 def _patch_http_startup(monkeypatch, events):
+    monkeypatch.setenv("MEMPALACE_HTTP_CHILD", "1")
+    monkeypatch.setattr(mcp, "_http_coordinator", None, raising=False)
     monkeypatch.setattr(mcp, "_READ_ONLY", False)
     monkeypatch.setattr(mcp, "_MCP_WRITER_READ_ONLY", False)
     monkeypatch.setattr(mcp, "_MCP_WRITER_LOCK_CM", None)
@@ -1361,7 +1370,7 @@ def test_writer_wait_seconds_parsing(monkeypatch, raw, expected):
     assert mcp._writer_wait_seconds() == expected
 
 
-def test_read_only_http_skips_writer_lease(monkeypatch):
+def test_read_only_http_skips_writer_lease(monkeypatch, runtime_child):
     calls = []
     monkeypatch.setattr(mcp, "_READ_ONLY", True)
     monkeypatch.setattr(
@@ -1378,7 +1387,7 @@ def test_read_only_http_skips_writer_lease(monkeypatch):
     assert calls == [(mcp._args.host, mcp._args.port)]
 
 
-def test_writable_http_releases_writer_lease_when_serving_ends(monkeypatch):
+def test_writable_http_releases_writer_lease_when_serving_ends(monkeypatch, runtime_child):
     events = []
 
     class DummyLease:
@@ -1406,7 +1415,7 @@ def test_writable_http_releases_writer_lease_when_serving_ends(monkeypatch):
     assert mcp._MCP_WRITER_LOCK_CM is None
 
 
-def test_writable_http_releases_writer_lease_after_bind_failure(monkeypatch):
+def test_writable_http_releases_writer_lease_after_bind_failure(monkeypatch, runtime_child):
     events = []
 
     class DummyLease:

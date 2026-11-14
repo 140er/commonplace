@@ -260,6 +260,10 @@ class WorkerUnavailable(Exception):
     pass
 
 
+class ProvenRecycling(WorkerUnavailable):
+    """The authenticated generation explicitly declined dispatch."""
+
+
 class WorkerPaused(WorkerUnavailable):
     """Memory is paused for an online backup; the caller may retry later."""
 
@@ -297,10 +301,30 @@ class WorkerClient:
             with slot() if slot is not None else contextlib.nullcontext():
                 try:
                     worker = self.supervisor.get(principal.workspace_id)
+                except (WorkersPaused, SupervisorClosed):
+                    raise
                 except Exception as exc:
                     log_failure(logger, "worker start failed", exc)
                     raise WorkerUnavailable() from exc
-                return _public_worker_response(self._post(worker, principal, request))
+                for attempt in range(2):
+                    pin = getattr(self.supervisor, "pin", None)
+                    try:
+                        with pin(worker) if pin is not None else contextlib.nullcontext():
+                            result = _public_worker_response(self._post(worker, principal, request))
+                    except ProvenRecycling:
+                        self.supervisor.retire(worker)
+                        if attempt:
+                            raise WorkerUnavailable() from None
+                        try:
+                            worker = self.supervisor.replace(worker, timeout_s=30)
+                        except (WorkersPaused, SupervisorClosed):
+                            raise
+                        except Exception as exc:
+                            raise WorkerUnavailable() from exc
+                    else:
+                        if worker.retiring:
+                            self.supervisor.retire(worker)
+                        return result
         except WorkersPaused as exc:
             raise WorkerPaused(exc.retry_after_s) from None
         except SupervisorClosed as exc:
@@ -342,7 +366,7 @@ class WorkerClient:
                     break
                 chunks.append(chunk)
             raw = b"".join(chunks)
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             raise WorkerUnavailable() from exc
         finally:
             if resp is not None:
@@ -351,10 +375,47 @@ class WorkerClient:
                 conn.close()
         if resp.status == 202:
             return None
+        from mempalace.worker_lifecycle import (
+            ADMITTED_HEADER,
+            GENERATION_HEADER,
+            STATE_HEADER,
+            proven_refusal,
+        )
+
+        getheader = getattr(resp, "getheader", lambda *args: None)
+        try:
+            payload = json.loads(raw.decode("utf-8")) if raw else None
+        except (ValueError, UnicodeError) as exc:
+            raise WorkerUnavailable() from exc
+        if (
+            worker.token
+            and isinstance(payload, dict)
+            and payload.get("jsonrpc") == "2.0"
+            and "id" in payload
+            and payload.get("id") in (None, request.get("id"))
+            and proven_refusal(resp.status, getheader, payload, worker.generation) == "recycling"
+        ):
+            raise ProvenRecycling()
+        if getheader(GENERATION_HEADER) == worker.generation:
+            try:
+                admitted = int(getheader(ADMITTED_HEADER))
+                if 0 <= admitted < 2**63:
+                    worker.admitted = admitted
+            except (TypeError, ValueError):
+                pass
+            if resp.status == 200 and getheader(STATE_HEADER) == "DRAINING":
+                worker.retiring = True
+            if resp.status == 200 and isinstance(payload, dict) and "error" not in payload:
+                if request.get("method") in {
+                    "tools/call",
+                    "internal/write_mirror_units",
+                    "internal/read_associations",
+                }:
+                    worker.completed = (worker.completed or 0) + 1
         if resp.status != 200:
             logger.error("worker answered HTTP %s for %s", resp.status, principal.workspace_id)
             raise WorkerUnavailable()
-        return json.loads(raw.decode("utf-8"))
+        return payload
 
     def call_tool(self, principal: Principal, name: str, arguments: dict):
         """Run one tool internally and return its parsed result."""
