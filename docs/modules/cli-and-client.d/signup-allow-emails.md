@@ -1,0 +1,1 @@
+- **Owns:** `commonplace/SETUP.md` documents `COMMONPLACE_SIGNUP_ALLOW_EMAILS` next to `COMMONPLACE_SIGNUP`: who it admits while sign-up is closed, the exact-match rule, the 20-entry cap and that it is never logged.
