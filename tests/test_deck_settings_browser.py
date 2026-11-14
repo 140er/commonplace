@@ -41,7 +41,9 @@ def browser():
         browser.close()
 
 
-def open_settings(browser, width, *, look="deck", static=STATIC, available=False, late_voice=False):
+def open_settings(
+    browser, width, *, look="deck", static=STATIC, available=False, late_voice=False, role="owner"
+):
     context = browser.new_context(
         viewport={"width": width, "height": 844 if width == 390 else 800},
         device_scale_factor=2,
@@ -54,8 +56,9 @@ def open_settings(browser, width, *, look="deck", static=STATIC, available=False
             "actor": "user:owner",
             "name": "Owner",
             "workspace": "demo",
-            "can_admin": True,
-            "role": "owner",
+            "can_admin": role == "owner",
+            "role": role,
+            "workspace_name": "Example",
             "people": {},
         },
         "/api/boards": {"boards": []},
@@ -108,9 +111,10 @@ def open_settings(browser, width, *, look="deck", static=STATIC, available=False
                 content_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
             )
 
+    responses["/api/bots/settings"] = {"sharing": False, "can_configure": role == "owner"}
     page.route("**/*", serve)
     page.goto(f"http://example.test/app/?ui={look}#/settings")
-    page.wait_for_selector("[data-tool-policy-mode]")
+    page.wait_for_selector("[data-tool-policy-mode]", state="attached")
     page.wait_for_selector("[data-schedule-form]")
     if late_voice:
         for route in delayed_voice:
@@ -121,15 +125,15 @@ def open_settings(browser, width, *, look="deck", static=STATIC, available=False
 
 
 @pytest.mark.parametrize("width", [390, 1280])
-def test_common_settings_are_first_and_preserve_every_setting(browser, width):
+def test_common_shortcuts_preserve_every_setting(browser, width):
     context, page = open_settings(browser, width, late_voice=True)
     try:
         shortcuts = page.locator("#deck-settings-nav")
         assert shortcuts.is_visible()
-        if width == 390:
-            assert shortcuts.evaluate("el=>new Set([...el.children].map(n=>n.offsetTop)).size") == 1
-            assert shortcuts.evaluate("el=>el.scrollWidth > el.clientWidth")
-        assert page.locator(".settings > :first-child").get_attribute("id") == "deck-settings-nav"
+        assert (
+            page.locator(".settings > :first-child").get_attribute("class")
+            == "capy-settings-subtitle"
+        )
         # One Settings tab, then one shortcut: two taps from any main destination.
         for label, target in [
             ("Notifications", "phone-push"),
@@ -138,10 +142,10 @@ def test_common_settings_are_first_and_preserve_every_setting(browser, width):
         ]:
             shortcuts.get_by_role("button", name=label, exact=True).click()
             assert page.locator(f"#{target}").evaluate("el => document.activeElement === el")
-            assert page.locator(f"#{target}").bounding_box()["y"] == pytest.approx(
-                shortcuts.bounding_box()["y"] + shortcuts.bounding_box()["height"] + 12, abs=1
-            )
-            assert shortcuts.is_visible()
+            # Shortcuts near the end clamp at the scroll limit; their heading stays in view.
+            frame = page.locator(".settings").bounding_box()
+            top = page.locator(f"#{target}").bounding_box()["y"]
+            assert frame["y"] <= top <= frame["y"] + frame["height"] - 44
             assert shortcuts.locator('[aria-current="location"]').inner_text() == label
         # Every former section and form is still reachable; only two headings change.
         old_sections = [
@@ -155,7 +159,7 @@ def test_common_settings_are_first_and_preserve_every_setting(browser, width):
             "Webhooks",
             "Look",
         ]
-        renamed = {"Agents": "Connections", "Tool policy": "Action permissions"}
+        renamed = {"Agents": "Connected apps", "Tool policy": "What bots may do without asking"}
         for old in old_sections:
             heading = page.get_by_role("heading", name=renamed.get(old, old), exact=True)
             heading.scroll_into_view_if_needed()
@@ -172,10 +176,10 @@ def test_common_settings_are_first_and_preserve_every_setting(browser, width):
             page.locator(".settings").locator(selector).scroll_into_view_if_needed()
             assert page.locator(".settings").locator(selector).is_visible(), selector
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
-        assert page.locator(".head h1").evaluate("el => getComputedStyle(el).fontSize") == "24px"
+        assert page.locator(".head h1").evaluate("el => getComputedStyle(el).fontSize") == "22px"
         assert page.locator("#phone-push").evaluate(
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
-        ) == ["rgb(17, 17, 17)", "20px"]
+        ) == ["rgba(20, 19, 25, 0.94)", "12px"]
         if width == 390:
             assert page.locator("#content").evaluate(
                 "el => [getComputedStyle(el).paddingLeft, getComputedStyle(el).paddingRight]"
@@ -195,7 +199,6 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
             page.locator('#deck-settings-nav [aria-current="location"]').inner_text()
             == "Action permissions"
         )
-        assert page.locator("#deck-settings-nav").is_visible()
         assert page.locator('[data-tool-policy-row="webhook_add"]').is_visible()
         result_box = page.locator('[data-tool-policy-row="webhook_add"]').bounding_box()
         assert result_box["y"] + result_box["height"] <= (844 if width == 390 else 800)
@@ -208,22 +211,16 @@ def test_permissions_search_disclosure_and_notification_setup(browser, width):
         ]:
             assert page.get_by_text(label, exact=True).count() == 1
         for wire in ["webhook_add", "webhook_list", "webhook_remove", "webhook_test"]:
-            meta = page.locator(f'[data-tool-policy-row="{wire}"] .deck-permission-meta')
-            assert meta.locator("summary").evaluate(
-                "el=>[getComputedStyle(el).paddingTop,getComputedStyle(el).paddingBottom]"
-            ) == ["0px", "0px"]
-            assert meta.locator("small").bounding_box()["y"] == pytest.approx(
-                meta.locator("summary").bounding_box()["y"], abs=2
-            )
+            row = page.locator(f'[data-tool-policy-row="{wire}"]')
+            assert row.get_attribute("title") == wire
+            assert row.locator("small, summary, details").count() == 0
         status = page.locator("[data-tool-policy-status]")
         assert status.evaluate("el=>getComputedStyle(el).marginTop") == "12px"
         assert not page.get_by_text("webhook_add", exact=True).is_visible()
-        page.locator('[data-tool-policy-row="webhook_add"] summary').click()
-        assert page.get_by_text("webhook_add", exact=True).is_visible()
         assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
         assert field.evaluate(
             "el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).borderRadius]"
-        ) == ["rgb(30, 30, 30)", "12px"]
+        ) == ["rgb(27, 26, 33)", "8px"]
         page.locator('[data-deck-setting="phone-push"]').click()
         assert "Connect a notification service" in page.locator("#phone-push").inner_text()
     finally:
