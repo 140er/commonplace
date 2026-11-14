@@ -1,9 +1,9 @@
 - **Owns:**
 
-  - The Memory route contract documents server-side theme selection and the map-only person ownership boundary.
+  - The Memory map system section documents the request contract, server-side theme selection and the map-only person ownership boundary.
 
 - **Promises:**
 
-  - The map contract records dangling-drawer suppression and the accepted distinguishable null topic.
+  - The map system section records dangling-drawer suppression and the accepted distinguishable null topic.
 
-  - The map contract specifies fail-closed thread citations and null-but-present selection fields.
+  - The map system section specifies fail-closed thread citations and null-but-present selection fields.

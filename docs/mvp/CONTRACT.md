@@ -123,15 +123,11 @@ GET  /api/memory/search?q=&theme=&limit=   -> {"results":[{"id","theme","topic",
 GET  /api/memory/<id>                      -> {"id","theme","topic","text","author","trust","at","cards":[…]}
 POST /api/memory                           {"text","theme?","topic?","task?"} -> {"id"}
 POST /api/facts                            {"subject","predicate","object","source","theme?","valid_from?","sensitivity?","single_valued?"} -> fact with provenance
-GET  /api/memory/map?limit=&theme=          -> {"nodes":[{"id","kind":"memory|person|card","label","theme","at","weight"}],
+GET  /api/memory/map?limit=400             -> {"nodes":[{"id","kind":"memory|person|card","label","theme","at","weight"}],
                                                "links":[{"source","target","kind":"fact|card|theme","label"}],
                                                "themes":[{"id","label","count"}],
                                                "weeks":[{"week":"2026-W44","count":12}]}
 ```
-`theme` is optional on the map and scopes server-side acquisition before counts and limits. Map selection reads use `GET /api/memory/<id>?view=map&theme=<optional wing>` and apply the same boundary to source text and linked cards. The installed authenticated `/api/memory/` prefix serves both variants; no new route is installed.
-
-Person sessions need a current workspace-owner role from the control database to see private map data. Missing or failed ownership proof hides private wings, private drawer metadata, private/secret relationships and private linked cards before graph labels, counts or weekly totals are built. Hidden and absent data have identical response shapes. Members' own private memories are also hidden in the map until per-user ownership is available. For non-owners, any private or unresolvable citation thread suppresses its fact; source and thread-valued topic fields in map selections, in every thread-reference form (`thr_` id, `/app/threads/` link, `t3-thread://` link, `mcp:` id), become null while their keys remain. Thread wings are resolved through the workspace handoff store. Unresolvable drawer citations, including deleted or refused drawers and lookup exceptions, also suppress the fact for non-owners. Thread-valued drawer rooms and origin/approval references use the same thread check; ordinary non-thread values do not affect visibility. A null topic indicates an unavailable thread-valued topic and can be distinguished from a normal topic such as "general", while revealing no thread identity. Members get no people overlay at all, so orphan people stay visible only on an owner-held overlay. Unreadable themes return the same empty graph as absent themes. The map refreshes the person identity when it opens so the notice follows role changes. The identity read has a 10-second deadline and runs concurrently with the graph request; pending, failed or null identity leaves the notice visible. Only current owner proof clears it. Graph loading never waits for identity and retains its server-side read boundary. Public thread links resolve their first path segment, including trailing slashes or deeper paths; later path segments naming thr_ or mcp: thread forms remain checked, as do embedded raw private thread IDs. Connection scopes and other Memory reads are unchanged.
-
 `POST /api/facts` uses the same required source and write policy as `fact_save`. Only a verified person session with a navigable source link approves a fact; agent bearer writes remain proposals.
 
 Map links are stored links only: knowledge-graph facts (person↔person, person↔memory via the fact's source), memory↔card links, and memory→theme. Weeks in Europe/Amsterdam.
@@ -162,7 +158,7 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
   - **Home** (default, nav count of what needs you): an "N things need you" box, one line per card (title + a reason from its `need`: asks, awaiting plan review, ready to merge, claim went stale, filed by an agent; Speak in its header; asks are answered in the card), one tile per space (worst need, open and waiting counts, Open), and a table of open tasks from `GET /api/cards` (Answer / Approve / Merge / Retake only where needed).
   - **Board**: columns backlog rail, todo, doing, review, done; task rows show status dot, title, assignee, branch, PR #, elapsed time, status line, claim bar; drag & drop with version.
   - **Card panel**: as in DESIGN.md + branch/PR/checks.
-  - **Memory**: search + the existing map with server-checked theme selection on `/api/memory/map`, panel with verbatim text and linked cards.
+  - **Memory**: search + the existing map with server-checked theme selection on `/api/memory/map`, panel with verbatim text and linked cards. The map's request parameters and its private-visibility rules are in the system notes under Memory map mode and private visibility.
   - **Settings**: connections (read-only list, last used), webhooks (add/remove/deliveries).
 - Live: poll `/api/events` every 2 s visible, 30 s hidden; refetch what changed.
 - Phone 390 px works for Home and Card.

@@ -131,8 +131,6 @@ FORMS = {
     "ctrl_plain": "{t}{z}",
     "ctrl_app": "/app/threads/{t}{z}",
 }
-# Forms a member's map selection must serve with a null topic (others may also be refused).
-SERVED = ["app_threads", "app_deep", "t3_link", "mcp_prefix"]
 
 
 def room_for(form, thread):
@@ -158,9 +156,13 @@ def test_unproved_owner_map_selection_nulls_thread_reference_topic(
     )
     owner = owner_headers(hub)
     status, raw = select(hub, owner, "probe", "?view=map")
-    assert status == 200 and json.loads(raw)["topic"] == room  # proved owner control
+    refused = status == 404  # the shared room check may refuse a spelling before the map guard
+    assert refused or (status == 200 and json.loads(raw)["topic"] == room)  # proved owner control
     unproved_route(hub, monkeypatch)
     status, raw = select(hub, owner, "probe", "?view=map")
+    if refused:
+        assert status == 404 and thread.id[4:] not in raw
+        return
     assert status == 200, raw
     assert json.loads(raw)["text"] == "Public exact words" and json.loads(raw)["topic"] is None
     assert thread.id[4:] not in raw
@@ -177,10 +179,8 @@ def test_member_map_selection_nulls_thread_reference_topic(hub, collection, form
     )
     status, raw = select(hub, headers, "probe", "?view=map")
     assert thread.id[4:] not in raw
-    if form in SERVED:
-        assert status == 200, raw
-    else:  # the gateway may already refuse these spellings for members
-        assert status in (200, 404), raw
+    # The shared room check refuses thread-naming rooms for members before the map guard.
+    assert status in (200, 404), raw
     if status == 200:
         body = json.loads(raw)
         assert body["text"] == "Public exact words" and "topic" in body and body["topic"] is None

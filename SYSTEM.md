@@ -650,10 +650,6 @@ Moved to [`docs/system/current-typed-provenance-association-proof.md`](docs/syst
 ### Memory map citation omission
 
 Moved to [`docs/system/memory-map-citation-omission.md`](docs/system/memory-map-citation-omission.md); edit it there.
-
-### Memory map mode and private visibility
-
-Moved to [`docs/system/memory-map-mode.md`](docs/system/memory-map-mode.md); edit it there.
 ### Explicit tunnel read proof
 
 Moved to [`docs/system/explicit-tunnel-read-proof.md`](docs/system/explicit-tunnel-read-proof.md); edit it there.
