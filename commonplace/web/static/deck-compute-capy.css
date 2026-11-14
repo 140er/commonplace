@@ -35,7 +35,7 @@
 :root[data-ui="deck"] .dc-state-word { display: inline-flex; align-items: center; gap: 6px; }
 :root[data-ui="deck"] .dc-state { flex: none; overflow: visible; vertical-align: middle; }
 :root[data-ui="deck"] .dc-summary-state { position: relative; display: inline-flex; max-width: 100%; vertical-align: top; }
-:root[data-ui="deck"] .dc-summary-state::before { content: "·"; position: absolute; left: -10px; }
+:root[data-ui="deck"] .dc-summary-state::before { content: "\00b7"; position: absolute; left: -10px; }
 :root[data-ui="deck"] .dc-summary-state .dc-state-word { max-width: 100%; overflow-wrap: anywhere; }
 :root[data-ui="deck"] .dc-node.dc-link-end .dc-node-surface { stroke: var(--violet); stroke-width: 1px; }
 :root[data-ui="deck"] .dc-top-add { display: none; }

@@ -247,7 +247,7 @@ test('summary separators wrap with their item and stay outside the text', async 
   assert.doesNotMatch(html,/·/,'separators are clipped outside a wrapped item, never orphaned text');
   const css=await readFile(new URL('../commonplace/web/static/deck-compute-capy.css', import.meta.url),'utf8');
   assert.match(css,/dc-summary[^}]*flex-wrap:\s*wrap/);
-  assert.match(css,/dc-summary-state::before[^}]*content:\s*['"]·['"]/);
+  assert.match(css,/dc-summary-state::before[^}]*content:\s*['"]\\00b7['"]/);
 });
 
 test('summary sorts effective status worst first without reordering the input', async () => {

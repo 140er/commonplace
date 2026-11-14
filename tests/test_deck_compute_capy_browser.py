@@ -40,7 +40,7 @@ def open_compute(page):
         "deck",
         "deck-capy",
     ]
-    html = "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    html = "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
     html += "".join(f'<link rel="stylesheet" href="/app/{name}.css">' for name in styles)
     html += """<div id="root"><div class="shell two" data-view="compute"><nav class="rail" id="nav"></nav>
       <main class="center"><div id="phone-bar"></div><header class="head"></header><div id="content"></div>
@@ -149,6 +149,12 @@ def test_compute_capy_screen(browser, size):
             "Bench degraded",
             "Laptop unknown",
         ]
+        assert (
+            page.locator(".dc-summary-state").first.evaluate(
+                'el=>getComputedStyle(el,"::before").content'
+            )
+            == '"·"'
+        )
         summary = page.locator(".dc-summary")
         assert summary.evaluate("el=>getComputedStyle(el).overflow") == "hidden"
         # Separators belong to an item; at a new row they sit outside the clipped summary edge.
