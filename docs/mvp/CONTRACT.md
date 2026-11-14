@@ -158,7 +158,7 @@ Tables in the control DB: `webhooks(id, workspace_id, connection_id, owner_actor
   - **Home** (default, nav count of what needs you): an "N things need you" box, one line per card (title + a reason from its `need`: asks, awaiting plan review, ready to merge, claim went stale, filed by an agent; Speak in its header; asks are answered in the card), one tile per space (worst need, open and waiting counts, Open), and a table of open tasks from `GET /api/cards` (Answer / Approve / Merge / Retake only where needed).
   - **Board**: columns backlog rail, todo, doing, review, done; task rows show status dot, title, assignee, branch, PR #, elapsed time, status line, claim bar; drag & drop with version.
   - **Card panel**: as in DESIGN.md + branch/PR/checks.
-  - **Memory**: search + the map (from memory-map-mix) on `/api/memory/map`, panel with verbatim text and linked cards.
+  - **Memory**: search + the existing map with server-checked theme selection on `/api/memory/map`, panel with verbatim text and linked cards. The map's request parameters and its private-visibility rules are in the system notes under Memory map mode and private visibility.
   - **Settings**: connections (read-only list, last used), webhooks (add/remove/deliveries).
 - Live: poll `/api/events` every 2 s visible, 30 s hidden; refetch what changed.
 - Phone 390 px works for Home and Card.
