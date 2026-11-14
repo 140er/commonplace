@@ -65,6 +65,16 @@ function machine(extra = {}) {
 }
 const field = (name, value, type = 'text', checked = false) => ({ name, value, type, checked });
 
+// Credential revocation is distinct from the supervisor's termination evidence.
+for (const service of ['Revoked; stop unconfirmed', 'Stopped']) {
+  const f = fixture({ machines: [machine({ revoked_at: '2026-01-01', lifecycle: { service, host_verification: 'unavailable' } })] });
+  f.block.show(f.host); await flush();
+  assert.ok(f.regions.list.innerHTML.includes(service));
+  assert.match(f.regions.list.innerHTML, /Host verification: unavailable/);
+  assert.doesNotMatch(f.regions.list.innerHTML, /data-runner-action="revoke"/);
+  f.block.stop();
+}
+
 // 1. Listing and the wing picker come from the owner routes; values are escaped.
 {
   const f = fixture({ machines: [machine({ label: 'x<img>', wings: ['shared', 'legacy'] })], wings: ['shared', 'team'] });
