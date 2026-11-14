@@ -238,6 +238,7 @@ def test_compute_all_four_states(browser, size):
           const gallery=document.createElement('section');gallery.className='deck-compute';gallery.id='state-gallery';
           gallery.style.cssText='position:fixed;inset:0;z-index:999;background:var(--card);width:100%;padding:16px 0;color:var(--ink)';
           gallery.innerHTML='<h1 style="padding:0 16px">Machine states</h1><svg width="100%" height="'+(phone ? 210 : 172)+'" viewBox="0 0 '+(phone ? 390 : 1440)+' '+(phone ? 210 : 172)+'">'+markup+'</svg>';
+          document.querySelector('#root').style.display='none';
           document.body.append(gallery);
         }""",
             size[0] == 390,
