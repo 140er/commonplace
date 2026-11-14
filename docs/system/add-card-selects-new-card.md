@@ -1,0 +1,7 @@
+### Add card shows and opens the new card
+
+- A usability test found that after Add card the form stayed open (so people added the same card twice) and the side panel first showed an unrelated card, with its live Approve button, while the address already named the new card. Cause: the router un-hid the side panel before the card's read returned, and the board only redrew after a slow refresh, so the panel still held whatever it had shown before.
+- Decision: adding a card is answered by the browser at once. The form closes, the new card is inserted into the list, selected and highlighted, and the board scrolls to the column it landed in. The panel is cleared to a loading line the moment the address names a card whose detail it does not hold. The shell never shows one card's actions under another card's address.
+- The Deck look has no Todo column: a new card lands in Active (or Needs you when it waits on the person), so the board says which column it went to instead of adding a column.
+- Slow reads say so: after one second the loading text gains "Still loading". Escape closes the open card from anywhere, but typed text in a field of that card survives the first Escape. In the Deck look the logo's Home route no longer waits for the project list.
+- Not changed: server behaviour, the Add card form's fields and its Who default (see the no-implicit-run note), and the phone sheet styling, which belongs to the visual design work.
