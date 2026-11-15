@@ -1,0 +1,4 @@
+- **Owns:** The guards of round 3 of the search stall: the transient-index-error cooldown (`tests/mcp/test_search_transient_cooldown.py`) and the worker call guards (`tests/test_search_stall_round3.py`).
+- **Promises:** Searches in a flush window do not each drop the caches and wait; a call on a deadline too short to finish is not sent; a busy worker is asked once per request; a refused index write names the worker's refusal.
+- **How it fails:** A second search that waits or drops the caches inside the cooldown, a startup-sized deadline that still reaches the worker, a second ask after busy, or a silent refusal fails these tests.
+- **Tests:** The two files above.

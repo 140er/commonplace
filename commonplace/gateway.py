@@ -65,6 +65,7 @@ from .workers import (
     WorkersPaused,
     WorkersStarting,
     WorkerSupervisor,
+    current_wait,
     memory_wait,
 )
 
@@ -74,6 +75,8 @@ MAX_REQUEST_BYTES = 8 * 1024 * 1024
 # A whole agent transcript (context handoff); the handoff API checks it again.
 HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
+# A worker call needs at least this long on its caller's deadline to be sent at all.
+MIN_WORKER_WINDOW_S = 0.25
 STARTUP_TIMEOUT_S = 0.08
 MAX_FANOUT_WINGS = 64
 # The public worker schema caps each ranked prefix at 100 hits. Doubling
@@ -284,6 +287,11 @@ class WorkerStarting(WorkerUnavailable):
         self.retry_after_s = retry_after_s
 
 
+def _busy_answer(response) -> bool:
+    error = response.get("error") if isinstance(response, dict) else None
+    return isinstance(error, dict) and error.get("code") == BUSY_RPC_CODE
+
+
 def _request_wait_s() -> float:
     """What one person's request may wait for a pause or a worker start, in all (seconds)."""
     try:
@@ -342,14 +350,31 @@ class WorkerClient:
             return foreground_load.background_call(
                 lambda: self._post_to_worker(principal, request, pause_wait_s=0.0)
             )
+        budget = current_wait()
+        if budget is not None and budget.busy:
+            # The worker already answered busy to this request: asking again only waits again.
+            raise WorkerBusy(2)
+        started = monotonic()
         with foreground_load.request():
-            return self._post_to_worker(principal, request)
+            result = self._post_to_worker(principal, request)
+        took = monotonic() - started
+        if took >= 1.0:
+            logger.info("worker call took %.1fs: %s", took, _call_label(request))
+        if budget is not None and _busy_answer(result):
+            budget.busy = True
+        return result
 
     def _post_to_worker(
         self, principal: Principal, request: dict, pause_wait_s: Optional[float] = None
     ) -> Optional[dict]:
         # One in-flight slot covers the worker start and the whole call, so
         # an online backup's pause drains it and never cuts it.
+        from .rules.checks import remaining
+
+        if remaining(WORKER_TIMEOUT_S) < MIN_WORKER_WINDOW_S:
+            # A caller on a short deadline (the startup context has 80 ms) gives up before the
+            # worker could answer, and the worker would run the call to the end regardless.
+            raise TimeoutError("not enough time left to ask the worker")
         slot = getattr(self.supervisor, "call", None)
         try:
             if slot is None:
@@ -497,6 +522,18 @@ class WorkerClient:
             },
         )
         error = response.get("error") if isinstance(response, dict) else None
+        if (
+            name == "write_mirror_units"
+            and isinstance(error, dict)
+            and error.get("code") != BUSY_RPC_CODE
+        ):
+            # Why the index job made no progress: the worker's own refusal (a preflight
+            # gate such as a diverged index or a read-only palace), never user content.
+            logger.warning(
+                "worker refused an index write: code=%s message=%.160s",
+                error.get("code"),
+                str(error.get("message")),
+            )
         if isinstance(error, dict) and error.get("code") == BUSY_RPC_CODE:
             data = error.get("data")
             wait = data.get("retry_after_s") if isinstance(data, dict) else None
