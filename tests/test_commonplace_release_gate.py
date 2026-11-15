@@ -461,3 +461,15 @@ def test_release_journey_browser_labels_exist_in_the_shipped_interface():
     assert len(names) >= 10
     missing = sorted(name for name in names if name not in corpus)
     assert not missing, f"Journey looks for interface text the app no longer ships: {missing}"
+
+
+def test_release_journey_memory_and_release_names_exist_in_the_default_deck_look():
+    """A name that survives only in the classic look would pass the shipped-text check above."""
+    root = Path(__file__).resolve().parents[1]
+    static = root / "commonplace" / "web" / "static"
+    source = (root / "scripts" / "commonplace_release.py").read_text()
+    assert 'name="Search saved memory"' in source
+    assert 'name="Search memory"' not in source
+    assert "Search saved memory</label>" in (static / "deck-memory.js").read_text()
+    assert "data-deck-release>Approve<" in (static / "deck-board.js").read_text()
+    assert 'name="Approve"' in source
