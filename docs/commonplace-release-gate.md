@@ -34,10 +34,10 @@ a project (the interface's word for a space), uses the signed-in person's connec
 Python MCP SDK, checks initialize and the prescribed startup reads, and performs
 card, memory and rule operations through normal HTTP/MCP routes. A card the agent
 creates waits in backlog until the signed-in owner releases it from the card
-panel (a reason is required); only then can the agent claim it. It checks an
+panel (in the Deck look, Approve opens the release form; a reason is required); only then can the agent claim it. It checks an
 actual owner question with two options, rejects the proposing agent's attempt
 to bypass that decision, and answers through the browser before completion.
-Memory: the agent saves and searches exact words; agent notes land in the inbox
+Memory: the owner types into the Search saved memory box and presses Enter; the agent saves and searches exact words; agent notes land in the inbox
 wing, which the Memory page lists as its Agent notes room, so the owner reads the
 agent's note back verbatim on the Memory page and through the signed-in search
 request, and the page also shows a note the owner saves in the project's own wing.

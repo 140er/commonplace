@@ -440,6 +440,9 @@ class Journey:
             # Agent-created cards wait in backlog until the signed-in owner releases them.
             await self.page.goto(self.instance.origin + f"/app/#/card/{number}")
             release = self.page.get_by_role("dialog", name="Card", exact=True)
+            # The Deck card panel keeps the release form under "Edit card"; Approve opens it
+            # and moves focus to the required Reason field.
+            await release.get_by_role("button", name="Approve", exact=True).click()
             await release.get_by_label("Reason").fill("Synthetic release journey card")
             async with self.page.expect_response(
                 lambda r: (
@@ -539,13 +542,9 @@ class Journey:
         await self.page.goto(self.instance.origin + "/app/#/memory")
         # The agent's note sits in the inbox wing, listed as the Agent notes room.
         for query, note in (("café release memory", text), ("café owner note", owner_text)):
-            box = self.page.get_by_role("searchbox", name="Search memory")
+            box = self.page.get_by_role("searchbox", name="Search saved memory")
             await box.fill(query)
-            await (
-                self.page.get_by_role("search")
-                .get_by_role("button", name=re.compile("^Search"))
-                .click()
-            )
+            await box.press("Enter")
             await self.page.get_by_text(note, exact=True).first.wait_for()
         return (
             "Agent save/search and the owner's API search return verbatim Unicode and "
