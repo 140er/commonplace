@@ -219,6 +219,33 @@ class _LockWaitExpired(BaseException):
 
 
 _http_lock_tls = threading.local()
+# The seconds the calling request has left (gateway header); bounds the read-lock wait below.
+HTTP_LOCK_WAIT_HEADER = "X-Mempalace-Lock-Wait"
+_HTTP_MIN_LOCK_WAIT_S = 0.25
+
+
+@contextlib.contextmanager
+def _http_request_wait_scope(value):
+    """This thread's request tells how long its caller still waits (None: no limit given)."""
+    try:
+        left = float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        left = None
+    if left is not None and not 0.0 <= left <= 3600.0:
+        left = None
+    _http_lock_tls.request_wait = left
+    try:
+        yield
+    finally:
+        _http_lock_tls.request_wait = None
+
+
+def _http_read_lock_wait() -> float:
+    """The read-lock wait: the worker's bound, or less when the request has less left."""
+    left = getattr(_http_lock_tls, "request_wait", None)
+    if left is None:
+        return _HTTP_READ_LOCK_WAIT_S
+    return min(_HTTP_READ_LOCK_WAIT_S, max(_HTTP_MIN_LOCK_WAIT_S, left))
 
 
 def _http_lock_lost() -> bool:
@@ -847,13 +874,16 @@ def _http_dispatch_unobserved(request):
     if _tool_capabilities.classify_tool(tool_name) == "read":
         release_mode = _embedding_release_mode(tool_name, request, "read")
         _http_lock_tls.lost = False
-        if not _HTTP_REQUEST_LOCK.acquire_read(_HTTP_READ_LOCK_WAIT_S):
+        if not _HTTP_REQUEST_LOCK.acquire_read(_http_read_lock_wait()):
             return _http_busy_response(request.get("id"), "try again in a moment")
         try:
-            if release_mode:
-                with _http_embedding_release_installed(release_mode):
-                    return _handle_read_with_retry(request)
-            return _handle_read_with_retry(request)
+            # A search takes an unchanged capacity verdict at once, however long ago it was
+            # probed, and the probe runs again behind it (see serve_stale_capacity_verdicts).
+            with serve_stale_capacity_verdicts():
+                if release_mode:
+                    with _http_embedding_release_installed(release_mode):
+                        return _handle_read_with_retry(request)
+                return _handle_read_with_retry(request)
         except _LockWaitExpired:
             return _http_busy_response(request.get("id"), "try again in a moment")
         finally:
@@ -1661,7 +1691,10 @@ def _http_handler_class():
                     # Locking policy lives in _http_dispatch: global lock for
                     # Chroma-touching tools, lock-free for logstream tools.
                     try:
-                        with _provenance.verified(self.verified_identity):
+                        with (
+                            _provenance.verified(self.verified_identity),
+                            _http_request_wait_scope(self.headers.get(HTTP_LOCK_WAIT_HEADER)),
+                        ):
                             response = _http_dispatch(request)
                     except Exception:
                         # Without this the exception escaped into BaseHTTPRequestHandler,
