@@ -206,7 +206,7 @@ test('the More button opens and closes the sheet, any tap inside closes it, Esca
 
 test('phone CSS: five tab columns and a sheet fixed inside the viewport', () => {
   const css = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
-  assert.match(css, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\) 46px/);
+  assert.match(css, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\) 54px/);
   assert.match(css, /\.deck-more \{[^}]*position: fixed; inset: 0/);
   assert.match(css, /\.deck-more-panel \{[^}]*left: 8px; right: 8px; bottom: calc\(76px/);
 });

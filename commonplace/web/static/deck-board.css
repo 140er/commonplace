@@ -125,3 +125,5 @@
 :root[data-ui="deck"] .deck-card-controls .tag.wait { color: var(--ink3); background: var(--s2); }
 
 :root[data-ui="deck"] .deck-card-drawer .callout h3 { font-size: 13.5px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+/* The phone Add card sheet covers the page, so it has no see-through: the Deck surface colour at full opacity. */
+:root[data-ui="deck"] .workbench-board form[data-board-add][aria-modal="true"] { background: var(--s1-solid); }

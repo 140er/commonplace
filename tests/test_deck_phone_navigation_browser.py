@@ -31,6 +31,18 @@ async def board_ready(page, url):
     await page.evaluate("document.fonts.ready")
 
 
+async def open_project_settings(page):
+    # The phone top bar has no settings gear (the bottom bar's Settings is the one gear);
+    # a project's settings open from the board's options menu.
+    menu = page.locator(".deck-board-menu:visible")
+    if not await menu.evaluate("details => details.open"):
+        await menu.locator("summary").click()
+    # The board redraws while it settles; click the entry in one browser task, not across redraws.
+    await page.locator('.deck-board-menu [data-action="coordinator"]:visible').evaluate(
+        "button => button.click()"
+    )
+
+
 async def assert_tabs(page):
     tabs = page.locator('[data-deck="tabs"]')
     await tabs.wait_for(state="visible")
@@ -82,18 +94,14 @@ def test_phone_destinations_survive_dock_and_drawer_return(hub, fresh, surface):
                         await page.go_back()
                         await page.wait_for_selector("#card-panel[hidden]", state="attached")
                     elif surface == "project-settings":
-                        await page.get_by_role(
-                            "button", name="Project settings", exact=True
-                        ).click()
+                        await open_project_settings(page)
                         await page.wait_for_selector("[data-project-settings] .workbench-project")
                         await assert_tabs(page)
                         await assert_gutters(page, ".workbench-project .project-top")
                         await assert_gutters(page, ".workbench-project .settings")
                         await page.locator("[data-project-back]").click()
                         await page.wait_for_selector("#card-panel[hidden]", state="attached")
-                        await page.get_by_role(
-                            "button", name="Project settings", exact=True
-                        ).click()
+                        await open_project_settings(page)
                         await page.wait_for_selector("[data-project-settings] .workbench-project")
                         await page.go_back()
                         await page.wait_for_selector("#card-panel[hidden]", state="attached")

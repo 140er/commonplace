@@ -53,7 +53,8 @@ test("phone workspace tools include switching workspace and project settings sta
   const tools = deck.toolsHTML();
   for (const href of ["#/boards", "#/memory", "#/needs"]) assert.ok(tools.includes(`href="${href}"`));
   assert.match(tools, /data-action="switch-workspace"/);
-  assert.match(deck.renderDeckTop({ board: { slug: "atlas", name: "Atlas" } }), /data-action="coordinator" data-board="atlas"/);
+  // The bottom bar's Settings is the one gear on a phone; a project's settings open from the board menu.
+  assert.doesNotMatch(deck.renderDeckTop({ board: { slug: "atlas", name: "Atlas" } }), /data-action="coordinator"|Project settings/);
   assert.doesNotMatch(deck.renderDeckTop(), /data-action="coordinator"/);
 });
 
