@@ -28,7 +28,7 @@ import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, cardId, cardColumn, chatTag, loadChatTimes, roveTo } from "./board.js";
 import { drawerCopy } from "./deck-board.js";
-import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal } from "./details.js";
+import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
@@ -82,7 +82,7 @@ const state = {
   boardColumn: null, justAdded: null, chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
   toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, botsWaiting: 0, chatTimes: new Map(),
   phonePushPending: false, underChat: null, fromChat: null, detailsSheet: false, rebase: null,
-  queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
+  queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false, cardRead: null,
 };
 // The Deck look (the default; classic is the explicit opt-out): its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
@@ -722,11 +722,14 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
   panel.hidden = false;
   const opening = state.card?.number !== number;
   const tab = opening ? "details" : panel.querySelector('[data-details-tab][aria-selected="true"]')?.dataset.detailsTab || "details";
-  if (opening) showLoading(panel, "Loading card…", { art: "loading" });
+  if (opening && !panel.querySelector(`[data-card-preview="${number}"]`)) showLoading(panel, "Loading card…", { art: "loading" });
   const request = ++state.panelRequest;
   const chatOrigin = state.chatDetail?.number === number ? state.chatDetail.row : null;
+  // The read started when the card was opened is used once; a refresh of the open card reads again.
+  const early = opening && state.cardRead?.number === number && state.cardRead.epoch === epoch ? state.cardRead.read : null;
+  if (early) state.cardRead = null;
   try {
-    const card = await api(`/api/cards/${number}`);
+    const card = await (early || api(`/api/cards/${number}`));
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
     if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
@@ -1492,13 +1495,31 @@ async function route() {
   // Until the named card's read arrives the panel says so, never what it held before (another card, a Needs me detail) with live buttons.
   const cardPanelHost = root.querySelector("#card-panel");
   cardPanelHost.hidden = !hash.startsWith("#/card/");
-  if (!cardPanelHost.hidden && state.card?.number !== Number(hash.slice(7))) { detailsUI?.stop(); detailsUI = null; showLoading(cardPanelHost, "Loading card…", { art: "loading" }); }
+  if (!cardPanelHost.hidden && state.card?.number !== Number(hash.slice(7))) { detailsUI?.stop(); detailsUI = null; openingCard(cardPanelHost, Number(hash.slice(7)), state.screen); }
+  else if (cardPanelHost.hidden) state.cardRead = null;
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) showLoading(root.querySelector("#content"), "Loading…");
   showError("");
   if (hash === "#/admin") { adminScreen(); return; }
   if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
   await refresh();
+}
+// Opening a card: the panel draws what the lists already know of it at once, and the card's own read
+// starts now, beside the project refresh instead of after it. A known card is drawn in full as soon as
+// its read answers; an unknown one (a shared link) waits for the refresh that tells which project it is in.
+function openingCard(host, number, epoch) {
+  const known = [state.cards, state.open, needsCards(), state.children, state.linked].flat().find((c) => c?.number === number && c.title);
+  if (state.deck?.on() === true) {
+    const board = state.boards.find((b) => b.slug === known?.board) || { slug: known?.board };
+    showCardPreview(host, number, known || null, { board, bots: state.deckBots || [], me: state.me.actor, people: state.me.people });
+  } else showLoading(host, "Loading card…", { art: "loading" });
+  const read = api(`/api/cards/${number}`);
+  state.cardRead = { number, epoch, read };
+  // The panel's own call reports a failure; this one only keeps it from going unhandled.
+  read.catch(() => {});
+  if (known) read.then(() => {
+    if (state.cardRead?.number === number && epoch === state.screen && state.route === `#/card/${number}`) void cardPanel(number, epoch);
+  }, () => {});
 }
 // The current view's list first, so a write never sends a version left over from another view.
 function findCard(number) {

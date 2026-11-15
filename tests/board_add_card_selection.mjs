@@ -14,7 +14,7 @@ function slice(start, end) {
   assert.ok(at >= 0 && stop > at, `Missing slice: ${start} -> ${end}`);
   return app.slice(at, stop);
 }
-const board = await load("board.js"), loading = await load("loading.js").catch(() => ({})), routes = await load("routes.js"), deckBoard = await load("deck-board.js");
+const board = await load("board.js"), loading = await load("loading.js").catch(() => ({})), routes = await load("routes.js"), deckBoard = await load("deck-board.js"), details = await load("details.js");
 const which = process.argv[2];
 const ME = "user:maya";
 const BOARD = { slug: "home", name: "Home" };
@@ -25,7 +25,15 @@ const OLD = [
 ];
 
 // A panel or content node as the shell sees it: innerHTML and hidden.
-function fakePanel(html = "") { return { hidden: true, innerHTML: html }; }
+function fakePanel(html = "") {
+  const panel = { hidden: true, innerHTML: html };
+  // The card preview draws its progress line into a slot of its own.
+  panel.querySelector = (selector) => selector === "[data-preview-load]" ? {
+    get innerHTML() { return ""; },
+    set innerHTML(value) { panel.innerHTML = panel.innerHTML.replace("<div data-preview-load></div>", `<div data-preview-load>${value}</div>`); },
+  } : null;
+  return panel;
+}
 
 // Runs the real route() against stubs: reads never come back, so what the screen shows is what shows before the first read.
 function routeHarness({ hash, base, panelHtml, card, contentHtml = "<p>old</p>", deck = true }) {
@@ -44,6 +52,7 @@ function routeHarness({ hash, base, panelHtml, card, contentHtml = "<p>old</p>",
     showError() {}, speech: { stop() {} }, adminScreen() {}, instanceAdminScreen() {}, refresh: () => never, boardDispose: null, detailsUI: null, adminUI: null, instanceAdminUI: null, botsUI: null, consoleUI: null,
     decodeURIComponent, URLSearchParams, enc: encodeURIComponent, askedRead: () => new Set(),
   };
+  Object.assign(context, { showCardPreview: details.showCardPreview, needsCards: () => [], cardPanel() {} });
   runInNewContext(slice("async function route(", "// The current view's list first"), context);
   return { state, content, panel, reads, timers, start: () => { void context.route(); }, tick: () => new Promise((resolve) => setImmediate(resolve)) };
 }

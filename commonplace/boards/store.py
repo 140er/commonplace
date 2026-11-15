@@ -388,12 +388,21 @@ def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
     )
 
 
-def expire_claims(conn, board_id):
-    expired = conn.execute(
+def _expired_claims(conn, board_id):
+    return conn.execute(
         "SELECT id,assignee FROM tasks "
         "WHERE board_id=? AND status='doing' AND claim_until<=? AND claim_expired_at IS NULL",
         (board_id, now()),
     ).fetchall()
+
+
+def has_expired_claims(conn, board_id) -> bool:
+    """Read-only twin of ``expire_claims``: whether it would write anything."""
+    return bool(_expired_claims(conn, board_id))
+
+
+def expire_claims(conn, board_id):
+    expired = _expired_claims(conn, board_id)
     for row in expired:
         conn.execute(
             "UPDATE tasks SET claim_expired_at=?,"
