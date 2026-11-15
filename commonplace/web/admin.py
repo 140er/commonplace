@@ -918,7 +918,9 @@ def deploy(context, data_dir=None):
     if not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", commit):
         commit = None
     context.remaining()
-    storage = storage_guard.status(data_dir) if data_dir else {}
+    storage = (
+        storage_guard.status(data_dir, storage_guard.DEPLOYED_MIN_FREE_BYTES) if data_dir else {}
+    )
     return {
         "commonplace_version": commonplace_version,
         "mempalace_version": mempalace_version,

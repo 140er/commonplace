@@ -168,6 +168,7 @@ def test_running_version_and_commit(hub, monkeypatch):
 def test_deploy_shows_free_data_space_and_a_low_disk(hub, monkeypatch):
     clock(hub)
     headers = cookie(hub)
+    monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", "1")
     code, data, _ = instance(hub, "deploy", headers)
     assert code == 200
     assert isinstance(data["data_free_bytes"], int) and data["data_free_bytes"] > 0

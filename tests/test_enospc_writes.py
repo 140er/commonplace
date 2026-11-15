@@ -274,7 +274,7 @@ def test_a_short_write_leaves_no_torn_line_for_the_next_entry(monkeypatch, tmp_p
 def test_logging_survives_a_full_disk_and_keeps_the_first_lost_line(capsys):
     import io
 
-    from mempalace.storage_guard import ResilientStreamHandler
+    from mempalace.storage_guard import harden
 
     class Stream(io.StringIO):
         full = True
@@ -285,7 +285,8 @@ def test_logging_survives_a_full_disk_and_keeps_the_first_lost_line(capsys):
             return super().write(text)
 
     stream = Stream()
-    handler = ResilientStreamHandler(stream)
+    handler = harden(logging.StreamHandler(stream))
+    assert type(handler) is logging.StreamHandler  # same class, only its error path changes
     handler.setFormatter(logging.Formatter("%(message)s"))
     log = logging.getLogger("enospc-test")
     log.propagate = False
@@ -306,15 +307,17 @@ def test_logging_survives_a_full_disk_and_keeps_the_first_lost_line(capsys):
     assert text.rstrip().endswith("space is back")
 
 
-def test_the_floor_is_off_at_zero_and_a_typo_keeps_the_default(monkeypatch):
+def test_the_library_has_no_floor_until_one_is_set_and_a_typo_keeps_the_default(monkeypatch):
     from mempalace import storage_guard
 
     monkeypatch.delenv("MEMPALACE_MIN_FREE_BYTES", raising=False)
-    assert storage_guard.min_free_bytes() == 256 * 1024 * 1024
-    monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", "0")
+    # The bare library has no floor of its own; a deployment passes one.
     assert storage_guard.min_free_bytes() == 0
+    assert storage_guard.min_free_bytes(storage_guard.DEPLOYED_MIN_FREE_BYTES) == 256 * 1024 * 1024
+    monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", "0")
+    assert storage_guard.min_free_bytes(storage_guard.DEPLOYED_MIN_FREE_BYTES) == 0
     monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", "lots")
-    assert storage_guard.min_free_bytes() == 256 * 1024 * 1024
+    assert storage_guard.min_free_bytes(storage_guard.DEPLOYED_MIN_FREE_BYTES) == 256 * 1024 * 1024
     monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", "1048576")
     assert storage_guard.min_free_bytes() == 1048576
 
@@ -440,6 +443,21 @@ def test_mcp_save_on_a_full_disk_is_an_error_not_a_saved(hub, disk):
     assert not ok["result"].get("isError"), ok
 
 
+def test_gateway_status_still_counts_drawers_and_keeps_free_space_off_it(hub):
+    """The worker's status now carries free-space fields; the gateway's fixed vocabulary drops them."""
+    owner = hub.owner_token()
+    saved = hub.rpc(
+        owner, "tools/call", {"name": "memory_save", "arguments": {"text": "status canary words"}}
+    )
+    assert not saved["result"].get("isError"), saved
+
+    response = hub.rpc(owner, "tools/call", {"name": "mempalace_status", "arguments": {}})
+
+    status = _payload(response)
+    assert status["total_drawers"] >= 1, status
+    assert not {"data_free_bytes", "disk_low", "min_free_bytes"} & set(status)
+
+
 def test_a_gateway_call_that_hits_a_full_disk_is_a_retryable_error_not_internal(hub, monkeypatch):
     from commonplace.gateway import Mediator
 
@@ -460,3 +478,32 @@ def test_a_gateway_call_that_hits_a_full_disk_is_a_retryable_error_not_internal(
     assert status == 200 and answer["error"]["code"] == STORAGE_FULL_CODE, text
     assert answer["error"]["data"]["retryable"] is True
     assert answer["error"]["data"]["retry_after_s"] > 0
+
+
+def _worker_environ(tmp_path) -> dict:
+    import sys
+    from pathlib import Path
+
+    from commonplace.workers import SubprocessLauncher, WorkerSupervisor
+
+    if not sys.platform.startswith("linux"):
+        pytest.skip("reads /proc/<pid>/environ")
+    sup = WorkerSupervisor(
+        str(tmp_path / "data"), launcher=SubprocessLauncher(startup_timeout_s=120)
+    )
+    worker = sup.get("ws_floor")
+    try:
+        raw = Path(f"/proc/{worker.pid}/environ").read_bytes().split(b"\0")
+    finally:
+        sup.stop_all()
+    return dict(e.decode().split("=", 1) for e in raw if e)
+
+
+def test_a_deployed_worker_starts_with_the_256_mib_floor(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEMPALACE_MIN_FREE_BYTES", raising=False)
+    assert _worker_environ(tmp_path).get("MEMPALACE_MIN_FREE_BYTES") == str(256 * 1024 * 1024)
+
+
+def test_the_operator_floor_reaches_the_worker(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", "1048576")
+    assert _worker_environ(tmp_path).get("MEMPALACE_MIN_FREE_BYTES") == "1048576"

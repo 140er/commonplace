@@ -3,17 +3,20 @@
 Leaf module (stdlib only), shared by the memory worker, the daemon and the
 gateway. Three jobs:
 
-* **Floor.** Below a free-space floor (default 256 MiB, ``MEMPALACE_MIN_FREE_BYTES``
-  overrides, ``0`` turns it off) a new write is refused *before* it starts, with
-  one retryable answer, so nothing half-writes. The warning that says so is
-  logged at most once a minute.
+* **Floor.** Below a free-space floor (``MEMPALACE_MIN_FREE_BYTES``; ``0`` turns it
+  off) a new write is refused *before* it starts, with one retryable answer, so
+  nothing half-writes. The bare library has no floor unless the variable is set; a
+  deployed Commonplace starts its workers with ``DEPLOYED_MIN_FREE_BYTES`` (256 MiB)
+  and reports against the same value. The warning that says so is logged at most
+  once a minute.
 * **Classification.** ``is_storage_full`` recognises ENOSPC / EDQUOT, SQLite's
   "database or disk is full" and the same text wrapped by a library, so a write
   that hit the wall mid-way is answered the same retryable way as one that was
   refused at the door.
-* **Logging that survives it.** ``ResilientStreamHandler`` never lets a failing
+* **Logging that survives it.** ``harden`` makes a stream handler never let a failing
   log write reach the caller, and keeps the first line it could not write so the
-  first error is not lost behind the "Logging error" noise.
+  first error is not lost behind the "Logging error" noise. The handler keeps its
+  own class; only its error path and the first write after a failure change.
 """
 
 from __future__ import annotations
@@ -29,7 +32,9 @@ from time import monotonic
 logger = logging.getLogger(__name__)
 
 MIN_FREE_ENV = "MEMPALACE_MIN_FREE_BYTES"
-DEFAULT_MIN_FREE_BYTES = 256 * 1024 * 1024
+# The bare library applies no floor of its own; a deployment sets one (see the module doc).
+DEFAULT_MIN_FREE_BYTES = 0
+DEPLOYED_MIN_FREE_BYTES = 256 * 1024 * 1024
 RETRY_AFTER_S = 30
 WARN_INTERVAL_S = 60.0
 ERROR_CLASS = "StorageFull"
@@ -104,15 +109,15 @@ def is_storage_full(exc) -> bool:
     return False
 
 
-def min_free_bytes() -> int:
-    """The floor, in bytes; ``0`` means no floor. A value that is not a number is the default."""
+def min_free_bytes(default: int = DEFAULT_MIN_FREE_BYTES) -> int:
+    """The floor, in bytes; ``0`` means no floor. A value that is not a number is ``default``."""
     raw = os.environ.get(MIN_FREE_ENV)
     if raw is None or not raw.strip():
-        return DEFAULT_MIN_FREE_BYTES
+        return default
     try:
         return max(0, int(raw.strip()))
     except ValueError:
-        return DEFAULT_MIN_FREE_BYTES
+        return default
 
 
 def free_bytes(path) -> int | None:
@@ -131,9 +136,19 @@ def free_bytes(path) -> int | None:
     return None
 
 
-def status(path) -> dict:
+# The keys ``status`` adds to ``mempalace_status``; a consumer with a fixed vocabulary drops them.
+STATUS_FIELDS = (
+    "data_free_bytes",
+    "min_free_bytes",
+    "disk_low",
+    "writes_refused",
+    "log_write_failures",
+)
+
+
+def status(path, default_floor: int = DEFAULT_MIN_FREE_BYTES) -> dict:
     """What the health views show: free bytes, the floor, and whether the disk is low."""
-    free, floor = free_bytes(path), min_free_bytes()
+    free, floor = free_bytes(path), min_free_bytes(default_floor)
     return {
         "data_free_bytes": free,
         "min_free_bytes": floor,
@@ -184,16 +199,14 @@ def note_refused() -> None:
         _counters["writes_refused"] += 1
 
 
+def retry_fields() -> dict:
+    """The fields that make a failed result retryable, for a result with its own message."""
+    return {"error_class": ERROR_CLASS, "retryable": True, "retry_after_s": RETRY_AFTER_S}
+
+
 def result(**fields) -> dict:
     """A tool result for a write that was not saved because the disk is full."""
-    return {
-        **fields,
-        "success": False,
-        "error": MESSAGE,
-        "error_class": ERROR_CLASS,
-        "retryable": True,
-        "retry_after_s": RETRY_AFTER_S,
-    }
+    return {**fields, "success": False, "error": MESSAGE, **retry_fields()}
 
 
 def rpc_error(req_id, tool_name=None) -> dict:
@@ -213,47 +226,42 @@ def rpc_error(req_id, tool_name=None) -> dict:
     }
 
 
-class ResilientStreamHandler(logging.StreamHandler):
-    """A stream handler whose failing writes never reach the caller.
+def harden(handler: logging.StreamHandler) -> logging.StreamHandler:
+    """Make ``handler`` survive a failing stream, keeping its class.
 
-    The standard handler prints a "Logging error" traceback to the same stream
-    that just failed and drops the record. Here the failure is counted, the
-    first and the latest lost line are kept, and the next write that works
-    first says how many were lost and what the first one was."""
+    The standard error path prints a "Logging error" traceback to the same stream
+    that just failed and drops the record. Here the failure is counted, the first
+    and the latest lost line are kept, and the next write that works first says
+    how many were lost and what the first one was. Returns ``handler``.
+    """
+    lost = {"count": 0, "first": "", "last": ""}
+    emit = handler.emit
 
-    def __init__(self, stream=None):
-        super().__init__(stream)
-        self._lost = 0
-        self._first_lost = ""
-        self._last_lost = ""
-
-    def emit(self, record):
+    def handle_error(record):
         try:
-            line = self.format(record)
-        except RecursionError:
-            raise
+            line = handler.format(record)
         except Exception:
-            self._note_lost(f"unformattable record from {record.name}")
-            return
-        try:
-            if self._lost:
-                summary = (
-                    f"[log] {self._lost} log line(s) were lost while the disk was full. "
-                    f"First lost: {self._first_lost} | Latest lost: {self._last_lost}"
-                )
-                self.stream.write(summary + self.terminator)
-                self._lost = 0
-            self.stream.write(line + self.terminator)
-            self.flush()
-        except RecursionError:
-            raise
-        except Exception:
-            self._note_lost(line)
-
-    def _note_lost(self, line: str) -> None:
+            line = f"unformattable record from {record.name}"
         with _lock:
             _counters["log_write_failures"] += 1
-        if not self._lost:
-            self._first_lost = line[:500]
-        self._last_lost = line[:500]
-        self._lost += 1
+        if not lost["count"]:
+            lost["first"] = line[:500]
+        lost["last"] = line[:500]
+        lost["count"] += 1
+
+    def guarded_emit(record):
+        if lost["count"]:
+            try:
+                handler.stream.write(
+                    f"[log] {lost['count']} log line(s) were lost while the disk was full. "
+                    f"First lost: {lost['first']} | Latest lost: {lost['last']}"
+                    + handler.terminator
+                )
+                lost["count"] = 0
+            except Exception:
+                pass
+        emit(record)
+
+    handler.handleError = handle_error
+    handler.emit = guarded_emit
+    return handler

@@ -3,6 +3,7 @@
 from commonplace.rules import checks
 from commonplace.vector_diagnostics import public_vector_diagnostics, sees_raw_vector_reason
 from mempalace.read_scope import PAGE_SIZE, valid_descriptors
+from mempalace.storage_guard import STATUS_FIELDS
 
 from .mirror_access import reader, unreadable_room
 
@@ -63,7 +64,7 @@ def _pair_payload(value, worker_tool):
         return {
             k: v
             for k, v in value.items()
-            if k not in {"sqlite_integrity", "library_versions", "updates"}
+            if k not in {"sqlite_integrity", "library_versions", "updates", *STATUS_FIELDS}
         }
     return value
 

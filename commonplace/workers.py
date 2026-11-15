@@ -51,6 +51,8 @@ _PASSED_ENV = frozenset(
         "HF_HUB_OFFLINE",
         "TRANSFORMERS_OFFLINE",
         "MEMPALACE_WORKER_MEMORY_OBSERVE",
+        # The free-space floor below which a worker refuses writes (default: see storage_guard).
+        "MEMPALACE_MIN_FREE_BYTES",
         # Opt-in: the socket of the operator's shared local embedding service.
         "MEMPALACE_EMBEDDING_SERVICE",
         "MEMPALACE_EMBEDDING_DEVICE",
@@ -288,6 +290,10 @@ class SubprocessLauncher:
                 "MEMPALACE_MCP_TRUSTED_IDENTITY": "1",
             }
         )
+        if not env.get("MEMPALACE_MIN_FREE_BYTES", "").strip():
+            from mempalace.storage_guard import DEPLOYED_MIN_FREE_BYTES
+
+            env["MEMPALACE_MIN_FREE_BYTES"] = str(DEPLOYED_MIN_FREE_BYTES)
         if not env.get("MALLOC_ARENA_MAX"):
             env["MALLOC_ARENA_MAX"] = DEFAULT_MALLOC_ARENA_MAX
         if _warmup_enabled():

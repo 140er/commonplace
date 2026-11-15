@@ -661,7 +661,7 @@ def _handoff_parsers(sub):
 
 
 def cmd_serve(args) -> int:
-    from mempalace.storage_guard import ResilientStreamHandler
+    from mempalace.storage_guard import harden
 
     from .gateway import Gateway
     from .workers import WorkerSupervisor
@@ -669,7 +669,7 @@ def cmd_serve(args) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(message)s",
-        handlers=[ResilientStreamHandler()],
+        handlers=[harden(logging.StreamHandler())],
     )
     db = _db(args)
     try:
