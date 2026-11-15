@@ -109,7 +109,7 @@ def _init_logging() -> None:
             root.addHandler(file_handler)
     else:
         # Standalone server: own the unconfigured root logger as before.
-        handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+        handlers: list[logging.Handler] = [_storage_guard.harden(logging.StreamHandler(sys.stderr))]
         if file_handler is not None:
             handlers.append(file_handler)
         logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=handlers)

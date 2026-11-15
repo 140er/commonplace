@@ -104,6 +104,8 @@ def _memory(ctx, name, args):
 
 def _retry_sentence(exc):
     wait = max(1, int(exc.retry_after_s))
+    if exc.reason == "storage":
+        return f"no: storage is full, so nothing was saved; try again in about {wait} seconds"
     if exc.reason == "paused":
         return f"no: memory is paused for a backup; try again in about {wait} seconds"
     if exc.reason == "starting":
@@ -818,11 +820,12 @@ def install(gateway):
             # starting or busy. The Memory page already offers "Try again" for an error.
             send_json(
                 h,
-                503,
+                507 if exc.reason == "storage" else 503,
                 {
                     "error": _retry_sentence(exc),
                     "retry_after_s": exc.retry_after_s,
                     **({"warming_up": True} if exc.reason == "starting" else {}),
+                    **({"code": "storage_full"} if exc.reason == "storage" else {}),
                 },
             )
         except ToolError as exc:

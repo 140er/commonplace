@@ -576,6 +576,10 @@ def _embed_failure(exc, **fields) -> dict:
     plain ``{"error": str(exc)}`` it always was. ``fields`` (such as
     ``success=False``) lead the result.
     """
+    if _storage_guard.is_storage_full(exc):
+        logger.error("write not saved: the disk is full (%s)", exc)
+        _storage_guard.note_refused()
+        return _storage_guard.result(**fields)
     refused = _model_mismatch_error(exc)
     if refused is not None:
         return {**fields, **refused}

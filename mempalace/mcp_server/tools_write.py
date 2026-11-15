@@ -2052,10 +2052,13 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
                     old_meta,
                 )
             except OSError as exc:
-                return {
+                failed = {
                     "success": False,
                     "error": f"could not record prior drawer text: {exc}",
                 }
+                if _storage_guard.is_storage_full(exc):
+                    failed.update(_storage_guard.retry_fields())
+                return failed
 
         _wal_log(
             "update_drawer",

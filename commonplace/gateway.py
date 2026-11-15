@@ -34,7 +34,7 @@ from time import monotonic, sleep
 from typing import Callable, Optional
 from urllib.parse import unquote, urlparse
 
-from mempalace import provenance
+from mempalace import provenance, storage_guard
 from mempalace.config import normalize_wing_name
 from mempalace.deadline import BUSY_INDEXING
 from mempalace.knowledge_graph import strictest
@@ -202,6 +202,18 @@ def _rpc_error(req_id, code: int, message: str, data: Optional[dict] = None) -> 
 
 # JSON-RPC server-error range: a busy database is retryable, unlike -32603.
 BUSY_RPC_CODE = -32001
+STORAGE_FULL_RPC_CODE = storage_guard.RPC_CODE
+
+
+def _storage_full_data(retry_after_s: int) -> dict:
+    return {
+        "error_class": storage_guard.ERROR_CLASS,
+        "reason": "storage_full",
+        "retryable": True,
+        "retry_after_s": retry_after_s,
+    }
+
+
 _LABEL = re.compile(r"[A-Za-z0-9_.\-/]{1,64}")
 
 
@@ -294,6 +306,12 @@ def _busy_answer(response) -> bool:
     return isinstance(error, dict) and error.get("code") == BUSY_RPC_CODE
 
 
+def _retry_after(error, default: int = storage_guard.RETRY_AFTER_S) -> int:
+    data = error.get("data") if isinstance(error, dict) else None
+    wait = data.get("retry_after_s") if isinstance(data, dict) else None
+    return wait if isinstance(wait, int) and 0 < wait <= 300 else default
+
+
 def _request_wait_s() -> float:
     """What one person's request may wait for a pause or a worker start, in all (seconds)."""
     try:
@@ -308,6 +326,14 @@ class WorkerBusy(WorkerUnavailable):
 
     def __init__(self, retry_after_s: int = 2):
         super().__init__("memory is busy indexing")
+        self.retry_after_s = retry_after_s
+
+
+class WorkerStorageFull(WorkerUnavailable):
+    """The worker refused a write because its data disk is full; nothing was changed."""
+
+    def __init__(self, retry_after_s: int = storage_guard.RETRY_AFTER_S):
+        super().__init__("storage is full")
         self.retry_after_s = retry_after_s
 
 
@@ -527,7 +553,7 @@ class WorkerClient:
         if (
             name == "write_mirror_units"
             and isinstance(error, dict)
-            and error.get("code") != BUSY_RPC_CODE
+            and error.get("code") not in (BUSY_RPC_CODE, STORAGE_FULL_RPC_CODE)
         ):
             # Why the index job made no progress: the worker's own refusal (a preflight
             # gate such as a diverged index or a read-only palace), never user content.
@@ -540,6 +566,8 @@ class WorkerClient:
             data = error.get("data")
             wait = data.get("retry_after_s") if isinstance(data, dict) else None
             raise WorkerBusy(wait if isinstance(wait, int) and 0 < wait <= 60 else 2)
+        if isinstance(error, dict) and error.get("code") == STORAGE_FULL_RPC_CODE:
+            raise WorkerStorageFull(_retry_after(error))
         if not isinstance(response, dict) or "error" in response:
             raise WorkerUnavailable()
         return _tool_result(response)
@@ -617,6 +645,13 @@ class Mediator:
                 BUSY_RPC_CODE,
                 "This workspace's memory is starting; try again in a moment",
                 {"retryable": True, "retry_after_s": exc.retry_after_s, "warming_up": True},
+            )
+        except WorkerStorageFull as exc:
+            return _rpc_error(
+                req_id,
+                STORAGE_FULL_RPC_CODE,
+                storage_guard.MESSAGE,
+                _storage_full_data(exc.retry_after_s),
             )
         except WorkerUnavailable:
             return _rpc_error(req_id, -32603, "This workspace's memory is unavailable right now")
@@ -2479,10 +2514,18 @@ class Gateway:
             raise extensions.RetryableToolError(
                 "Memory is starting; try again in a few seconds", exc.retry_after_s, "starting"
             ) from None
+        except WorkerStorageFull as exc:
+            raise extensions.RetryableToolError(
+                storage_guard.MESSAGE, exc.retry_after_s, "storage"
+            ) from None
         except WorkerUnavailable:
             raise extensions.ToolError("Memory is unavailable right now") from None
         if "error" in response:
             error = response["error"]
+            if error.get("code") == STORAGE_FULL_RPC_CODE:
+                raise extensions.RetryableToolError(
+                    storage_guard.MESSAGE, _retry_after(error), "storage"
+                )
             if error.get("code") == BUSY_RPC_CODE:
                 data = error.get("data")
                 wait = data.get("retry_after_s") if isinstance(data, dict) else None
@@ -2493,6 +2536,11 @@ class Gateway:
                 )
             raise extensions.ToolError(error.get("message", "refused"))
         result = _tool_result(response)
+        if isinstance(result, dict) and result.get("error_class") == storage_guard.ERROR_CLASS:
+            # Cut short by a full disk after it started: rolled back, same call can be sent again.
+            raise extensions.RetryableToolError(
+                storage_guard.MESSAGE, _retry_after(result), "storage"
+            )
         if response.get("result", {}).get("isError") or (
             isinstance(result, dict) and result.get("error")
         ):
@@ -2818,6 +2866,17 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             log_failure(logger, "gateway request failed", exc)
             self.close_connection = True
             if not self._response_started:
+                if storage_guard.is_storage_full(exc):
+                    self._send_json(
+                        507,
+                        {
+                            "error": storage_guard.MESSAGE,
+                            "code": "storage_full",
+                            "retry_after_s": storage_guard.RETRY_AFTER_S,
+                        },
+                        {"Retry-After": str(storage_guard.RETRY_AFTER_S)},
+                    )
+                    return
                 self._send_json(500, {"error": "internal error"})
 
     def _instance_admission(self, path, principal):
@@ -3059,6 +3118,17 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                         BUSY_RPC_CODE,
                         "The workspace database is busy right now; retry shortly",
                         {"retryable": True, "retry_after_s": db_busy.RETRY_AFTER_S},
+                    ),
+                )
+                return
+            if storage_guard.is_storage_full(exc):
+                self._send_json(
+                    200,
+                    _rpc_error(
+                        req_id,
+                        STORAGE_FULL_RPC_CODE,
+                        storage_guard.MESSAGE,
+                        _storage_full_data(storage_guard.RETRY_AFTER_S),
                     ),
                 )
                 return

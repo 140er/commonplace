@@ -602,6 +602,9 @@ def tokenless_http_hub(monkeypatch):
     hub with raw HTTP requests opt out with this rather than carry a token.
     """
     monkeypatch.delenv("MEMPALACE_MCP_HTTP_TOKEN", raising=False)
+    # A tokenless server cannot vouch for an identity header, and it refuses to start
+    # when asked to: a value another test left in this process must not reach it.
+    monkeypatch.delenv("MEMPALACE_MCP_TRUSTED_IDENTITY", raising=False)
     monkeypatch.setenv("MEMPALACE_MCP_HTTP_ALLOW_INSECURE_NO_TOKEN", "1")
 
 

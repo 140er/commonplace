@@ -855,6 +855,12 @@ def _http_dispatch_unobserved(request):
                     result = write_mirror_units(**params)
                 except (TypeError, ValueError):
                     return _json_rpc_error(req_id, -32602, "Invalid mirror units")
+                except Exception as exc:
+                    if not _storage_guard.is_storage_full(exc):
+                        raise
+                    # Units already written stay; the batch is idempotent and replays whole.
+                    logger.error("index write not saved: the disk is full (%s)", exc)
+                    return _storage_guard.rpc_error(req_id, "mempalace_add_drawer")
                 return _tool_call_response(req_id, result)
         except _LockWaitExpired:
             # Units already written stay; the batch is idempotent and replays whole.

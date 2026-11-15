@@ -165,6 +165,18 @@ def test_running_version_and_commit(hub, monkeypatch):
     assert instance(hub, "deploy", headers, "?path=/tmp/forbidden")[0] == 400
 
 
+def test_deploy_shows_free_data_space_and_a_low_disk(hub, monkeypatch):
+    clock(hub)
+    headers = cookie(hub)
+    monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", "1")
+    code, data, _ = instance(hub, "deploy", headers)
+    assert code == 200
+    assert isinstance(data["data_free_bytes"], int) and data["data_free_bytes"] > 0
+    assert data["disk_low"] is False
+    monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", str(2**62))
+    assert instance(hub, "deploy", headers)[1]["disk_low"] is True
+
+
 def test_backup_receipts_projection(hub, tmp_path, monkeypatch):
     clock(hub)
     monkeypatch.setenv("COMMONPLACE_BACKUP_STATUS_DIR", str(tmp_path))

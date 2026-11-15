@@ -10,6 +10,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from io import StringIO
 
+from mempalace import storage_guard
+
 from . import agent_log, continuity_schema, import_grant, ingest_cadence, plans, sync_protocol
 from .handoff.api import _integer, _object, _read_json, _RequestError, _text
 from .handoff.models import ThreadMessage
@@ -275,6 +277,17 @@ def _update_settings(db, conn, principal, data, sync_feed):
         sync_feed.record(conn, principal.workspace_id, "sync.request", {})
 
 
+def _unavailable(error):
+    """The retryable answer for a capture that failed after the request was read."""
+    if storage_guard.is_storage_full(error):
+        return 507, {
+            "error": "Storage is full; nothing was saved. Retry the same chunk later",
+            "code": "storage_full",
+            "retry_after_s": storage_guard.RETRY_AFTER_S,
+        }
+    return 500, {"error": "Capture unavailable; retry the same chunk"}
+
+
 def register(ctx):
     from . import continuity, sync_feed
 
@@ -442,7 +455,7 @@ def register(ctx):
             status, result = 400, {"error": "Invalid or unsupported native transcript"}
         except Exception as error:
             log_failure(logging.getLogger(__name__), "Capture failed", error)
-            status, result = 500, {"error": "Capture unavailable; retry the same chunk"}
+            status, result = _unavailable(error)
         handler.close_connection = True
         handler._send_json(status, result, {"Connection": "close", "Cache-Control": "no-store"})
 

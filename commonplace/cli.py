@@ -661,10 +661,16 @@ def _handoff_parsers(sub):
 
 
 def cmd_serve(args) -> int:
+    from mempalace.storage_guard import harden
+
     from .gateway import Gateway
     from .workers import WorkerSupervisor
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(message)s",
+        handlers=[harden(logging.StreamHandler())],
+    )
     db = _db(args)
     try:
         if not db.has_users():

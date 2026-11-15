@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -899,8 +900,9 @@ def index_stats(gateway, context, principal, after=None):
     return {"workspaces": figures, **page(rows, "created_at", "instance", "index-stats")}
 
 
-def deploy(context):
+def deploy(context, data_dir=None):
     from commonplace import __version__ as commonplace_version
+    from mempalace import storage_guard
     from mempalace.version import __version__ as mempalace_version
 
     context.remaining()
@@ -916,11 +918,16 @@ def deploy(context):
     if not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", commit):
         commit = None
     context.remaining()
+    storage = (
+        storage_guard.status(data_dir, storage_guard.DEPLOYED_MIN_FREE_BYTES) if data_dir else {}
+    )
     return {
         "commonplace_version": commonplace_version,
         "mempalace_version": mempalace_version,
         "commit": commit,
         "commit_source": "build" if commit else "unknown",
+        "data_free_bytes": storage.get("data_free_bytes"),
+        "disk_low": storage.get("disk_low", False),
     }
 
 
@@ -1014,7 +1021,7 @@ def install(gateway):
                 send_json(h, 400, {"error": "Invalid admin query"})
                 return
             if section == "deploy":
-                result = deploy(context)
+                result = deploy(context, os.path.dirname(os.fspath(gateway.db.path)))
             else:
                 from commonplace.backup_status import read_receipts
 

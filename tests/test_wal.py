@@ -74,9 +74,10 @@ def test_wal_ensure_is_idempotent_and_cached(tmp_path, monkeypatch):
 def test_wal_log_never_raises_when_write_fails(tmp_path, monkeypatch, caplog):
     """A WAL write failure is logged and swallowed, never crashing the caller.
 
-    Covers wal.py:96-97 — the module docstring and _wal_log both promise that
-    any WAL failure is non-fatal, so a tool call is never broken by audit-log
-    I/O (e.g. a full disk or a read-only filesystem).
+    The module docstring and _wal_log promise that audit-log I/O (an unwritable
+    or read-only location) never breaks a tool call. A full disk is the one
+    exception: the write is refused so nothing lands unjournaled, see
+    tests/test_enospc_writes.py.
     """
     import logging
 
@@ -86,7 +87,7 @@ def test_wal_log_never_raises_when_write_fails(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(wal, "_WAL_INITIALIZED_DIR", None)
 
     def _boom(*args, **kwargs):
-        raise OSError("no space left on device")
+        raise PermissionError("read-only file system")
 
     monkeypatch.setattr(wal.os, "open", _boom)
 

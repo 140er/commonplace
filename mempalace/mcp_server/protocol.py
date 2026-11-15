@@ -625,6 +625,34 @@ def _mcp_stale_library_refusal(req_id, tool_name: str):
     }
 
 
+# Tools that only remove data: refused for no reason at a low disk, and a person
+# asking to forget something must not be turned away because the disk is nearly full.
+_STORAGE_FLOOR_EXEMPT_TOOLS = frozenset(
+    {
+        "mempalace_delete_drawer",
+        "mempalace_delete_drawers",
+        "mempalace_delete_by_source",
+        "mempalace_delete_tunnel",
+        "mempalace_delete_hallway",
+    }
+)
+
+
+def _mcp_storage_floor_refusal(req_id, tool_name: str):
+    """Refuse a write before it starts when the data disk is below its free-space floor.
+
+    Checked before the handler runs, so a refused write has changed nothing and
+    the caller can send the same call again once space returns.
+    """
+    if tool_name not in _MUTATING_TOOLS or tool_name in _STORAGE_FLOOR_EXEMPT_TOOLS:
+        return None
+    try:
+        _storage_guard.require_free_space(_config.palace_path)
+    except _storage_guard.StorageFull:
+        return _storage_guard.rpc_error(req_id, tool_name)
+    return None
+
+
 def _mcp_tool_preflight_refusal(req_id, tool_name: str, *, check_writer: bool = True):
     """Run MCP request preflight gates outside handle_request complexity."""
 
@@ -650,6 +678,10 @@ def _mcp_tool_preflight_refusal(req_id, tool_name: str, *, check_writer: bool = 
     if stale_library_error is not None:
         return stale_library_error
 
+    storage_error = _mcp_storage_floor_refusal(req_id, tool_name)
+    if storage_error is not None:
+        return storage_error
+
     diverged_index_error = _mcp_diverged_index_refusal(req_id, tool_name)
     if diverged_index_error is not None:
         return diverged_index_error
@@ -673,6 +705,7 @@ def _tool_result_is_error(result) -> bool:
         return False
     return (
         result.get("error_class") in MODEL_ERROR_CLASS_NAMES
+        or result.get("error_class") == _storage_guard.ERROR_CLASS
         or result.get("error") == BACKEND_OPEN_FAILED_ERROR
     )
 
@@ -696,6 +729,8 @@ def _decorate_mcp_tool_result(tool_name: str, result):
     if tool_name == "mempalace_status" and isinstance(result, dict):
         from ..update_awareness import cached_update_status, schedule_update_check
 
+        for key, value in _storage_guard.status(_config.palace_path).items():
+            result.setdefault(key, value)
         result.setdefault("sqlite_integrity", _sqlite_integrity_payload())
         result.setdefault("library_versions", _stale_library_payload())
         result.setdefault("updates", {"server": cached_update_status()})
@@ -915,6 +950,26 @@ def validate_tool_arguments(tool_name: str, arguments: dict) -> dict:
     return checked
 
 
+def _storage_full_result(result):
+    """A handler's failed result that only carries the disk-full text, made retryable.
+
+    Most write tools catch their own exceptions and answer ``{"success": False,
+    "error": str(exc)}``, which drops the exception class. Naming the full disk
+    here gives every one of them the same retryable answer.
+    """
+    if (
+        isinstance(result, dict)
+        and result.get("success") is False
+        and result.get("error_class") != _storage_guard.ERROR_CLASS
+        and _storage_guard.is_storage_full_text(result.get("error"))
+    ):
+        _storage_guard.note_refused()
+        return _storage_guard.result(
+            **{k: v for k, v in result.items() if k not in ("success", "error", "error_class")}
+        )
+    return result
+
+
 def call_tool(req_id, params: dict, internal: bool = False):
     """Validate, gate, and run one tools/call.
 
@@ -998,7 +1053,7 @@ def call_tool(req_id, params: dict, internal: bool = False):
     try:
         with _write_stall_watch(tool_name):
             return None, _decorate_mcp_tool_result(
-                tool_name, TOOLS[tool_name]["handler"](**tool_args)
+                tool_name, _storage_full_result(TOOLS[tool_name]["handler"](**tool_args))
             )
     except TypeError as e:
         _observation.control_outcome("raised")
@@ -1026,6 +1081,10 @@ def call_tool(req_id, params: dict, internal: bool = False):
         return _internal_tool_error(req_id, tool_name, e, include_message=internal), None
     except Exception as exc:
         _observation.control_outcome("raised")
+        if _storage_guard.is_storage_full(exc):
+            logger.error("Tool %s not saved: the disk is full (%s)", tool_name, exc)
+            _storage_guard.note_refused()
+            return _storage_guard.rpc_error(req_id, tool_name), None
         expose = internal or isinstance(exc, ValueError)
         return _internal_tool_error(req_id, tool_name, exc, include_message=expose), None
 

@@ -1,12 +1,14 @@
 """Connection-level freshness checks for client writes, over MCP and REST."""
 
 import copy
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from commonplace import events
+from commonplace.http_util import log_failure
 
 from . import checks
 from .store import rules_sequence
@@ -399,7 +401,11 @@ def rest_write(ctx, handler, tool, body, *, audit_principal=None, audit_reason="
     try:
         yield logged
     except Exception:
-        record("deny")
+        try:
+            record("deny")
+        except Exception as audit_error:
+            # A failing audit (a full disk) must not replace the error that made the write fail.
+            log_failure(logging.getLogger(__name__), "Refused write audit failed", audit_error)
         raise
     else:
         logged.seq = record("ok")
