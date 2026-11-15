@@ -165,6 +165,42 @@ def test_running_version_and_commit(hub, monkeypatch):
     assert instance(hub, "deploy", headers, "?path=/tmp/forbidden")[0] == 400
 
 
+def test_commit_falls_back_to_the_environment_and_names_its_source(hub, monkeypatch):
+    clock(hub)
+    headers = cookie(hub)
+    from commonplace.web import admin
+
+    marker = {"value": None}
+
+    class Resource:
+        def joinpath(self, name):
+            return self
+
+        def read_text(self, **kwargs):
+            if marker["value"] is None:
+                raise FileNotFoundError()
+            return marker["value"]
+
+    def identity():
+        _, data, _ = instance(hub, "deploy", headers)
+        return data["commit"], data["commit_source"], data.get("commit_short")
+
+    monkeypatch.setattr(admin.resources, "files", lambda package: Resource())
+    monkeypatch.setenv("COMMONPLACE_COMMIT", SHA)
+    assert identity() == (SHA, "env", SHA[:12])
+    # The build marker wins over the environment.
+    marker["value"] = "b" * 40 + "\n"
+    assert identity() == ("b" * 40, "build", "b" * 12)
+    # An empty marker is the failing deploy: the environment still names the commit.
+    marker["value"] = "\n"
+    assert identity() == (SHA, "env", SHA[:12])
+    # An invalid environment value is ignored, never echoed.
+    monkeypatch.setenv("COMMONPLACE_COMMIT", "../unsafe")
+    assert identity() == (None, "unknown", None)
+    monkeypatch.delenv("COMMONPLACE_COMMIT")
+    assert identity() == (None, "unknown", None)
+
+
 def test_deploy_shows_free_data_space_and_a_low_disk(hub, monkeypatch):
     clock(hub)
     headers = cookie(hub)

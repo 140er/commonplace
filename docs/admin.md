@@ -298,8 +298,10 @@ operational data and stops pending operational loads. No admin mutation API exis
 
 Both versions come from the installed packages. A valid packaged build marker gives
 `commit_source:"build"` and a full 40- or 64-character hexadecimal commit. Missing or
-invalid marker means **Running commit unknown**. Runtime git and environment flags
-cannot override image identity. Separately the eligible page requests existing
+invalid marker means **Running commit unknown**, unless the container's environment
+holds a valid full commit: the payload then reports that commit with an environment
+source and a short form, and the page names which source it used. The marker always
+wins, and runtime git never names the commit. Separately the eligible page requests existing
 `GET /healthz` and requires `ok === true`: **Gateway reachable** proves only that the
 gateway answered. The existing public health endpoint remains `{"ok":true}`.
 Version and health have independent 5,000 ms deadlines, errors and retries.

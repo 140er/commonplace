@@ -1296,3 +1296,91 @@ esac"""
         assert "verified release" not in result.stdout
         if scenario == "short_commit":
             assert not any("up" in call for call in calls)
+
+
+DERIVE_DOCKER = """if [[ "$*" == *"config --format json" ]]; then
+ echo '{"services":{"commonplace":{"ports":[{"host_ip":"127.0.0.1","published":"8765"}]}}}'
+fi
+case "$*" in
+*" up "*) printf '%s' "${COMMONPLACE_BUILD_COMMIT:-}" > "$HOME/build-arg-seen" ;;
+*"exec -T commonplace python -c"*) echo "$(< "$HOME/build-arg-seen")" ;;
+esac"""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_builds_with_the_staged_source_commit(tmp_path):
+    sha = "0123456789abcdef" * 2 + "01234567"
+    source = tmp_path / "staged"
+    source.mkdir()
+    (source / ".release-commit").write_text(sha + "\n")
+    result, _calls = run_deploy(
+        tmp_path, docker=DERIVE_DOCKER, env={"COMMONPLACE_SOURCE_DIR": str(source)}
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "build-arg-seen").read_text() == sha
+    assert f"build commit: {sha}" in result.stdout
+    assert f"verified release: {sha}" in result.stdout
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_explicit_commit_wins_over_the_staged_source_commit(tmp_path):
+    explicit = "a" * 40
+    source = tmp_path / "staged"
+    source.mkdir()
+    (source / ".release-commit").write_text("b" * 40 + "\n")
+    result, _calls = run_deploy(
+        tmp_path,
+        docker=DERIVE_DOCKER,
+        env={"COMMONPLACE_SOURCE_DIR": str(source), "COMMONPLACE_BUILD_COMMIT": explicit},
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "build-arg-seen").read_text() == explicit
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_deploy_warns_when_no_commit_can_be_found(tmp_path):
+    source = tmp_path / "staged"
+    source.mkdir()
+    (source / ".release-commit").write_text("not-a-commit\n")
+    result, _calls = run_deploy(
+        tmp_path, docker=DERIVE_DOCKER, env={"COMMONPLACE_SOURCE_DIR": str(source)}
+    )
+    assert result.returncode == 0, result.stderr
+    assert "build commit: unknown" in result.stdout
+    assert (tmp_path / "build-arg-seen").read_text() == ""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="deploy.sh targets GNU/Linux hosts")
+def test_stage_archive_records_the_archived_commit(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (repo / "a.txt").write_text("x\n")
+    subprocess.run([*git, "add", "a.txt"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
+    sha = subprocess.run(
+        [*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    archive = tmp_path / "source.tar"
+    subprocess.run([*git, "archive", "-o", str(archive), "HEAD"], check=True)
+    destination = tmp_path / "staged"
+    result = subprocess.run(
+        ["bash", str(DEPLOY / "commonplace" / "stage-archive.sh"), str(archive), str(destination)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (destination / ".release-commit").read_text() == sha + "\n"
+    # A plain tar (no commit header) still stages; the commit is just absent.
+    plain = tmp_path / "plain.tar"
+    with tarfile.open(plain, "w") as handle:
+        handle.add(repo / "a.txt", arcname="a.txt")
+    bare = tmp_path / "bare"
+    result = subprocess.run(
+        ["bash", str(DEPLOY / "commonplace" / "stage-archive.sh"), str(plain), str(bare)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (bare / ".release-commit").exists()

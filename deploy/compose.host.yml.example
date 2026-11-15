@@ -16,6 +16,8 @@ services:
     environment:
       COMMONPLACE_DATA: /data
       COMMONPLACE_BASE_URL: ${COMMONPLACE_BASE_URL:-https://hub.example.com}
+      # Second source for the commit shown in Admin; the build marker wins.
+      COMMONPLACE_COMMIT: ${COMMONPLACE_BUILD_COMMIT:-}
     volumes:
       - ${COMMONPLACE_DATA_DIR:?Set COMMONPLACE_DATA_DIR to the persistent data directory}:/data
     mem_limit: 20g

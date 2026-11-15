@@ -900,23 +900,35 @@ def index_stats(gateway, context, principal, after=None):
     return {"workspaces": figures, **page(rows, "created_at", "instance", "index-stats")}
 
 
-def deploy(context, data_dir=None):
-    from commonplace import __version__ as commonplace_version
-    from mempalace import storage_guard
-    from mempalace.version import __version__ as mempalace_version
+_COMMIT = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})")
 
-    context.remaining()
+
+def running_commit():
+    """(commit, source) of the running image: the build marker, else COMMONPLACE_COMMIT."""
     try:
-        commit = (
+        marker = (
             resources.files("commonplace.web")
             .joinpath("_build_commit.txt")
             .read_text(encoding="ascii")
             .strip()
         )
     except (OSError, UnicodeError):
-        commit = ""
-    if not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", commit):
-        commit = None
+        marker = ""
+    if _COMMIT.fullmatch(marker):
+        return marker, "build"
+    declared = os.environ.get("COMMONPLACE_COMMIT", "").strip()
+    if _COMMIT.fullmatch(declared):
+        return declared, "env"
+    return None, "unknown"
+
+
+def deploy(context, data_dir=None):
+    from commonplace import __version__ as commonplace_version
+    from mempalace import storage_guard
+    from mempalace.version import __version__ as mempalace_version
+
+    context.remaining()
+    commit, commit_source = running_commit()
     context.remaining()
     storage = (
         storage_guard.status(data_dir, storage_guard.DEPLOYED_MIN_FREE_BYTES) if data_dir else {}
@@ -925,7 +937,8 @@ def deploy(context, data_dir=None):
         "commonplace_version": commonplace_version,
         "mempalace_version": mempalace_version,
         "commit": commit,
-        "commit_source": "build" if commit else "unknown",
+        "commit_short": commit[:12] if commit else None,
+        "commit_source": commit_source,
         "data_free_bytes": storage.get("data_free_bytes"),
         "disk_low": storage.get("disk_low", False),
     }

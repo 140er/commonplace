@@ -41,6 +41,18 @@ timespan_seconds() {
     printf '%s\n' "$total"
 }
 
+# The full lowercase commit of a staged source tree: the file written by
+# stage-archive.sh, else the checkout HEAD. Prints nothing when unknown.
+staged_source_commit() {
+    local dir=$1 sha=
+    [[ ! -f $dir/.release-commit ]] || read -r sha < "$dir/.release-commit" || true
+    if [[ ! $sha =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] && [[ -e $dir/.git ]] && command -v git >/dev/null; then
+        sha=$(git -C "$dir" rev-parse --verify HEAD 2>/dev/null) || sha=
+    fi
+    [[ $sha =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] && printf '%s\n' "$sha"
+    return 0
+}
+
 run_command() {
     local -a command
     read -r -a command <<< "$1"
@@ -196,7 +208,14 @@ main() {
     local -a compose=(docker compose -f "$COMPOSE_FILE" --env-file "$COMPOSE_ENV_FILE")
     rendered=$("${compose[@]}" config --format json 2>/dev/null) || die deploy 'compose config failed'
     jq --arg port "$APP_PORT" -e 'all(.services[] | .ports[]? | select(.published != null); .host_ip == "127.0.0.1" and (.published | tostring) == $port)' <<< "$rendered" >/dev/null 2>&1 || die deploy 'published ports must use loopback'
+    # An image only carries a commit if the build argument is set, so when the
+    # operator did not set one, take it from the staged source tree.
+    if [[ -z ${COMMONPLACE_BUILD_COMMIT:-} ]]; then
+        COMMONPLACE_BUILD_COMMIT=$(staged_source_commit "$COMMONPLACE_SOURCE_DIR")
+        [[ -z $COMMONPLACE_BUILD_COMMIT ]] || export COMMONPLACE_BUILD_COMMIT
+    fi
     requested=${COMMONPLACE_BUILD_COMMIT:-}
+    printf '[deploy] build commit: %s\n' "${requested:-unknown}"
     [[ -z $requested || $requested =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || die release 'COMMONPLACE_BUILD_COMMIT must be a full lowercase commit'
     "${compose[@]}" up -d --build --wait --wait-timeout 90 || die deploy 'compose up failed'
     "${compose[@]}" ps || die deploy 'compose ps failed'

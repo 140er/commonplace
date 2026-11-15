@@ -272,12 +272,12 @@ The script performs these steps in order:
    require the published port equals APP_PORT, run `up -d --build --wait
    --wait-timeout 90` (Compose waits up to 90 seconds for service readiness),
    show `ps`, and print the health HTTP status (10-second timeout).
-   When `COMMONPLACE_BUILD_COMMIT` is set (deploy.env or the environment), it
-   must be a full lowercase commit; the health status must then be 200, and the
+   When `COMMONPLACE_BUILD_COMMIT` is set (deploy.env or the environment) or
+   derived from the staged source, it must be a full lowercase commit; the health status must then be 200, and the
    installed package's build resource, read inside the running service together
    with an internal health probe, must equal it. A mismatch, missing identity or
-   failed probe exits nonzero and only a match prints `verified release`. When it
-   is unset the script prints `release attestation: not requested` and does not
+   failed probe exits nonzero and only a match prints `verified release`. When no
+   commit can be found the script prints `release attestation: not requested` and does not
    fail on identity. A failure after `up` may leave the new container running:
    inspect it and use the explicit image rollback above if needed.
 
@@ -288,16 +288,19 @@ around the gate. The script does not fetch source or delete operator files.
 
 ## Running build identity
 
-When staging a clean reviewed source tree, set `COMMONPLACE_BUILD_COMMIT` to its
-full reviewed commit (40 or 64 hexadecimal characters) before building with the
-tracked host compose example. The actual image recipe validates the build argument
-and writes `commonplace/web/_build_commit.txt` before package installation. This
-resource travels with the installed wheel. Setting `COMMONPLACE_BUILD_COMMIT` for
-the deployment wrapper makes it compare the running package with that commit. An
-empty build argument is permitted
-and reports **Running commit unknown**; an invalid nonempty argument fails the
-build. No runtime environment or checkout HEAD overrides image identity. Admin
-shows both installed package versions separately from the commit.
+`stage-archive.sh` records the commit a git archive carries in `.release-commit`
+beside the staged source. When `COMMONPLACE_BUILD_COMMIT` is not set, `deploy.sh`
+takes the full commit from that file (else from a checkout's HEAD), prints
+`build commit: <sha>`, exports it as the build argument and attests it as below. Set
+`COMMONPLACE_BUILD_COMMIT` (a full 40- or 64-character lowercase commit) to override.
+The image recipe validates the build argument and writes
+`commonplace/web/_build_commit.txt` before package installation. This resource
+travels with the installed wheel. An empty build argument is permitted: it reports
+**Running commit unknown** and the script prints `build commit: unknown`; an invalid
+nonempty argument fails the build. The host compose example also passes the commit to
+the container as `COMMONPLACE_COMMIT`, a second source Admin uses only when the build
+marker is empty. A valid marker always wins and checkout HEAD is never read at runtime.
+Admin shows both installed package versions separately from the commit.
 
 ## Optional backup status
 
