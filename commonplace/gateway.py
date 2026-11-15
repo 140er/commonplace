@@ -57,7 +57,7 @@ from .auth import PersonalTokenAuthenticator, bearer_from_header
 from .bounded_map import BoundedMap
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
-from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
+from .policy import PIPELINE_SCOPE, TOOL_RULES, Policy, canonical_wing, is_private_wing
 from .vector_diagnostics import public_vector_diagnostics, sees_raw_vector_reason
 from .workers import (
     DEFAULT_REQUEST_WAIT_S,
@@ -2959,6 +2959,19 @@ class _GatewayHandler(BaseHTTPRequestHandler):
                 sleep(delay)
         return False
 
+    def _pipeline_token_refused(self, path, principal):
+        """A token whose only scope is pipeline:write records pipeline events and nothing else."""
+        if (
+            principal is None
+            or principal.person
+            or tuple(principal.policy.scopes) != (PIPELINE_SCOPE,)
+            or (self.command, path) == ("POST", "/api/pipeline/events")
+        ):
+            return False
+        self.close_connection = True
+        self._send_json(403, {"error": "this connection can only record pipeline events"})
+        return True
+
     def _handle(self):
         path = urlparse(self.path).path
         if path in ("/health", "/healthz"):
@@ -2983,7 +2996,9 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         principal = self.server.gateway.principal_for(self)
         self._commonplace_principal = principal
-        if self._instance_admission(path, principal):
+        if self._pipeline_token_refused(path, principal) or self._instance_admission(
+            path, principal
+        ):
             return
         from .runner import enrollment_api
 

@@ -167,13 +167,13 @@ test('phone: every rail and account destination is reachable from the More sheet
   assert.match(sheet, /<div class="deck-more" id="deck-more" aria-label="More"[^>]* hidden>/);
   assert.doesNotMatch(sheet, /role="dialog"/, 'a closed sheet is not announced as a dialog');
   const bar = renderDeckBar({ hash: '#/today', can_admin: true, can_manage_instance: true });
-  const railTools = ['#/', '#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/rules', '#/admin', '#/instance-admin'];
+  const railTools = ['#/', '#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/pipeline', '#/rules', '#/admin', '#/instance-admin'];
   for (const href of railTools) assert.ok(bar.includes(`href="${href}"`), `rail offers ${href}`);
   assert.deepEqual(sheetLinks(sheet), railTools, 'the sheet offers each of them, with the same routes');
   assert.match(sheet, /href="#\/needs">Needs me<span class="count need">3<span class="sr"> waiting on you/);
   assert.match(sheet, /data-action="switch-workspace"/);
   assert.match(sheet, /data-action="logout"/);
-  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/today' })), ['#/', '#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/rules']);
+  assert.deepEqual(sheetLinks(renderDeckMore({ hash: '#/today' })), ['#/', '#/board', '#/memory', '#/needs', '#/boards', '#/console', '#/pipeline', '#/rules']);
   assert.doesNotMatch(renderDeckBar({ hash: '#/today', needs: 3 }), /deck-more|waiting on you<\/span><\/span><\/a><a href="#\/boards"/);
   assert.match(renderDeckTabs({ hash: '#/memory' }), /class="deck-tab-more"[^>]*aria-current="page"/);
   assert.doesNotMatch(renderDeckTabs({ hash: '#/today' }), /class="deck-tab-more"[^>]*aria-current/);

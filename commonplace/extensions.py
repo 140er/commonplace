@@ -61,6 +61,7 @@ MODULES = (
     "commonplace.meetings",
     "commonplace.topology",
     "commonplace.topology.extension",
+    "commonplace.pipeline",
     "commonplace.person_actions",
 )
 
