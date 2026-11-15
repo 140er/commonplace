@@ -13,8 +13,12 @@ from __future__ import annotations
 import dataclasses
 import os
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# A workspace's open thread store gives back its page cache after this long unused.
+DEFAULT_STORE_IDLE_S = 600.0
 
 
 @dataclass
@@ -29,6 +33,7 @@ class HandoffContext:
     service: object = None
     _stores: dict = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _used: dict = field(default_factory=dict)  # workspace id -> last store_for, monotonic
 
     def store_for(self, workspace_id: str):
         from commonplace.admission import GATE
@@ -37,6 +42,7 @@ class HandoffContext:
         with self._lock:
             store = self._stores.get(workspace_id)
             if store is not None:
+                self._used[workspace_id] = time.monotonic()
                 return store
         # Enter the gate before the lock, so a waiting opener never holds it.
         with GATE.creating(), self._lock:
@@ -45,7 +51,38 @@ class HandoffContext:
                 directory = workspace_path(self.data_dir, workspace_id)
                 os.makedirs(directory, exist_ok=True)
                 store = self._stores[workspace_id] = open_threads(directory)
+            self._used[workspace_id] = time.monotonic()
             return store
+
+    def release_idle_memory(self, idle_s: float = None) -> list:
+        """Give back the page cache of each open store nobody asked for in ``idle_s`` seconds.
+
+        The connections stay open, so a holder of a store never meets a closed one. The
+        default (ten minutes) is ``COMMONPLACE_STORE_IDLE_S``. Returns the workspace ids."""
+        if idle_s is None:
+            idle_s = float(os.environ.get("COMMONPLACE_STORE_IDLE_S") or DEFAULT_STORE_IDLE_S)
+        now = time.monotonic()
+        with self._lock:
+            idle = [
+                (ws, store)
+                for ws, store in self._stores.items()
+                if now - self._used.get(ws, now) >= idle_s
+            ]
+            for ws, _ in idle:
+                self._used[ws] = now  # not again until it has been idle a full interval
+        released = []
+        for ws, store in idle:
+            release = getattr(store, "release_memory", None)
+            try:
+                if release is not None and release():
+                    released.append(ws)
+            except Exception:
+                pass  # a store that cannot shrink keeps what it has
+        if released:
+            from mempalace.worker_memory import trim_heap
+
+            trim_heap()  # SQLite frees into the allocator; glibc keeps those pages until trimmed
+        return released
 
     def has_threads(self, workspace_id: str) -> bool:
         from commonplace.workspace_store import thread_path, workspace_path
@@ -85,6 +122,7 @@ class HandoffContext:
             for store in self._stores.values():
                 store.close()
             self._stores.clear()
+            self._used.clear()
 
 
 def install(gateway, data_dir=None, **_ignored) -> HandoffContext:

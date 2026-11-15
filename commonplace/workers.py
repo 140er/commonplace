@@ -78,6 +78,10 @@ DEFAULT_IDLE_STOP_S = 15 * 60
 # gateway turns it off (lazy loading, as before).
 WARMUP_ENV = "MEMPALACE_WORKER_WARMUP"
 WARMUP_SWITCH = "COMMONPLACE_WORKER_WARMUP"
+# Optional: the anonymous-memory ceiling (MiB) above which a worker drains and is replaced
+# (mempalace.worker_memory). Off unless set on the gateway; the operator's own
+# ``MEMPALACE_WORKER_RSS_RECYCLE_MB`` never reaches a worker.
+RSS_RECYCLE_SWITCH = "COMMONPLACE_WORKER_RSS_RECYCLE_MB"
 # A memory call that meets a backup pause waits this long, then is refused
 # with a retry hint (COMMONPLACE_BACKUP_MEMORY_WAIT_S overrides the wait).
 DEFAULT_PAUSE_WAIT_S = 20.0
@@ -213,6 +217,7 @@ class Worker:
     completed: Optional[int] = None
     control: object = None
     reap: object = None
+    started: float = field(default_factory=time.monotonic)
 
     @property
     def host_header(self) -> str:
@@ -298,6 +303,11 @@ class SubprocessLauncher:
             env["MALLOC_ARENA_MAX"] = DEFAULT_MALLOC_ARENA_MAX
         if _warmup_enabled():
             env[WARMUP_ENV] = "1"
+        recycle = os.environ.get(RSS_RECYCLE_SWITCH, "").strip()
+        if recycle:
+            from mempalace.worker_memory import RECYCLE_ENV
+
+            env[RECYCLE_ENV] = recycle
         from mempalace.worker_lifecycle import ControlPipes
 
         control = ControlPipes()
@@ -465,6 +475,31 @@ class WorkerSupervisor:
     def worker_pids(self) -> list:
         with self._lock:
             return [w.pid for w in self._workers.values() if w.pid is not None and w.alive()]
+
+    def worker_snapshot(self) -> list:
+        """Read-only facts of each running worker for a status view; never raises."""
+        try:
+            with self._lock:
+                running = [w for w in self._workers.values() if w.pid is not None and w.alive()]
+            now = time.monotonic()
+            from mempalace.worker_memory import read_process_memory
+
+            rows = []
+            for worker in running:
+                memory = read_process_memory(worker.pid) or {}
+                rows.append(
+                    {
+                        "workspace_id": worker.workspace_id,
+                        "pid": worker.pid,
+                        "uptime_s": max(0, int(now - worker.started)),
+                        "retiring": bool(worker.retiring),
+                        **{k: memory.get(k) for k in ("rss_bytes", "anon_bytes", "file_bytes")},
+                    }
+                )
+            return rows
+        except Exception:
+            logger.debug("worker snapshot unavailable", exc_info=True)
+            return []
 
     def pause(self, drain_s: float = 60.0) -> list:
         """Close the gate, drain in-flight calls, stop every worker.
@@ -668,6 +703,13 @@ class WorkerSupervisor:
                 if not w.pins and (now - w.last_used > self.idle_stop_s or not w.alive())
             ]
             stopped = [self._workers.pop(ws) for ws in idle]
+            # A clean circuit of a workspace with no worker holds nothing worth keeping.
+            for ws in [
+                ws
+                for ws, circuit in self._circuits.items()
+                if ws not in self._workers and ws not in self._starting and circuit.clean()
+            ]:
+                del self._circuits[ws]
         for worker in stopped:
             worker.stop()
         return idle

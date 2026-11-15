@@ -302,6 +302,38 @@ the container as `COMMONPLACE_COMMIT`, a second source Admin uses only when the 
 marker is empty. A valid marker always wins and checkout HEAD is never read at runtime.
 Admin shows both installed package versions separately from the commit.
 
+## Memory: what to sample and what it means
+
+The container's memory limit counts page cache and mapped files as well as the
+processes' own (anonymous) memory. Large databases fill the cache by design and the
+kernel reclaims it before it kills anything, so a figure near the limit is not by
+itself a leak. Admin's deploy view (`GET /api/admin/instance/deploy`, field `memory`)
+splits it: `cgroup.anon_bytes` against `cgroup.file_bytes`, `cgroup.working_set_bytes`
+(current less the inactive file cache), `cgroup.oom_kill`, the gateway's own
+`rss_bytes` and `anon_bytes`, and each worker's `anon_bytes`, `rss_bytes` and
+`uptime_s`. The same split is in the container's cgroup files `memory.stat`,
+`memory.current` and `memory.events`.
+
+Sample once a minute for 24 hours: the cgroup's `anon`, `file`, `inactive_file` and
+`oom_kill`, the gateway's anonymous memory, and each worker's anonymous memory with
+its uptime. Suggested readings (tune them to the instance):
+
+| Pattern | Reading | Action |
+| --- | --- | --- |
+| `file` rises toward the limit, `anon` stays flat, `working_set_bytes` stays well under the limit | cache | none |
+| Gateway `anon_bytes` climbs in a line and does not fall when traffic stops | gateway leak | only a deploy resets it; report the slope |
+| One worker's `anon_bytes` climbs with its `uptime_s`, others flat; it drops when the worker stops after its idle period | worker growth | set the recycle ceiling below |
+| `anon` above about 70% of the limit for 30 minutes, `working_set_bytes` above about 85%, or `oom_kill` rises | at risk | act before the next kill |
+
+The worker recycle is off until set. Set `COMMONPLACE_WORKER_RSS_RECYCLE_MB` in the
+gateway's environment (whole MiB, at least 512) to roughly one and a half times the
+largest worker's steady-state `anon_bytes`, never below the size a worker reaches
+right after it loads its palace, or healthy workers restart in a loop. A worker above
+the ceiling (anonymous memory only, after ten minutes and two admitted calls) finishes
+its running calls, drains and is replaced on the next call; the container is not
+restarted and the gateway process has no recycle. Idle workspaces' thread stores give
+back their page cache after `COMMONPLACE_STORE_IDLE_S` seconds (default 600).
+
 ## Optional backup status
 
 Only the hosting administrator provisions live configuration. The optional tracked

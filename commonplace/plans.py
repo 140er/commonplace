@@ -147,6 +147,7 @@ class StorageMeter:
             if cached is not None and now - cached[0] < 60:
                 return cached[1]
             total = self._walk(path)
+            self._cache = {w: c for w, c in self._cache.items() if now - c[0] < 60}
             self._cache[workspace_id] = (now, total)
             return total
 
@@ -188,6 +189,7 @@ class StorageMeter:
                 connection_id=principal.connection_id,
                 auth=principal.auth,
             )
+            self._denied = {w: t for w, t in self._denied.items() if now - t < 60}
             self._denied[principal.workspace_id] = now
 
 

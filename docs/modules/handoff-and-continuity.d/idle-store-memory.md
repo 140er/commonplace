@@ -1,0 +1,4 @@
+- **Owns:** `HandoffContext.release_idle_memory` and `ThreadStore.release_memory`: a workspace's open thread store gives back its SQLite page cache (up to 64 MiB on an encrypted workspace) once nobody has asked for the store for ten minutes (`COMMONPLACE_STORE_IDLE_S` overrides), then trims the heap.
+- **Promises:** The connection stays open and the data is untouched, so a holder of the store never meets a closed one; the cache refills on the next read. A store a call is using is skipped, not waited for, and a store is released at most once per idle interval.
+- **How it fails:** A store that cannot release keeps what it holds; the sweep never raises into the gateway.
+- **Tests:** `tests/test_memory_growth_bounds.py::test_idle_thread_stores_release_their_page_cache` covers the idle and busy cases, the once-per-interval rule and the held-store skip.

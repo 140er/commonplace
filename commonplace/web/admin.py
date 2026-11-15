@@ -922,7 +922,49 @@ def running_commit():
     return None, "unknown"
 
 
-def deploy(context, data_dir=None):
+# At most this many workers are listed (largest first); the totals cover all of them.
+MEMORY_WORKER_ROWS = 50
+
+
+def memory_view(gateway=None):
+    """Where the container's memory sits: cgroup, gateway process, each worker. Never raises.
+
+    Read-only and cheap (a few small /proc and cgroup files). Every figure is ``None`` where
+    the platform does not give it, so a monitor can tell anonymous growth (a leak) from
+    file cache (reclaimable) and see which worker holds it.
+    """
+    try:
+        from mempalace.worker_memory import read_cgroup_memory, read_process_memory
+
+        workers = []
+        supervisor = getattr(gateway, "supervisor", None)
+        snapshot = getattr(supervisor, "worker_snapshot", None)
+        if callable(snapshot):
+            workers = sorted(snapshot(), key=lambda w: w.get("rss_bytes") or 0, reverse=True)
+        process = read_process_memory() or {}
+        return {
+            "cgroup": read_cgroup_memory(),
+            "gateway": {k: process.get(k) for k in ("rss_bytes", "anon_bytes", "file_bytes")},
+            "worker_count": len(workers),
+            "workers_rss_bytes": sum(w.get("rss_bytes") or 0 for w in workers),
+            "workers_anon_bytes": sum(w.get("anon_bytes") or 0 for w in workers),
+            "workers": [
+                {
+                    "workspace_id": identifier(w.get("workspace_id")),
+                    **{
+                        k: w.get(k)
+                        for k in ("pid", "uptime_s", "rss_bytes", "anon_bytes", "file_bytes")
+                    },
+                }
+                for w in workers[:MEMORY_WORKER_ROWS]
+            ],
+        }
+    except Exception as exc:
+        log_failure(LOG, "Admin memory view unavailable", exc)
+        return None
+
+
+def deploy(context, data_dir=None, gateway=None):
     from commonplace import __version__ as commonplace_version
     from mempalace import storage_guard
     from mempalace.version import __version__ as mempalace_version
@@ -941,6 +983,7 @@ def deploy(context, data_dir=None):
         "commit_source": commit_source,
         "data_free_bytes": storage.get("data_free_bytes"),
         "disk_low": storage.get("disk_low", False),
+        "memory": memory_view(gateway),
     }
 
 
@@ -1034,7 +1077,7 @@ def install(gateway):
                 send_json(h, 400, {"error": "Invalid admin query"})
                 return
             if section == "deploy":
-                result = deploy(context, os.path.dirname(os.fspath(gateway.db.path)))
+                result = deploy(context, os.path.dirname(os.fspath(gateway.db.path)), gateway)
             else:
                 from commonplace.backup_status import read_receipts
 

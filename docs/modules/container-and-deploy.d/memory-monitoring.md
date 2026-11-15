@@ -1,0 +1,2 @@
+- **Promises:** `deploy/commonplace/DEPLOY.md` says what to sample next to the container (the cgroup's anonymous and file memory, each worker's anonymous memory) and what separates a leak from reclaimable cache, and how to set `COMMONPLACE_WORKER_RSS_RECYCLE_MB` once a steady-state size is known.
+- **Tests:** `tests/test_memory_growth_bounds.py` pins the environment variable the note names.

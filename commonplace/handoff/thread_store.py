@@ -574,6 +574,19 @@ class ThreadStore:
         with self._lock:
             self._conn.close()
 
+    def release_memory(self) -> bool:
+        """Hand the connection's page cache back (SQLCipher keeps up to 64 MiB of it).
+
+        Skipped, not waited for, while a call holds the store; the data is untouched and the
+        cache refills on the next read. True when the cache was released."""
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
+            self._conn.execute("PRAGMA shrink_memory")
+            return True
+        finally:
+            self._lock.release()
+
     def fact_cursor(self, stored_id: str, version: int) -> int:
         """First unprocessed message for this extractor version; chats stay untouched."""
         with self._lock:

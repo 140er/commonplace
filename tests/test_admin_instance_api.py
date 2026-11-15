@@ -213,6 +213,94 @@ def test_deploy_shows_free_data_space_and_a_low_disk(hub, monkeypatch):
     assert instance(hub, "deploy", headers)[1]["disk_low"] is True
 
 
+def test_deploy_shows_where_the_memory_sits(hub, monkeypatch):
+    clock(hub)
+    headers = cookie(hub)
+    from mempalace import worker_memory
+
+    cgroup = {
+        "current_bytes": 6500,
+        "limit_bytes": 8000,
+        "anon_bytes": 1000,
+        "file_bytes": 5000,
+        "shmem_bytes": 40,
+        "inactive_file_bytes": 3000,
+        "working_set_bytes": 3500,
+        "oom_kill": 0,
+    }
+    monkeypatch.setattr(worker_memory, "read_cgroup_memory", lambda: cgroup)
+    rows = [
+        {
+            "workspace_id": "ws_aaaaaaaaaaaaaaaa",
+            "pid": 11,
+            "uptime_s": 5,
+            "rss_bytes": 100,
+            "anon_bytes": 60,
+        },
+        {
+            "workspace_id": "ws_bbbbbbbbbbbbbbbb",
+            "pid": 12,
+            "uptime_s": 900,
+            "rss_bytes": 900,
+            "anon_bytes": 800,
+        },
+    ]
+    monkeypatch.setattr(hub.gateway.supervisor, "worker_snapshot", lambda: rows, raising=False)
+    code, data, _ = instance(hub, "deploy", headers)
+    assert code == 200
+    memory = data["memory"]
+    assert memory["cgroup"] == cgroup
+    assert set(memory["gateway"]) == {"rss_bytes", "anon_bytes", "file_bytes"}
+    assert memory["gateway"]["rss_bytes"] > 0 and memory["gateway"]["anon_bytes"] > 0
+    assert memory["worker_count"] == 2
+    assert (memory["workers_rss_bytes"], memory["workers_anon_bytes"]) == (1000, 860)
+    # Largest first; each row says whose worker it is, how long it has run and what it holds.
+    assert [w["workspace_id"] for w in memory["workers"]] == [
+        "ws_bbbbbbbbbbbbbbbb",
+        "ws_aaaaaaaaaaaaaaaa",
+    ]
+    assert set(memory["workers"][0]) == {
+        "workspace_id",
+        "pid",
+        "uptime_s",
+        "rss_bytes",
+        "anon_bytes",
+        "file_bytes",
+    }
+
+
+def test_deploy_memory_view_never_breaks_the_deploy_view(hub, monkeypatch):
+    clock(hub)
+    headers = cookie(hub)
+    from mempalace import worker_memory
+
+    def broken(*args, **kwargs):
+        raise OSError("fixture failure")
+
+    monkeypatch.setattr(worker_memory, "read_cgroup_memory", broken)
+    code, data, _ = instance(hub, "deploy", headers)
+    assert code == 200 and data["memory"] is None
+    assert data["commit_source"] and "data_free_bytes" in data
+    # Without a cgroup (a laptop, another OS) the process figures still show.
+    monkeypatch.setattr(worker_memory, "read_cgroup_memory", lambda: None)
+    memory = instance(hub, "deploy", headers)[1]["memory"]
+    assert memory["cgroup"] is None and memory["gateway"]["rss_bytes"] > 0
+
+
+def test_deploy_memory_lists_a_bounded_number_of_workers(hub, monkeypatch):
+    clock(hub)
+    from commonplace.web import admin
+
+    rows = [
+        {"workspace_id": f"ws_{i:016x}", "pid": i, "uptime_s": i, "rss_bytes": i, "anon_bytes": i}
+        for i in range(1, 200)
+    ]
+    monkeypatch.setattr(hub.gateway.supervisor, "worker_snapshot", lambda: rows, raising=False)
+    memory = admin.memory_view(hub.gateway)
+    assert memory["worker_count"] == 199 and len(memory["workers"]) == admin.MEMORY_WORKER_ROWS
+    assert memory["workers"][0]["rss_bytes"] == 199
+
+
 def test_backup_receipts_projection(hub, tmp_path, monkeypatch):
     clock(hub)
     monkeypatch.setenv("COMMONPLACE_BACKUP_STATUS_DIR", str(tmp_path))
