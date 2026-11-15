@@ -181,7 +181,12 @@ for (const zoom of [1, .5, .25]) for (const one of bundleCases) test(`compact pr
   const chip = /<rect class="dc-bundle-chip" x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(own), box = { x: Number(chip[1]), y: Number(chip[2]), width: Number(chip[3]), height: Number(chip[4]) };
   const sign = side === 'left' || side === 'top' ? -1 : 1, centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   assert.ok(sign * (horizontal ? centre.x - at.x : centre.y - at.y) > Number(radius), 'the count is on the outer side of the mark');
-  assert.ok(horizontal ? Math.abs(centre.y - at.y) < .01 : Math.abs(centre.x - at.x) < .01, 'the count lines up with the mark along the edge');
+  for (const [from, to] of [...places.values()].map(place => place.points.map(p => ({ x: p.x * zoom, y: p.y * zoom }))).flatMap(points => points.slice(1).map((p, i) => [points[i], p]))) {
+    for (let t = 0; t <= 1; t += .002) {
+      const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t;
+      assert.ok(!(x > box.x - 1.5 && x < box.x + box.width + 1.5 && y > box.y - 1.5 && y < box.y + box.height + 1.5), 'no stroke runs under the count');
+    }
+  }
   assert.ok(box.x >= hx || box.x + box.width <= -hx || box.y >= hy || box.y + box.height <= -hy, 'the count stays off the card, so it cannot meet its name, role or status');
   assert.ok(Number(radius) < 6 && Math.abs(horizontal ? at.x : at.y) + Number(radius) <= (horizontal ? hx : hy) + Number(radius), 'the mark only reaches over the card edge by its radius');
   const text = /<text class="dc-node-name" x="(-?[\d.]+)"/.exec(scene), status = /class="dc-node-status"[^>]*transform="translate\((-?[\d.]+) 0\)"/.exec(scene);

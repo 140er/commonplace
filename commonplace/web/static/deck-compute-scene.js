@@ -85,8 +85,9 @@ function leaves(path, at, k, hx, hy) {
   }
   return rel[rel.length-1];
 }
-// The end mark sits on the card edge where most of the strokes leave it; its count lies beyond it, away from the card.
-function bundleHTML(node, bundle, at, width, height) {
+// The end mark sits on the card edge where most of the strokes leave it. Its count lies beyond the mark, away from the
+// card, and as near as it can be without covering a stroke, another card or this card.
+function bundleHTML(node, bundle, at, width, height, phone) {
   const hx = width/2, hy = height/2, text = String(bundle.count), chip = Math.max(18, text.length*7+10);
   const exits = bundle.paths.map(path => leaves(path, at, bundle.k, hx, hy));
   const sideOf = p => Math.abs(p.x) >= hx-.5 ? (p.x < 0 ? 'left' : 'right') : (p.y < 0 ? 'top' : 'bottom');
@@ -95,17 +96,36 @@ function bundleHTML(node, bundle, at, width, height) {
   const across = side === 'left' || side === 'right' ? 'y' : 'x', limit = (across === 'y' ? hy : hx)-10;
   const along = Math.max(-limit, Math.min(limit, met.reduce((sum, p) => sum+p[across], 0)/met.length));
   const out = side === 'left' || side === 'top' ? -1 : 1, edge = across === 'y' ? hx : hy;
-  const reach = MARK+CHIP_GAP+(across === 'y' ? chip : CHIP_HEIGHT)/2;
   const round = value => Math.round(value*100)/100, mark = across === 'y' ? { x: out*edge, y: round(along) } : { x: round(along), y: out*edge };
-  const centre = across === 'y' ? { x: out*(edge+reach), y: mark.y } : { x: mark.x, y: out*(edge+reach) };
-  return `<g class="topo-bundle dc-bundle" data-bundle-node="${e(node.key)}" data-count="${bundle.count}"><circle class="dc-bundle-mark" data-side="${side}" cx="${mark.x}" cy="${mark.y}" r="${MARK}"/><rect class="dc-bundle-chip" x="${centre.x-chip/2}" y="${centre.y-CHIP_HEIGHT/2}" width="${chip}" height="${CHIP_HEIGHT}" rx="9"/><text class="topo-bundle-count" x="${centre.x}" y="${centre.y+4}" text-anchor="middle">${text}</text></g>`;
+  const size = { width: chip, height: CHIP_HEIGHT }, depth = across === 'y' ? chip : CHIP_HEIGHT;
+  const rel = p => ({ x: (p.x-at.x)*bundle.k, y: (p.y-at.y)*bundle.k });
+  const strokes = bundle.strokes.map(points => points.map(rel));
+  const cards = [{ x: -hx, y: -hy, width, height }, ...bundle.others.map(other => { const c = cardSize(other.node, phone), o = rel(other.at); return { x: o.x-c.width/2, y: o.y-c.height/2, width: c.width, height: c.height }; })];
+  const meets = (box, a, b) => {
+    let low = 0, high = 1;
+    const dx = b.x-a.x, dy = b.y-a.y;
+    for (const [p, q] of [[-dx, a.x-box.x+2], [dx, box.x+box.width-a.x+2], [-dy, a.y-box.y+2], [dy, box.y+box.height-a.y+2]]) {
+      if (!p) { if (q < 0) return false; } else { const t = q/p; if (p < 0) low = Math.max(low, t); else high = Math.min(high, t); if (low > high) return false; }
+    }
+    return true;
+  };
+  const touches = box => cards.some(card => box.x < card.x+card.width+2 && box.x+box.width > card.x-2 && box.y < card.y+card.height+2 && box.y+box.height > card.y-2) || strokes.some(points => points.slice(1).some((p, i) => meets(box, points[i], p)));
+  const place = (distance, shift) => {
+    const reach = MARK+CHIP_GAP+distance+depth/2, centre = across === 'y' ? { x: out*(edge+reach), y: mark.y+shift } : { x: mark.x+shift, y: out*(edge+reach) };
+    return { centre, box: { x: centre.x-size.width/2, y: centre.y-size.height/2, width: size.width, height: size.height } };
+  };
+  const tries = [];
+  for (const distance of [0, 6, 12, 18, 24, 32, 44, 60, 80, 110]) for (let shift = -96; shift <= 96; shift += 6) tries.push([distance, shift]);
+  tries.sort((a, b) => a[0]+Math.abs(a[1]) - b[0]-Math.abs(b[1]));
+  const { centre, box } = tries.map(([distance, shift]) => place(distance, shift)).find(item => !touches(item.box)) || place(0, 0);
+  return `<g class="topo-bundle dc-bundle" data-bundle-node="${e(node.key)}" data-count="${bundle.count}"><circle class="dc-bundle-mark" data-side="${side}" cx="${mark.x}" cy="${mark.y}" r="${MARK}"/><rect class="dc-bundle-chip" x="${round(box.x)}" y="${round(box.y)}" width="${box.width}" height="${box.height}" rx="9"/><text class="topo-bundle-count" x="${round(centre.x)}" y="${round(centre.y+4)}" text-anchor="middle">${text}</text></g>`;
 }
 function nodeHTML(node, at, { sel, on, dim, words, linkEnd, bundle }, phone) {
   const { width, height } = cardSize(node, phone), left = -width/2, textX = left+(phone ? 12 : 50), room = width-(phone ? 40 : 78);
   const name = wrapLines(node.name,room,13,1)[0], role = wrapLines(node.role || '',room,12,1)[0];
   const kind = KINDS[node.kind] || KINDS.unknown;
   const label = `${node.name}${node.role ? `, ${node.role}` : ''}${node.status === 'none' ? '' : `. ${words[node.status] || 'Not reported'}`}${node.stale ? '. Stale' : ''}${node.missing ? '. Not recorded' : ''}${bundle ? `. ${bundle.count} links` : ''}`;
-  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${linkEnd ? ' dc-link-end' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${nodeStatusMark(node, width/2-16, phone)}${bundle ? bundleHTML(node, bundle, at, width, height) : ''}</g></g>`;
+  return `<g class="topo-node dc-node s-${node.status}${sel ? ' sel' : ''}${linkEnd ? ' dc-link-end' : ''}${on ? ' on' : ''}${dim ? ' dim' : ''}${node.stale || node.missing ? ' stale' : ''}" data-key="${e(node.key)}" transform="translate(${at.x} ${at.y})" tabindex="0" role="button" aria-pressed="${sel}" aria-label="${e(label)}"><title>${e(label)}</title><g class="dc-node-card"><rect class="dc-node-surface" x="${left}" y="-24" width="${width}" height="${height}" rx="10"/>${phone ? '' : `<g class="dc-node-tile" transform="translate(${left+24} 0)"><rect x="-14" y="-14" width="28" height="28" rx="7"/><g class="dc-node-icon" transform="scale(.38)">${kind.icon}</g></g>`}<text class="dc-node-name" x="${textX}" y="${role ? -4 : 4}">${e(name)}</text>${role ? `<text class="dc-node-role" x="${textX}" y="14">${e(role)}</text>` : ''}${nodeStatusMark(node, width/2-16, phone)}${bundle ? bundleHTML(node, bundle, at, width, height, phone) : ''}</g></g>`;
 }
 function linkHTML(link, at, names, { on, dim, sel, words }) {
   const states = [...new Set([words[link.status.from],words[link.status.to]].filter(Boolean))].join('; ');

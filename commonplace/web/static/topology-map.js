@@ -167,10 +167,11 @@ export function renderScene(model, positions, { route = null, selected = null, s
       if (!bundles.has(key)) bundles.set(key, []);
       bundles.get(key).push({ id: link.id, state: link.status[end], end });
     }
+    const strokes = presentation ? [...places.values()].map(at => at.points || [{ x: at.x1, y: at.y1 }, { x: at.x2, y: at.y2 }]) : [];
     for (const [key, ends] of bundles) {
       if (ends.length <= 3) { bundles.delete(key); continue; }
       // The presentation also learns where each stroke leaves this node, so its mark can sit where they meet.
-      if (presentation) { bundles.set(key, { count: ends.length, k, paths: ends.map(({ id, end }) => { const at = places.get(id), points = at.points || [{ x: at.x1, y: at.y1 }, { x: at.x2, y: at.y2 }]; return end === "from" ? points : [...points].reverse(); }) }); continue; }
+      if (presentation) { bundles.set(key, { count: ends.length, k, strokes, others: model.nodes.filter(node => node.key !== key && positions[node.key]).map(node => ({ node, at: positions[node.key] })), paths: ends.map(({ id, end }) => { const at = places.get(id), points = at.points || [{ x: at.x1, y: at.y1 }, { x: at.x2, y: at.y2 }]; return end === "from" ? points : [...points].reverse(); }) }); continue; }
       const remaining = ends.filter(end => end.id !== selectedLink);
       // Match the status reader: worst known state; unknown only with no known state.
       const state = ["down", "degraded", "up", "unknown"].find(state => remaining.some(end => end.state === state)) || "none";
