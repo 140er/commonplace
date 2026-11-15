@@ -425,7 +425,9 @@ function navigation() {
   root.querySelector(".shell")?.setAttribute("data-screen", state.base === "#/decide" ? "decide" : "");
   // The phone top bar already names the project, so the board hides its own title there (m1).
   root.querySelector(".shell")?.setAttribute("data-view", view);
-  state.deck?.appearance?.sync(state.base);
+  // shell() draws this before route() sets state.base, so until the first route the stage reads the address: its first paint is final.
+  const hash = globalThis.location?.hash || "#/";
+  state.deck?.appearance?.sync(state.screen === 0 ? (hash === "#/" ? state.deck.home() : hash) : state.base);
   void state.deck?.shell?.sync();
   state.shellSync?.();
 }
