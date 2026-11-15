@@ -1,0 +1,3 @@
+- **Tests:**
+
+  - `tests/deck_pipeline.mjs`, through `tests/test_deck_pipeline.py`, checks the Pipeline view over `tests/pipeline_fixture.json` (the server's own example at a fixed time): block order, states, Amsterdam times and durations, waits on the connectors, the slowest step, lead time, retries, link and escape rules, the empty state, the phone stacking rules, reduced motion and the account-menu and More-sheet entries. `tests/test_deck_pipeline_browser.py` lays the real view out at 1280 and 390 pixels (PIPELINE_SHOTS writes screenshots) and skips without Playwright or Chrome. `tests/test_pipeline_compute.py` keeps the fixture equal to the server's answer.

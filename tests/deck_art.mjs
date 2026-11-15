@@ -23,7 +23,7 @@ function assertArt(html, name) {
 }
 
 test('the art helper is hidden, text-free and refuses names it does not know', () => {
-  assert.deepEqual(Object.keys(ART).sort(), ['bots', 'clear', 'column', 'header', 'loading', 'rail', 'rule', 'search', 'step-choose', 'step-preview', 'step-progress', 'step-report']);
+  assert.deepEqual(Object.keys(ART).sort(), ['bots', 'clear', 'column', 'header', 'loading', 'pipeline', 'rail', 'rule', 'search', 'step-choose', 'step-preview', 'step-progress', 'step-report']);
   for (const name of Object.keys(ART)) {
     assertArt(artHTML(name), name);
     assert.equal(text(artHTML(name)), '');

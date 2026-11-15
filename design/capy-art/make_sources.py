@@ -188,6 +188,26 @@ def main():
     paint(img, mark(0.65, 4, 1), vgrad(1, 11, 1.0, 0.4))
     write_png(HERE / "rail.png", img)
 
+    # pipeline: three blocks joined by arrows, the first full, the second half, the third empty.
+    img = canvas(44, 30)
+    for x0, fill in ((1, 1.0), (17, 0.5), (33, 0.0)):
+        paint(img, stroke_only(rect(x0, 9, x0 + 10, 21), 0.9), lambda x, y: 0.95)
+        if fill:
+            paint(img, rect(x0 + 2, 11, x0 + 2 + 6 * fill, 19), vgrad(11, 19, 0.9, 0.35))
+    for x0 in (12, 28):
+        paint(
+            img,
+            union(
+                segment(x0, 15, x0 + 3, 15, 1.2),
+                segment(x0 + 2, 13, x0 + 4, 15, 1.2),
+                segment(x0 + 2, 17, x0 + 4, 15, 1.2),
+            ),
+            lambda x, y: 0.9,
+        )
+    for x in range(1, 43):
+        img[26][x] = 0.4
+    write_png(HERE / "pipeline.png", img)
+
     # Import steps, 24 x 12 each: the mark plus one cue.
     img = canvas(24, 12)
     paint(img, mark(0.65, 1, 1), vgrad(1, 11, 1.0, 0.4))

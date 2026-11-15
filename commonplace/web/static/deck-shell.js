@@ -91,7 +91,7 @@ export function shellTrees(options = {}) {
 export function shellThreads({ directory = {} } = {}) {
   return rows(directory.conversations).map(item => `<a class="deck-thread-row" href="${conversationHref(item.id)}">${e(item.title || 'Conversation')}</a>`).join('');
 }
-const accountLinks = (options, { count = false } = {}) => { const { can_admin, can_manage_instance } = options; return `<a href="#/needs">Needs me${count ? badge(waiting(options), 'need', 'waiting on you') : ''}</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`; };
+const accountLinks = (options, { count = false } = {}) => { const { can_admin, can_manage_instance } = options; return `<a href="#/needs">Needs me${count ? badge(waiting(options), 'need', 'waiting on you') : ''}</a><a href="#/boards">Projects</a><a href="#/console">Console</a><a href="#/pipeline">Pipeline</a><a href="#/rules">Rules</a>${can_admin === true ? '<a href="#/admin">Admin</a>' : ''}${can_manage_instance === true ? '<a href="#/instance-admin">Instance console</a>' : ''}<button data-action="shortcuts">Shortcuts</button><button data-action="logout">Sign out</button>`; };
 export function renderShellBar(options) {
   const { workspace = 'Commonplace', user = '', hash = '', sections, section } = options;
   const role = { owner: 'Owner', member: 'Member' }[options.role];
@@ -106,7 +106,7 @@ export function renderShellBar(options) {
 }
 export function renderShellTop(options) {
   const { hash = '', section, user = '', board = null } = options;
-  const label = SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/memory') ? 'Memory' : hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : board?.slug ? 'Board' : 'Commonplace');
+  const label = SECTIONS.find(([id]) => id === section)?.[1] || (hash.startsWith('#/memory') ? 'Memory' : hash === '#/pipeline' ? 'Pipeline' : hash.startsWith('#/board') ? 'Board' : ['#/', '#/home'].includes(hash) ? 'Home' : board?.slug ? 'Board' : 'Commonplace');
   const boardPage = label === 'Board' && (!!board?.slug || /^#\/board(?:\/[^/?#]+)?(?:\?.*)?$/.test(hash));
   return `<header class="m-top" data-deck="top"><a class="deck-brand" href="#/" aria-label="Commonplace home">${brand}</a>${boardPage ? '' : `<b>${label}</b>`}<span class="spacer"></span><button class="iconbtn" data-action="palette" aria-label="Search or do (command palette)">${icon('search')}</button><button class="deck-phone-avatar" data-action="switch-workspace" aria-label="Account and workspace" data-deck-waiting="${waiting(options) > 0}">${e(initials(user))}</button></header>`;
 }
