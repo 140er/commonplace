@@ -423,6 +423,8 @@ def _token(local, policy, name="review"):
 # Develop after PR #14: the baseline "off" must match. A commit in
 # this branch's own history, so any clone of the branch can read it.
 DEVELOP_BASELINE = "c07bb354"
+# Generous so a loaded machine never trips it; only a wedged child does.
+EXCHANGE_DEADLINE = 120
 
 # What tools gained after the baseline is derived, never listed: a tool that is
 # absent from the pinned tool list, or an argument absent from a pinned tool's
@@ -503,6 +505,101 @@ def test_baseline_normalizes_only_exact_new_startup_guidance():
     assert _as_baseline(actual, actual) == actual
 
 
+def _module_level_imports(path, package):
+    """Dotted names ``path`` imports when it is imported (function bodies excluded)."""
+    tree = ast.parse(path.read_text())
+    names, stack = set(), list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                parts = package.split(".")[: len(package.split(".")) - node.level + 1]
+                base = ".".join(parts + ([node.module] if node.module else []))
+            names.add(base)
+            names.update(f"{base}.{alias.name}" for alias in node.names)
+        else:
+            stack.extend(ast.iter_child_nodes(node))
+    return names
+
+
+def _module_file(root, name):
+    """The source file of dotted module ``name`` under ``root``, or None."""
+    base = root.joinpath(*name.split("."))
+    for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _carry_missing_imports(snapshot, overlaid):
+    """Copy from this tree the modules the overlaid files import and ``snapshot`` lacks."""
+    pending = [
+        path
+        for entry in overlaid
+        for path in ([entry] if entry.is_file() else sorted(entry.rglob("*.py")))
+    ]
+    while pending:
+        path = pending.pop()
+        package = ".".join(path.relative_to(snapshot).with_suffix("").parts[:-1])
+        for name in _module_level_imports(path, package):
+            if name.split(".")[0] not in ("commonplace", "mempalace"):
+                continue
+            source = _module_file(ROOT, name)
+            if source is None or _module_file(snapshot, name) is not None:
+                continue
+            # A missing module also needs its missing parent packages.
+            parts = name.split(".")
+            for depth in range(1, len(parts) + 1):
+                module = ".".join(parts[:depth])
+                if _module_file(snapshot, module) is not None:
+                    continue
+                source = _module_file(ROOT, module)
+                target = snapshot / source.relative_to(ROOT)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if source.name == "__init__.py" and module in extensions.MODULES:
+                    # An extension package the baseline does not enable stays
+                    # inert: its submodules are carried, its install hook is not.
+                    target.write_text("")
+                    continue
+                shutil.copy2(source, target)
+                pending.append(target)
+
+
+def test_baseline_carries_modules_new_board_imports_need(tmp_path, monkeypatch):
+    """A module the overlaid code imports and the baseline lacks is copied, not pinned."""
+    current, snapshot = tmp_path / "current", tmp_path / "snapshot"
+    for tree in (current, snapshot):
+        (tree / "commonplace" / "boards").mkdir(parents=True)
+        (tree / "commonplace" / "__init__.py").write_text("")
+    (current / "commonplace" / "extension_pkg").mkdir()
+    (current / "commonplace" / "extension_pkg" / "__init__.py").write_text("raise SystemExit")
+    (current / "commonplace" / "extension_pkg" / "leaf.py").write_text("LEAF = 1\n")
+    (current / "commonplace" / "redact.py").write_text("from . import extension_pkg\n")
+    (current / "commonplace" / "pinned.py").write_text("CURRENT = True\n")
+    (snapshot / "commonplace" / "pinned.py").write_text("PINNED = True\n")
+    board = snapshot / "commonplace" / "boards" / "assignees.py"
+    board.write_text(
+        "from commonplace import redact, pinned\n"
+        "from commonplace.extension_pkg import leaf\n"
+        "def lazy():\n    from commonplace import missing_lazy\n"
+    )
+    monkeypatch.setitem(globals(), "ROOT", current)
+    monkeypatch.setattr(extensions, "MODULES", ("commonplace.extension_pkg",))
+    _carry_missing_imports(snapshot, [snapshot / "commonplace" / "boards"])
+    carried = snapshot / "commonplace"
+    assert (carried / "redact.py").read_text() == "from . import extension_pkg\n"
+    assert (carried / "extension_pkg" / "leaf.py").read_text() == "LEAF = 1\n"
+    # An extension package stays inert and a module the baseline has stays pinned.
+    assert (carried / "extension_pkg" / "__init__.py").read_text() == ""
+    assert (carried / "pinned.py").read_text() == "PINNED = True\n"
+    assert not (carried / "missing_lazy.py").exists()
+
+
 @pytest.fixture(scope="module")
 def legacy(tmp_path_factory):
     snapshot = tmp_path_factory.mktemp("develop-baseline")
@@ -525,19 +622,6 @@ def legacy(tmp_path_factory):
         snapshot / "commonplace" / "rules",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    shutil.copy2(ROOT / "commonplace" / "callstack.py", snapshot / "commonplace" / "callstack.py")
-    # Current board code imports the cards:decide grant rules: a leaf module with
-    # no commonplace imports, so the pinned gateway, policy and handoff stay as-is.
-    shutil.copy2(
-        ROOT / "commonplace" / "decide_grant.py", snapshot / "commonplace" / "decide_grant.py"
-    )
-    # Current rules checks import the read deadline: a leaf module (stdlib only), so
-    # the pinned gateway, policy and handoff stay as-is.
-    shutil.copy2(ROOT / "mempalace" / "deadline.py", snapshot / "mempalace" / "deadline.py")
-    # Current stores take their busy timeout and lock retry from a stdlib-only leaf module.
-    shutil.copy2(ROOT / "commonplace" / "db_busy.py", snapshot / "commonplace" / "db_busy.py")
-    # Current board and rules stores create files through the admission gate.
-    shutil.copy2(ROOT / "commonplace" / "admission.py", snapshot / "commonplace" / "admission.py")
     # Overlaid board tools use the current registry contract; handoff remains
     # absent from the baseline's enabled modules below.
     shutil.copy2(ROOT / "commonplace" / "extensions.py", snapshot / "commonplace" / "extensions.py")
@@ -558,12 +642,22 @@ def legacy(tmp_path_factory):
     projects = snapshot / "commonplace" / "projects"
     projects.mkdir(exist_ok=True)
     (projects / "__init__.py").write_text("")
-    for name in ("orchestration.py", "limits.py"):
-        shutil.copy2(ROOT / "commonplace" / "projects" / name, projects / name)
-    # Current board storage depends on the opt-in SQLite adapter. Supply only
-    # that dependency; the archived handoff/search/storage sources stay pinned.
     shutil.copy2(
-        ROOT / "mempalace" / "sqlite_crypto.py", snapshot / "mempalace" / "sqlite_crypto.py"
+        ROOT / "commonplace" / "projects" / "orchestration.py", projects / "orchestration.py"
+    )
+    # Whatever else the overlaid board, rules and projects code imports at module
+    # level and the baseline lacks (leaf modules such as the stores' busy timeout,
+    # the read deadline or the redaction helpers, and the SQLite adapter) is carried
+    # over by import, so a new import on develop cannot break the pinned snapshot.
+    # Modules the baseline has stay pinned.
+    _carry_missing_imports(
+        snapshot,
+        [
+            snapshot / "commonplace" / "boards",
+            snapshot / "commonplace" / "rules",
+            snapshot / "commonplace" / "extensions.py",
+            projects / "orchestration.py",
+        ],
     )
     # A separate interpreter keeps relative and dynamic imports, policies and
     # extension registrations entirely on the pinned source tree.
@@ -661,9 +755,19 @@ finally:
     )
 
     def exchange(action, **values):
-        process.stdin.write(json.dumps({"action": action, **values}) + "\n")
-        process.stdin.flush()
-        line = process.stdout.readline()
+        # A reply is never awaited without a deadline: a wedged child is killed, so
+        # the read ends and the failure names the child's own stderr.
+        watchdog = threading.Timer(EXCHANGE_DEADLINE, process.kill)
+        watchdog.start()
+        try:
+            try:
+                process.stdin.write(json.dumps({"action": action, **values}) + "\n")
+                process.stdin.flush()
+            except BrokenPipeError:
+                pass  # the child is gone: its stderr below says why
+            line = process.stdout.readline()
+        finally:
+            watchdog.cancel()
         assert line, process.stderr.read()
         return json.loads(line)
 
@@ -682,9 +786,12 @@ finally:
             cli=lambda arguments: exchange("cli", arguments=arguments),
         )
     finally:
-        process.stdin.close()
         try:
-            process.wait(timeout=5)
+            process.stdin.close()
+        except BrokenPipeError:
+            pass  # a dead child is judged by its exit status below
+        try:
+            process.wait(timeout=EXCHANGE_DEADLINE)
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)

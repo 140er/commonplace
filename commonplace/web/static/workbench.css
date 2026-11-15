@@ -201,7 +201,10 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
 @media (max-width: 699px) {
   .shell > .rail { display: none; }
   .m-top { display: flex; min-width: 0; }
-  .m-top .projbtn { min-width: 0; overflow-wrap: anywhere; font-size: 17px; }
+  .m-top .projbtn { min-width: 0; font-size: 17px; }
+  /* A long project name is cut with an ellipsis, never broken inside the word; the full name stays in the button's label. */
+  .m-top .projbtn .pn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-top :is(.m-menu, .iconbtn, .m-settings) { flex: none; }
   .m-top .m-settings { min-height: 44px; }
   .m-tabs { display: grid; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   .m-tabs a { min-width: 0; overflow-wrap: anywhere; }
@@ -301,4 +304,15 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   :root[data-ui="deck"] .center:has(.memory-import) > #content { padding: 24px 16px; }
   .memory-import { padding: 0; background: none; }
   .memory-import-summary > div { grid-template-columns: 1fr; gap: 4px; }
+}
+
+/* The key hint is for a keyboard; a phone or any coarse pointer has no Enter or Esc to press. */
+@media (pointer: coarse), (max-width: 699px) {
+  .workbench-board form[data-board-add] .composer-keys { display: none; }
+}
+
+/* Classic phone: the tab bar stays at the foot of the screen, also on a short page and while a long one scrolls. */
+@media (max-width: 699px) {
+  :root:not([data-ui="deck"]) .shell:not([data-view="bots"]) .center { min-height: 100dvh; }
+  :root:not([data-ui="deck"]) .shell:not([data-view="bots"]) #phone-tabs { margin-top: auto; position: sticky; bottom: 0; z-index: 10; }
 }

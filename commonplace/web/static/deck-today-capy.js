@@ -1,11 +1,23 @@
 import { activityEvent, groupActivity, activityHTML } from './deck-home-activity.js';
 export { activityText } from './deck-home-activity.js';
 import { escape as e } from './api.js';
-import { addStyles, placeMenu, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone, needsMeCount } from './deck-home-today.js';
+import { addStyles, placeMenu, primaryAction, needsCards, removeNeed, todayKey, stamp, displayText, actionRequest, actionRow, avatar, timeHTML, stateName, stateTone, needsMeCount } from './deck-home-today.js';
 import { previewText } from './needs-me.js';
 import { artHTML } from './deck-art.js';
 
 export const TITLE = 'Today';
+
+/** What approving does, in one plain line under the Approve button. */
+export const approveNote = who => `Approve means yes: ${who || 'the coworker'} goes ahead with this.`;
+/** The names a reply dialog takes from what the person pressed: Answer opens "Answer", Reply opens "Reply". */
+export const replyWords = (action, answering) => action === 'approve' ? { title: 'Reason for approval', label: 'Your reason', submit: 'Approve' } : answering ? { title: 'Answer', label: 'Your answer', submit: 'Send answer' } : { title: 'Reply', label: 'Your reply', submit: 'Send reply' };
+/** The line shown once a send succeeded: what was sent, to whom, and where the card went. */
+export function sentLine(card, action, request, who, answering = false) {
+  const name = who || 'the coworker';
+  if (action === 'approve') return request?.options?.body?.then === 'done' ? 'Accepted. The card is done and left Today.' : `Approved. ${name} goes ahead. The card left Today and is back on its Board.`;
+  if (action === 'reject') return `Turned down. The card went back to ${name} and left Today.`;
+  return `${answering ? 'Answer' : 'Reply'} sent to ${name}. The card left Today and is back on its Board.`;
+}
 const enc = encodeURIComponent;
 
 
@@ -17,12 +29,13 @@ export const summaryLine = (needs, date = new Date()) => `${date.toLocaleDateStr
 export function cardHTML(card, bots, { busy, errors, held, exiting, open = new Set() }, escape = e) {
   const bot = bots.find(bot => bot.board && bot.board === card.board);
   const name = bot?.name || card.bot_name;
+  const approves = primaryAction(card).action === 'approve';
   const fact = card.fact || card.bot_reason;
   const waiting = (card.actions || []).some(action => ['approve', 'answer', 'accept', 'reject'].includes(action));
   const words = card.body || card.ask || '';
   const preview = previewText(displayText(card.display_body || words));
   const full = words && words !== preview ? `<details class="bt-full" data-bt-full="${card.number}"${open.has(card.number) ? ' open' : ''}><summary>Show full text</summary><p class="bt-full-text">${escape(words)}</p></details>` : '';
-  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(displayText(name))}</b>` : ''}${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(displayText(card.display_title || card.title))}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${actionRow(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
+  return `<article class="bt-card${waiting ? ' bt-waiting' : ''}" data-bt-card="${card.number}" tabindex="-1" aria-labelledby="bt-title-${card.number}"><header>${name ? `${avatar({ name }, escape)}<b>${escape(displayText(name))}</b>` : ''}${timeHTML(card.updated_at, escape)}</header><h2 id="bt-title-${card.number}">${escape(displayText(card.display_title || card.title))}</h2>${preview ? `<p class="bt-body bt-preview">${escape(preview)}</p>` : ''}${full}${fact ? `<p class="bt-fact">${escape(displayText(fact))}</p>` : ''}${actionRow(card, { busy: busy.has(card.number) || exiting.has(stamp(card)) }, escape)}${approves ? `<p class="bt-approve-note">${escape(approveNote(name && displayText(name)))}</p>` : ''}${held.has(stamp(card)) ? '<p class="bt-held" role="status">Held for now. Still waiting on you.</p>' : ''}${errors.has(card.number) ? `<p class="bt-error" role="alert">${escape(errors.get(card.number))}</p>` : ''}</article>`;
 }
 export function botsHTML(bots, escape = e) {
   return `<section class="bt-bots"><header><h2>Your bots</h2>${artHTML('rule')}<span>Latest from each</span></header><ul>${bots.map(bot => `<li><a href="#/bots/${enc(bot.id)}">${avatar(bot, escape)}<span class="bt-bot-copy"><b>${escape(displayText(bot.name))}${bot.state ? ` <i class="bt-dot" data-tone="${stateTone(bot.state)}" aria-label="${escape(stateName(bot.state))}"></i>` : ''}</b>${bot.last?.text ? `<span>${escape(displayText(bot.last.text))}</span>` : ''}</span>${timeHTML(bot.last?.at, escape)}</a></li>`).join('')}</ul>${bots.length ? '' : `<p class="bt-empty">${artHTML('bots')}No bots yet. <a href="#/bots?new=1">New bot</a></p>`}</section>`;
@@ -34,11 +47,12 @@ export function mount(context) {
   addStyles(doc);
   const host = root.closest?.('.center') || root;
   host.classList.add('deck-today-capy');
-  root.innerHTML = `<div class="bt-scroll"><div class="bt-page"><header class="bt-title"><h1>Today</h1><p data-bt="summary">Loading…</p></header><div class="bt-grid"><div class="bt-main"><section class="bt-list" data-bt="cards" aria-label="Needs me"></section><p class="bt-keys">A Approve · H Hold · R Reply · J K Move</p><div data-bt="bots"></div></div><aside class="bt-activity" aria-labelledby="bt-activity-title"><header><h2 id="bt-activity-title">Activity</h2>${artHTML('rule')}</header><ol data-bt="activity"></ol></aside></div><p class="bt-error" data-bt="error" role="alert" hidden></p></div></div><dialog class="bt-reply"><form><h2>Reply</h2><p data-bt="reply-title"></p><label data-bt="choice-label">Choose an answer<select name="choice"></select></label><label>Your reply<textarea name="reply" maxlength="8000" rows="3"></textarea></label><p class="bt-error" data-bt="reply-error" role="alert"></p><div><button type="button" data-bt-cancel>Cancel</button><button type="submit">Send reply</button></div></form></dialog>`;
+  root.innerHTML = `<div class="bt-scroll"><div class="bt-page"><header class="bt-title"><h1>Today</h1><p data-bt="summary">Loading…</p></header><p class="bt-confirm" data-bt="confirm" role="status" hidden></p><div class="bt-grid"><div class="bt-main"><section class="bt-list" data-bt="cards" aria-label="Needs me"></section><p class="bt-keys">A Approve · H Hold · R Reply · J K Move</p><div data-bt="bots"></div></div><aside class="bt-activity" aria-labelledby="bt-activity-title"><header><h2 id="bt-activity-title">Activity</h2>${artHTML('rule')}</header><ol data-bt="activity"></ol></aside></div><p class="bt-error" data-bt="error" role="alert" hidden></p></div></div><dialog class="bt-reply" aria-labelledby="bt-reply-h"><form><h2 id="bt-reply-h">Reply</h2><p data-bt="reply-title"></p><p class="bt-reply-note" data-bt="reply-note" hidden></p><label data-bt="choice-label">Choose an answer<select name="choice"></select></label><label><span data-bt="reply-label">Your reply</span><textarea name="reply" maxlength="8000" rows="3"></textarea></label><p class="bt-error" data-bt="reply-error" role="alert"></p><div><button type="button" data-bt-cancel>Cancel</button><button type="submit">Send reply</button></div></form></dialog>`;
   const region = name => root.querySelector(`[data-bt="${name}"]`);
   const dialog = root.querySelector('dialog'), form = dialog.querySelector('form');
-  let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', focused = null, needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
+  let ctx = context, active = true, generation = 0, read, current = null, currentAction = 'reply', currentAnswering = false, confirmTimer = null, focused = null, needs = ctx.needs || {}, bots = [], events = [], seq = 0, eventEpoch = '', loaded = false;
   const busy = new Set(), errors = new Map(), held = new Set(), exiting = new Set(), settled = new Set(), leaving = new Map(), attempts = new Map(), writes = new Set(), timers = new Set(), activity = [], openGroups = new Set(), openFull = new Set();
+  const botName = card => (bots.find(bot => bot.board && bot.board === card.board)?.name || card.bot_name || '');
   function cards() {
     const list = needsCards(needs).filter(card => !settled.has(stamp(card)));
     for (const { card, index } of [...leaving.values()].sort((a, b) => a.index - b.index)) if (!list.some(item => item.number === card.number)) list.splice(Math.min(index, list.length), 0, card);
@@ -93,11 +107,15 @@ export function mount(context) {
     if (queue.status === 'rejected' && [401, 403, 404].includes(queue.reason?.status)) { needs = { count: 0 }; dialog.close(); current = null; }
     paint();
   }
-  function openReply(card, action = 'reply') {
+  function openReply(card, action = 'reply', answering = false) {
     if (action === 'reply' && !(card.actions || []).some(action => ['answer', 'accept'].includes(action))) { ctx.go?.(`#/card/${card.number}`); return; }
-    current = card; currentAction = action;
-    dialog.querySelector('h2').textContent = action === 'approve' ? 'Reason for approval' : 'Reply';
-    form.querySelector('[type="submit"]').textContent = action === 'approve' ? 'Approve' : 'Send reply';
+    current = card; currentAction = action; currentAnswering = answering;
+    const words = replyWords(action, answering);
+    dialog.querySelector('h2').textContent = words.title;
+    region('reply-label').textContent = words.label;
+    form.querySelector('[type="submit"]').textContent = words.submit;
+    region('reply-note').hidden = action !== 'approve';
+    region('reply-note').textContent = action === 'approve' ? approveNote(displayText(botName(card))) : '';
     region('reply-title').textContent = displayText(card.title);
     const choices = card.ask_options || [];
     form.elements.choice.innerHTML = '<option value="">Reply in your own words</option>' + choices.map((choice, i) => `<option value="${i}">${e(displayText(choice))}</option>`).join('');
@@ -105,12 +123,17 @@ export function mount(context) {
     form.elements.reply.value = ''; region('reply-error').textContent = '';
     dialog.showModal(); form.elements.reply.focus();
   }
+  // One short line under the heading names what was sent and where the card went; it clears itself.
+  function confirm(text) {
+    const line = region('confirm'); line.textContent = text; line.hidden = false;
+    clearTimeout(confirmTimer); confirmTimer = setTimeout(() => { line.hidden = true; line.textContent = ''; }, 8000);
+  }
   async function act(card, action, extra = {}) {
     if (!active || busy.has(card.number) || settled.has(stamp(card)) || exiting.has(stamp(card))) return;
     if (action === 'approve' && card.approval_kind?.startsWith('origin') && !extra.submit) { openReply(card, action); return; }
-    if (action === 'reply' && !extra.submit) { openReply(card); return; }
+    if (action === 'reply' && !extra.submit) { openReply(card, 'reply', extra.answering === true); return; }
     if (action === 'approve' && card.approval_kind?.startsWith('origin') && !extra.reason?.trim()) { region('reply-error').textContent = 'Write a reason for this approval.'; return; }
-    const signature = JSON.stringify([stamp(card), action, extra.reply, extra.choice, extra.reason]);
+    const signature = JSON.stringify([stamp(card), action, extra.reply, extra.choice, extra.reason]), answering = extra.answering === true || currentAnswering;
     if (!attempts.has(signature)) attempts.set(signature, globalThis.crypto.randomUUID());
     const request = actionRequest(card, action, { ...extra, key: attempts.get(signature) });
     if (!request && action === 'hold') { held.add(stamp(card)); paint(); return; }
@@ -121,8 +144,9 @@ export function mount(context) {
       if (!active) return;
       if (current?.number === card.number) { dialog.close(); current = null; }
       const at = new Date().toISOString();
-      activity.unshift({ at, text: `${action === 'approve' ? 'You approved' : action === 'reject' ? 'You turned down' : action === 'hold' ? 'You held' : 'You replied to'} ${displayText(card.title)}`, fresh: true });
+      activity.unshift({ at, text: `${action === 'approve' ? 'You approved' : action === 'reject' ? 'You turned down' : action === 'hold' ? 'You held' : answering ? 'You answered' : 'You replied to'} ${displayText(card.title)}`, fresh: true });
       leaving.set(stamp(card), { card, index: Math.max(0, cards().findIndex(item => item.number === card.number)) });
+      confirm(sentLine(card, action, request, displayText(botName(card)), answering));
       needs = removeNeed(needs, card); ctx.onNeedsChanged?.(card);
       exiting.add(stamp(card)); paint();
       const timer = setTimeout(() => {
@@ -141,7 +165,7 @@ export function mount(context) {
     if (event.target.closest?.('[data-bt-cancel]')) { dialog.close(); current = null; return; }
     const button = event.target.closest?.('[data-bt-action]'), article = button?.closest('[data-bt-card]');
     const card = cards().find(card => card.number === Number(article?.dataset.btCard));
-    if (card && button && !button.disabled) { event.preventDefault(); focused = card.number; void act(card, button.dataset.btAction); }
+    if (card && button && !button.disabled) { event.preventDefault(); focused = card.number; void act(card, button.dataset.btAction, button.matches('.bt-primary') ? { answering: true } : {}); }
   }
   function onKey(event) {
     if (dialog.open || doc?.querySelector?.('dialog[open]')) return;
@@ -156,7 +180,7 @@ export function mount(context) {
     event.preventDefault(); if (!current) return;
     if (currentAction === 'approve') { void act(current, 'approve', { submit: true, reason: form.elements.reply.value }); return; }
     const choice = current.ask_options?.[Number(form.elements.choice.value)];
-    void act(current, 'reply', { submit: true, reply: form.elements.reply.value, ...(form.elements.choice.value !== '' ? { choice } : {}) });
+    void act(current, 'reply', { submit: true, answering: currentAnswering, reply: form.elements.reply.value, ...(form.elements.choice.value !== '' ? { choice } : {}) });
   }
   function onGroupToggle(event) { const group = event.target; if (group.matches?.('.bt-more') && group.open) placeMenu(group.querySelector('[role="menu"]'), doc?.defaultView || globalThis);  if (group.matches?.('.bt-full')) { const number = Number(group.dataset.btFull); if (group.open) openFull.add(number); else openFull.delete(number); return; }
     if (!group.matches?.('[data-bt-group]')) return; if (group.open) openGroups.add(group.dataset.btGroup); else openGroups.delete(group.dataset.btGroup); }
@@ -164,7 +188,7 @@ export function mount(context) {
   root.addEventListener('click', onClick); form.addEventListener('submit', onSubmit); doc?.addEventListener('keydown', onKey, true);
   paint(); void refresh();
   return { refresh, stop() {
-    active = false; generation++; read?.abort(); writes.forEach(controller => controller.abort()); timers.forEach(clearTimeout);
+    active = false; generation++; read?.abort(); writes.forEach(controller => controller.abort()); timers.forEach(clearTimeout); clearTimeout(confirmTimer);
     dialog.close(); root.removeEventListener('toggle', onGroupToggle, true); root.removeEventListener('click', onClick); form.removeEventListener('submit', onSubmit); doc?.removeEventListener('keydown', onKey, true); host.classList.remove('deck-today-capy');
   } };
 }

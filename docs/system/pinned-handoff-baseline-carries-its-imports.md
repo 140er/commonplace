@@ -1,0 +1,7 @@
+### The pinned handoff baseline carries the modules board code imports
+
+15 Nov 2026. Every comparison case of the off-path handoff file failed in two large selections: the first with the snapshot child's import error, the rest with a broken pipe. It passed in a rerun of a different tree. It was not load: on plain develop the same cases fail without any parallel work.
+
+Why. The cases compare the current gateway with a pinned snapshot of an older commit, run in a separate interpreter. The board and rules trees come from the current tree, and every leaf module they import that the snapshot lacks was copied by name. Board code gained an import of a redaction helper and of the console authority module that the list did not name, so the snapshot child died while importing and each later case wrote to a dead pipe.
+
+Decision. The overlay follows the module-level imports of the overlaid code and copies what the baseline lacks, so a new import cannot break the snapshot again. A module the baseline already has stays pinned, imports inside functions are left alone, and an extension package the baseline does not enable is carried with an empty package file so its install hook never runs. The child's replies carry a 120 second deadline, a dead child reports its own stderr, and teardown no longer hides that report behind a broken pipe. The timing cases of the file were already marked and stay out of the behaviour gate.

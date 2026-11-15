@@ -86,7 +86,7 @@
   :root[data-ui="deck"] .m-top .deck-brand { min-height: 44px; min-width: 44px; justify-content: center; margin-inline: -10px; }
   :root[data-ui="deck"] .shell .center { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
   :root[data-ui="deck"] .shell #phone-tabs .m-tabs { height: calc(68px + env(safe-area-inset-bottom)); padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); background: var(--ground); gap: 4px; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; }
-  :root[data-ui="deck"] .shell #phone-tabs .m-tabs[data-mic="true"] { grid-template-columns: repeat(5, minmax(0, 1fr)) 46px; }
+  :root[data-ui="deck"] .shell #phone-tabs .m-tabs[data-mic="true"] { grid-template-columns: repeat(5, minmax(0, 1fr)) 54px; }
   :root[data-ui="deck"] .m-tabs :is(a, .deck-tab-more) { min-height: 52px; font-size: 11px; gap: 3px; color: var(--ink3); }
   :root[data-ui="deck"] .m-tabs .deck-tab-more { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; padding: 0; border: 0; background: transparent; font-weight: 500; }
   :root[data-ui="deck"] .m-tabs :is(a, .deck-tab-more)[aria-current] { color: var(--ink); }
@@ -99,7 +99,7 @@
   :root[data-ui="deck"] .deck-more-panel .i { color: var(--ink3); }
   :root[data-ui="deck"] .deck-more .count { position: static; margin-left: auto; }
   :root[data-ui="deck"] .m-tabs .count { position: absolute; top: 0; right: calc(50% - 22px); }
-  :root[data-ui="deck"] .deck-tab-mic { display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 0; border-radius: 15px; background: var(--violet); color: var(--ink); }
+  :root[data-ui="deck"] .deck-tab-mic { display: grid; place-items: center; width: 44px; height: 44px; margin-left: 10px; justify-self: end; align-self: center; padding: 0; border: 0; border-radius: 15px; background: var(--violet); color: var(--ink); }
   :root[data-ui="deck"] .deck-tab-mic .i { width: 22px; height: 22px; }
   /* The phone head carries the page title, so page headings hide; a dialog title is its only title and stays. */
   :root[data-ui="deck"] .shell .center h1:not(dialog h1) { display: none; }

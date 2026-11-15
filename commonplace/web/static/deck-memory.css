@@ -21,7 +21,9 @@
 :root[data-ui="deck"] .deck-memory :is(button, summary, select):focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
 :root[data-ui="deck"] .deck-memory .memory-results { flex: none; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); }
 :root[data-ui="deck"] .deck-memory .res { padding: 16px 18px; margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-family: var(--font); }
-:root[data-ui="deck"] .deck-memory .res + .res { border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .deck-memory :is(.res, .res-expand) + .res { border-top: 1px solid var(--line); }
+:root[data-ui="deck"] .deck-memory .res-expand { display: block; width: 100%; min-height: 44px; margin: 0; padding: 0 18px 12px; border: 0; background: transparent; color: var(--violet-ink); font: 500 13px/1.4 var(--font); text-align: left; cursor: pointer; }
+:root[data-ui="deck"] .deck-memory .res-expand:hover { text-decoration: underline; }
 :root[data-ui="deck"] .deck-memory .res:hover, :root[data-ui="deck"] .deck-memory .res.is-selected { background: var(--s2); }
 :root[data-ui="deck"] .deck-memory .res:focus-visible { position: relative; outline-offset: -3px; }
 :root[data-ui="deck"] .deck-memory .ex { margin: 0 0 6px; font-size: 14px; line-height: 1.55; }
@@ -95,3 +97,4 @@
   :root[data-ui="deck"] .deck-memory-dialog { width: 100%; max-width: none; max-height: calc(100dvh - 84px - env(safe-area-inset-bottom)); margin: auto 0 calc(68px + env(safe-area-inset-bottom)); padding: 16px 16px 24px; border-width: 1px 0 0; border-radius: var(--radius-dialog) var(--radius-dialog) 0 0; }
   :root[data-ui="deck"] .deck-memory-dialog .memory-import h1 { font-size: 24px; line-height: 1.25; }
 }
+:root[data-ui="deck"] .deck-memory .memory-retry { margin: 0; padding: 8px 0; color: var(--ink2); font-size: 14px; overflow-wrap: anywhere; }

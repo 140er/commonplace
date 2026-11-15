@@ -5,6 +5,7 @@
   --stage: #08080b;
   --surface-a: .94;
   --s1: rgba(20,19,25,var(--surface-a));
+  --s1-solid: #141319;
   --card: var(--s1);
   --s2: #1b1a21;
   --s3: #25242c;

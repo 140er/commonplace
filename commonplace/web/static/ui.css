@@ -138,6 +138,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px
 .memory-results { overflow-y: auto; max-height: 40%; background: none; box-shadow: inset 0 0 0 1px var(--line); }
 .memory-results button { width: 100%; text-align: left; padding: 14px 20px; display: block; }
 .memory-results button:hover { background: var(--surface); }
+.memory-results .res-expand { padding-top: 0; font-size: 13px; font-weight: 600; color: var(--accent); }
 .memory-results p { white-space: pre-wrap; margin-top: 6px; }
 .theme-0 { background: var(--strong); }
 .theme-1 { background: var(--ok); }

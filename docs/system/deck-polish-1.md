@@ -1,0 +1,5 @@
+### Deck polish, first slice
+
+- The usability re-test listed small Deck faults: Today's Answer button opened a dialog called "Reply", a sent card vanished without a word, Approve was unexplained, the phone mic crowded the tab bar, the phone top bar and bottom bar both carried a settings gear, a keyboard hint showed on phones, and the Add card sheet let the board show through.
+- Decision: the dialog takes its name from the button, a sent card leaves a short status line saying what was sent and where it went, and Approve carries one line saying it means yes. On a phone the bottom bar's Settings is the only gear; the top bar's project gear is removed because the board's own menu already opens a project's settings. The mic keeps a fixed gap to the tabs. The key hint is hidden for coarse pointers and narrow screens, and the phone sheet uses the Deck surface colour at full opacity.
+- Rejected: hiding the gear with CSS only (two code paths for one entry), and moving the mic above the bar (it would cover the list).
