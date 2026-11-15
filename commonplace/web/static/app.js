@@ -28,7 +28,7 @@ import { deriveChatState, seenStore, clearSeen } from "./chatstate.js";
 import { renderRail, renderPhoneBar, renderPhoneTabs } from "./rail.js";
 import { boardView as renderBoard, bindBoard, cardId, cardColumn, chatTag, loadChatTimes, roveTo } from "./board.js";
 import { drawerCopy } from "./deck-board.js";
-import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal } from "./details.js";
+import { createDetails, canRemoveAssignment, assignmentPickup, deckAssignmentForm, assignmentRefusal, showCardPreview } from "./details.js";
 import { reviewerChange } from "./card-reviewer.js";
 import { addBlockers, parseBlockerNumbers, removeBlocker } from "./blockers.js";
 import { lifecycleRequest, placeLifecycle } from "./lifecycle.js";
@@ -82,7 +82,7 @@ const state = {
   boardColumn: null, justAdded: null, chatHasMore: false, chatLoading: false, chatObserver: null, chatVisible: new Set(), chatTaskRequests: new Map(),
   toggled: new Set(), expandedChildren: new Set(), rulesWaiting: 0, botsWaiting: 0, chatTimes: new Map(),
   phonePushPending: false, underChat: null, fromChat: null, detailsSheet: false, rebase: null,
-  queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false,
+  queue: null, pollFails: 0, queueFocus: "", queueShownAt: 0, queueField: false, queueDirty: false, cardRead: null,
 };
 // The Deck look (the default; classic is the explicit opt-out): its bar, its own screens and the Look switch in Settings (deck.js).
 state.deck = createDeck({
@@ -227,6 +227,8 @@ function restore(saved) {
   root.querySelectorAll("[data-draft]").forEach((input) => {
     if (state.drafts.has(input.dataset.draft)) input.value = state.drafts.get(input.dataset.draft);
   });
+  // The Who hint under a restored choice says what that choice does.
+  root.querySelector('[data-board-add] select[name="assignee"]')?.dispatchEvent(new Event("change", { bubbles: true }));
   const scope = (saved?.scope && root.querySelector(`#${saved.scope}`)) || root;
   if (saved?.key) {
     const input = scope.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
@@ -547,7 +549,7 @@ function boardView() {
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
   const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column });
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
@@ -722,11 +724,14 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
   panel.hidden = false;
   const opening = state.card?.number !== number;
   const tab = opening ? "details" : panel.querySelector('[data-details-tab][aria-selected="true"]')?.dataset.detailsTab || "details";
-  if (opening) showLoading(panel, "Loading card…", { art: "loading" });
+  if (opening && !panel.querySelector(`[data-card-preview="${number}"]`)) showLoading(panel, "Loading card…", { art: "loading" });
   const request = ++state.panelRequest;
   const chatOrigin = state.chatDetail?.number === number ? state.chatDetail.row : null;
+  // The read started when the card was opened is used once; a refresh of the open card reads again.
+  const early = opening && state.cardRead?.number === number && state.cardRead.epoch === epoch ? state.cardRead.read : null;
+  if (early) state.cardRead = null;
   try {
-    const card = await api(`/api/cards/${number}`);
+    const card = await (early || api(`/api/cards/${number}`));
     if (request !== state.panelRequest || epoch !== state.screen || state.route !== `#/card/${number}`) return;
     // The form may have opened while this read was in flight. Keep state.card too: Save checks the version the person started from.
     if (!opening && (panel.querySelector(".assignment-refusal") || (keepForm && panelForm()))) return;
@@ -767,11 +772,22 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
 }
+// The agents Who can offer besides people, as the server lists them for this person (with what each one starts).
+// A failed read leaves the field as it was; a changed list redraws the form around the words already typed.
+async function loadBoardAgents(slug) {
+  if (!slug) return;
+  let agents = [];
+  try { const body = await api(`/api/boards/${enc(slug)}/assignees`); agents = Array.isArray(body?.agents) ? body.agents : []; } catch { /* the form keeps people only */ }
+  if (state.boardAgents?.slug === slug && JSON.stringify(state.boardAgents.agents) === JSON.stringify(agents)) return;
+  state.boardAgents = { slug, agents };
+  if (state.addingCard && currentBoard()?.slug === slug) { const saved = remember(); boardView(); restore(saved); }
+}
 function newCardForm(edit = null) {
   voice.stop();
   if (!edit && state.base.startsWith("#/board/") && !state.base.endsWith("/chat")) {
     const saved = remember(); state.addingCard = true; boardView(); restore(saved);
     root.querySelector('[data-board-add] [name="title"]')?.focus();
+    void loadBoardAgents(currentBoard()?.slug);
     return;
   }
   detailsUI?.stop(); detailsUI = null;
@@ -1492,13 +1508,31 @@ async function route() {
   // Until the named card's read arrives the panel says so, never what it held before (another card, a Needs me detail) with live buttons.
   const cardPanelHost = root.querySelector("#card-panel");
   cardPanelHost.hidden = !hash.startsWith("#/card/");
-  if (!cardPanelHost.hidden && state.card?.number !== Number(hash.slice(7))) { detailsUI?.stop(); detailsUI = null; showLoading(cardPanelHost, "Loading card…", { art: "loading" }); }
+  if (!cardPanelHost.hidden && state.card?.number !== Number(hash.slice(7))) { detailsUI?.stop(); detailsUI = null; openingCard(cardPanelHost, Number(hash.slice(7)), state.screen); }
+  else if (cardPanelHost.hidden) state.cardRead = null;
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) showLoading(root.querySelector("#content"), "Loading…");
   showError("");
   if (hash === "#/admin") { adminScreen(); return; }
   if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
   await refresh();
+}
+// Opening a card: the panel draws what the lists already know of it at once, and the card's own read
+// starts now, beside the project refresh instead of after it. A known card is drawn in full as soon as
+// its read answers; an unknown one (a shared link) waits for the refresh that tells which project it is in.
+function openingCard(host, number, epoch) {
+  const known = [state.cards, state.open, needsCards(), state.children, state.linked].flat().find((c) => c?.number === number && c.title);
+  if (state.deck?.on() === true) {
+    const board = state.boards.find((b) => b.slug === known?.board) || { slug: known?.board };
+    showCardPreview(host, number, known || null, { board, bots: state.deckBots || [], me: state.me.actor, people: state.me.people });
+  } else showLoading(host, "Loading card…", { art: "loading" });
+  const read = api(`/api/cards/${number}`);
+  state.cardRead = { number, epoch, read };
+  // The panel's own call reports a failure; this one only keeps it from going unhandled.
+  read.catch(() => {});
+  if (known) read.then(() => {
+    if (state.cardRead?.number === number && epoch === state.screen && state.route === `#/card/${number}`) void cardPanel(number, epoch);
+  }, () => {});
 }
 // The current view's list first, so a write never sends a version left over from another view.
 function findCard(number) {

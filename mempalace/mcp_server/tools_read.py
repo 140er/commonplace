@@ -1004,6 +1004,50 @@ def _search_fact_wings(wing, wings):
     return wings
 
 
+# A transient index error (the HNSW flush window) drops the palace caches, waits a moment and
+# searches again. Doing that for every search while the window lasts made each search pay
+# the wait and the cache reload, hold the request lock through it, and drop the handles other
+# searches were using. One drop per cooldown; a search that meets the error again inside the
+# cooldown is answered from the lexical index, flagged, at once.
+_TRANSIENT_RESET_COOLDOWN_S = env_float("MEMPALACE_TRANSIENT_RESET_COOLDOWN_S", 30.0)
+_transient_reset_lock = threading.Lock()
+_transient_reset_at = float("-inf")
+
+
+def _claim_transient_reset() -> bool:
+    """True for the one search per cooldown that may drop the caches and retry."""
+    global _transient_reset_at
+    now = time.monotonic()
+    with _transient_reset_lock:
+        if now - _transient_reset_at < _TRANSIENT_RESET_COOLDOWN_S:
+            return False
+        _transient_reset_at = now
+        return True
+
+
+def _settle_transient_index_error(result, search):
+    """Answer a search that met a transient index error; ``search(vector_disabled)`` reruns it."""
+    if not _is_transient_index_error(result):
+        return result
+    if not _claim_transient_reset():
+        # The caches were dropped moments ago for this same window and the error is back:
+        # answer from the lexical index now instead of dropping them again and waiting.
+        logger.info("search: index error inside the cooldown; answering from the lexical index")
+        result = search(True)
+        if not _is_transient_index_error(result):
+            result["index_catching_up"] = True
+        return result
+    # Post-bulk-write HNSW flush window: drop caches, give the segment a moment to settle,
+    # retry once. The caller never sees the transient unless the second attempt also fails.
+    _force_chroma_cache_reset()
+    time.sleep(2)
+    _refresh_vector_disabled_flag()
+    result = search(_vector_disabled)
+    if not _is_transient_index_error(result):
+        result["index_recovered"] = True
+    return result
+
+
 def tool_search(
     query: str,
     limit: int = 5,
@@ -1143,7 +1187,9 @@ def tool_search(
     # sqlite/pickle path before we touch chromadb. Calling _get_client()
     # here would defeat the fallback — it constructs a PersistentClient
     # which can segfault on segment load when the HNSW index has diverged.
+    phase_started = time.monotonic()
     _refresh_vector_disabled_flag()
+    probe_s = time.monotonic() - phase_started
     result = search_memories(
         sanitized["clean_query"],
         palace_path=_config.palace_path,
@@ -1160,14 +1206,18 @@ def tool_search(
         include_facts=False,
         **experimental,
     )
-    if _is_transient_index_error(result):
-        # Post-bulk-write HNSW flush window: drop caches, give
-        # the segment a moment to settle, retry once. Caller never sees
-        # the transient unless the second attempt also fails.
-        _force_chroma_cache_reset()
-        time.sleep(2)
-        _refresh_vector_disabled_flag()
-        result = search_memories(
+    first_s = time.monotonic() - phase_started - probe_s
+    if first_s + probe_s >= 1.0:
+        # Where a slow search spent its time; timings only, never the query or results.
+        logger.info(
+            "search timings: vector-probe %.2fs, first search %.2fs, index error %s",
+            probe_s,
+            first_s,
+            _is_transient_index_error(result),
+        )
+    result = _settle_transient_index_error(
+        result,
+        lambda disabled: search_memories(
             sanitized["clean_query"],
             palace_path=_config.palace_path,
             wing=wing,
@@ -1177,14 +1227,13 @@ def tool_search(
             before=before,
             n_results=limit,
             max_distance=dist,
-            vector_disabled=_vector_disabled,
+            vector_disabled=disabled,
             candidate_strategy=candidate_strategy,
             collection_name=_config.collection_name,
             include_facts=False,
             **experimental,
-        )
-        if not _is_transient_index_error(result):
-            result["index_recovered"] = True
+        ),
+    )
     if _vector_disabled:
         result["vector_disabled"] = True
         result["vector_disabled_reason"] = _vector_disabled_reason

@@ -41,6 +41,7 @@ from .store import (
     append_event,
     card,
     expire_claims,
+    has_expired_claims,
     now,
     owns_card,
     pr_repository,
@@ -1143,16 +1144,10 @@ class BoardService(lifecycle.LifecycleMixin):
             return True
         return creator is None or _restricted(creator)
 
-    @contextmanager
-    def transaction(self, *, runner_lock=False):
-        """One board transaction. ``runner_lock`` takes the runner write lock first (the
-        order of runner starts: runner, then board) and keeps it until the board
-        transaction has ended."""
+    def _request_state(self):
+        """The workspace's orchestration facts one request reads, taken before its board connection."""
         from commonplace.projects import orchestration as orch, reports
 
-        self.pending = []
-        self._auto_release = []
-        conflict = None
         try:
             self._report_snapshot = reports.snapshot(self.ctx.gateway, self.principal.workspace_id)
             self._orchestration_on = self._report_snapshot.enabled
@@ -1172,6 +1167,18 @@ class BoardService(lifecycle.LifecycleMixin):
             else False
         )
         self._admission_conn = None
+
+    @contextmanager
+    def transaction(self, *, runner_lock=False):
+        """One board transaction. ``runner_lock`` takes the runner write lock first (the
+        order of runner starts: runner, then board) and keeps it until the board
+        transaction has ended."""
+        from commonplace.projects import orchestration as orch
+
+        self.pending = []
+        self._auto_release = []
+        conflict = None
+        self._request_state()
         # Commit/rollback boards before releasing the admission lock.
         with ExitStack() as self._admissions:
             if runner_lock:
@@ -2657,49 +2664,80 @@ class BoardService(lifecycle.LifecycleMixin):
         return json.dumps(previous, ensure_ascii=False)
 
     def task_show(self, task):
+        # Opening a card must not queue behind the board's writers: with nothing due to expire
+        # or wake, the card is read on a plain read snapshot. Anything that would write takes
+        # the write path below, as before.
+        shown = self._show_snapshot(task)
+        if shown is not None:
+            return shown
         with self.transaction() as conn:
             row, _board = self._get(conn, task)
-            result = self._card(conn, row, self.principal)
-            hidden = self.store.hidden_link_targets(conn, row["id"], self.principal)
-            linked = self.store.links(conn, row["id"], self.principal)
-            visibility = {memory_id: False for memory_id in hidden}
-            visibility.update({link["drawer_id"]: True for link in linked})
-            result["events"] = [
-                {
-                    "kind": r["kind"],
-                    "actor": f"conn:{r['stamp_connection']}"
-                    if r["stamp_connection"]
-                    else r["stamp_user"]
-                    if r["stamp_user"].startswith(("user:", "system"))
-                    else f"user:{r['stamp_user']}",
-                    "text": self._history_text(r, visibility),
-                    "at": r["created_at"],
-                    "choice": r["choice"],
-                    "target": r["target"],
-                    **(
-                        {"reason": r["reason"]}
-                        if r["kind"] == "release" or r["reason"] is not None
-                        else {}
-                    ),
-                    # Events that opened an ask carry the choices offered, verbatim.
-                    **(
-                        {"options": json.loads(r["options"] or "[]"), "context": r["context"]}
-                        if r["to_status"] == "review" and r["kind"] in ("ask", "handoff", "move")
-                        else {}
-                    ),
-                }
-                for r in conn.execute(
-                    "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (row["id"],)
-                )
-                if not (
-                    r["kind"] in ("link", "unlink")
-                    and not self._history_link_visible(r["target"], visibility)
-                )
-            ]
-            result["linked"] = linked
-            result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
-            self._with_goals(conn, row, result)
-            return result
+            return self._shown(conn, row)
+
+    def _show_snapshot(self, task):
+        from commonplace.snooze import store as snooze
+
+        self._request_state()
+        with self.store.connection() as conn:
+            conn.execute("BEGIN")
+            try:
+                conn.execute("PRAGMA query_only=ON")
+                row = task_row(conn, task)
+                require_visible(row, self.principal)
+                if has_expired_claims(conn, row["board_id"]) or snooze.has_due(
+                    conn, snooze.clock()
+                ):
+                    return None
+                return self._shown(conn, row)
+            except sqlite3.OperationalError as exc:
+                if "readonly" not in str(exc):
+                    raise
+                return None
+            finally:
+                conn.rollback()
+
+    def _shown(self, conn, row):
+        result = self._card(conn, row, self.principal)
+        hidden = self.store.hidden_link_targets(conn, row["id"], self.principal)
+        linked = self.store.links(conn, row["id"], self.principal)
+        visibility = {memory_id: False for memory_id in hidden}
+        visibility.update({link["drawer_id"]: True for link in linked})
+        result["events"] = [
+            {
+                "kind": r["kind"],
+                "actor": f"conn:{r['stamp_connection']}"
+                if r["stamp_connection"]
+                else r["stamp_user"]
+                if r["stamp_user"].startswith(("user:", "system"))
+                else f"user:{r['stamp_user']}",
+                "text": self._history_text(r, visibility),
+                "at": r["created_at"],
+                "choice": r["choice"],
+                "target": r["target"],
+                **(
+                    {"reason": r["reason"]}
+                    if r["kind"] == "release" or r["reason"] is not None
+                    else {}
+                ),
+                # Events that opened an ask carry the choices offered, verbatim.
+                **(
+                    {"options": json.loads(r["options"] or "[]"), "context": r["context"]}
+                    if r["to_status"] == "review" and r["kind"] in ("ask", "handoff", "move")
+                    else {}
+                ),
+            }
+            for r in conn.execute(
+                "SELECT * FROM task_events WHERE task_id=? ORDER BY id", (row["id"],)
+            )
+            if not (
+                r["kind"] in ("link", "unlink")
+                and not self._history_link_visible(r["target"], visibility)
+            )
+        ]
+        result["linked"] = linked
+        result["callstack"] = json.loads(row["callstack"]) if row["callstack"] else None
+        self._with_goals(conn, row, result)
+        return result
 
     def _with_goals(self, conn, row, result):
         """Agent card context: the goal chain, only for a card that points at a goal."""

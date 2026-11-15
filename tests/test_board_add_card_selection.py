@@ -76,7 +76,7 @@ MUTATIONS = {
     "stale panel kept": (
         "stale_panel",
         "app.js",
-        'detailsUI?.stop(); detailsUI = null; showLoading(cardPanelHost, "Loading card…", { art: "loading" });',
+        "detailsUI?.stop(); detailsUI = null; openingCard(cardPanelHost, Number(hash.slice(7)), state.screen);",
         "void 0;",
     ),
     "escape ignored in a field": (

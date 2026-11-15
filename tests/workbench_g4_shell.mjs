@@ -122,7 +122,7 @@ if (which === 'details-button') {
   assert.deepEqual(opened, [link]); assert.equal(prevented, 1);
 } else if (which === 'direct-link') {
   const routes = await module('routes');
-  Object.assign(context, routes, { clearAgentSecret() {}, decideStart: () => undefined, speech: { stop() {} }, consoleUI: null, detailsUI: null, boardDispose: null, refresh: async () => {},
+  Object.assign(context, routes, { clearAgentSecret() {}, needsCards: () => [], decideStart: () => undefined, speech: { stop() {} }, consoleUI: null, detailsUI: null, boardDispose: null, refresh: async () => {},
     api: async () => ({ boards: state.boards }), boardPreference: () => 'last', localStorage: { getItem: () => null, setItem() {} } });
   run(slice('async function route()', '// The current view'));
   // A shared card link draws its board behind the card, not a Loading Needs me.

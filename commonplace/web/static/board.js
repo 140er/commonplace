@@ -197,10 +197,10 @@ export function roveTo(card) {
 }
 // The column a card is drawn in: the Deck groups by who it waits on, the classic board by status.
 export const cardColumn = (card, me, deck) => (deck ? boardGroup(card, me) : card.status);
-export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, added = null, people = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
+export function boardView({ board, cards = [], me, filter = 'all', selected, messages = [], adding = false, added = null, people = [], agents = [], canPrioritize = false, column = 'todo', sheet = true, doneAll = false, bots = [], deck = globalThis.document?.documentElement?.dataset?.ui === 'deck' }) {
   const options = { board, me, selected, messages, deck, added }, visible = filterCards(cards, filter, me).map((c, i) => [c, i]).sort(([a, i], [b, j]) => prioRank(a) - prioRank(b) || i - j).map(([c]) => c);
   const backlog = visible.filter((c) => c.status === 'backlog'), count = (s) => visible.filter((c) => c.status === s).length;
-  const form = adding ? addCardForm({ people, me, sheet, canPrioritize, failure: addFailureFor(board) }) : '';
+  const form = adding ? addCardForm({ people, agents, me, sheet, canPrioritize, failure: addFailureFor(board) }) : '';
   if (deck) return deckBoardView({ ...options, bots, cards: visible, filter, form, sheet, column });
   const steps = !cards.length ? `<section class="empty-strip" aria-label="Get started"><ol class="steps"><li class="is-next"><span class="num" aria-hidden="true">1</span><div><h2>Add your first card</h2><p>A card is one piece of work. Write it like a to-do.</p><button class="btn primary" data-action="new-card">${icon(PLUS)}Add card</button></div></li><li><span class="num" aria-hidden="true">2</span><div><h2>Connect an agent</h2><p>An agent is an AI helper that works on cards. The first one becomes the Coworker.</p><button class="btn" data-action="connect-agent">Connect an agent</button></div></li><li><span class="num" aria-hidden="true">3</span><div><h2>Ask for something</h2><p>Write in chat. The Coworker turns requests into cards.</p><button class="btn" data-action="open-chat">Write in chat <kbd>/</kbd></button></div></li></ol></section>` : '';
   return `<div class="workbench-board">${steps}${whyStrip(board)}<div class="board-tools">${segHTML({ label: 'Filter cards', attr: 'data-board-filter', current: filter, items: ['all','mine','agents','blocked'].map((f) => [f, `${heading(f)}${f === 'blocked' ? ` ${cards.filter((c) => isBlocked(c, me)).length}` : ''}`]) })}</div><nav class="col-jump" aria-label="Jump to a column">${columns.map((s) => `<button type="button" data-board-column="${s}" aria-controls="col-${s}" aria-pressed="${column === s}">${heading(s)} <span class="n">${count(s)}</span></button>`).join('')}</nav><div class="board" role="region" aria-label="Board">${columns.map((s) => {
@@ -215,7 +215,16 @@ export function boardView({ board, cards = [], me, filter = 'all', selected, mes
 // "Any agent" choice (value ANY_AGENT) leaves the card open for an agent, which starts a run on a configured board.
 export const ANY_AGENT = 'any';
 export const WHO_HINTS = { me: 'Nothing starts when you add this card.', any: 'Adding this card starts an agent run now if a machine is connected. Choose Me to add it without starting one.' };
-export const whoHint = (value) => (value === ANY_AGENT ? WHO_HINTS.any : WHO_HINTS.me);
+// A listed agent says what the server does when the card is handed to it: starts_run is the server's own answer
+// (a person who owns the workspace handing a card to the project's Coworker); every other agent is only given the card.
+export const agentHint = (agent) => (agent.starts_run
+  ? `Adding this card starts ${agent.name} now. Choose Me to add it without starting anything.`
+  : `Ready for ${agent.name}. Nothing starts when you add this card.`);
+export const agentLabel = (agent) => (agent.starts_run ? `${agent.name} (starts now)` : `${agent.name} (ready for it, no run starts)`);
+export const whoHint = (value, agents = []) => {
+  const agent = agents.find((a) => a.ref === value);
+  return agent ? agentHint(agent) : value === ANY_AGENT ? WHO_HINTS.any : WHO_HINTS.me;
+};
 // One create at a time per page, and the last failure: the board re-renders on every poll, which makes a fresh
 // enabled form while a request is still out (a second tap then adds the card twice) and drops a message set on the old one.
 let addPending = false, addFailure = null;
@@ -226,9 +235,9 @@ export function addFailureText(error) {
   const why = status ? `${reason && reason !== `Request failed (${status})` ? `${reason} ` : ''}(error ${status})` : 'the server did not answer, check your connection';
   return `Could not add card: ${why}. Your words are kept here. Try again.`;
 }
-export function addCardForm({ people = [], me = '', sheet = true, canPrioritize = false, failure = '' } = {}) {
+export function addCardForm({ people = [], agents = [], me = '', sheet = true, canPrioritize = false, failure = '' } = {}) {
   const first = me ? `<option value="${e(me)}" selected>Me (no run starts)</option>` : '<option value="" disabled selected>Choose who</option>';
-  const who = `<select name="assignee" aria-describedby="add-card-who"${me ? '' : ' required'}>${first}<option value="${ANY_AGENT}">Any agent (starts a run now)</option>${people.filter((p) => p.ref !== me).map((p) => `<option value="${e(p.ref)}">${e(p.name)}</option>`).join('')}</select>`;
+  const who = `<select name="assignee" aria-describedby="add-card-who"${me ? '' : ' required'}>${first}<option value="${ANY_AGENT}">Any agent (starts a run now)</option>${people.filter((p) => p.ref !== me).map((p) => `<option value="${e(p.ref)}">${e(p.name)}</option>`).join('')}${agents.length ? `<optgroup label="Bots and coworkers">${agents.map((a) => `<option value="${e(a.ref)}" data-hint="${e(agentHint(a))}">${e(agentLabel(a))}</option>`).join('')}</optgroup>` : ''}</select>`;
   return `<form data-board-add class="composer"${sheet ? ' role="dialog" aria-modal="true" aria-labelledby="add-card-h"' : ' aria-labelledby="add-card-h"'}><h2 id="add-card-h"${sheet ? '' : ' class="sr"'}>Add card</h2><label><span class="sr">Title</span><input class="ttl" name="title" required maxlength="500" placeholder="Card title"></label><label class="vis">Details <small>(optional)</small><textarea name="body"></textarea></label><div class="composer-row"><label class="vis">Who${who}</label><label class="vis">Label<input name="label"></label>${canPrioritize ? `<label class="vis">Priority<select name="priority">${PRIORITIES.map((p) => `<option value="${p}"${p === 'normal' ? ' selected' : ''}>${heading(p)}</option>`).join('')}</select></label>` : ''}</div><p class="composer-hint" id="add-card-who" data-who-hint role="status">${whoHint(me)}</p><div class="composer-foot"><button class="btn primary" type="submit"${addPending ? ' disabled' : ''}>Add card</button><button type="button" class="btn ghost" data-action="cancel-card">Cancel</button></div><p class="composer-hint">Enter adds · Esc cancels</p><p role="status" data-add-status${failure ? ' data-failed' : ''}>${e(failure)}</p></form>`;
 }
 // A missing Who falls back to the person adding the card, never to an agent start; only ANY_AGENT leaves it unassigned.
@@ -281,7 +290,7 @@ export function bindBoard(root, { api, board, me = '', onAdded = () => {}, onFil
   };
   const stopDeckBoard = bindDeckBoard(root);
   // The hint under Who says plainly whether adding the card will start a run.
-  const change = (event) => { const who = event.target.closest?.('[data-board-add] select[name="assignee"]'); const hint = who?.closest('[data-board-add]').querySelector('[data-who-hint]'); if (hint) hint.textContent = whoHint(who.value); };
+  const change = (event) => { const who = event.target.closest?.('[data-board-add] select[name="assignee"]'); const hint = who?.closest('[data-board-add]').querySelector('[data-who-hint]'); if (hint) hint.textContent = who.selectedOptions?.[0]?.dataset?.hint || whoHint(who.value); };
   root.addEventListener('click', click); root.addEventListener('submit', submit); root.addEventListener('keydown', keydown); root.addEventListener('change', change);
   return () => { stopDeckBoard(); root.removeEventListener('click', click); root.removeEventListener('submit', submit); root.removeEventListener('keydown', keydown); root.removeEventListener('change', change); };
 }

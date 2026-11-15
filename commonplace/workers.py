@@ -113,9 +113,15 @@ class MemoryWait:
     def __init__(self, seconds: float):
         self.left = max(0.0, float(seconds))
         self.paused = False  # a pause was met: later calls of this request do not wait
+        self.busy = False  # the worker answered busy: later calls of this request do not ask
 
 
 _wait_budget = contextvars.ContextVar("commonplace_memory_wait", default=None)
+
+
+def current_wait() -> Optional[MemoryWait]:
+    """The wait budget of the request running on this thread, if it has one."""
+    return _wait_budget.get()
 
 
 @contextmanager
