@@ -1,0 +1,6 @@
+### Deck polish, third slice
+
+- The polish cards found four small defects that still reproduced on the current build: the Accept button touched the collapsed Changes line (0 px against 13 px when open), a decision left a result line that repeated the version row above it, the Bots list showed "c" where the sidebar showed "CO" for the same bot, and the phone notification buttons "Test" and "Turn off" ran together with no gap.
+- Decision: Accept gets 8 px in both states through one margin on the Changes block and none below the diff; the result line is dropped for the Deck look only (classic output is byte-checked and unchanged); the list reuses the sidebar's initials function instead of a second one; the two buttons get a 12 px gap in the Deck look.
+- Rejected: keeping "Accepted vN" while dropping only "Rejected vN" (the row above says both the same way), and changing the shared notification markup (it would touch classic).
+- Not reproduced on the current build, so not changed: the duplicate gear in the Board top bar (the project gear was removed earlier and the Board has a "…" menu), the Deck board no longer shows a "why cards are waiting" strip so there is no second left edge, the Home picker shows a short bot name untruncated up to 65 % of the composer, the phone mic clears the tab bar, and the Backlog label does not overlap the columns.

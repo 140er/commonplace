@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_deck_config_review_browser.py` and `tests/test_deck_polish3_browser.py` prove the third Deck polish slice in a real browser; `tests/project_config_review.mjs` also pins that the Deck version row is the only decision result.
+- **Promises:** The two browser files measure the gap above Accept (8 px, collapsed and open), the absence of the repeated result line, the sidebar and Bots list initials, and the gap between the phone notification buttons at 1280 and 390 wide. They fail on the previous build.
+- **How it fails:** They skip where no browser is installed; a change to the Deck config review, the Bots list avatar or the notification buttons fails by size and item.
+- **Tests:** Run the two browser files and the `deck_names`, `deck_unknown`, `deck_wrap`, `deck_escape` and `classic_bytes` cases of `tests/test_project_config_review.py`.
