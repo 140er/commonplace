@@ -4,6 +4,7 @@ import { botPage, workspaceRoute } from './routes.js';
 import { scrollFades } from './deck-coworker-sharing.js';
 import { setupText } from './bot-setup.js';
 import { artHTML } from './deck-art.js';
+import { botInitials } from './deck-shell.js';
 
 const enc = encodeURIComponent;
 const list = value => Array.isArray(value) ? value : [];
@@ -13,7 +14,8 @@ const present = (objects, key) => objects.find(value => value && Object.hasOwn(v
 // This is presentation copy only; request bodies always preserve the exact draft.
 export const displayCopy = value => String(value ?? '').replace(/\b(?:PR|card|ticket)\s*#\d+\s*[:·-]?\s*/gi, '').replace(/#\d+\b/g, '').replace(/(?:~\/|\/(?:home|Users|var|tmp)\/)[^\s,;]+/g, '').replace(/\s+/g, ' ').trim();
 const name = value => displayCopy(value) || 'Coworker';
-const avatar = value => `<span class="cb-avatar" aria-hidden="true">${e(Array.from(name(value))[0])}</span>`;
+// The sidebar gives each bot its initials; the list shows the same ones, not the first letter as typed.
+const avatar = (value, initials) => `<span class="cb-avatar" aria-hidden="true">${e(initials || Array.from(name(value))[0].toUpperCase())}</span>`;
 const lock = label => `<svg class="cb-lock" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" role="img" aria-label="${label}"><rect x="4" y="7" width="8" height="6" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>`;
 export function stateView(state) {
   if (['needs_you', 'needs_person', 'waiting_on_owner'].includes(state)) return { tone: 'waiting', word: 'Waiting on you' };
@@ -48,12 +50,13 @@ export function botGroups(bots) {
 }
 export function capyRosterHTML({ bots = [], conversations = [], loaded = true, setup = '' }) {
   if (!bots.length) return `<li class="bots-note">${artHTML(loaded ? 'bots' : 'loading')}${loaded ? 'No bots yet. Create one to get started.' : 'Loading…'}</li>`;
+  const initials = botInitials(bots);
   return botGroups(bots).map(group => `<li class="cb-folder"><h2>${e(group.label)}</h2><ul>${group.bots.map(bot => {
     const coworkers = Array.isArray(bot.coworkers) ? bot.coworkers.length : Number.isSafeInteger(bot.coworker_count) ? bot.coworker_count : conversations.filter(row => belongs(row, bot)).length || (bot.board ? 1 : 0);
     const unread = positive(bot.unread_count ?? bot.unread);
     const privateBot = Object.hasOwn(bot, 'private') ? bot.private === true : bot.is_private === true;
     const summary = displayCopy(bot.last?.text || bot.summary || bot.job), next = setup && /no chat model/i.test(summary) ? `<span class="cb-next">${e(setup)}</span>` : '';
-    return `<li><a class="cb-bot-row" href="${botPage(bot.id, bot.coworkerOnly)}">${avatar(bot.name)}<span class="cb-bot-main"><span class="cb-bot-name"><b>${e(name(bot.name))}</b>${dot(bot.state)}${privateBot ? lock('Private bot') : ''}</span><span class="cb-summary">${e(summary)}</span>${next}</span><span class="cb-bot-count">${coworkers} ${coworkers === 1 ? 'coworker' : 'coworkers'}</span>${unread ? `<span class="cb-unread">${unread}<span class="sr"> unread</span></span>` : ''}</a></li>`;
+    return `<li><a class="cb-bot-row" href="${botPage(bot.id, bot.coworkerOnly)}">${avatar(bot.name, initials.get(bot))}<span class="cb-bot-main"><span class="cb-bot-name"><b>${e(name(bot.name))}</b>${dot(bot.state)}${privateBot ? lock('Private bot') : ''}</span><span class="cb-summary">${e(summary)}</span>${next}</span><span class="cb-bot-count">${coworkers} ${coworkers === 1 ? 'coworker' : 'coworkers'}</span>${unread ? `<span class="cb-unread">${unread}<span class="sr"> unread</span></span>` : ''}</a></li>`;
   }).join('')}</ul></li>`).join('');
 }
 

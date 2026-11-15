@@ -30,7 +30,7 @@ const brand = '<svg class="deck-mark" viewBox="0 0 24 24" aria-hidden="true"><re
 const badge = (n, type, label) => count(n) ? `<span class="count ${type}">${n}<span class="sr"> ${label}</span></span>` : '';
 const waiting = options => Number.isSafeInteger(options.needs) ? count(options.needs) : count(options.botsWaiting);
 const initials = user => String(user || '?').trim().split(/\s+/u).slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase();
-function botInitials(bots) {
+export function botInitials(bots) {
   const groups = new Map(), labels = new Map();
   for (const bot of bots) {
     const letters = Array.from(String(bot.name || 'Bot').toUpperCase()).filter(letter => /[\p{L}\p{N}]/u.test(letter));
@@ -40,7 +40,7 @@ function botInitials(bots) {
   }
   for (const [first, group] of groups) {
     const used = new Set();
-    group.sort((a, b) => String(a.bot.name).localeCompare(String(b.bot.name)) || String(a.bot.id).localeCompare(String(b.bot.id)) || a.bot.shellKind.localeCompare(b.bot.shellKind));
+    group.sort((a, b) => String(a.bot.name).localeCompare(String(b.bot.name)) || String(a.bot.id).localeCompare(String(b.bot.id)) || String(a.bot.shellKind || '').localeCompare(String(b.bot.shellKind || '')));
     for (const { bot, letters } of group) {
       const second = group.length > 1 ? [...letters.slice(1), ...'123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(letter => !used.has(letter)) || '?' : '';
       used.add(second); labels.set(bot, first + second);
