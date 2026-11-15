@@ -2,7 +2,7 @@ import { mountMap } from "./map.js";
 import { api as request, escape as e, actor } from "./api.js";
 import { cardId, isBlocked } from "./board.js";
 import { createMemoryImport } from "./memory-import.js";
-import { renderDeckMemory, retryLine, retryText, savedMarkup, rememberRoomCounts, memoryRoom, memoryDetails, queryHistory, memoryStyles } from "./deck-memory.js";
+import { resultWords, sourcesWarning, renderDeckMemory, retryLine, retryText, savedMarkup, rememberRoomCounts, memoryRoom, memoryDetails, queryHistory, memoryStyles } from "./deck-memory.js";
 
 const enc = encodeURIComponent;
 const exact = (value) => e(value).replaceAll("\r", "&#13;");
@@ -89,6 +89,7 @@ export async function searchMemory({ api = request, boards, query, project = "",
   ended.catch(() => {});
   const call = (path) => Promise.race([api(path, { signal: controller.signal }), ended]);
   const params = () => { const found = new URLSearchParams({ q: query }); if (source && source !== "note") found.set("source", source); if (from) found.set("from", from); if (since) found.set("since", since); return found; };
+  const why = (error) => timedOut ? "timeout" : error?.status === 503 ? (error.payload?.warming_up === true ? "warming" : "busy") : [401, 403].includes(error?.status) ? "denied" : "failed";
   const wings = new Map();
   for (const board of selected) if (board.wing && !wings.has(board.wing)) wings.set(board.wing, board);
   if ((!source || source === "note") && wings.size) {
@@ -105,7 +106,7 @@ export async function searchMemory({ api = request, boards, query, project = "",
         }
         moreNotes = page.results.length >= limit && limit < SEARCH_LIMIT_MAX;
         truncated ||= page.results.length >= limit;
-      } catch (error) { errors.push({ source: "note" }); retry = retryHint(error); }
+      } catch (error) { errors.push({ source: "note", reason: why(error) }); retry = retryHint(error); }
     });
   }
   if (source !== "note") {
@@ -116,7 +117,7 @@ export async function searchMemory({ api = request, boards, query, project = "",
           const page = await call(`/api/chat/${enc(board.slug)}/search?${params()}`);
           results.push(...page.results.map((row) => ({ ...row, board: board.slug, wing: board.wing, author: memoryAuthor(row, board), sourceLabel: sourceLabel(row, board) })));
           truncated ||= page.truncated;
-        } catch { errors.push({ board: board.slug, source: "project" }); }
+        } catch (error) { errors.push({ board: board.slug, source: "project", reason: why(error) }); }
       });
     }
   }
@@ -125,7 +126,7 @@ export async function searchMemory({ api = request, boards, query, project = "",
   try { await Promise.all(Array.from({ length: Math.min(SEARCH_CONCURRENCY, tasks.length) }, worker)); }
   finally { clearTimeout(timer); controller.abort(); }
   // Tasks skipped after an abort or the deadline count as failed sources, never as "no results".
-  for (; next < tasks.length; next++) errors.push({ source: "skipped" });
+  for (; next < tasks.length; next++) errors.push({ source: "skipped", reason: timedOut ? "timeout" : "skipped" });
   const unique = new Map();
   for (const result of results) {
     const id = result.kind === "note" ? JSON.stringify(["note", result.wing, result.id]) : key(result);
@@ -176,9 +177,9 @@ export function renderMemory(state) {
     <form class="memory-toolbar" data-memory-search><div class="search-big" role="search"><label class="sr" for="mq">Search memory</label><input id="mq" name="query" type="search" value="${e(filters.query)}" placeholder="Search exact words…"><button class="btn ghost" type="submit">Search <kbd>↵</kbd></button></div>
     <div class="filters"><label class="chip">Project: <select name="project">${options([["", "All"], ...boards.map((board) => [board.slug, name(board)])], filters.project)}</select></label><label class="chip">Source: <select name="source">${options([["", "Any"], ["chat", "Chat"], ["reply", "Quick replies"], ["card", "Cards"], ["note", "Notes"]], filters.source)}</select></label><label class="chip">From: <select name="from">${options([["", "Anyone"], ...Object.entries(state.people || {}), ...boards.filter((board) => board.coordinator).map((board) => [board.coordinator, `${name(board)} Coworker`]), ...results.filter((row) => row.actor && !String(row.actor).startsWith("user:")).map((row) => [row.actor, row.author])].filter(([ref], i, all) => all.findIndex(([id]) => id === ref) === i), filters.from)}</select></label><label class="chip">When: <select name="when">${options([["", "Any time"], ["1", "Last 24 hours"], ["7", "Last 7 days"], ["30", "Last 30 days"]], filters.when)}</select></label><span class="memory-status" role="status">${e(status)}</span></div></form>
     ${error ? `<div class="memory-empty" role="alert"><h2>Search couldn't run</h2><p>${e(error)}</p><button class="btn" data-memory-action="retry">Try again</button></div>` : ""}
-    ${state.errors?.length && !state.error && !busy ? '<p class="memory-warning" role="alert">Some sources could not be searched. <button class="btn" data-memory-action="retry">Try again</button> for all results.</p>' : ""}
+    ${state.errors?.length && !state.error && !busy ? sourcesWarning(state.errors, boards) : ""}
     ${busy ? retryLine(state) : ""}
-    <div class="memory-results list" aria-busy="${Boolean(busy)}">${busy && !results.length && !state.retry ? '<div class="memory-loading" role="status"><span class="memory-spinner" aria-hidden="true"></span> Searching saved memory… this can take a few seconds.</div>' : ""}${results.map((row, i) => `<button class="res${selected && key(row) === key(selected) ? " is-selected" : ""}${busy ? " is-loading" : ""}" data-memory-result="${i}"${selected && key(row) === key(selected) ? ' aria-current="true"' : ""}><span class="src"><b>${e(row.sourceLabel)}</b><span> · ${e(row.author)} · </span>${stamp(row, { dateOnly: row.kind === "note" })}</span><span class="ex">${highlighted(row.text, busy ? state.completedQuery : filters.query)}</span></button>`).join("")}${!busy && state.moreNotes ? '<button class="btn memory-more" data-memory-action="more">Show more</button>' : ""}${!busy && !error && !results.length ? `<div class="memory-empty" role="status"><h2>${searched ? "No exact words match" : "Search your memory"}</h2><p>${searched ? "Memory finds the words you type, not their meaning. Try fewer or different words, or search every project." : "Exact words from chats, cards and notes. Never summarised."}</p>${searched ? '<button class="btn" data-memory-action="clear">Search all projects</button>' : ""}</div>` : ""}</div>
+    <div class="memory-results list" aria-busy="${Boolean(busy)}">${busy && !results.length && !state.retry ? '<div class="memory-loading" role="status"><span class="memory-spinner" aria-hidden="true"></span> Searching saved memory… this can take a few seconds.</div>' : ""}${results.map((row, i) => { const words = resultWords(row, i, { query: busy ? state.completedQuery : filters.query, expanded: state.expanded, highlight: highlighted }); return `<button class="res${selected && key(row) === key(selected) ? " is-selected" : ""}${busy ? " is-loading" : ""}" data-memory-result="${i}"${selected && key(row) === key(selected) ? ' aria-current="true"' : ""}><span class="src"><b>${e(row.sourceLabel)}</b><span> · ${e(row.author)} · </span>${stamp(row, { dateOnly: row.kind === "note" })}</span><span class="ex">${words.html}</span></button>${words.toggle}`; }).join("")}${!busy && state.moreNotes ? '<button class="btn memory-more" data-memory-action="more">Show more</button>' : ""}${!busy && !error && !results.length ? `<div class="memory-empty" role="status"><h2>${searched ? "No exact words match" : "Search your memory"}</h2><p>${searched ? "Memory finds the words you type, not their meaning. Try fewer or different words, or search every project." : "Exact words from chats, cards and notes. Never summarised."}</p>${searched ? '<button class="btn" data-memory-action="clear">Search all projects</button>' : ""}</div>` : ""}</div>
     <div class="keys"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open source</span><span><kbd>Y</kbd> copy exact words</span>${memoryActions(selected, state.destination).link ? '<span><kbd>L</kbd> link to a card</span>' : ""}</div></section>`;
 }
 
@@ -207,7 +208,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   const history = queryHistory(me, storage);
   const saved = look === "deck" ? history.read() : "";
   if (look === "deck") memoryStyles(mount.ownerDocument);
-  const state = { look, viewer: typeof me === "string" ? me : me.actor, boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [] };
+  const state = { look, viewer: typeof me === "string" ? me : me.actor, boards, people: me.people || {}, results: [], filters: {}, selected: null, destination, errors: [], expanded: new Set() };
   let searchEpoch = 0, sourceEpoch = 0, stopped = false, writing = false, returnKey = "";
   let inflight = null, typing = null;
   const cancelSearch = () => { inflight?.abort(new Error("Superseded")); inflight = null; if (typing) clearTimeout(typing); typing = null; };
@@ -220,6 +221,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     let restore = null;
     if (focused && (mount.contains(focused) || panel?.contains(focused))) {
       const selector = focused.matches("[data-memory-result]") ? `[data-memory-result="${focused.dataset.memoryResult}"]`
+        : focused.matches("[data-memory-expand]") ? `[data-memory-expand="${focused.dataset.memoryExpand}"]`
         : focused.matches("[data-memory-room]") ? `[data-memory-room="${focused.dataset.memoryRoom}"]`
         : focused.matches("[data-memory-action]") ? `[data-memory-action="${focused.dataset.memoryAction}"]`
         : focused.matches("[data-memory-post]") ? `[data-memory-post="${focused.dataset.memoryPost}"]`
@@ -410,6 +412,12 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
       importer = createMemoryImport({ mount: importDialog || mount, me, api, look, onClose() {
         closeImport();
       } });
+      return;
+    }
+    const expand = event.target.closest("[data-memory-expand]");
+    if (expand) {
+      const found = state.results[Number(expand.dataset.memoryExpand)];
+      if (found) { const id = `${found.kind}:${found.id}`; if (!state.expanded.delete(id)) state.expanded.add(id); draw(); }
       return;
     }
     const row = event.target.closest("[data-memory-result]");
