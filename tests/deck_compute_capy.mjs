@@ -142,6 +142,60 @@ for (const phone of [false, true]) test(`compact presentation: a device with mor
 });
 
 
+// The card is drawn at screen size and the strokes in map units, so where the strokes meet the card edge moves with the
+// zoom. The count's end mark must sit there, with its number beyond it, whichever side the strokes come in on.
+const bundleCases = [
+  ...[[1, 0], [-1, 0], [0, 1], [0, -1]].flatMap(dir => [4, 6, 8].map(count => ({ phone: false, dir, count }))),
+  ...[4, 6, 8].map(count => ({ phone: true, dir: [-1, 0], count, parallel: true })),
+];
+for (const zoom of [1, .5, .25]) for (const one of bundleCases) test(`compact presentation: the link count's end mark sits where ${one.count} links meet the card, ${one.phone ? 'phone' : 'desktop'} ${one.parallel ? 'ported' : `toward ${one.dir}`}, zoom ${zoom}`, async () => {
+  const { computePresentation, cardSize } = await import('../commonplace/web/static/deck-compute-scene.js');
+  const device = key => ({ key, values: { kind: 'server', name: key === 'hub' ? 'Build machine' : key, role: 'Runner' } });
+  const nodes = [device('hub')], links = [];
+  for (let i = 0; i < one.count; i++) { const peer = one.parallel ? 'peer' : `peer-${i}`; if (!nodes.some(n => n.key === peer)) nodes.push(device(peer)); links.push({ id: `link-${i}`, from: 'hub', to: peer, method: 'direct' }); }
+  const core = createMapCore({ route: true, presentation: computePresentation(one.phone) });
+  core.apply({ nodes, links });
+  core.positions.hub = { x: 0, y: 0 };
+  nodes.slice(1).forEach(({ key }, i, peers) => { const spread = (i - (peers.length - 1) / 2) * 60; core.positions[key] = one.parallel ? { x: 0, y: 300 } : { x: one.dir[0] * 600 + (one.dir[1] ? spread * 2 : 0), y: one.dir[1] * 400 + (one.dir[0] ? spread : 0) }; });
+  core.setView({ x: 0, y: 0, k: zoom }, { remember: false });
+  const scene = core.scene(), hub = core.model.nodes[0], { width, height } = cardSize(hub, one.phone), hx = width / 2, hy = height / 2;
+  // Measured independently of the scene code: walk every stroke out of the hub on the screen until it leaves the card.
+  const places = core.links(), exits = links.map(({ id }) => {
+    const points = places.get(id).points.map(p => ({ x: p.x * zoom, y: p.y * zoom }));
+    for (let t = 0; t <= 1; t += .0002) {
+      const at = t * (points.length - 1), i = Math.min(points.length - 2, Math.floor(at)), u = at - i;
+      const p = { x: points[i].x + (points[i + 1].x - points[i].x) * u, y: points[i].y + (points[i + 1].y - points[i].y) * u };
+      if (Math.abs(p.x) >= hx - .01 || Math.abs(p.y) >= hy - .01) return { ...p, side: Math.abs(p.x) >= hx - .5 ? (p.x < 0 ? 'left' : 'right') : (p.y < 0 ? 'top' : 'bottom') };
+    }
+    throw new Error('stroke never leaves the card');
+  });
+  const tally = side => exits.filter(p => p.side === side).length, most = Math.max(...['left', 'right', 'top', 'bottom'].map(tally));
+  const own = new RegExp(`<g class="topo-bundle dc-bundle" data-bundle-node="hub" data-count="${one.count}">.*?</g>`).exec(scene)?.[0] || '';
+  const mark = /<circle class="dc-bundle-mark" data-side="(\w+)" cx="(-?[\d.]+)" cy="(-?[\d.]+)" r="([\d.]+)"/.exec(own);
+  assert.ok(mark, 'the count has an end mark');
+  const [, side, cx, cy, radius] = mark, at = { x: Number(cx), y: Number(cy) }, horizontal = side === 'left' || side === 'right';
+  assert.equal(tally(side), most, `the mark is on a side where most strokes meet the card (${exits.map(p => p.side)})`);
+  const met = exits.filter(p => p.side === side), mean = met.reduce((sum, p) => sum + p[horizontal ? 'y' : 'x'], 0) / met.length, reach = (horizontal ? hy : hx) - 10;
+  assert.ok(Math.abs(at[horizontal ? 'y' : 'x'] - Math.max(-reach, Math.min(reach, mean))) < .1, 'the mark is where those strokes meet the edge');
+  assert.ok(Math.abs(horizontal ? Math.abs(at.x) - hx : Math.abs(at.y) - hy) < .01, 'the mark sits on the card edge');
+  const chip = /<rect class="dc-bundle-chip" x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(own), box = { x: Number(chip[1]), y: Number(chip[2]), width: Number(chip[3]), height: Number(chip[4]) };
+  const sign = side === 'left' || side === 'top' ? -1 : 1, centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  assert.ok(sign * (horizontal ? centre.x - at.x : centre.y - at.y) > Number(radius), 'the count is on the outer side of the mark');
+  for (const [from, to] of [...places.values()].map(place => place.points.map(p => ({ x: p.x * zoom, y: p.y * zoom }))).flatMap(points => points.slice(1).map((p, i) => [points[i], p]))) {
+    for (let t = 0; t <= 1; t += .002) {
+      const x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t;
+      assert.ok(!(x > box.x - 1.5 && x < box.x + box.width + 1.5 && y > box.y - 1.5 && y < box.y + box.height + 1.5), 'no stroke runs under the count');
+    }
+  }
+  assert.ok(box.x >= hx || box.x + box.width <= -hx || box.y >= hy || box.y + box.height <= -hy, 'the count stays off the card, so it cannot meet its name, role or status');
+  assert.ok(Number(radius) < 6 && Math.abs(horizontal ? at.x : at.y) + Number(radius) <= (horizontal ? hx : hy) + Number(radius), 'the mark only reaches over the card edge by its radius');
+  const text = /<text class="dc-node-name" x="(-?[\d.]+)"/.exec(scene), status = /class="dc-node-status"[^>]*transform="translate\((-?[\d.]+) 0\)"/.exec(scene);
+  if (side === 'left') assert.ok(Number(text[1]) - Number(radius) > -hx + Number(radius), 'the mark leaves the name its padding');
+  if (side === 'right' && status) assert.ok(Number(status[1]) + 8 < hx - Number(radius), 'the mark leaves the status mark its room');
+  assert.equal((own.match(/class="dc-bundle-mark"/g) || []).length, 1, 'one end mark per device');
+});
+
+
 test('compact node states have distinct geometry and accessible status words', async () => {
   const { computePresentation } = await import('../commonplace/web/static/deck-compute-scene.js');
   const words = { up: 'Healthy', degraded: 'Degraded', down: 'Unreachable', unknown: 'Not reported' };

@@ -337,3 +337,54 @@ def test_compute_all_four_states(browser, size):
             )
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (390, 844)], ids=["desktop", "phone"])
+def test_compute_link_count_mark_sits_where_the_links_meet_the_card(browser, size):
+    """The runner has four links: its count's mark is on the card edge they reach, the number beyond it."""
+    page = browser.new_page(viewport={"width": size[0], "height": size[1]}, device_scale_factor=2)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        page.set_default_timeout(8000)
+        open_compute(page)
+        found = page.evaluate(
+            """() => {
+          const box = el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+          const node = document.querySelector('.dc-node[data-key="runner"]'), card = box(node.querySelector('.dc-node-surface'));
+          const mark = box(node.querySelector('.dc-bundle-mark')), chip = box(node.querySelector('.dc-bundle-chip'));
+          const parts = [...node.querySelectorAll('.dc-node-name,.dc-node-role,.dc-node-status')].map(box);
+          const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+          return { card, mark, chip, parts: parts.map(part => ({ chip: hit(chip, part), mark: hit(mark, part) })), centre: { x: (mark.left+mark.right)/2, y: (mark.top+mark.bottom)/2 }, chipCentre: { x: (chip.left+chip.right)/2, y: (chip.top+chip.bottom)/2 },
+            side: ['left', 'right', 'top', 'bottom'].find(s => node.querySelector('.dc-bundle-mark').dataset.side === s), unclipped: chip.left >= 0 && chip.right <= innerWidth };
+        }"""
+        )
+        assert not any(part["chip"] or part["mark"] for part in found["parts"])
+        assert found["unclipped"]
+        side, card, centre, chip = (
+            found["side"],
+            found["card"],
+            found["centre"],
+            found["chipCentre"],
+        )
+        # The mark is on the card edge on that side, and the count lies farther out than the mark.
+        if side in ("left", "right"):
+            assert centre["x"] == pytest.approx(card[side], abs=1)
+            assert (chip["x"] - centre["x"]) * (1 if side == "right" else -1) > 4
+        else:
+            assert centre["y"] == pytest.approx(card[side], abs=1)
+            assert (chip["y"] - centre["y"]) * (1 if side == "bottom" else -1) > 4
+        # A stroke reaches the card on that side: the runner's links are drawn centre to centre, so one of them crosses it.
+        crossing = page.evaluate(
+            """side => { const card = document.querySelector('.dc-node[data-key="runner"] .dc-node-surface').getBoundingClientRect();
+          return [...document.querySelectorAll('.topo-link .topo-route')].some(path => { const m = path.getScreenCTM(), length = path.getTotalLength();
+            for (let d = 0; d <= length; d += .5) { const q = path.getPointAtLength(d), x = q.x*m.a + q.y*m.c + m.e, y = q.x*m.b + q.y*m.d + m.f;
+              const edge = { left: Math.abs(x-card.left) < 1, right: Math.abs(x-card.right) < 1, top: Math.abs(y-card.top) < 1, bottom: Math.abs(y-card.bottom) < 1 }[side];
+              if (edge && y > card.top - 1 && y < card.bottom + 1 && x > card.left - 1 && x < card.right + 1) return true; } return false; }); }""",
+            side,
+        )
+        assert crossing, f"no stroke reaches the {side} edge where the mark sits"
+        capture(page, f"link-count-{'desktop' if size[0] == 1280 else 'phone'}.png")
+        assert errors == []
+    finally:
+        page.close()
