@@ -105,7 +105,8 @@ def browser():
 
 
 def editing_fields(page):
-    page.locator(".workbench-details").wait_for()
+    # A card opens at once as a read-only preview; the controls come with the card's own read.
+    page.locator(".workbench-details:not([data-card-preview])").wait_for()
     edit = page.locator("[data-deck-card-controls]")
     if edit.count() and edit.get_attribute("open") is None:
         edit.locator("summary").click()

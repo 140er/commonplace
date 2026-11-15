@@ -2,6 +2,7 @@
 
 import mimetypes
 import os
+import re
 import shutil
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,6 +26,14 @@ def browser():
             raise
         yield instance
         instance.close()
+
+
+def no_runner_status_line():
+    """The status line shown while no enrolled runner machine is known, read from the shipped source."""
+    source = (STATIC / "deck-compute-work.js").read_text()
+    found = re.search(r"if \(!model\?\.asked\) return '([^']+)'", source)
+    assert found, "deck-compute-work.js no longer has the no-runner status line"
+    return found.group(1)
 
 
 def open_compute(page):
@@ -274,8 +283,8 @@ def test_compute_status_line_comes_before_the_map(browser, size):
         open_compute(page)
         status = page.locator(".dc-status")
         status.wait_for()
-        # This fixture's machines are not recorded as runners, so the line says work cannot be counted.
-        assert status.inner_text().startswith("Running work is not reported")
+        # This fixture records no enrolled runner machine, so the line says there is no running work to count.
+        assert status.inner_text() == no_runner_status_line()
         assert page.evaluate("document.documentElement.scrollWidth") == size[0]
         above = page.evaluate(
             "document.querySelector('.dc-status').getBoundingClientRect().bottom"
