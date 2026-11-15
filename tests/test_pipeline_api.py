@@ -416,15 +416,19 @@ def test_the_pipeline_scope_is_the_only_scope_and_one_token_per_workspace(world)
 
 
 # ── The card step comes from the board ──────────────────────────────────
-def board_card(world, *, pr=7, repo=REPO, claim_seconds=0):
-    """A card on a board with its PR linked; returns its number."""
+def board_card(world, *, pr=7, repo=REPO, board="work", board_repo=None, doing=True):
+    """A card on a board with its PR linked; returns (its number, the board service)."""
     from commonplace.boards import BoardService
-    from commonplace.extensions import ToolContext
+    from commonplace.extensions import ToolContext, ToolError
 
     service = BoardService(ToolContext(world.person, world.gateway))
-    service.board_add(slug="work", wing="shared")
-    card = service.task_add(board="work", title="Build the thing")
-    service.task_update(card["number"], status="doing")
+    try:
+        service.board_add(slug=board, wing="shared", repo=board_repo)
+    except ToolError:  # the board is already there
+        pass
+    card = service.task_add(board=board, title="Build the thing")
+    if doing:
+        service.task_update(card["number"], status="doing")
     service.task_update(card["number"], pr=f"https://github.com/{repo}/pull/{pr}")
     return card["number"], service
 
@@ -468,12 +472,91 @@ def test_a_pr_with_no_linked_card_says_no_card(world, http):
     assert one["lead"]["basis"] == "first_event"
 
 
-def test_a_card_for_another_pr_or_repo_is_not_this_ones(world, http):
+def test_a_card_for_another_pr_is_not_this_ones(world, http):
     board_card(world, pr=8)
-    board_card_other = "other/repo"
     post(http, body(event("o", "pr_opened", "pass", 0)))
     assert step(http("GET", f"/api/pipeline/prs/{REPO}/7")[1], "card")["detail"] == "No card"
-    assert board_card_other != REPO
+
+
+def card_ref(world, http, repo=REPO, pr=7):
+    return step(http("GET", f"/api/pipeline/prs/{repo}/{pr}")[1], "card")
+
+
+def test_a_card_linked_under_the_old_repository_name_is_found(world, http):
+    """The events say the new name; the board's card stores the name its repository had."""
+    number, _ = board_card(world, pr=637, repo="acme/old-name")
+    post(http, body(event("o", "pr_opened", "pass", 0), pr=637))
+    box = card_ref(world, http, pr=637)
+    assert (box["state"], box["ref"]) == ("pass", f"#/card/{number}")
+    assert http("GET", f"/api/pipeline/prs/{REPO}/637")[1]["lead"]["basis"] == "card"
+
+
+def test_two_cards_with_one_number_prefer_the_exact_repository(world, http):
+    other, _ = board_card(world, repo="other/repo", board="other")
+    exact, _ = board_card(world, repo=REPO)
+    assert other < exact
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    assert card_ref(world, http)["ref"] == f"#/card/{exact}"
+
+
+def test_two_cards_with_one_number_and_no_fit_link_nothing(world, http):
+    board_card(world, repo="other/repo", board="other")
+    board_card(world, repo="third/repo", board="third")
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    assert card_ref(world, http)["detail"] == "No card"
+
+
+def test_two_cards_fall_back_to_the_board_that_holds_the_repository(world, http):
+    board_card(world, repo="other/repo", board="other", board_repo="other/repo")
+    mine, _ = board_card(world, repo="acme/old-name", board="mine", board_repo=REPO)
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    assert card_ref(world, http)["ref"] == f"#/card/{mine}"
+
+
+def test_a_repository_alias_picks_between_cards(world, http, monkeypatch):
+    board_card(world, repo="other/repo", board="other")
+    renamed, _ = board_card(world, repo="acme/old-name", board="mine")
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    assert card_ref(world, http)["detail"] == "No card"  # two cards, no alias yet
+    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", f"bad,x=,acme/old-name={REPO}")
+    assert card_ref(world, http)["ref"] == f"#/card/{renamed}"
+    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", f"{REPO}=acme/old-name")  # read both ways
+    assert card_ref(world, http)["ref"] == f"#/card/{renamed}"
+
+
+def test_the_alias_list_is_read_both_ways_and_ignores_junk(monkeypatch):
+    from commonplace.pipeline.cards import aliases
+
+    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", "a/old=a/new, b/x=b/y,junk,=,c/d=")
+    assert aliases("a/new") == {"github.com/a/new", "github.com/a/old"}
+    assert aliases("a/old") == {"github.com/a/new", "github.com/a/old"}
+    assert aliases("b/y") == {"github.com/b/x", "github.com/b/y"}
+    assert aliases("c/d") == {"github.com/c/d"}
+    assert aliases("not a repo") == set() or all(
+        r.startswith("github.com/") for r in aliases("x/y")
+    )
+    monkeypatch.delenv("COMMONPLACE_REPO_ALIASES")
+    assert aliases("a/new") == {"github.com/a/new"}
+
+
+def test_a_card_that_never_was_doing_starts_when_it_was_created(world, http):
+    number, service = board_card(world, doing=False)
+    with service.store.connection() as conn:
+        created = conn.execute("SELECT created_at FROM tasks WHERE id=?", (number,)).fetchone()[0]
+    post(http, body(event("o", "pr_opened", "pass", 2040)))
+    box = card_ref(world, http)
+    assert box["start"][:19] == created[:19] and box["ref"] == f"#/card/{number}"
+
+
+def test_a_card_in_another_workspace_is_never_used(world, http):
+    number, _ = board_card(world)
+    feeder, reader_token = other_workspace(world)
+    # Their workspace has this repository and number in its events but no card of its own.
+    post(http, body(event("o", "pr_opened", "pass", 0)), token=feeder)
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    theirs = http("GET", f"/api/pipeline/prs/{REPO}/7", token=reader_token)[1]
+    assert step(theirs, "card")["detail"] == "No card"
+    assert card_ref(world, http)["ref"] == f"#/card/{number}"
 
 
 def test_a_card_the_reader_cannot_see_is_not_linked(world, http):

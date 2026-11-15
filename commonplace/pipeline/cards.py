@@ -1,24 +1,71 @@
 """The board card behind a pull request: when it was first claimed and when its PR was linked.
 
 The Pipeline's ``card`` step is not sent by the deploy script; the board already knows it.
-``card_for`` reads the workspace's board file (never creating it) and answers the card whose
-PR link is this repository and number, or ``None`` when no card the reader may see is linked.
-Only numbers and times leave this module: no title, body or board name.
+``cards_for`` reads the workspace's board file (never creating it) and answers, for each
+(repository, PR number), the card whose PR link it is, or nothing when no card the reader may
+see fits. Only numbers and times leave this module: no title, body or board name.
+
+A card stores the repository of its board when the PR was linked, which can be an older name
+of the repository the events carry (a renamed repository). So a card is chosen like this,
+among the cards the reader may see that have this PR number:
+
+1. a card whose PR repository is the event's repository or one of its aliases;
+2. else, if exactly one such card exists, that card;
+3. else the first card on a board whose repository is the event's repository or an alias.
+
+Aliases come from ``COMMONPLACE_REPO_ALIASES``, ``old/name=new/name`` pairs separated by
+commas, read both ways. Nothing is matched across workspaces: a reader only sees its own
+workspace's board file.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from commonplace.boards.service import BoardService, normalize_repo
 from commonplace.extensions import ToolContext, ToolError
 
+ALIASES_ENV = "COMMONPLACE_REPO_ALIASES"
 
-def _normal(repo: str):
+
+def _normal(repo):
     try:
         return normalize_repo(repo)
     except ToolError:
         return None
+
+
+def aliases(repo: str) -> set:
+    """The normalized repository and every alias of it named in ``COMMONPLACE_REPO_ALIASES``."""
+    family = {n for n in [_normal(repo)] if n}
+    for pair in os.environ.get(ALIASES_ENV, "").split(","):
+        left, _, right = pair.partition("=")
+        names = {_normal(left.strip()), _normal(right.strip())} if right.strip() else set()
+        names.discard(None)
+        if names & family:
+            family |= names
+    return family
+
+
+def _boards_of(conn, board_id) -> set:
+    return {
+        row["repo"]
+        for row in conn.execute("SELECT repo FROM board_repos WHERE board_id=?", (board_id,))
+    }
+
+
+def _pick(conn, candidates, family):
+    """The card for one PR among visible candidates, or ``None`` (see the module note)."""
+    for row in candidates:
+        if row["pr_repo"] in family:
+            return row
+    if len(candidates) == 1:
+        return candidates[0]
+    for row in candidates:
+        if _boards_of(conn, row["board_id"]) & family:
+            return row
+    return None
 
 
 def cards_for(gateway, principal, keys) -> dict:
@@ -31,26 +78,30 @@ def cards_for(gateway, principal, keys) -> dict:
     store = BoardService(ToolContext(principal=principal, gateway=gateway)).store
     with store.connection() as conn:
         for repo, pr in keys:
-            normal = _normal(repo)
-            if normal is None:
+            family = aliases(repo)
+            if not family:
                 continue
-            for row in conn.execute(
-                "SELECT t.id, t.created_at, t.pr_reported_at, b.wing AS wing FROM tasks t "
-                "JOIN boards b ON b.id=t.board_id WHERE t.pr_repo=? AND t.pr_number=? "
-                "ORDER BY t.id",
-                (normal, pr),
-            ):
-                if not principal.policy.can_read_wing(row["wing"]):
-                    continue
-                claimed = conn.execute(
-                    "SELECT created_at FROM task_events WHERE task_id=? AND to_status='doing' "
-                    "ORDER BY id LIMIT 1",
-                    (row["id"],),
-                ).fetchone()
-                found[(repo, pr)] = {
-                    "number": row["id"],
-                    "claimed_at": claimed["created_at"] if claimed else row["created_at"],
-                    "linked_at": row["pr_reported_at"],
-                }
-                break
+            candidates = [
+                row
+                for row in conn.execute(
+                    "SELECT t.id, t.created_at, t.pr_reported_at, t.pr_repo, b.id AS board_id, "
+                    "b.wing AS wing FROM tasks t JOIN boards b ON b.id=t.board_id "
+                    "WHERE t.pr_number=? ORDER BY t.id",
+                    (pr,),
+                )
+                if principal.policy.can_read_wing(row["wing"])
+            ]
+            row = _pick(conn, candidates, family)
+            if row is None:
+                continue
+            claimed = conn.execute(
+                "SELECT created_at FROM task_events WHERE task_id=? AND to_status='doing' "
+                "ORDER BY id LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+            found[(repo, pr)] = {
+                "number": row["id"],
+                "claimed_at": claimed["created_at"] if claimed else row["created_at"],
+                "linked_at": row["pr_reported_at"],
+            }
     return found
