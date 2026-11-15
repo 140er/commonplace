@@ -302,3 +302,8 @@ kbd { font: 500 11px/16px var(--mono); color: var(--text-2); background: var(--s
   .memory-import { padding: 0; background: none; }
   .memory-import-summary > div { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* The key hint is for a keyboard; a phone or any coarse pointer has no Enter or Esc to press. */
+@media (pointer: coarse), (max-width: 699px) {
+  .workbench-board form[data-board-add] .composer-keys { display: none; }
+}
