@@ -19,6 +19,7 @@ from ._http import (
     send_json,
     send_text,
 )
+from .assignees import board_assignees
 from .digest import ssml
 from .display import NEEDS, with_urls
 from .priority import rank
@@ -374,6 +375,10 @@ def dispatch(service, h, parts, method):
             body = read_json(h)
             with rest_write(service.ctx, h, "board_add", body):
                 return 201, service.board_add(**body)
+    if len(parts) == 3 and parts[0] == "boards" and parts[2] == "assignees" and method == "GET":
+        if not service.principal.person:
+            raise HTTPError(403, "sign in as a person to list who a card can go to")
+        return 200, board_assignees(service, parts[1])
     if len(parts) == 3 and parts[0] == "boards" and parts[2] == "cards":
         if method == "GET":
             cards = service.task_list(
