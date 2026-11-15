@@ -1,0 +1,5 @@
+### Deck polish, second slice
+
+- The usability re-test found that Memory results on a phone were walls of text, that "Some sources could not be searched" did not say which ones, and that the classic look on a phone let its tab bar float under a short page and broke a project name inside a word.
+- Decision: a result is shown as a window around its first match with a toggle for the whole text, so the match is always visible and the stored words stay whole; the warning is built from the failures the page already records, now with a reason, so no server change is needed; the classic tab bar is pinned with a minimum page height and a sticky bar, and the project name is cut with an ellipsis. The classic bar keeps Bots and Memory only, because the rest of the destinations are in the top-left menu and a larger change is a product call.
+- Rejected: clamping with CSS lines alone (the match can sit below the cut), nesting the toggle inside the result button (a button inside a button), and a fixed bar with extra page padding (it overlaps the Bots page, which already fills the screen).

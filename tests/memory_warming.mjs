@@ -21,7 +21,7 @@ function mount(look) {
   if (look === 'deck') node.ownerDocument = { documentElement: { dataset: { ui: 'deck' } } };
   return node;
 }
-const click = (node, dataset) => node.listeners.get('click')({ target: { closest: (selector) => (selector.includes('data-memory-result') ? null : { dataset }) } });
+const click = (node, dataset) => node.listeners.get('click')({ target: { closest: (selector) => (/data-memory-(result|expand)/.test(selector) ? null : { dataset }) } });
 // A fake memory worker: `script` answers each note search in turn; the harness counts the
 // requests and the most that were ever in flight at once.
 function harness(look, script, options = {}) {

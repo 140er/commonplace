@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { renderMemory, renderMemoryPanel, createMemory } from '../commonplace/web/static/memory.js';
+import { renderMemory, renderMemoryPanel, createMemory, searchMemory } from '../commonplace/web/static/memory.js';
+import { excerpt, sourcesWarning } from '../commonplace/web/static/deck-memory.js';
 import { createMemoryImport, renderImport } from '../commonplace/web/static/memory-import.js';
 const board = { slug: 'work', name: 'Workspace', wing: 'wing/private', coordinator: 'conn:bot-opaque' };
 const me = { actor: 'user:owner', workspace: 'workspace-one', people: { 'conn:bot-opaque': 'Notebook' } };
@@ -184,4 +185,25 @@ test('phone page headings hide in the Deck shell but a dialog title stays visibl
   const hide = css.match(/:root\[data-ui="deck"\] \.shell \.center h1([^{]*)\{\s*display: none;/);
   assert.ok(hide, 'the phone shell still hides page headings');
   assert.equal(hide[1].trim(), ':not(dialog h1)');
+});
+
+test('a long result is cut around its first match; a short one is kept whole', () => {
+  assert.deepEqual(excerpt('short words', 'short'), { text: 'short words', cut: false });
+  const long = `${'start words '.repeat(60)}the harbor lantern line${' end words'.repeat(60)}`;
+  const part = excerpt(long, 'harbor');
+  assert.equal(part.cut, true);
+  assert.ok(part.text.length < 260 && part.text.includes('harbor lantern') && part.text.startsWith('…') && part.text.endsWith('…'));
+  assert.ok(excerpt(long, 'missing').text.startsWith('start words'), 'no match starts at the beginning');
+});
+test('the warning names each source that did not answer and why', () => {
+  const html = sourcesWarning([{ source: 'note', reason: 'timeout' }, { source: 'project', board: 'work', reason: 'failed' }, { source: 'skipped', reason: 'skipped' }], [board]);
+  assert.match(html, /Some sources could not be searched: notes \(no answer in time\); Workspace chat and cards \(the server had a problem\); other sources \(not reached before time ran out\)\./);
+  assert.match(html, /data-memory-action="retry"/);
+  assert.match(sourcesWarning([], [board]), /^<p[^>]*>Some sources could not be searched\. /);
+  assert.ok(!sourcesWarning([{ source: 'project', board: '<b>', reason: 'failed' }], []).includes('<b>'));
+});
+test('a failed read records why, so the page can say it', async () => {
+  const api = async path => { if (path.startsWith('/api/chat/work/')) { const error = new Error('x'); error.status = 503; error.payload = { retry_after_s: 1 }; throw error; } return { results: [] }; };
+  const page = await searchMemory({ api, boards: [{ ...board, wing: '' }], query: 'exact' });
+  assert.deepEqual(page.errors, [{ board: 'work', source: 'project', reason: 'busy' }]);
 });
