@@ -1094,7 +1094,7 @@ export async function mountProjectReview(host, {project, api, e, current = () =>
       const result = await api(`${base}/configs/${version.version}/${action}`, {method: "POST", body: action === "accept" ? {sha256: version.sha256} : {}});
       // Keep a completed decision visible even if the following refresh fails.
       Object.assign(version, result.version && typeof result.version === "object" ? result.version : result);
-    }, `${action === "reject" ? "Rejected" : "Accepted"} ${version.ref}`);
+    }, deck ? "" : `${action === "reject" ? "Rejected" : "Accepted"} ${version.ref}`);
   }
   async function act(action, done) {
     if (busy || !active()) return;

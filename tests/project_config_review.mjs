@@ -86,6 +86,7 @@ if (deck) {
     await click('[data-config-reject="2"]');
     await click('[data-config-confirm-reject="2"]');
     assert.match(host.innerHTML, /Rejected by you/);
+    assert.doesNotMatch(host.innerHTML, /Rejected v2/, "the version row already says it");
     assert.doesNotMatch(host.innerHTML, /user:owner|data-config-accept|data-config-reject/);
     assert.ok(host.innerHTML.indexOf("data-project-review-status") < host.innerHTML.indexOf("Waiting for release"));
   }
