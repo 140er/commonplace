@@ -42,6 +42,7 @@ MESSAGE = (
 
 _FULL_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT})
 _SQLITE_FULL = 13
+_MAX_ERROR_TEXT = 400
 _FULL_TEXTS = (
     "database or disk is full",
     "no space left on device",
@@ -69,7 +70,12 @@ class StorageFull(OSError):
 
 
 def is_storage_full_text(text) -> bool:
-    return isinstance(text, str) and any(marker in text.lower() for marker in _FULL_TEXTS)
+    """Whether a short error line names a full disk; long text may be quoted content."""
+    return (
+        isinstance(text, str)
+        and len(text) <= _MAX_ERROR_TEXT
+        and any(marker in text.lower() for marker in _FULL_TEXTS)
+    )
 
 
 def is_storage_full(exc) -> bool:
@@ -85,11 +91,15 @@ def is_storage_full(exc) -> bool:
                 return True
             if getattr(exc, "sqlite_errorname", None) == "SQLITE_FULL":
                 return True
-        try:
-            if is_storage_full_text(str(exc)):
-                return True
-        except Exception:
-            pass
+        # A library wraps the OS error in its own exception type and keeps only the text.
+        # An input refusal (ValueError and kin) can quote what the person wrote, so its
+        # text never counts.
+        if not isinstance(exc, (ValueError, TypeError, KeyError)):
+            try:
+                if is_storage_full_text(str(exc)):
+                    return True
+            except Exception:
+                pass
         exc = exc.__cause__ or exc.__context__
     return False
 

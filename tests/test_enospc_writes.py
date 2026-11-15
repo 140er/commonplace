@@ -339,6 +339,9 @@ def test_a_full_disk_is_recognised_however_it_is_wrapped(exc):
     except ValueError as outer:
         assert storage_guard.is_storage_full(outer)
     assert not storage_guard.is_storage_full(PermissionError(errno.EACCES, "denied"))
+    # What a person wrote is never mistaken for the disk saying so.
+    assert not storage_guard.is_storage_full(ValueError("note: database or disk is full"))
+    assert not storage_guard.is_storage_full_text("database or disk is full " + "x" * 500)
 
 
 def test_a_queued_write_refused_for_a_full_disk_is_kept_and_runs_when_space_returns(
