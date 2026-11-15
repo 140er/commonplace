@@ -99,9 +99,11 @@ def open_screen(browser, screen, width, *, look="deck", css=None, populated=Fals
 
 def pill_styles(page, selector):
     return page.locator(selector).evaluate("""root => {
-      const properties=['backgroundColor','color','fontSize','fontWeight','minHeight','borderRadius'];
+      const properties=['backgroundColor','color','fontSize','fontWeight','minHeight','borderRadius',
+        'paddingLeft','paddingRight'];
       const style=el=>Object.fromEntries(properties.map(key=>[key,getComputedStyle(el)[key]]));
-      return {radius:getComputedStyle(root.querySelector('.seg')).borderRadius,
+      const seg=getComputedStyle(root.querySelector('.seg'));
+      return {radius:seg.borderRadius,gap:seg.columnGap,background:seg.backgroundColor,border:seg.borderTopWidth,
         selected:style(root.querySelector('.seg [aria-pressed=true]')),
         idle:style(root.querySelector('.seg [aria-pressed=false]'))};
     }""")
@@ -217,11 +219,6 @@ def test_deck_panels_have_readable_surfaces_and_contained_fields(browser, screen
 
 
 @pytest.mark.parametrize("width", [390, 1280])
-@pytest.mark.xfail(
-    strict=True,
-    reason="product follow-up: the Needs me segment control still has the older Deck pill style "
-    "while the board segment control moved to the Hermes look",
-)
 def test_needs_filter_segment_matches_the_board_segment(browser, width):
     context, page = open_screen(browser, "needs", width)
     try:
