@@ -20,6 +20,14 @@ async function main(){
  f.req('/api/admin/instance/deploy').resolve({...deploy,commonplace_version:'<img src=x>'});await flush();
  assert.doesNotMatch(f.mount.innerHTML,/<img/);assert.match(f.mount.innerHTML,/&lt;img/);
  assert.match(f.mount.innerHTML,/Running commit unknown/);assert.match(f.mount.innerHTML,/3\.12\.0/);
+ if(process.argv[2]==='commit'){
+   const sha='0123456789abcdef'.repeat(2)+'01234567';
+   const shown=async(source,commit)=>{const g=fixture();g.ui.show();g.req('/api/admin/instance/deploy').resolve({...deploy,commit,commit_source:source});await flush();const html=g.mount.innerHTML;g.ui.stop();return html;};
+   assert.match(await shown('build',sha),new RegExp('Running commit 0123456789ab \\('+sha+', from image build\\)'));
+   assert.match(await shown('env',sha),/from environment\)/);
+   assert.match(await shown('env','<img src=x>'),/Running commit unknown/);
+   return;
+ }
  if(process.argv[2]==='index-stats'){
    const figure={value:null,reason:'model_not_in_sqlite'};
    const row={workspace_id:'ws_1234567890abcdef',...Object.fromEntries(['drawers','embedding_model','dimension','vector_count','hnsw_capacity','tombstones'].map(k=>[k,figure]))};

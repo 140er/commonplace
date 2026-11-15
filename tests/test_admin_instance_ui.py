@@ -29,6 +29,10 @@ def test_health_and_version_independent(hub):
     run(hub, "health")
 
 
+def test_running_commit_names_its_source(hub):
+    run(hub, "commit")
+
+
 def test_complete_admin_and_operational_retries(hub):
     run(hub, "complete")
 

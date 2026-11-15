@@ -117,3 +117,7 @@ def test_build_marker_recipe_and_compose():
     assert compose["services"]["commonplace"]["build"]["args"] == {
         "COMMONPLACE_BUILD_COMMIT": "${COMMONPLACE_BUILD_COMMIT:-}"
     }
+    assert (
+        compose["services"]["commonplace"]["environment"]["COMMONPLACE_COMMIT"]
+        == "${COMMONPLACE_BUILD_COMMIT:-}"
+    )

@@ -129,7 +129,7 @@ export function createAdmin({ mount, api, e, current, runners = null, invites = 
 
   function content(key, data) {
     if (key === 'index-stats') return rows(['Workspace', 'Memories', 'Model', 'Dimension', 'Vectors (SQLite)', 'HNSW capacity', 'Tombstones'], data.workspaces.map(w => [w.workspace_id, ...['drawers','embedding_model','dimension','vector_count','hnsw_capacity','tombstones'].map(k => w[k].value ?? w[k].reason)]));
-    if (key === 'deploy') return rows(['Package', 'Version'], [['Commonplace', data.commonplace_version], ['MemPalace', data.mempalace_version]]) + `<p>${data.commit_source === 'build' && /^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(data.commit) ? 'Running commit ' + e(data.commit) : 'Running commit unknown'}</p>`;
+    if (key === 'deploy') return rows(['Package', 'Version'], [['Commonplace', data.commonplace_version], ['MemPalace', data.mempalace_version]]) + `<p>${['build', 'env'].includes(data.commit_source) && /^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(data.commit) ? 'Running commit ' + e(data.commit.slice(0, 12)) + ' (' + e(data.commit) + ', from ' + (data.commit_source === 'build' ? 'image build' : 'environment') + ')' : 'Running commit unknown'}</p>`;
     if (key === 'health') return '<p>Gateway reachable</p><p class="quiet">The gateway answered. This does not verify memory, runners, databases or backups.</p>';
     if (key === 'backups') return '<p>Last completed recorded attempt. Snapshot status does not verify remote upload or retention. Interrupted runs may leave the previous receipt.</p>' + '<h3>Online</h3>' + panel('backup-online') + '<h3>Offline</h3>' + panel('backup-offline');
     if (key.startsWith('backup-')) {
