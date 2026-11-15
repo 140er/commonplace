@@ -95,3 +95,4 @@
   :root[data-ui="deck"] .deck-memory-dialog { width: 100%; max-width: none; max-height: calc(100dvh - 84px - env(safe-area-inset-bottom)); margin: auto 0 calc(68px + env(safe-area-inset-bottom)); padding: 16px 16px 24px; border-width: 1px 0 0; border-radius: var(--radius-dialog) var(--radius-dialog) 0 0; }
   :root[data-ui="deck"] .deck-memory-dialog .memory-import h1 { font-size: 24px; line-height: 1.25; }
 }
+:root[data-ui="deck"] .deck-memory .memory-retry { margin: 0; padding: 8px 0; color: var(--ink2); font-size: 14px; overflow-wrap: anywhere; }
