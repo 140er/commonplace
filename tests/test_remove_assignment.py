@@ -105,7 +105,8 @@ def browser():
 
 
 def editing_fields(page):
-    page.locator(".workbench-details").wait_for()
+    # A card opens at once as a read-only preview; the controls come with the card's own read.
+    page.locator(".workbench-details:not([data-card-preview])").wait_for()
     edit = page.locator("[data-deck-card-controls]")
     if edit.count() and edit.get_attribute("open") is None:
         edit.locator("summary").click()
@@ -132,7 +133,11 @@ def open_drawer(browser, hub, fresh, card, width, look, *, removable=True):
     editing_fields(page)
     if removable:
         page.locator('[data-action="remove-assignment"]').wait_for()
-        page.locator('[data-action="remove-assignment"]').scroll_into_view_if_needed()
+        # The drawer is drawn again when the card's refresh lands; scrolling the element found now
+        # cannot fail on a node the redraw replaced.
+        page.locator('[data-action="remove-assignment"]').evaluate(
+            "element => element.scrollIntoView({ block: 'nearest' })"
+        )
     page.evaluate("document.fonts.ready")
     return context, page
 
