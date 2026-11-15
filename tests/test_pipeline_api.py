@@ -26,6 +26,7 @@ def world(env, tmp_path, monkeypatch):
     The server clock stands still, so two reads of an open PR give the same numbers."""
     fixed = datetime.now(timezone.utc)
     monkeypatch.setattr(routes, "_now", lambda: fixed)
+    monkeypatch.delenv("COMMONPLACE_REPO_ALIASES", raising=False)
     TOKENS["pipeline"] = pipeline_token(env, "deploy-feed")
     env.gateway.supervisor.workspace_dir = lambda workspace_id: tmp_path / "ws" / workspace_id
     return env
@@ -429,7 +430,10 @@ def board_card(world, *, pr=7, repo=REPO, board="work", board_repo=None, doing=T
     card = service.task_add(board=board, title="Build the thing")
     if doing:
         service.task_update(card["number"], status="doing")
-    service.task_update(card["number"], pr=f"https://github.com/{repo}/pull/{pr}")
+    service.task_update(card["number"], pr=f"https://github.com/{repo or REPO}/pull/{pr}")
+    if repo is None:
+        with service.store.connection() as conn:
+            conn.execute("UPDATE tasks SET pr_repo=NULL, pr_url=NULL WHERE id=?", (card["number"],))
     return card["number"], service
 
 
@@ -442,9 +446,13 @@ def card_claim(service, number):
         ).fetchone()["created_at"]
 
 
-def test_the_card_step_runs_from_the_claim_to_the_pr_opening(world, http):
+def test_the_card_step_runs_from_the_claim_to_the_pr_opening(world, http, monkeypatch):
     number, service = board_card(world)
     claimed = card_claim(service, number)
+    service.task_update(number, status="todo")
+    with monkeypatch.context() as clock:
+        clock.setattr("commonplace.boards.store.now", lambda: when(2100))
+        service.task_update(number, status="doing")
     # The PR opened four minutes after the card was claimed.
     post(http, body(event("o", "pr_opened", "pass", 2040), event("g", "gate", "pass", 2100)))
     _, one, _ = http("GET", f"/api/pipeline/prs/{REPO}/7")
@@ -482,8 +490,9 @@ def card_ref(world, http, repo=REPO, pr=7):
     return step(http("GET", f"/api/pipeline/prs/{repo}/{pr}")[1], "card")
 
 
-def test_a_card_linked_under_the_old_repository_name_is_found(world, http):
+def test_a_card_linked_under_the_old_repository_name_is_found(world, http, monkeypatch):
     """The events say the new name; the board's card stores the name its repository had."""
+    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", f"acme/old-name={REPO}")
     number, _ = board_card(world, pr=637, repo="acme/old-name")
     post(http, body(event("o", "pr_opened", "pass", 0), pr=637))
     box = card_ref(world, http, pr=637)
@@ -508,20 +517,83 @@ def test_two_cards_with_one_number_and_no_fit_link_nothing(world, http):
 
 def test_two_cards_fall_back_to_the_board_that_holds_the_repository(world, http):
     board_card(world, repo="other/repo", board="other", board_repo="other/repo")
-    mine, _ = board_card(world, repo="acme/old-name", board="mine", board_repo=REPO)
+    mine, _ = board_card(world, repo=None, board="mine", board_repo=REPO)
     post(http, body(event("o", "pr_opened", "pass", 0)))
     assert card_ref(world, http)["ref"] == f"#/card/{mine}"
 
 
-def test_a_repository_alias_picks_between_cards(world, http, monkeypatch):
+@pytest.mark.parametrize("reverse", [False, True])
+def test_a_repository_alias_picks_between_cards(world, http, monkeypatch, reverse):
     board_card(world, repo="other/repo", board="other")
-    renamed, _ = board_card(world, repo="acme/old-name", board="mine")
+    old, new = "acme/old-name", REPO
+    card_repo, event_repo = (new, old) if reverse else (old, new)
+    renamed, _ = board_card(world, repo=card_repo, board="mine")
+    post(http, body(event("o", "pr_opened", "pass", 0), repo=event_repo))
+    assert card_ref(world, http, repo=event_repo)["detail"] == "No card"
+    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", f"bad,x=,{old}={new}")
+    assert card_ref(world, http, repo=event_repo)["ref"] == f"#/card/{renamed}"
+
+
+def test_a_single_card_for_a_different_repository_is_not_borrowed(world, http):
+    board_card(world, pr=133, repo="other/project")
+    post(http, body(event("o", "pr_opened", "pass", 0), pr=133))
+    box = card_ref(world, http, pr=133)
+    assert (box["state"], box["detail"], box["ref"]) == ("skipped", "No card", None)
+    assert http("GET", f"/api/pipeline/prs/{REPO}/133")[1]["lead"]["basis"] == "first_event"
+
+
+@pytest.mark.parametrize("extra_card", [False, True])
+def test_a_mismatched_card_repo_cannot_be_overridden_by_its_board(world, http, extra_card):
+    board_card(world, repo="other/project", board_repo=REPO)
+    if extra_card:
+        board_card(world, repo="third/project", board="third")
     post(http, body(event("o", "pr_opened", "pass", 0)))
-    assert card_ref(world, http)["detail"] == "No card"  # two cards, no alias yet
-    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", f"bad,x=,acme/old-name={REPO}")
-    assert card_ref(world, http)["ref"] == f"#/card/{renamed}"
-    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", f"{REPO}=acme/old-name")  # read both ways
-    assert card_ref(world, http)["ref"] == f"#/card/{renamed}"
+    assert card_ref(world, http)["detail"] == "No card"
+
+
+@pytest.mark.parametrize(
+    "stored_repo",
+    [
+        "acme/widgets",
+        "github.com/acme/widgets",
+        "https://github.com/Acme/Widgets.git/",
+        "git@github.com:acme/widgets.git",
+    ],
+)
+def test_card_repository_urls_and_names_are_normalized(world, http, stored_repo):
+    number, service = board_card(world)
+    with service.store.connection() as conn:
+        conn.execute("UPDATE tasks SET pr_repo=? WHERE id=?", (stored_repo, number))
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    assert card_ref(world, http)["ref"] == f"#/card/{number}"
+
+
+@pytest.mark.parametrize("board_repo", [None, "other/project"])
+@pytest.mark.parametrize("count", [1, 2])
+def test_missing_card_repo_needs_a_matching_board(world, http, board_repo, count):
+    for i in range(count):
+        board_card(world, repo=None, board=f"work-{i}", board_repo=board_repo)
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    assert card_ref(world, http)["detail"] == "No card"
+
+
+@pytest.mark.parametrize("missing_repo", [False, True])
+def test_multiple_matching_cards_are_ambiguous(world, http, missing_repo):
+    for _ in range(2):
+        board_card(world, repo=None if missing_repo else REPO, board_repo=REPO)
+    post(http, body(event("o", "pr_opened", "pass", 0)))
+    assert card_ref(world, http)["detail"] == "No card"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_missing_card_repo_can_use_an_explicit_board_alias(world, http, monkeypatch, reverse):
+    old, new = "acme/old-name", REPO
+    board_repo, event_repo = (new, old) if reverse else (old, new)
+    number, _ = board_card(world, repo=None, board_repo=board_repo)
+    post(http, body(event("o", "pr_opened", "pass", 0), repo=event_repo))
+    assert card_ref(world, http, repo=event_repo)["detail"] == "No card"
+    monkeypatch.setenv("COMMONPLACE_REPO_ALIASES", f"https://github.com/{old}.git={new}")
+    assert card_ref(world, http, repo=event_repo)["ref"] == f"#/card/{number}"
 
 
 def test_the_alias_list_is_read_both_ways_and_ignores_junk(monkeypatch):

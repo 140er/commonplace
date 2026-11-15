@@ -1,3 +1,8 @@
+- **Owns:**
+  Repository identity selection for visible board cards linked to pipeline PRs.
 - **Promises:**
-
-  - The card for a PR is found by number among the cards the reader may see, preferring one whose PR repository is the event's repository or an alias (`COMMONPLACE_REPO_ALIASES`), else the only card with that number, else the card on a board that holds the repository; a card linked under a repository's old name is therefore still found. Nothing is matched across workspaces.
+  Normalize repositories and honor explicit `COMMONPLACE_REPO_ALIASES` old/new pairs in either direction. A unique matching PR repository wins; board repositories apply only to cards missing their PR repository. Workspace and wing isolation and first-doing timestamps are preserved.
+- **How it fails:**
+  A populated conflicting PR repository is excluded even when the board matches. Ambiguous matches and cards without repository information remain No card; PR-number uniqueness never establishes identity. Owners must migrate renamed card repositories or configure explicit aliases.
+- **Tests:**
+  `tests/test_pipeline_api.py` covers wrong-repository singleton rejection, normalization, explicit aliases, board fallback, ambiguity, isolation and the first doing timestamp.
