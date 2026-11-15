@@ -151,7 +151,7 @@ function linkMarkup(link, at, names, { on, dim, words, interactive, sel, bundles
 
 /** The whole map as SVG markup. `route` is one of `model.routes`: its links and nodes are
  * marked `on` and everything else `dim`. `selected` is a node key. */
-export function renderScene(model, positions, { route = null, selected = null, selectedLink = null, interactiveLinks = false, words = STATUS_TEXT, labels = 0, places: given = null, cards = false, presentation = null } = {}) {
+export function renderScene(model, positions, { route = null, selected = null, selectedLink = null, interactiveLinks = false, words = STATUS_TEXT, labels = 0, places: given = null, cards = false, presentation = null, k = 1 } = {}) {
   const onLinks = new Set(route?.hops.map((hop) => hop.link));
   const onNodes = new Set(route ? [route.site, ...route.hops.flatMap((hop) => [hop.from, hop.to])] : []);
   const selectedEnds = new Set(presentation ? model.links.filter(link => link.id === selectedLink).flatMap(link => [link.from,link.to]) : []);
@@ -165,11 +165,12 @@ export function renderScene(model, positions, { route = null, selected = null, s
     for (const link of model.links) if (places.has(link.id)) for (const end of ["from", "to"]) {
       const key = link[end];
       if (!bundles.has(key)) bundles.set(key, []);
-      bundles.get(key).push({ id: link.id, state: link.status[end] });
+      bundles.get(key).push({ id: link.id, state: link.status[end], end });
     }
     for (const [key, ends] of bundles) {
       if (ends.length <= 3) { bundles.delete(key); continue; }
-      if (presentation) { bundles.set(key, { count: ends.length }); continue; }
+      // The presentation also learns where each stroke leaves this node, so its mark can sit where they meet.
+      if (presentation) { bundles.set(key, { count: ends.length, k, paths: ends.map(({ id, end }) => { const at = places.get(id), points = at.points || [{ x: at.x1, y: at.y1 }, { x: at.x2, y: at.y2 }]; return end === "from" ? points : [...points].reverse(); }) }); continue; }
       const remaining = ends.filter(end => end.id !== selectedLink);
       // Match the status reader: worst known state; unknown only with no known state.
       const state = ["down", "degraded", "up", "unknown"].find(state => remaining.some(end => end.state === state)) || "none";
@@ -301,7 +302,7 @@ export function createMapCore({ storage = null, workspace = "", words = STATUS_T
     /** Make `key` the selected node (not a toggle); false when the map has no such node. */
     choose(key) { if (!positions[key]) return false; if (presentation) selectedLink = null; selected = key; return true; },
     clear() { selected = null; },
-    scene() { return renderScene(model, positions, { route: route(), selected, selectedLink, interactiveLinks: routed, words, labels, places: routed ? linkPlaces() : null, cards, presentation }); },
+    scene() { return renderScene(model, positions, { route: route(), selected, selectedLink, interactiveLinks: routed, words, labels, places: routed ? linkPlaces() : null, cards, presentation, k: view?.k || 1 }); },
     links() { return linkPlaces(); },
     get routed() { return routed; },
     /** What each device's label needs, for a host or a test that reasons about plates. */
