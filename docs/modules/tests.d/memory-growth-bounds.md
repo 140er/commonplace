@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_memory_growth_bounds.py` holds the growth and recycle regressions (a thousand workspaces through the tools-list cache, the warm-up table, the restart circuits and the storage meter; the idle store release; the RSS recycle conditions and its drain; the launcher switch; the readings), and `tests/test_admin_instance_api.py` the deploy view's `memory` object.

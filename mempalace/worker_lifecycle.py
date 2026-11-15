@@ -50,6 +50,10 @@ class RestartCircuit:
     def available(self):
         return self.clock() >= self.until
 
+    def clean(self):
+        """No failures on record and no cooldown running."""
+        return self.failures == 0 and self.available()
+
     def ended(self, terminal, completed):
         self.healthy(completed)
         if terminal is None:
@@ -145,6 +149,7 @@ class Coordinator:
         self.reason = None
         self.finished = False
         self.progress_sent = False
+        self.rss_source = "unknown"
 
     def acquire(self):
         with self.lock:
@@ -186,10 +191,12 @@ class Coordinator:
         if finish:
             self._finish()
 
-    def drain(self, reason="parent_lost"):
+    def drain(self, reason="parent_lost", rss_source=None):
         with self.lock:
             if self.reason is None:
                 self.reason = reason
+                if rss_source is not None:
+                    self.rss_source = rss_source
             finish = self.active == 0
         if finish:
             self._finish()
@@ -204,7 +211,7 @@ class Coordinator:
                 admitted=self.admitted,
                 completed=self.completed,
                 reason=self.reason,
-                rss_source="unknown",
+                rss_source=self.rss_source,
             )
         self.cleanup()
         self.exit()

@@ -54,6 +54,7 @@ from . import (
     urls,
 )
 from .auth import PersonalTokenAuthenticator, bearer_from_header
+from .bounded_map import BoundedMap
 from .control_db import ControlDB, ControlError, Principal
 from .http_util import log_failure
 from .policy import TOOL_RULES, Policy, canonical_wing, is_private_wing
@@ -287,6 +288,11 @@ CHECKPOINT_MAX_ITEMS = 500
 
 # How often a page that is about to search may ask for the memory worker to start.
 _WARM_MEMORY_EVERY_S = 30.0
+# Once the warm-up table holds this many workspaces, entries older than the interval are
+# dropped (they no longer throttle anything), so it only holds what the last interval asked.
+_WARM_TABLE_PRUNE_AT = 256
+# Workspaces whose last tools list the mediator keeps for a backup pause.
+TOOLS_CACHE_MAX_WORKSPACES = 128
 
 
 class WorkerUnavailable(Exception):
@@ -590,7 +596,9 @@ class Mediator:
     def __init__(self, db: ControlDB, workers: WorkerClient):
         self.db = db
         self.workers = workers
-        self._tools_cache: dict = {}
+        # The last tools list per workspace, only for a backup pause: bounded so a long-lived
+        # gateway does not keep one full list for every workspace it ever served.
+        self._tools_cache = BoundedMap(TOOLS_CACHE_MAX_WORKSPACES)
         self.gateway = None  # set by Gateway; local tools get it in their context
 
     # ── entry point ──
@@ -2456,6 +2464,10 @@ class Gateway:
             if now - self._warmed.get(workspace_id, -_WARM_MEMORY_EVERY_S) < _WARM_MEMORY_EVERY_S:
                 return
             self._warmed[workspace_id] = now
+            if len(self._warmed) > _WARM_TABLE_PRUNE_AT:
+                self._warmed = {
+                    ws: at for ws, at in self._warmed.items() if now - at < _WARM_MEMORY_EVERY_S
+                }
 
         def start():
             try:
@@ -2466,6 +2478,15 @@ class Gateway:
                 logger.debug("memory worker warm-up start skipped: %s", exc)
 
         threading.Thread(target=start, name="memory-warm", daemon=True).start()
+
+    def release_idle_memory(self) -> None:
+        """Hand back what idle workspaces' open stores hold. Never raises."""
+        try:
+            handoff = getattr(self, "handoff", None)
+            if handoff is not None:
+                handoff.release_idle_memory()
+        except Exception as exc:
+            logger.debug("idle memory release skipped: %s", exc)
 
     def workspace_dir(self, workspace_id: str) -> str:
         from .admission import GATE
@@ -2611,6 +2632,7 @@ class Gateway:
         def reap():
             while not stop.wait(idle_check_s):
                 self.supervisor.stop_idle()
+                self.release_idle_memory()
 
         threading.Thread(target=reap, daemon=True).start()
         if threading.current_thread() is threading.main_thread():

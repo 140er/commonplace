@@ -1,0 +1,4 @@
+- **Owns:** `StorageMeter` in `commonplace/plans.py` keeps each workspace's counted total for sixty seconds and its last limit audit for sixty seconds.
+- **Promises:** Both tables drop entries past their minute whenever a new entry is stored, so they hold only the workspaces seen in the last minute; the totals and the audit throttle are unchanged.
+- **How it fails:** An entry dropped early only costs one more count or one more audit row for that workspace.
+- **Tests:** `tests/test_memory_growth_bounds.py::test_storage_meter_forgets_totals_past_their_minute` runs a thousand workspaces through the meter.

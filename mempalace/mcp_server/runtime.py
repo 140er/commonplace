@@ -424,6 +424,11 @@ def _run_http_loop() -> None:
             _refresh_vector_disabled_flag()
         _start_idle_exit_watchdog()
         _start_write_stall_watchdog()
+        from ..worker_memory import start_rss_recycle
+
+        # Off unless the launcher sets the ceiling; then a worker whose anonymous memory
+        # passes it drains through the coordinator and the gateway starts a replacement.
+        start_rss_recycle(_http_coordinator)
 
         if env_bool(_WORKER_WARMUP_ENV, False):
             # The worker warm-up runs the search path the eager one only
