@@ -2955,11 +2955,11 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         return False
 
     def _pipeline_token_refused(self, path, principal):
-        """The deploy script's token records pipeline events and nothing else."""
+        """A token whose only scope is pipeline:write records pipeline events and nothing else."""
         if (
             principal is None
             or principal.person
-            or PIPELINE_SCOPE not in principal.policy.scopes
+            or tuple(principal.policy.scopes) != (PIPELINE_SCOPE,)
             or (self.command, path) == ("POST", "/api/pipeline/events")
         ):
             return False

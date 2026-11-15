@@ -558,3 +558,15 @@ def test_the_token_command_mints_and_revokes_the_pipeline_token(tmp_path, capsys
         == 0
     )
     assert cli.main(base + mint[:2] + ["second"] + mint[3:]) == 0
+
+
+def test_the_pipeline_scope_is_in_no_default_scope_set(world, http):
+    from commonplace.sessions import person_policy
+
+    for role in ("owner", "member"):
+        assert "pipeline:write" not in person_policy(role).scopes
+    for profile in ("slim", "standard", "full"):
+        assert "pipeline:write" not in Policy.build(profile=profile, trust="trusted").scopes
+    # An ordinary token with several scopes is not mistaken for the deploy token.
+    assert http("GET", "/api/pipeline/prs")[0] == 200
+    assert http("GET", "/api/pipeline/prs", principal=world.person)[0] == 200
