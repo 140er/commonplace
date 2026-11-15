@@ -12,10 +12,12 @@ so the WAL machinery is kept here, free of any such side effects.
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
 
+from . import storage_guard
 from .paths import config_dir
 from .timeutil import utc_now_iso
 
@@ -71,6 +73,32 @@ def _ensure_wal() -> None:
     _WAL_INITIALIZED_DIR = wal_dir
 
 
+def _append(entry: dict) -> None:
+    """Append one entry as one line, in one write, leaving no partial line behind.
+
+    A buffered text write can split a line over several syscalls, and a full
+    disk can accept only the front of one. The next append would then continue
+    the broken line and corrupt two entries. The line goes out in a single
+    ``os.write``; if the disk took only part of it, that part is cut off again
+    (only when nothing else was appended after it).
+    """
+    _ensure_wal()
+    data = (json.dumps(entry, default=str) + "\n").encode("utf-8")
+    fd = os.open(str(_WAL_FILE), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        start = os.fstat(fd).st_size
+        written = os.write(fd, data)
+        if written != len(data):
+            try:
+                if os.fstat(fd).st_size == start + written:
+                    os.ftruncate(fd, start)
+            except OSError:
+                pass
+            raise OSError(errno.ENOSPC, "short write to the write-ahead log")
+    finally:
+        os.close(fd)
+
+
 def _wal_log(operation: str, params: dict, result: dict = None):
     """Append a write operation to the write-ahead log.
 
@@ -100,14 +128,18 @@ def _wal_log(operation: str, params: dict, result: dict = None):
         "result": result,
     }
     try:
-        # Dir setup shares the append's exception handler below: any WAL
-        # failure is logged and non-fatal, never crashing the tool call.
-        _ensure_wal()
-        fd = os.open(str(_WAL_FILE), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
+        # Dir setup shares the append's exception handler below: a WAL failure
+        # is logged and non-fatal, never crashing the tool call -- except a full
+        # disk, which is refused (see below).
+        _append(entry)
     except Exception as e:
         logger.error(f"WAL write failed: {e}")
+        if storage_guard.is_storage_full(e):
+            # The write this entry guards would fail on the same disk, or land
+            # with no record of it. Refuse before the caller changes anything,
+            # so a retry after space returns starts from a clean state.
+            storage_guard.note_refused()
+            raise storage_guard.StorageFull() from e
 
 
 def _wal_result(operation: str, result: dict):
@@ -132,9 +164,9 @@ def _wal_result(operation: str, result: dict):
         "result": result,
     }
     try:
-        _ensure_wal()
-        fd = os.open(str(_WAL_FILE), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
+        _append(entry)
     except Exception as e:
+        # Never raised: the write this outcome describes has already happened, so
+        # failing the caller now would only make it retry work that is stored.
+        # The intent line stays without an outcome, which is how a replay sees it.
         logger.error(f"WAL result write failed: {e}")

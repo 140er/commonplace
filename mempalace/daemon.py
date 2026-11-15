@@ -26,7 +26,7 @@ from typing import Any
 from urllib import error as urlerror, request as urlrequest
 from urllib.parse import parse_qs, urlparse
 
-from . import paths
+from . import paths, storage_guard
 from ._env import env_float, env_int
 from ._proc import kernel32 as _kernel32, pid_alive as _pid_alive
 from .config import MempalaceConfig
@@ -74,6 +74,8 @@ def _lock_defer_backoff_seconds() -> float:
 
 # Override via env for operators; tests patch the module attribute directly.
 LOCK_DEFER_BACKOFF_SECONDS = _lock_defer_backoff_seconds()
+# How long a job refused for a full disk waits before it is claimed again.
+STORAGE_DEFER_BACKOFF_SECONDS = float(storage_guard.RETRY_AFTER_S)
 MAX_BODY_BYTES = 1 << 20  # 1 MiB cap on request bodies (auth-gated DoS guard)
 SHUTDOWN_DRAIN_SECONDS = 10.0
 # Terminal jobs are kept for diagnostics then pruned so the queue DB (which
@@ -697,6 +699,20 @@ class DaemonRuntime:
                     payload["backend"] = self.backend
                 result = execute_job(job.kind, payload)
                 ok = bool(result.get("success", True))
+                if not ok and result.get("error_class") == storage_guard.ERROR_CLASS:
+                    # The disk is full: the write was refused before it started or
+                    # rolled back, so nothing was filed. Parked and tried again
+                    # once space may have returned, never dead-lettered.
+                    self._safe_defer(
+                        job.id,
+                        claimed_started_at=job.started_at,
+                        error={
+                            "error_class": storage_guard.ERROR_CLASS,
+                            "message": result.get("error", storage_guard.MESSAGE),
+                        },
+                    )
+                    self._deferred_until[job.id] = time.monotonic() + STORAGE_DEFER_BACKOFF_SECONDS
+                    continue
                 if not ok and result.get("error_class") == LOCK_REFUSAL_ERROR_CLASS:
                     # Refused the palace write lock: no drawer was filed, so this
                     # is a deferral, not a failure. Dead-lettering it

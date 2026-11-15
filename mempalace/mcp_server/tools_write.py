@@ -2052,6 +2052,8 @@ def tool_update_drawer(drawer_id: str, content: str = None, wing: str = None, ro
                     old_meta,
                 )
             except OSError as exc:
+                if _storage_guard.is_storage_full(exc):
+                    return _embed_failure(exc, success=False)
                 return {
                     "success": False,
                     "error": f"could not record prior drawer text: {exc}",
