@@ -227,6 +227,8 @@ function restore(saved) {
   root.querySelectorAll("[data-draft]").forEach((input) => {
     if (state.drafts.has(input.dataset.draft)) input.value = state.drafts.get(input.dataset.draft);
   });
+  // The Who hint under a restored choice says what that choice does.
+  root.querySelector('[data-board-add] select[name="assignee"]')?.dispatchEvent(new Event("change", { bubbles: true }));
   const scope = (saved?.scope && root.querySelector(`#${saved.scope}`)) || root;
   if (saved?.key) {
     const input = scope.querySelector(`[data-draft="${CSS.escape(saved.key)}"]`);
@@ -547,7 +549,7 @@ function boardView() {
   const cards = boardCards(), from = state.fromChat && cards.find((card) => card.number === state.fromChat.number);
   const made = from && chatTag(from, messages).split(" · ")[1];
   const fromBar = from ? `<div class="m-frombar"><span role="status">Showing <b>${e(state.deck?.on() ? from.title : cardId(board, from.number))}</b>${made ? `, made in chat at ${e(made)}` : ", from chat"}</span><a class="btn" href="#/board/${enc(board.slug)}/chat" data-action="from-chat-back">Back to chat</a></div>` : "";
-  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), column });
+  content.innerHTML = fromBar + renderBoard({ board, cards, bots: state.deckBots || [], me: state.me.actor, filter: state.boardFilter || "all", selected: state.selected, messages, adding: state.addingCard, added: state.justAdded, sheet: phone(), doneAll, canPrioritize: state.me.can_admin === true, people: Object.entries(state.me.people || {}).map(([ref, name]) => ({ ref, name })), agents: state.boardAgents?.slug === board.slug ? state.boardAgents.agents : [], column });
   if (backlog) content.querySelector(".backlog").open = true;
   // Each card carries its actions button (m9); the menu returns focus to it by id.
   content.querySelectorAll(".workbench-board .card[data-card] .card-top").forEach((top) => {
@@ -767,11 +769,22 @@ async function cardPanel(number, epoch, { keepForm = false } = {}) {
     if (request === state.panelRequest && epoch === state.screen) panel.innerHTML = message(error.message, true) + '<button class="opt" data-action="close-panel">Close</button>';
   }
 }
+// The agents Who can offer besides people, as the server lists them for this person (with what each one starts).
+// A failed read leaves the field as it was; a changed list redraws the form around the words already typed.
+async function loadBoardAgents(slug) {
+  if (!slug) return;
+  let agents = [];
+  try { const body = await api(`/api/boards/${enc(slug)}/assignees`); agents = Array.isArray(body?.agents) ? body.agents : []; } catch { /* the form keeps people only */ }
+  if (state.boardAgents?.slug === slug && JSON.stringify(state.boardAgents.agents) === JSON.stringify(agents)) return;
+  state.boardAgents = { slug, agents };
+  if (state.addingCard && currentBoard()?.slug === slug) { const saved = remember(); boardView(); restore(saved); }
+}
 function newCardForm(edit = null) {
   voice.stop();
   if (!edit && state.base.startsWith("#/board/") && !state.base.endsWith("/chat")) {
     const saved = remember(); state.addingCard = true; boardView(); restore(saved);
     root.querySelector('[data-board-add] [name="title"]')?.focus();
+    void loadBoardAgents(currentBoard()?.slug);
     return;
   }
   detailsUI?.stop(); detailsUI = null;
