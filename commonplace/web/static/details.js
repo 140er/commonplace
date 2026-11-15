@@ -6,11 +6,15 @@ import { waitingSection } from "./waiting.js";
 import { cardTypeRows, saveCardType } from "./tasktypes.js";
 import { reviewerRows } from "./card-reviewer.js";
 import { drawerSummary, drawerActions, drawerCopy, stateWord, needsOwner } from "./deck-board.js";
+import { showLoading } from "./loading.js";
 
 const statuses = ["backlog", "todo", "doing", "review", "done"];
 const priorities = ["urgent", "high", "normal", "low"];
 const enc = encodeURIComponent;
 const exact = (value) => e(value).replaceAll("\r", "&#13;");
+const CLOSE_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+// "P-12": the board's first letter and the card number, as the drawer names the card.
+const cardLabel = (card, board) => `${[board.name, board.slug, card.board].map((part) => String(part || "").normalize("NFKD").toUpperCase().match(/[A-Z]/)?.[0]).find(Boolean) || "C"}-${card.number}`;
 const label = (value) => value ? value[0].toUpperCase() + value.slice(1) : "—";
 
 export function canRemoveAssignment(card) {
@@ -140,8 +144,7 @@ function activityHTML(card, author, stamp) {
 export function renderDetails(card, { board = { slug: card.board }, me, messages = [], origin = originMessage(card, messages), strip = null, tab = "details", people = {}, bots = [], canRemove = false, deck = globalThis.document?.documentElement?.dataset?.ui === "deck" } = {}) {
   const context = detailsContext(card, me);
   const name = board.name || board.slug || card.board;
-  const prefix = [board.name, board.slug, card.board].map((part) => String(part || "").normalize("NFKD").toUpperCase().match(/[A-Z]/)?.[0]).find(Boolean) || "C";
-  const id = `${prefix}-${card.number}`;
+  const id = cardLabel(card, board);
   const author = (ref) => detailsAuthor(ref, board);
   const stamp = (at) => {
     if (!at) return "";
@@ -163,11 +166,25 @@ export function renderDetails(card, { board = { slug: card.board }, me, messages
     .replace(/<header class="detail-h">[\s\S]*?<\/header>/, () => header + drawerSummary(card, { board, people, bots, me }))
     .replace(/<dl class="fields">[\s\S]*?<\/dl>/, (fields) => `<details class="deck-card-controls" data-deck-card-controls><summary>Edit card</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div>${fields}</details>`)
     .replace('</div><div class="ctx-foot">', () => '</div><div class="ctx-foot">' + drawerActions(card, me))
-    .replace(' aria-keyshortcuts="]">Hide</button>', () => ' aria-keyshortcuts="]" aria-label="Close card"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>')
+    .replace(' aria-keyshortcuts="]">Hide</button>', () => ` aria-keyshortcuts="]" aria-label="Close card">${CLOSE_ICON}</button>`)
     .replace('<form class="reply" data-form="comment">', () => '<form class="reply" data-form="comment" id="deck-card-reply" hidden>')
     .replace(`Memory for ${e(id)}`, () => 'Linked memory')
     .replace('Context (exact words)', () => 'Context')
     .replace("'s request, quoted exactly", () => "'s request"), id);
+}
+
+// The Deck drawer before the card's own read answers. It has the drawer's shape, so the board
+// behind it lays out the same while loading, and holds only what the lists already knew: the
+// title, state, holder and summary. No control that writes: those come with the read.
+export function renderCardPreview(number, card = null, { board = {}, people = {}, bots = [], me } = {}) {
+  const known = card ? `<header class="detail-h"><div class="deck-card-state"><i class="deck-board-dot ${needsOwner(card, me) ? "waiting" : card.status === "done" ? "live" : "idle"}" aria-hidden="true"></i>${e(stateWord(card, me))}</div><h2 tabindex="-1" data-details-title>${e(card.title)}</h2></header>${drawerSummary(card, { board, people, bots, me })}` : "";
+  const html = `<section class="workbench-details deck-card-drawer" aria-label="Card details" aria-busy="true" data-card-preview="${e(number)}"><div class="ctx-head"><div class="ctx-tabs"></div><button class="btn ghost sm hide" data-action="close-panel" aria-label="Close card">${CLOSE_ICON}</button></div><div class="ctx-body">${known}<div data-preview-load></div></div></section>`;
+  return card ? drawerCopy(html, cardLabel(card, board)) : html;
+}
+// Draws the preview into `host`, with the progress line that grows a slow hint after a second.
+export function showCardPreview(host, number, card, options) {
+  host.innerHTML = renderCardPreview(number, card, options);
+  showLoading(host.querySelector("[data-preview-load]"), "Loading card…");
 }
 
 // The shell keeps ownership of card mutations, drafts, sheet modality and chat focus return.

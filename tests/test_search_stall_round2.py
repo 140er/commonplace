@@ -117,3 +117,23 @@ def test_index_job_treats_busy_and_starting_like_a_pause(world, kind):  # noqa: 
     state = search_index.State()
     assert search_index.sweep(world.service, world.ws, state) is True
     assert state.failures == 0
+
+
+def test_busy_answer_honours_the_request_budget_not_the_workers_own_lock_wait(hub, monkeypatch):
+    """The worker waits for its palace lock no longer than the request has left."""
+    from mempalace import mcp_server
+
+    owner = hub.owner_token()
+    _save(hub, owner, "Paused kettle canary", theme="shared")
+    monkeypatch.setenv("COMMONPLACE_MEMORY_WAIT_S", "0.5")
+    monkeypatch.setattr(mcp_server, "_HTTP_READ_LOCK_WAIT_S", 3.0, raising=False)
+    lock = mcp_server._HTTP_REQUEST_LOCK
+    lock.acquire_write()  # what a slow index write holds
+    try:
+        started = time.monotonic()
+        status, body = _http(hub, owner, PATH)
+        waited = time.monotonic() - started
+    finally:
+        lock.release_write()
+    assert status == 503 and body["error"].startswith("no: memory is busy indexing"), body
+    assert waited < 1.5, f"the busy answer took {waited:.1f}s of a 0.5 s request budget"

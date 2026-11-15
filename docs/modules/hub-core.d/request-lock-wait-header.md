@@ -1,0 +1,4 @@
+- **Owns:** The `X-Mempalace-Lock-Wait` header: the gateway sends the seconds a person's request still has (`MemoryWait.ends`), and the worker waits for its palace lock no longer than that (never more than its own `MEMPALACE_READ_LOCK_WAIT_S`, at least 0.25 s).
+- **Promises:** A busy answer takes the request's budget at most from the moment of the call that gets it; the part of a request spent in earlier worker calls is real work, logged by `worker call took`.
+- **How it fails:** A worker that does not read the header keeps its own bound; an invalid value is ignored.
+- **Tests:** `tests/test_search_stall_round2.py`.

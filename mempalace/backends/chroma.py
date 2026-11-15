@@ -1056,6 +1056,45 @@ _capacity_cache_generation = 0
 # (benchmarks, batch tooling) cannot grow it without limit.
 _CAPACITY_CACHE_MAX_ENTRIES = 32
 
+# Stale-while-revalidate for a search. Past the reuse ceiling a verdict whose files have
+# not changed (checked every call, cheaply) is still the right answer; a search that
+# opted in (:func:`serve_stale_capacity_verdicts`) takes it at once and a background
+# thread probes again, one at a time per palace. A verdict older than this, one that
+# is not "ok", and one the clock itself is about to change are never served stale.
+_CAPACITY_STALE_MAX_AGE_SECONDS = 3600.0
+# A clock-dependent verdict is not served stale this close to the moment it turns.
+_CAPACITY_STALE_FLIP_MARGIN_SECONDS = 15.0
+_capacity_refreshing: set = set()
+_capacity_refresh_lock = threading.Lock()
+_capacity_stale_ok = threading.local()
+# ``(palace_path, collection_name)`` -> whether the collection stores an explicit
+# ``hnsw:sync_threshold``; only a collection without one has a verdict the clock changes.
+_capacity_explicit_threshold: dict[tuple[str, str], bool] = {}
+_capacity_reuse_logged: set = set()
+
+# The probe unpickles the whole segment metadata (a dict entry per drawer) to count its
+# ids: the largest part of its cost, and the file changes only when chromadb flushes.
+# Keyed by the file's ``(inode, mtime_ns, size)``; a coarse-timestamp filesystem keeps
+# the short ceiling of the verdict cache.
+_pickle_count_cache: dict[str, tuple[tuple, int, float]] = {}
+_PICKLE_COUNT_FINE_MAX_AGE_SECONDS = 3600.0
+
+
+@contextlib.contextmanager
+def serve_stale_capacity_verdicts() -> Iterator[None]:
+    """Let this thread's capacity checks take an expired-but-unchanged verdict at once.
+
+    For an interactive search: it must not wait for an O(palace) probe because ten idle
+    seconds passed. A changed file or change counter still forces a probe in the call.
+    """
+    previous = getattr(_capacity_stale_ok, "on", False)
+    _capacity_stale_ok.on = True
+    try:
+        yield
+    finally:
+        _capacity_stale_ok.on = previous
+
+
 # Ceiling on how long one verdict may be reused while the files that fed it
 # look unchanged. Coarse timestamps (FAT32 stores mtime at 2 s granularity,
 # exFAT at 10 ms, HFS+ at 1 s) cannot notice a quick rewrite, and a write inside
@@ -1191,12 +1230,22 @@ def _timestamps_resolve_writes(fingerprint: tuple) -> bool:
     )
 
 
-def _capacity_reuse_limit(fingerprint: tuple, status: dict) -> float:
-    """Seconds a verdict may be served while its files still match."""
+def _capacity_reuse_limit(
+    fingerprint: tuple, status: dict, clock_dependent: Optional[bool] = None
+) -> float:
+    """Seconds a verdict may be served while its files still match.
+
+    ``clock_dependent`` False says the collection stores an explicit sync threshold, so
+    nothing in its verdict changes with time; None (unknown) keeps the cautious rule."""
     if not _timestamps_resolve_writes(fingerprint):
         return _CAPACITY_CACHE_MAX_AGE_SECONDS
     age = status.get("hnsw_metadata_age_seconds")
-    if status.get("status") == "ok" and (status.get("divergence") or 0) > 0 and age is not None:
+    if (
+        clock_dependent is not False
+        and status.get("status") == "ok"
+        and (status.get("divergence") or 0) > 0
+        and age is not None
+    ):
         # The one verdict that changes with no file touched: a standing gap
         # between sqlite and the pickle turns "diverged" once the pickle is
         # old enough, so serve it only until then.
@@ -1229,6 +1278,9 @@ def reset_hnsw_capacity_cache() -> None:
     global _capacity_cache_generation
     _capacity_cache_generation += 1
     _capacity_cache.clear()
+    _pickle_count_cache.clear()
+    _capacity_explicit_threshold.clear()
+    _capacity_reuse_logged.clear()
 
 
 def hnsw_capacity_status(palace_path: str, collection_name: str = "mempalace_drawers") -> dict:
@@ -1282,16 +1334,88 @@ def hnsw_capacity_status(palace_path: str, collection_name: str = "mempalace_dra
     cached = _capacity_cache.get(key)
     if cached is not None:
         fingerprint, cached_segment, status, probed_at = cached
-        if time.monotonic() - probed_at <= _capacity_reuse_limit(fingerprint, status):
+        age = time.monotonic() - probed_at
+        clock_dependent = None
+        if key in _capacity_explicit_threshold:
+            clock_dependent = not _capacity_explicit_threshold[key]
+        if age <= _capacity_reuse_limit(fingerprint, status, clock_dependent):
             if _capacity_fingerprint(palace_path, cached_segment) == fingerprint:
                 return _served_capacity_status(status, fingerprint)
+        elif getattr(_capacity_stale_ok, "on", False) and _stale_verdict_servable(
+            status, fingerprint, age, clock_dependent
+        ):
+            if _capacity_fingerprint(palace_path, cached_segment) == fingerprint:
+                _refresh_capacity_in_background(key, palace_path, collection_name, age)
+                return _served_capacity_status(status, fingerprint)
+    return _probe_and_cache(key, palace_path, collection_name)
 
+
+def _stale_verdict_servable(
+    status: dict, fingerprint: tuple, age: float, clock_dependent: Optional[bool]
+) -> bool:
+    """Whether an expired verdict with unchanged files may still answer a search now."""
+    if status.get("status") != "ok" or age > _CAPACITY_STALE_MAX_AGE_SECONDS:
+        return False
+    if not _timestamps_resolve_writes(fingerprint):
+        # Coarse stamps cannot show a quick rewrite; only the short ceiling bounds the risk.
+        return False
+    if clock_dependent is not False and (status.get("divergence") or 0) > 0:
+        # The one verdict the clock changes (see ``_capacity_reuse_limit``): never serve it
+        # near the moment it turns, and never when that is unknown.
+        if clock_dependent is None:
+            return False
+        served = _served_capacity_status(status, fingerprint).get("hnsw_metadata_age_seconds")
+        if served is None or served >= (
+            _HNSW_PERSISTENT_DIVERGENCE_GRACE_SECONDS - _CAPACITY_STALE_FLIP_MARGIN_SECONDS
+        ):
+            return False
+    return True
+
+
+def _refresh_capacity_in_background(key, palace_path: str, collection_name: str, age: float):
+    """Probe again behind the request that took the stale verdict; one probe per palace."""
+    with _capacity_refresh_lock:
+        if key in _capacity_refreshing:
+            return
+        _capacity_refreshing.add(key)
+    logger.info("capacity verdict served stale (age %.0fs); probing again in the background", age)
+
+    def run() -> None:
+        started = time.monotonic()
+        try:
+            _probe_and_cache(key, palace_path, collection_name)
+        except Exception:
+            logger.debug("background capacity probe failed", exc_info=True)
+        finally:
+            with _capacity_refresh_lock:
+                _capacity_refreshing.discard(key)
+            took = time.monotonic() - started
+            if took >= 1.0:
+                logger.info("background capacity probe took %.2fs", took)
+
+    threading.Thread(target=run, name="capacity-refresh", daemon=True).start()
+
+
+def wait_for_capacity_refresh(timeout: float = 10.0) -> bool:
+    """Wait for background capacity probes to end (tests, shutdown); False on timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with _capacity_refresh_lock:
+            if not _capacity_refreshing:
+                return True
+        time.sleep(0.01)
+    return False
+
+
+def _probe_and_cache(key, palace_path: str, collection_name: str) -> dict:
+    """Run the probe and remember the verdict when no file moved while it ran."""
     generation = _capacity_cache_generation
     # Snapshot the files the probe is about to read, before it reads them, and
     # again after — using the segment id the probe itself resolved. Caching
     # only when both snapshots agree makes an external write during the probe
     # (sqlite, pickle, OR header) fall through uncached rather than pin a verdict
     # the disk no longer supports.
+    started = time.monotonic()
     before = _capacity_fingerprint(palace_path, _segment_id_safe(palace_path, collection_name))
     out = _hnsw_capacity_status_uncached(palace_path, collection_name)
     segment_id = out.get("segment_id")
@@ -1311,8 +1435,58 @@ def hnsw_capacity_status(palace_path: str, collection_name: str = "mempalace_dra
     if cacheable:
         if len(_capacity_cache) >= _CAPACITY_CACHE_MAX_ENTRIES:
             _capacity_cache.clear()
+        explicit = _capacity_has_explicit_threshold(palace_path, collection_name)
+        if explicit is not None:
+            _capacity_explicit_threshold[key] = explicit
         _capacity_cache[key] = (after, segment_id, dict(out), time.monotonic())
+        _log_capacity_reuse_once(key, after, out, explicit, time.monotonic() - started)
     return out
+
+
+def _capacity_has_explicit_threshold(palace_path: str, collection_name: str) -> Optional[bool]:
+    try:
+        return bool(_collection_has_sync_threshold_metadata(palace_path, collection_name))
+    except Exception:
+        return None
+
+
+def _log_capacity_reuse_once(key, fingerprint: tuple, status: dict, explicit, took: float) -> None:
+    """Say once per palace which rule decides how long a verdict is reused, and why."""
+    if key in _capacity_reuse_logged:
+        return
+    _capacity_reuse_logged.add(key)
+    db_family, pickle_sig, header_sig, _counter = fingerprint
+    stamps = (*db_family, pickle_sig, header_sig)
+    grid = [mtime_ns % _COARSE_MTIME_NS for _inode, mtime_ns, _size in stamps if mtime_ns]
+    clock_dependent = None if explicit is None else not explicit
+    logger.info(
+        "capacity verdict reuse: fine timestamps=%s (stamp ns past the 10 ms grid: %s), "
+        "ceiling %.0fs, clock-dependent=%s, explicit sync threshold=%s, probe took %.2fs",
+        _timestamps_resolve_writes(fingerprint),
+        grid,
+        _capacity_reuse_limit(fingerprint, status, clock_dependent),
+        clock_dependent,
+        explicit,
+        took,
+    )
+
+
+def _hnsw_element_count_cached(palace_path: str, segment_id: str) -> Optional[int]:
+    """:func:`_hnsw_element_count`, skipping the unpickle while the file is unchanged."""
+    path = os.path.join(palace_path, segment_id, "index_metadata.pickle")
+    signature = _stat_signature(path)
+    hit = _pickle_count_cache.get(path)
+    if hit is not None and signature != (0, 0, 0) and hit[0] == signature:
+        fine = signature[1] % _COARSE_MTIME_NS != 0
+        limit = _PICKLE_COUNT_FINE_MAX_AGE_SECONDS if fine else _CAPACITY_CACHE_MAX_AGE_SECONDS
+        if time.monotonic() - hit[2] <= limit:
+            return hit[1]
+    count = _hnsw_element_count(palace_path, segment_id)
+    if count is not None and signature != (0, 0, 0) and _stat_signature(path) == signature:
+        if len(_pickle_count_cache) >= _CAPACITY_CACHE_MAX_ENTRIES:
+            _pickle_count_cache.clear()
+        _pickle_count_cache[path] = (signature, count, time.monotonic())
+    return count
 
 
 def _hnsw_capacity_status_uncached(
@@ -1366,7 +1540,7 @@ def _hnsw_capacity_status_uncached(
             )
             return out
 
-        hnsw_count = _hnsw_element_count(palace_path, seg_id)
+        hnsw_count = _hnsw_element_count_cached(palace_path, seg_id)
         out["hnsw_count"] = hnsw_count
         sync_threshold = _read_sync_threshold(palace_path, collection_name)
         has_explicit_sync_threshold = _collection_has_sync_threshold_metadata(

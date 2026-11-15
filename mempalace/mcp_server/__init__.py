@@ -105,6 +105,7 @@ from ..backends.chroma import (  # noqa: E402
     hnsw_capacity_status,
     register_before_system_cache_reset,
     reset_hnsw_capacity_cache,
+    serve_stale_capacity_verdicts,
 )
 from ..collision_scan import assert_no_collisions  # noqa: E402
 from ..config import (  # noqa: E402

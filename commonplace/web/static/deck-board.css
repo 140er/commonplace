@@ -17,10 +17,10 @@
 :root[data-ui="deck"] .deck-board-menu > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; display: flex; flex-direction: column; padding: 6px; min-width: 160px; background: var(--s2); border: 1px solid var(--line2); border-radius: 8px; }
 :root[data-ui="deck"] .deck-board-menu :is(button,a) { padding: 8px 12px; border: 0; text-align: left; color: var(--ink2); background: transparent; text-decoration: none; border-radius: 6px; }
 :root[data-ui="deck"] .deck-board-menu :is(button,a):hover { background: var(--s3); color: var(--ink); }
-:root[data-ui="deck"] .deck-board .seg { border: 0; background: var(--s1); border-radius: 8px; gap: 4px; }
-:root[data-ui="deck"] .deck-board .seg button { border: 0; min-height: 32px; color: var(--ink3); }
-:root[data-ui="deck"] .deck-board .seg button[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
-:root[data-ui="deck"] .shell .deck-board .board { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; padding: 0; align-items: start; overflow-x: auto; }
+:root[data-ui="deck"] :is(.deck-board, .needs-me) .seg { border: 0; background: var(--s1); border-radius: 8px; gap: 4px; }
+:root[data-ui="deck"] :is(.deck-board, .needs-me) .seg button { border: 0; min-height: 32px; color: var(--ink3); }
+:root[data-ui="deck"] :is(.deck-board, .needs-me) .seg button[aria-pressed="true"] { background: var(--s3); color: var(--ink); }
+:root[data-ui="deck"] .shell .deck-board .board { display: grid; grid-template-columns: repeat(4,minmax(220px,1fr)); gap: 14px; padding: 0; align-items: start; overflow-x: auto; }
 :root[data-ui="deck"] .shell .deck-board .col { display: flex; min-width: 0; padding: 0; background: none; border: 0; border-radius: 0; }
 :root[data-ui="deck"] .deck-board .col-h { padding: 0 4px 12px; gap: 8px; }
 :root[data-ui="deck"] .deck-board .col-h h2 { color: var(--ink); font-size: 13.5px; font-weight: 600; }
@@ -105,8 +105,8 @@
   :root[data-ui="deck"] .deck-board-menu :is(button,a) { min-height: 44px; display: flex; align-items: center; }
   :root[data-ui="deck"] .deck-board-intro { max-width: none; margin-top: 8px; }
   :root[data-ui="deck"] .deck-board .board-tools { position: static; justify-content: flex-start; }
-  :root[data-ui="deck"] .deck-board .seg { max-width: 100%; overflow-x: auto; }
-  :root[data-ui="deck"] .deck-board .seg button { min-height: 44px; }
+  :root[data-ui="deck"] :is(.deck-board, .needs-me) .seg { max-width: 100%; overflow-x: auto; }
+  :root[data-ui="deck"] :is(.deck-board, .needs-me) .seg button { min-height: 44px; }
   :root[data-ui="deck"] .shell .deck-board .board { grid-template-columns: repeat(4,100%); scroll-snap-type: x mandatory; overscroll-behavior-x: contain; }
   :root[data-ui="deck"] .deck-board .col { scroll-snap-align: start; }
   :root[data-ui="deck"] .deck-board .card-top .card-more { min-height: 44px; padding: 0 12px; font-size: 14px; }
@@ -125,3 +125,5 @@
 :root[data-ui="deck"] .deck-card-controls .tag.wait { color: var(--ink3); background: var(--s2); }
 
 :root[data-ui="deck"] .deck-card-drawer .callout h3 { font-size: 13.5px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+/* The phone Add card sheet covers the page, so it has no see-through: the Deck surface colour at full opacity. */
+:root[data-ui="deck"] .workbench-board form[data-board-add][aria-modal="true"] { background: var(--s1-solid); }

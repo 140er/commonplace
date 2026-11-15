@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { escape as e } from '../commonplace/web/static/api.js';
 import { placeMenu, todayKey, removeNeed, createNeedLedger, actionRequest, canApprove, actionRow, needsCards, runHTML, displayText, runUpdate, retryIntent, quietSelector } from '../commonplace/web/static/deck-home-today.js';
-import { cardHTML, activityText } from '../commonplace/web/static/deck-today-capy.js';
+import { cardHTML, activityText, approveNote, replyWords, sentLine } from '../commonplace/web/static/deck-today-capy.js';
 import { modelControls } from '../commonplace/web/static/deck-home.js';
 
 const card = { number: 7, version: 4, title: 'Review the release', actions: ['approve', 'reject'] };
@@ -146,4 +146,28 @@ test('phone: Reply is an inline button and the menu only keeps what has no butto
   assert.doesNotMatch(phone, /\.bt-desktop-reply\) \{ display: none/);
   assert.match(phone, /\.bt-more:not\(:has\(\[data-bt-action="reject"\]\)\) \{ display: none/);
   assert.match(phone, /\.bt-more \[role="menuitem"\]\[data-bt-action="reply"\] \{ display: none/);
+});
+test('the reply dialog is named for the button pressed', () => {
+  assert.deepEqual(replyWords('reply', true), { title: 'Answer', label: 'Your answer', submit: 'Send answer' });
+  assert.deepEqual(replyWords('reply', false), { title: 'Reply', label: 'Your reply', submit: 'Send reply' });
+  assert.equal(replyWords('approve', true).title, 'Reason for approval');
+});
+test('a sent action names what was sent, to whom, and where the card went', () => {
+  assert.match(sentLine(card, 'reply', null, 'Shipping', true), /^Answer sent to Shipping\..*Board/);
+  assert.match(sentLine(card, 'reply', null, 'Shipping', false), /^Reply sent to Shipping\./);
+  assert.match(sentLine(card, 'approve', { options: { body: { then: 'done' } } }, 'Shipping'), /^Accepted\. The card is done/);
+  assert.match(sentLine(card, 'approve', { options: { body: {} } }, 'Shipping'), /^Approved\. Shipping goes ahead\./);
+  assert.match(sentLine(card, 'reject', null, ''), /^Turned down\. The card went back to the coworker/);
+});
+test('Approve gets one plain line, other main buttons do not', () => {
+  assert.equal(approveNote('Shipping'), 'Approve means yes: Shipping goes ahead with this.');
+  assert.match(cardHTML(card, [], { busy: new Set(), errors: new Map(), held: new Set(), exiting: new Set() }), /class="bt-approve-note"/);
+  const ask = { ...card, actions: ['answer'], ask_options: ['Blue'] };
+  assert.doesNotMatch(cardHTML(ask, [], { busy: new Set(), errors: new Map(), held: new Set(), exiting: new Set() }), /bt-approve-note/);
+});
+test('phone: the mic keeps a gap to the tabs and the key hint is for keyboards only', () => {
+  const shell = readFileSync(new URL('../commonplace/web/static/deck-shell.css', import.meta.url), 'utf8');
+  assert.match(shell, /\.deck-tab-mic \{[^}]*margin-left: 10px/);
+  const bench = readFileSync(new URL('../commonplace/web/static/workbench.css', import.meta.url), 'utf8');
+  assert.match(bench, /@media \(pointer: coarse\), \(max-width: 699px\) \{\s*\.workbench-board form\[data-board-add\] \.composer-keys \{ display: none/);
 });
