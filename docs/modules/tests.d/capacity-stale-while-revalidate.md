@@ -1,0 +1,4 @@
+- **Owns:** The stale-while-revalidate reuse of the capacity verdict and the request-bounded busy answer (`tests/test_capacity_stale_while_revalidate.py`, the budget case in `tests/test_search_stall_round2.py`).
+- **Promises:** A search past the ceiling answers from the last verdict at once with one background probe; a changed file, a verdict that is not "ok" and one the clock is about to turn still probe in the call; an unchanged pickle is not unpickled again; the reuse rule is logged once; a busy answer honours the request budget.
+- **How it fails:** A search that waits for a probe of unchanged files, several background probes at once, a stale verdict that hides a changed index, or a busy answer longer than the budget fails these tests.
+- **Tests:** The files above.

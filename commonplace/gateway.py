@@ -77,6 +77,8 @@ HANDOFF_REQUEST_BYTES = 64 * 1024 * 1024
 WORKER_TIMEOUT_S = 660.0
 # A worker call needs at least this long on its caller's deadline to be sent at all.
 MIN_WORKER_WINDOW_S = 0.25
+# Seconds of a person's request left; the worker bounds its palace-lock wait by it.
+LOCK_WAIT_HEADER = "X-Mempalace-Lock-Wait"
 STARTUP_TIMEOUT_S = 0.08
 MAX_FANOUT_WINGS = 64
 # The public worker schema caps each ranked prefix at 100 hits. Doubling
@@ -424,21 +426,21 @@ class WorkerClient:
         body = json.dumps(request).encode("utf-8")
         conn = None
         resp = None
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {worker.token}",
+            "Host": worker.host_header,
+            provenance.IDENTITY_HEADER: provenance.encode_identity(principal.identity()),
+        }
+        budget = current_wait()
+        if budget is not None:
+            # What this request has left: the worker waits for its palace lock no longer.
+            headers[LOCK_WAIT_HEADER] = f"{max(0.0, budget.ends - monotonic()):.2f}"
         try:
             conn = http.client.HTTPConnection(
                 worker.host, worker.port, timeout=remaining(WORKER_TIMEOUT_S)
             )
-            conn.request(
-                "POST",
-                "/mcp",
-                body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {worker.token}",
-                    "Host": worker.host_header,
-                    provenance.IDENTITY_HEADER: provenance.encode_identity(principal.identity()),
-                },
-            )
+            conn.request("POST", "/mcp", body, headers=headers)
             # Header and body reads share the caller's deadline with connect/send.
             # Keep the socket: getresponse may detach it for Connection: close.
             sock = conn.sock
