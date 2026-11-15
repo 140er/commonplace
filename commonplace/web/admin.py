@@ -934,6 +934,7 @@ def memory_view(gateway=None):
     file cache (reclaimable) and see which worker holds it.
     """
     try:
+        from commonplace.memtrace import process_counts
         from mempalace.worker_memory import read_cgroup_memory, read_process_memory
 
         workers = []
@@ -944,7 +945,10 @@ def memory_view(gateway=None):
         process = read_process_memory() or {}
         return {
             "cgroup": read_cgroup_memory(),
-            "gateway": {k: process.get(k) for k in ("rss_bytes", "anon_bytes", "file_bytes")},
+            "gateway": {
+                **{k: process.get(k) for k in ("rss_bytes", "anon_bytes", "file_bytes")},
+                **process_counts(),
+            },
             "worker_count": len(workers),
             "workers_rss_bytes": sum(w.get("rss_bytes") or 0 for w in workers),
             "workers_anon_bytes": sum(w.get("anon_bytes") or 0 for w in workers),

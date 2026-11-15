@@ -250,7 +250,15 @@ def test_deploy_shows_where_the_memory_sits(hub, monkeypatch):
     assert code == 200
     memory = data["memory"]
     assert memory["cgroup"] == cgroup
-    assert set(memory["gateway"]) == {"rss_bytes", "anon_bytes", "file_bytes"}
+    assert set(memory["gateway"]) == {
+        "rss_bytes",
+        "anon_bytes",
+        "file_bytes",
+        "thread_count",
+        "open_fd_count",
+    }
+    assert memory["gateway"]["thread_count"] >= 1
+    assert memory["gateway"]["open_fd_count"] >= 1
     assert memory["gateway"]["rss_bytes"] > 0 and memory["gateway"]["anon_bytes"] > 0
     assert memory["worker_count"] == 2
     assert (memory["workers_rss_bytes"], memory["workers_anon_bytes"]) == (1000, 860)
