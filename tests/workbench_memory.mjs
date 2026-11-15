@@ -26,7 +26,7 @@ function node() {
 }
 function click(target, attrs) {
   const dataset = attrs;
-  target.listeners.get('click')({ target: { closest(selector) { return selector.includes('data-memory-result') ? (dataset.memoryResult !== undefined ? { dataset } : null) : { dataset }; } } });
+  target.listeners.get('click')({ target: { closest(selector) { return selector.includes('data-memory-expand') ? null : selector.includes('data-memory-result') ? (dataset.memoryResult !== undefined ? { dataset } : null) : { dataset }; } } });
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const cases = {

@@ -1,0 +1,1 @@
+- **Tests:** `tests/test_deck_polish2_browser.py` serves the shell from static files with fixture data and measures the long Memory results (cut, match kept, toggle), the named failed sources, the classic phone tab bar position while scrolling, and the project name on one line; `tests/deck_memory.mjs` covers the helpers behind them.
