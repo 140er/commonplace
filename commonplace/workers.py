@@ -112,6 +112,7 @@ class MemoryWait:
 
     def __init__(self, seconds: float):
         self.left = max(0.0, float(seconds))
+        self.ends = time.monotonic() + self.left  # the request's own wall-clock end
         self.paused = False  # a pause was met: later calls of this request do not wait
         self.busy = False  # the worker answered busy: later calls of this request do not ask
 

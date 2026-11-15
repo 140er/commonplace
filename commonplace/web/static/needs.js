@@ -2,6 +2,7 @@ import { runnerConsent, consentStyle, decideRunner } from "./runnerconsent.js";
 import { api as request, escape as e } from "./api.js";
 import { detailsAuthor, detailsContext } from "./details.js";
 import { cardId } from "./board.js";
+import { segHTML } from "./seg.js";
 import { decisionBlocksHTML } from "./decision-blocks.js";
 
 const enc = encodeURIComponent;
@@ -64,9 +65,7 @@ const styles = consentStyle + `
 .needs-me,.needs-detail { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; background:#FEFEFC; color:var(--text); }
 .needs-me .bar { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); }
 .needs-me h1 { font-size:18px; line-height:24px; font-weight:650; }
-.needs-me .seg { display:flex; flex-wrap:wrap; margin-left:auto; gap:2px; }
-.needs-me .seg button { min-height:32px; padding:0 10px; border:1px solid transparent; background:transparent; border-radius:var(--r); color:var(--text-2); }
-.needs-me .seg [aria-pressed=true] { border-color:var(--line-strong); background:var(--surface); color:var(--text); }
+.needs-me .seg { margin-left:auto; }
 .needs-me .list { flex:1; min-height:0; overflow:auto; padding:8px 16px 16px; }
 .needs-me .list-note { font-size:13px; color:var(--text-2); padding:4px 4px 0; }
 .needs-me .group-h { padding:12px 4px 6px; font-size:12px; font-weight:650; color:var(--text-3); letter-spacing:.03em; text-transform:uppercase; }
@@ -109,8 +108,7 @@ const styles = consentStyle + `
 .needs-detail .phone-back { display:none; }
 @media(max-width:1099px) { .needs-detail { width:100%; } }
 @media(max-width:699px) {
-.needs-me .bar { padding:10px 14px; } .needs-me .seg { margin-left:0; width:100%; }
-.needs-me .seg button { flex:1; min-height:44px; padding:0 6px; }
+.needs-me .bar { padding:10px 14px; } .needs-me .seg { margin-left:0; }
 .needs-me .row-item { grid-template-columns:minmax(0,1fr) auto; padding:14px; gap:6px; }
 .needs-me .row-item .typ { justify-self:start; grid-column:1 / -1; }
 .needs-me .row-item h3 { font-size:16px; line-height:21px; } .needs-me .row-item a { display:block; min-height:44px; }
@@ -168,7 +166,7 @@ export function renderNeeds({ needs = {}, boards = [], holds = [], cards = [], f
   const visibleCards = [...new Set([...items.map((item) => item.card.number), ...held.map((hold) => hold.card)])];
   const projectSlugs = new Set([...visibleCards.map((number) => known.get(number)?.board), ...roles.map((item) => item.board)].filter(Boolean));
   const total = visibleCards.length + roles.length + setup.length, projectCount = projectSlugs.size;
-  return `<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${total} ${total === 1 ? "item" : "items"}, ${projectCount} ${projectCount === 1 ? "project" : "projects"}</span><div class="seg" role="group" aria-label="Filter">${Object.entries(filters).map(([key, text]) => `<button data-needs-filter="${key}" aria-pressed="${filter === key}">${text}</button>`).join("")}</div></header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${setupRows}${roles.length ? `<h2 class="group-h">Set up</h2>${roles.map(modelRoleRow).join("")}` : ""}${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length && !roles.length && !setup.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
+  return `<section class="needs-me" aria-label="Needs me"><header class="bar"><h1>Needs me</h1><span data-needs-chat></span><span class="sub">${total} ${total === 1 ? "item" : "items"}, ${projectCount} ${projectCount === 1 ? "project" : "projects"}</span>${segHTML({ label: "Filter", attr: "data-needs-filter", current: filter, items: Object.entries(filters) })}</header><div class="list"><p class="list-note">Only what an agent can't do without you.</p>${setupRows}${roles.length ? `<h2 class="group-h">Set up</h2>${roles.map(modelRoleRow).join("")}` : ""}${heldGroup("Approved, not sent yet", (hold) => ["waiting", "settling"].includes(hold.state))}${heldGroup("Recent answers", (hold) => !["waiting", "settling"].includes(hold.state))}${[...groups].map(([name, group]) => `<h2 class="group-h">${e(name)}</h2>${group.map(({ card, kind }) => row(card, kind)).join("")}`).join("")}${!items.length && !held.length && !roles.length && !setup.length ? '<p class="empty">Nothing needs you right now.</p>' : ""}</div><div class="keys" aria-label="Keyboard shortcuts"><span><kbd>J</kbd><kbd>K</kbd> move</span><span><kbd>↵</kbd> open linked card</span><span><kbd>R</kbd> ask a question</span><span>Approve and Decline have no single-key shortcut, on purpose: use the buttons.</span></div></section>`;
 }
 
 export function githubPrUrl(value) {
