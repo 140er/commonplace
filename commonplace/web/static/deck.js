@@ -19,6 +19,7 @@ export const SCREENS = {
   home: () => import('./deck-home.js'),
   today: () => import('./deck-today-capy.js'),
   compute: () => import('./deck-workspace.js'),
+  pipeline: () => import('./deck-pipeline.js'),
   coworkers: () => import('./deck-workspace.js'),
 };
 

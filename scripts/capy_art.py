@@ -26,6 +26,7 @@ NAMES = (
     "header",
     "rule",
     "rail",
+    "pipeline",
     "step-choose",
     "step-preview",
     "step-progress",

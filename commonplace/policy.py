@@ -43,8 +43,13 @@ SCOPES = (
     "bots:chat",
     "bots:confirm",
     "bots:learned",
+    "pipeline:write",
     "admin",
 )
+
+# The deploy script's own token: it may record pipeline events and do nothing else. The gateway
+# refuses every other route to a connection that holds it, and it must be the only scope.
+PIPELINE_SCOPE = "pipeline:write"
 
 TRUST_LEVELS = ("trusted", "standard", "untrusted")
 
