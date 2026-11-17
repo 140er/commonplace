@@ -669,6 +669,7 @@ class ControlDB:
         *,
         personal: bool = False,
         initial_space_pending: bool = False,
+        audit_reason: str = "",
         conn=None,
     ) -> str:
         owner = self.user(owner_ref)
@@ -698,7 +699,13 @@ class ControlDB:
                 "INSERT INTO memberships(workspace_id, user_id, role, created_at) VALUES (?,?,?,?)",
                 (wid, owner["id"], "owner", now),
             )
-        self.audit(action="workspace.create", decision="ok", workspace_id=wid, user_id=owner["id"])
+        self.audit(
+            action="workspace.create",
+            decision="ok",
+            workspace_id=wid,
+            user_id=owner["id"],
+            reason=audit_reason,
+        )
         return wid
 
     def workspace(self, ref: str) -> sqlite3.Row:
