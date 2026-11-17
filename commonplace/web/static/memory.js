@@ -100,9 +100,10 @@ export async function searchMemory({ api = request, boards, query, project = "",
         if (project) found.set("theme", selected[0].wing);
         const page = await call(`/api/memory/search?${found}`);
         for (const row of page.results) {
-          // The server authorizes every note. Standalone wings need no project to
-          // be searchable, including a workspace's first note after a reload.
-          const board = wings.get(row.theme) || (!project ? { slug: `notes:${row.theme}`, wing: row.theme, notesOnly: true } : null);
+          if (!row.theme) continue;
+          // The default workspace wing needs no project, even after a reload.
+          // Other wings retain the readable room/destination inventory boundary.
+          const board = wings.get(row.theme) || (!project && row.theme === "shared" ? { slug: "notes:shared", wing: "shared", notesOnly: true } : null);
           if (!board || (from && row.author !== from) || (since && !(Date.parse(row.at) >= Date.parse(since)))) continue;
           const note = { ...row, actor: row.author, kind: "note", board: board.slug, wing: row.theme };
           results.push({ ...note, author: memoryAuthor(note, board), sourceLabel: sourceLabel(note, board) });
@@ -222,6 +223,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   const person = typeof me === "string" ? me : me.actor;
   const draw = () => {
     if (stopped || importer || mapMode) return;
+    for (const room of state.note?.choices?.wings || []) if (!state.boards.some(board => board.wing === room.wing)) state.boards = [...state.boards, { slug: `notes:${room.wing}`, name: room.name, wing: room.wing, notesOnly: true }];
     const focused = mount.ownerDocument?.activeElement;
     let restore = null;
     if (focused && (mount.contains(focused) || panel?.contains(focused))) {
@@ -247,7 +249,10 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     const preview = mount.querySelector(".memory-note-preview");
     if (preview && state.note?.previewOpen) preview.open = true;
   };
-  const note = createNote({ api, draw, alive: () => !stopped, boards: () => state.boards });
+  const note = createNote({ api, draw, alive: () => !stopped, boards: () => state.boards, onResult() {
+    const line = mount.querySelector(".memory-note-saved, .memory-note [role=alert]");
+    line?.focus?.(); line?.scrollIntoView?.({ block: "nearest" });
+  } });
   state.note = note.state;
   async function openDrawer(id) {
     const epoch = ++sourceEpoch;
@@ -415,7 +420,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   }
   function click(event) {
     const drawer = event.target.closest("[data-note-drawer]");
-    if (drawer) { event.preventDefault(); void openDrawer(drawer.dataset.noteDrawer); return; }
+    if (drawer?.dataset.noteDrawer) { event.preventDefault(); void openDrawer(drawer.dataset.noteDrawer); return; }
     const noteAction = event.target.closest("[data-memory-action]")?.dataset.memoryAction;
     if (noteAction === "note") { void note.open().then(() => { if (!stopped) mount.querySelector('[name="note-text"]')?.focus(); }); return; }
     if (noteAction === "note-close") { if (!note.state.saving) { note.state.open = false; draw(); mount.querySelector('[data-memory-action="note"]')?.focus(); } return; }
@@ -472,11 +477,11 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   }
   function submit(event) {
     const form = event.target;
-    if (form.matches("[data-memory-note]")) { event.preventDefault(); void note.save(); }
-    else if (form.matches("[data-memory-search]")) {
+    if (form.matches("[data-memory-search]")) {
       event.preventDefault();
       void search(Object.fromEntries(new FormData(form)));
     } else if (form.matches("[data-memory-link]")) { event.preventDefault(); void action("link-note", new FormData(form).get("card")); }
+    else if (form.matches("[data-memory-note]")) { event.preventDefault(); void note.save(); }
   }
   function input(event) {
     if (event.target.name === "note-text") {

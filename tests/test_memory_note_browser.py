@@ -110,6 +110,7 @@ def test_add_note_verbatim_search_and_drawer(chat_hub, look, width, role):
                 page.get_by_role("button", name="Save", exact=True).click()
             saved = response.value.json()
             expect(page.locator(".memory-note-saved")).to_contain_text("Saved to")
+            expect(page.locator(".memory-note-saved")).to_be_in_viewport()
             capture("saved")
             page.get_by_role("link", name="Open drawer", exact=True).click()
             expect(page.locator(".memory-panel .msg-b")).to_have_text(text)

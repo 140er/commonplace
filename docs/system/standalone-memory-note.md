@@ -22,8 +22,9 @@ path with the authenticated caller, scope checks and free-space floor. Its save
 response adds the actual theme and topic; it does not issue a second write or a
 fallible read after a successful save. A plain Saved to line links to
 #/memory?drawer=<id>, which opens the existing authorized source reader. Memory
-search accepts server-authorized notes from wings without a project, including a
-workspace's first note after reload.
+search includes the default workspace wing without requiring a project, including
+the first note after reload. Other wings keep the readable room inventory boundary;
+authorized composer destinations join that inventory when the composer opens.
 
 Empty and oversized notes produce plain 400 messages. Refused wings and scopes
 retain 403; busy/starting and low-storage failures retain retryable 503/507 hints.

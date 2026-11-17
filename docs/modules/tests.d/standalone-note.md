@@ -1,7 +1,7 @@
 - **Owns:** tests/test_memory_note.py, tests/memory_note.mjs and
-  tests/test_memory_note_browser.py for standalone workspace notes, plus the
-  standalone-wing search contract in tests/memory_agent_notes.mjs and the save
+  tests/test_memory_note_browser.py for standalone workspace notes, plus the save
   response fixture in tests/test_commonplace_rules_enforce.py.
+  The VM map harness supplies the note module imported by the Memory controller.
 - **Promises:** The real API checks Unicode and long-text round trips, default and
   picked destinations, immediate search, validation, scopes, forbidden wings and the
   free-space floor. The harness checks retained drafts, explicit retries, duplicate

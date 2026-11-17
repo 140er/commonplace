@@ -19,8 +19,8 @@ export function renderNote(state = {}) {
   return `<section class="memory-note" aria-labelledby="memory-note-title" aria-busy="${Boolean(loading || saving)}">
     <h2 id="memory-note-title">Add a note</h2><p>Save a workspace note, separate from bot and conversation memory. Your words stay exactly as typed.</p>
     ${loading ? '<p role="status">Loading places to save…</p>' : ""}
-    ${error ? `<p role="alert">${e(error)}</p>` : ""}
-    ${saved ? `<p class="memory-note-saved" role="status">Saved to ${e(label(saved.theme))}. <a href="#/memory?drawer=${encodeURIComponent(saved.id)}" data-note-drawer="${e(saved.id)}">Open drawer</a>. ${saved.notice ? e(saved.notice) : "It will be searchable shortly."}</p>` : ""}
+    ${error ? `<p tabindex="-1" role="alert">${e(error)}</p>` : ""}
+    ${saved ? `<p class="memory-note-saved" tabindex="-1" role="status">Saved to ${e(label(saved.theme))}. <a href="#/memory?drawer=${encodeURIComponent(saved.id)}" data-note-drawer="${e(saved.id)}">Open drawer</a>. ${saved.notice ? e(saved.notice) : "It will be searchable shortly."}</p>` : ""}
     ${choices ? `<form data-memory-note><fieldset${saving ? " disabled" : ""}>
       <label for="note-text">Note</label><textarea id="note-text" name="note-text" rows="5" aria-describedby="note-limit">${exact(text)}</textarea><p id="note-limit">Up to 100,000 characters. Nothing is summarised or rewritten.</p>
       <details class="memory-note-preview"><summary>Preview exact words</summary><pre data-note-preview>${exact(text)}</pre></details>
@@ -30,7 +30,7 @@ export function renderNote(state = {}) {
     </fieldset></form>` : !loading ? '<button class="btn" data-memory-action="note">Try again</button><button class="btn ghost" data-memory-action="note-close">Close</button>' : ""}</section>`;
 }
 
-export function createNote({ api = request, draw, alive, boards = () => [] }) {
+export function createNote({ api = request, draw, alive, boards = () => [], onResult = () => {} }) {
   const state = { open: false, text: "", room: "general" };
   return {
     state,
@@ -50,13 +50,13 @@ export function createNote({ api = request, draw, alive, boards = () => [] }) {
     async save() {
       if (state.saving || !state.choices) return;
       state.error = noteProblem(state.text); state.saved = null;
-      if (state.error) { draw(); return; }
+      if (state.error) { draw(); onResult(); return; }
       state.saving = true; draw();
       try {
         const saved = await saveNote(state, api);
         if (alive()) { state.saved = saved; state.text = ""; }
       } catch (error) { if (alive()) state.error = plainError(error); }
-      finally { state.saving = false; if (alive()) draw(); }
+      finally { state.saving = false; if (alive()) { draw(); onResult(); } }
     },
   };
 }
