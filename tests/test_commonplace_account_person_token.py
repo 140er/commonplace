@@ -785,6 +785,15 @@ def test_proof_timestamps_and_binding_are_bounded(phone):
     assert saved["challenge_hash"] == store.challenge(VERIFIER)
 
 
+def same_answer(first, second):
+    """Two identical answers can straddle a second: the Date header moves with the clock."""
+
+    def stable(answer):
+        return (answer[0], {k: v for k, v in answer[1].items() if k != "Date"}, answer[2])
+
+    return stable(first) == stable(second)
+
+
 def test_event_and_deletion_capabilities_are_separate_and_share_no_proof_state(phone):
     def feed(pair, suffix=""):
         return phone.request(
@@ -824,7 +833,7 @@ def test_event_and_deletion_capabilities_are_separate_and_share_no_proof_state(p
         "SELECT cursor_secret FROM oauth_person_grants WHERE connection_id=? AND capability=?",
         (app.connection_id, CAPABILITY),
     ) == [{"cursor_secret": None}]
-    assert feed(combined) == before_feed
+    assert same_answer(feed(combined), before_feed)
     assert rows(phone, "SELECT * FROM account_delete_tokens") == saved
     assert feed(combined, "?cursor=" + token)[0] == 400
     assert use(phone, combined, cursor)[0] == 403
@@ -837,7 +846,7 @@ def test_event_and_deletion_capabilities_are_separate_and_share_no_proof_state(p
         )
         == before
     )
-    assert feed(combined) == before_feed
+    assert same_answer(feed(combined), before_feed)
 
 
 def test_revoking_a_deletion_proof_never_changes_event_cursor_state(phone, monkeypatch):
