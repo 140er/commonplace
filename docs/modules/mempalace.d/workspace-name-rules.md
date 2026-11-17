@@ -1,0 +1,4 @@
+- **Owns:** The browser-readable name_validation_rules description derived from sanitize_name's existing pattern, length and path/null restrictions.
+- **Promises:** Exported rules preserve the server's accepted name set and error strings. Unicode letter/digit and whitespace classes expand from the server runtime, so JavaScript does not substitute its different meanings of word characters, whitespace, trim or string length. The expansion is cached after first use.
+- **How it fails:** Path separators, consecutive periods, nulls, markup, parentheses, brackets and other disallowed punctuation remain invalid. The sanitizer remains authoritative for every write, even when the browser checks first.
+- **Tests:** tests/test_config.py preserves sanitizer behavior. tests/test_workspace_name_rules.py compares browser decisions and normalized names with sanitize_name over boundary, Unicode and deterministic generated cases.
