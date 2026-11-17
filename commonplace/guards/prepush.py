@@ -2,8 +2,12 @@
 
 Runs what git is about to push through lint and format checks, ``docs-check``
 against the base branch, and the fast tests that map to the changed files. It is
-a quick check, never the full suite or CI, and says so in every run. When the
-budget runs out it prints what it skipped instead of failing or passing silently.
+a quick check, never the full suite, and says so in every run. When the budget
+runs out it prints what it skipped instead of failing or passing silently.
+
+The hook and CI both call this module. ``python -m commonplace.guards.prepush --ci``
+is the pull-request gate: the same checks, plus the four guard files, and a
+skipped or cut-off step fails.
 
 Install it with ``python -m commonplace.guards.hooks install``; run it by hand with
 ``python -m commonplace.guards.prepush --manual``.
@@ -29,7 +33,17 @@ from commonplace.guards.stacks import PlannedCommand, detect_stacks, plan_comman
 from commonplace.orch import docs_check
 
 DEFAULT_BUDGET_SECONDS = 60.0
+CI_BUDGET_SECONDS = 600.0
 BUDGET_ENV = "COMMONPLACE_PREPUSH_BUDGET"
+# Repo-wide guard files on every pull request (CLAUDE.md). CI appends these
+# through gate_tests(); the hook uses select_tests() alone so the 60s budget
+# still finishes the affected files.
+GUARD_TESTS = (
+    "tests/test_eval_guards.py",
+    "tests/test_commonplace_public_surface.py",
+    "tests/test_docs_obligations.py",
+    "tests/test_docs_fragments.py",
+)
 TESTS_DIR = "tests"
 # -v prints each test id before it runs, so a cut-off run shows where it stopped.
 FAST_TEST_ARGS = ("-v", "-x", "-p", "no:cacheprovider")
@@ -100,6 +114,22 @@ def select_tests(
         else:
             unmapped.append(path)
     return ChangedTests(tuple(sorted(chosen)), tuple(unmapped))
+
+
+def gate_tests(
+    repo_root: Path | str, changed: Iterable[str], *, guards: bool, tests_dir: str = TESTS_DIR
+) -> ChangedTests:
+    """Affected tests, and, when ``guards`` is set, the four guard files that exist.
+
+    Affected files stay first so a short budget starts them before the guard files.
+    """
+    selected = select_tests(repo_root, changed, tests_dir)
+    if not guards:
+        return selected
+    root = Path(repo_root)
+    have = set(selected.files)
+    extra = tuple(path for path in GUARD_TESTS if path not in have and (root / path).is_file())
+    return ChangedTests(selected.files + extra, selected.unmapped)
 
 
 # ── budget and tools ───────────────────────────────────────────────────
@@ -176,6 +206,7 @@ class QuickReport:
     outcomes: list[StepOutcome]
     budget_seconds: float
     total_seconds: float
+    strict: bool = False
 
     def with_status(self, status: str) -> list[StepOutcome]:
         return [o for o in self.outcomes if o.status == status]
@@ -190,8 +221,12 @@ class QuickReport:
 
     @property
     def exit_code(self) -> int:
-        """1 only when a check failed; skipped or cut-short work is reported, never a failure."""
-        return 1 if self.failed else 0
+        """1 when a check failed. Strict mode (CI) also fails if a step was skipped or cut off."""
+        if self.failed:
+            return 1
+        if self.strict and not self.complete:
+            return 1
+        return 0
 
 
 def _say(stream: TextIO, text: str = "") -> None:
@@ -355,6 +390,8 @@ def run_quick_checks(
     heads: list[str],
     budget_seconds: float = DEFAULT_BUDGET_SECONDS,
     files_current: bool = True,
+    guards: bool = False,
+    strict: bool = False,
     out: TextIO | None = None,
     clock: Callable[[], float] = time.monotonic,
     env: dict[str, str] | None = None,
@@ -363,6 +400,8 @@ def run_quick_checks(
 
     ``files_current`` is False when the pushed commit is not the checked-out one: the
     file-based steps would then read the wrong files, so they are skipped and reported.
+    ``guards`` appends the four guard files. ``strict`` fails the run when a step is
+    skipped or cut off (the CI gate); the hook reports that and still exits 0.
     """
     stream = sys.stderr if out is None else out
     top = Path(repo_root)
@@ -370,12 +409,26 @@ def run_quick_checks(
     env = dict(os.environ if env is None else env)
     env["PATH"] = tool_path(top, env.get("PATH"))
     env.setdefault("PYTHONUNBUFFERED", "1")
-    _say(
-        stream,
-        f"commonplace pre-push QUICK CHECK: {_plural(len(changed), 'changed file')}, "
-        f"budget {budget_seconds:g}s",
-    )
-    _say(stream, "This is not the full test suite and not CI; a pass here is not a green build.")
+    if strict:
+        _say(
+            stream,
+            f"commonplace CI gate: {_plural(len(changed), 'changed file')}, "
+            f"budget {budget_seconds:g}s",
+        )
+        _say(
+            stream,
+            "Same entrypoint as the pre-push hook, plus the four guard files. "
+            "An incomplete step fails.",
+        )
+    else:
+        _say(
+            stream,
+            f"commonplace pre-push QUICK CHECK: {_plural(len(changed), 'changed file')}, "
+            f"budget {budget_seconds:g}s",
+        )
+        _say(
+            stream, "This is not the full test suite and not CI; a pass here is not a green build."
+        )
 
     outcomes: list[StepOutcome] = []
 
@@ -394,7 +447,7 @@ def run_quick_checks(
         record(StepOutcome("lint/format", _SKIPPED, detail=why))
     record(_docs_step(top, base, heads, budget))
     if files_current:
-        selection = select_tests(top, changed)
+        selection = gate_tests(top, changed, guards=guards)
         record(_test_step(top, selection, budget, env))
         if selection.unmapped:
             _say(
@@ -407,7 +460,7 @@ def run_quick_checks(
             StepOutcome("tests", _SKIPPED, detail="the pushed commit is not the checked-out HEAD")
         )
 
-    report = QuickReport(outcomes, budget_seconds, budget.elapsed())
+    report = QuickReport(outcomes, budget_seconds, budget.elapsed(), strict=strict)
     _print_verdict(stream, report)
     return report
 
@@ -416,26 +469,47 @@ def _print_verdict(stream: TextIO, report: QuickReport) -> None:
     took = f"{report.total_seconds:.1f}s of {report.budget_seconds:g}s"
     if report.failed:
         names = ", ".join(o.name for o in report.with_status(_FAILED))
-        _say(stream, f"QUICK CHECK FAILED ({took}): {names}. The push is blocked until it passes.")
+        if report.strict:
+            _say(stream, f"CI GATE FAILED ({took}): {names}.")
+        else:
+            _say(
+                stream,
+                f"QUICK CHECK FAILED ({took}): {names}. The push is blocked until it passes.",
+            )
     if report.complete and not report.failed:
-        _say(
-            stream,
-            f"QUICK CHECK PASSED ({took}). Only the changed files and their mapped fast tests "
-            "were checked; the full suite and CI still decide.",
-        )
+        if report.strict:
+            _say(
+                stream,
+                f"CI GATE PASSED ({took}). Affected tests, lint, and the guard files were checked.",
+            )
+        else:
+            _say(
+                stream,
+                f"QUICK CHECK PASSED ({took}). Only the changed files and their mapped fast tests "
+                "were checked; the full suite and CI still decide.",
+            )
         return
     left = report.with_status(_SKIPPED) + report.with_status(_INCOMPLETE)
-    if left:
+    if not left:
+        return
+    detail = "; ".join(f"{o.name} ({o.detail})" for o in left)
+    if report.strict:
         _say(
             stream,
-            "QUICK CHECK INCOMPLETE: not checked: "
-            + "; ".join(f"{o.name} ({o.detail})" for o in left)
-            + ". This does not block the push, and it is not a pass for those.",
+            f"CI GATE FAILED ({took}): not checked: {detail}. "
+            "A skipped or cut-off step is not a pass.",
         )
-        _say(
-            stream,
-            f"Raise the budget with --budget SECONDS or {BUDGET_ENV}, or run the commands above.",
-        )
+        return
+    _say(
+        stream,
+        "QUICK CHECK INCOMPLETE: not checked: "
+        + detail
+        + ". This does not block the push, and it is not a pass for those.",
+    )
+    _say(
+        stream,
+        f"Raise the budget with --budget SECONDS or {BUDGET_ENV}, or run the commands above.",
+    )
 
 
 # ── command line ───────────────────────────────────────────────────────
@@ -477,6 +551,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="check HEAD against the base instead of reading pushed refs from stdin",
     )
+    parser.add_argument(
+        "--ci",
+        action="store_true",
+        help=(
+            "pull-request gate: same checks as the hook, plus the four guard files; "
+            "a skipped or cut-off step fails"
+        ),
+    )
     return parser
 
 
@@ -492,7 +574,15 @@ def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
         warn("not inside a git work tree")
         return 2
     top = Path(top_text)
-    budget = parse_budget(args.budget or os.environ.get(BUDGET_ENV), warn)
+    if args.ci:
+        args.manual = True
+        if not args.base:
+            ref = os.environ.get("GITHUB_BASE_REF", "").strip()
+            args.base = f"origin/{ref}" if ref else None
+    if args.ci and not args.budget and not os.environ.get(BUDGET_ENV):
+        budget = CI_BUDGET_SECONDS
+    else:
+        budget = parse_budget(args.budget or os.environ.get(BUDGET_ENV), warn)
     base = _resolve_base(top, args.base)
     source = sys.stdin if stdin is None else stdin
     head_sha = _git_out(top, "rev-parse", "HEAD") or ""
@@ -508,6 +598,9 @@ def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
             top, updates, args.remote, default_ref=base if base_exists else None
         )
     except push_range.PushRangeError as exc:
+        if args.ci:
+            warn(f"cannot tell which files changed: {exc}. The CI gate fails closed.")
+            return 1
         warn(f"cannot tell which files changed: {exc}. Not checked; the push is not blocked.")
         return 0
     pushed = [u for u in updates if not (u.is_delete or u.is_tag)]
@@ -523,6 +616,8 @@ def main(argv: list[str] | None = None, stdin: TextIO | None = None) -> int:
         heads=heads,
         budget_seconds=budget,
         files_current=heads == [head_sha],
+        guards=args.ci,
+        strict=args.ci,
     )
     return report.exit_code
 
