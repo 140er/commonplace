@@ -132,3 +132,76 @@ def test_add_note_verbatim_search_and_drawer(chat_hub, look, width, role):
         finally:
             context.close()
             browser.close()
+
+
+@pytest.mark.parametrize("look", ["deck", "classic"])
+@pytest.mark.parametrize("width", [1280, 390])
+def test_note_places_retry_and_save_failure_are_distinct(chat_hub, look, width):
+    playwright = pytest.importorskip("playwright.sync_api", reason="optional browser dependency")
+    from playwright.sync_api import expect
+
+    h = chat_hub
+    origin = f"http://127.0.0.1:{h.port}"
+    cookie_name, value = h.owner["Cookie"].split("=", 1)
+    baseline = os.environ.get("CP_NOTE_LOADING_BASELINE_STATIC")
+    evidence = os.environ.get("CP_NOTE_EVIDENCE")
+    load_error = "The places to save could not be loaded. Try again."
+    save_error = "The note could not be saved. Your text is still here; try again."
+    with playwright.sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        context = browser.new_context(viewport={"width": width, "height": 844})
+        context.add_cookies([{"name": cookie_name, "value": value, "url": origin}])
+        page = context.new_page()
+        try:
+            if baseline:
+
+                def base_asset(route):
+                    path = Path(baseline) / route.request.url.split("/app/", 1)[1].split("?", 1)[0]
+                    if path.is_file():
+                        route.fulfill(path=path)
+                    else:
+                        route.continue_()
+
+                page.route("**/app/*.js", base_asset)
+
+            def capture(phase):
+                if not evidence:
+                    return
+                out = Path(evidence)
+                out.mkdir(parents=True, exist_ok=True)
+                stem = f"588-{phase}-{look}-{width}"
+                page.screenshot(path=str(out / f"{stem}.png"), full_page=True)
+                metrics = page.locator(".memory-note").evaluate("""el => ({
+                    text: el.innerText,
+                    controls: [...el.querySelectorAll('button,textarea,[role=alert]')].map(n => {
+                        const r=n.getBoundingClientRect();
+                        return {text:n.innerText || n.name, x:r.x,y:r.y,width:r.width,height:r.height};
+                    }), overflow:document.documentElement.scrollWidth > innerWidth
+                })""")
+                (out / f"{stem}.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2))
+                assert not metrics["overflow"]
+
+            page.route("**/api/memory/rooms?compose=1", lambda route: route.abort("failed"))
+            page.goto(f"{origin}/app/?ui={look}#/memory")
+            page.get_by_role("button", name="Add a note", exact=True).click()
+            expect(page.locator(".memory-note [role=alert]")).to_have_text(
+                save_error if baseline else load_error
+            )
+            expect(page.get_by_role("button", name="Try again", exact=True)).to_be_visible()
+            capture("before-load-error" if baseline else "after-load-error")
+            if baseline:
+                return
+            page.unroute("**/api/memory/rooms?compose=1")
+            page.get_by_role("button", name="Try again", exact=True).click()
+            note = page.get_by_role("textbox", name="Note", exact=True)
+            expect(note).to_be_visible()
+            text = "\n  $& $' $` $$ < & \" ' café 🧭\nexact words  "
+            note.fill(text)
+            page.route("**/api/memory", lambda route: route.abort("failed"))
+            page.get_by_role("button", name="Save", exact=True).click()
+            expect(page.locator(".memory-note [role=alert]")).to_have_text(save_error)
+            expect(note).to_have_value(text)
+            capture("after-save-error")
+        finally:
+            context.close()
+            browser.close()

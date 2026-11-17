@@ -33,7 +33,13 @@ def test_note_composer_harness():
 
 
 def test_note_choices_default_and_verbatim_search(hub):
+    from commonplace import sessions
+    from tests.test_commonplace_boards import service
+
     token = hub.owner_token()
+    service(hub, sessions.person_principal(hub.db, hub.admin, hub.workspace)).board_add(
+        slug="research", name="Research", wing="project_research"
+    )
     _save(hub, token, "existing project note", theme="project_research", topic="decisions")
     status, page = _http(hub, token, "/api/memory/rooms?compose=1")
     assert status == 200

@@ -34,6 +34,7 @@ export function renderNote(state = {}) {
 
 export function createNote({ api = request, draw, alive, boards = () => [], onResult = () => {} }) {
   const state = { open: false, text: "", room: "general" };
+  let selection = 0;
   return {
     state,
     async open() {
@@ -46,8 +47,19 @@ export function createNote({ api = request, draw, alive, boards = () => [], onRe
         if (!page.composer) { state.error = "You cannot save notes in this workspace."; return; }
         state.choices = { ...page.composer, wings: page.composer.wings.map(row => ({ ...row, name: boards().find(board => board.wing === row.wing)?.name || row.name })) };
         state.wing = state.choices.default_wing;
-      } catch (error) { if (alive()) state.error = plainError(error); }
+      } catch { if (alive()) state.error = "The places to save could not be loaded. Try again."; }
       finally { state.loading = false; if (alive()) draw(); }
+    },
+    async chooseWing(wing) {
+      const epoch = ++selection;
+      state.wing = wing; state.room = "general"; draw();
+      try {
+        const page = await api(`/api/memory/rooms?compose=1&wing=${encodeURIComponent(wing)}`, { timeoutMs: 1200 });
+        if (!alive() || epoch !== selection || state.saving) return;
+        const rooms = page.composer?.wings.find(row => row.wing === wing)?.rooms;
+        const picked = state.choices?.wings.find(row => row.wing === wing);
+        if (picked && rooms) { picked.rooms = rooms; draw(); }
+      } catch { /* Extra rooms are optional; general remains usable. */ }
     },
     async save() {
       if (state.saving || !state.choices) return;
