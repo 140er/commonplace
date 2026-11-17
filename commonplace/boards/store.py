@@ -38,6 +38,7 @@ TASK_COLUMNS = {
     "labels": "TEXT",
     "paths": "TEXT",
     "claim_expired_at": "TEXT",
+    "claim_session": "TEXT NOT NULL DEFAULT ''",
     "agent_parent": "TEXT",
     "proposal_status": "TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected'))",
     "proposed_to": "TEXT",
@@ -275,6 +276,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
                 "task_type",
                 "priority",
                 "ask_blocks",
+                "claim_session",
             )
         },
         "ask_blocks": decision_blocks.public(row),
@@ -391,17 +393,55 @@ def append_event(conn, number, kind, actor, *, trust="trusted", **fields):
 def _expired_claims(conn, board_id):
     return conn.execute(
         "SELECT id,assignee FROM tasks "
-        "WHERE board_id=? AND status='doing' AND claim_until<=? AND claim_expired_at IS NULL",
+        "WHERE board_id=? AND status='doing' AND assignee LIKE 'conn:%' "
+        "AND claim_until<=? AND claim_expired_at IS NULL",
         (board_id, now()),
     ).fetchall()
 
 
-def has_expired_claims(conn, board_id) -> bool:
+def claim_matches(row, actor, session_id=""):
+    """Session-less rows keep their original connection's renewal compatibility."""
+    return row["assignee"] == actor and (
+        not row["claim_session"] or row["claim_session"] == session_id
+    )
+
+
+def _pool_claims(conn, board_id, grace_minutes):
+    cutoff = (
+        datetime.strptime(now(), "%Y-%m-%dT%H:%M:%SZ") - timedelta(minutes=grace_minutes)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return conn.execute(
+        "SELECT t.* FROM tasks t WHERE t.board_id=? AND t.status='doing' "
+        "AND t.assignee LIKE 'conn:%' AND t.claim_until<=? AND t.claim_expired_at<=? "
+        "AND coalesce(t.ask,'')='' AND coalesce(t.ask_to,'')='' "
+        "AND coalesce(t.review_context,'')='' "
+        "AND coalesce(t.proposal_status,'') NOT IN ('pending','rejected') "
+        "AND NOT EXISTS (SELECT 1 FROM task_blockers b JOIN tasks d ON d.id=b.blocker_id "
+        "WHERE b.task_id=t.id AND d.status!='done') "
+        "AND NOT EXISTS (SELECT 1 FROM card_snoozes s WHERE s.task_id=t.id "
+        "AND (s.until>? OR (s.after_card IS NOT NULL AND coalesce("
+        "(SELECT status FROM tasks WHERE id=s.after_card),'')!='done'))) "
+        "AND NOT EXISTS (SELECT 1 FROM card_archive a WHERE a.task_id=t.id AND a.archived=1)",
+        (board_id, now(), cutoff, now()),
+    ).fetchall()
+
+
+def claim_grace(directory):
+    """Workspace-local setting; invalid values fail before any claim changes."""
+    from commonplace.workspace_store import settings_for
+
+    minutes = settings_for(directory).get("claim_expiry_grace_minutes", 30)
+    if type(minutes) is not int or minutes < 0:
+        raise ToolError("no: claim_expiry_grace_minutes must be a non-negative integer")
+    return minutes
+
+
+def has_expired_claims(conn, board_id, grace_minutes=30) -> bool:
     """Read-only twin of ``expire_claims``: whether it would write anything."""
-    return bool(_expired_claims(conn, board_id))
+    return bool(_expired_claims(conn, board_id) or _pool_claims(conn, board_id, grace_minutes))
 
 
-def expire_claims(conn, board_id):
+def expire_claims(conn, board_id, grace_minutes=30):
     expired = _expired_claims(conn, board_id)
     for row in expired:
         conn.execute(
@@ -418,7 +458,36 @@ def expire_claims(conn, board_id):
             from_status="doing",
             to_status="doing",
         )
-    return expired
+    returned = _pool_claims(conn, board_id, grace_minutes)
+    for row in returned:
+        # Restricted and unresolved legacy origins retain their assigned reservation.
+        assignee = row["assignee"] if row["restricted_origin"] != 0 else None
+        conn.execute(
+            "UPDATE tasks SET status='todo',assignee=?,claim_until=NULL,claim_session='',"
+            "version=version+1,updated_at=?,updated_by='system' WHERE id=?",
+            (assignee, now(), row["id"]),
+        )
+        # Reuse the last claim's authenticated requester for the existing start trigger.
+        stamp = conn.execute(
+            "SELECT stamp_user,stamp_connection,stamp_trust FROM task_events "
+            "WHERE task_id=? AND stamp_connection=? ORDER BY id DESC LIMIT 1",
+            (row["id"], row["assignee"][5:]),
+        ).fetchone()
+        append_event(
+            conn,
+            row["id"],
+            "release",
+            row["assignee"],
+            user_id=stamp["stamp_user"] if stamp else row["stamp_user"],
+            trust=stamp["stamp_trust"] if stamp else row["stamp_trust"],
+            text="claim expired, returned to the pool",
+            from_status="doing",
+            to_status="todo",
+            target=assignee,
+        )
+    return [dict(row, to_status="doing") for row in expired] + [
+        dict(row, to_status="todo") for row in returned
+    ]
 
 
 # Path -> (st_dev, st_ino, PRAGMA schema_version) after this process migrated it.
@@ -625,7 +694,7 @@ class BoardStore:
                 )
             ):
                 raise ToolError("no: this connection cannot change this board")
-            expire_claims(conn, row["board_id"])
+            expire_claims(conn, row["board_id"], claim_grace(Path(self.path).parent))
             row = task_row(conn, row["id"])
             if principal is not None:
                 # Linking only adds; it never needs the card's hold.
@@ -642,7 +711,7 @@ class BoardStore:
                     "UPDATE tasks SET version=version+1,updated_at=?,updated_by=? WHERE id=?",
                     (now(), actor, row["id"]),
                 )
-                if row["status"] == "doing" and row["assignee"] == actor and connection:
+                if row["status"] == "doing" and claim_matches(row, actor) and connection:
                     until = (
                         datetime.now(timezone.utc) + timedelta(minutes=row["claim_minutes"])
                     ).strftime("%Y-%m-%dT%H:%M:%SZ")

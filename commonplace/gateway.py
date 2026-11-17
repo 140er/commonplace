@@ -282,6 +282,7 @@ class Hidden(Exception):
 
 # Write-side room checks share one reader per gateway call.
 _WRITE_ACCESS = contextvars.ContextVar("commonplace_write_access", default=None)
+_CLAIM_SESSION = contextvars.ContextVar("commonplace_claim_session", default="")
 # Same bound as drawer batches.
 CHECKPOINT_MAX_ITEMS = 500
 
@@ -765,7 +766,11 @@ class Mediator:
         if not tool.usable_by(principal, self.gateway):
             self._audit(principal, tool.name, "deny", "owner only" if tool.owner_only else "off")
             return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
-        ctx = extensions.ToolContext(principal=principal, gateway=self.gateway)
+        ctx = extensions.ToolContext(
+            principal=principal,
+            gateway=self.gateway,
+            extra={"claim_session": _CLAIM_SESSION.get()},
+        )
         try:
             result = tool.handler(ctx, args)
         except extensions.ToolError as exc:
@@ -3147,6 +3152,14 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         return True
 
     def _mcp(self, principal, request):
+        initializing = isinstance(request, dict) and request.get("method") == "initialize"
+        session_id = (
+            secrets.token_urlsafe(32) if initializing else self.headers.get("Mcp-Session-Id", "")
+        )
+        if len(session_id) > 200 or (session_id and not session_id.isascii()):
+            self._send_json(400, {"error": "Invalid Mcp-Session-Id"})
+            return
+        token = _CLAIM_SESSION.set(session_id)
         try:
             response = self.server.gateway.mediator.handle(principal, request)
         except Exception as exc:
@@ -3177,11 +3190,19 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
             return
+        finally:
+            _CLAIM_SESSION.reset(token)
         if response is None:
             self.send_response(202)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        self._send_json(200, response)
+        self._send_json(
+            200,
+            response,
+            extra_headers={"Mcp-Session-Id": session_id}
+            if initializing and "result" in response
+            else None,
+        )
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _dispatch

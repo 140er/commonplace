@@ -1,0 +1,4 @@
+- **Owns:** Due claim recovery in the existing trigger sweep and session-aware held/expired checkpoint classification.
+- **Promises:** A returned claim uses the existing todo firing transition. Resume preserves its session context and only heartbeats matching live claims; all readers can see expired cards while checkpoints remain read-only.
+- **How it fails:** An inactive or unauthorized prior requester follows existing trigger refusal handling; return-to-todo never removes restricted-origin reservations or unresolved waits.
+- **Tests:** `tests/test_expired_claim_pool.py` proves trigger recovery without a card read, session isolation and checkpoint before/after output; the existing durable resume and trigger regressions cover compatibility.

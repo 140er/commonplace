@@ -9,6 +9,7 @@ import re
 import sqlite3
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from time import monotonic
 from urllib.parse import urlparse
 
@@ -40,6 +41,8 @@ from .store import (
     BoardStore,
     append_event,
     card,
+    claim_grace,
+    claim_matches,
     expire_claims,
     has_expired_claims,
     now,
@@ -1148,6 +1151,7 @@ class BoardService(lifecycle.LifecycleMixin):
         """The workspace's orchestration facts one request reads, taken before its board connection."""
         from commonplace.projects import orchestration as orch, reports
 
+        self._claim_grace = claim_grace(Path(self.store.path).parent)
         try:
             self._report_snapshot = reports.snapshot(self.ctx.gateway, self.principal.workspace_id)
             self._orchestration_on = self._report_snapshot.enabled
@@ -1271,6 +1275,7 @@ class BoardService(lifecycle.LifecycleMixin):
             row["status"] == "todo"
             and row["assignee"] not in (None, self.principal.actor)
             and row["proposal_status"] not in ("pending", "rejected")
+            and row["claim_expired_at"] is None
             and not _waiting_on_person(row)
             and self._restricted_origin(row)
             and self._origin_released(row)
@@ -1800,13 +1805,13 @@ class BoardService(lifecycle.LifecycleMixin):
         return conn.execute("SELECT * FROM boards WHERE id=?", (cur.lastrowid,)).fetchone()
 
     def _expire(self, conn, board):
-        for row in expire_claims(conn, board["id"]):
+        for row in expire_claims(conn, board["id"], self._claim_grace):
             self._emit(
                 conn,
                 row["id"],
-                "card.expired",
+                "card.moved" if row["to_status"] == "todo" else "card.expired",
                 actor="system",
-                **{"from": "doing", "to": "doing", "target": row["assignee"]},
+                **{"from": "doing", "to": row["to_status"], "target": row["assignee"]},
             )
         from commonplace.snooze import store as snooze
 
@@ -1957,13 +1962,24 @@ class BoardService(lifecycle.LifecycleMixin):
         if (
             renew_claim
             and row["status"] == "doing"
-            and row["assignee"] == self.principal.actor
+            and claim_matches(row, self.principal.actor, self.ctx.extra.get("claim_session", ""))
             and "claim_until" not in updates
             and not self.principal.person
         ):
             updates["claim_until"] = self._until(row)
         if "claim_until" in updates:
             updates["claim_expired_at"] = None
+            if updates["claim_until"] is None:
+                updates["claim_session"] = ""
+            elif (
+                row["status"] != "doing"
+                or updates.get("assignee", row["assignee"]) != row["assignee"]
+            ):
+                updates["claim_session"] = (
+                    self.ctx.extra.get("claim_session", "")
+                    if updates.get("assignee", row["assignee"]) == self.principal.actor
+                    else ""
+                )
             if updates["claim_until"] is not None:
                 updates["heartbeat_at"] = now()
         if "pr_url" in updates:  # set here, so the next BoardStore open has nothing to backfill
@@ -1989,6 +2005,14 @@ class BoardService(lifecycle.LifecycleMixin):
             if moving:
                 self._member_reservation(row)
             return
+        if (
+            row["status"] == "doing"
+            and row["assignee"] == self.principal.actor
+            and not claim_matches(
+                row, self.principal.actor, self.ctx.extra.get("claim_session", "")
+            )
+        ):
+            raise ToolError("no: claim belongs to another session")
         if row["proposal_status"] in ("pending", "rejected") and not self._own_card(row):
             raise ToolError("no: proposal needs its parent or the workspace owner")
         if row["status"] == "done" and not reopening:
@@ -2684,7 +2708,7 @@ class BoardService(lifecycle.LifecycleMixin):
                 conn.execute("PRAGMA query_only=ON")
                 row = task_row(conn, task)
                 require_visible(row, self.principal)
-                if has_expired_claims(conn, row["board_id"]) or snooze.has_due(
+                if has_expired_claims(conn, row["board_id"], self._claim_grace) or snooze.has_due(
                     conn, snooze.clock()
                 ):
                     return None
@@ -3082,9 +3106,10 @@ class BoardService(lifecycle.LifecycleMixin):
         )
         number = cur.lastrowid
         conn.execute(
-            "UPDATE tasks SET claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
+            "UPDATE tasks SET claim_session=?,claim_until=?,heartbeat_at=?,agent_parent=?,proposal_status=?,"
             "proposed_to=?,review_kind=?,task_type=?,priority=?,reviewer=?,ask_blocks=? WHERE id=?",
             (
+                self.ctx.extra.get("claim_session", "") if until and assignee == p.actor else "",
                 until,
                 at if until else None,
                 p.parent_agent,
@@ -3508,6 +3533,10 @@ class BoardService(lifecycle.LifecycleMixin):
             self._write(board, row=row)
             if row["status"] != "doing" or row["assignee"] != self.principal.actor:
                 raise ToolError("no: only the holder of a doing card can heartbeat it")
+            if not claim_matches(
+                row, self.principal.actor, self.ctx.extra.get("claim_session", "")
+            ):
+                raise ToolError("no: claim belongs to another session")
             self._set(conn, row, {"heartbeat_at": now()})
             self._log(conn, row["id"], "renew")
             self._emit(conn, row["id"], "card.updated")
@@ -3620,6 +3649,10 @@ class BoardService(lifecycle.LifecycleMixin):
                 raise ToolError("no: card is not available to take")
             self._write(b, row=row, claiming=True)
             if held:
+                if not claim_matches(
+                    row, self.principal.actor, self.ctx.extra.get("claim_session", "")
+                ):
+                    raise ToolError("no: claim belongs to another session")
                 return self._card(conn, row, self.principal)
             task_types.require(conn, row["task_type"], type_holder, labels=type_labels)
             from commonplace.projects import limits
