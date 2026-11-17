@@ -25,6 +25,12 @@ COOKIE = "cmmn_session"
 LINK_MINUTES = 15
 SESSION_DAYS = 30
 
+
+def workspace_csrf(session: str) -> str:
+    """Purpose-bound browser proof, following the existing consent-token pattern."""
+    return hashlib.sha256(("workspace-create-v1:" + session).encode()).hexdigest()
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS login_links (
     token_hash TEXT PRIMARY KEY,

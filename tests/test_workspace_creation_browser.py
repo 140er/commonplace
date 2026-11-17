@@ -2,8 +2,6 @@
 
 import json
 import os
-import shutil
-import uuid
 from pathlib import Path
 
 import pytest
@@ -19,7 +17,7 @@ def browser():
     playwright = pytest.importorskip("playwright.sync_api", reason="optional browser dependency")
     with playwright.sync_playwright() as manager:
         try:
-            browser = manager.chromium.launch(executable_path=shutil.which("google-chrome"))
+            browser = manager.chromium.launch()
         except playwright.Error as exc:
             if "Executable doesn't exist" in str(exc):
                 pytest.skip("optional browser executable unavailable")
@@ -35,6 +33,7 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
 
     site = world
     monkeypatch.setenv("COMMONPLACE_SIGNUP", "open")
+    monkeypatch.setenv("COMMONPLACE_WORKSPACE_LIMIT", "25")
     assert site.owner.browser.post("/api/boards", {"slug": "work", "name": "Work"}).status == 201
     origin = f"http://127.0.0.1:{site.port}"
     context = browser.new_context(
@@ -181,74 +180,86 @@ def test_workspace_creation_journey(browser, world, monkeypatch, size, look):  #
         page.get_by_role("button", name="Create workspace", exact=True).evaluate(
             "el => { el.click(); el.click(); }"
         )
-        expect(page.get_by_role("heading", name="Workspace created", exact=True)).to_be_visible()
+        expect(page.locator(".workspace-switch")).not_to_be_visible()
+        expect(page).to_have_url(origin + "/app/#/" if look == "deck" else origin + "/app/#/bots")
         assert len(calls) == 1 and len(site.db.workspaces()) == before + 1
         created = next(row["id"] for row in site.db.workspaces() if row["name"] == "Separate work")
         assert created != site.owner.workspace
         assert site.db.role(created, site.owner.id) == "owner"
         assert site.db.role(created, site.guest.id) is None
-        me = context.request.get(origin + "/api/me").json()
-        assert me["workspace"] == site.owner.workspace
+        assert context.request.get(origin + "/api/me").json()["workspace"] == created
+        boards = context.request.get(origin + "/api/boards").json()["boards"]
+        assert [board["slug"] for board in boards] == ["commonplace"]
+        assert all(not any(board["counts"].values()) for board in boards)
+        expect(page.locator(".shell")).to_be_visible()
         if look == "deck":
-            expect(
-                page.get_by_text(
-                    '"Separate work" is ready. It is empty and only you are in it.', exact=True
-                )
-            ).to_be_visible()
-        shot("result")
-        page.get_by_role("button", name="Stay here", exact=True).click()
+            expect(page.locator(".bh-form")).to_be_visible()
+        else:
+            expect(page.get_by_role("heading", name="Bots", exact=True)).to_be_visible()
+        target = os.environ.get("WORKSPACE_SHOTS")
+        if target:
+            directory = Path(target)
+            directory.mkdir(parents=True, exist_ok=True)
+            page.screenshot(path=str(directory / f"577-home-{look}-{size[0]}.png"))
         switcher()
-        confirm("Another workspace")
+        page.locator(f'[data-workspace="{site.owner.workspace}"]').click()
+        expect(page.locator(".workspace-switch")).not_to_be_visible()
+        assert context.request.get(origin + "/api/me").json()["workspace"] == site.owner.workspace
+        page.goto(f"{origin}/app/?ui={look}#/board/work")
+        expect(page.locator(".shell")).to_be_visible()
+
+        def refuse(name, message):
+            switcher()
+            confirm(name)
+            page.get_by_role("button", name="Create workspace", exact=True).click()
+            expect(
+                page.locator(
+                    "[data-workspace-refusal]" if look == "deck" else "[data-workspace-error]"
+                )
+            ).to_have_text(message)
+            assert len(site.db.workspaces()) == before + 1
+            assert (
+                context.request.get(origin + "/api/me").json()["workspace"] == site.owner.workspace
+            )
+            shot("refusal-" + name.lower())
+            page.get_by_role(
+                "button", name="Close" if look == "deck" else "Cancel", exact=True
+            ).click()
+            if look != "deck":
+                page.get_by_role("button", name="Close", exact=True).click()
+
         monkeypatch.setenv("COMMONPLACE_SIGNUP", "closed")
-        page.get_by_role("button", name="Create workspace", exact=True).click()
-        expect(
-            page.locator("[data-workspace-refusal]" if look == "deck" else "[data-workspace-error]")
-        ).to_have_text(
+        refuse(
+            "Closed",
             "New workspaces are turned off on this server."
             if look == "deck"
-            else "This instance is closed to new workspaces."
+            else "This instance is closed to new workspaces.",
         )
-        assert len(site.db.workspaces()) == before + 1
-        shot("refusal")
-        if look == "deck":
-            page.get_by_role("button", name="Close", exact=True).click()
-            monkeypatch.setenv("COMMONPLACE_SIGNUP", "open")
-            from commonplace import invites, plans
+        monkeypatch.setenv("COMMONPLACE_SIGNUP", "open")
+        with monkeypatch.context() as patch:
+            patch.setenv("COMMONPLACE_WORKSPACE_LIMIT", "1")
+            refuse("Cap", "You can have at most 1 owned workspaces.")
+        from commonplace import plans
+        from mempalace import storage_guard
 
-            def refuse(*args, **kwargs):
+        with monkeypatch.context() as patch:
+            patch.setenv("MEMPALACE_MIN_FREE_BYTES", "100")
+            patch.setattr(storage_guard, "free_bytes", lambda path: 1)
+            refuse("Disk", storage_guard.MESSAGE)
+        site.gateway.supervisor.pause(drain_s=0)
+        try:
+            refuse("Backup", "Workspaces are paused for a backup. Try again shortly.")
+        finally:
+            site.gateway.supervisor.resume()
+        with monkeypatch.context() as patch:
+
+            def plan_refusal(*args, **kwargs):
                 raise plans.LimitReached("Your plan does not allow another workspace.")
 
-            switcher()
-            confirm("Plan example")
-            with monkeypatch.context() as patch:
-                patch.setattr(plans, "assign_signup_plan", refuse)
-                page.get_by_role("button", name="Create workspace", exact=True).click()
-                expect(page.locator("[data-workspace-refusal]")).to_have_text(
-                    "Your plan does not allow another workspace."
-                )
-            shot("refusal-plan")
-            page.get_by_role("button", name="Close", exact=True).click()
-            for index in range(4):
-                invites.create_workspace(
-                    site.db,
-                    site.owner.id,
-                    name=f"Rate example {index}",
-                    request_id=str(uuid.uuid4()),
-                )
-            switcher()
-            confirm("Rate example")
-            page.get_by_role("button", name="Create workspace", exact=True).click()
-            expect(page.locator("[data-workspace-refusal]")).to_have_text(
-                "Too many new workspaces. Try again in 60 minutes."
-            )
-            shot("refusal-rate")
-            page.get_by_role("button", name="Close", exact=True).click()
-            switcher()
-        else:
-            page.get_by_role("button", name="Cancel", exact=True).click()
-        page.locator(f'[data-workspace="{created}"]').click()
-        expect(page.locator(".workspace-switch")).not_to_be_visible()
-        assert context.request.get(origin + "/api/me").json()["workspace"] == created
-        assert context.request.get(origin + "/api/boards").json() == {"boards": []}
+            patch.setattr(plans, "assign_signup_plan", plan_refusal)
+            refuse("Plan", "Your plan does not allow another workspace.")
+        with monkeypatch.context() as patch:
+            patch.setenv("COMMONPLACE_WORKSPACE_CREATIONS_PER_HOUR", "1")
+            refuse("Rate", "Too many new workspaces. Try again in 60 minutes.")
     finally:
         context.close()

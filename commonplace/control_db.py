@@ -27,6 +27,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import unicodedata
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -55,12 +56,14 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     name TEXT NOT NULL DEFAULT '',
     is_admin INTEGER NOT NULL DEFAULT 0,
+    is_person INTEGER NOT NULL DEFAULT 1 CHECK (is_person IN (0,1)),
     created_at TEXT NOT NULL,
     disabled_at TEXT
 );
 CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    slug TEXT,
     personal_of TEXT REFERENCES users(id),
     initial_space_pending INTEGER NOT NULL DEFAULT 0 CHECK (initial_space_pending IN (0,1)),
     created_at TEXT NOT NULL
@@ -262,7 +265,16 @@ class ControlDB:
         with self._lock:
             self._conn.executescript(_SCHEMA)
             with self._tx() as conn:
+                user_columns = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+                if "is_person" not in user_columns:
+                    conn.execute(
+                        "ALTER TABLE users ADD COLUMN is_person INTEGER NOT NULL DEFAULT 1 "
+                        "CHECK (is_person IN (0,1))"
+                    )
                 workspace_columns = {r[1] for r in conn.execute("PRAGMA table_info(workspaces)")}
+                if "slug" not in workspace_columns:
+                    conn.execute("ALTER TABLE workspaces ADD COLUMN slug TEXT")
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspace_slug ON workspaces(slug)")
                 if "initial_space_pending" not in workspace_columns:
                     conn.execute(
                         "ALTER TABLE workspaces ADD COLUMN initial_space_pending INTEGER "
@@ -373,7 +385,9 @@ class ControlDB:
         return _Tx()
 
     # ── users ──
-    def create_user(self, email: str, name: str = "", *, is_admin: bool = False) -> str:
+    def create_user(
+        self, email: str, name: str = "", *, is_admin: bool = False, is_person: bool = True
+    ) -> str:
         email = email.strip()
         if "@" not in email or len(email) > 254:
             raise ControlError(f"not an email address: {email!r}")
@@ -381,8 +395,8 @@ class ControlDB:
         with self._lock:
             try:
                 self._conn.execute(
-                    "INSERT INTO users(id, email, name, is_admin, created_at) VALUES (?,?,?,?,?)",
-                    (uid, email, name.strip(), int(is_admin), _iso(_now())),
+                    "INSERT INTO users(id, email, name, is_admin, is_person, created_at) VALUES (?,?,?,?,?,?)",
+                    (uid, email, name.strip(), int(is_admin), int(is_person), _iso(_now())),
                 )
             except sqlite3.IntegrityError:
                 raise ControlError(f"user {email} already exists") from None
@@ -420,13 +434,23 @@ class ControlDB:
         if not name:
             raise ControlError("workspace name is empty")
         wid = _new_id("ws")
+        stem = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+        stem = re.sub(r"[^a-z0-9]+", "-", stem).strip("-")[:64].rstrip("-") or "workspace"
+        slug = f"{stem}-{wid[3:]}"
         now = _iso(_now())
         # A new workspace adds stores to the data tree: never during a backup cut.
         with GATE.creating(), self._lock, self._tx() if conn is None else nullcontext(conn) as conn:
             conn.execute(
-                "INSERT INTO workspaces(id, name, personal_of, initial_space_pending, created_at) "
-                "VALUES (?,?,?,?,?)",
-                (wid, name, owner["id"] if personal else None, int(initial_space_pending), now),
+                "INSERT INTO workspaces(id, name, slug, personal_of, initial_space_pending, created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    wid,
+                    name,
+                    slug,
+                    owner["id"] if personal else None,
+                    int(initial_space_pending),
+                    now,
+                ),
             )
             conn.execute(
                 "INSERT INTO memberships(workspace_id, user_id, role, created_at) VALUES (?,?,?,?)",

@@ -106,8 +106,8 @@ export function createInviteBlock({ api, e, copy = text => globalThis.navigator.
   return { show, stop };
 }
 
-// Lists only the caller's own workspaces; creation never switches without a separate click.
-export async function openWorkspaces({ api, e, onError = () => {}, doc = globalThis.document, reload = () => globalThis.location.assign('/app/') }) {
+// Lists only the caller's own workspaces; confirmed creation opens its empty Home.
+export async function openWorkspaces({ api, e, onError = () => {}, doc = globalThis.document, reload = () => { globalThis.location.hash = '/'; globalThis.location.reload(); } }) {
   let result;
   try { result = await api('/api/workspaces'); }
   catch (error) { onError(error.message || 'Workspaces unavailable.'); return null; }
@@ -206,15 +206,17 @@ export async function openWorkspaces({ api, e, onError = () => {}, doc = globalT
     dialog.querySelector('[data-workspace-error]').textContent = '';
     try {
       if (confirm && stage === 'confirm') {
-        const response = await api('/api/workspaces', { method: 'POST', body: { name, request_id: requestId } });
+        const response = await api('/api/workspaces', { method: 'POST', body: { name, request_id: requestId, csrf: result.csrf } });
         created = response.workspace;
         stage = 'result'; render();
+        await api('/api/workspaces/switch', { method: 'POST', body: { workspace: created.id } });
+        reload();
       } else {
         await api('/api/workspaces/switch', { method: 'POST', body: { workspace: selected.dataset.workspace } });
         reload();
       }
     } catch (error) {
-      if (deck && confirm && error.status >= 400 && error.status < 500) {
+      if (deck && confirm && stage === 'confirm' && error.status >= 400 && error.status < 600) {
         const reason = error.payload?.error || error.message || 'Could not create workspace.';
         refusal = ({
           'This instance is closed to new workspaces.': 'New workspaces are turned off on this server.',

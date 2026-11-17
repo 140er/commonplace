@@ -59,7 +59,8 @@ EXACT = {
     ("GET", "/api/invites"): "authenticated",
     ("POST", "/api/invites"): "authenticated",
     ("GET", "/api/workspaces"): "authenticated",
-    # Workspace creation requires the signed-in person's same-origin session.
+    # Account provisioning deliberately has no MCP tool or token authority:
+    # a person session, explicit same-origin Origin and session-bound csrf are required.
     ("POST", "/api/workspaces"): "authenticated",
     ("POST", "/api/workspaces/switch"): "authenticated",
     ("GET", "/api/me"): "authenticated",

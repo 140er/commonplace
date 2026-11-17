@@ -1,0 +1,4 @@
+- **Owns:** The users.is_person account classification and unique derived workspaces.slug field.
+- **Promises:** Existing accounts migrate as persons; service accounts can be created with is_person=False. New workspace slugs derive from the display name with a unique opaque id suffix and never select a filesystem path. Existing workspace ids, paths and memberships stay valid.
+- **How it fails:** A service account cannot provision a workspace through a browser session. Database uniqueness rejects slug collisions. Filesystem paths always use the generated workspace id.
+- **Tests:** tests/test_workspace_creation_safety.py covers service-account refusal, distinct derived slugs, atomic caps and instance inventory visibility. Existing control-database and workspace-store switch checks remain affected regressions.
