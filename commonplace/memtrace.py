@@ -24,7 +24,9 @@ def process_counts() -> dict:
         try:
             # Count entries, never read their names or targets into the payload.
             with os.scandir(path) as entries:
-                counts[field] = sum(1 for _ in entries)
+                found = sum(1 for _ in entries)
+            # Listing /proc/self/fd holds its own descriptor open while it counts.
+            counts[field] = max(found - 1, 0) if field == "open_fd_count" else found
         except (OSError, ValueError):
             pass
     return counts
