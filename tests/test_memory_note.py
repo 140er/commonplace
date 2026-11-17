@@ -83,8 +83,10 @@ def test_note_choices_and_writes_obey_scopes_and_wings(hub):
 
 def test_note_storage_floor_and_busy_remain_retryable(hub, monkeypatch):
     from commonplace.extensions import RetryableToolError
+    from mempalace import storage_guard
 
     token = hub.owner_token()
+    monkeypatch.setattr(storage_guard, "_last_warning", None)
     monkeypatch.setenv("MEMPALACE_MIN_FREE_BYTES", str(2**62))
     status, body = _http(hub, token, "/api/memory", {"text": "floor canary"})
     assert status == 507 and body["code"] == "storage_full" and body["retry_after_s"] > 0

@@ -24,7 +24,7 @@ def test_add_note_verbatim_search_and_drawer(chat_hub, look, width, role):
     origin = f"http://127.0.0.1:{h.port}"
     auth = h.owner if role == "owner" else h.member
     cookie_name, value = auth["Cookie"].split("=", 1)
-    text = "  Harbor canary café e\u0301 漢字 🧭\ttwo  spaces\nsecond line stays.  "
+    text = "\n  Harbor canary café e\u0301 漢字 🧭\ttwo  spaces\nsecond line stays.  "
     baseline = os.environ.get("CP_NOTE_BASELINE_STATIC")
     evidence = os.environ.get("CP_NOTE_EVIDENCE")
     with playwright.sync_playwright() as pw:
@@ -85,6 +85,10 @@ def test_add_note_verbatim_search_and_drawer(chat_hub, look, width, role):
             page.get_by_role("button", name="Save", exact=True).click()
             expect(page.locator(".memory-note [role=alert]")).to_have_text("Write a note first.")
             note.fill(text)
+            page.locator('[name="note-wing"]').select_option("project_research")
+            expect(note).to_have_value(text)
+            page.locator('[name="note-wing"]').select_option("shared")
+            expect(note).to_have_value(text)
             page.get_by_text("Preview exact words", exact=True).click()
             assert page.locator("[data-note-preview]").text_content() == text
             capture("composer")

@@ -62,7 +62,7 @@ test('the Memory controller submits the note route and preserves a draft across 
   const action = value => listeners.get('click')({ target: { closest: selector => selector === '[data-memory-action]' ? { dataset: { memoryAction: value } } : null } });
   action('note'); await new Promise(resolve => setImmediate(resolve));
   listeners.get('input')({ target: { name: 'note-text', value: '  exact 🧭\n  ' } });
-  ui.setProject('other'); assert.match(mount.innerHTML, />  exact 🧭\n  <\/textarea>/);
+  ui.setProject('other'); assert.match(mount.innerHTML, />\n  exact 🧭\n  <\/textarea>/);
   listeners.get('submit')({ preventDefault() {}, target: { matches: selector => selector === '[data-memory-note]' } });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.find(([path]) => path === '/api/memory')[1].body.text, '  exact 🧭\n  ');
@@ -83,7 +83,7 @@ test('preview, destination, errors and saved drawer are escaped plain words', ()
     choices: { default_wing: 'shared', wings: [{ wing: 'shared', name: 'Workspace notes' }] } };
   const html = renderNote(state);
   assert.match(html, /value="shared" selected/);
-  assert.match(html, /data-note-preview>  &lt;script&gt;漢字\n  <\/pre>/);
+  assert.match(html, /data-note-preview>\n  &lt;script&gt;漢字\n  <\/pre>/);
   assert.match(renderNote({ ...state, error: '<busy>' }), /role="alert">&lt;busy&gt;/);
   const saved = renderNote({ ...state, saved: { id: 'opaque', theme: 'shared' } });
   assert.match(saved, /Saved to Workspace notes/);

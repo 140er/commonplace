@@ -16,14 +16,16 @@ export function renderNote(state = {}) {
   const wings = choices?.wings || [];
   const picked = wings.find(row => row.wing === wing);
   const label = value => wings.find(row => row.wing === value)?.name || value;
+  // HTML drops the first newline after textarea/pre: supply one so the draft's
+  // own leading blank line survives a redraw and stays visible in its preview.
   return `<section class="memory-note" aria-labelledby="memory-note-title" aria-busy="${Boolean(loading || saving)}">
     <h2 id="memory-note-title">Add a note</h2><p>Save a workspace note, separate from bot and conversation memory. Your words stay exactly as typed.</p>
     ${loading ? '<p role="status">Loading places to save…</p>' : ""}
     ${error ? `<p tabindex="-1" role="alert">${e(error)}</p>` : ""}
     ${saved ? `<p class="memory-note-saved" tabindex="-1" role="status">Saved to ${e(label(saved.theme))}. <a href="#/memory?drawer=${encodeURIComponent(saved.id)}" data-note-drawer="${e(saved.id)}">Open drawer</a>. ${saved.notice ? e(saved.notice) : "It will be searchable shortly."}</p>` : ""}
     ${choices ? `<form data-memory-note><fieldset${saving ? " disabled" : ""}>
-      <label for="note-text">Note</label><textarea id="note-text" name="note-text" rows="5" aria-describedby="note-limit">${exact(text)}</textarea><p id="note-limit">Up to 100,000 characters. Nothing is summarised or rewritten.</p>
-      <details class="memory-note-preview"><summary>Preview exact words</summary><pre data-note-preview>${exact(text)}</pre></details>
+      <label for="note-text">Note</label><textarea id="note-text" name="note-text" rows="5" aria-describedby="note-limit">\n${exact(text)}</textarea><p id="note-limit">Up to 100,000 characters. Nothing is summarised or rewritten.</p>
+      <details class="memory-note-preview"><summary>Preview exact words</summary><pre data-note-preview>\n${exact(text)}</pre></details>
       <div class="memory-note-destination"><label>Save to<select name="note-wing">${wings.map(row => `<option value="${e(row.wing)}"${row.wing === wing ? " selected" : ""}>${e(row.name)}</option>`).join("")}</select></label><label>Room<select name="note-room">${(picked?.rooms || ["general"]).map(value => `<option value="${e(value)}"${value === room ? " selected" : ""}>${e(value)}</option>`).join("")}</select></label></div>
       <p>${String(wing).startsWith("private") ? "This is private memory. Only people allowed to read this wing can see it." : "People who can read this wing can find this note."}</p>
       <div class="memory-note-actions"><button type="button" class="btn ghost" data-memory-action="note-close">Close</button><button class="btn primary" type="submit">${saving ? "Saving…" : "Save"}</button></div>
