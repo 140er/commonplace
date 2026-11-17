@@ -1,0 +1,4 @@
+- **Owns:** Focused temporary-database regressions for admin membership removal, disposable account deletion and their public CLI contract.
+- **Promises:** Base failures explicitly demonstrate the absent subcommands; head assertions cover scoped revocation, content attribution, owner guards, migration, crash rollback, dry-run, backup/pause refusal and immutable audit history without live data access.
+- **How it fails:** Any widening of authority, cross-workspace deletion, partial transaction, altered historical audit row or missing help/documentation token fails a concrete assertion.
+- **Tests:** `tests/test_admin_account_cleanup.py` and the admin-cleanup protocol-token cases in `tests/test_docs_reference_compat.py`.

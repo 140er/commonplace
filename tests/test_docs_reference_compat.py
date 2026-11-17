@@ -192,3 +192,28 @@ def test_token_check_keeps_config_sections_keys_and_commands():
 )
 def test_workspace_creation_contract_names_are_deliberate(token):
     assert token in (ROOT / "docs/system/person-workspace-creation.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "commonplace member remove",
+        "commonplace user delete",
+        "commonplace user add",
+        "--disposable",
+        "--force-owner",
+        "--by",
+        "--reason",
+        "--yes",
+        "users.is_disposable",
+        "users.is_admin",
+        "member.remove",
+        "user.delete",
+        "audit_log",
+        "target_ids",
+        "example.invalid",
+        "example.test",
+    ],
+)
+def test_admin_cleanup_contract_names_are_deliberate(token):
+    assert token in (ROOT / "docs/system/admin-account-cleanup.md").read_text()

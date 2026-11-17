@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL DEFAULT '',
     is_admin INTEGER NOT NULL DEFAULT 0,
     is_person INTEGER NOT NULL DEFAULT 1 CHECK (is_person IN (0,1)),
+    is_disposable INTEGER NOT NULL DEFAULT 0 CHECK (is_disposable IN (0,1)),
     created_at TEXT NOT NULL,
     disabled_at TEXT
 );
@@ -271,6 +272,11 @@ class ControlDB:
                         "ALTER TABLE users ADD COLUMN is_person INTEGER NOT NULL DEFAULT 1 "
                         "CHECK (is_person IN (0,1))"
                     )
+                if "is_disposable" not in user_columns:
+                    conn.execute(
+                        "ALTER TABLE users ADD COLUMN is_disposable INTEGER NOT NULL DEFAULT 0 "
+                        "CHECK (is_disposable IN (0,1))"
+                    )
                 workspace_columns = {r[1] for r in conn.execute("PRAGMA table_info(workspaces)")}
                 if "slug" not in workspace_columns:
                     conn.execute("ALTER TABLE workspaces ADD COLUMN slug TEXT")
@@ -316,7 +322,7 @@ class ControlDB:
                 """)
             # Losing ownership clears a stored cards:decide grant, so regaining
             # ownership never revives it without fresh consent. (Connections keep
-            # their membership row from being deleted, so demotion is the path.)
+            # their membership row unless the admin cleanup removes credentials.)
             self._conn.executescript(_DECIDE_DEMOTE_TRIGGER)
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
@@ -386,7 +392,13 @@ class ControlDB:
 
     # ── users ──
     def create_user(
-        self, email: str, name: str = "", *, is_admin: bool = False, is_person: bool = True
+        self,
+        email: str,
+        name: str = "",
+        *,
+        is_admin: bool = False,
+        is_person: bool = True,
+        is_disposable: bool = False,
     ) -> str:
         email = email.strip()
         if "@" not in email or len(email) > 254:
@@ -395,8 +407,17 @@ class ControlDB:
         with self._lock:
             try:
                 self._conn.execute(
-                    "INSERT INTO users(id, email, name, is_admin, is_person, created_at) VALUES (?,?,?,?,?,?)",
-                    (uid, email, name.strip(), int(is_admin), int(is_person), _iso(_now())),
+                    "INSERT INTO users(id, email, name, is_admin, is_person, is_disposable, created_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (
+                        uid,
+                        email,
+                        name.strip(),
+                        int(is_admin),
+                        int(is_person),
+                        int(is_disposable),
+                        _iso(_now()),
+                    ),
                 )
             except sqlite3.IntegrityError:
                 raise ControlError(f"user {email} already exists") from None
@@ -418,6 +439,204 @@ class ControlDB:
     def has_users(self) -> bool:
         with self._lock:
             return self._conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+
+    def _cleanup_admin(self, actor: str):
+        user = self.user(actor)
+        if user["is_admin"] != 1 or user["disabled_at"]:
+            raise ControlError("active instance admin access required")
+        return user["id"]
+
+    @staticmethod
+    def _credential_cleanup(conn, user_id, workspace_id=None):
+        """An explicit credential allowlist; never walk or delete workspace content."""
+        present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        scope = "user_id = :uid"
+        params = {"uid": user_id}
+        if workspace_id is not None:
+            scope += " AND workspace_id = :wid"
+            params["wid"] = workspace_id
+        connection_scope = f"connection_id IN (SELECT id FROM connections WHERE {scope})"
+        plan = []
+        for table in ("oauth_codes", "oauth_tokens", "runner_connections"):
+            if table in present:
+                plan.append((table, connection_scope, params))
+        for table in ("oauth_person_grants", "account_delete_checks", "account_delete_tokens"):
+            if table in present:
+                # Include stale person credentials even when their connection is gone.
+                plan.append((table, f"({connection_scope}) OR ({scope})", params))
+        for table in ("sessions", "login_links", "oauth_requests"):
+            if table in present:
+                plan.append((table, scope, params))
+        plan.append(("connections", scope, params))
+        return plan
+
+    @staticmethod
+    def _cleanup_counts(conn, plan):
+        return {
+            table: conn.execute(f"SELECT count(*) FROM {table} WHERE {where}", params).fetchone()[0]
+            for table, where, params in plan
+        }
+
+    @staticmethod
+    def _execute_cleanup(conn, plan):
+        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ControlError("cleanup requires foreign-key checks")
+        for table, where, params in plan:
+            conn.execute(f"DELETE FROM {table} WHERE {where}", params)
+        if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise ControlError("related records remain; use the account-deletion flow")
+
+    def remove_member(
+        self,
+        workspace_ref: str,
+        user_ref: str,
+        *,
+        actor: str,
+        reason: str = "",
+        force_owner: bool = False,
+        dry_run: bool = True,
+    ) -> dict:
+        """Remove access atomically while retaining the user's attributed workspace data."""
+        try:
+            with self._tx() as conn:
+                actor_id = self._cleanup_admin(actor)
+                wid = self.workspace(workspace_ref)["id"]
+                user = conn.execute(
+                    "SELECT * FROM users WHERE id=? OR email=?", (user_ref, user_ref)
+                ).fetchone()
+                if user is None or self.role(wid, user["id"]) is None:
+                    return {"state": "already absent"}
+                uid = user["id"]
+                if self.role(wid, uid) == "owner":
+                    other_owner = conn.execute(
+                        "SELECT 1 FROM memberships m JOIN users u ON u.id=m.user_id "
+                        "WHERE m.workspace_id=? AND m.user_id!=? AND m.role='owner' "
+                        "AND u.disabled_at IS NULL",
+                        (wid, uid),
+                    ).fetchone()
+                    if other_owner is None:
+                        raise ControlError("cannot remove the last owner of a workspace")
+                    if not force_owner:
+                        raise ControlError(
+                            "removing an owner requires --force-owner and a second owner"
+                        )
+                plan = self._credential_cleanup(conn, uid, wid)
+                plan.append(
+                    ("memberships", "workspace_id=:wid AND user_id=:uid", {"wid": wid, "uid": uid})
+                )
+                counts = self._cleanup_counts(conn, plan)
+                if not dry_run:
+                    self._execute_cleanup(conn, plan)
+                    self.audit(
+                        action="member.remove",
+                        decision="ok",
+                        workspace_id=wid,
+                        user_id=actor_id,
+                        auth="cli",
+                        reason=reason,
+                        target_ids=[uid],
+                    )
+                return {"state": "dry-run" if dry_run else "removed", "delete": counts}
+        except sqlite3.IntegrityError:
+            raise ControlError(
+                "related records prevent member removal; use the account-deletion flow"
+            ) from None
+
+    def delete_user(
+        self,
+        user_ref: str,
+        *,
+        actor: str,
+        reason: str = "",
+        dry_run: bool = True,
+    ) -> dict:
+        """Delete only unjoined disposable accounts, in one foreign-key-checked transaction."""
+        try:
+            with self._tx() as conn:
+                actor_id = self._cleanup_admin(actor)
+                user = conn.execute(
+                    "SELECT * FROM users WHERE id=? OR email=?", (user_ref, user_ref)
+                ).fetchone()
+                if user is None:
+                    return {"state": "already absent"}
+                uid = user["id"]
+                domain = user["email"].rsplit("@", 1)[-1].casefold()
+                if not user["is_disposable"] and domain not in {"example.invalid", "example.test"}:
+                    raise ControlError("account is not disposable; use the account-deletion flow")
+                if conn.execute(
+                    "SELECT 1 FROM workspaces w WHERE "
+                    "(w.personal_of=:uid OR EXISTS (SELECT 1 FROM memberships m "
+                    "WHERE m.workspace_id=w.id AND m.user_id=:uid AND m.role='owner')) "
+                    "AND EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=w.id "
+                    "AND m.user_id!=:uid)",
+                    {"uid": uid},
+                ).fetchone():
+                    raise ControlError(
+                        "account owns a workspace with other members; use the account-deletion flow"
+                    )
+                if conn.execute("SELECT 1 FROM memberships WHERE user_id=?", (uid,)).fetchone():
+                    raise ControlError(
+                        "account has remaining memberships; use member remove or the account-deletion flow"
+                    )
+                if (
+                    user["is_admin"]
+                    and conn.execute(
+                        "SELECT 1 FROM users WHERE id!=? AND is_admin=1 AND disabled_at IS NULL",
+                        (uid,),
+                    ).fetchone()
+                    is None
+                ):
+                    raise ControlError(
+                        "cannot delete the last instance admin; use the account-deletion flow"
+                    )
+                plan = self._credential_cleanup(conn, uid)
+                present = {
+                    r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                for table, column in (
+                    ("account_plans", "user_id"),
+                    ("transcription_usage", "user_id"),
+                    ("user_identities", "user_id"),
+                    ("ingest_cadence", "account_id"),
+                    ("email_challenges", "email"),
+                ):
+                    if table in present:
+                        # GitHub's permanent subject reservation is deliberately not removed.
+                        plan.append(
+                            (
+                                table,
+                                f"{column}=:value COLLATE NOCASE",
+                                {"value": user["email"] if column == "email" else uid},
+                            )
+                        )
+                plan.append(("users", "id=:uid", {"uid": uid}))
+                counts = self._cleanup_counts(conn, plan)
+                detached = conn.execute(
+                    "SELECT count(*) FROM workspaces WHERE personal_of=?", (uid,)
+                ).fetchone()[0]
+                if not dry_run:
+                    # An empty retained personal workspace keeps its data and loses only this pointer.
+                    conn.execute(
+                        "UPDATE workspaces SET personal_of=NULL WHERE personal_of=?", (uid,)
+                    )
+                    self._execute_cleanup(conn, plan)
+                    self.audit(
+                        action="user.delete",
+                        decision="ok",
+                        user_id=actor_id,
+                        auth="cli",
+                        reason=reason,
+                        target_ids=[uid],
+                    )
+                return {
+                    "state": "dry-run" if dry_run else "deleted",
+                    "delete": counts,
+                    "detach_personal_workspaces": detached,
+                }
+        except sqlite3.IntegrityError:
+            raise ControlError(
+                "related records prevent user deletion; use the account-deletion flow"
+            ) from None
 
     # ── workspaces and memberships ──
     def create_workspace(
