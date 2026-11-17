@@ -1,0 +1,4 @@
+- **Owns:** Optional connection display names alongside stable connection identifiers.
+- **Promises:** Existing control databases gain a display_name column without changing stored identifiers, token hashes, policy, parent links or audiences; rotation preserves the display name.
+- **How it fails:** Duplicate identifiers retain the existing uniqueness constraint; malformed display-name values are refused before token creation.
+- **Tests:** tests/test_agent_human_names.py and tests/test_commonplace_control_db.py cover migration, persistence, identity and token behavior.

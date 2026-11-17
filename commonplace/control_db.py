@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS connections (
     workspace_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
     client TEXT NOT NULL,
     auth TEXT NOT NULL CHECK (auth IN ('pat', 'oauth')),
     token_hash TEXT UNIQUE,
@@ -268,6 +269,10 @@ class ControlDB:
                         "NOT NULL DEFAULT 0 CHECK (initial_space_pending IN (0,1))"
                     )
                 columns = {r[1] for r in conn.execute("PRAGMA table_info(connections)")}
+                if "display_name" not in columns:
+                    conn.execute(
+                        "ALTER TABLE connections ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
+                    )
                 if "parent_id" not in columns:
                     conn.execute(
                         "ALTER TABLE connections ADD COLUMN parent_id TEXT REFERENCES connections(id)"
@@ -503,6 +508,7 @@ class ControlDB:
         expires_days: Optional[int] = DEFAULT_TOKEN_DAYS,
         parent: Optional[str] = None,
         grantor: Optional["Principal"] = None,
+        display_name: str = "",
     ) -> tuple:
         """Create a connection with a new token. Returns ``(connection_id, token)``.
 
@@ -559,6 +565,8 @@ class ControlDB:
             ):
                 raise ControlError(bots_grant.TOP_LEVEL_TEXT)
         name = name.strip()
+        if not isinstance(display_name, str) or len(display_name) > 120:
+            raise ControlError("display name must be at most 120 characters")
         client = client.strip()
         if not _CONNECTION_NAME.fullmatch(name):
             raise ControlError(
@@ -598,14 +606,15 @@ class ControlDB:
                 raise ControlError("a runner connection cannot be a parent")
             try:
                 self._conn.execute(
-                    "INSERT INTO connections(id, workspace_id, user_id, name, client, auth, "
+                    "INSERT INTO connections(id, workspace_id, user_id, name, display_name, client, auth, "
                     "token_hash, token_hint, policy, created_by, created_at, expires_at, parent_id, started_by) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         cid,
                         ws["id"],
                         user["id"],
                         name,
+                        display_name.strip(),
                         client,
                         "pat",
                         tokens.token_hash(token),

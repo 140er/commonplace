@@ -253,7 +253,7 @@ def test_child_proposals_still_need_parent_approval_after_parent_rotation(hub, f
         {},
         {"name": ""},
         {"name": []},
-        {"name": "a b"},
+        {"name": "a/b"},
         {"name": "x", "client": None},
         {"name": "x", "parent": None},
         {"name": "x", "trust": "trusted"},

@@ -119,6 +119,7 @@ def test_bootstrap_owner_only_configuration_and_explicit_serialization(api):
     assert bot["connection_id"] is None
     status, body = api.request("GET")
     assert status == 200
+    assert body.pop("members")
     assert body == {
         "bots": [bot],
         "conversations": [],
@@ -503,3 +504,19 @@ def test_internal_worker_methods_have_no_public_http_alias(api):
         "/conversations/unknown/add_bot_reply",
     ):
         assert api.request("POST", path, {})[0] == 404
+
+
+def test_conversation_picker_directory_is_workspace_scoped(api):
+    db = api.gateway.db
+    db._conn.execute("UPDATE users SET name='Invited Person' WHERE id=?", (api.member,))
+    for user in (api.owner, api.member):
+        status, body = api.request("GET", user=user)
+        assert status == 200
+        members = {item["id"]: item for item in body["members"]}
+        assert set(members) == {api.owner, api.member}
+        assert members[api.member] == {"id": api.member, "name": "Invited Person"}
+        assert all(set(item) == {"id", "name"} for item in members.values())
+    status, body = api.request(
+        "POST", "/conversations", {"kind": "group", "member_ids": ["unknown-member"]}
+    )
+    assert status == 404

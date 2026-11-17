@@ -151,7 +151,7 @@ def test_browser_durable_chat_remains_usable_during_background_turn(tmp_path, mo
                 )
                 page.get_by_label("Title (optional)").fill("Shared planning room")
                 page.locator('input[name="bot_ids"]').check()
-                page.get_by_label("Other workspace user IDs").fill(member)
+                page.get_by_label("invited", exact=True).check()
                 page.get_by_role("button", name="Create conversation", exact=True).click()
                 page.get_by_role("heading", name="Shared planning room", exact=True).wait_for()
                 group_id = page.url.split("/conversations/", 1)[1]
