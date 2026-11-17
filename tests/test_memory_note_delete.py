@@ -1,6 +1,8 @@
 """Only browser owners can permanently remove newly marked standalone notes."""
 
-from commonplace import sessions
+import pytest
+
+from commonplace import memory_tools, sessions
 from tests._chat_helpers import chat_environment, chat_hub_fixture  # noqa: F401
 
 
@@ -244,3 +246,41 @@ def test_storage_quota_does_not_block_removing_a_note(chat_hub, monkeypatch):
     identifier = note(h)
     monkeypatch.setattr(h.gateway.storage_meter, "used", lambda *args: 2**62)
     assert delete(h, identifier)[0] == 200
+
+
+@pytest.mark.parametrize("lookup", ["error", "missing", "member"])
+def test_unproved_owner_role_hides_delete_and_refuses_write(chat_hub, monkeypatch, lookup):
+    h = chat_hub
+    identifier = note(h)
+    csrf = h.get(h.owner, f"/api/memory/{identifier}")[1]["delete_note"]["csrf"]
+    deleted = []
+    post = h.gateway.mediator.workers.post
+
+    def capture(principal, request):
+        if request.get("params", {}).get("name") == "mempalace_delete_drawer":
+            deleted.append(request)
+        return post(principal, request)
+
+    def role(*args):
+        if lookup == "error":
+            raise RuntimeError("role unavailable")
+        return None if lookup == "missing" else "member"
+
+    def unproved(operation):
+        def run(ctx, *args):
+            # Authenticate normally; lose current owner proof at the operation boundary.
+            with monkeypatch.context() as patch:
+                patch.setattr(ctx.db, "role", role)
+                return operation(ctx, *args)
+
+        return run
+
+    monkeypatch.setattr(h.gateway.mediator.workers, "post", capture)
+    monkeypatch.setattr(memory_tools, "_delete_offer", unproved(memory_tools._delete_offer))
+    monkeypatch.setattr(memory_tools, "_delete_note", unproved(memory_tools._delete_note))
+    status, record, _ = h.get(h.owner, f"/api/memory/{identifier}")
+    assert status == 200 and "delete_note" not in record
+    assert record["text"] == "deletioncanary exact words\nsecond line"
+    assert delete(h, identifier, csrf=csrf)[0] == 403
+    assert not deleted
+    assert h.get(h.owner, f"/api/memory/{identifier}")[0] == 200

@@ -39,3 +39,11 @@ and Delete. Cancel keeps the note. Success closes the panel, removes any current
 result and saved-note link, and displays Note deleted. A failed write keeps the
 note and dialog for an explicit retry; the app never automatically retries a
 delete.
+
+Shared record formatting classifies only the stored note origin; it never checks
+browser ownership or adds database role lookups to MCP, startup or map reads.
+Delete offers and the delete route check current ownership in the REST layer,
+using the same fail-closed proof as map privacy. An unavailable, missing or
+non-owner role gives no delete offer and a 403 refusal without a delete call.
+The REST save path supplies trusted origin through a scoped context; the shared
+_save(ctx, args) contract remains unchanged for other callers.

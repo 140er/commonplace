@@ -156,7 +156,7 @@ def http(env, tmp_path, monkeypatch):
     monkeypatch.setattr(
         memory_tools,
         "_save",
-        lambda _ctx, args, **_options: ("memory", args["text"], "", "shared", "general"),
+        lambda _ctx, args: ("memory", args["text"], "", "shared", "general"),
     )
     monkeypatch.setattr(memory_tools, "_file_fact", lambda _ctx, _args: {"triple_id": 1})
     server = env.gateway.build_server("127.0.0.1", 0)

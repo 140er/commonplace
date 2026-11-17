@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -217,7 +218,7 @@ def _record(ctx, record, store=None):
         "at": metadata.get("hub_written_at") or metadata.get("filed_at", ""),
         "source": _stored_source(metadata),
         "cards": _cards(ctx, record["drawer_id"], store),
-        "_delete_note": _note_delete_allowed(ctx, record),
+        "_standalone_note": provenance.standalone_note(metadata, record["drawer_id"]),
     }
 
 
@@ -313,7 +314,7 @@ def _link(ctx, memory_id, task, store):
     _emit(ctx, "memory.linked", memory_id, task=task)
 
 
-def _save(ctx, args, *, standalone_note=False):
+def _save(ctx, args):
     text = args.get("text")
     if not isinstance(text, str) or not text.strip():
         raise NoteInputError("Write a note first.")
@@ -344,16 +345,9 @@ def _save(ctx, args, *, standalone_note=False):
     flags = _privacy_flags(text)
     if "health" in flags and ctx.principal.policy.can_write_wing("private"):
         theme = "private"
-    from contextlib import nullcontext
-
-    with (
-        provenance.standalone_note_operation()
-        if standalone_note and not source and task is None
-        else nullcontext()
-    ):
-        result = _memory(
-            ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text, **source}
-        )
+    result = _memory(
+        ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text, **source}
+    )
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id, flags=flags)
     saved_wing = result.get("wing") or theme
@@ -452,7 +446,7 @@ def _instant(value):
 
 
 def _map_hides_private(ctx):
-    """Map-only restriction: a person needs current workspace-owner proof."""
+    """Private maps and note deletion need current workspace-owner proof."""
     if not ctx.principal.person:
         return False
     try:
@@ -842,19 +836,27 @@ def note_composer(ctx, selected_wing=None):
     }
 
 
-def _note_delete_allowed(ctx, record):
+def _note_save_origin(principal, body):
+    standalone = (
+        principal.person
+        and principal.auth == "session"
+        and not principal.connection_id
+        and body.get("source") is None
+        and body.get("task") is None
+    )
+    return provenance.standalone_note_operation() if standalone else nullcontext()
+
+
+def _note_delete_allowed(ctx, wing):
     p = ctx.principal
-    metadata = record.get("metadata") or {}
-    wing = record.get("wing") or metadata.get("wing", "")
     return (
         p.person
         and p.auth == "session"
         and not p.connection_id
         and p.role == "owner"
-        and ctx.db.role(p.workspace_id, p.user_id) == "owner"
+        and not _map_hides_private(ctx)
         and not p.policy.refusal("mempalace_delete_drawer")
         and p.policy.can_write_wing(wing)
-        and provenance.standalone_note(metadata, record["drawer_id"])
     )
 
 
@@ -868,7 +870,7 @@ def _delete_note(ctx, h, identifier):
         or p.auth != "session"
         or p.connection_id
         or p.role != "owner"
-        or ctx.db.role(p.workspace_id, p.user_id) != "owner"
+        or _map_hides_private(ctx)
         or not ctx.db.user(p.user_id)["is_person"]
         or h.headers.get("Authorization")
         or not session
@@ -886,7 +888,9 @@ def _delete_note(ctx, h, identifier):
     ):
         raise ToolError("Open this note again and try again.")
     record = _memory(ctx, "mempalace_get_drawer", {"drawer_id": identifier})
-    if not _note_delete_allowed(ctx, record):
+    metadata = record.get("metadata") or {}
+    wing = record.get("wing") or metadata.get("wing", "")
+    if not provenance.standalone_note(metadata, identifier) or not _note_delete_allowed(ctx, wing):
         raise ToolError("Only standalone notes in a writable wing can be deleted here.")
     from mempalace import storage_guard
 
@@ -917,7 +921,12 @@ def _delete_note(ctx, h, identifier):
 
 def _delete_offer(ctx, h, memory):
     session = sessions.cookie_value(h.headers.get("Cookie"))
-    if memory.pop("_delete_note", False) and session and not h.headers.get("Authorization"):
+    if (
+        memory.pop("_standalone_note", False)
+        and session
+        and not h.headers.get("Authorization")
+        and _note_delete_allowed(ctx, memory["theme"])
+    ):
         memory["delete_note"] = {"csrf": sessions.memory_delete_csrf(session, memory["id"])}
     return memory
 
@@ -942,14 +951,8 @@ def install(gateway):
                 if principal.policy.refusal("memory_save"):
                     raise ToolError("no: memory write refused")
                 body = read_json(h)
-                with rest_write(ctx, h, "memory_save", body):
-                    memory_id, _, notice, theme, topic = _save(
-                        ctx,
-                        body,
-                        standalone_note=principal.person
-                        and principal.auth == "session"
-                        and not principal.connection_id,
-                    )
+                with rest_write(ctx, h, "memory_save", body), _note_save_origin(principal, body):
+                    memory_id, _, notice, theme, topic = _save(ctx, body)
                 send_json(
                     h,
                     201,
