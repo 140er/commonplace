@@ -136,6 +136,9 @@ def show(c):
 
 
 def run(ctx, name, args):
+    args = dict(args)
+    if "session_id" in args:
+        ctx = ctx.with_claim_session(args.pop("session_id"))
     result = _run(ctx, name, args)
     # Chat is verbatim, including literal actor refs inside someone's words.
     if name in ("space_read", "space_post"):
@@ -300,6 +303,16 @@ def add(
     available=None,
     untrusted_scope=None,
 ):
+    if write and name.startswith("task_"):
+        properties = {
+            **properties,
+            "session_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Stable identity of this session or run; reuse it for claim writes and orch_resume. Omit only for legacy connection-held claims.",
+            },
+        }
     input_schema = {
         "type": "object",
         "properties": properties,

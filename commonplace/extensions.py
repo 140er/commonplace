@@ -22,7 +22,7 @@ from __future__ import annotations
 import importlib
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger("commonplace.extensions")
@@ -131,6 +131,12 @@ class ToolContext:
     principal: Any
     gateway: Any
     extra: dict = field(default_factory=dict)
+
+    def with_claim_session(self, session_id):
+        """A caller's stable run identity; it narrows connection ownership only."""
+        if not isinstance(session_id, str) or not 1 <= len(session_id) <= 200:
+            raise ToolError("no: session_id must be a non-empty string of at most 200 characters")
+        return replace(self, extra={**self.extra, "claim_session": session_id})
 
     @property
     def db(self):

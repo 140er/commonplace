@@ -67,7 +67,13 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import replace
 
-from commonplace.boards.store import BoardStore, task_row
+from commonplace.boards.store import (
+    BoardStore,
+    claim_grace,
+    expire_claims,
+    has_expired_claims,
+    task_row,
+)
 from commonplace.control_db import ControlError
 from commonplace.extensions import ToolError
 from commonplace.http_util import log_failure
@@ -183,6 +189,16 @@ def _sweep_board(js, st, board: str, now) -> list[dict]:
             return results
         cursor, gen = pair
         _barrier("sweep_after_pair", conn)
+        store = BoardStore(directory)
+        grace = claim_grace(directory)
+        with store.connection() as boards:
+            b = boards.execute(
+                "SELECT id FROM boards WHERE slug=? AND archived=0", (board,)
+            ).fetchone()
+            due = b is not None and has_expired_claims(boards, b["id"], grace)
+        if due:
+            with store.transaction() as boards:
+                expire_claims(boards, b["id"], grace)
         with BoardStore(directory).connection() as boards:
             board_row = boards.execute("SELECT * FROM boards WHERE slug=?", (board,)).fetchone()
             if board_row is None or board_row["archived"]:

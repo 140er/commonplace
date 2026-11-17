@@ -300,9 +300,11 @@ def restore_ack(ctx, text):
 # ------------------------------------------------------------- lease, journal
 
 
-def resume(ctx, board, role, force=False):
+def resume(ctx, board, role, force=False, session_id=None):
     from . import durable
 
+    if session_id is not None:
+        ctx = ctx.with_claim_session(session_id)
     if force:
         _owner(ctx)
     return durable.resume(ctx, board, role, force=bool(force))
@@ -401,9 +403,11 @@ def reassign_step(ctx, board, role, epoch, token, report, step_key):
     return organigram.reassign_step(ctx, board, role, epoch, token, report, step_key)
 
 
-def checkpoint(ctx, board, role):
+def checkpoint(ctx, board, role, session_id=None):
     from . import durable
 
+    if session_id is not None:
+        ctx = ctx.with_claim_session(session_id)
     return durable.checkpoint(ctx, board, role)
 
 
@@ -519,7 +523,12 @@ OPERATIONS = {
     ),
     "orch_resume": (
         resume,
-        {"board": BOARD, "role": ROLE, "force": {"type": "boolean"}},
+        {
+            "board": BOARD,
+            "role": ROLE,
+            "force": {"type": "boolean"},
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        },
         ("board", "role"),
         "write",
         True,
@@ -689,7 +698,11 @@ OPERATIONS = {
     ),
     "orch_checkpoint": (
         checkpoint,
-        {"board": BOARD, "role": ROLE},
+        {
+            "board": BOARD,
+            "role": ROLE,
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 200},
+        },
         ("board", "role"),
         "read",
         False,

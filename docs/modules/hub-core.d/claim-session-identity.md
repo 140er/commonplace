@@ -1,0 +1,4 @@
+- **Owns:** Request-local claim session identity in tool contexts and MCP initialization responses.
+- **Promises:** Successful initialization supplies `Mcp-Session-Id`; subsequent requests pass it into local tools without sharing state between requests. Explicit `session_id` can supply a stable run identity, scoped within existing connection authority.
+- **How it fails:** Empty or overlong explicit identifiers refuse; invalid transport identifiers refuse before dispatch. A missing identity cannot renew a session-bound claim.
+- **Tests:** `tests/test_expired_claim_pool.py` exercises two initialized MCP sessions sharing one connection, headerless refusal, explicit task identity and session-aware resume.

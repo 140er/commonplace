@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     assignee      TEXT,                             -- actor ref; in todo it reserves the card for that actor
     claim_until   TEXT,                             -- agents only, while status = 'doing'; people's cards never expire
     claim_from    TEXT CHECK (claim_from IN ('backlog', 'todo')), -- original claim lane (history)
-    claim_expired_at TEXT,                          -- expired claims retain their lane and assignee
+    claim_expired_at TEXT,                          -- first observed expiry; retained after return to todo
+    claim_session TEXT NOT NULL DEFAULT '',         -- empty: legacy connection-held claim
     agent_parent  TEXT,                            -- creator's authenticated direct parent, if any
     proposal_status TEXT CHECK (proposal_status IN ('pending', 'approved', 'rejected')),
     proposed_to   TEXT,                             -- immutable direct parent who may approve

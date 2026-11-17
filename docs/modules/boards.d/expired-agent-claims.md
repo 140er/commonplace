@@ -1,0 +1,4 @@
+- **Owns:** Agent claim grace, session ownership and return-to-todo history in the board store and task tool surface.
+- **Promises:** Eligible expired agent claims return after the workspace grace; person waits, questions, snoozes, dependencies and reserved origins keep their protections. Session-bound claims only renew for their owning run; legacy rows retain same-connection renewal.
+- **How it fails:** Invalid grace or session identifiers refuse; restricted expired reservations require their holder or a deliberate owner reassignment, and protected expired work remains in its current lane.
+- **Tests:** `tests/test_expired_claim_pool.py` covers grace boundaries, real trigger firing, protected work, requester reservations, session acquisition paths and idempotent existing-database migration; existing claim and renewal cases remain guards.

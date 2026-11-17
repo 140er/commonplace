@@ -282,6 +282,7 @@ class Hidden(Exception):
 
 # Write-side room checks share one reader per gateway call.
 _WRITE_ACCESS = contextvars.ContextVar("commonplace_write_access", default=None)
+_CLAIM_SESSION = contextvars.ContextVar("commonplace_claim_session", default="")
 # Same bound as drawer batches.
 CHECKPOINT_MAX_ITEMS = 500
 
@@ -602,10 +603,14 @@ class Mediator:
         self.gateway = None  # set by Gateway; local tools get it in their context
 
     # ── entry point ──
-    def handle(self, principal: Principal, request) -> Optional[dict]:
+    def handle(self, principal: Principal, request, *, session_id="") -> Optional[dict]:
         # One budget for every pause and worker-start wait this request makes.
-        with memory_wait(_request_wait_s()):
-            return self._handle(principal, request)
+        token = _CLAIM_SESSION.set(session_id)
+        try:
+            with memory_wait(_request_wait_s()):
+                return self._handle(principal, request)
+        finally:
+            _CLAIM_SESSION.reset(token)
 
     def _handle(self, principal: Principal, request) -> Optional[dict]:
         if not isinstance(request, dict):
@@ -765,7 +770,11 @@ class Mediator:
         if not tool.usable_by(principal, self.gateway):
             self._audit(principal, tool.name, "deny", "owner only" if tool.owner_only else "off")
             return _rpc_error(req_id, -32601, f"Unknown tool: {tool.name}")
-        ctx = extensions.ToolContext(principal=principal, gateway=self.gateway)
+        ctx = extensions.ToolContext(
+            principal=principal,
+            gateway=self.gateway,
+            extra={"claim_session": _CLAIM_SESSION.get()},
+        )
         try:
             result = tool.handler(ctx, args)
         except extensions.ToolError as exc:
@@ -3147,8 +3156,17 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         return True
 
     def _mcp(self, principal, request):
+        initializing = isinstance(request, dict) and request.get("method") == "initialize"
+        session_id = (
+            secrets.token_urlsafe(32) if initializing else self.headers.get("Mcp-Session-Id", "")
+        )
+        if len(session_id) > 200 or (session_id and not session_id.isascii()):
+            self._send_json(400, {"error": "Invalid Mcp-Session-Id"})
+            return
         try:
-            response = self.server.gateway.mediator.handle(principal, request)
+            response = self.server.gateway.mediator.handle(
+                principal, request, session_id=session_id
+            )
         except Exception as exc:
             req_id = request.get("id") if isinstance(request, dict) else None
             log_failure(logger, f"gateway MCP request failed ({_call_label(request)})", exc)
@@ -3182,6 +3200,12 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        self._send_json(200, response)
+        self._send_json(
+            200,
+            response,
+            extra_headers={"Mcp-Session-Id": session_id}
+            if initializing and "result" in response
+            else None,
+        )
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _dispatch

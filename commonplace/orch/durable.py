@@ -1713,10 +1713,12 @@ def _sync_jobs(conn, board, role, epoch, actor, now):
 
 def _card_classes(ctx, board_row, principal, now, *, heartbeat):
     """Read-only classes of the board's doing cards; heartbeat the caller's held ones."""
+    from commonplace.boards.store import claim_matches
+
     actor = principal.actor
     with BoardStore(ctx.workspace_dir()).connection() as conn:
         rows = conn.execute(
-            "SELECT id, title, assignee, claim_until, claim_expired_at, version FROM tasks "
+            "SELECT id, title, assignee, claim_until, claim_expired_at, claim_session, version FROM tasks "
             "WHERE board_id=? AND status='doing' ORDER BY id LIMIT ?",
             (board_row["id"], MAX_LIST * 3),
         ).fetchall()
@@ -1728,18 +1730,18 @@ def _card_classes(ctx, board_row, principal, now, *, heartbeat):
             "assignee": row["assignee"],
             "claim_until": row["claim_until"],
         }
-        if row["assignee"] != actor:
-            classes["not_held_by_caller"].append(card)
-        elif row["claim_expired_at"] is None and (
-            row["claim_until"] is None or row["claim_until"] > now
+        if row["claim_expired_at"] is not None or (
+            row["claim_until"] is not None and row["claim_until"] <= now
         ):
+            classes["expired"].append(card)
+        elif claim_matches(row, actor, ctx.extra.get("claim_session", "")):
             classes["held"].append(card)
         else:
-            classes["expired"].append(card)
+            classes["not_held_by_caller"].append(card)
     if heartbeat and classes["held"]:
         from commonplace.boards.service import BoardService
 
-        service = BoardService(ToolContext(principal=principal, gateway=ctx.gateway))
+        service = BoardService(ctx)
         for card in classes["held"]:
             try:
                 renewed = service.task_heartbeat(card["card"])
