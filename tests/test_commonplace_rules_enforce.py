@@ -156,7 +156,7 @@ def http(env, tmp_path, monkeypatch):
     monkeypatch.setattr(
         memory_tools,
         "_save",
-        lambda _ctx, args: ("memory", args["text"], "", "shared", "general"),
+        lambda _ctx, args, **_options: ("memory", args["text"], "", "shared", "general"),
     )
     monkeypatch.setattr(memory_tools, "_file_fact", lambda _ctx, _args: {"triple_id": 1})
     server = env.gateway.build_server("127.0.0.1", 0)
@@ -791,5 +791,8 @@ def test_exempt_rest_shapes_preserve_their_routes(env, http, route, monkeypatch)
     status, response, headers = http(
         route.method, path, {**bodies.get(route.path, {}), "rules_seq": "ignored"}
     )
-    assert status in (200, 201, 202), response
+    if route.tool == "mempalace_delete_drawer":
+        assert status == 403, response  # Instruction exemption never grants browser authority.
+    else:
+        assert status in (200, 201, 202), response
     assert "Commonplace-Rules-Notice" not in headers
