@@ -8,6 +8,10 @@
   submission locks and stopped-controller fencing. Browser cases cover both looks,
   owner and member sessions, and 1280/390 px widths with optional screenshots and
   exact strings and control positions; a baseline-static option captures prior UI.
+  Literal dollar replacement patterns, HTML characters, quotes, newlines and emoji
+  retain identical textarea, preview and posted bytes after redraws in both looks.
+  MCP acceptance below the shared limit preserves its reply and stored text, and
+  save fixtures follow the five-value result used by every production consumer.
 - **How it fails:** Missing composer, route reuse or permission checks fail assertions;
   missing optional browser dependencies skip only browser cases.
 - **Tests:** tests/test_memory_note.py wraps the JavaScript harness; the API and browser

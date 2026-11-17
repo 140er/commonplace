@@ -3,6 +3,43 @@ import { test } from 'node:test';
 import { renderMemory, createMemory, searchMemory } from '../commonplace/web/static/memory.js';
 import { noteProblem, saveNote, renderNote, createNote } from '../commonplace/web/static/memory-note.js';
 
+const literalDrafts = ['$&', "$'", '$`', '$$', '$& $\' $` $$'].map(pattern => `\n  ${pattern} < & " ' café é 🧭\nsecond line\t  `);
+const fieldText = (html, expression) => {
+  const raw = html.match(expression)?.[1];
+  assert.notEqual(raw, undefined, 'the field is rendered');
+  // HTML ignores one leading LF in textarea/pre, then resolves references once.
+  return raw.replace(/^\n/, '').replace(/&(amp|lt|gt|quot|#39|#13);/g, (_, entity) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#13': '\r' }[entity]));
+};
+
+for (const look of ['deck', 'classic']) for (const [index, draft] of literalDrafts.entries()) test(`${look}: literal replacement pattern ${index} survives redraw, preview and save`, async () => {
+  const listeners = new Map(), posted = [];
+  const mount = { innerHTML: '', ownerDocument: { documentElement: { dataset: { ui: look } } },
+    addEventListener(type, handler) { listeners.set(type, handler); }, removeEventListener(type) { listeners.delete(type); }, querySelector() { return null; } };
+  const ui = createMemory({ mount, api: async (path, options) => {
+    if (path.includes('compose=1')) return { composer: { default_wing: 'shared', wings: [{ wing: 'shared', name: 'Workspace notes' }] } };
+    if (path === '/api/memory') { posted.push(options.body); return { id: 'saved', theme: 'shared' }; }
+    return { rooms: [] };
+  } });
+  try {
+    listeners.get('click')({ target: { closest: selector => selector === '[data-memory-action]' ? { dataset: { memoryAction: 'note' } } : null } });
+    await new Promise(resolve => setImmediate(resolve));
+    listeners.get('input')({ target: { name: 'note-text', value: draft } });
+    for (const project of ['other', '']) {
+      ui.setProject(project);
+      const value = fieldText(mount.innerHTML, /<textarea\b[^>]*>([\s\S]*?)<\/textarea>/);
+      const preview = fieldText(mount.innerHTML, /<pre data-note-preview>([\s\S]*?)<\/pre>/);
+      assert.deepEqual(Buffer.from(value), Buffer.from(draft), 'textarea bytes must remain literal');
+      assert.deepEqual(Buffer.from(preview), Buffer.from(draft), 'preview bytes must remain literal');
+      // A subsequent edit event must not propagate altered rendered text to storage.
+      listeners.get('input')({ target: { name: 'note-text', value } });
+    }
+    listeners.get('submit')({ preventDefault() {}, target: { matches: selector => selector === '[data-memory-note]' } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(posted.length, 1);
+    assert.deepEqual(Buffer.from(posted[0].text), Buffer.from(draft), 'posted body bytes must remain literal');
+  } finally { ui.stop(); }
+});
+
 test('both Memory looks have an Add a note action before search', () => {
   for (const look of ['deck', 'classic']) {
     const html = renderMemory({ look });

@@ -6,7 +6,20 @@ from pathlib import Path
 import pytest
 
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
-from tests.test_commonplace_memory import _http, _save
+from tests.test_commonplace_memory import _call, _http, _save
+
+
+def test_mcp_memory_save_under_limit_keeps_text_and_response_unchanged(hub):
+    token = hub.owner_token()
+    text = "\n  $& $' $` $$ < & \" ' café e\u0301 🧭\t\r\n" + "long exact words\n" * 1800
+    result = _call(hub, token, "memory_save", text=text, theme="shared", topic="general")
+    assert not result.get("isError"), result
+    reply = result["content"][0]["text"]
+    memory_id = reply.removeprefix("saved ")
+    assert reply == f"saved {memory_id}" and memory_id != reply
+    status, memory = _http(hub, token, f"/api/memory/{memory_id}")
+    assert status == 200 and memory["text"].encode() == text.encode()
+    assert memory["theme"] == "shared" and memory["topic"] == "general"
 
 
 def test_note_composer_harness():

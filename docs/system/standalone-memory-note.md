@@ -7,6 +7,12 @@ text. No summary, trimming or Unicode normalization is applied. The length limit
 is 100,000 Unicode characters; malformed characters are refused rather than
 silently removed.
 
+These limits apply to both POST /api/memory and the MCP memory_save tool because
+both call the same _save helper. Text must be nonempty and at most 100,000 Unicode
+characters. NUL and unpaired surrogates are refused rather than removed; tabs,
+newlines and carriage returns remain valid and unchanged. Accepted MCP writes
+retain their existing saved-id response and exact stored text.
+
 The default destination follows the existing memory_save policy: a configured
 write_wing, otherwise shared in the active workspace. Shared means readable by
 people with access to that wing; the UI says this explicitly. This uses the
@@ -33,3 +39,9 @@ it never retries a write automatically. Duplicate submission is locked while
 saving, and controller shutdown fences late UI updates. A successful save clears
 the draft and says the note will be searchable shortly; API acceptance checks
 also establish immediate retrieval through search.
+
+Deck inserts the escaped composer through a function replacement, so literal
+dollar replacement patterns in a draft cannot be interpreted as page markup.
+The shared _save result has five values: id, linked task, notice, actual wing and
+actual room. Its three production consumers are memory_save, POST /api/memory and
+meeting-note filing; each unpacks all five values.

@@ -24,7 +24,7 @@ def test_add_note_verbatim_search_and_drawer(chat_hub, look, width, role):
     origin = f"http://127.0.0.1:{h.port}"
     auth = h.owner if role == "owner" else h.member
     cookie_name, value = auth["Cookie"].split("=", 1)
-    text = "\n  Harbor canary café e\u0301 漢字 🧭\ttwo  spaces\nsecond line stays.  "
+    text = "\n  Harbor canary $& $' $` $$ < & \" ' café e\u0301 漢字 🧭\ttwo  spaces\nsecond line stays.  "
     baseline = os.environ.get("CP_NOTE_BASELINE_STATIC")
     evidence = os.environ.get("CP_NOTE_EVIDENCE")
     with playwright.sync_playwright() as pw:
@@ -112,6 +112,7 @@ def test_add_note_verbatim_search_and_drawer(chat_hub, look, width, role):
                 lambda response: response.url == origin + "/api/memory" and response.status == 201
             ) as response:
                 page.get_by_role("button", name="Save", exact=True).click()
+            assert response.value.request.post_data_json["text"].encode() == text.encode()
             saved = response.value.json()
             expect(page.locator(".memory-note-saved")).to_contain_text("Saved to")
             expect(page.locator(".memory-note-saved")).to_be_in_viewport()

@@ -125,7 +125,7 @@ def keep_note(gateway, workspace_id, user_id, meeting_id, note_id, body, now) ->
             )
         principal = _principal(gateway, user_id, workspace_id)
         ctx = ToolContext(principal=principal, gateway=gateway)
-        memory_id, _, _ = memory_tools._save(
+        memory_id, _, _, _, _ = memory_tools._save(
             ctx, {"text": text, "topic": "meetings", "theme": wing}
         )
         view = meetings.complete_filing(note_id, request_id, memory_id, user_id, now)
