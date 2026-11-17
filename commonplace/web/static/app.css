@@ -176,3 +176,24 @@ kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; 
   .panel .tile, .log { padding: 16px; }
   .panel form.composer { padding: 8px; }
 }
+
+/* Shared project and bot prerequisites; long reasons wrap on phones. */
+.ready-to-start {margin:16px 0;padding:16px;border:1px solid var(--line, #d8d8d8);border-radius:8px;min-width:0;max-width:100%;font-size:14px}
+.ready-to-start h2 {margin:0 0 12px;font-size:18px}
+.ready-to-start ul {list-style:none;padding:0;margin:0}
+.ready-to-start li {padding:10px 0;border-top:1px solid var(--line, #d8d8d8);overflow-wrap:anywhere}
+.ready-to-start li>div {display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between}
+.ready-to-start p {margin:5px 0 0;line-height:1.5}
+.ready-to-start a {text-decoration:underline;text-underline-offset:3px}
+.ready-state {font-weight:500}
+[data-state="needs_you"] .ready-state {font-weight:700}
+.bots-thread>[data-region="model"] {flex:0 1 auto;overflow:auto;padding:0 16px;max-height:50vh}
+@media(max-width:699px) {.ready-to-start {padding:12px}.ready-to-start a {display:inline-block;padding:10px 0}}
+
+@media(max-width:699px) {
+  .workbench-project[data-ready-focus="chat"] .radio .sub-fields {display:grid}
+  .workbench-project[data-ready-focus="chat"] .radio .mode-note,
+  .workbench-project[data-ready-focus="chat"] .radio .callout {display:block}
+  .workbench-project[data-ready-focus="chat"] .radio small.phone-note {display:none}
+  .workbench-project[data-ready-focus="connection"] .desktop-agent {display:inline-flex}
+}

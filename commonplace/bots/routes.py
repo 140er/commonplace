@@ -152,11 +152,24 @@ def _listing(gateway, h, principal):
     bots.ensure_defaults(principal.user_id, [(b["slug"], b["name"]) for b in boards])
     asks = _asks(gateway, principal)
     working = _working(gateway, principal, bots)
+    from commonplace.projects import readiness
+
+    rows = [_view(gateway, bot, asks, working) for bot in bots.roster(principal.user_id)]
+    states = {None: readiness.snapshot(gateway, principal)}
+    readable = {b["slug"] for b in boards}
+    for bot in rows:
+        board = bot.get("board")
+        if board is not None and board not in readable:
+            continue  # An archived or unreadable project must not break the bot directory.
+        if board not in states:
+            states[board] = readiness.snapshot(gateway, principal, board)
+        bot["readiness"] = states[board]
     send_json(
         h,
         200,
         {
-            "bots": [_view(gateway, bot, asks, working) for bot in bots.roster(principal.user_id)],
+            "bots": rows,
+            "readiness": states[None],
             "model": _model(gateway, principal),
             "can_configure": principal.role == "owner",
         },

@@ -257,6 +257,7 @@ export function modelsHTML(project, e) {
 export function settingsOptions({ action, dataset = {}, needs = null, panel, refresh = () => {} }) {
   return {
     refresh,
+    ...(["chat", "connection", "trust"].includes(dataset.readyFocus) ? {focus: dataset.readyFocus} : {}),
     ...(action === "project-models" ? { focus: "models", role: dataset.role } : {}),
     ...(needs ? { onBack() { panel.hidden = true; refresh(); } } : {}),
   };
@@ -452,9 +453,18 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
   }
   if (!active()) return;
 
+  const {readyToStartHTML} = await import("./ready-to-start.js");
+  if (!active()) return;
   function renderMain() {
+    const ready = host.querySelector("[data-project-ready]");
+    if (ready) {
+      ready.innerHTML = readyToStartHTML(project.readiness, {canConfigure: project.can_configure, board: slug});
+      if (project.readiness) ready.querySelectorAll('[data-ready-focus]').forEach(link => {
+        link.onclick = event => { event.preventDefault(); event.stopPropagation(); revealReady(link.dataset.readyFocus); };
+      });
+    }
     const trust = host.querySelector("[data-project-trust]");
-    if (trust) mountOrchestratorTrust(trust, {project, api, e, current: active});
+    if (trust) mountOrchestratorTrust(trust, {project, api, e, current: active, onSaved: refreshReadiness});
     host.querySelector("[data-project-heading]").innerHTML = mainHTML(project, e, { notAnswering });
     const hint = host.querySelector("[data-project-notice]");
     if (hint) { hint.hidden = project.main.connected; hint.textContent = notice; }
@@ -466,6 +476,29 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       const own = memory.querySelector("[data-project-own-wing]");
       if (own) { own.disabled = connecting; own.onclick = configureWing; }
     }
+  }
+  async function refreshReadiness() {
+    markSaved();
+    try {
+      const latest = await api(path);
+      if (active()) { project.readiness = latest.readiness; renderMain(); }
+    } catch { /* Keep the last confirmed states until settings are reopened. */ }
+  }
+  function revealReady(target) {
+    const root = host.querySelector('.workbench-project');
+    if (!root || !["chat", "connection", "trust"].includes(target)) return;
+    root.dataset.readyFocus = target;
+    const node = host.querySelector(target === 'chat' ? '[data-project-chat]' : target === 'trust' ? '[data-project-trust]' : '[data-project-heading]');
+    node?.scrollIntoView?.({block: 'start'});
+    if (target === 'chat') {
+      const hosted = host.querySelector('[data-chat-mode="hosted"]');
+      if (hosted && project.can_configure) hosted.disabled = false;
+      host.querySelector('[data-chat-mode]')?.focus();
+    } else if (target === 'trust') {
+      const disclosure = node?.querySelector('details');
+      if (disclosure) { disclosure.open = true; disclosure.querySelector('input,button')?.focus(); }
+      else host.querySelector('[data-project-connect]')?.click();
+    } else host.querySelector('[data-project-connect]')?.click();
   }
   async function configureWing() {
     if (connecting) return;
@@ -526,7 +559,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       if (next) next.disabled = false;
     }
   }
-  host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>';
+  host.innerHTML = settings ? projectSettingsHTML(project, e, {origin, restart}) : '<div data-project-ready></div><div data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p>';
   renderMain();
   if (settings) {
     installProjectStyles();
@@ -558,7 +591,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
       host.querySelector(`[data-model-role="${role || "main"}"]`)?.focus();
     }
     await Promise.all([
-      mountChatAnswers(host.querySelector("[data-project-chat]"), {project, api, e, current: active, onSaved: markSaved}),
+      mountChatAnswers(host.querySelector("[data-project-chat]"), {project, api, e, current: active, onSaved: refreshReadiness, setupExpanded: () => host.querySelector(".workbench-project")?.dataset?.readyFocus === "chat"}),
       mountProjectAgents(host.querySelector("[data-project-agents]"), {project, api, e, current: active, onUpdate: latest => { project = latest; renderMain(); }}),
       mountProjectReview(host.querySelector("[data-project-review]"), {project, api, e, current: active}),
       restart && loadNotAnswering(),
@@ -566,6 +599,7 @@ export async function mountProject(host, { slug, api, e, settings = false, curre
     if (!active()) return;
   }
   renderMain();
+  revealReady(focus);
   // The models form is redrawn from `project`, so a saved or added model shows at once.
   // Edits not saved yet survive a redraw triggered by another form: the role pickers, the
   // escalation picker and the escalation fields. The form just saved is redrawn from the saved data.
@@ -692,7 +726,7 @@ function answerMode(front) {
 }
 
 // Selecting Hosted changes only the panel. The Turn on handler owns its sole write.
-export async function mountChatAnswers(host, { project, api, e, current = () => true, onSaved = () => {} }) {
+export async function mountChatAnswers(host, { project, api, e, current = () => true, onSaved = () => {}, setupExpanded = () => false }) {
   const active = () => current() && host.isConnected;
   const owner = project.can_configure;
   const scope = project.board;
@@ -714,7 +748,7 @@ export async function mountChatAnswers(host, { project, api, e, current = () => 
     if (!active()) return;
     const focusId = host.contains?.(globalThis.document?.activeElement) ? globalThis.document.activeElement.id : null;
     const models = [...new Set([...(payload.local_models || []), localModel].filter(Boolean))];
-    const radio = (value, title, note, fields = "") => `<div class="radio ${selected === value ? "on" : ""}"><input type="radio" name="chat-answer-mode" id="chat-${value}" data-chat-mode="${value}" value="${value}" ${selected === value ? "checked" : ""} ${disabled()} ${value === "hosted" && globalThis.matchMedia?.("(max-width: 699px)").matches ? "disabled" : ""}><div><label for="chat-${value}"><b>${title}</b><small class="mode-note">${note}</small><small class="phone-note">${value === "basic" ? "a short receipt, no model" : value === "hosted" ? "set up on a computer" : (payload.local_reachable ? "reachable" : "not reachable") + " · nothing leaves this machine"}</small></label>${fields}</div></div>`;
+    const radio = (value, title, note, fields = "") => `<div class="radio ${selected === value ? "on" : ""}"><input type="radio" name="chat-answer-mode" id="chat-${value}" data-chat-mode="${value}" value="${value}" ${selected === value ? "checked" : ""} ${disabled()} ${value === "hosted" && !setupExpanded() && globalThis.matchMedia?.("(max-width: 699px)").matches ? "disabled" : ""}><div><label for="chat-${value}"><b>${title}</b><small class="mode-note">${note}</small><small class="phone-note">${value === "basic" ? "a short receipt, no model" : value === "hosted" ? "set up on a computer" : (payload.local_reachable ? "reachable" : "not reachable") + " · nothing leaves this machine"}</small></label>${fields}</div></div>`;
     host.innerHTML = `<p class="lead">Which model writes the quick reply you see in chat. The Coworker still does the work.</p><details class="set-note"><summary>What quick replies are</summary>A short answer from this model, shown in chat before or beside the Coworker's own answer. Quick replies are saved in chat and memory like every message, under their own name, “Quick reply · local model” or “Quick reply · hosted provider”, never under the Coworker's name.</details>
       ${front.inherited ? `<p class="set-note">${answerMode(front) === "hosted" ? "Hosted" : answerMode(front) === "local" ? "Local" : "Basic"} · set for the whole workspace${front.applies === false ? " · Off until you press Turn on" : ""}</p>` : ""}
       <fieldset class="radios"><legend class="sr">Chat answer mode</legend>
@@ -898,7 +932,7 @@ function installProjectStyles() {
 
 export function projectSettingsHTML(project, e, {origin = "", restart = false} = {}) {
   const back = settingsOrigin(project.board, origin);
-  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><section class="set-sec"><h2>Coworker</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div><div data-project-review></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec" data-project-models-section><summary>Agent models and escalation</summary><div data-project-models-host>${modelsHTML(project, e)}</div></details></div></div></section>`;
+  return `<section class="workbench-project" aria-labelledby="project-settings-title"><header class="project-top"><h1 id="project-settings-title">${e(project.name)}<span class="title-sub"> <span class="desk-only">Project </span>settings</span></h1><span class="saved" role="status" data-project-saved>Changes save automatically</span><a class="btn back" data-project-back href="${e(back.href)}"${back.href.startsWith("#/board/") && !back.href.endsWith("/chat") ? ' data-keys="G B"' : ""}>${back.label}</a></header><div class="settings"><div class="settings-inner"><div data-project-ready></div><section class="set-sec"><h2>Coworker</h2><p class="lead">The project's lead agent: it reads chat and turns requests into cards. With no agent connected, chat requests wait.</p><div class="orch-card${restart ? " warn" : ""}" data-project-heading></div><p data-project-notice hidden></p><p role="status" data-project-connect-status></p><div data-project-trust></div><div data-project-review></div>${restart ? '<div class="restart-box"><h3>How to restart the agent</h3><ol><li>Check that the agent app is open and the computer is awake.</li><li>Quit the agent app and start it again. It reconnects with the same setup.</li><li>Check that the computer can still reach this Commonplace (same network or VPN).</li></ol><button type="button" class="btn primary" data-project-check>Check again</button><p role="status" data-project-check-status></p></div>' : ""}<p class="phone-note set-note">Connect an agent on a computer.</p></section><section class="set-sec"><h2>Chat answers</h2><div data-project-chat></div></section><section class="set-sec"><h2>Agents</h2><div data-project-limit></div><div data-project-agents></div><p class="phone-note set-note">To connect or disconnect an agent, open Settings on a computer. Agents run there.</p></section><section class="set-sec"><h2>Project memory</h2><div data-project-memory></div></section><details class="set-sec" data-project-models-section><summary>Agent models and escalation</summary><div data-project-models-host>${modelsHTML(project, e)}</div></details></div></div></section>`;
 }
 
 export async function mountProjectAgents(host, {project, api, e, current, onUpdate}) {
@@ -982,7 +1016,7 @@ export function mountWorkspaceOrchestration(host, {api, e, enabled, current = ()
 }
 
 // Owner-only: config versions to accept and cards an agent can no longer release.
-export function mountOrchestratorTrust(host, {project, api, e, current = () => true}) {
+export function mountOrchestratorTrust(host, {project, api, e, current = () => true, onSaved = () => {}}) {
   installOrchestrationStyles();
   const active = () => current() && host.isConnected;
   const orchestration = project.orchestration;
@@ -1008,7 +1042,7 @@ export function mountOrchestratorTrust(host, {project, api, e, current = () => t
     busy = true; status = ""; render();
     try {
       const result = await api(`/api/projects/${encodeURIComponent(project.board)}/orchestrator/trust`, {method: "POST", body});
-      if (active()) { trusted = result.trusted; orchestration.trusted = trusted; status = "Saved"; }
+      if (active()) { trusted = result.trusted; orchestration.trusted = trusted; status = "Saved"; onSaved(); }
     } catch { if (active()) status = "Could not save Coworker permissions"; }
     finally { busy = false; render(); }
   }

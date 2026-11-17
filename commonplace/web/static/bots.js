@@ -8,6 +8,7 @@ import { permissionText, settingsFrameHTML, sharingHTML, threadsHTML, threadPrev
 import { capyRosterHTML, overviewBots } from "./deck-coworkers.js";
 import { botCreateFields, validateBotName } from "./bot-create.js";
 import { setupText } from "./bot-setup.js";
+import { readyToStartHTML } from "./ready-to-start.js";
 import { scrollFades, sharePermission } from "./deck-coworker-sharing.js";
 
 export const BOTS_COPY = Object.freeze({
@@ -74,8 +75,9 @@ export function rosterHTML({ bots, current = null, loaded = true }, e) {
   }).join("");
 }
 
-export function modelNoteHTML({ model, canConfigure, error }, e) {
+export function modelNoteHTML({ model, readiness, board, canConfigure, error }, e) {
   if (error) return `<p class="bots-notice" role="alert">${e(error)} <button type="button" data-bots-action="retry">Retry</button></p>`;
+  if (readiness) return readyToStartHTML(readiness, {canConfigure, board});
   if (!model || model.ready !== false) return "";
   const text = setupText(model.code, canConfigure);
   return `<p class="bots-notice" role="status">${e(text)}${canConfigure ? ' <a href="#/settings">Open settings</a>' : ""}</p>`;
@@ -359,11 +361,11 @@ export function sheetHTML(sheet, bot, e) {
 const shellHTML = `<div class="bots" data-pane="roster">
   <section class="bots-roster" aria-labelledby="bots-h">
     <header class="bots-bar"><h1 id="bots-h">${BOTS_COPY.title}</h1><p class="deck-bots-intro" hidden>One thread per bot. Coworkers run under each one.</p><button type="button" class="bots-new" data-bots-action="new">${BOTS_COPY.newBot}</button></header>
-    <div data-region="model"></div>
     <ul class="bots-list" data-region="roster"></ul>
   </section>
   <section class="bots-thread" aria-label="Conversation">
     <header class="bots-head" data-region="head"></header>
+    <div data-region="model"></div>
     <ol class="bots-stream" data-region="messages" tabindex="-1"></ol>
     <div data-region="waiting"></div>
     <div data-region="notice"></div>
@@ -402,7 +404,7 @@ export function createBots({
   onRoster = () => {},
 }) {
   const s = {
-    bots: [], model: null, canConfigure: false, loaded: false, error: "",
+    bots: [], model: null, readiness: null, canConfigure: false, loaded: false, error: "",
     botId: null, bot: null, messages: [], waiting: [], running: false, more: false, ready: false,
     open: new Set(), busy: new Set(), editing: new Set(), waitingOpen: false, notice: null,
     turn: null, unsent: null, sheet: null, threads: [], threadId: null,
@@ -429,8 +431,7 @@ export function createBots({
   function paintRoster() {
     const node = region("roster");
     if (node) node.innerHTML = deck() ? capyRosterHTML({ bots: overviewBots(s.bots, s.coworkerBots), conversations: s.coworkerConversations, loaded: s.loaded, setup: s.model?.ready === false ? setupText(s.model.code, s.canConfigure) : "" }) : rosterHTML({ bots: s.bots, current: s.botId, loaded: s.loaded }, e);
-    const model = region("model");
-    if (model) model.innerHTML = modelNoteHTML({ model: s.model, canConfigure: s.canConfigure, error: s.error }, e);
+    paintReadiness();
     if (deck()) paintHead();
   }
   function paintMessages({ force = false } = {}) {
@@ -473,7 +474,12 @@ export function createBots({
     scrollFades(node);
     if (s.sheet && !s.sheet.painted) { s.sheet.painted = true; node.querySelector?.("[data-focus]")?.focus?.(); }
   }
+  function paintReadiness() {
+    const model = region("model");
+    if (model) model.innerHTML = modelNoteHTML({ model: s.model, readiness: s.bot?.readiness || s.readiness, board: s.bot?.board, canConfigure: s.canConfigure, error: s.error }, e);
+  }
   function paintThread() {
+    paintReadiness();
     host()?.querySelector(".bots")?.setAttribute?.("data-pane", s.botId ? "thread" : "roster");
     const composer = region("composer");
     paintHead();
@@ -550,7 +556,7 @@ export function createBots({
       const [result, directory] = await Promise.all([api("/api/bots"), deck() && !s.sharingOnly ? api('/api/coworkers').catch(() => null) : null]);
       if (!alive(token)) return;
       s.coworkerConversations = directory?.conversations || []; s.coworkerBots = directory?.bots || [];
-      s.bots = result.bots || []; s.model = result.model || null; s.canConfigure = result.can_configure === true;
+      s.bots = result.bots || []; s.model = result.model || null; s.readiness = result.readiness || null; s.canConfigure = result.can_configure === true;
       if (deck() && s.canConfigure) {
         try {
           const all = await api("/api/bots/shared");
