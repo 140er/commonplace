@@ -1,3 +1,4 @@
+import { snoozedLine } from './card-controls.js';
 import { escape as e, actor, elapsed } from './api.js';
 import { whyStrip, waitingText } from './waiting.js';
 import { segHTML } from './seg.js';
@@ -19,7 +20,7 @@ function author(ref, board) {
 }
 export function cardTags(card, { me, board = {}, messages = [], deck = false } = {}) {
   const tags = [];
-  if (card.waiting) tags.push(waitingText(card));
+  if (card.waiting && !card.snoozed) tags.push(waitingText(card));
   if (isBlocked(card, me)) tags.push('Blocked');
   else if (card.need === 'you' || (card.status === 'review' && card.ask && card.ask_to === me && card.review_kind !== 'completion')) tags.push('Needs me');
   if (card.message_id) tags.push(chatTag(card, messages));
@@ -67,7 +68,7 @@ function doneView(card, options, stop) {
 function cardView(card, options, stop) {
   const id = cardId(options.board, card.number), tags = cardTags(card, options);
   const blocked = isBlocked(card, options.me), selected = options.selected === card.number;
-  return `<article class="card${blocked ? ' is-blocked' : ''}${tags.includes('Needs me') ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}"${selected ? ' aria-current="true"' : ''}><div class="card-top"><span class="cid">${e(id)}</span>${(card.labels || []).map((l) => `<span class="tag lbl">${e(l)}</span>`).join('')}</div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3><div class="card-meta">${prioTag(card)}${tags.map((t) => `<span class="tag ${tagKind(t)}">${e(t)}</span>`).join('')}${card.assignee && card.need !== 'working' ? `<span class="who">${e(author(card.assignee, options.board))}</span>` : ''}</div>${blocked ? `<p class="card-note">Waiting on ${e(author(card.ask_to, options.board))}: ${e(card.ask)}</p>` : ''}</article>`;
+  return `<article class="card${blocked ? ' is-blocked' : ''}${tags.includes('Needs me') ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${card.number}" data-key="${card.number}" draggable="true" tabindex="${stop ? 0 : -1}" aria-label="${e(id + ' ' + card.title)}"${selected ? ' aria-current="true"' : ''}><div class="card-top"><span class="cid">${e(id)}</span>${(card.labels || []).map((l) => `<span class="tag lbl">${e(l)}</span>`).join('')}</div><h3><a href="#/card/${card.number}" tabindex="-1">${e(card.title)}</a></h3><div class="card-meta">${prioTag(card)}${tags.map((t) => `<span class="tag ${tagKind(t)}">${e(t)}</span>`).join('')}${card.assignee && card.need !== 'working' ? `<span class="who">${e(author(card.assignee, options.board))}</span>` : ''}</div>${snoozedLine(card)}${blocked ? `<p class="card-note">Waiting on ${e(author(card.ask_to, options.board))}: ${e(card.ask)}</p>` : ''}</article>`;
 }
 // Component styles (design 03, 04, 05, r2-04-board-1024) stay with this renderer.
 const styles = `
