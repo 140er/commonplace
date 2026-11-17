@@ -1,0 +1,4 @@
+- **Owns:** Current-workspace member id/name entries on the person-only Coworker directory response.
+- **Promises:** The directory uses stored human names with an email-local-part fallback, includes no full email address, and lists no other workspace's people; existing conversation membership authorization remains authoritative at creation.
+- **How it fails:** A removed or unknown member remains refused by the existing server authority even if selected from an older directory response.
+- **Tests:** tests/test_coworker_api.py checks owner/member directory scope and unknown-member refusal; tests/test_member_picker_agent_names_browser.py verifies selection and ID submission.

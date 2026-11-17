@@ -12,7 +12,7 @@ const bot = { id: 'bot-1', name: 'Mira', instructions: 'Keep exact words', conne
 const conversation = (id, extra = {}) => ({ id, kind: 'dm', title: `Room ${id}`, member_ids: ['u-one'], bot_ids: [bot.id], board: null, ...extra });
 const message = (id, room, text, extra = {}) => ({ id, conversation_id: room, actor: 'user:u-one', text, created_at: '2026-11-09T12:00:00Z', ...extra });
 const job = (id, room, state = 'running', extra = {}) => ({ id, conversation_id: room, message_id: 1, bot_id: bot.id, state, code: '', ...extra });
-const directory = (extra = {}) => ({ bots: [bot], conversations: [conversation('a'), conversation('b')], user_id: 'u-one', can_manage_bots: true, ...extra });
+const directory = (extra = {}) => ({ bots: [bot], conversations: [conversation('a'), conversation('b')], members: [{id:'u-one',name:'Owner'}, {id:'u-two',name:'Second person'}, {id:'u-three',name:'Third person'}], user_id: 'u-one', can_manage_bots: true, ...extra });
 const detail = (id, extra = {}) => ({ conversation: conversation(id), messages: [], jobs: [], memories: [], ...extra });
 
 // The host models only DOM operations used by this controller. Requests deliberately
@@ -40,7 +40,7 @@ function fixture() {
   };
   const time = { setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); } };
   const navigation = [];
-  const ui = createCoworkers({ mount: () => host, api, current: () => user, doc, events, timers: time, navigate: hash => navigation.push(hash) });
+  const ui = createCoworkers({ mount: () => host, api, boards: () => [{slug:'demo',name:'Demonstration project'}], current: () => user, doc, events, timers: time, navigate: hash => navigation.push(hash) });
   const take = (path, method = 'GET') => {
     const request = requests.find(item => !item.settled && !item.taken && item.path === path && (item.options.method || 'GET') === method);
     assert.ok(request, `${method} ${path} was requested`); request.taken = true; return request;
@@ -452,10 +452,21 @@ const cases = {
       create.resolve({ bot: { ...bot, id: 'bot-2', name: 'Named coworker' } }); await flush();
       assert.match(f.host.innerHTML, /Named coworker/);
       f.click('new-conversation');
-      f.submit('conversation', [['kind', 'group'], ['title', 'Project channel'], ['member_ids', 'u-two, u-three\nu-two'], ['bot_ids', bot.id], ['bot_ids', 'bot-2'], ['board', 'demo']]);
+      assert.match(f.host.innerHTML, /Search members/);
+      assert.match(f.host.innerHTML, /Second person/);
+      assert.match(f.host.innerHTML, /name="member_ids" value="u-two"/);
+      assert.match(f.host.innerHTML, /<select name="board"/);
+      assert.match(f.host.innerHTML, /Demonstration project/);
+      assert.doesNotMatch(f.host.innerHTML, /Other workspace user IDs|Project slug/);
+      f.submit('conversation', [['kind', 'group'], ['title', 'Project channel'], ['member_ids', 'u-two'], ['member_ids', 'u-three'], ['member_ids', 'u-two'], ['bot_ids', bot.id], ['bot_ids', 'bot-2'], ['board', 'demo']]);
       const group = f.take('/api/coworkers/conversations', 'POST');
       assert.deepEqual(group.options.body, { kind: 'group', title: 'Project channel', member_ids: ['u-two', 'u-three'], bot_ids: [bot.id, 'bot-2'], board: 'demo' });
-      group.resolve({ conversation: conversation('new', { kind: 'group' }) }); await flush();
+      group.reject(Object.assign(new Error('not_found'), {status:404})); await flush();
+      assert.match(f.host.innerHTML, /selected member, bot or project is no longer available/);
+      assert.match(f.host.innerHTML, /name="member_ids" value="u-two" checked/);
+      assert.match(f.host.innerHTML, /value="Project channel"/);
+      f.submit('conversation', [['kind','group'],['title','Project channel'],['member_ids','u-two'],['member_ids','u-three'],['bot_ids',bot.id],['bot_ids','bot-2'],['board','demo']]);
+      f.take('/api/coworkers/conversations', 'POST').resolve({ conversation: conversation('new', { kind: 'group' }) }); await flush();
       assert.deepEqual(f.navigation, ['#/bots/-/coworkers/conversations/new']); f.ui.stop();
 
       const member = fixture(); await member.open('a', detail('a'), directory({ can_manage_bots: false }));

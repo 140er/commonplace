@@ -1,6 +1,7 @@
 """Human-managed agent tokens, sharing the existing connection authority."""
 
 import logging
+import re
 from pathlib import Path
 
 from commonplace import bots_grant, control_db, decide_grant, import_grant, urls
@@ -185,7 +186,27 @@ def _expired(row):
     return expires is not None and expires <= control_db._now()
 
 
-def connection_view(row, db=None, *, viewer=None, coordinators=None):
+NAME_RULE = "Use 1–120 characters: letters A–Z, numbers, spaces or . _ : @ -, starting with a letter or number."
+
+
+def connection_names(data):
+    """Keep legacy identifiers; derive a slug for an explicitly human display name."""
+    display = data.get("display_name", data["name"]).strip()
+    if (
+        not 1 <= len(display) <= 120
+        or not re.fullmatch(r"[A-Za-z0-9 ._:@-]+", display)
+        or not re.match(r"[A-Za-z0-9]", display)
+    ):
+        raise ValueError(NAME_RULE)
+    identifier = (
+        re.sub(r" +", "-", display).lower() if "display_name" in data or " " in display else display
+    )
+    if "display_name" in data and data["name"] != identifier:
+        raise ValueError("The identifier must match the name shown in the form.")
+    return identifier, display
+
+
+def connection_view(row, db=None, *, viewer=None, coordinators=None, include_display_name=True):
     view = {
         key: row[key]
         for key in (
@@ -202,6 +223,8 @@ def connection_view(row, db=None, *, viewer=None, coordinators=None):
             "started_by",
         )
     }
+    if include_display_name:
+        view["display_name"] = row["display_name"] or row["name"]
     policy = Policy.from_json(row["policy"])
     view["read_wings"] = list(policy.read_wings)
     view["import_read"] = policy.has_scope(import_grant.READER_SCOPE)
@@ -394,6 +417,97 @@ def _patch(gateway, h, principal, row, data):
         _update_read_wings(gateway, h, principal, row, data)
 
 
+def _create(gateway, h, principal, reveal):
+    try:
+        data = read_json(h)
+    except ValueError:
+        return
+    if set(data) - {
+        "name",
+        "display_name",
+        "client",
+        "parent",
+        "read_wings",
+        "import",
+        "import_read",
+        "decide",
+    }:
+        send_json(h, 400, {"error": "Unsupported connection fields"})
+        return
+    if not isinstance(data.get("name"), str) or (
+        "display_name" in data and not isinstance(data["display_name"], str)
+    ):
+        send_json(h, 400, {"error": NAME_RULE, "field": "name"})
+        return
+    if not isinstance(data.get("client", "generic"), str):
+        send_json(h, 400, {"error": "Client must be 1–60 characters", "field": "client"})
+        return
+    if "parent" in data and not isinstance(data["parent"], str):
+        send_json(h, 400, {"error": "Choose an existing parent connection", "field": "parent"})
+        return
+    try:
+        identifier, display_name = connection_names(data)
+    except ValueError as exc:
+        send_json(h, 400, {"error": str(exc), "field": "name"})
+        return
+    try:
+        grant_import, grant_read, grant_decide = _consents(data, gateway.db, principal)
+    except ValueError:
+        send_json(h, 400, {"error": "Import, reader and answer consent must be booleans"})
+        return
+    except PermissionError as exc:
+        send_json(h, 403, {"error": str(exc)})
+        return
+    try:
+        read_wings = _read_wings(gateway, principal, data)
+    except ValueError:
+        send_json(h, 400, {"error": "Choose existing nonprivate workspace wings without patterns"})
+        return
+    except ToolError:
+        send_json(h, 503, {"error": "Workspace wings are unavailable; try again"})
+        return
+    try:
+        parent = data.get("parent")
+        if parent is not None:
+            try:
+                row = gateway.db.connection(parent, principal.workspace_id)
+            except ControlError:
+                raise ControlError(
+                    "Choose an existing parent connection in this workspace"
+                ) from None
+            if gateway.db.authenticate_connection(row["id"]) is None:
+                raise ControlError("The parent connection is inactive")
+        cid, token = gateway.db.create_token(
+            workspace_ref=principal.workspace_id,
+            user_ref=principal.user_id,
+            actor=principal.user_id,
+            name=identifier,
+            display_name=display_name,
+            client=data.get("client", "generic"),
+            parent=parent,
+            grantor=principal,
+            expires_days=TOKEN_DAYS,
+            policy=Policy.build(
+                profile="slim",
+                scopes=(
+                    "memory:read",
+                    "memory:write",
+                    *((import_grant.IMPORT_SCOPE,) if grant_import else ()),
+                    *((import_grant.READER_SCOPE,) if grant_read else ()),
+                    *((decide_grant.DECIDE_SCOPE,) if grant_decide else ()),
+                ),
+                read_wings=read_wings,
+                write_wing="inbox",
+                trust="untrusted",
+            ),
+        )
+    except ControlError as exc:
+        send_json(h, 400, {"error": str(exc)})
+        return
+    row = gateway.db.connection(cid, principal.workspace_id)
+    reveal(h, 201, row, token, principal)
+
+
 def install(gateway):
     def manage(h):
         from commonplace.control_db import RunnerLinkedError
@@ -406,71 +520,7 @@ def install(gateway):
             send_json(h, 403, {"error": "Sign in as a workspace owner to manage agents"})
             return
         if h.command == "POST" and not parts:
-            try:
-                data = read_json(h)
-            except ValueError:
-                return
-            if (
-                set(data)
-                - {"name", "client", "parent", "read_wings", "import", "import_read", "decide"}
-                or not isinstance(data.get("name"), str)
-                or not isinstance(data.get("client", "generic"), str)
-                or ("parent" in data and not isinstance(data["parent"], str))
-            ):
-                send_json(h, 400, {"error": "Use an agent name, client and optional parent"})
-                return
-            try:
-                grant_import, grant_read, grant_decide = _consents(data, gateway.db, principal)
-            except ValueError:
-                send_json(h, 400, {"error": "Import, reader and answer consent must be booleans"})
-                return
-            except PermissionError as exc:
-                send_json(h, 403, {"error": str(exc)})
-                return
-            try:
-                read_wings = _read_wings(gateway, principal, data)
-            except ValueError:
-                send_json(
-                    h, 400, {"error": "Choose existing nonprivate workspace wings without patterns"}
-                )
-                return
-            except ToolError:
-                send_json(h, 503, {"error": "Workspace wings are unavailable; try again"})
-                return
-            try:
-                parent = data.get("parent")
-                if parent is not None:
-                    row = gateway.db.connection(parent, principal.workspace_id)
-                    if gateway.db.authenticate_connection(row["id"]) is None:
-                        raise ControlError("parent connection is inactive")
-                cid, token = gateway.db.create_token(
-                    workspace_ref=principal.workspace_id,
-                    user_ref=principal.user_id,
-                    actor=principal.user_id,
-                    name=data["name"],
-                    client=data.get("client", "generic"),
-                    parent=parent,
-                    grantor=principal,
-                    expires_days=TOKEN_DAYS,
-                    policy=Policy.build(
-                        profile="slim",
-                        scopes=(
-                            "memory:read",
-                            "memory:write",
-                            *((import_grant.IMPORT_SCOPE,) if grant_import else ()),
-                            *((import_grant.READER_SCOPE,) if grant_read else ()),
-                            *((decide_grant.DECIDE_SCOPE,) if grant_decide else ()),
-                        ),
-                        read_wings=read_wings,
-                        write_wing="inbox",
-                        trust="untrusted",
-                    ),
-                )
-            except ControlError:
-                send_json(h, 400, {"error": "Invalid or duplicate agent name, client or parent"})
-                return
-            row = gateway.db.connection(cid, principal.workspace_id)
-            reveal(h, 201, row, token, principal)
+            _create(gateway, h, principal, reveal)
             return
         if (
             h.command == "DELETE"

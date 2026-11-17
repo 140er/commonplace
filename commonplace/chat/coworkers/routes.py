@@ -188,6 +188,14 @@ def handle(gateway, h):
                 {
                     "bots": store.list_bots(),
                     "conversations": store.list_conversations(principal.user_id, owns=True),
+                    "members": [
+                        {
+                            "id": member["id"],
+                            "name": gateway.db.user(member["id"])["name"]
+                            or member["email"].split("@", 1)[0],
+                        }
+                        for member in gateway.db.members(principal.workspace_id)
+                    ],
                     "user_id": principal.user_id,
                     "can_manage_bots": principal.role == "owner",
                 },

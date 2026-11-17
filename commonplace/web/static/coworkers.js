@@ -189,11 +189,18 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     const conversations = directory.conversations;
     return `<nav aria-label="Conversations"><h2>Channels</h2><ul>${rows(conversations.filter(item => item.kind === "group" && item.board), "No project channels yet.")}</ul><h2>Direct messages</h2><ul>${rows(conversations.filter(item => item.kind === "dm"), "No direct messages yet.")}</ul><h2>Groups</h2><ul>${rows(conversations.filter(item => item.kind === "group" && !item.board), "No groups yet.")}</ul></nav><section aria-labelledby="cw-bots-heading"><h2 id="cw-bots-heading">Conversation bots</h2><ul>${directory.bots.length ? directory.bots.map(bot => `<li class="cw-bot"><span>${e(bot.name)}</span><small>${bot.connection_id ? "Connection linked" : "Persona"}</small>${button("start-dm", "Message", `data-id="${e(bot.id)}"`)}</li>`).join("") : '<li class="cw-quiet">No bots created yet.</li>'}</ul>${directory.can_manage_bots === true ? button("new-bot", "Create bot") : ""}</section>`;
   }
+  function audience() {
+    const members = (directory.members || []).filter(member => (formValues.member_ids || []).some(id => same(id, member.id)));
+    const bots = directory.bots.filter(bot => (formValues.bot_ids || []).some(id => same(id, bot.id)));
+    return `Audience: you${[...members, ...bots].map(item => `, ${item.name}`).join("")}. ${formValues.board ? `Project: ${boards().find(board => board.slug === formValues.board)?.name || formValues.board}. ` : ""}Only these participants can open this conversation.`;
+  }
   function editorHTML() {
     if (!editor) return "";
     const value = name => e(formValues[name] || "");
     const bot = editor === "bot";
-    return `<section class="cw-editor" aria-labelledby="cw-editor-heading"><header><h2 id="cw-editor-heading">${bot ? "Create a bot" : "New conversation"}</h2>${button("close-editor", "Close", formBusy ? "disabled" : "")}</header><form data-cw-form="${bot ? "bot" : "conversation"}">${bot ? `<label>Name<input name="name" maxlength="100" required value="${value("name")}"></label><label>Instructions<textarea name="instructions" rows="3" maxlength="4000">${value("instructions")}</textarea></label><label>Existing connection ID (optional)<input name="connection_id" value="${value("connection_id")}"></label><p class="cw-quiet">A persona keeps its name and instructions. Linking a connection does not start a worker.</p>` : `<label>Type<select name="kind"><option value="dm"${formValues.kind !== "group" ? " selected" : ""}>Direct message</option><option value="group"${formValues.kind === "group" ? " selected" : ""}>Group or project channel</option></select></label><label>Title (optional)<input name="title" maxlength="200" value="${value("title")}"></label><fieldset><legend>Bots</legend>${directory.bots.length ? directory.bots.map(item => `<label class="cw-check"><input type="checkbox" name="bot_ids" value="${e(item.id)}"${(formValues.bot_ids || []).some(id => same(id, item.id)) ? " checked" : ""}>${e(item.name)}</label>`).join("") : '<p>Create a bot before starting a DM.</p>'}</fieldset><label>Other workspace user IDs<textarea name="member_ids" rows="2" aria-describedby="cw-invite-help">${value("member_ids")}</textarea></label><p id="cw-invite-help" class="cw-quiet">You are included. For a group, separate invited user IDs with commas or new lines. A DM has just you and one bot.</p><label>Project slug (optional)<input name="board" value="${value("board")}" list="cw-projects"></label><datalist id="cw-projects">${boards().map(board => `<option value="${e(board.slug)}">${e(board.name || board.slug)}</option>`).join("")}</datalist>`}<p role="alert" data-cw-form-error>${e(formError)}</p><button class="btn primary"${formBusy ? " disabled" : ""}>${formBusy ? "Saving…" : bot ? "Create bot" : "Create conversation"}</button></form></section>`;
+    const members = (directory.members || []).filter(member => !same(member.id, directory.user_id));
+    const query = (formValues.member_search || "").toLowerCase();
+    return `<section class="cw-editor" aria-labelledby="cw-editor-heading"><header><h2 id="cw-editor-heading">${bot ? "Create a bot" : "New conversation"}</h2>${button("close-editor", "Close", formBusy ? "disabled" : "")}</header><form data-cw-form="${bot ? "bot" : "conversation"}">${bot ? `<label>Name<input name="name" maxlength="100" required value="${value("name")}"></label><label>Instructions<textarea name="instructions" rows="3" maxlength="4000">${value("instructions")}</textarea></label><label>Existing connection ID (optional)<input name="connection_id" value="${value("connection_id")}"></label><p class="cw-quiet">A persona keeps its name and instructions. Linking a connection does not start a worker.</p>` : `<label>Type<select name="kind"><option value="dm"${formValues.kind !== "group" ? " selected" : ""}>Direct message</option><option value="group"${formValues.kind === "group" ? " selected" : ""}>Group or project channel</option></select></label><label>Title (optional)<input name="title" maxlength="200" value="${value("title")}"></label><fieldset><legend>Bots</legend>${directory.bots.length ? directory.bots.map(item => `<label class="cw-check"><input type="checkbox" name="bot_ids" value="${e(item.id)}"${(formValues.bot_ids || []).some(id => same(id, item.id)) ? " checked" : ""}>${e(item.name)}</label>`).join("") : '<p>Create a bot before starting a DM.</p>'}</fieldset><fieldset><legend>Workspace members</legend><label>Search members<input type="search" name="member_search" value="${value("member_search")}" aria-controls="cw-member-options"></label><p id="cw-invite-help" class="cw-quiet">You are included. Choose a group to invite people. A direct message is private to you and one bot.</p><div id="cw-member-options">${members.map(member => `<label class="cw-check" data-cw-member="${e(member.name.toLowerCase())}"${formValues.member_search && !member.name.toLowerCase().includes(formValues.member_search.toLowerCase()) ? " hidden" : ""}><input type="checkbox" name="member_ids" value="${e(member.id)}"${(formValues.member_ids || []).some(id => same(id, member.id)) ? " checked" : ""}${formValues.kind !== "group" ? " disabled" : ""}>${e(member.name)}</label>`).join("") || '<p class="cw-quiet">No other workspace members are available.</p>'}</div><p class="cw-quiet" data-cw-member-empty${!query || members.some(member => member.name.toLowerCase().includes(query)) ? " hidden" : ""}>No members match your search.</p></fieldset><label>Project (optional)<select name="board"><option value="">No project</option>${boards().map(board => `<option value="${e(board.slug)}"${formValues.board === board.slug ? " selected" : ""}>${e(board.name || board.slug)}</option>`).join("")}</select></label><p role="status" data-cw-audience>${e(audience())}</p>`}<p role="alert" data-cw-form-error>${e(formError)}</p><button class="btn primary"${formBusy ? " disabled" : ""}>${formBusy ? "Saving…" : bot ? "Create bot" : "Create conversation"}</button></form></section>`;
   }
   function messageHTML(item) {
     const bot = item.actor === "bot:" + item.bot_id ? (directory?.bots || []).find(bot => same(bot.id, item.bot_id)) : null;
@@ -235,7 +242,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
       if (input?.tagName === "TEXTAREA" && selection) input.setSelectionRange(...selection);
     }
     if (editorField) {
-      const input = host.querySelector(`.cw-editor [name="${editorField}"]`);
+      const input = [...host.querySelectorAll(`.cw-editor [name="${editorField}"]`)].find(input => input.value === active.value) || host.querySelector(`.cw-editor [name="${editorField}"]`);
       input?.focus({ preventScroll: true });
       if (input?.setSelectionRange && selection?.every(Number.isInteger)) input.setSelectionRange(...selection);
     }
@@ -249,6 +256,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     const values = new FormData(form);
     formValues = Object.fromEntries(values);
     formValues.bot_ids = values.getAll("bot_ids");
+    formValues.member_ids = values.getAll("member_ids");
   }
   function composeState() {
     if (!conversation) return;
@@ -440,7 +448,7 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     let body;
     if (bot) body = { name: formValues.name.trim(), instructions: formValues.instructions || "", ...(formValues.connection_id?.trim() ? { connection_id: formValues.connection_id.trim() } : {}) };
     else {
-      const members = [...new Set((formValues.member_ids || "").split(/[,\n]/).map(id => id.trim()).filter(Boolean))];
+      const members = [...new Set(formValues.member_ids || [])];
       if (formValues.kind === "dm" && (formValues.bot_ids.length !== 1 || members.length)) { formError = "A direct message includes you and exactly one bot. Use a group to invite other people."; render(); return; }
       body = { kind: formValues.kind, title: formValues.title || "", member_ids: members, bot_ids: formValues.bot_ids, ...(formValues.board?.trim() ? { board: formValues.board.trim() } : {}) };
     }
@@ -456,13 +464,26 @@ export function createCoworkers({ mount, api, current, boards = () => [], naviga
     } catch (error) {
       if (eligible() && epoch === page) {
         if (error.status === 401) { stop(); return; }
-        formError = `${errorText(error)}${!error.status || error.status >= 500 ? " Creation could not be confirmed. Refresh before creating again." : ""}`;
+        formError = `${!bot && error.status === 404 ? "A selected member, bot or project is no longer available. Refresh and choose again." : errorText(error)}${!error.status || error.status >= 500 ? " Creation could not be confirmed. Refresh before creating again." : ""}`;
       }
     } finally { if (eligible() && epoch === page) { formBusy = false; render(); } }
   }
   function input(event) {
     const form = event.target.closest?.(".cw-editor form");
-    if (form) { captureForm(form); return; }
+    if (form) {
+      captureForm(form);
+      if (event.target.name === "member_search") {
+        const query = event.target.value.toLowerCase();
+        const options = [...host.querySelectorAll("[data-cw-member]")];
+        options.forEach(option => { option.hidden = !option.dataset.cwMember.includes(query); });
+        const empty = host.querySelector("[data-cw-member-empty]");
+        if (empty) empty.hidden = options.some(option => !option.hidden);
+      } else if (event.type === "change" && (event.target.tagName === "SELECT" || event.target.type === "checkbox")) {
+        if (event.target.name === "kind" && formValues.kind === "dm") formValues.member_ids = [];
+        render();
+      }
+      return;
+    }
     const field = event.target.dataset?.cwField;
     if (!field || !conversation) return;
     if (field.startsWith("control-")) {

@@ -128,7 +128,7 @@ def test_limited_detail_rechecks_current_authority(env, dispatch, progress, live
 def test_existing_single_segment_get_routes_are_not_conversation_aliases(api, monkeypatch):
     # Complete existing GET collection inventory beneath /api/coworkers.
     collections = {
-        "": {"bots", "conversations", "user_id", "can_manage_bots"},
+        "": {"bots", "conversations", "members", "user_id", "can_manage_bots"},
         "/bots": {"bots", "team_bots"},
         "/conversations": {"conversations"},
     }
