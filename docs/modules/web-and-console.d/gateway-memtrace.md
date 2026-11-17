@@ -1,0 +1,4 @@
+- **Owns:** The Admin deploy memory object's gateway row adds `thread_count` and `open_fd_count` from cheap process counters.
+- **Promises:** Thread count includes native threads on Linux and falls back to Python threads elsewhere. Descriptor count reads only directory entries, never descriptor targets or contents. Existing memory byte readings remain available when counters are unsupported.
+- **How it fails:** An unreadable descriptor directory yields a null count; missing Linux thread information uses the Python thread count. The enclosing memory view keeps its existing never-raise boundary.
+- **Tests:** `tests/test_admin_instance_api.py` asserts the additive fields through the authenticated deploy route; `tests/test_gateway_memtrace.py` covers unavailable counters.

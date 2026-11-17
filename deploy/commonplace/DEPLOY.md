@@ -334,6 +334,47 @@ its running calls, drains and is replaced on the next call; the container is not
 restarted and the gateway process has no recycle. Idle workspaces' thread stores give
 back their page cache after `COMMONPLACE_STORE_IDLE_S` seconds (default 600).
 
+### Gateway allocator bound
+
+The gateway image starts with `MALLOC_ARENA_MAX=2`, matching the memory workers.
+This caps glibc's number of allocator arenas before Python starts, limiting freed
+memory retained by the gateway's many short-lived HTTP request threads. The
+operator can override it through the container environment. This does not change
+SQLite page-cache limits or retained user data, and does not recycle the gateway.
+A smaller arena count can trade allocator concurrency for lower memory retention.
+The [glibc allocator documentation](https://sourceware.org/glibc/manual/latest/html_node/Malloc-Tunable-Parameters.html)
+describes the startup setting.
+
+### Gateway allocation diagnostic
+
+If gateway anonymous memory keeps rising, sample `memory.gateway.anon_bytes`,
+`thread_count` and `open_fd_count` in the Admin deploy payload once a minute. Compare
+like traffic after warm-up: `(last_anon_bytes - first_anon_bytes) / 1048576 / elapsed_hours`.
+The investigation target is below **20 MiB/hour**, measured without tracing.
+
+Set `COMMONPLACE_MEMTRACE=1` in the application's operator environment file (the
+compose service's `env_file`) and restart the gateway through the normal approved
+release procedure. It is off by default. After the initial baseline, every ten
+minutes the gateway log contains up to ten lines such as:
+
+```text
+gateway memtrace growth commonplace/handoff/thread_store.py:123 size_bytes=4096 count=8
+```
+
+Each line is positive live Python allocation growth since the preceding snapshot,
+not total process memory. Only source location and numeric allocation metadata are
+logged; paths outside the application are reduced to their filename. No user
+content, queries, tokens, workspace identifiers or descriptor targets are included.
+The sampler uses five frames and retains one preceding snapshot. Sampling failures
+emit a fixed message and retry after ten minutes. An existing tracer keeps its own
+configuration and is left running at shutdown.
+
+Tracing itself consumes CPU and memory. Remove the switch and restart after the
+capture; compare the untraced anonymous-memory slope against the target. Flat
+allocation differences with rising anonymous memory point toward native allocations
+or allocator retention rather than retained Python request objects. Growing threads
+or descriptors provide another signal; unavailable counters are null.
+
 ## Optional backup status
 
 Only the hosting administrator provisions live configuration. The optional tracked

@@ -2627,6 +2627,9 @@ class Gateway:
                 self.pause_server.stop()
             raise
         self._http_server = server
+        from commonplace.memtrace import start as start_memtrace
+
+        memtrace = start_memtrace()
         stop = threading.Event()
 
         def reap():
@@ -2648,6 +2651,8 @@ class Gateway:
             server.serve_forever()
         finally:
             stop.set()
+            if memtrace is not None:
+                memtrace.close()
             try:
                 # Database-polling workers go first, so none can settle a row
                 # or claim a job while the rest of the gateway is closing.
