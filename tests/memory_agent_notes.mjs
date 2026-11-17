@@ -34,13 +34,15 @@ test('the inbox room is searched next to the project rooms and shows the exact w
   ui.stop();
 });
 
-test('a room the server does not list, or a project that already owns the wing, adds nothing', async () => {
+test('project room names stay authoritative and authorized standalone notes remain searchable', async () => {
   for (const rooms of [[], [{ wing: 'project_work', name: 'Agent notes' }]]) {
     const node = mount(), paths = [];
     const ui = createMemory({ mount: node, boards: [board], me, api: api(paths, rooms) });
     await ui.search({ query: 'exact' });
     assert.ok(!node.innerHTML.includes('Agent notes'));
-    assert.ok(!node.innerHTML.includes('second line'), 'a note from a room this person has no list entry for is not shown');
+    assert.ok(node.innerHTML.includes('second line'), 'the search route authorizes standalone notes even without a project or listing entry');
+    await ui.search({ query: 'exact', project: 'work' });
+    assert.ok(!node.innerHTML.includes('second line'), 'an explicit project filter still excludes a different wing');
     ui.stop();
   }
 });

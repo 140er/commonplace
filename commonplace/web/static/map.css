@@ -146,3 +146,27 @@
 .memory-view { display: flex; flex-direction: column; min-height: 65vh; gap: var(--gap); }
 .memory-view .stage { min-height: 55vh; }
 
+/* Standalone notes share the Memory controls in both looks. */
+.memory-note-entry { margin: 0 0 16px; }
+.memory-note { margin: 0 0 24px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; background: var(--card); }
+.memory-note h2 { margin: 0 0 12px; font-size: 18px; }
+.memory-note p { margin: 0 0 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.memory-note fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.memory-note label { display: block; margin: 0 0 8px; }
+.memory-note textarea { box-sizing: border-box; display: block; width: 100%; min-height: 132px; resize: vertical; margin: 0 0 8px; padding: 12px; font: inherit; line-height: 1.5; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.memory-note select { display: block; box-sizing: border-box; width: 100%; min-height: 44px; margin-top: 8px; font: inherit; }
+.memory-note-preview { margin: 16px 0; }
+.memory-note-preview summary { cursor: pointer; }
+.memory-note pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.memory-note-destination { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.memory-note-destination label { min-width: 0; }
+.memory-note-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.memory-note-actions .btn, .memory-note-entry .btn { min-height: 44px; }
+:root[data-ui="deck"] .deck-memory .memory-note-actions .primary { background: var(--violet); color: white; }
+:root[data-ui="deck"] .deck-memory .memory-note-actions .btn,
+:root[data-ui="deck"] .deck-memory .memory-note-entry .btn { min-height: 44px; }
+@media (max-width: 699px) {
+  .memory-note { padding: 16px; }
+  .memory-note-destination { grid-template-columns: 1fr; gap: 8px; }
+  .memory-note textarea, .memory-note select { font-size: 16px; }
+}
