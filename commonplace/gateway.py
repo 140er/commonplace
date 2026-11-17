@@ -463,7 +463,9 @@ class WorkerClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {worker.token}",
             "Host": worker.host_header,
-            provenance.IDENTITY_HEADER: provenance.encode_identity(principal.identity()),
+            provenance.IDENTITY_HEADER: provenance.encode_identity(
+                provenance.request_identity(principal.identity())
+            ),
         }
         budget = current_wait()
         if budget is not None:
@@ -2315,10 +2317,7 @@ def _rest_tool(method, path):
                 "approve": "task_approve",
             }.get(parts[3])
     if parts[:2] == ["api", "memory"]:
-        if len(parts) == 2 and method == "POST":
-            return "memory_save"
-        if len(parts) == 3 and method == "GET":
-            return "memory_search" if parts[2] in ("search", "map") else "memory_get"
+        return _memory_rest_tool(method, parts)
     if parts[:2] == ["api", "webhooks"]:
         if len(parts) == 2:
             return {"GET": "webhook_list", "POST": "webhook_add"}.get(method)
@@ -2329,6 +2328,16 @@ def _rest_tool(method, path):
                 return "webhook_list"
             if method == "POST" and parts[3] == "test":
                 return "webhook_test"
+    return None
+
+
+def _memory_rest_tool(method, parts):
+    if len(parts) == 4 and parts[3] == "delete" and method == "POST":
+        return "mempalace_delete_drawer"
+    if len(parts) == 2 and method == "POST":
+        return "memory_save"
+    if len(parts) == 3 and method == "GET":
+        return "memory_search" if parts[2] in ("search", "map") else "memory_get"
     return None
 
 

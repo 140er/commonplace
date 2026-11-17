@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib
 import json
 import logging
@@ -13,13 +14,13 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from mempalace import fact_provenance
+from mempalace import fact_provenance, provenance
 from mempalace.config import sanitize_content
 from mempalace.deadline import BUSY_INDEXING
 from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
-from . import events
+from . import events, sessions
 from ._http import BadRequest, path_parts, query, read_json, require_principal, send_json
 from .extensions import LocalTool, RetryableToolError, ToolContext, ToolError, register
 from .http_util import log_failure
@@ -216,6 +217,7 @@ def _record(ctx, record, store=None):
         "at": metadata.get("hub_written_at") or metadata.get("filed_at", ""),
         "source": _stored_source(metadata),
         "cards": _cards(ctx, record["drawer_id"], store),
+        "_delete_note": _note_delete_allowed(ctx, record),
     }
 
 
@@ -311,7 +313,7 @@ def _link(ctx, memory_id, task, store):
     _emit(ctx, "memory.linked", memory_id, task=task)
 
 
-def _save(ctx, args):
+def _save(ctx, args, *, standalone_note=False):
     text = args.get("text")
     if not isinstance(text, str) or not text.strip():
         raise NoteInputError("Write a note first.")
@@ -342,9 +344,16 @@ def _save(ctx, args):
     flags = _privacy_flags(text)
     if "health" in flags and ctx.principal.policy.can_write_wing("private"):
         theme = "private"
-    result = _memory(
-        ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text, **source}
-    )
+    from contextlib import nullcontext
+
+    with (
+        provenance.standalone_note_operation()
+        if standalone_note and not source and task is None
+        else nullcontext()
+    ):
+        result = _memory(
+            ctx, "mempalace_add_drawer", {"wing": theme, "room": topic, "content": text, **source}
+        )
     memory_id = result["drawer_id"]
     _emit(ctx, "memory.saved", memory_id, flags=flags)
     saved_wing = result.get("wing") or theme
@@ -824,6 +833,91 @@ def note_composer(ctx):
     }
 
 
+def _note_delete_allowed(ctx, record):
+    p = ctx.principal
+    metadata = record.get("metadata") or {}
+    wing = record.get("wing") or metadata.get("wing", "")
+    return (
+        p.person
+        and p.auth == "session"
+        and not p.connection_id
+        and p.role == "owner"
+        and ctx.db.role(p.workspace_id, p.user_id) == "owner"
+        and not p.policy.refusal("mempalace_delete_drawer")
+        and p.policy.can_write_wing(wing)
+        and provenance.standalone_note(metadata, record["drawer_id"])
+    )
+
+
+def _delete_note(ctx, h, identifier):
+    from .gateway import _same_origin_allowed
+
+    p = ctx.principal
+    session = sessions.cookie_value(h.headers.get("Cookie"))
+    if (
+        not p.person
+        or p.auth != "session"
+        or p.connection_id
+        or p.role != "owner"
+        or ctx.db.role(p.workspace_id, p.user_id) != "owner"
+        or not ctx.db.user(p.user_id)["is_person"]
+        or h.headers.get("Authorization")
+        or not session
+    ):
+        raise ToolError("Only the workspace owner can delete a note in the browser.")
+    if not h.headers.get_all("Origin", []) or not _same_origin_allowed(ctx.gateway, h):
+        raise ToolError("Open Memory in this browser and try again.")
+    body = read_json(h)
+    csrf = body.get("csrf")
+    if (
+        set(body) != {"csrf"}
+        or not isinstance(csrf, str)
+        or not csrf.isascii()
+        or not hmac.compare_digest(csrf, sessions.memory_delete_csrf(session, identifier))
+    ):
+        raise ToolError("Open this note again and try again.")
+    record = _memory(ctx, "mempalace_get_drawer", {"drawer_id": identifier})
+    if not _note_delete_allowed(ctx, record):
+        raise ToolError("Only standalone notes in a writable wing can be deleted here.")
+    from mempalace import storage_guard
+
+    if storage_guard.status(ctx.workspace_dir(), storage_guard.DEPLOYED_MIN_FREE_BYTES)["disk_low"]:
+        raise RetryableToolError(storage_guard.MESSAGE, storage_guard.RETRY_AFTER_S, "storage")
+    with provenance.standalone_note_operation():
+        _memory(ctx, "mempalace_delete_drawer", {"drawer_id": identifier})
+    metadata = record.get("metadata") or {}
+    ctx.db.audit(
+        action="memory.note.deleted",
+        decision="ok",
+        workspace_id=p.workspace_id,
+        user_id=p.user_id,
+        auth=p.auth,
+        wing=record.get("wing") or metadata.get("wing"),
+        target_ids=[identifier],
+        reason=json.dumps({"room": record.get("room") or metadata.get("room", "")}),
+    )
+    _emit(
+        ctx,
+        "memory.deleted",
+        identifier,
+        wing=record.get("wing") or metadata.get("wing"),
+        room=record.get("room") or metadata.get("room", ""),
+    )
+    send_json(h, 200, {"message": "Note deleted"})
+
+
+def _delete_offer(ctx, h, memory):
+    session = sessions.cookie_value(h.headers.get("Cookie"))
+    if memory.pop("_delete_note", False) and session and not h.headers.get("Authorization"):
+        memory["delete_note"] = {"csrf": sessions.memory_delete_csrf(session, memory["id"])}
+    return memory
+
+
+def _warm_rooms(gateway, principal):
+    if not principal.policy.refusal("memory_search"):
+        gateway.warm_memory(principal.workspace_id)
+
+
 def install(gateway):
     def handle(h):
         principal = require_principal(gateway, h)
@@ -832,12 +926,21 @@ def install(gateway):
         ctx = ToolContext(principal=principal, gateway=gateway)
         parts = path_parts(h, "/api/memory")
         try:
+            if h.command == "POST" and len(parts) == 2 and parts[1] == "delete":
+                _delete_note(ctx, h, parts[0])
+                return
             if h.command == "POST" and not parts:
                 if principal.policy.refusal("memory_save"):
                     raise ToolError("no: memory write refused")
                 body = read_json(h)
                 with rest_write(ctx, h, "memory_save", body):
-                    memory_id, _, notice, theme, topic = _save(ctx, body)
+                    memory_id, _, notice, theme, topic = _save(
+                        ctx,
+                        body,
+                        standalone_note=principal.person
+                        and principal.auth == "session"
+                        and not principal.connection_id,
+                    )
                 send_json(
                     h,
                     201,
@@ -856,12 +959,17 @@ def install(gateway):
                 args["limit"] = params.get("limit")
                 results, warming = _search_page(ctx, args, _boards(ctx))
                 # Additive: set only while the memory worker is warming up.
-                send_json(h, 200, {"results": results, **({"warming_up": True} if warming else {})})
+                send_json(
+                    h,
+                    200,
+                    {
+                        "results": [_delete_offer(ctx, h, row) for row in results],
+                        **({"warming_up": True} if warming else {}),
+                    },
+                )
             elif h.command == "GET" and parts == ["rooms"]:
                 rooms = note_rooms(principal)
-                if not principal.policy.refusal("memory_search"):
-                    # The Memory page asks for its rooms before it searches.
-                    gateway.warm_memory(principal.workspace_id)
+                _warm_rooms(gateway, principal)
                 send_json(
                     h,
                     200,
@@ -886,7 +994,7 @@ def install(gateway):
                     if params.get("view") == "map"
                     else _get(ctx, parts[0], _boards(ctx))
                 )
-                send_json(h, 200, memory)
+                send_json(h, 200, _delete_offer(ctx, h, memory))
             else:
                 send_json(h, 404, {"error": "not found"})
         except BadRequest:

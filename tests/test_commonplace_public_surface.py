@@ -912,6 +912,7 @@ REST_TOOLS = [
     ("GET", "/api/memory/id", "memory_get"),
     ("GET", "/api/memory/id?view=map", "memory_get"),
     ("POST", "/api/memory", "memory_save"),
+    ("POST", "/api/memory/id/delete", "mempalace_delete_drawer"),
     ("GET", "/api/webhooks", "webhook_list"),
     ("POST", "/api/webhooks", "webhook_add"),
     ("DELETE", "/api/webhooks/id", "webhook_remove"),
