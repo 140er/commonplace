@@ -1,0 +1,31 @@
+name: Commit identity
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Reject placeholder authors and committers
+        env:
+          PYTHONPATH: .
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags origin "$BASE_REF"
+            RANGE="origin/${BASE_REF}..HEAD"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${BEFORE}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+          python -m commonplace.guards.identity --range "$RANGE"
