@@ -155,3 +155,54 @@ for (const look of ['deck', 'classic']) for (const width of [1280, 390]) test(`$
     assert.match(mount.innerHTML, /Note deleted/);
   } finally { ui.stop(); }
 });
+
+test('loading places has a load-specific error and an explicit retry', async () => {
+  let failed = true;
+  const note = createNote({ alive: () => true, draw() {}, api: async () => {
+    if (failed) throw Object.assign(new Error('busy'), { status: 503 });
+    return { composer: { default_wing: 'shared', wings: [{ wing: 'shared', rooms: ['general'] }] } };
+  } });
+  await note.open();
+  assert.equal(note.state.error, 'The places to save could not be loaded. Try again.');
+  assert.match(renderNote(note.state), />Try again<\/button>/);
+  assert.doesNotMatch(note.state.error, /saved|text is still here/);
+  failed = false; await note.open();
+  assert.equal(note.state.error, '');
+  assert.equal(note.state.wing, 'shared');
+});
+
+test('a generic save error keeps the draft and describes saving', async () => {
+  const note = createNote({ alive: () => true, draw() {}, api: async path => {
+    if (path.includes('compose=1')) return { composer: { default_wing: 'shared', wings: [{ wing: 'shared' }] } };
+    throw new Error('offline');
+  } });
+  await note.open(); note.state.text = literalDrafts[4]; await note.save();
+  assert.equal(note.state.error, 'The note could not be saved. Your text is still here; try again.');
+  assert.equal(note.state.text, literalDrafts[4]);
+});
+
+test('room discovery starts only on selection, keeps the draft and fences stale answers', async () => {
+  const requests = [], pending = [];
+  const composer = { default_wing: 'shared', wings: ['shared', 'project'].map(wing => ({ wing, rooms: ['general'] })) };
+  let alive = true;
+  const note = createNote({ alive: () => alive, draw() {}, api: async (path, options) => {
+    requests.push([path, options]);
+    if (!path.includes('&wing=')) return { composer };
+    return new Promise(resolve => pending.push(resolve));
+  } });
+  await note.open();
+  assert.equal(requests.length, 1, 'opening never requests richer rooms');
+  note.state.text = literalDrafts[4];
+  const first = note.chooseWing('project');
+  assert.equal(note.state.wing, 'project'); assert.equal(note.state.room, 'general');
+  assert.ok(requests[1][1].timeoutMs <= 1500);
+  const second = note.chooseWing('shared');
+  pending[0]({ composer: { wings: [{ wing: 'project', rooms: ['general', 'late'] }] } }); await first;
+  assert.deepEqual(note.state.choices.wings[1].rooms, ['general']);
+  pending[1]({ composer: { wings: [{ wing: 'shared', rooms: ['general', 'decisions'] }] } }); await second;
+  assert.deepEqual(note.state.choices.wings[0].rooms, ['general', 'decisions']);
+  assert.equal(note.state.text, literalDrafts[4]);
+  const third = note.chooseWing('project'); alive = false;
+  pending[2]({ composer: { wings: [{ wing: 'project', rooms: ['general', 'stopped'] }] } }); await third;
+  assert.deepEqual(note.state.choices.wings[1].rooms, ['general']);
+});

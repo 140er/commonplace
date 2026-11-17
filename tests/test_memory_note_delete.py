@@ -237,3 +237,10 @@ def test_csrf_is_bound_to_both_drawer_and_session(chat_hub):
     second_session = h.cookie("owner@example.com", h.workspace)
     assert delete(h, identifier, second_session, csrf=proof)[0] == 403
     assert h.get(h.owner, f"/api/memory/{identifier}")[0] == 200
+
+
+def test_storage_quota_does_not_block_removing_a_note(chat_hub, monkeypatch):
+    h = chat_hub
+    identifier = note(h)
+    monkeypatch.setattr(h.gateway.storage_meter, "used", lambda *args: 2**62)
+    assert delete(h, identifier)[0] == 200

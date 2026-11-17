@@ -912,7 +912,6 @@ REST_TOOLS = [
     ("GET", "/api/memory/id", "memory_get"),
     ("GET", "/api/memory/id?view=map", "memory_get"),
     ("POST", "/api/memory", "memory_save"),
-    ("POST", "/api/memory/id/delete", "mempalace_delete_drawer"),
     ("GET", "/api/webhooks", "webhook_list"),
     ("POST", "/api/webhooks", "webhook_add"),
     ("DELETE", "/api/webhooks/id", "webhook_remove"),
@@ -1324,3 +1323,9 @@ def test_throttled_browser_navigation_is_a_recovery_screen(surface, path):
     assert b'href="/app/?signin=throttled">Retry</a>' in content
     assert b"Set-Cookie" not in content
     assert "Set-Cookie" not in headers
+
+
+def test_note_delete_alias_requires_the_delete_tool():
+    from commonplace.gateway import _rest_tool
+
+    assert _rest_tool("POST", "/api/memory/id/delete") == "mempalace_delete_drawer"

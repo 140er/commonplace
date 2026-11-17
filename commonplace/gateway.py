@@ -3138,6 +3138,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             name = request["params"]["name"]
             if "delete" in name or "remove" in name:
                 return False
+        if _rest_tool(self.command, path) == "mempalace_delete_drawer":
+            return False  # Deleting a note can reduce an exceeded storage quota.
         gateway = self.server.gateway
         if (
             gateway.storage_meter.used(

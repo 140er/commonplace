@@ -18,8 +18,8 @@ write_wing, otherwise shared in the active workspace. Shared means readable by
 people with access to that wing; the UI says this explicitly. This uses the
 workspace's own memory rather than inventing a private per-person wing that
 members could not read under the existing private-wing rules. The optional picker
-offers readable, writable wings and their existing rooms, including empty project
-wings, with general as the default room. The actual save path still decides the
+offers readable, writable active board wings and the default wing, including empty
+project wings, with general as the initial room. The actual save path still decides the
 destination, including its established privacy routing.
 
 GET /api/memory/rooms?compose=1 adds destination hints. POST /api/memory remains
@@ -39,6 +39,25 @@ it never retries a write automatically. Duplicate submission is locked while
 saving, and controller shutdown fences late UI updates. A successful save clears
 the draft and says the note will be searchable shortly; API acceptance checks
 also establish immediate retrieval through search.
+
+Opening GET /api/memory/rooms?compose=1 reads board metadata and policy only. It
+never asks the memory worker for taxonomy: a full-palace scan blocked large
+workspaces beyond the client's timeout. Selecting a wing explicitly adds wing to
+that query and optionally calls the existing authorized mempalace_list_rooms path.
+Both its propagated read deadline and HTTP wait are 0.75 seconds; the client allows
+1.2 seconds. A failure or late answer leaves general available. Late answers cannot
+populate the cache. Successful hints live for 30 seconds in a bounded 256-entry
+cache, isolated by gateway, workspace, user, connection, role and policy. Destination
+authority is checked before every cache lookup. Two reader slots per gateway limit
+stuck transports, and repeated selection coalesces while a reader is still running.
+The form opens without requesting enrichment for the default wing.
+
+Loading failures say The places to save could not be loaded. Try again. and show
+an explicit Try again action. Save failures keep their existing save-specific text
+and preserve the draft. Optional room failures do not prevent saving to general.
+The request-path scan audit also found Memory Map wing enumeration, now inside a
+one-second read deadline. Connection wing discovery already has a one-second HTTP
+bound and propagated deadline; the plain Memory rooms route uses a fixed inventory.
 
 Deck inserts the escaped composer through a function replacement, so literal
 dollar replacement patterns in a draft cannot be interpreted as page markup.

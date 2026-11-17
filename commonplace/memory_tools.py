@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from mempalace import fact_provenance, provenance
 from mempalace.config import sanitize_content
-from mempalace.deadline import BUSY_INDEXING
+from mempalace.deadline import BUSY_INDEXING, deadline
 from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
 
@@ -723,7 +723,14 @@ def memory_map(ctx, limit=400, theme=None):
     if theme:
         theme = canonical_wing(_string({"theme": theme}, "theme"))
     hide_private = _map_hides_private(ctx)
-    records, counts = _recent(ctx, _limit(limit, 400, 2000), theme, hide_private=hide_private)
+    try:
+        # Metadata overviews can otherwise scan the entire palace per request.
+        with deadline(1.0):
+            records, counts = _recent(
+                ctx, _limit(limit, 400, 2000), theme, hide_private=hide_private
+            )
+    except TimeoutError:
+        raise RetryableToolError("Memory is busy", retry_after_s=2, reason="busy") from None
     store = _boards(ctx)
     nodes, links = [], []
     weeks = Counter()
@@ -793,37 +800,39 @@ def note_rooms(principal):
     return [{"wing": AGENT_NOTES_WING, "name": "Agent notes"}]
 
 
-def note_composer(ctx):
+def note_composer(ctx, selected_wing=None):
     """Destination hints only; the existing save path authorizes every write again."""
     policy = ctx.principal.policy
     if policy.refusal("memory_save") or policy.refusal("mempalace_add_drawer"):
         return None
     default = canonical_wing(policy.write_wing or "shared")
-    taxonomy = (
-        _memory(ctx, "mempalace_get_taxonomy", {}).get("taxonomy", {})
-        if _available(ctx, "mempalace_get_taxonomy")
-        else {}
-    )
-    rooms = {canonical_wing(wing): list(values) for wing, values in taxonomy.items()}
+    # Opening a composer must never touch the palace or start its worker.
+    rooms = {default}
     store = _boards(ctx)
     if store is not None:
         with store.connection() as conn:
             for row in conn.execute("SELECT wing FROM boards WHERE archived=0"):
-                rooms.setdefault(canonical_wing(row["wing"]), [])
-    rooms.setdefault(default, [])
+                rooms.add(canonical_wing(row["wing"]))
     wings = [
         {
             "wing": wing,
             "name": "Workspace notes" if wing == "shared" else wing,
-            "rooms": sorted(set(["general", *values])),
+            "rooms": ["general"],
         }
-        for wing, values in sorted(rooms.items())
+        for wing in sorted(rooms)
         if policy.can_read_wing(wing)
         and policy.can_write_wing(wing)
         and (not policy.write_wing or wing == default)
     ]
     if not wings:
         return None
+    if selected_wing is not None:
+        from .memory_places import room_choices
+
+        selected = next((row for row in wings if row["wing"] == selected_wing), None)
+        if selected is None:
+            raise ToolError("no: note destination refused")
+        selected["rooms"] = room_choices(ctx, selected_wing)
     return {
         "default_wing": default
         if any(row["wing"] == default for row in wings)
@@ -976,7 +985,7 @@ def install(gateway):
                     {
                         "rooms": rooms,
                         **(
-                            {"composer": note_composer(ctx)}
+                            {"composer": note_composer(ctx, query(h).get("wing"))}
                             if query(h).get("compose") == "1"
                             else {}
                         ),

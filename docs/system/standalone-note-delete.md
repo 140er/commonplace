@@ -22,7 +22,8 @@ the existing delete_drawer WAL line, physical and logical drawer removal, search
 index updates and derived-index cleanup. There is no parallel storage deletion
 implementation. The app additionally checks the deployed free-space floor before
 the delete write; low storage returns retryable 507 and a backup pause returns
-retryable 503. Unknown ids and second deletes return 404 with a plain message.
+retryable 503. An exceeded workspace storage quota does not block deletion,
+which can free that quota; the disk free-space floor still applies. Unknown ids and second deletes return 404 with a plain message.
 
 The audit_log contract is an authenticated user id, timestamp, workspace id,
 drawer id, wing and room for memory.note.deleted. It contains no note text or
