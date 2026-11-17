@@ -58,6 +58,7 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
     page.route("**/api/bots/settings", share)
     try:
         page.reload()
+        page.locator('[data-deck-setting="tool-policy"]').click()
         page.wait_for_selector(".capy-policy")
         page.wait_for_selector("[data-capy-sharing] input")
         page.evaluate("document.fonts.ready")
@@ -72,11 +73,11 @@ def test_settings_columns_preserve_entries_and_policy_writes(browser, width, hei
         assert page.locator(".settings > :last-child").get_attribute("data-deck-appearance") == ""
         titles = page.locator(".deck-settings-main > section > h2").all_text_contents()
         assert titles[:5] == [
+            "Phone notifications",
             "Look",
-            "Bot sharing",
-            "What bots may do without asking",
-            "Second review",
             "Connected apps",
+            "Workspace",
+            "Bot sharing",
         ]
         for title in [
             "Free plan",

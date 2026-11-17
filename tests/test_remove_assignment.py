@@ -84,6 +84,20 @@ def test_removal_refusals_leave_card_and_audit_unchanged(hub, fresh, refusal):
     assert snapshot(fresh.owner, number) == before
 
 
+def test_other_connection_cannot_remove_reservation_but_owner_can(hub, fresh):
+    card, _ = reservation(fresh)
+    outsider = fresh.connect("other-worker")
+    path = f"/api/cards/{card['number']}/handoff"
+    payload = {"to": "anyone", "note": "Return to the pool", "version": card["version"]}
+    before = snapshot(fresh.owner, card["number"])
+    status, result = api(hub, outsider.token, "POST", path, payload)
+    assert status == 403, result
+    assert snapshot(fresh.owner, card["number"]) == before
+    status, result = api(hub, fresh.cookie, "POST", path, payload)
+    assert status == 200, result
+    assert result["assignee"] is None and result["claim_until"] is None
+
+
 @pytest.fixture(scope="module")
 def browser():
     if os.environ.get("CP_BROWSER_E2E") == "0":

@@ -155,6 +155,7 @@ def test_common_shortcuts_preserve_every_setting(browser, width):
             top = page.locator(f"#{target}").bounding_box()["y"]
             assert frame["y"] <= top <= frame["y"] + frame["height"] - 44
             assert shortcuts.locator('[aria-current="location"]').inner_text() == label
+        shortcuts.get_by_role("button", name="Action permissions", exact=True).click()
         # Every former section and form is still reachable; only two headings change.
         old_sections = [
             "Free plan",
