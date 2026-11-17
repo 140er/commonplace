@@ -1,4 +1,4 @@
 - **Owns:** Focused expired-claim regression fixtures using isolated workspace databases and controllable clocks.
 - **Promises:** Tests capture baseline failures and verify grace recovery, actual trigger starts, reservation safety, person/review/snooze/dependency protection, session isolation and legacy renewal.
 - **How it fails:** Assertions distinguish omitted recovery, incorrectly renewed sessions, leaked reservation authority and a missing/defaultless migration column; background work is bounded by the caller's test timeout.
-- **Tests:** `tests/test_expired_claim_pool.py`, plus the affected existing board-claim, durable-resume, trigger and read-snapshot cases.
+- **Tests:** `tests/test_expired_claim_pool.py`, `tests/test_commonplace_origin_holder_release.py`, `tests/test_commonplace_public_surface.py`, `tests/test_spaces_contract.py` and its `tests/spaces_surfaces.json` snapshot, plus the affected existing board-claim, durable-resume, trigger and read-snapshot cases.

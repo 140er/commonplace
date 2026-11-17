@@ -603,14 +603,10 @@ class Mediator:
         self.gateway = None  # set by Gateway; local tools get it in their context
 
     # ── entry point ──
-    def handle(self, principal: Principal, request, *, session_id="") -> Optional[dict]:
+    def handle(self, principal: Principal, request) -> Optional[dict]:
         # One budget for every pause and worker-start wait this request makes.
-        token = _CLAIM_SESSION.set(session_id)
-        try:
-            with memory_wait(_request_wait_s()):
-                return self._handle(principal, request)
-        finally:
-            _CLAIM_SESSION.reset(token)
+        with memory_wait(_request_wait_s()):
+            return self._handle(principal, request)
 
     def _handle(self, principal: Principal, request) -> Optional[dict]:
         if not isinstance(request, dict):
@@ -3163,10 +3159,9 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         if len(session_id) > 200 or (session_id and not session_id.isascii()):
             self._send_json(400, {"error": "Invalid Mcp-Session-Id"})
             return
+        token = _CLAIM_SESSION.set(session_id)
         try:
-            response = self.server.gateway.mediator.handle(
-                principal, request, session_id=session_id
-            )
+            response = self.server.gateway.mediator.handle(principal, request)
         except Exception as exc:
             req_id = request.get("id") if isinstance(request, dict) else None
             log_failure(logger, f"gateway MCP request failed ({_call_label(request)})", exc)
@@ -3195,6 +3190,8 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             self._send_json(500, _rpc_error(req_id, -32603, "Internal error"))
             return
+        finally:
+            _CLAIM_SESSION.reset(token)
         if response is None:
             self.send_response(202)
             self.send_header("Content-Length", "0")

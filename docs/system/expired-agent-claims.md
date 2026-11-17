@@ -16,6 +16,14 @@ requirements: it returns to its reservation holder's queue, and a coordinator
 cannot take that expired reservation. The project owner may deliberately hand it
 to a different connection through the existing assignment controls.
 
+Origin release is an authority grant and never renews or reacquires a claim.
+Within the grace it preserves the expired Doing card and its deadline. After the
+grace, its ordinary expiry pass first returns the card to reserved Todo and logs
+that return; the separate origin-release event follows. The former Doing deadline
+is cleared, the expiry timestamp and assignee remain, and the project report
+revision advances for the lane change. The origin grant adds no claim deadline.
+The pinned origin-release regression covers both sides of this boundary.
+
 Only `doing` cards held by a connection are returned. Person-held cards, review
 cards, open questions or review context, pending/rejected proposals, archived
 cards, active time/dependency snoozes and unfinished `blocked_by` dependencies
@@ -36,7 +44,11 @@ that header on subsequent calls. New claims carry this session identity in
 `claim_session`, separately from their connection actor. Stateless clients can
 instead send a stable `session_id` on task write tools, `orch_resume` and
 `orch_checkpoint`; this also supports a run identity that survives a transport
-reconnect. The identifier narrows existing connection authority and is not an
+reconnect. These optional schema fields are recorded in the tool inventory;
+tool names, profiles and visibility stay unchanged. The HTTP handler scopes the
+identity around the existing two-argument mediator call and resets it on success,
+notification and error paths, preserving adapters and keepalive isolation.
+The identifier narrows existing connection authority and is not an
 authentication credential. It is not included in public card replies.
 
 Every acquisition path records the identity when the caller claims for itself.

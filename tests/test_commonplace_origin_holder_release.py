@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from commonplace.boards.display import people
-from commonplace.boards.store import task_row
+from commonplace.boards.store import now, task_row
 from commonplace.extensions import ToolError
 from commonplace.policy import Policy
 from tests._commonplace_helpers import hub_fixture  # noqa: F401
@@ -545,21 +545,41 @@ def test_owner_recovery_dedup_and_notice_per_board(hub, fresh):
     assert fresh.owner.needs_me(format="digest")["count"] == 3
 
 
-@pytest.mark.parametrize("state", ["active", "expired"])
+@pytest.mark.parametrize("state", ["active", "expired", "within-grace"])
 def test_origin_release_does_not_renew_claim(hub, fresh, state):
     s = setup(hub, fresh)
-    if state == "expired":
+    if state in ("expired", "within-grace"):
         edit(
             fresh.owner,
             s.n,
             claim_until="2000-01-01T00:00:00Z",
-            claim_expired_at="2000-01-01T00:01:00Z",
+            claim_expired_at=now() if state == "within-grace" else "2000-01-01T00:01:00Z",
         )
     before, history = snapshot(fresh.owner, s.n)
     release(s.k.work, s.n)
     after, events = snapshot(fresh.owner, s.n)
-    preserved(before, after)
-    assert len(events) == len(history) + 1
+    if state == "expired":
+        # Past the grace, the normal expiry pass returns the card before the
+        # origin grant. That grant still cannot renew or reacquire the claim.
+        preserved(
+            {
+                **before,
+                "status": "todo",
+                "claim_until": None,
+                "claim_session": "",
+                "version": before["version"] + 1,
+                "report_reset_rev": before["report_reset_rev"] + 1,
+            },
+            after,
+        )
+        assert len(events) == len(history) + 2
+        shown = s.k.work.task_show(s.n)["events"]
+        assert shown[-2]["kind"] == "release"
+        assert shown[-2]["text"] == "claim expired, returned to the pool"
+        assert shown[-1]["choice"] == "release origin"
+    else:
+        preserved(before, after)
+        assert len(events) == len(history) + 1
 
 
 @pytest.mark.parametrize("kind", ["legacy-null", "zero-with-agent-parent"])

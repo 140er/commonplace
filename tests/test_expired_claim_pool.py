@@ -251,8 +251,8 @@ def test_standard_mcp_sessions_automatically_scope_new_claims(w):
         write_wings=["shared"],
     )
 
-    def rpc(method, params, session=""):
-        conn = http.client.HTTPConnection("127.0.0.1", w.hub.port, timeout=10)
+    def rpc(method, params, session="", connection=None):
+        conn = connection or http.client.HTTPConnection("127.0.0.1", w.hub.port, timeout=10)
         try:
             headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
             if session:
@@ -268,7 +268,8 @@ def test_standard_mcp_sessions_automatically_scope_new_claims(w):
             assert response.status == 200, result
             return response.getheader("Mcp-Session-Id"), result
         finally:
-            conn.close()
+            if connection is None:
+                conn.close()
 
     initialize = {
         "protocolVersion": "2024-11-05",
@@ -288,6 +289,19 @@ def test_standard_mcp_sessions_automatically_scope_new_claims(w):
         assert refused["result"].get("isError"), refused
     _, renewed = rpc("tools/call", {"name": "task_heartbeat", "arguments": {"task": n}}, first)
     assert not renewed["result"].get("isError"), renewed
+    # Header scope must also end between requests on one persistent connection.
+    connection = http.client.HTTPConnection("127.0.0.1", w.hub.port, timeout=10)
+    try:
+        for session in (first, "", second, first):
+            _, result = rpc(
+                "tools/call",
+                {"name": "task_heartbeat", "arguments": {"task": n}},
+                session,
+                connection=connection,
+            )
+            assert bool(result["result"].get("isError")) == (session != first)
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize("acquire", ["take", "update", "add"])
