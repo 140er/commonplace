@@ -101,7 +101,7 @@ const cases = {
     handlers.get('keydown')({ target: { closest: () => ({}) }, key: 'ArrowRight', preventDefault: () => { prevented = true; } });
     assert.equal(prevented, true);
     assert.ok(mount.innerHTML.includes('aria-labelledby="tab-memory"'));
-    handlers.get('click')({ target: { closest: () => ({ dataset: { detailsTab: 'details' } }) } });
+    handlers.get('click')({ target: { closest: selector => selector === '[data-details-tab]' ? { dataset: { detailsTab: 'details' } } : null } });
     assert.ok(mount.innerHTML.includes('aria-labelledby="tab-details"'));
     component.stop();
     assert.equal(handlers.size, 0);

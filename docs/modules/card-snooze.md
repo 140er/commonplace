@@ -19,7 +19,7 @@
 
   - Refusals carry a code: `invalid_snooze` (not exactly one of `until` and `after_card`), `timezone_required`, `invalid_timezone`, `invalid_time` (also a wall time the clocks skip), `in_past`, `too_far`, `invalid_condition`, `self`, `other_board`, `condition_met` (the card is already done), `not_snoozable` (not Backlog or Todo), `not_snoozed` (unsnooze of a card that is not snoozed).
 
-  - Not built yet: snoozing a thread (chat message), free-text conditions, an app control for it, and re-triggering a runner-configured board's todo start when a card wakes (a wake is not a todo event).
+  - Not built yet: snoozing a thread (chat message), free-text conditions, and re-triggering a runner-configured board's todo start when a card wakes (a wake is not a todo event). The Deck card panel and classic drawer expose the existing time and wake routes through shared controls.
 
 - **Tests:**
 
