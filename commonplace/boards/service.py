@@ -2052,6 +2052,51 @@ class BoardService(lifecycle.LifecycleMixin):
         ):
             raise ToolError("no: take this card before editing it")
 
+    def board_directory(self, *, names_only=False):
+        """Current visible project names, without expiry or runner projections.
+
+        Only display counts are cached. Authority, names and wing visibility are
+        read on every request; the regular board_list remains the full projection.
+        """
+        from commonplace.web.startup import snapshots, viewer_key
+
+        with self.store.connection() as conn:
+            boards = self._visible_boards(conn)
+        if names_only:
+            return [dict(board) for board in boards]
+
+        def counts():
+            from commonplace.rules.checks import connection
+
+            with connection(self.store.path, timeout=0.1) as conn:
+                return {
+                    row["board_id"]: dict(row)
+                    for row in conn.execute(
+                        "SELECT board_id, "
+                        + ", ".join(f"sum(status='{status}') AS {status}" for status in STATUSES)
+                        + " FROM tasks WHERE parent_number IS NULL "
+                        "AND id NOT IN (SELECT task_id FROM card_archive WHERE archived=1) "
+                        "GROUP BY board_id"
+                    )
+                }
+
+        totals, state = snapshots(self.ctx.gateway).read(
+            ("board-counts", *viewer_key(self.principal)), counts
+        )
+        return [
+            {
+                **{key: board[key] for key in ("slug", "name", "wing", "coordinator")},
+                "can_configure": self.principal.role == "owner",
+                "counts": (
+                    {status: (totals.get(board["id"], {}).get(status) or 0) for status in STATUSES}
+                    if totals is not None
+                    else None
+                ),
+                "counts_state": state,
+            }
+            for board in boards
+        ]
+
     def board_list(self, *, top_level=False):
         from commonplace.projects import limits
 

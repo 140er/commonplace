@@ -195,7 +195,7 @@ function bootFixture() {
   let resolveStatus;
   const pendingStatus = new Promise((resolve) => { resolveStatus = resolve; });
   const context = {
-    document, state, Event, boundedRequest, adminUI: null, instanceAdminUI: null, timer: null, clearTimeout() {},
+    document, state, Event, AbortController, setTimeout, boundedRequest, adminUI: null, instanceAdminUI: null, timer: null, clearTimeout,
     fetch: async (path) => path === "/api/voice" ? pendingStatus : { ok: true, status: 200, json: async () => ({ people: {} }) },
     shell() { calls.push("shell"); },
     async route() { calls.push("route"); },
@@ -232,6 +232,8 @@ const otherWorkspace = bootFixture();
 otherWorkspace.context.location = { pathname: "/app/", search: "?w=ws_other", hash: "#/card/7" };
 await otherWorkspace.boot();
 assert.deepEqual(otherWorkspace.calls, ["shell", "replace:/app/#/", "route", "error:This card is in another workspace. Sign out, then sign in again to open it.", "schedule"]);
+otherWorkspace.resolveStatus({ ok: true, status: 200, json: async () => ({ available: false }) });
+await new Promise(setImmediate);
 const expiredAtLoad = bootFixture();
 expiredAtLoad.context.voice = { load() { expiredAtLoad.state.me = null; } };
 await expiredAtLoad.boot(); assert.deepEqual(expiredAtLoad.calls, ["shell"]);

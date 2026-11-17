@@ -1,0 +1,4 @@
+- **Owns:** Independent cold shell and Settings reads, bounded browser reads and small optional metadata snapshots.
+- **Promises:** Main content renders before badges and scans; late Settings sections preserve other forms.
+- **How it fails:** Expired reads expose retry/loading states; stale replies cannot cross screen or viewer changes.
+- **Tests:** tests/test_cold_start.py, tests/test_settings_load.py, tests/test_shell_snapshots.py and Node shell wrappers.

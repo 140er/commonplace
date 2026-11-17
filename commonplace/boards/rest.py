@@ -370,6 +370,8 @@ def dispatch(service, h, parts, method):
             return routed
     if parts == ["boards"]:
         if method == "GET":
+            if query(h).get("view") == "shell":
+                return 200, {"boards": service.board_directory()}
             return 200, {"boards": service.board_list(top_level=True)}
         if method == "POST":
             body = read_json(h)

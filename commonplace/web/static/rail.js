@@ -15,6 +15,7 @@ const icon = (name) => `<svg class="i" viewBox="0 0 16 16" fill="none" stroke="c
 const badge = (n, label) => count(n) ? `<span class="count need">${n}<span class="sr"> ${label}</span></span>` : '';
 
 export function projectSubline(board) {
+  if (board.counts == null && board.counts_state) return board.counts_state === 'unavailable' ? 'Counts unavailable' : 'Still loading counts';
   const agents = count(board.agents_working);
   const doing = count(board.counts?.doing);
   return agents ? `${agents} agent${agents === 1 ? '' : 's'} working` : doing ? `${doing} doing` : 'Idle';

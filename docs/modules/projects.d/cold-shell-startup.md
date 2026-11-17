@@ -1,0 +1,4 @@
+- **Owns:** Optional plan storage snapshots and cooperative file-walk deadlines.
+- **Promises:** Storage display never blocks Settings; admission continues to use the original synchronous meter.
+- **How it fails:** Missing totals show loading or unavailable; stale totals are display-only.
+- **Tests:** tests/test_cold_start_routes.py and tests/test_commonplace_plans.py.

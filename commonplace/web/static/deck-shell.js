@@ -175,7 +175,7 @@ export function createDeckShell({ root, api, context, on }) {
     if (pending) return pending;
     const token = generation;
     pending = (async () => {
-      const results = await Promise.allSettled([api('/api/coworkers/bots', { timeoutMs: 10000 }), api('/api/coworkers/conversations', { timeoutMs: 10000 })]);
+      const results = await Promise.allSettled([api('/api/coworkers/bots', { timeoutMs: 3000 }), api('/api/coworkers/conversations', { timeoutMs: 3000 })]);
       if (token !== generation || !on()) return;
       directory = { ...(results[0].status === 'fulfilled' ? results[0].value : {}), conversations: results[1].status === 'fulfilled' ? rows(results[1].value?.conversations) : [] };
       error = results.some(result => result.status === 'rejected') ? 'unavailable' : '';

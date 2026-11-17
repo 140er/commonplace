@@ -181,6 +181,15 @@ def test_agent_listing_offers_only_existing_nonprivate_wings(hub, fresh):
     created = create(hub, fresh, read_wings=["project_a"])
     status, _, payload = http(hub, "GET", cookie=fresh.cookie)
     assert status == 200
+    from commonplace.web.startup import snapshots
+
+    cache = snapshots(hub.gateway)
+    assert cache.slots.acquire(timeout=2)
+    assert cache.slots.acquire(timeout=2)
+    cache.slots.release()
+    cache.slots.release()
+    status, _, payload = http(hub, "GET", cookie=fresh.cookie)
+    assert status == 200
     assert "project_a" in payload.get("wings", [])
     assert "private_notes" not in payload["wings"]
     assert "private.notes" not in payload["wings"]

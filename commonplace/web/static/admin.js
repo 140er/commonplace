@@ -6,7 +6,7 @@ const SECTIONS = {
 };
 
 // api includes response.json(): the deadline covers both transport and body decoding.
-export async function boundedRequest(api, path, { timers = globalThis, signal } = {}) {
+export async function boundedRequest(api, path, { timers = globalThis, signal, timeoutMs = 5000 } = {}) {
   const controller = new AbortController();
   let timer, abort;
   const deadline = new Promise((_, reject) => {
@@ -16,7 +16,7 @@ export async function boundedRequest(api, path, { timers = globalThis, signal } 
     timer = timers.setTimeout(() => {
       controller.abort();
       reject(Object.assign(new Error('Request timed out'), { name: 'TimeoutError' }));
-    }, 5000);
+    }, timeoutMs);
   });
   try {
     if (controller.signal.aborted) return await deadline;

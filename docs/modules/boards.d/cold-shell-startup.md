@@ -1,0 +1,4 @@
+- **Owns:** The shell board directory and cached display counts.
+- **Promises:** Current board visibility is checked on every read; counts never run runner projections or expire claims.
+- **How it fails:** Unavailable counts remain explicit; full projections are deferred.
+- **Tests:** tests/test_cold_start_routes.py and tests/test_shell_snapshots.py.

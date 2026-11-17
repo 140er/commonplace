@@ -18,7 +18,7 @@ SETTINGS = [
     "/api/chat-settings",
     "/api/settings/orchestration",
 ]
-SHARED = ["/api/boards", "/api/needs-me", "/api/rules/count"]
+SHARED = ["/api/boards?view=shell"]
 
 HARNESS = r"""
 const assert = require('node:assert/strict');
@@ -44,6 +44,23 @@ async function advance(ms) {
 }
 let html = '', screenError = '', orchestrationHTML = '', blocked = true, saved = true, webhookDraft = null;
 const input = {};
+const parts = new Map();
+let skeleton = '';
+function renderParts() {
+  html = skeleton;
+  for (const [key, part] of parts) html = html.replace(part.placeholder, () => part.value);
+}
+function makeNode(value, key = null) {
+  const node = { dataset: {}, querySelector: selector => selector === '[data-workspace-orchestration]' ? host : null };
+  Object.defineProperty(node, 'innerHTML', { set(next) { parts.get(key).value = next; renderParts(); }, get() { return parts.get(key)?.value; } });
+  node.replaceWith = next => {
+    parts.get(key).value = next.value;
+    if (key === 'hooks') webhookDraft = next.value.includes('data-form="webhook"') ? { value: '' } : null;
+    renderParts();
+  };
+  node.value = value;
+  return node;
+}
 const host = {
   isConnected: true,
   get innerHTML() { return orchestrationHTML; },
@@ -54,10 +71,15 @@ const content = {
   children: [{}],
   get innerHTML() { return html; },
   set innerHTML(value) {
-    html = value; orchestrationHTML = '';
+    html = value; skeleton = value; orchestrationHTML = ''; parts.clear();
+    for (const match of value.matchAll(/<section class="settings-section" data-settings-part="([a-z]+)">.*?<\/section>/g)) {
+      parts.set(match[1], { placeholder: match[0], value: match[0], node: makeNode(match[0], match[1]) });
+    }
     webhookDraft = value.includes('data-form="webhook"') ? { value: '' } : null;
   },
   querySelector(selector) {
+    const key = /^\[data-settings-part="([a-z]+)"\]$/.exec(selector)?.[1];
+    if (key) return parts.get(key)?.node || null;
     if (selector === 'input[name="url"]') return webhookDraft;
     if (selector === '.settings') return html.includes('class="settings"') ? {} : null;
     if (selector === '[data-workspace-orchestration]') return host;
@@ -65,7 +87,7 @@ const content = {
   },
 };
 const values = {
-  '/api/boards': { boards: [] }, '/api/needs-me': {}, '/api/rules/count': {},
+  '/api/boards?view=shell': { boards: [] }, '/api/bots': { bots: [] }, '/api/needs-me': {}, '/api/rules/count': {},
   '/api/connections': {}, '/api/webhooks': { webhooks: [] },
   '/api/plan': { plan: 'free' }, '/api/phone-push': {},
   '/api/chat-settings': { front: { enabled: false }, usage: { used_today: 0, user_used_today: 0 } },
@@ -73,7 +95,11 @@ const values = {
 const reads = [], stalled = [];
 const context = {
   AbortController, Event,
-  document: { dispatchEvent() {} },
+  document: { dispatchEvent() {}, createElement() {
+    return { content: { firstElementChild: null }, set innerHTML(value) {
+      this.content.firstElementChild = value ? makeNode(value) : null;
+    } };
+  } },
   setTimeout(fn, ms) { const id = ++serial; timers.set(id, { fn, at: now + ms }); return id; },
   clearTimeout(id) { timers.delete(id); },
   fetch(url, options) {
@@ -121,6 +147,22 @@ vm.runInContext('async function clickRetry() { ' + retry[1] + ' }', context);
 (async () => {
   const { createNeedLedger } = await import(require('node:url').pathToFileURL(require('node:path').resolve('commonplace/web/static/deck-home-today.js')).href);
   context.deckNeedsLedger = createNeedLedger();
+  if (mode === 'progressive') {
+    const load = context.refresh();
+    await tick();
+    assert.match(html, path === '/api/webhooks' ? /Free plan/ : /data-form="webhook"/, 'Cheap settings render before a stalled section');
+    assert.match(html, /Still loading/);
+    const draft = content.querySelector('input[name="url"]');
+    if (draft) draft.value = 'https://example.invalid/unsaved';
+    await advance(3000);
+    await load;
+    assert.match(html, /Could not load/);
+    if (draft) {
+      assert.equal(content.querySelector('input[name="url"]'), draft, 'A late section preserves the mounted form');
+      assert.equal(draft.value, 'https://example.invalid/unsaved');
+    }
+    return;
+  }
   if (mode === 'background') {
     blocked = false;
     await context.refresh();
@@ -284,3 +326,15 @@ def test_orchestration_settings_lock_contention_is_retryable(monkeypatch, enable
     finally:
         conn.close()
     assert replies == [(503, {"error": "settings_unavailable"})]
+
+
+@pytest.mark.parametrize("path", SETTINGS)
+def test_settings_sections_render_independently(path):
+    result = subprocess.run(
+        ["node", "-e", HARNESS, path, "fetch", "progressive"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

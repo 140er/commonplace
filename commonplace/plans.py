@@ -175,15 +175,19 @@ class StorageMeter:
 
     @staticmethod
     def _walk(path) -> int:
+        from mempalace.deadline import remaining
+
         total = 0
         pending = [path]
         while pending:
+            remaining(3.0)
             directory = pending.pop()
             try:
                 if not stat.S_ISDIR(os.stat(directory, follow_symlinks=False).st_mode):
                     continue
                 with os.scandir(directory) as entries:
                     for entry in entries:
+                        remaining(3.0)
                         try:
                             info = entry.stat(follow_symlinks=False)
                         except FileNotFoundError:

@@ -310,7 +310,7 @@ export function mount(context) {
   async function refresh(next = {}) {
     ctx = { ...ctx, ...next }; const mine = ++epoch;
     request?.abort(); request = new AbortController();
-    const options = { signal: request.signal, timeoutMs: 15000 };
+    const options = { signal: request.signal, timeoutMs: 3000 };
     try {
       const result = await read(options);
       if (stopped || mine !== epoch) return;

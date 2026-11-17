@@ -1,0 +1,4 @@
+- **Owns:** Cold-start 30-second dependency fixtures and updated shell/plan/wing snapshot harnesses.
+- **Promises:** The same slow-dependency regressions fail on pinned develop and pass on the change; each run is bounded and isolated.
+- **How it fails:** Late metadata cannot replace main content or drafts; missing counters cannot appear as real zero totals.
+- **Tests:** tests/test_cold_start.py, tests/test_cold_start_routes.py, tests/test_shell_snapshots.py, tests/test_settings_load.py and all Node harness wrapper files.

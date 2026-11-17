@@ -122,11 +122,13 @@ export function mount(context) {
     ctx = { ...ctx, ...next }; paint();
     read?.abort(); read = new AbortController(); const token = ++generation;
     try {
-      const [roster, coworkers] = await Promise.allSettled([api('/api/bots', { signal: read.signal, timeoutMs: 10000 }), api('/api/coworkers', { signal: read.signal, timeoutMs: 10000 })]);
+      void api('/api/coworkers', { signal: read.signal, timeoutMs: 3000 }).then(value => {
+        if (!active || token !== generation) return;
+        directory = value || {}; paint();
+      }).catch(() => {});
+      const roster = await api('/api/bots', { signal: read.signal, timeoutMs: 3000 });
       if (!active || token !== generation) return;
-      if (roster.status === 'rejected') throw roster.reason;
-      bots = (roster.value.bots || []).filter(bot => !bot.frozen && !bot.lifecycle && (bot.mine !== false || bot.perms?.talk)); configured = roster.value.model;
-      directory = coworkers.status === 'fulfilled' ? coworkers.value : {};
+      bots = (roster.bots || []).filter(bot => !bot.frozen && !bot.lifecycle && (bot.mine !== false || bot.perms?.talk)); configured = roster.model;
       status = 'ready'; retries = 0;
       report(); paint();
       const board = selectedBot()?.board;

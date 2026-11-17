@@ -44,7 +44,7 @@ if (process.argv[2] === 'entry') {
       if (path === '/api/me') { identitySignal = options.signal; return new Promise(() => {}); }
       return Promise.resolve({ ok: true, status: 200, json: async () => graph });
     },
-    setTimeout(callback, ms) { assert.equal(ms, 10000); deadline = callback; return 1; },
+    setTimeout(callback, ms) { assert.ok([3000, 10000].includes(ms)); if (ms === 10000) deadline = callback; return ms; },
     clearTimeout() { cleared = true; },
   });
   const ui = createMemory({ mount, panel, boards: context.boards, api: realApi });
