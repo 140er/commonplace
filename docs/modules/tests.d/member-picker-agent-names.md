@@ -1,4 +1,4 @@
-- **Owns:** Regression coverage for human connection names, named conversation audience selection and persisted identifier compatibility.
+- **Owns:** Regression coverage for the unchanged admin connection inventory, the Coworker directory response fields, human connection names, named conversation audience selection and persisted identifier compatibility.
 - **Promises:** Focused API and production-JavaScript cases prove the former failures and current behavior; Chromium journeys exercise the real local gateway at 1280 and 390 CSS pixels using synthetic accounts only.
 - **How it fails:** Missing name acceptance, validation messages, identifier previews, member lists or ID payloads fail assertions; browser cases skip only when the optional browser package is unavailable.
-- **Tests:** tests/test_agent_human_names.py, tests/agent_human_names.mjs, tests/test_commonplace_agent_connections.py, tests/test_coworker_api.py, tests/test_coworker_browser.py, tests/coworker_ui.mjs and tests/test_member_picker_agent_names_browser.py.
+- **Tests:** tests/test_admin_api.py, tests/test_coworker_livelog_limits.py, tests/test_agent_human_names.py, tests/agent_human_names.mjs, tests/test_commonplace_agent_connections.py, tests/test_coworker_api.py, tests/test_coworker_browser.py, tests/coworker_ui.mjs and tests/test_member_picker_agent_names_browser.py.

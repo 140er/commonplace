@@ -26,3 +26,8 @@ The schema addition has an empty default and changes no existing identifier,
 token hash, lifetime, scope, authorization or parent relation. Token reveals stay
 inside their existing one-time surface. Chromium evidence uses synthetic local
 accounts and captures forms before credentials are revealed.
+
+The admin connection inventory explicitly opts out of the display-name field in
+the shared serializer. Its SQL projection and response fields remain unchanged;
+Settings and connection setup continue to include the stored display name. This
+keeps a new Settings field from breaking a narrower administrative read.

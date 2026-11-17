@@ -297,3 +297,42 @@ def test_inventory_counts_match_listed_members(hub, section):
     field = "members" if section == "users" else "connections"
     assert data["count"] == len(data[field]) == 1
     assert not data["has_more"] and data["next_cursor"] is None
+
+
+def test_connection_inventory_preserves_fields_with_a_stored_display_name(hub):
+    headers = cookie(hub)
+    cid, _ = agent(hub, "research-helper")
+    hub.db._conn.execute(
+        "UPDATE connections SET display_name=? WHERE id=?", ("Research Helper", cid)
+    )
+    status, data, _ = get(hub, "connections", headers)
+    assert status == 200
+    row = next(row for row in data["connections"] if row["id"] == cid)
+    assert row["name"] == "research-helper"
+    assert set(row) == {
+        "id",
+        "name",
+        "client",
+        "auth",
+        "user_id",
+        "created_at",
+        "expires_at",
+        "revoked_at",
+        "last_used_at",
+        "parent_id",
+        "started_by",
+        "read_wings",
+        "import_read",
+        "decide",
+        "decide_grantable",
+        "bots_chat",
+        "bots_confirm",
+        "bots_learned",
+        "bots_grantable",
+        "trust",
+        "scopes",
+        "activity",
+        "state",
+        "user_disabled",
+    }
+    assert "Research Helper" not in json.dumps(data)

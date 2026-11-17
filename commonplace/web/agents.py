@@ -206,7 +206,7 @@ def connection_names(data):
     return identifier, display
 
 
-def connection_view(row, db=None, *, viewer=None, coordinators=None):
+def connection_view(row, db=None, *, viewer=None, coordinators=None, include_display_name=True):
     view = {
         key: row[key]
         for key in (
@@ -223,7 +223,8 @@ def connection_view(row, db=None, *, viewer=None, coordinators=None):
             "started_by",
         )
     }
-    view["display_name"] = row["display_name"] or row["name"]
+    if include_display_name:
+        view["display_name"] = row["display_name"] or row["name"]
     policy = Policy.from_json(row["policy"])
     view["read_wings"] = list(policy.read_wings)
     view["import_read"] = policy.has_scope(import_grant.READER_SCOPE)

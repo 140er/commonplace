@@ -161,7 +161,8 @@ def connections(conn, workspace_id, context, after=None):
     result = []
     for row in rows[:PAGE_SIZE]:
         context.remaining()
-        view = connection_view(row)
+        # This inventory keeps its existing projection; display names belong to Settings.
+        view = connection_view(row, include_display_name=False)
         policy = Policy.from_json(row["policy"])
         for key in ("name", "client"):
             view[key] = display(view[key])
