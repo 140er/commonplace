@@ -408,6 +408,45 @@ def test_unknown_foreign_key_dependencies_refuse_and_rollback(account, capsys):
     assert dump(account.db) == before
 
 
+def test_cleanup_refuses_unlisted_content_tables(account):
+    db = account.db
+    db._conn.execute("CREATE TABLE threads(id TEXT, actor TEXT, content TEXT)")
+    db._conn.execute(
+        "INSERT INTO threads VALUES ('retained', ?, 'verbatim thread')", (account.user,)
+    )
+    before = dump(db)
+    with pytest.raises(ControlError, match="unsupported cleanup table"), db._tx() as conn:
+        db._execute_cleanup(conn, [("threads", "actor=:uid", {"uid": account.user})])
+    assert dump(db) == before
+
+
+def test_membership_and_user_cleanup_preserve_real_thread_store(account):
+    from commonplace.handoff.models import ThreadMessage
+    from commonplace.handoff.thread_store import ThreadStore
+
+    path = account.root / "workspaces" / account.workspace / "threads.sqlite3"
+    path.parent.mkdir(parents=True)
+    store = ThreadStore(str(path))
+    try:
+        stored = store.store(
+            account.workspace,
+            "import-private:" + account.user + ":fixture",
+            [ThreadMessage(0, "user", "message", "verbatim thread\ncontent", "{}")],
+            actor="user:" + account.user,
+            wing="private_chats",
+        )
+        before = dump(store)
+        assert remove(account, "--yes") == 0
+        assert dump(store) == before
+        assert delete(account, "--yes") == 0
+        assert dump(store) == before
+        row = store._conn.execute("SELECT * FROM threads WHERE id=?", (stored.id,)).fetchone()
+        assert row["source_thread_id"] == "import-private:" + account.user + ":fixture"
+        assert row["wing"] == "private_chats" and row["created_by"] == "user:" + account.user
+    finally:
+        store.close()
+
+
 def test_parent_connections_and_runner_bindings_cleaned_atomically(account):
     db = account.db
     cid, *_ = credentials(account, account.workspace)

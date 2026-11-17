@@ -55,9 +55,13 @@ opening the database. It makes no backup itself. A backup or pause must finish
 before deletion is attempted again, including a dry-run.
 
 The database uses one `BEGIN IMMEDIATE` transaction for authorization, eligibility,
-credential removal, membership or user deletion and audit insertion. Foreign keys
-stay enabled and `PRAGMA foreign_key_check` must succeed. An exception, including
-failure to append the audit row after deleting the user, rolls back every change.
+credential removal, membership or user deletion and audit insertion. Every deletion
+statement names its supported control table literally; a plan
+containing any other table is refused before executing its statements. The
+thread-store SQL guard and its narrow existing exceptions remain unchanged. No
+thread identity, author, message, chunk or stored content is updated or deleted.
+Foreign keys stay enabled and `PRAGMA foreign_key_check` must succeed. An exception,
+including failure to append the audit row after deleting the user, rolls back every change.
 
 Each executed change appends exactly one `audit_log` row: `action` is `member.remove`
 or `user.delete`, `decision` is `ok`, `auth` is `cli`, `user_id` is the acting

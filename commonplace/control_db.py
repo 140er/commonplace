@@ -481,8 +481,31 @@ class ControlDB:
     def _execute_cleanup(conn, plan):
         if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise ControlError("cleanup requires foreign-key checks")
+        # Literal control-table statements keep the write boundary explicit.
+        # A plan can narrow these predicates, never choose a content table.
+        statements = {
+            "oauth_codes": "DELETE FROM oauth_codes WHERE ",
+            "oauth_tokens": "DELETE FROM oauth_tokens WHERE ",
+            "runner_connections": "DELETE FROM runner_connections WHERE ",
+            "oauth_person_grants": "DELETE FROM oauth_person_grants WHERE ",
+            "account_delete_checks": "DELETE FROM account_delete_checks WHERE ",
+            "account_delete_tokens": "DELETE FROM account_delete_tokens WHERE ",
+            "sessions": "DELETE FROM sessions WHERE ",
+            "login_links": "DELETE FROM login_links WHERE ",
+            "oauth_requests": "DELETE FROM oauth_requests WHERE ",
+            "connections": "DELETE FROM connections WHERE ",
+            "memberships": "DELETE FROM memberships WHERE ",
+            "account_plans": "DELETE FROM account_plans WHERE ",
+            "transcription_usage": "DELETE FROM transcription_usage WHERE ",
+            "user_identities": "DELETE FROM user_identities WHERE ",
+            "ingest_cadence": "DELETE FROM ingest_cadence WHERE ",
+            "email_challenges": "DELETE FROM email_challenges WHERE ",
+            "users": "DELETE FROM users WHERE ",
+        }
+        if any(table not in statements for table, _, _ in plan):
+            raise ControlError("unsupported cleanup table")
         for table, where, params in plan:
-            conn.execute(f"DELETE FROM {table} WHERE {where}", params)
+            conn.execute(statements[table] + where, params)
         if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise ControlError("related records remain; use the account-deletion flow")
 
