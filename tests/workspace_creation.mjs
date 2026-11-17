@@ -3,19 +3,20 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('../commonplace/web/static/invites.js', import.meta.url), 'utf8');
 const { openWorkspaces } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+const nameRules = JSON.parse(process.env.WORKSPACE_NAME_RULES || 'null');
 const e = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 
 async function fixture({ refusal = false, uncertain = false, switchRefusal = false, useDefaultReload = false, deck = false, workspaces = [{ id: 'old', name: 'Current workspace', role: 'owner', current: true }] } = {}) {
-  const calls = [], listeners = {}, error = { textContent: '' }, input = { value: '', focus() {} };
+  const calls = [], listeners = {}, error = { textContent: '' }, nameError = { textContent: '' }, continueButton = { disabled: true }, input = { value: '', focus() {} };
   const dialog = {
     innerHTML: '', setAttribute() {}, addEventListener: (kind, fn) => listeners[kind] = fn,
-    querySelector: selector => selector.includes('name') ? input : selector.includes('error') ? error : { textContent: '' },
+    querySelector: selector => selector.includes('name-error') ? nameError : selector.includes('button[type=') ? continueButton : selector.includes('name') ? input : selector.includes('error') ? error : { textContent: '' },
     querySelectorAll: () => [], showModal() {}, close() { this.closed = true; }, remove() {},
   };
   let reloads = 0, attempts = 0, switches = 0;
   const api = async (path, options) => {
     calls.push({ path, ...options });
-    if (!options) return { workspaces, csrf: "session-bound-csrf" };
+    if (!options) return { workspaces, csrf: "session-bound-csrf", name_rules: nameRules };
     if (path.endsWith('/switch')) {
       if (switchRefusal && ++switches === 1) throw Object.assign(new Error('Switch temporarily unavailable.'), { status: 503 });
       return {};
@@ -30,7 +31,8 @@ async function fixture({ refusal = false, uncertain = false, switchRefusal = fal
     input.value = name;
     return listeners.submit({ preventDefault() {}, target: { closest: () => ({ elements: { name: input } }) } });
   };
-  return { dialog, calls, error, click, submit, reloads: () => reloads };
+  const type = name => { input.value = name; listeners.input({ target: { closest: () => ({ elements: { name: input } }) } }); };
+  return { dialog, calls, error, nameError, continueButton, type, click, submit, reloads: () => reloads };
 }
 
 test('switcher confirms, creates once, shows result, then switches', async () => {
@@ -52,11 +54,11 @@ test('switcher confirms, creates once, shows result, then switches', async () =>
 });
 
 test('cancel confirmation creates nothing and escapes names', async () => {
-  const f = await fixture();
-  await f.click('[data-workspace-create]');
-  await f.submit('<script>');
+  const f = await fixture({ workspaces: [{ id: 'old', name: '<script>', role: 'owner', current: true }] });
   assert.ok(!f.dialog.innerHTML.includes('<script>'));
   assert.match(f.dialog.innerHTML, /&lt;script>/);
+  await f.click('[data-workspace-create]');
+  await f.submit('Research');
   await f.click('[data-workspace-cancel]');
   assert.match(f.dialog.innerHTML, /Switch workspace/);
   assert.equal(f.calls.length, 1);
@@ -175,4 +177,31 @@ for (const reason of [
       assert.equal(f.calls.filter(c => c.path.endsWith('/switch')).length, 0);
     }
   });
+}
+
+for (const deck of [true, false]) {
+  for (const name of ['bad/..<script>x</script>', 'bad<script>', 'bad\\name', 'bad..name', 'bad\u0000name', 'bad\nname', 'bad@name', 'UX-TEST (leave)', '[Research]', 'Research [2026]', '_leading', 'trailing_']) {
+    test(`${deck ? 'Deck' : 'Classic'} blocks an invalid name inline: ${JSON.stringify(name)}`, async () => {
+      const f = await fixture({ deck });
+      await f.click('[data-workspace-create]');
+      f.type(name);
+      await f.submit(name);
+      assert.doesNotMatch(f.dialog.innerHTML, /data-workspace-confirm/);
+      assert.ok(f.nameError.textContent.includes('Use 1–128'), f.nameError.textContent);
+      assert.ok(f.nameError.textContent.includes('underscores (_)'), f.nameError.textContent);
+      assert.equal(f.continueButton.disabled, true);
+      assert.equal(f.calls.length, 1);
+    });
+  }
+  for (const name of ['UX-TEST leave', 'My team', "Anna's space", 'Café 日本語', 'A'.repeat(128)]) {
+    test(`${deck ? 'Deck' : 'Classic'} accepts a valid workspace name: ${name}`, async () => {
+      const f = await fixture({ deck });
+      await f.click('[data-workspace-create]');
+      f.type(name);
+      assert.equal(f.nameError.textContent, '');
+      assert.equal(f.continueButton.disabled, false);
+      await f.submit(name);
+      assert.match(f.dialog.innerHTML, /data-workspace-confirm/);
+    });
+  }
 }

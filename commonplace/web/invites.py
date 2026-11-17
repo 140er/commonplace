@@ -244,8 +244,10 @@ def _workspaces(gateway, h):
         send_json(h, 403, {"error": "Sign in to see your workspaces"})
         return
     if h.command == "GET":
+        from mempalace.config import name_validation_rules
+
         rows = invites.memberships(db, principal.user_id, principal.workspace_id)
-        body = {"workspaces": rows}
+        body = {"workspaces": rows, "name_rules": name_validation_rules()}
         session = sessions.cookie_value(h.headers.get("Cookie"))
         if principal.auth == "session" and session and not h.headers.get("Authorization"):
             body["csrf"] = sessions.workspace_csrf(session)
