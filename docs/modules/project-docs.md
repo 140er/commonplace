@@ -1,6 +1,6 @@
 ## project-docs
 
-- **Paths:** `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
+- **Paths:** `.claude/`, `AGENTS.md`, `CHANGELOG.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `HUB-DESIGN.md`, `INSPIRATION-REPOS.md`, `LICENSE`, `MISSION.md`, `PRODUCT-DESIGN.md`, `README.md`, `REPORT.md`, `REVIEW.md`, `ROADMAP.md`, `SECURITY.md`, `openarena-claim.txt`, `design/`, `docs/`
 - **Owns:**
 
   - `docs/compute/execution-contract.md` documents default-denied script self-approval, task-required scope storage, durable denial and outcome auditing and held-handle sealed execution snapshots.
@@ -12,6 +12,8 @@
   - The coworker contract specifies local-only board-less model turns and actor-based message authorship, including human rows addressed by `bot_id`.
 
   - The batch merge rule in `CLAUDE.md` (`AGENTS.md` links to it): affected tests and the repo-wide guard files per PR, no full test suite anywhere (owner decision, 13 Nov), a smoke set for a release, breaks fixed when found. A release PR into `main` follows the same rule (affected tests plus the fresh-user release journey, never a full suite).
+
+  - The verification rule in `CLAUDE.md` (`AGENTS.md` links to it), the verify skill `.claude/skills/verify/SKILL.md` and the merge-gate review guide `REVIEW.md`: a PR runs the verify skill on a throwaway data directory and port and shows its evidence, a failing check gets at most three fix rounds, and a PR never edits the checks or rules that judge it.
 
   - The self-improvement rule in `CLAUDE.md` (`AGENTS.md` links to it): agents note lessons with the outcome that taught them, propose small instruction edits when a lesson repeats (never a silent rewrite or self-merge), and file suggestion cards (problem, proposal, benefit, cost) that go to the coordinator and the owner, with no work before the owner's yes.
 
