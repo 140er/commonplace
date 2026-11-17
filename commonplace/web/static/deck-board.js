@@ -1,4 +1,5 @@
 // Deck Board presentation. Card mutations, drag/drop and drawer lifecycle stay in the shell.
+import { snoozedLine } from './card-controls.js';
 import { segHTML } from './seg.js';
 import { escape as e, actor } from './api.js';
 import { inNeedsQueue, needsMeCount, currentNeeds, hideReferences } from './needs-me.js';
@@ -38,7 +39,7 @@ export const boardGroup = (card, me, needs) => needsOwner(card, me, needs) ? 'to
 const columns = [['todo', 'Needs you', 'waiting'], ['doing', 'Active', 'busy'], ['review', 'In review', 'idle'], ['done', 'Shipped', 'live']];
 function cardHTML(card, options, first) {
   const selected = options.selected === card.number, name = botName(card, options);
-  return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(cardTitle(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(cardTitle(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span></div></article>`;
+  return `<article class="card${needsOwner(card, options.me) ? ' is-you' : ''}${selected ? ' is-selected' : ''}" data-card="${e(card.number)}" data-key="${e(card.number)}" draggable="true" tabindex="${first || selected ? 0 : -1}" aria-label="${e(cardTitle(card.title))}"${selected ? ' aria-current="true"' : ''}><div class="card-top"></div><h3><a href="#/card/${e(card.number)}" tabindex="-1">${e(cardTitle(card.title))}</a></h3><div class="card-meta">${avatar(name)}<span class="deck-board-bot">${e(name)}</span><span aria-hidden="true">·</span><span data-card-state>${e(stateWord(card, options.me))}</span></div>${snoozedLine(card)}</article>`;
 }
 // Just after Add card: say which column holds the new card and the state the server gave it (the Deck has no
 // Todo column), read from the card itself so a queue that has not caught up cannot name another place; else the usual intro.

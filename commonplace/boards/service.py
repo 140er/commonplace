@@ -372,6 +372,8 @@ def needs_me(
     reviewing=False,
 ) -> dict:
     """Decision queue: asks, done_review, backlog_from_agents, ready_to_merge, stale, count."""
+    from commonplace.snooze import store as snooze
+
     owner_queue = True
     try:
         _owner(principal, trusted_read=True)
@@ -401,7 +403,10 @@ def needs_me(
         rows = conn.execute(
             "SELECT t.*,b.slug AS board,b.wing AS board_wing,b.coordinator AS board_coordinator "
             "FROM tasks t JOIN boards b ON b.id=t.board_id "
-            "WHERE t.status!='done' ORDER BY t.created_at,t.id"
+            "WHERE t.status!='done' AND NOT "
+            + snooze.snoozed_sql("t")
+            + " ORDER BY t.created_at,t.id",
+            (snooze.now_stamp(),),
         ).fetchall()
         for row in rows:
             if not principal.policy.can_read_wing(row["board_wing"]):

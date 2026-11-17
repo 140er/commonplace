@@ -1,0 +1,4 @@
+- **Owns:** Secret-free readiness projection in `commonplace/projects/readiness.py`, attached to project reads.
+- **Promises:** Model, key, runner, agent connection, machine approval and optional notification states remain independent; member reads include the same states without credentials or identifiers.
+- **How it fails:** Missing or unused connections and revoked or disabled machines require setup; unapproved bindings and missing project start permission remain Needs you. A registered runner is checked again at start.
+- **Tests:** `tests/test_ready_to_start_states.py` checks fixture state transitions and real owner/member project responses.

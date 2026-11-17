@@ -15,6 +15,7 @@ from commonplace.projects import (
     models,
     orchestration,
     panel_routes,
+    readiness,
     seats,
     wing,
 )
@@ -83,6 +84,7 @@ def _view(gateway, principal, board):
                 for m in registry.machines(gateway.db, principal.workspace_id)
                 if m["enabled"] and not m["revoked_at"]
             ]
+    result["readiness"] = readiness.snapshot(gateway, principal, board["slug"], main=result["main"])
     return result
 
 
