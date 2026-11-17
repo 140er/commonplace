@@ -19,6 +19,10 @@ assert.match(details.assignmentPickup({...card, awaiting_release:true}), /After.
 const deckOwner = {deck:true, canRemove:true};
 const ownerHTML = details.renderDetails(card, deckOwner);
 assert.match(ownerHTML, /data-action="remove-assignment"/);
+const withoutEditing = ownerHTML.replace(/<details class="deck-card-controls"[\s\S]*?<\/details>/g, '');
+assert.match(withoutEditing, /data-action="remove-assignment"/, 'Removal is reachable without opening Edit card');
+assert.equal((ownerHTML.match(/data-action="remove-assignment"/g)||[]).length, 1);
+assert.match(details.deckAssignmentForm(card), /This card goes back to the pool/);
 assert.doesNotMatch(ownerHTML, /Anyone eligible|Anyone who can work/);
 const memberHTML = details.renderDetails(card, {deck:true, canRemove:false});
 assert.doesNotMatch(memberHTML, /data-action="remove-assignment"/);
@@ -32,6 +36,7 @@ const slice = (start, end) => {
 let focused = false;
 const panel = {innerHTML:'', hidden:false, querySelector:()=>({focus(){focused=true;}})};
 const errors = [], requests = [];
+const settle = () => new Promise(resolve=>setImmediate(resolve));
 const state = {pending:new Set(), card};
 const context = {
   conflictText,
@@ -54,18 +59,18 @@ const form = {querySelector:()=>null, dataset:{form:'remove-assignment',card:'1'
 runInNewContext(slice('async function mutate(', 'async function approveProposal('), context);
 runInNewContext(slice('root.addEventListener("submit",', 'let drag = null;'), context);
 const submit = ()=>context.submit({target:{closest:()=>form}, preventDefault(){}});
-await submit();
+await submit(); await settle();
 assert.equal(requests.length, 1);
 assert.equal(requests[0].path, '/api/cards/1/handoff');
 assert.equal(requests[0].method, 'POST');
 assert.deepEqual(JSON.parse(JSON.stringify(requests[0].body)), {to:'anyone',note:'No longer assigned',version:7});
 form.values.note = ' ';
-await submit();
+await submit(); await settle();
 assert.equal(requests.length, 1, 'A blank reason must not send a request');
 form.values.note = 'Keep the exact reason';
 for (const [status, message] of [[409,'Card changed.'],[403,'Card is reserved for another connection.'],[403,'This card came from a restricted connection and has not been released.']]) {
   context.api = async()=>{throw Object.assign(new Error(message),{status});};
-  await submit();
+  await submit(); await settle();
   assert.equal(errors.at(-1),message, 'Show the server reason verbatim');
 }
 console.log('Removal button, form, request, blank reason and refusal messages pass');
@@ -99,7 +104,7 @@ const known = [
 ];
 for (const [status,payload,expected] of known) {
   context.api = async()=>{throw Object.assign(new Error(payload.error || 'card changed'),{status,payload});};
-  await submit();
+  await submit(); await settle();
   assert.ok(panel.innerHTML.includes(expected), panel.innerHTML);
   assert.match(panel.innerHTML, /Assignment not removed/);
   assert.match(panel.innerHTML, />Close<\/button>/);

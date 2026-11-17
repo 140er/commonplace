@@ -68,3 +68,7 @@
   :root[data-ui="deck"] .capy-settings .appearance-slider input[type="range"] { min-height: 44px; }
   :root[data-ui="deck"] .capy-sharing-switch { min-height: 44px; }
 }
+
+:root[data-ui="deck"] .capy-settings .settings-advanced > summary { cursor: pointer; color: var(--ink); font-size: 15px; font-weight: 600; line-height: 22px; }
+:root[data-ui="deck"] .capy-settings .settings-advanced > p { margin-top: 8px; }
+:root[data-ui="deck"] .capy-settings .settings-advanced > .settings-section { padding: 0; border: 0; margin-top: 16px; background: transparent; }

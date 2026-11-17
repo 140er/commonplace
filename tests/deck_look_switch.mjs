@@ -58,10 +58,10 @@ test("the Settings page template ends with Sign out and carries no Look markup o
   assert.doesNotMatch(view, /id="look"|data-deck-action/, "the switch is added by deck.js at the top");
 });
 
-test("in the Deck layout Look is the first section, ahead of every other one", () => {
+test("in Deck, navigation and notifications lead with Look before advanced settings", () => {
   const ids = ["phone-push", "deck-connections", "deck-tools", "plan", "tool-policy", "deck-settings-nav", "look", "deck-bot-sharing", "deck-second-review", "sign-out"];
   const ordered = capy.settingsOrder(ids.map((id) => ({ id })));
-  assert.equal(ordered[0].id, "look");
+  assert.deepEqual(ordered.slice(0,3).map(item=>item.id), ["deck-settings-nav", "phone-push", "look"]);
   assert.equal(ordered.length, ids.length);
 });
 

@@ -55,11 +55,11 @@ test('segmented click uses the existing save route, preserves identity and ignor
   assert.deepEqual(calls[1],['/api/tool-policy',{method:'POST',body:{actions:{memory_save:'off'}}}]);
 });
 
-test('layout keeps every old section, places the four primary sections first and stacks Appearance last', () => {
+test('layout puts common settings before advanced permissions without losing sections', () => {
   const old=['phone-push','deck-connections','deck-tools','plan','voice','chat','agent-schedules','tool-policy','webhooks','sign-out','look'];
-  const sections=[...old,'deck-bot-sharing','deck-second-review'].map(id=>({id}));
+  const sections=[...old,'deck-settings-nav','deck-bot-sharing','deck-second-review'].map(id=>({id}));
   const ordered=settingsOrder(sections);
-  assert.deepEqual(ordered.slice(0,5).map(n=>n.id),['look','deck-bot-sharing','tool-policy','deck-second-review','deck-connections']);
+  assert.deepEqual(ordered.slice(0,5).map(n=>n.id),['deck-settings-nav','phone-push','look','deck-connections','deck-tools']);
   assert.deepEqual(new Set(ordered),new Set(sections));
   assert.equal(ordered.length,sections.length);
   assert.equal(settingsLayout(1440),'columns'); assert.equal(settingsLayout(390),'stack');
@@ -85,7 +85,7 @@ test('the arrangement moves all legacy setting nodes intact, including newly add
       if(selector==='h2') return this.heading;
       if(selector==='[data-capy-sharing]') return {textContent:''};
       const id=selector.match(/^#([^ ]+)/)?.[1], node=this.children.find(item=>item.id===id);
-      return selector.endsWith(' h2') ? node?.heading : node || null;
+      return selector.endsWith(' h2') ? node?.heading : node || this.children.map(child=>child.querySelector(selector)).find(Boolean) || null;
     }
     setAttribute() {}
   }
@@ -98,10 +98,14 @@ test('the arrangement moves all legacy setting nodes intact, including newly add
   for(const id of ['deck-connections','tool-policy','phone-push','deck-tools','look','deck-settings-nav',...entries]) main.append(new Node(id));
   const before=[...main.children];
   arrangeCapySettings(box);
-  for(const entry of before) assert.ok(main.children.includes(entry),entry.id);
+  for(const entry of before) assert.ok(main.children.includes(entry) || main.querySelector(`#${entry.id}`) === entry,entry.id);
   assert.equal(new Set(main.children).size,main.children.length,'each section is reachable once');
+  const advanced=main.querySelector('#deck-settings-advanced');
+  assert.ok(advanced, 'permissions are collapsed under Advanced');
+  assert.equal(advanced.open, undefined, 'Advanced starts closed');
+  assert.ok(advanced.children.includes(before.find(node=>node.id==='tool-policy')));
   const first=main.children.slice(0,5).map(node=>node.id);
-  assert.deepEqual(first,['look','deck-bot-sharing','tool-policy','deck-second-review','deck-connections']);
+  assert.deepEqual(first,['deck-settings-nav','phone-push','look','deck-connections','deck-tools']);
   arrangeCapySettings(box);
   assert.deepEqual(main.children.slice(0,5).map(node=>node.id),first,'late refresh is idempotent');
 });

@@ -71,6 +71,15 @@ Tests must never be the bottleneck. Agents keep building while checks run; nobod
 - At most 12 concurrent Claude agents/turns on the shared host across all orchestrators and their delegated children. Queue the rest; start no new child above the cap.
 - No raw pytest on the shared host: run tests only through the project's test runners so the slot cap holds; full batches prefer a dedicated runner.
 
+## Verification before a PR
+
+- Run the verify skill (`.claude/skills/verify/SKILL.md`) before opening a PR and put its evidence in the PR body.
+- Run the cheap checks (affected tests, lint) before every push.
+- A failing check gets at most 3 fix rounds. Then stop and ask the maintainer for a decision, with what failed, where, and the evidence.
+- Never retry a flaky test or sleep around it. Find the root cause, or delete the test and explain why in the commit.
+- A PR never modifies the checks or rules that judge it. The merge gate reads `REVIEW.md` and its config from the base branch, never from the PR head.
+- Review focus for this repo: see `REVIEW.md`.
+
 ## Self-improvement and suggestions
 
 **Lessons.** After a task, a failure, or feedback from the owner, write the lesson down in one line: what happened, what to do differently, and the outcome that taught it (PR, commit, check result, or dated message). Keep it in your handoff or task notes, not in chat. When the same lesson shows up a second time, propose a small edit to the instruction file it belongs to (this file, a skill, or a prompt) as a PR or a staged diff next to the original. Never rewrite instructions silently and never edit a live instruction file directly. Keep each edit to a few lines, cite the outcomes that taught it, and do not merge your own instruction PR: it needs the owner's go.
