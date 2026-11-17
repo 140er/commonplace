@@ -154,9 +154,11 @@ if (which === 'details-button') {
     injected: async (host, options) => mounted.push(options) });
   run(slice('function resumeNeedsAfterPanel(', "// The no-answer error's restart link"));
   run(slice('root.addEventListener("click",', 'root.addEventListener("submit",').replaceAll('await import("./projects.js")', '({mountProject: injected, settingsOptions})'));
-  const click = (dataset) => handlers.click({ target: { closest: (s) => s.includes('.chat-recovery') ? null : { dataset } } });
+  let prevented = 0;
+  const click = (dataset) => handlers.click({ preventDefault() { prevented++; }, target: { closest: (s) => s.includes('.chat-recovery') ? null : { dataset } } });
   await click({ action: 'coordinator', board: 'alpha' });
   assert.equal(paused, true);
+  assert.equal(prevented, 1, 'settings links prevent navigation before the async import');
   assert.equal(mounted.length, 1); assert.equal(typeof mounted[0].onBack, 'function');
   assert.equal(mounted[0].focus, undefined, 'the coordinator button opens settings without a focus target');
   // "Set the model" on a Needs me row opens that board's settings on that role's picker.

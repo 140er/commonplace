@@ -1,0 +1,4 @@
+- **Owns:** `docs/design/coworker-setup-next-step-evidence.md` records the setup dead ends and captured replacement strings at both screen widths.
+- **Promises:** The before source is identified, each action is described, and synthetic browser evidence is distinguished from external model availability.
+- **How it fails:** Capture filenames are references to external evidence, not an assertion that images are stored in the repository or that a hosted provider was tested.
+- **Tests:** `test_coworker_setup_next_step.py`, `test_coworker_setup_browser.py` and `test_coworker_browser.py`.
