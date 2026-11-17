@@ -85,7 +85,7 @@ def create_workspace(db, user_id, *, name, request_id):
 
     from . import plans, ratelimit
     from .admission import GATE
-    from .social.accounts import signup_enabled
+    from .social.accounts import allowed_signup_emails, signup_enabled
 
     name = sanitize_name(name, "Workspace name")
     if not isinstance(request_id, str) or len(request_id) != 36:
@@ -96,7 +96,8 @@ def create_workspace(db, user_id, *, name, request_id):
         raise ValueError("Use a valid workspace request id.") from None
     # Nonblocking admission avoids waiting for a backup while holding the DB lock.
     with GATE.creating(timeout=0), db._lock, db._tx() as conn:
-        if not db.user(user_id)["is_person"]:
+        user = db.user(user_id)
+        if not user["is_person"]:
             raise WorkspaceCreationError(403, "Only a person can create a workspace.")
         previous = conn.execute(
             "SELECT w.id, w.name, w.slug FROM workspace_creations c "
@@ -113,7 +114,13 @@ def create_workspace(db, user_id, *, name, request_id):
                 "slug": previous["slug"],
                 "role": "owner",
             }, False
-        if not signup_enabled():
+        if signup_enabled():
+            creation_rule = "signup open"
+        elif user["is_admin"] == 1:  # Same stored flag as instance_admin.stored_flag.
+            creation_rule = "instance admin"
+        elif user["email"].strip().casefold() in allowed_signup_emails():
+            creation_rule = "allowlist"
+        else:
             raise WorkspaceCreationError(403, "This instance is closed to new workspaces.")
         cap = _creation_setting("COMMONPLACE_WORKSPACE_LIMIT", 5)
         if plans.owned_workspace_count(db, user_id) >= cap:
@@ -157,7 +164,12 @@ def create_workspace(db, user_id, *, name, request_id):
         directory_created = False
         try:
             workspace = db.create_workspace(
-                name, user_id, personal=True, initial_space_pending=True, conn=conn
+                name,
+                user_id,
+                personal=True,
+                initial_space_pending=True,
+                audit_reason=creation_rule,
+                conn=conn,
             )
             plans.assign_signup_plan(db, user_id, workspace, via="workspace", conn=conn)
             from .workspace_store import workspace_root
