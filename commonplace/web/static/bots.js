@@ -6,6 +6,7 @@ import { elapsed, safeLink } from "./api.js";
 import { sendMessage } from "./botstream.js";
 import { permissionText, settingsFrameHTML, sharingHTML, threadsHTML, threadPreviewHTML } from "./bot-sharing.js";
 import { capyRosterHTML, overviewBots } from "./deck-coworkers.js";
+import { botCreateFields, validateBotName } from "./bot-create.js";
 import { setupText } from "./bot-setup.js";
 import { scrollFades, sharePermission } from "./deck-coworker-sharing.js";
 
@@ -332,12 +333,10 @@ export function sheetHTML(sheet, bot, e) {
   if (sheet.kind === "project") return projectHTML(sheet, bot, e);
   if (sheet.kind === "learned") return learnedSheetHTML(sheet, bot, e);
   if (sheet.kind === "new") {
-    return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><form class="sheet-body" data-bots-form="create"><h2 id="sheet-h">New bot</h2>
-      <label>Name<input name="name" maxlength="60" required autocomplete="off" data-focus></label>
-      <label>Job<input name="job" maxlength="200" autocomplete="off" placeholder="What it helps with"></label>
-      <label>How to work<textarea name="instructions" maxlength="4000" rows="4" placeholder="Optional: tone, habits, things to avoid"></textarea></label>
+    return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><form class="sheet-body" data-bots-form="create"><h2 id="sheet-h">Create bot</h2>
+      ${botCreateFields(sheet.values || {}, e, {personal: true})}
       ${sheet.error ? `<p class="bots-notice" role="alert">${e(sheet.error)}</p>` : ""}
-      <div class="sheet-btns"><button type="submit" class="bb-opt go"${sheet.busy ? " disabled" : ""}>Create</button><button type="button" class="bb-opt" data-bots-action="close">Cancel</button></div></form></div>`;
+      <div class="sheet-btns"><button type="submit" class="bb-opt go"${sheet.busy ? " disabled" : ""}>Create bot</button><button type="button" class="bb-opt" data-bots-action="close">Cancel</button></div></form></div>`;
   }
   const memories = sheet.memories;
   return `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-h"><div class="sheet-body"><h2 id="sheet-h">${e(bot.name)}</h2>
@@ -1008,6 +1007,9 @@ export function createBots({
   async function create(form) {
     const sheet = s.sheet;
     if (!sheet || sheet.busy) return;
+    sheet.values = Object.fromEntries(["name", "job", "instructions"].map(key => [key, form.elements[key].value]));
+    const error = validateBotName(form);
+    if (error) { sheet.error = error; paintSheet(); return; }
     const body = { name: form.elements.name.value.trim() };
     for (const key of ["job", "instructions"]) { const value = form.elements[key].value.trim(); if (value) body[key] = value; }
     if (!body.name) return;
@@ -1129,6 +1131,8 @@ export function createBots({
     void submit(form);
   }
   function onInput(event) {
+    const createForm = event.target.closest?.('[data-bots-form="create"]');
+    if (createForm && event.target.name === "name") validateBotName(createForm);
     const box = event.target;
     if (deck() && s.sheet?.kind === "sharing") {
       if (box?.name === "person-search") {

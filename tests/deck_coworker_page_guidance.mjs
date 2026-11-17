@@ -130,7 +130,7 @@ test('mounted: a running job is shown on the page with its card link', async () 
   h.ui.stop();
 });
 test('mounted: a missing chat model is explained on the page for owners and members', async () => {
-  for (const [can, text, link] of [[true, /Chat answers/, /Open settings/], [false, /Ask the workspace owner/, null]]) {
+  for (const [can, text, link] of [[true, /Needs a model.*Chat answers/, /Project settings/], [false, /Ask the workspace owner/, null]]) {
     const h = page(path => path === '/api/bots' ? { bots: [{ id: 'bot', name: 'Atlas' }], model: { ready: false, code: 'needs_configuration' }, can_configure: can } : path === '/api/coworkers' ? { bots: [], conversations: [conversation] } : path.endsWith('/room') ? { conversation } : { models: {} });
     await settle();
     const setup = /class="cb-setup" role="status">([^]*?)<\/p>/.exec(h.body.innerHTML)?.[1] || '';

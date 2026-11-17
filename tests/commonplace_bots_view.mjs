@@ -600,7 +600,7 @@ test("new bot sheet posts name, job and instructions, then opens the bot", async
   h.state.extra["POST /api/bots"] = async (body) => { h.state.bots = [...h.state.bots, botRow("n1", body.name)]; return { bot: botRow("n1", body.name) }; };
   await h.controller.show(null);
   h.controller.click(el({ botsAction: "new" }));
-  assert.match(h.d.regions.sheet.innerHTML, /New bot[^]*How to work/);
+  assert.match(h.d.regions.sheet.innerHTML, /Create bot[^]*How to work/);
   await h.controller.submit(form({ botsForm: "create" }, { name: " Notes ", job: "Keep notes", instructions: "" }));
   assert.deepEqual(h.calls.find((c) => c.method === "POST" && c.path === "/api/bots").body, { name: "Notes", job: "Keep notes" });
   assert.deepEqual(h.gone, ["#/bots/n1"]);
@@ -611,7 +611,7 @@ test("the Today creation entry opens the same sheet and ignores a stopped screen
   const h = harness({ bots: [] });
   await h.controller.show(null);
   await h.controller.newBot();
-  assert.match(h.d.regions.sheet.innerHTML, /New bot[^]*How to work/);
+  assert.match(h.d.regions.sheet.innerHTML, /Create bot[^]*How to work/);
   h.controller.stop();
   const before = h.d.regions.sheet.innerHTML;
   await h.controller.newBot();
@@ -885,4 +885,17 @@ test("the review sheet shows the server's sentence when the list cannot be read"
   h.controller.click(el({ botsAction: "learned-sheet" }));
   await settle();
   assert.match(h.d.regions.sheet.innerHTML, /Request failed \(500\)/);
+});
+
+test("create bot rejects invalid names before a request and preserves the draft", async () => {
+  const h = harness();
+  await h.controller.show(null);
+  await h.controller.newBot();
+  await h.controller.submit(form({botsForm: "create"}, {name: "Bad/Name", job: "Keep notes", instructions: "Exact draft"}));
+  assert.equal(h.calls.filter(c => c.method === "POST" && c.path === "/api/bots").length, 0);
+  assert.match(h.d.regions.sheet.innerHTML, /value="Bad\/Name"/);
+  assert.match(h.d.regions.sheet.innerHTML, /value="Keep notes"/);
+  assert.match(h.d.regions.sheet.innerHTML, /Exact draft/);
+  assert.match(h.d.regions.sheet.innerHTML, /starting with a letter or number/);
+  h.controller.stop();
 });

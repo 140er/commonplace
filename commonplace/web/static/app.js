@@ -1739,6 +1739,7 @@ root.addEventListener("click", async (event) => {
       voice.stop();
       const saved = remember(); state.spaceTab = b.dataset.tab; spaceView(); restore(saved);
     } else if (action === "coordinator" || action === "project-models") {
+      event.preventDefault?.();
       const epoch = state.screen, projects = await import("./projects.js");
       if (epoch !== state.screen) return;
       return openProjectSettings(action, b, projects);

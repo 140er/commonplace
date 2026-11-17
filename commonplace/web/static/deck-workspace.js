@@ -94,7 +94,7 @@ export function mount(context) {
         return `<div>${page.bot ? '' : `<a class="dw-parent" href="${coworkerLink(bot.id)}">${e(bot.name)} › Coworkers</a>`}${coworkerRow({ bot, board, project: project.value, checkpoint: checkpoint.value, failed: project.status === 'rejected' || checkpoint.status === 'rejected' })}</div>`;
       }));
       if (stopped || mine !== epoch) return;
-      region('content').innerHTML = rows.length ? `<div class="dw-workers">${rows.join('')}</div>` : `<p class="dw-empty">${page.bot && !parent ? 'This Bot is unavailable.' : 'No project Coworker is recorded here yet.'}</p>`;
+      region('content').innerHTML = rows.length ? `<div class="dw-workers">${rows.join('')}</div>` : `<p class="dw-empty">${page.bot && !parent ? 'This Bot is unavailable.' : 'No bots on this project yet. <a href="#/bots/-/coworkers/conversations">Add a bot</a>'}</p>`;
     } catch {
       if (!stopped && mine === epoch) region('content').innerHTML = '<p role="alert">Coworkers could not be loaded. Reopen this page to try again.</p>';
     }
