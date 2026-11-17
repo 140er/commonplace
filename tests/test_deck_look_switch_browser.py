@@ -53,7 +53,10 @@ def test_look_is_at_the_top_and_switches_both_ways_on_the_same_screen(browser, w
         assert look.is_visible()
         top = look.bounding_box()["y"]
         assert top < (844 if width == 390 else 800) / 2, "Look is on the first screen of Settings"
-        for later in ["#phone-push", '[data-form="agent"]', '.settings .opt[data-action="logout"]']:
+        for later in (["#phone-push"] if start == "classic" else []) + [
+            '[data-form="agent"]',
+            '.settings .opt[data-action="logout"]',
+        ]:
             assert top < page.locator(later).bounding_box()["y"], later
         assert page.get_by_role("group", name="Look").get_by_role("button").all_inner_texts() == [
             "Deck",
@@ -66,7 +69,9 @@ def test_look_is_at_the_top_and_switches_both_ways_on_the_same_screen(browser, w
             page.locator(f'{LOOK}[data-look="{look_name}"]').click()
             settle(page, look_name)
             assert len(reads) == 1, "one redraw per switch"
-            assert page.locator("#look").bounding_box()["y"] < top + 200, "still at the top"
+            assert page.locator("#look").bounding_box()["y"] < (844 if width == 390 else 800) / 2, (
+                "Look stays on the first screen"
+            )
         page.locator(f'{LOOK}[data-look="{other}"]').click()
         page.wait_for_timeout(300)
         assert len(reads) == 1, "choosing the look already shown does nothing"

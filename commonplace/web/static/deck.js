@@ -128,6 +128,8 @@ export function createDeck({ root, api, context, title, screen = () => 0, reload
     const jump = event.target?.closest?.('[data-deck-setting]');
     if (jump && deckOn(storage)) {
       const target = root.querySelector(`#${jump.dataset.deckSetting}`);
+      const advanced = target?.closest?.('#deck-settings-advanced');
+      if (advanced) advanced.open = true;
       const scroller = target?.closest?.('.settings');
       if (scroller) {
         const nav = scroller.querySelector('#deck-settings-nav');

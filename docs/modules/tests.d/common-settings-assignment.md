@@ -1,0 +1,4 @@
+- **Owns:** Common Settings and reservation-removal regression witnesses at desktop and phone widths.
+- **Promises:** Harness assertions fail on the pinned base and pass after the common-first order, Advanced disclosure and directly visible removal are applied.
+- **How it fails:** Missing or reordered sections, lost form state, hidden removal, changed handoff payloads and unauthorized reservation removal fail focused checks.
+- **Tests:** `tests/deck_settings_capy.mjs`, `tests/remove_assignment.mjs`, `tests/test_settings_assignment_browser.py`, `tests/test_remove_assignment.py`, `tests/test_deck_settings_browser.py`, `tests/test_deck_settings_capy_browser.py`, `tests/deck_board.mjs`, `tests/deck_look_switch.mjs`, `tests/test_deck_look_switch.py`, `tests/test_deck_look_switch_browser.py`.

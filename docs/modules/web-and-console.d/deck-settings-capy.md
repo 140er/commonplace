@@ -1,6 +1,6 @@
 - **Owns:**
 
-  - Deck Settings places Bot sharing, What bots may do without asking, Second review and Connected apps in the main column, with the existing Appearance controller in a sticky right column. Below 1100px the columns stack and Appearance comes last. Notifications, workspace navigation, plan, voice, chat, schedules, webhooks, sign out and the classic-look switch remain in the same page with their original forms and handlers.
+  - Deck Settings places Notifications, Look, Connected apps and workspace navigation first in the main column, with the action-policy catalog collapsed under Advanced, with the existing Appearance controller in a sticky right column. Below 1100px the columns stack and Appearance comes last. Notifications, workspace navigation, plan, voice, chat, schedules, webhooks, sign out and the classic-look switch remain in the same page with their original forms and handlers.
 
 - **Promises:**
 
@@ -13,6 +13,8 @@
   - Bot sharing reads and writes the existing workspace sharing route and honors its owner flag. Private defaults, access logs and owner-only grants are fixed guarantees grouped under Always on; the real sharing switch remains separate. Second review opens the existing project settings; there is no new workspace-wide review switch. All visible values and project names come from the hub.
 
   - Members retain sign out, navigation, personal Appearance, notifications, webhooks and their own bot grants. Only workspace policy, management, voice, schedules and connection management controls are disabled; existing controllers and server authority still decide access. Common Settings installs one scroll listener per scrolling box, even when late renders replace its children.
+
+- **How it fails:** Existing loading and save errors stay with their controllers; unavailable notification setup explains the workspace owner action needed.
 
 - **Tests:**
 

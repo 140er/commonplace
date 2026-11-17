@@ -43,7 +43,7 @@ MUTATIONS = (
         "    leave();\n    reload();\n  }\n  const toggle",
         "    leave();\n    reload();\n    reload();\n  }\n  const toggle",
     ),
-    ("deck-settings-capy.js", "['look', 'deck-bot-sharing',", "['deck-bot-sharing',"),
+    ("deck-settings-capy.js", "'phone-push', 'look',", "'phone-push',"),
     ("deck-dither.js", "limit > 0 ? Math.min(size, Math.ceil(limit * dpr)) : size", "size"),
     (
         "agents.js",

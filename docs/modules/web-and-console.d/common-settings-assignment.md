@@ -1,0 +1,4 @@
+- **Owns:** Common Settings order and collapsed Advanced; directly reachable reservation removal in Deck.
+- **Promises:** Existing settings forms, permission identities, required removal reasons and versioned handoff authority remain intact.
+- **How it fails:** Advanced opens from its shortcut; ownership, origin and concurrent-start refusals keep the existing explanations.
+- **Tests:** `tests/test_deck_settings_capy.py`, `tests/test_remove_assignment_ui.py`, `tests/test_settings_assignment_browser.py`, existing Settings and removal browser checks.
