@@ -26,11 +26,11 @@ test('empty DM prerequisite opens the same bot editor',async()=>{
 });
 test('both create forms use the same name rule and wording',async()=>{
   const f=conversationPage();await settle();f.click('new-bot');
-  for(const html of [f.host.innerHTML,sheetHTML({kind:'new'},{},e)]) {
+  for(const [html,limit] of [[f.host.innerHTML,80],[sheetHTML({kind:'new'},{},e),60]]) {
     assert.match(html,/data-bot-create-fields/);
-    assert.match(html,/maxlength="60"/);
+    assert.ok(html.includes(`data-name-limit="${limit}"`));
     assert.match(html,/How to work/);
-    assert.match(html,/starting with a letter or number/);
+    assert.match(html,/Spaces and non-English letters are welcome/);
     assert.match(html,/>Create bot</);
   }
   f.ui.stop();
@@ -56,8 +56,8 @@ test('configuration and failed jobs explain the reason and link the fix',()=>{
 
 test('shared name validation rejects invalid names and preserves human display names', async()=>{
   const {botNameError} = await import('../commonplace/web/static/bot-create.js');
-  for(const name of ['', '   ', ':lead', 'Bad/Name', '!!!', 'a'.repeat(61)]) assert.match(botNameError(name), /letters/);
-  for(const name of [' Research Helper ', 'Helper_2', 'Local:helper@work']) assert.equal(botNameError(name), '');
+  for(const name of ['', '   ', 'a'.repeat(81)]) assert.match(botNameError(name), /characters/);
+  for(const name of [' Research Helper ', 'Helper_2', 'Local:helper@work', 'Zoë 李', ':lead', 'Bad/Name', '!!!', '😀'.repeat(80)]) assert.equal(botNameError(name), '');
 });
 test('members get an honest owner prerequisite without an unusable create action',async()=>{
   const f=conversationPage(false);await settle();f.click('new-conversation');

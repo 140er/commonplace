@@ -138,3 +138,20 @@ test('mounted: a missing chat model is explained on the page for owners and memb
     h.ui.stop();
   }
 });
+
+for (const canConfigure of [true, false]) {
+  test(`mounted: unknown model code keeps setup guidance for ${canConfigure ? 'owner' : 'member'}`, async () => {
+    const code = 'future_model_status';
+    const h = page(path => path === '/api/bots'
+      ? { bots: [{ id: 'bot', name: 'Helper' }], model: { ready: false, code }, can_configure: canConfigure }
+      : path === '/api/coworkers' ? { bots: [], conversations: [conversation] }
+      : path.endsWith('/room') ? { conversation } : { models: {} });
+    try {
+      await settle();
+      const banner = /class="cb-setup" role="status">([^]*?)<\/p>/.exec(h.body.innerHTML)?.[1] || '';
+      assert.ok(banner.includes(e(setupText(code, canConfigure))), 'Unknown codes retain the existing escaped setup text');
+      if (canConfigure) assert.match(banner, /<a href="#\/settings">Open settings<\/a>/);
+      else assert.doesNotMatch(banner, /<a /);
+    } finally { h.ui.stop(); }
+  });
+}

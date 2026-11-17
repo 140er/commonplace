@@ -9,8 +9,8 @@ outside version control, following the usability audit's evidence convention.
 | --- | --- | --- | --- |
 | 1280 | Empty DM | Create a bot before starting a DM. | Create a bot before starting a DM. **Create bot** opens the shared editor. |
 | 390 | Empty DM | Create a bot before starting a DM. | Create a bot before starting a DM. **Create bot** opens the shared editor. |
-| 1280 | Create forms | Conversation: Create a bot / Instructions / Create bot. Personal: New bot / How to work / Create. | Both: Create bot / Name / How to work / Create bot; identical visible name rules. |
-| 390 | Create forms | Conversation: Create a bot / Instructions / Create bot. Personal: New bot / How to work / Create. | Both: Create bot / Name / How to work / Create bot; identical visible name rules. |
+| 1280 | Create forms | Conversation: Create a bot / Instructions / Create bot. Personal: New bot / How to work / Create. | Both: Create bot / Name / How to work / Create bot; shared name wording; the existing server limit is 60 for personal bots and 80 for conversation bots, with Unicode accepted. |
+| 390 | Create forms | Conversation: Create a bot / Instructions / Create bot. Personal: New bot / How to work / Create. | Both: Create bot / Name / How to work / Create bot; shared name wording; the existing server limit is 60 for personal bots and 80 for conversation bots, with Unicode accepted. |
 | 1280 | Empty roster | No Coworkers recorded yet. | No bots on this project yet. **Add a bot** links to the creation directory. |
 | 390 | Empty roster | No Coworkers recorded yet. | No bots on this project yet. **Add a bot** links to the creation directory. |
 | 1280 | Missing model | Needs configuration / needs_configuration | Needs a model: choose one in **Project settings**, under Chat answers. Then send your message again. |
@@ -32,3 +32,10 @@ Browser checks create a conversation bot through the prerequisite action and the
 open a DM with that bot selected. The existing durable gateway browser case
 independently creates a bot and two DMs, receives synthetic model replies, reloads
 persisted messages and verifies conversation isolation and cancellation.
+
+The setup-banner regression for an unknown model code was reproduced for an owner
+before the fallback fix; the member case remained passing. Both now preserve the
+existing setup text, and the owner also retains the settings link. Thirty contract
+cases compare the client validator with both real stores, including non-ASCII
+letters, spaces, punctuation, emoji boundaries and invalid UTF-8 text. The client
+no longer applies connection-identifier rules to human display names.

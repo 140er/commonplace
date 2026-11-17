@@ -1008,7 +1008,7 @@ export function createBots({
     const sheet = s.sheet;
     if (!sheet || sheet.busy) return;
     sheet.values = Object.fromEntries(["name", "job", "instructions"].map(key => [key, form.elements[key].value]));
-    const error = validateBotName(form);
+    const error = validateBotName(form, {personal: true});
     if (error) { sheet.error = error; paintSheet(); return; }
     const body = { name: form.elements.name.value.trim() };
     for (const key of ["job", "instructions"]) { const value = form.elements[key].value.trim(); if (value) body[key] = value; }
@@ -1132,7 +1132,7 @@ export function createBots({
   }
   function onInput(event) {
     const createForm = event.target.closest?.('[data-bots-form="create"]');
-    if (createForm && event.target.name === "name") validateBotName(createForm);
+    if (createForm && event.target.name === "name") validateBotName(createForm, {personal: true});
     const box = event.target;
     if (deck() && s.sheet?.kind === "sharing") {
       if (box?.name === "person-search") {

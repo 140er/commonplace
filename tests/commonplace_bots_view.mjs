@@ -891,11 +891,11 @@ test("create bot rejects invalid names before a request and preserves the draft"
   const h = harness();
   await h.controller.show(null);
   await h.controller.newBot();
-  await h.controller.submit(form({botsForm: "create"}, {name: "Bad/Name", job: "Keep notes", instructions: "Exact draft"}));
+  await h.controller.submit(form({botsForm: "create"}, {name: " ", job: "Keep notes", instructions: "Exact draft"}));
   assert.equal(h.calls.filter(c => c.method === "POST" && c.path === "/api/bots").length, 0);
-  assert.match(h.d.regions.sheet.innerHTML, /value="Bad\/Name"/);
+  assert.match(h.d.regions.sheet.innerHTML, /value=" "/);
   assert.match(h.d.regions.sheet.innerHTML, /value="Keep notes"/);
   assert.match(h.d.regions.sheet.innerHTML, /Exact draft/);
-  assert.match(h.d.regions.sheet.innerHTML, /starting with a letter or number/);
+  assert.match(h.d.regions.sheet.innerHTML, /Use 1–60 characters/);
   h.controller.stop();
 });

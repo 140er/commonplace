@@ -84,19 +84,25 @@ def test_coworker_setup_next_actions(tmp_path, width):
             capture("conversation-create")
             if not baseline:
                 name = page.get_by_label("Name", exact=True)
-                name.fill("Bad/Name")
-                assert "letters" in name.evaluate("input=>input.validationMessage")
-                name.fill("Research Helper")
+                name.fill(" ")
+                assert "characters" in name.evaluate("input=>input.validationMessage")
+                name.fill("😀" * 80)
+                assert name.evaluate("input=>input.validationMessage") == ""
+                name.fill("😀" * 81)
+                assert "characters" in name.evaluate("input=>input.validationMessage")
+                name.fill("Zoë 李")
                 page.get_by_label("How to work").fill("Keep exact words")
                 page.locator('[data-cw-form="bot"] button.primary').click()
-                page.get_by_text("Research Helper", exact=True).wait_for()
+                page.get_by_text("Zoë 李", exact=True).wait_for()
                 page.locator('[data-cw-action="start-dm"]').click()
                 assert page.locator('[name="bot_ids"]:checked').count() == 1
             page.evaluate("personal()")
             capture("personal-create")
             if not baseline:
                 assert page.get_by_role("heading", name="Create bot").is_visible()
-                assert page.get_by_label("Name", exact=True).get_attribute("maxlength") == "60"
+                assert (
+                    page.get_by_label("Name", exact=True).get_attribute("data-name-limit") == "60"
+                )
             page.evaluate("empty()")
             page.wait_for_selector(".cb-empty")
             capture("project-roster")
