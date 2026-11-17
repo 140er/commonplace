@@ -161,8 +161,24 @@ def cmd_plan_show(args) -> int:
 
 
 def cmd_workspace_add(args) -> int:
-    print(_db(args).create_workspace(args.name, args.owner))
-    return 0
+    from types import SimpleNamespace
+
+    from .social.accounts import initialize_workspace
+    from .workers import WorkerSupervisor
+
+    db = _db(args)
+    try:
+        owner = db.user(args.owner)["id"]
+        wid = db.create_workspace(args.name, owner, initial_space_pending=True)
+        supervisor = WorkerSupervisor(str(_data_dir(args)))
+        gateway = SimpleNamespace(
+            db=db, supervisor=supervisor, workspace_dir=lambda ws: str(supervisor.workspace_dir(ws))
+        )
+        initialize_workspace(gateway, owner, wid)
+        print(wid)
+        return 0
+    finally:
+        db.close()
 
 
 def _meetings(command, args) -> int:
