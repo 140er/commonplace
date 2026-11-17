@@ -502,7 +502,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
     }
   }
   function change(event) {
-    if (event.target.name === "note-wing") { note.state.wing = event.target.value; note.state.room = "general"; draw(); return; }
+    if (event.target.name === "note-wing") { void note.chooseWing(event.target.value); return; }
     if (event.target.name === "note-room") { note.state.room = event.target.value; return; }
     if (event.target.matches?.("[data-map-project]")) { void showMap(event.target.value); return; }
     const form = event.target.closest("[data-memory-search]");
