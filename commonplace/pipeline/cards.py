@@ -9,9 +9,14 @@ A card stores the repository of its board when the PR was linked, which can be a
 of the repository the events carry (a renamed repository). So a card is chosen like this,
 among the cards the reader may see that have this PR number:
 
-1. a card whose PR repository is the event's repository or one of its aliases;
-2. else, if exactly one such card exists, that card;
-3. else the first card on a board whose repository is the event's repository or an alias.
+1. a unique card whose normalized PR repository is the event's repository or an alias;
+2. else a unique card missing its PR repository, on a board whose normalized repository
+   is the event's repository or an alias.
+
+A populated, different PR repository rules a card out, even if its board matches.
+Ambiguous matches and cards with no repository information are left unlinked. PR numbers
+alone never establish repository identity; renamed repositories need an explicit alias
+or a migration of the card's stored PR repository.
 
 Aliases come from ``COMMONPLACE_REPO_ALIASES``, ``old/name=new/name`` pairs separated by
 commas, read both ways. Nothing is matched across workspaces: a reader only sees its own
@@ -50,22 +55,22 @@ def aliases(repo: str) -> set:
 
 def _boards_of(conn, board_id) -> set:
     return {
-        row["repo"]
+        _normal(row["repo"])
         for row in conn.execute("SELECT repo FROM board_repos WHERE board_id=?", (board_id,))
     }
 
 
 def _pick(conn, candidates, family):
     """The card for one PR among visible candidates, or ``None`` (see the module note)."""
-    for row in candidates:
-        if row["pr_repo"] in family:
-            return row
-    if len(candidates) == 1:
-        return candidates[0]
-    for row in candidates:
-        if _boards_of(conn, row["board_id"]) & family:
-            return row
-    return None
+    matches = [row for row in candidates if _normal(row["pr_repo"]) in family]
+    if matches:
+        return matches[0] if len(matches) == 1 else None
+    matches = [
+        row
+        for row in candidates
+        if not row["pr_repo"] and _boards_of(conn, row["board_id"]) & family
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def cards_for(gateway, principal, keys) -> dict:
