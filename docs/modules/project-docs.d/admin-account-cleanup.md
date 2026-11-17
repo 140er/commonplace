@@ -1,0 +1,4 @@
+- **Owns:** The decision record for the supported administrative account-cleanup boundary.
+- **Promises:** `docs/system/admin-account-cleanup.md` states what can be removed, what must use the account-deletion flow, why disposable accounts need a stored marker and which audit fields are appended.
+- **How it fails:** Help flags, audit action names and eligibility markers drifting from the decision record fail the documentation reference checks.
+- **Tests:** `tests/test_docs_reference_compat.py::test_admin_cleanup_contract_names_are_deliberate` and the focused cleanup CLI help regression.
