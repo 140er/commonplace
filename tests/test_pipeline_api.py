@@ -453,8 +453,9 @@ def test_the_card_step_runs_from_the_claim_to_the_pr_opening(world, http, monkey
     with monkeypatch.context() as clock:
         clock.setattr("commonplace.boards.store.now", lambda: when(2100))
         service.task_update(number, status="doing")
-    # The PR opened four minutes after the card was claimed.
-    post(http, body(event("o", "pr_opened", "pass", 2040), event("g", "gate", "pass", 2100)))
+    # The PR opened about a minute after the card was claimed. Events stay inside the five
+    # minutes the server accepts ahead of its clock, whatever the setup took.
+    post(http, body(event("o", "pr_opened", "pass", 1860), event("g", "gate", "pass", 1920)))
     _, one, _ = http("GET", f"/api/pipeline/prs/{REPO}/7")
     box = step(one, "card")
     assert (box["state"], box["ref"], box["detail"]) == ("pass", f"#/card/{number}", None)

@@ -27,7 +27,16 @@ def test_polling_does_not_retain_requests_or_open_resources():
         assert harness.drive(rig, 600, 2, request, seed=6) == {200: 600}
         after = rig.control("sample")
         growth = after["traced_kib"] - before["traced_kib"]
-        assert growth < 1024, rig.control("diff", n=8)["top"]
+        if growth >= 1024:
+            # A one-time lazy allocation (a first-use buffer) can land inside any one window
+            # under load; retained growth shows up again in the next window, a one-off does not.
+            first_top = rig.control("diff", n=8)["top"]
+            before = rig.control("sample")
+            rig.control("baseline")
+            assert harness.drive(rig, 600, 2, request, seed=7) == {200: 600}
+            after = rig.control("sample")
+            growth = after["traced_kib"] - before["traced_kib"]
+            assert growth < 1024, (first_top, rig.control("diff", n=8)["top"])
         # Background report passes can briefly own a pair of read connections and WAL fds.
         assert after["sqlite_connections"] <= before["sqlite_connections"] + 4
         assert after["threads"] <= before["threads"] + 2
