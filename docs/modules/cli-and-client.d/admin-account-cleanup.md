@@ -1,0 +1,4 @@
+- **Owns:** `commonplace member remove`, `commonplace user delete` and the `user add --disposable` marker.
+- **Promises:** Cleanup requires explicit `--by`, defaults to dry-run and executes only with `--yes`; the existing data lock and an immediate backup-fence check protect the operation, and deletion checks the matching pause signal.
+- **How it fails:** Refusals print a plain reason; user-deletion eligibility and dependency refusals point to the account-deletion flow without enabling it or weakening its rules.
+- **Tests:** `tests/test_admin_account_cleanup.py` pins help flags, dry-run counts, admin identity, backup and pause refusal, deletion and repeated commands.
