@@ -1,0 +1,4 @@
+- **Owns:** The existing Bots API blocker-status assertion exercised while checking Coworker setup regressions.
+- **Promises:** The assertion matches the unchanged Waiting for wording returned for a blocked card.
+- **How it fails:** A mismatch was reproduced on plain develop before correcting the test; no blocker-state implementation or wire value changed.
+- **Tests:** `test_bots_api.py::test_work_status_review_blocked_and_needs_you`, alongside the existing Bots API checks.
