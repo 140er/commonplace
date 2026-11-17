@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from mempalace import fact_provenance
+from mempalace.config import sanitize_content
 from mempalace.deadline import BUSY_INDEXING
 from mempalace.knowledge_graph import source_range
 from mempalace.paths import KNOWLEDGE_GRAPH_FILENAME
@@ -26,6 +27,13 @@ from .policy import canonical_wing, is_private_wing
 from .rules.enforce import RulesRefresh, rest_write
 
 logger = logging.getLogger(__name__)
+MAX_NOTE_LENGTH = 100_000
+
+
+class NoteInputError(ToolError):
+    """A correctable note field, distinct from an authorization refusal."""
+
+
 _AMSTERDAM = ZoneInfo("Europe/Amsterdam")
 _APP_URL = (
     os.environ.get("COMMONPLACE_APP_URL")
@@ -84,8 +92,8 @@ def _memory(ctx, name, args):
         raise
     except ToolError as exc:
         if str(exc) in ("No palace found", "Chroma database missing"):
-            if name == "mempalace_list_wings":
-                return {"wings": {}}
+            if name in ("mempalace_list_wings", "mempalace_get_taxonomy"):
+                return {"wings" if name == "mempalace_list_wings" else "taxonomy": {}}
             if name == "mempalace_search":
                 return {"results": []}
             if name in ("mempalace_get_drawer", "mempalace_get_drawers"):
@@ -304,7 +312,17 @@ def _link(ctx, memory_id, task, store):
 
 
 def _save(ctx, args):
-    text = _string(args, "text")
+    text = args.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise NoteInputError("Write a note first.")
+    if len(text) > MAX_NOTE_LENGTH:
+        raise NoteInputError("Use up to 100,000 characters.")
+    try:
+        unchanged = sanitize_content(text)
+    except ValueError:
+        raise NoteInputError("Remove invalid characters from the note.") from None
+    if unchanged != text:
+        raise NoteInputError("Remove invalid characters from the note.")
     topic = _string(args, "topic", "general")
     task = _task(args) if args.get("task") is not None else None
     source = _source(args)
@@ -344,11 +362,11 @@ def _save(ctx, args):
                 f"saved {memory_id}, not linked: {str(exc).removeprefix('no: ')}"
                 + (f"\n{notice}" if notice else "")
             ) from None
-    return memory_id, task, notice
+    return memory_id, task, notice, canonical_wing(saved_wing), result.get("room") or topic
 
 
 def memory_save(ctx, args):
-    memory_id, task, notice = _save(ctx, args)
+    memory_id, task, notice, _, _ = _save(ctx, args)
     result = f"saved {memory_id}" + (f" linked to #{task}" if task is not None else "")
     return result + (f"\n{notice}" if notice else "")
 
@@ -766,6 +784,46 @@ def note_rooms(principal):
     return [{"wing": AGENT_NOTES_WING, "name": "Agent notes"}]
 
 
+def note_composer(ctx):
+    """Destination hints only; the existing save path authorizes every write again."""
+    policy = ctx.principal.policy
+    if policy.refusal("memory_save") or policy.refusal("mempalace_add_drawer"):
+        return None
+    default = canonical_wing(policy.write_wing or "shared")
+    taxonomy = (
+        _memory(ctx, "mempalace_get_taxonomy", {}).get("taxonomy", {})
+        if _available(ctx, "mempalace_get_taxonomy")
+        else {}
+    )
+    rooms = {canonical_wing(wing): list(values) for wing, values in taxonomy.items()}
+    store = _boards(ctx)
+    if store is not None:
+        with store.connection() as conn:
+            for row in conn.execute("SELECT wing FROM boards WHERE archived=0"):
+                rooms.setdefault(canonical_wing(row["wing"]), [])
+    rooms.setdefault(default, [])
+    wings = [
+        {
+            "wing": wing,
+            "name": "Workspace notes" if wing == "shared" else wing,
+            "rooms": sorted(set(["general", *values])),
+        }
+        for wing, values in sorted(rooms.items())
+        if policy.can_read_wing(wing)
+        and policy.can_write_wing(wing)
+        and (not policy.write_wing or wing == default)
+    ]
+    if not wings:
+        return None
+    return {
+        "default_wing": default
+        if any(row["wing"] == default for row in wings)
+        else wings[0]["wing"],
+        "max_length": MAX_NOTE_LENGTH,
+        "wings": wings,
+    }
+
+
 def install(gateway):
     def handle(h):
         principal = require_principal(gateway, h)
@@ -779,8 +837,17 @@ def install(gateway):
                     raise ToolError("no: memory write refused")
                 body = read_json(h)
                 with rest_write(ctx, h, "memory_save", body):
-                    memory_id, _, notice = _save(ctx, body)
-                send_json(h, 201, {"id": memory_id, **({"notice": notice} if notice else {})})
+                    memory_id, _, notice, theme, topic = _save(ctx, body)
+                send_json(
+                    h,
+                    201,
+                    {
+                        "id": memory_id,
+                        "theme": theme,
+                        "topic": topic,
+                        **({"notice": notice} if notice else {}),
+                    },
+                )
             elif h.command == "GET" and parts == ["search"]:
                 if principal.policy.refusal("memory_search"):
                     raise ToolError("no: memory search refused")
@@ -795,7 +862,18 @@ def install(gateway):
                 if not principal.policy.refusal("memory_search"):
                     # The Memory page asks for its rooms before it searches.
                     gateway.warm_memory(principal.workspace_id)
-                send_json(h, 200, {"rooms": rooms})
+                send_json(
+                    h,
+                    200,
+                    {
+                        "rooms": rooms,
+                        **(
+                            {"composer": note_composer(ctx)}
+                            if query(h).get("compose") == "1"
+                            else {}
+                        ),
+                    },
+                )
             elif h.command == "GET" and parts == ["map"]:
                 params = query(h)
                 send_json(h, 200, memory_map(ctx, params.get("limit"), params.get("theme")))
@@ -828,6 +906,8 @@ def install(gateway):
                     **({"code": "storage_full"} if exc.reason == "storage" else {}),
                 },
             )
+        except NoteInputError as exc:
+            send_json(h, 400, {"error": str(exc)})
         except ToolError as exc:
             status = 404 if str(exc) == "no: memory not found" else 403
             send_json(h, status, {"error": str(exc)})

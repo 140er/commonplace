@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
+import { createNote, renderNote } from '../commonplace/web/static/memory-note.js';
 const source = await readFile(new URL('../commonplace/web/static/memory.js', import.meta.url), 'utf8');
 const listeners = new Map();
 let notice = { hidden: true };
@@ -10,7 +11,7 @@ const panel = { ...mount };
 let mounted = 0, disposed = 0;
 const paths = [];
 const graph = { nodes: [], links: [], themes: [], weeks: [] };
-const context = { mount, panel, mounted: 0, e: String, actor: String, cardId() {}, isBlocked() {}, URLSearchParams, AbortController, request() {}, globalThis: {},
+const context = { mount, panel, mounted: 0, createNote, renderNote, e: String, actor: String, cardId() {}, isBlocked() {}, URLSearchParams, AbortController, request() {}, globalThis: {},
   mountMap(root, data, open) { assert.equal(root, mount); assert.equal(data, graph); assert.equal(typeof open, 'function'); mounted++; return () => disposed++; },
   queryHistory: () => ({ read: () => '', save() {} }), memoryStyles() {}, createMemoryImport() {}, renderDeckMemory() {}, savedMarkup() {}, rememberRoomCounts() {}, memoryRoom() {}, memoryDetails() {},
   api: async path => { if (path === '/api/memory/rooms') return { rooms: [] }; paths.push(path); return path === "/api/me" ? { can_admin: canAdmin } : graph; }, boards: [{ slug: 'atlas', wing: 'project_atlas' }],
