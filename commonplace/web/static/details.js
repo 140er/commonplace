@@ -31,7 +31,7 @@ export function assignmentPickup(card, deck = false) {
 
 // Deck keeps assignment controls separate from the Classic drawer.
 export function deckAssignmentForm(card) {
-  return `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Remove assignment</h2><p>Remove the assignment from #${card.number} ${e(card.title)}?</p><p>${e(assignmentPickup(card, true))}</p><label>Reason<textarea name="note" aria-describedby="assignment-reason-help" required></textarea></label><p class="set-note" id="assignment-reason-help">Saved in the card's activity.</p><div class="assignment-actions"><button class="btn primary confirm-removal" type="submit" disabled>Remove assignment</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></div></form>`;
+  return `<form class="form-tile assignment-removal" data-form="remove-assignment" data-card="${card.number}"><input type="hidden" name="version" value="${e(card.version)}"><h2>Remove assignment</h2><p>Remove the assignment from #${card.number} ${e(card.title)}?</p><p>This card goes back to the pool. ${e(assignmentPickup(card, true))}</p><label>Reason<textarea name="note" aria-describedby="assignment-reason-help" required></textarea></label><p class="set-note" id="assignment-reason-help">Saved in the card's activity.</p><div class="assignment-actions"><button class="btn primary confirm-removal" type="submit" disabled>Remove assignment</button><button class="btn" type="button" data-action="cancel-form">Cancel</button></div></form>`;
 }
 
 export function assignmentRefusal(error) {
@@ -164,7 +164,10 @@ export function renderDetails(card, { board = { slug: card.board }, me, messages
   return drawerCopy(html
     .replace('class="workbench-details"', () => 'class="workbench-details deck-card-drawer"')
     .replace(/<header class="detail-h">[\s\S]*?<\/header>/, () => header + drawerSummary(card, { board, people, bots, me }))
-    .replace(/<dl class="fields">[\s\S]*?<\/dl>/, (fields) => `<details class="deck-card-controls" data-deck-card-controls><summary>Edit card</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div>${fields}</details>`)
+    .replace(/<dl class="fields">[\s\S]*?<\/dl>/, (fields) => {
+      const removal = fields.match(/<button class="btn" data-action="remove-assignment">Remove assignment<\/button>/)?.[0] || "";
+      return `${removal ? `<div class="acts">${removal}</div>` : ""}<details class="deck-card-controls" data-deck-card-controls><summary>Edit card</summary><div class="acts"><button class="btn" data-action="edit-card">Edit</button><button class="btn" data-action="handoff">Hand off</button></div>${fields.replace(removal, "")}</details>`;
+    })
     .replace('</div><div class="ctx-foot">', () => '</div><div class="ctx-foot">' + drawerActions(card, me))
     .replace(' aria-keyshortcuts="]">Hide</button>', () => ` aria-keyshortcuts="]" aria-label="Close card">${CLOSE_ICON}</button>`)
     .replace('<form class="reply" data-form="comment">', () => '<form class="reply" data-form="comment" id="deck-card-reply" hidden>')

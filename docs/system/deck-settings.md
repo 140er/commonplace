@@ -1,11 +1,13 @@
 ### Common Settings in Deck
 
-Deck Settings has two columns: Bot sharing, What bots may do without asking,
-Second review and Connected apps in the main column, with sticky Appearance at
-the right. On narrow screens the sections stack and Appearance comes last.
-Notifications, Workspace, plan, voice, chat, schedules, webhooks, sign out and the
-classic-look switch remain reachable below the primary sections. The original
-section shortcuts still move focus without discarding form state.
+Deck Settings starts with short destinations for Notifications, Connections,
+Workspace, Action permissions and Appearance. Notifications, Look, Connected apps
+and workspace navigation lead the main column, with sticky Appearance at the
+right. On narrow screens the sections stack. The action-policy catalog is inside
+Advanced, closed by default, with a plain introduction. Its shortcut opens the
+disclosure before scrolling and focusing the existing policy section. Collapsing
+it preserves searches and forms. Bot sharing, Second review, plan, voice, chat,
+schedules, webhooks, sign out and the classic-look switch remain reachable.
 
 Action permissions remain grouped by purpose and searchable by human label,
 purpose or technical name. Allow, Ask and Deny use the existing server values;

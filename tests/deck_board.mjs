@@ -40,7 +40,7 @@ test('drawer shows summary, live Bot, Coworker, Version and truthful progress; c
   for(const action of ['edit-card','handoff','panel-move','remove-assignment']) assert.match(html,new RegExp(`data-action="${action}"`));
   assert.match(html,/data-choice="Approve"/);
   assert.match(html,/data-choice="Hold"/);
-  assert.ok(html.indexOf('>Who<') < html.indexOf('data-action="remove-assignment"'));
+  assert.ok(html.indexOf('data-action="remove-assignment"') < html.indexOf('data-deck-card-controls'), 'Remove assignment is directly reachable before Edit card');
   const missing=renderDetails(base,{...options,bots:[]});
   assert.doesNotMatch(missing,/Review gate|Checks.*Passed|abc1234/,'no invented progress');
 });

@@ -74,8 +74,8 @@ export function scopeHTML(scope) {
 }
 
 export function settingsOrder(sections) {
-  const rank = id => ['look', 'deck-bot-sharing', 'tool-policy', 'deck-second-review', 'deck-connections'].indexOf(id);
-  return [...sections].sort((a, b) => (rank(a.id) < 0 ? 5 : rank(a.id)) - (rank(b.id) < 0 ? 5 : rank(b.id)));
+  const rank = id => ['deck-settings-nav', 'phone-push', 'look', 'deck-connections', 'deck-tools', 'deck-bot-sharing', 'deck-second-review'].indexOf(id);
+  return [...sections].sort((a, b) => (a.id === 'deck-settings-advanced' ? 100 : rank(a.id) < 0 ? 7 : rank(a.id)) - (b.id === 'deck-settings-advanced' ? 100 : rank(b.id) < 0 ? 7 : rank(b.id)));
 }
 export const settingsLayout = width => width >= 1100 ? 'columns' : 'stack';
 
@@ -99,9 +99,11 @@ export function arrangeCapySettings(box, { api, context = () => ({}) } = {}) {
   const subtitle = box.querySelector('.capy-settings-subtitle') || doc.createElement('p');
   subtitle.className = 'capy-settings-subtitle'; subtitle.textContent = settingsSubtitle(me);
   box.prepend?.(subtitle);
-  // The old shortcuts still reach Notifications, Connections and Workspace, below the main sections.
+  // Common destinations stay first; the long permissions catalog is opt-in.
   const nav = main.querySelector('#deck-settings-nav');
-  if (nav) nav.setAttribute('aria-label', 'More settings sections');
+  if (nav) nav.setAttribute('aria-label', 'Settings sections');
+  if (appearance) appearance.id = 'deck-appearance';
+  if (nav && !nav.querySelector('[data-deck-setting="deck-appearance"]')) nav.insertAdjacentHTML?.('beforeend', '<button type="button" data-deck-setting="deck-appearance">Appearance</button>');
   const policy = main.querySelector('#tool-policy h2');
   if (policy) policy.textContent = 'What bots may do without asking';
   const connections = main.querySelector('#deck-connections h2');
@@ -119,6 +121,17 @@ export function arrangeCapySettings(box, { api, context = () => ({}) } = {}) {
     const boards = context()?.boards || [];
     review.innerHTML = `<h2>Second review</h2><p>Review settings belong to each project. Open a project’s settings to manage its reviewers and review changes.</p>${boards.length ? boards.map(board => `<button class="btn" type="button" data-action="coordinator" data-board="${e(board.slug)}">${e(board.name || board.slug)} review settings</button>`).join('') : '<p>No projects configured.</p>'}`;
     main.append(review);
+  }
+  const policySection = main.querySelector('#tool-policy');
+  if (policySection) {
+    let advanced = main.querySelector('#deck-settings-advanced');
+    if (!advanced) {
+      advanced = doc.createElement('details');
+      advanced.className = 'settings-section settings-advanced'; advanced.id = 'deck-settings-advanced';
+      advanced.innerHTML = '<summary>Advanced</summary><p>Choose what bots may do without asking.</p>';
+      main.append(advanced);
+    }
+    advanced.append(policySection);
   }
   settingsOrder([...main.children]).forEach(section => main.append(section));
   if (me.role && !owner) main.querySelectorAll?.('input, select, textarea, button').forEach(control => {
