@@ -1,6 +1,6 @@
 ## memory-and-search
 
-- **Paths:** `commonplace/memory_tools.py`, `commonplace/memory_places.py`, `commonplace/search_index_api.py`, `commonplace/store_embed.py`, `commonplace/store_switch.py`, `commonplace/workspace_store.py`, `commonplace/capture.py`, `commonplace/capture_client.py`, `commonplace/agent_log.py`
+- **Paths:** `commonplace/memory_tools.py`, `commonplace/memory_places.py`, `commonplace/memory_organise.py`, `commonplace/search_index_api.py`, `commonplace/store_embed.py`, `commonplace/store_switch.py`, `commonplace/workspace_store.py`, `commonplace/capture.py`, `commonplace/capture_client.py`, `commonplace/agent_log.py`
 - **Owns:**
 
   - Memory tools and routes under the caller's policy, search index progress, workspace store generations and cutovers, and opt-in chat capture.

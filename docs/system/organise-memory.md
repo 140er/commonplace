@@ -1,0 +1,5 @@
+### Organising memory: facts, stored sources and links
+
+Decision: the graph, the stored sources and diary, and the links between places get one named page ("Organise memory", beside Saved threads on the Deck Memory page) and a thin set of routes under `/api/organise/` instead of a new storage path. Every route runs the worker tool a connection would call, as the same caller, so access rules are the ones that already exist and nothing is widened.
+
+The first slice reads everything and changes only what keeps history. A fact is ended or replaced, never erased: the old fact, its dates and its sources stay readable. A link is added or removed while both places and their texts stay as they are. A stored text is only read, word for word; there is no route that deletes, bulk deletes, deletes by source or rewrites a drawer, and a test fails if one appears. Every change is previewed first with what happens and what stays, and applies only on an explicit confirm bound to that preview; if the stored state moved, it refuses and changes nothing. Deleting or recovering stored text is a separate decision for the project owner and is not part of this slice.
