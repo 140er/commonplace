@@ -242,14 +242,23 @@ export function escalationBody(read) {
   return {rule: {after_failures: after ? Number(after) : null, labels, model}};
 }
 
+// What a role runs on, labelled: the owner's choice, the default (the first model in the list) or nothing usable.
+const SOURCE_WORDS = {project: "chosen for this project", workspace: "chosen for the workspace", default: "default, nothing chosen"};
+export function effectiveWords(project, role) {
+  const item = project.models_effective?.[role];
+  if (!item) return "Not known yet";
+  if (!item.model) return "No usable model: add one to the list below";
+  return `${item.provider}/${item.model} (${SOURCE_WORDS[item.source] || "source not known"})`;
+}
+
 export function modelsHTML(project, e) {
   const disabled = project.can_configure ? "" : "disabled";
   const roles = Object.keys(MODEL_ROLE_LABELS).map((role) => {
     const choice = project.models?.[role];
-    return `<fieldset ${disabled}><legend>${MODEL_ROLE_LABELS[role]}</legend><label>Model<select name="${role}_model" data-model-role="${role}">${modelOptions(project, e, choice, "Runner default")}</select></label>${choice ? `<p class="set-note">Stored: <code data-model-stored="${role}">${e(choice.provider)}/${e(choice.model)}</code></p>` : ""}</fieldset>`;
+    return `<fieldset ${disabled}><legend>${MODEL_ROLE_LABELS[role]}</legend><label>Model<select name="${role}_model" data-model-role="${role}">${modelOptions(project, e, choice, "Default")}</select></label>${choice ? `<p class="set-note">Stored: <code data-model-stored="${role}">${e(choice.provider)}/${e(choice.model)}</code></p>` : ""}<p class="set-note">Runs on: <span data-model-effective="${role}">${e(effectiveWords(project, role))}</span></p></fieldset>`;
   }).join("");
   const add = project.can_configure ? `<form data-project-model-add><h3>Add a model to the list</h3><label>Provider<input name="provider" maxlength="128" autocomplete="off" required></label><label>Model<input name="model" maxlength="120" autocomplete="off" required></label><button class="opt" type="submit">Add to list</button><p role="status" data-project-model-add-status></p></form>` : "";
-  return `<form data-project-models><p>Pick a model from this workspace's list, or leave a role on the runner's default.</p>${roles}${project.can_configure ? '<button class="blockbtn" type="submit">Save models</button>' : ""}<p role="status" data-project-model-status></p></form>${escalationHTML(project, e)}${add}`;
+  return `<form data-project-models><p>Pick a model from this workspace's list, or leave a role on the default: the first model in the list. A role with no model and an empty list cannot start, and Needs me says so.</p>${roles}${project.can_configure ? '<button class="blockbtn" type="submit">Save models</button>' : ""}<p role="status" data-project-model-status></p></form>${escalationHTML(project, e)}${add}`;
 }
 
 // Options the shell passes when a button opens project settings (Needs me, board header).

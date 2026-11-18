@@ -170,14 +170,18 @@ def test_default_model_and_rule_changes_apply_to_the_next_start(world):
     assert world.jobs_for(docs)[-1]["model"] == "example-strong"
 
 
-def test_escalation_never_turns_an_unmapped_role_into_a_start(world):
+def test_escalation_never_turns_a_role_with_no_model_into_a_start(world):
+    """With no choice and an empty list nothing starts, rule or not; the rule's own model then
+    joins the list, so the role has a default and the card escalates as usual (#419)."""
     card = world.card(labels=["security"])
     world.configure()
-    world.set_models(None, role="worker")
-    refused("model_unresolved", world.person_start, card)
-    set_rule(world)
+    world.clear_models()
     refused("model_unresolved", world.person_start, card)
     assert world.jobs_for(card) == []
+    set_rule(world)
+    assert world.person_start(card)[0] == 201
+    [row] = world.jobs_for(card)
+    assert (row["model"], row["model_source"]) == ("example-strong", "escalation")
 
 
 # ------------------------------------------------- escalation model is in the list
@@ -290,12 +294,13 @@ def test_reviewer_and_gate_needs_me_items_are_fixable_through_the_models_route(w
         return BoardService(world.ctx(world.owner)).needs_me().get("model_roles", [])
 
     world.configure(model_role=role)
-    [item] = [i for i in items() if i["role"] == role]
-    assert item["action"]["type"] == "project_models" and item["action"]["role"] == role
+    world.clear_models()
+    [item] = [i for i in items() if role in i["roles"]]
+    assert item["action"]["type"] == "project_models" and role in item["roles"]
     api = ProjectsHub(world.hub)
     choice = {"provider": PROVIDER, "model": MODEL}
     assert api.models(api.owner, BOARD, {role: choice}, declare=True)[0] == 200
-    assert [i for i in items() if i["role"] == role] == []
+    assert items() == []
     assert api.project(api.owner, BOARD)[1]["models"][role] == choice
 
 

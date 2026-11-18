@@ -61,6 +61,12 @@ def _view(gateway, principal, board):
             role: choice.public() if choice is not None else None
             for role, choice in choices.items()
         },
+        "models_effective": {
+            role: effective.public()
+            for role, effective in models.effective_roles(
+                gateway.db, principal.workspace_id, board["slug"]
+            ).items()
+        },
         "model_catalog": [
             choice.public()
             for choice in models.catalog(gateway.db, principal.workspace_id, board["slug"])

@@ -1,0 +1,4 @@
+- **Owns:** The plan's `model_source` and the effective-model lines of the Coworker config render.
+- **Promises:** A start of a role with no model choice runs on the default and records `model_source: default` on the job and in the start reply; `orch_config_render` shows each role's effective model, labelled.
+- **How it fails:** With no choice and no listed model the start is refused as `model_unresolved` naming the role, the board and the fix; a retry of a stored step replays its job whatever its model source was.
+- **Tests:** `tests/test_role_model_default.py`, `tests/test_projects_escalation.py` and `tests/test_orch_runner.py`.
