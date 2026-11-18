@@ -1,3 +1,4 @@
+import { wingLabel } from "./wing-label.js";
 import { api as request, escape as e } from "./api.js";
 
 export const NOTE_MAX_LENGTH = 100000;
@@ -15,7 +16,7 @@ export function renderNote(state = {}) {
   const { choices, loading, saving, saved, text = "", wing, room = "general", error } = state;
   const wings = choices?.wings || [];
   const picked = wings.find(row => row.wing === wing);
-  const label = value => wings.find(row => row.wing === value)?.name || value;
+  const label = value => wingLabel(value, wings.find(row => row.wing === value)?.name);
   // HTML drops the first newline after textarea/pre: supply one so the draft's
   // own leading blank line survives a redraw and stays visible in its preview.
   return `<section class="memory-note" aria-labelledby="memory-note-title" aria-busy="${Boolean(loading || saving)}">
@@ -26,7 +27,7 @@ export function renderNote(state = {}) {
     ${choices ? `<form data-memory-note><fieldset${saving ? " disabled" : ""}>
       <label for="note-text">Note</label><textarea id="note-text" name="note-text" rows="5" aria-describedby="note-limit">\n${exact(text)}</textarea><p id="note-limit">Up to 100,000 characters. Nothing is summarised or rewritten.</p>
       <details class="memory-note-preview"><summary>Preview exact words</summary><pre data-note-preview>\n${exact(text)}</pre></details>
-      <div class="memory-note-destination"><label>Save to<select name="note-wing">${wings.map(row => `<option value="${e(row.wing)}"${row.wing === wing ? " selected" : ""}>${e(row.name)}</option>`).join("")}</select></label><label>Room<select name="note-room">${(picked?.rooms || ["general"]).map(value => `<option value="${e(value)}"${value === room ? " selected" : ""}>${e(value)}</option>`).join("")}</select></label></div>
+      <div class="memory-note-destination"><label>Save to<select name="note-wing">${wings.map(row => `<option value="${e(row.wing)}"${row.wing === wing ? " selected" : ""}>${e(wingLabel(row.wing, row.name))}</option>`).join("")}</select></label><label>Room<select name="note-room">${(picked?.rooms || ["general"]).map(value => `<option value="${e(value)}"${value === room ? " selected" : ""}>${e(value)}</option>`).join("")}</select></label></div>
       <p>${String(wing).startsWith("private") ? "This is private memory. Only people allowed to read this wing can see it." : "People who can read this wing can find this note."}</p>
       <div class="memory-note-actions"><button type="button" class="btn ghost" data-memory-action="note-close">Close</button><button class="btn primary" type="submit">${saving ? "Saving…" : "Save"}</button></div>
     </fieldset></form>` : !loading ? '<button class="btn" data-memory-action="note">Try again</button><button class="btn ghost" data-memory-action="note-close">Close</button>' : ""}</section>`;
@@ -45,7 +46,7 @@ export function createNote({ api = request, draw, alive, boards = () => [], onRe
         const page = await api("/api/memory/rooms?compose=1", { timeoutMs: 10000 });
         if (!alive()) return;
         if (!page.composer) { state.error = "You cannot save notes in this workspace."; return; }
-        state.choices = { ...page.composer, wings: page.composer.wings.map(row => ({ ...row, name: boards().find(board => board.wing === row.wing)?.name || row.name })) };
+        state.choices = { ...page.composer, wings: page.composer.wings.map(row => ({ ...row, name: wingLabel(row.wing, boards().find(board => board.wing === row.wing)?.name || row.name) })) };
         state.wing = state.choices.default_wing;
       } catch { if (alive()) state.error = "The places to save could not be loaded. Try again."; }
       finally { state.loading = false; if (alive()) draw(); }

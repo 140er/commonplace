@@ -1,9 +1,11 @@
 // Memory presentation uses only readable source data; authority stays in memory.js.
 import { escape as e, actor } from "./api.js";
+import { wingLabel } from "./wing-label.js";
 import { artHTML } from "./deck-art.js";
 
 export function roomName(board) {
   if (!board) return "Saved memory";
+  if (board.wing) return wingLabel(board.wing, board.name);
   if (board.name && board.name !== board.slug) return board.name;
   const words = String(board.name || board.slug || "Saved memory").replace(/[-_]+/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);

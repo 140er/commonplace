@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { wingLabel } from '../commonplace/web/static/wing-label.js';
 import { test } from 'node:test';
 import { renderMemory, createMemory, searchMemory } from '../commonplace/web/static/memory.js';
 import { noteProblem, saveNote, renderNote, createNote } from '../commonplace/web/static/memory-note.js';
@@ -205,4 +206,33 @@ test('room discovery starts only on selection, keeps the draft and fences stale 
   const third = note.chooseWing('project'); alive = false;
   pending[2]({ composer: { wings: [{ wing: 'project', rooms: ['general', 'stopped'] }] } }); await third;
   assert.deepEqual(note.state.choices.wings[1].rooms, ['general']);
+});
+
+for (const boardName of ['', 'HALO avatar']) test(`wing labels keep ids and prefer board names: ${boardName || 'unnamed'}`, async () => {
+  const posted = [];
+  const note = createNote({ draw() {}, alive: () => true,
+    boards: () => [{ wing: 'project_blue_eye', name: boardName }],
+    api: async (path, options) => {
+      if (path.includes('compose=1')) return { composer: { default_wing: 'project_blue_eye', wings: [{ wing: 'project_blue_eye', name: 'project_blue_eye', rooms: ['general'] }] } };
+      posted.push(options.body);
+      return { id: 'saved', theme: 'project_blue_eye' };
+    },
+  });
+  await note.open();
+  const html = renderNote(note.state);
+  assert.match(html, new RegExp(`<option value="project_blue_eye" selected>${boardName || 'Blue Eye'}</option>`));
+  note.state.text = 'exact words';
+  await note.save();
+  assert.deepEqual(posted, [{ text: 'exact words', theme: 'project_blue_eye', topic: 'general' }]);
+  assert.match(renderNote(note.state), new RegExp(`Saved to ${boardName || 'Blue Eye'}`));
+});
+
+test('shared fallback labels preserve explicit names and never insert markup', () => {
+  assert.equal(wingLabel('project_blue_EYE'), 'Blue Eye');
+  assert.equal(wingLabel('agent_notes'), 'Agent Notes');
+  assert.equal(wingLabel('shared'), 'Workspace notes');
+  assert.equal(wingLabel('project_blue_eye', '  '), 'Blue Eye');
+  assert.equal(wingLabel('project_blue_eye', 'HALO avatar'), 'HALO avatar');
+  const html = renderNote({ open: true, wing: 'project_blue_eye', choices: { wings: [{ wing: 'project_blue_eye', name: '<Blue & Eye>' }] } });
+  assert.match(html, /&lt;Blue &amp; Eye&gt;<\/option>/);
 });
