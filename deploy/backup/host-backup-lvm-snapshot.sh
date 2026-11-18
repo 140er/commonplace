@@ -182,10 +182,19 @@ settle_devices() {
     ! command -v udevadm >/dev/null 2>&1 || timeout 30 udevadm settle >>"$LOG" 2>&1 || true
 }
 
-# True while this run's own snapshot LV exists (reserved name only).
+# Fails closed: only lvs exit 5 ("volume not found") means the LV is absent. Any other
+# failure (a busy lock, a metadata hiccup) leaves the answer unknown and counts as present.
+lv_present() {
+    local rc=0
+    lvs "$1" >/dev/null 2>&1 || rc=$?
+    (( rc == 5 )) && return 1
+    return 0
+}
+
+# True while this run's own snapshot LV exists (reserved name only), or cannot be ruled out.
 snapshot_present() {
     [[ -n "$SNAP_NAME" && "$SNAP_NAME" == "$SNAP_PREFIX"* && "$SNAP_NAME" != "$ORIGIN_LV" ]] &&
-        lvs "$VG/$SNAP_NAME" >/dev/null 2>&1
+        lv_present "$VG/$SNAP_NAME"
 }
 
 # Log every process whose mount namespace still lists this run's snapshot (a CI sandbox
@@ -265,7 +274,7 @@ cleanup_snap() {
         fi
     fi
 
-    if [[ -n "$SNAP_NAME" ]] && lvs "$VG/$SNAP_NAME" >/dev/null 2>&1; then
+    if [[ -n "$SNAP_NAME" ]] && lv_present "$VG/$SNAP_NAME"; then
         if [[ "$SNAP_NAME" != "$SNAP_PREFIX"* || "$SNAP_NAME" == "$ORIGIN_LV" ]]; then
             log "REFUSING to lvremove unexpected name $SNAP_NAME"
             rc=1

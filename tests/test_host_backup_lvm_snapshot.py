@@ -23,6 +23,7 @@ STUBS = {
         name="${@: -1}"
         case "$name" in */*) ;; *) for f in "$STATE"/lv-*; do [ -e "$f" ] && echo "  ${f##*/lv-}"; done; exit 0;; esac
         name="${name#*/}"
+        [ -z "${LVS_TRANSIENT:-}" ] || { echo "  Cannot process volume group" >&2; exit 3; }
         [ -e "$STATE/lv-$name" ] || exit 5
         case "$*" in *origin*) echo "  $(cat "$STATE/lv-$name")";; esac
     """,
@@ -676,3 +677,38 @@ def test_unrelated_logical_volumes_do_not_block_a_backup(host, name):
     assert result.returncode == 0, result.stderr
     assert host.result().startswith("PASS")
     assert host.lv_exists(name)
+
+
+# ---- a failing lvs is never read as "the snapshot is gone" ----
+
+SNAPSHOT_PRESENT = "init_run; SNAP_NAME=nightlysnap1; if snapshot_present; then echo present=yes; else echo present=no; fi"
+
+
+def test_snapshot_present_is_false_only_when_lvs_says_the_volume_is_absent(host):
+    result = host.run(SNAPSHOT_PRESENT)
+    assert "present=no" in result.stdout, result.stderr
+
+
+def test_snapshot_present_stays_true_while_the_volume_exists(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(SNAPSHOT_PRESENT)
+    assert "present=yes" in result.stdout, result.stderr
+
+
+def test_snapshot_present_fails_closed_when_lvs_errors_for_another_reason(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(SNAPSHOT_PRESENT, LVS_TRANSIENT="1")
+    assert "present=yes" in result.stdout, result.stderr
+
+
+def test_a_transiently_failing_lvs_cannot_hide_a_left_behind_snapshot(host):
+    host.add_lv("nightlysnap1")
+    result = host.run(
+        "init_run; SNAP_NAME=nightlysnap1; MAP=none\nmkdir -p $LOG_DIR; : >> $LOG\nfinish_run PASS; echo rc=$?",
+        LVS_TRANSIENT="1",
+    )
+    assert host.result().startswith("FAIL ALERT"), result.stderr
+    assert host.proof()["snapshot_left"] == 1
+    assert "ALERT" in host.log_text()
+    assert host.calls_for("lvremove") == []  # origin could not be verified: nothing is removed
+    assert host.lv_exists("nightlysnap1")
