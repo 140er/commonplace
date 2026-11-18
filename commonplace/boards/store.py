@@ -249,6 +249,7 @@ def _paths(raw) -> list:
 
 def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
     """The public card shape, deliberately independent of SQLite's schema."""
+    columns = row.keys()
     result = {
         "number": row["id"],
         "parent": row["parent_number"],
@@ -265,7 +266,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         "return_to": row["return_to"],
         "flags": json.loads(row["flags"] or "[]"),
         **{
-            key: row[key] if key in row.keys() else None
+            key: row[key] if key in columns else None
             for key in TASK_COLUMNS
             if key
             not in (
@@ -280,9 +281,9 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
             )
         },
         "ask_blocks": decision_blocks.public(row),
-        "priority": priority_name(row["priority"] if "priority" in row.keys() else None),
+        "priority": priority_name(row["priority"] if "priority" in columns else None),
         "labels": json.loads(row["labels"] or "[]"),
-        "paths": _paths(row["paths"] if "paths" in row.keys() else None),
+        "paths": _paths(row["paths"] if "paths" in columns else None),
         "links": len(BoardStore.links(conn, row["id"], principal)),
         "version": row["version"],
         "created_by": row["created_by"],
@@ -290,7 +291,7 @@ def card(conn, row, principal=None, *, release=None, approver=None) -> dict:
         "updated_at": row["updated_at"],
         "position": row["position"],
         # Filed by a restricted (untrusted) connection; clients gate their own actions on this.
-        "restricted": "restricted_origin" in row.keys() and bool(row["restricted_origin"]),
+        "restricted": "restricted_origin" in columns and bool(row["restricted_origin"]),
     }
     person_owner = bool(principal and principal.person and principal.role == "owner")
     result["can_prioritize"] = person_owner

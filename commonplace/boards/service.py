@@ -317,9 +317,15 @@ def _waiting_on_person(row):
 
 
 def _plan_waiting(row):
+    # Cheap exits first (a card list asks once per card): only an open card with the plan label can be waiting.
+    if row["status"] not in ("todo", "doing"):
+        return False
+    raw = row["labels"] if "labels" in row.keys() else None
+    labels = json.loads(raw or "[]") if isinstance(raw, str) else raw
+    if "plan" not in (labels or ()):
+        return False
     data = dict(row)
-    if isinstance(data.get("labels"), str):
-        data["labels"] = json.loads(data["labels"] or "[]")
+    data["labels"] = labels
     return plan_waiting(data)
 
 
@@ -997,7 +1003,8 @@ class BoardService(lifecycle.LifecycleMixin):
             )
             from commonplace.snooze import store as snooze
 
-            if snoozed := snooze.active(conn, row["id"]):
+            snoozed = snooze.active(conn, row["id"])
+            if snoozed:
                 result["snoozed"] = snoozed
             result.update(lifecycle.card_fields(conn, row, q))
             if self._restricted_origin(row):
@@ -1024,20 +1031,27 @@ class BoardService(lifecycle.LifecycleMixin):
                             (row["id"], row["board_id"]),
                         )
                     ],
-                    waiting=self._waiting(conn, row, usage=usage, runner=runner),
+                    waiting=self._waiting(conn, row, usage=usage, runner=runner, snoozed=snoozed),
                 )
             return result
 
     def _feature_on(self):
         from commonplace.projects import orchestration as orch
 
+        # One settings read per projection (a card list asks once, not once per card); a failed read is not kept.
+        cache = getattr(self, "_projection_cache", None)
+        if cache is not None and "feature" in cache:
+            return cache["feature"]
         try:
-            return orch.enabled(self.ctx.db, self.principal.workspace_id)
+            on = orch.enabled(self.ctx.db, self.principal.workspace_id)
         except orch.SettingsUnavailable:
             # Projection stays usable; admission still raises the captured failure.
             return False
+        if cache is not None:
+            cache["feature"] = on
+        return on
 
-    def _waiting(self, conn, row, usage=None, *, runner=_UNSET):
+    def _waiting(self, conn, row, usage=None, *, runner=_UNSET, snoozed=_UNSET):
         from commonplace.boards import why
         from commonplace.boards.store import active_blockers
         from commonplace.projects import split
@@ -1046,7 +1060,7 @@ class BoardService(lifecycle.LifecycleMixin):
             runner = getattr(self, "_admission_conn", None)
             if runner is None:
                 with split.runner_read(self.ctx.workspace_dir()) as reader:
-                    return self._waiting(conn, row, usage=usage, runner=reader)
+                    return self._waiting(conn, row, usage=usage, runner=reader, snoozed=snoozed)
         usage = usage or self._usage(conn, runner, row)
         stuck = split.stuck(runner, row["id"])
         marked = conn.execute("SELECT 1 FROM card_splits WHERE task_id=?", (row["id"],)).fetchone()
@@ -1064,7 +1078,7 @@ class BoardService(lifecycle.LifecycleMixin):
 
         return why.waiting(
             {**dict(row), "split_stuck": stuck, "release_by": release_by},
-            snoozed=snooze.active(conn, row["id"]),
+            snoozed=snooze.active(conn, row["id"]) if snoozed is _UNSET else snoozed,
             blockers=active_blockers(conn, row["id"]),
             released=released and not stuck,
             usage=usage,

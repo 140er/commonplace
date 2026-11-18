@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_board_cold_read.py`, `tests/test_board_cold_render.py` and the slug-less `#/board` route, orchestration option, server read timing and card-count checks of `tests/cold_bundle_browser.py`.
+- **Promises:** The single-read test fails on the pinned development source (13 setting reads for 12 cards) and passes on the change; the harness records per-request start and end, board markup time, the server card read and payload size for every sample.
+- **How it fails:** The harness check fails when a median reaches 2500 ms, when the board loses a card, or when the thirteenth card is not deferred; it needs Playwright and a built bundle and is not part of the affected-test set.
+- **Tests:** Run the two test files, the board service and card projection suites, the Node wrappers (shell files changed) and the documentation guards.

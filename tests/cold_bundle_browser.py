@@ -34,11 +34,14 @@ async def measure(args):
     with tempfile.TemporaryDirectory(prefix="cold-bundle-") as directory:
         hub = Hub(Path(directory), SimpleNamespace(start=unavailable))
         try:
-            service = BoardService(
-                ToolContext(
-                    sessions.person_principal(hub.db, hub.admin, hub.workspace), hub.gateway
-                )
-            )
+            principal = sessions.person_principal(hub.db, hub.admin, hub.workspace)
+            if args.orchestration:
+                # The large live workspace has Coworker management on, which adds the waiting projection to every card.
+                from commonplace.projects import orchestration
+
+                orchestration.ensure_schema(hub.db)
+                orchestration.set_enabled(hub.db, principal, True)
+            service = BoardService(ToolContext(principal, hub.gateway))
             service.board_add(slug="project", wing="shared")
             for n in range(args.cards):
                 service.task_add(
@@ -65,6 +68,18 @@ async def measure(args):
             assert status == 200
             bot = next(b for b in roster["bots"] if b.get("board") == "project")
             origin = f"http://127.0.0.1:{hub.port}"
+            server = []
+            for _ in range(5):
+                started = time.perf_counter()
+                status, cards = api(hub, cookie, "GET", "/api/boards/project/cards")
+                server.append(
+                    {
+                        "ms": round((time.perf_counter() - started) * 1000, 1),
+                        "json_bytes": len(json.dumps(cards, separators=(",", ":"))),
+                    }
+                )
+                assert status == 200
+            print("server card read:", server, flush=True)
             async with async_playwright() as p:
                 browser = await p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
                 try:
@@ -73,10 +88,15 @@ async def measure(args):
                         (f"#/bots/{bot['id']}", ".ready-to-start"),
                         ("#/memory", ".memory-search"),
                         ("#/card/1", "#card-panel .workbench-details"),
+                        ("#/board", ".workbench-board"),
                         ("#/board/project", ".workbench-board"),
                         ("#/settings", ".settings"),
                     ]:
-                        if args.route and not route.startswith(args.route):
+                        if (
+                            args.route
+                            and route != args.route
+                            and not route.startswith(args.route.rstrip("/") + "/")
+                        ):
                             continue
                         samples = []
                         for _ in range(args.samples):
@@ -109,7 +129,13 @@ async def measure(args):
                                   window.boardRenders = 0;
                                   const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
                                   Object.defineProperty(Element.prototype, 'innerHTML', {...descriptor, set(value) {
-                                    if (this.id === 'content' && String(value).includes('workbench-board')) window.boardRenders++;
+                                    if (this.id === 'content' && String(value).includes('workbench-board')) {
+                                      window.boardRenders++;
+                                      const t0 = performance.now();
+                                      descriptor.set.call(this, value);
+                                      (window.boardPhases ??= []).push({at: t0, set_ms: performance.now() - t0, chars: String(value).length});
+                                      return;
+                                    }
                                     descriptor.set.call(this, value);
                                   }});
                                   window.keySelector = """
@@ -146,16 +172,29 @@ async def measure(args):
                                 )
                                 before = [r["path"] for r in requests if r["at"] <= timing["at"]]
                                 resources = await page.evaluate(
-                                    "() => performance.getEntriesByType('resource').map(r => ({path:new URL(r.name).pathname,ms:r.duration,bytes:r.encodedBodySize}))"
+                                    "() => performance.getEntriesByType('resource').map(r => ({path:new URL(r.name).pathname,start:r.startTime,end:r.responseEnd,ms:r.duration,bytes:r.encodedBodySize,decoded:r.decodedBodySize}))"
                                 )
                                 sample = {
                                     "resources": resources,
+                                    "board_phases": await page.evaluate("window.boardPhases || []"),
                                     "ms": round(timing["ms"], 1),
                                     "requests": len(before),
                                     "paths": before,
                                     "errors": errors.copy(),
                                 }
                                 assert not errors, errors
+                                if route.startswith("#/board"):
+                                    sample["cards"] = await page.evaluate(
+                                        """() => {
+                                      const lists = [...document.querySelectorAll('.workbench-board .cards')]
+                                        .map((list) => [...list.children].filter((c) => c.matches('.card[data-card]')));
+                                      const long = lists.find((list) => list.length > 12) || [];
+                                      const mode = (card) => card ? getComputedStyle(card).contentVisibility : null;
+                                      return {total: new Set([...document.querySelectorAll('.workbench-board [data-card]')].map((c) => c.dataset.card)).size,
+                                        columns: lists.map((list) => list.length), twelfth: mode(long[11]), thirteenth: mode(long[12]),
+                                        long: long.length};
+                                    }"""
+                                    )
                                 if route.startswith("#/board/"):
                                     await page.evaluate(
                                         "window.originalBoardCard = document.querySelector('.workbench-board [data-card]')"
@@ -191,6 +230,7 @@ async def measure(args):
                             "cards": args.cards,
                             "median_ms": round(statistics.median(s["ms"] for s in samples), 1),
                             "median_requests": statistics.median(s["requests"] for s in samples),
+                            "server_card_read": server,
                             "samples": samples,
                         }
                         results.append(result)
@@ -244,6 +284,13 @@ async def measure(args):
         for result in results:
             assert result["median_requests"] < 40, result
             assert result["median_ms"] < 2500, result
+            if result["route"].startswith("#/board"):
+                for sample in result["samples"]:
+                    # Every card stays in the page; only cards past the first screenful skip off-screen work.
+                    assert sample["cards"]["total"] == args.cards, sample
+                    if sample["cards"]["long"] > 12:
+                        assert sample["cards"]["twelfth"] == "visible", sample
+                        assert sample["cards"]["thirteenth"] == "auto", sample
             if result["route"].startswith("#/board/"):
                 for sample in result["samples"]:
                     assert sample["bare_board_hash"] == "#/board/project", sample
@@ -257,6 +304,7 @@ if __name__ == "__main__":
     parser.add_argument("--route")
     parser.add_argument("--cards", type=int, default=1)
     parser.add_argument("--samples", type=int, default=3)
+    parser.add_argument("--orchestration", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--recovery", action="store_true")
     asyncio.run(measure(parser.parse_args()))

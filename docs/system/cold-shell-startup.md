@@ -228,3 +228,63 @@ The small fixture board revisit median is 208 → 30 ms. The original run replac
 The large fixture board revisit median is 2786 → 728 ms. The original run replaced the tree three times; this change renders it once and keeps the same card node across the revisit.
 
 Three unchanged browser-free tests fail on the development source: five API reads before the board paint (budget two), two renders of an unchanged 1000-card board (budget one), and cold `#/board` resolving to `#/start`. All three pass on this change. The Chromium request budget also fails on development (74–80 requests, threshold below 40) and passes here. Production bundle 429, 503 and network failures retain the neutral retry message and recover through manual Retry in all three real-browser cases.
+
+
+Large-board cold start (card #596)
+
+The live owner measurement after card #595 left one route above the 2.5 s target:
+the board on the large live workspace (3.58 s median with the fixture profile,
+2.8 s to 6.4 s across five loads; the other routes 1.65 to 1.69 s). Request counts
+were already fine, so the time was the board data read and the first render.
+Per-phase timings on the 1000-card, 20000-event fixture, now with Coworker
+management on as on the live workspace (`--orchestration`), slug-less `#/board`,
+median of five cold contexts:
+
+| Phase | Before | After |
+| --- | ---: | ---: |
+| Card read request (start to end, fixture profile) | 286 ms | 200 ms |
+| Server card read, unthrottled, 1000 cards | 206 ms | 136 ms |
+| Card payload: wire / decoded | 36 KB / 1.40 MB | 35 KB / 1.40 MB |
+| Markup set to key element (style, layout, paint, two frames) | 665 ms | 253 ms |
+| Key element (`.workbench-board`) | 2542 ms | 2021 ms |
+
+Two costs dominated. First, the browser styled, laid out and painted all 1000 cards
+although a screen shows about eight. Cards after the first twelve of each column now
+carry `content-visibility: auto` with a reserved height, so the browser skips them
+until they near the viewport. Every card is still in the page with its exact words,
+so find in page, focus, keyboard moves and counts are unchanged, and nothing is
+sliced away on slow or unknown data. The rule is CSS in `board.js` and applies to the
+Classic and Deck boards. Second, the server read repeated per-card work: the
+Coworker setting was read once per card, the snooze lookup ran twice per card, and
+the plan-label check copied the whole row for every card. A list now reads the
+setting once per projection (the cache lives only for that call, never between
+calls, and a failed read is not kept), passes the snooze result to the waiting
+reason, and exits early before the row copy. The card shape is unchanged. A cached
+value never authorizes a write: admission and every write read the setting
+themselves.
+
+No new request is made before the key element, and no payload field is trimmed:
+the card list remains the lossless projection described above.
+
+Before and after on the large fixture with `--orchestration`, five cold contexts per
+route, 4x CPU, 100 ms latency, 1.25 MB/s:
+
+| Route | Requests before / after | Median seconds before / after |
+| --- | ---: | ---: |
+| Home | 14 / 14 | 1.59 / 1.59 |
+| Bot | 18 / 18 | 1.70 / 1.72 |
+| Memory | 13 / 13 | 1.60 / 1.61 |
+| Card panel | 15 / 15 | 1.62 / 1.62 |
+| Board, slug-less `#/board` | 14 / 14 | 2.54 / 2.02 |
+| Board, `#/board/project` | 13 / 13 | 2.38 / 1.90 |
+| Settings | 23 / 23 | 1.66 / 1.67 |
+
+All five board samples now fall between 1.96 and 2.03 s (before: 2.40 to 2.65 s).
+The board revisit median is 683 ms before and 144 ms after. Reproduce with
+`python -m tests.cold_bundle_browser --output /tmp/cold-large.json --cards 1000
+--orchestration --check`; add `--source-root <checkout of the previous source>` to
+measure the earlier revision. The fixture cannot reproduce the live host's slow
+loads (6.2 and 6.4 s of five), which point to contention in the read on that host,
+nor the live card sizes; the project owner must still remeasure the live workspace
+after release. This change shortens the server read and removes the browser's
+off-screen work, which both grow with the card count.

@@ -94,6 +94,8 @@ const styles = `
 .workbench-board .empty-col { margin: 0; padding: 14px 10px; border: 1px dashed var(--line-strong); border-radius: var(--r); font-size: 12.5px; color: var(--text-3); text-align: center; }
 .workbench-board .add-ghost { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; padding: 0 8px; border: 1px dashed var(--line-strong); border-radius: var(--r); background: transparent; color: var(--text-2); font-weight: 500; }
 .workbench-board .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px 9px; display: flex; flex-direction: column; gap: 5px; cursor: pointer; box-shadow: 0 1px 0 rgba(0,0,0,.03); }
+/* Past the first screenful the browser skips style, layout and paint of off-screen cards until they near the viewport (every card stays in the DOM, so find, focus and keyboard moves still reach it). */
+.workbench-board .cards > .card:nth-child(n+13) { content-visibility: auto; contain-intrinsic-block-size: auto 76px; }
 .workbench-board .card-top { display: flex; align-items: center; gap: 6px; min-height: 18px; flex-wrap: wrap; }
 .workbench-board .card-top .tag.lbl { margin-left: auto; }
 .workbench-board .card-top .tag.lbl + .tag.lbl { margin-left: 0; }
