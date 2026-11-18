@@ -9,8 +9,15 @@ const context = { state: { me: viewer }, remember() {}, location: { hash: '#/cha
   api: async () => { throw Object.assign(new Error('service unavailable'), { status: 503 }); },
 };
 runInNewContext(source.slice(source.indexOf('async function route()'), source.indexOf('function openingCard(')), context);
-await context.route();
+assert.equal(await context.route(), false);
 assert.equal(context.state.me, viewer);
 assert.match(content.innerHTML, /Could not load projects/);
 assert.match(content.innerHTML, /Retry/);
 assert.doesNotMatch(content.innerHTML, /Sign in|No bots yet/);
+assert.equal(context.state.bootRoutePending, true);
+let scheduled = 0;
+context.polling = false; context.schedule = () => scheduled++;
+const pollingStart = source.indexOf('async function poll()');
+runInNewContext(source.slice(pollingStart, source.indexOf('document.addEventListener("visibilitychange"', pollingStart)), context);
+await context.poll();
+assert.equal(scheduled, 1, 'Visibility polling remains paused while route discovery is unresolved');

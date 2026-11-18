@@ -6,7 +6,7 @@ const mode = process.argv[2];
 const app = readFileSync('commonplace/web/static/app.js', 'utf8');
 const admin = readFileSync('commonplace/web/static/admin.js', 'utf8');
 const api = readFileSync('commonplace/web/static/api.js', 'utf8');
-let now = 100000, sequence = 0, signedIn = 0, shells = 0, routes = 0;
+let now = 100000, sequence = 0, signedIn = 0, shells = 0, routes = 0, polls = 0;
 const timers = new Map(), requests = [], buttons = {};
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const root = { innerHTML: 'Loading Commonplace…', querySelector: selector => {
@@ -16,16 +16,17 @@ const root = { innerHTML: 'Loading Commonplace…', querySelector: selector => {
 const response = status => ({ status, ok: status === 200, json: async () => status === 200 ? { actor: 'user:reader', workspace: 'workspace', people: {} } : {} });
 const context = {
   state: { me: null }, root, AbortController, Event, URLSearchParams,
-  signinCode: null, setPeople() {}, showError() {}, schedule() {},
+  signinCode: null, setPeople() {}, showError() {}, schedule() { polls++; },
   location: { search: '', hash: '#/bots/project' }, history: {},
   document: { dispatchEvent() {} }, voice: { load() {} },
   signin() { signedIn++; root.innerHTML = 'Sign in | Email a sign-in link'; },
-  shell() { shells++; root.innerHTML = 'App'; }, route() { routes++; },
+  shell() { shells++; root.innerHTML = 'App'; }, route() { routes++; if (mode === 'route-error') return false; },
   setTimeout(fn, ms) { const id = ++sequence; timers.set(id, { fn, at: now + ms }); return id; },
   clearTimeout(id) { timers.delete(id); },
   fetch(path, options) {
     assert.equal(path, '/api/me');
     requests.push({ at: now, signal: options.signal });
+    if (mode === 'route-error') return Promise.resolve(response(200));
     if (mode === 'slow-success') return new Promise(resolve => context.setTimeout(() => resolve(response(200)), 5000));
     if (requests.length > 1 && !['exhaustion', 'manual'].includes(mode)) return Promise.resolve(response(200));
     if (mode === 'timeout') return new Promise(() => {});
@@ -44,7 +45,11 @@ async function advance(ms) {
   await tick();
 }
 await tick();
-if (mode === '401') {
+if (mode === 'route-error') {
+  await context.ready;
+  assert.equal(polls, 0, 'Failed initial discovery must not start background refresh on an unresolved route');
+  assert.equal(signedIn, 0);
+} else if (mode === '401') {
   assert.equal(signedIn, 1);
   assert.match(root.innerHTML, /Sign in/);
   assert.equal(requests.length, 1);

@@ -20,6 +20,7 @@ import pytest
         "slow-success",
         "exhaustion",
         "manual",
+        "route-error",
     ],
 )
 def test_boot_identity_recovery(case):

@@ -28,7 +28,9 @@ Provider-discovery fallback runs only inside sign-in, after a refusal or logout.
 Voice initialization handles its own failure. Main shell refresh and Settings
 already retain data or show an error. The earlier unhandled project-discovery
 read for classic home, chat and shared-card entry now shows `Could not load
-projects.` with a Retry button that repeats route discovery.
+projects.` with a Retry button that repeats route discovery. Event polling stays
+paused until route discovery succeeds, so it cannot replace this failure with a
+screen selected from an empty project list.
 
 The rail distinguishes pending or unavailable discovery from a successful empty
 list. `No bots yet` requires both a successful personal roster and coworker bot

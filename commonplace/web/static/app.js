@@ -1506,8 +1506,11 @@ async function route() {
     let result;
     try { result = await api("/api/boards"); }
     catch {
-      if (state.me) root.querySelector("#content").innerHTML = '<p class="message" role="status">Could not load projects. <button data-action="retry-route">Retry</button></p>';
-      return;
+      if (state.me) {
+        state.bootRoutePending = true;
+        root.querySelector("#content").innerHTML = '<p class="message" role="status">Could not load projects. <button data-action="retry-route">Retry</button></p>';
+      }
+      return false;
     }
     if (!state.me) return;
     state.boards = result.boards;
@@ -1572,6 +1575,7 @@ async function route() {
   markOpenCard();
   if (!root.querySelector("#content").children.length || state.base !== previousBase) showLoading(root.querySelector("#content"), "Loading…");
   showError("");
+  if (state.bootRoutePending) { state.bootRoutePending = false; schedule(0); }
   if (hash === "#/admin") { adminScreen(); return; }
   if (hash === "#/instance-admin") { instanceAdminScreen(); return; }
   await refresh();
@@ -2056,7 +2060,7 @@ document.addEventListener("keydown", (event) => {
 let timer = null, polling = false, retryDelay = 2000;
 function schedule(delay) { clearTimeout(timer); timer = setTimeout(poll, delay ?? (document.hidden ? 30000 : 2000)); }
 async function poll() {
-  if (polling || !state.me) { schedule(); return; }
+  if (polling || !state.me || state.bootRoutePending) { schedule(); return; }
   polling = true;
   try {
     const feed = await api(`/api/events?after=${state.seq}&epoch=${encodeURIComponent(state.eventEpoch || "")}`);
@@ -2145,7 +2149,7 @@ async function boot() {
     const search = params.toString();
     history.replaceState(history.state, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
   }
-  await route();
+  if (await route() === false) return;
   if (moved) showError("This card is in another workspace. Sign out, then sign in again to open it.");
   if (state.me) schedule(0);
 }
