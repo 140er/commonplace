@@ -26,6 +26,7 @@ import pytest
         "discovery-cancellation",
         "scripts",
         "credentials",
+        "unbound",
     ],
 )
 def test_compute_ui(case):

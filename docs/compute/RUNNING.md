@@ -67,7 +67,10 @@ Unknown attempts retain their slots and never automatically recollect.
 ## Provision a credential
 
 A gateway or target needs a credential reference (an id and a version) before it
-can be verified. Private keys are never typed into or shown by the web form: the
+can be verified or used. It can be saved without one: the record then shows "No
+credential bound yet", the server refuses to verify it or use it for a run, and
+the reference is bound to the record's id right after it is saved (from the same
+screen, by choosing a listed credential or typing its reference). Private keys are never typed into or shown by the web form: the
 form only lists the references that already exist and shows this step. Run it on
 the server, as the service user, from the repository. Use the workspace folder
 that holds `compute.sqlite3`, a wrapping-key path outside the data folder inside a
@@ -104,7 +107,8 @@ PY
 ```
 
 The Compute management form then lists the reference (name, purpose, account,
-version and recorded state) so it can be selected. The list reads only those
+version and recorded state) so it can be selected, either while saving the record
+or afterwards with "Bind a credential" on its row. The list reads only those
 plain reference columns; it never opens the wrapping key or any key.
 
 ## Provision a script target

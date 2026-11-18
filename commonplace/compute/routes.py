@@ -118,7 +118,11 @@ def handle(gateway, handler):
                 body = _fields(
                     _body(h, 65_536 if kind == "scripts" else 8192),
                     _CREATE_FIELDS[kind],
-                    optional=("agent_id",) if kind == "scopes" else (),
+                    optional=("agent_id",)
+                    if kind == "scopes"
+                    else ("credential_id", "credential_version")
+                    if kind in ("gateways", "nodes")
+                    else (),
                 )
                 if kind == "scopes" and "agent_id" in body and type(body["agent_id"]) is not str:
                     raise StoreError()
@@ -131,6 +135,14 @@ def handle(gateway, handler):
                 singular = kind[:-1]
                 item = getattr(store, "create_" + singular)(principal, **auth, **body)
                 return send_json(h, 201, {singular: item})
+            if len(parts) == 3 and parts[0] in ("gateways", "nodes") and parts[2] == "credential":
+                kind, object_id, _ = parts
+                singular = kind[:-1]
+                # Conceal foreign IDs before inspecting the body, as for the other actions.
+                getattr(store, "get_" + singular)(principal, object_id, **auth)
+                body = _fields(_body(h), ("credential_id", "credential_version"))
+                item = store.bind_credential(principal, kind, object_id, **auth, **body)
+                return send_json(h, 200, {singular: item})
             if len(parts) == 3 and parts[0] in ("scopes", "executions"):
                 kind, object_id, action = parts
                 if (kind, action) not in (

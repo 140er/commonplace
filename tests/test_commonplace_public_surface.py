@@ -377,6 +377,8 @@ def test_protected_prefix_roots_and_concrete_actions_authenticate_before_validat
         ("GET", "/api/webhooks/1/deliveries"),
         ("POST", "/api/webhooks/1/test"),
         ("DELETE", "/api/webhooks/1"),
+        ("POST", "/api/compute/gateways/g1/credential"),
+        ("POST", "/api/compute/nodes/n1/credential"),
     ]
     for method, path in paths:
         assert hardened(request(surface, method, path, body=b"invalid")) == 401

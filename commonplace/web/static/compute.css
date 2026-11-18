@@ -58,3 +58,5 @@
 .compute-credential-next p { margin: 0; }
 .compute-credential-next pre { max-height: 220px; background: var(--surface); }
 .compute-verification { font-size: 13px; color: var(--text-2); margin: 0; }
+.compute-credential-state { margin: 6px 0; font-size: 13px; color: var(--text-2); }
+.compute-credential-state[data-credential="unbound"], .compute-credential-state[data-credential="unknown"] { color: var(--wait); }
