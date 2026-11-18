@@ -433,10 +433,7 @@ private runner answer.
 Latency is roughly one poll interval plus CLI runtime. Failed or expired jobs
 are never re-queued. The receipt remains on failure, and chat status shows
 today's usage and the latest error, such as `cli_failed`, `cli_timeout`,
-`cli_not_configured`, `bad_output`, `no_access`, `daily_limit` or `budget_exceeded` (a cost
-budget is spent; the chat shows a plain reply, see `docs/system/cost-budgets.md`). A runner may
-add `input_tokens`, `output_tokens`, `cost_micros` with `currency`, or `cost_unknown` to its
-answer or failure; without them the job's cost is recorded as unknown. Late, duplicate
+`cli_not_configured`, `bad_output`, `no_access` or `daily_limit`. Late, duplicate
 or wrongly credentialed answers get 409 and are discarded. Chat command exits
 are 0 for success/no job, 3 for missing or invalid credentials, 4 for invalid
 config and 5 for a hub failure in `--once` mode.
