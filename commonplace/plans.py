@@ -177,6 +177,8 @@ class StorageMeter:
     def _walk(path) -> int:
         from mempalace.deadline import remaining
 
+        # Check only an ambient display deadline. Without one, remaining()
+        # returns its argument unchanged, so synchronous admission is unchanged.
         total = 0
         pending = [path]
         while pending:

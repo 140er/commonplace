@@ -234,7 +234,7 @@ export function mount(context) {
     sharing ||= createBots({ mount: () => root.querySelector('[data-cb="sharing"]'), api: (...args) => ctx.api(...args), e, viewport: null });
     await sharing.showSharing(parent);
   }
-  const options = () => ({ signal: controller?.signal, timeoutMs: 3000 });
+  const options = () => ({ signal: controller?.signal, timeoutMs: 10000 });
   const activeWorker = () => workers.find(row => row.key === selected);
   const draftKey = row => `${row?.key}:${mode}`;
   const drafts = new Map();

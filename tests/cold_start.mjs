@@ -9,7 +9,7 @@ const read = name => readFileSync(`commonplace/web/static/${name}`, 'utf8');
 const app = read('app.js');
 const slice = (start, end) => app.slice(app.indexOf(start), app.indexOf(end, app.indexOf(start)));
 const [slow, route = '#/boards'] = process.argv.slice(2);
-let now = 0, serial = 0, painted = null;
+let now = 0, serial = 0, painted = null, fallback = null;
 const timers = new Map(), requests = [], aborted = [];
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const content = { children: [], innerHTML: '', querySelector: () => null };
@@ -39,7 +39,7 @@ const context = {
   remember: () => ({}), restore() {}, capture: () => () => {}, navigation() {},
   boardsView: paint, boardView: paint, memoryView: paint, settingsView: paint,
   botsScreen: paint, mountWorkbenchChat() {}, rememberDeckBots() {},
-  showError() {}, message: text => text, waitingTotal: () => 0,
+  showError(text) { if (text) fallback = { at: now, text }; }, message: text => text, waitingTotal: () => 0,
 };
 runInNewContext(read('api.js').replace(/export /g, '') + '\n' + slice('async function refresh(', 'function decideStart('), context);
 const load = context.refresh();
@@ -50,6 +50,13 @@ for (const at of [1900, 3000, 30000]) {
   await tick();
 }
 await load;
+if (slow === '/api/boards?view=shell') {
+  assert.equal(painted, null);
+  assert.equal(fallback?.at, 3000, 'Bootstrap falls back at its explicit short deadline');
+  assert.match(content.innerHTML, /timed out/);
+  assert.ok(aborted.every(signal => signal?.aborted));
+  process.exit(0);
+}
 console.log(JSON.stringify({ slow, route, main_ms: painted, deadline_ms: 3000 }));
 assert.notEqual(painted, null, `${slow} held ${route} behind a 30 s dependency`);
 assert.ok(painted < 2000, `${slow} delayed main data until ${painted} ms`);

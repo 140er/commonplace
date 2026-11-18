@@ -137,6 +137,7 @@ if (["foreground_only", "settled_background", "settled_needs"].includes(which)) 
   }
   settingsReads.splice(0).forEach((resolve) => resolve());
   await foreground;
+  // The Settings skeleton renders once before navigation; late sections cannot repaint it.
   if (which === "navigate_during_settings") { assert.equal(renders, 1); assert.equal(html, "Another page"); }
   else completeView();
 } else {

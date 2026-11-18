@@ -82,7 +82,7 @@ export function mount(context) {
     ctx = { ...ctx, ...next };
     read?.abort(); read = new AbortController();
     const token = ++generation, alive = () => active && token === generation;
-    const options = { signal: read.signal, timeoutMs: 3000 };
+    const options = { signal: read.signal, timeoutMs: 10000 };
     const reads = [
       ctx.me?.can_admin === true ? api('/api/needs-me', options) : Promise.resolve(ctx.needs || { count: 0 }),
       api('/api/bots', options),

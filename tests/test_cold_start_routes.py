@@ -26,6 +26,7 @@ def cold_hub(tmp_path):
     hub.close()
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize(
     "dependency", ["board-projection", "bot-project-names", "wing-list", "storage-walk"]
 )

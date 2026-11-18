@@ -78,7 +78,7 @@ export function mount(context) {
     if (child) { child.refresh?.(page.screen === 'compute' && !page.management ? ctx : undefined); return; }
     const mine = ++epoch;
     request?.abort(); request = new AbortController();
-    const options = { signal: request.signal, timeoutMs: 3000 };
+    const options = { signal: request.signal, timeoutMs: 10000 };
     try {
       const roster = await ctx.api('/api/bots', options);
       if (stopped || mine !== epoch) return;

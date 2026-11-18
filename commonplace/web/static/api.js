@@ -8,7 +8,7 @@ export class ApiError extends Error {
 }
 
 export async function api(path, options = {}) {
-  const { timeoutMs = (!options.method || options.method.toUpperCase() === "GET" ? 3000 : 0), optional = false, ...requestOptions } = options;
+  const { timeoutMs = 0, optional = false, ...requestOptions } = options;
   if (timeoutMs > 0) {
     const controller = new AbortController();
     const abort = () => controller.abort(requestOptions.signal.reason);

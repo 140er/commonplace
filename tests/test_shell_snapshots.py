@@ -56,6 +56,7 @@ def test_optional_work_has_a_deadline_and_failure_backoff():
 
 def test_uncooperative_dependencies_cannot_accumulate_threads():
     cache = Snapshots()
+    cache.values[0] = (cache.clock() - 1, 7)
     release = threading.Event()
     entered = [threading.Event(), threading.Event()]
 
@@ -66,9 +67,12 @@ def test_uncooperative_dependencies_cannot_accumulate_threads():
 
     try:
         for i in range(2):
-            assert cache.read(i, lambda i=i: load(i)) == (None, "loading")
+            assert cache.read(i, lambda i=i: load(i)) == (
+                (7, "stale") if i == 0 else (None, "loading")
+            )
             assert entered[i].wait(1)
         assert cache.read(2, lambda: 2) == (None, "loading")
+        assert cache.read(0, lambda: 99) == (7, "stale")
         assert len(cache.pending) == 2
     finally:
         release.set()

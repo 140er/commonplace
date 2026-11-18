@@ -17,6 +17,8 @@ class Snapshots:
         self.values = BoundedMap(256)
         self.pending = {}
         self.retry = BoundedMap(256)
+        # Loaders own their transport timeouts. An uncooperative loader holds a
+        # slot until it exits; exhaustion degrades display hints to stale/loading.
         self.slots = threading.BoundedSemaphore(2)
         self.lock = threading.Lock()
 

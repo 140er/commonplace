@@ -555,7 +555,7 @@ export function createMemory({ mount, panel, api = request, boards = [], me = {}
   }
   // Agent connections save to a wing no project owns. The server lists it only when the
   // caller may read it, and it joins the project rooms as a notes-only room.
-  const roomsReady = Promise.resolve().then(() => api("/api/memory/rooms", { timeoutMs: 3000 })).then((page) => {
+  const roomsReady = Promise.resolve().then(() => api("/api/memory/rooms", { timeoutMs: 8000 })).then((page) => {
     const owned = new Set(boards.map((board) => board.wing));
     const rooms = (page.rooms || []).filter((room) => room.wing && !owned.has(room.wing)).map((room) => ({ slug: `notes:${room.wing}`, name: room.name || room.wing, wing: room.wing, notesOnly: true }));
     if (rooms.length && !stopped) { const known = new Set(state.boards.map(board => board.wing)); state.boards = [...state.boards, ...rooms.filter(room => !known.has(room.wing))]; draw(); }

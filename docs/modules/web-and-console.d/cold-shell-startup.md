@@ -1,4 +1,4 @@
-- **Owns:** Independent cold shell and Settings reads, bounded browser reads and small optional metadata snapshots.
-- **Promises:** Main content renders before badges and scans; late Settings sections preserve other forms; cold wing callers share the existing one-second budget and receive available results.
+- **Owns:** Independent cold shell and Settings reads, explicitly bounded bootstrap reads and small optional metadata snapshots.
+- **Promises:** Main content renders before badges and scans; ordinary reads retain their original timeout budgets; late Settings sections preserve other forms; cold wing callers share the existing one-second budget and receive available results.
 - **How it fails:** Unknown wing lists are null with a visible loading/unavailable state; completed empty lists are ready; expired reads expose retry/loading states; stale replies cannot cross screen or viewer changes.
 - **Tests:** tests/test_commonplace_web.py, tests/test_cold_start.py, tests/test_settings_load.py, tests/test_shell_snapshots.py and Node shell wrappers.

@@ -709,7 +709,7 @@ function spaceView() {
 }
 function boardsView() {
   title("Projects", '<button class="btn primary" data-action="new-board">New project</button>');
-  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? "Still loading counts…" : Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
+  root.querySelector("#content").innerHTML = `<section class="queue">${state.boards.map((b) => `<article class="item"><h3><a href="#/board/${enc(b.slug)}">${e(b.name || b.slug)}</a></h3><div class="meta">${b.counts == null && b.counts_state ? (b.counts_state === "unavailable" ? "Counts unavailable" : "Still loading counts…") : Object.entries(b.counts || {}).map(([key, value]) => `${e(key)} ${e(value)}`).join(" · ")}</div></article>`).join("") || '<section class="empty-strip"><h2>Create your first project</h2><p>A project is one board, one chat and one memory.</p><button class="btn primary" data-action="new-board">Create project</button></section>'}</section>`;
   // A workspace without projects starts with the create dialog, once per visit.
   if (!state.boards.length && state.base === "#/start" && !state.onboardingOffered) { state.onboardingOffered = true; openOnboarding(); }
 }
@@ -1179,7 +1179,7 @@ async function refresh({ background = false, events = [] } = {}) {
   const epoch = state.screen, request = ++state.refreshRequest, viewer = state.me;
   if (!background) state.renderPending = epoch;
   const current = () => state.me === viewer && epoch === state.screen && request === state.refreshRequest;
-  const read = (path, options = {}) => api(path, { timeoutMs: 3000, ...options }).catch((error) => {
+  const read = (path, options = {}) => api(path, options).catch((error) => {
     if (state.base === "#/settings") throw new Error(`Could not load ${path}: ${error.message}`);
     throw error;
   });
@@ -1187,9 +1187,11 @@ async function refresh({ background = false, events = [] } = {}) {
     // The roster feeds the Bots badge on every screen; on the bots screen itself the screen reports it.
     // The owner queue is not a prerequisite for a member's workspace screens.
     const needsPage = ["#/needs", "#/decide"].includes(state.base) || (state.base === "#/" && !state.deck?.on());
-    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true }) : Promise.resolve(null);
-    const ruleRead = read(state.base === "#/rules" ? "/api/rules" : "/api/rules/count");
-    const rosterRead = state.base.startsWith("#/bots") ? Promise.resolve(null) : read("/api/bots");
+    // Only bootstrap metadata has a short budget; actual queue/rule content
+    // and subsequent card, list and memory reads retain their existing budgets.
+    const ownerNeeds = state.me.can_admin === true ? read("/api/needs-me", { optional: true, ...(needsPage ? {} : { timeoutMs: 3000 }) }) : Promise.resolve(null);
+    const ruleRead = state.base === "#/rules" ? read("/api/rules") : read("/api/rules/count", { timeoutMs: 3000 });
+    const rosterRead = state.base.startsWith("#/bots") ? Promise.resolve(null) : read("/api/bots", { timeoutMs: 3000 });
     // Badges are optional, not prerequisites of Settings, Memory, a project or a card.
     // Keep the last value during revalidation and guard late arrivals by screen/request.
     void ownerNeeds.then((needs) => {
@@ -1201,7 +1203,7 @@ async function refresh({ background = false, events = [] } = {}) {
       if (current() && roster?.bots) { rememberDeckBots(roster.bots); state.deckBots = roster.bots; state.botsWaiting = waitingTotal(roster.bots); navigation(); }
     }).catch(() => {});
     const [boards, needs, rules] = await Promise.all([
-      read("/api/boards?view=shell"),
+      read("/api/boards?view=shell", { timeoutMs: 3000 }),
       needsPage ? ownerNeeds : null,
       state.base === "#/rules" ? ruleRead : null,
     ]);
