@@ -1,8 +1,6 @@
 FROM node:22.14.0-bookworm-slim AS web-assets
 WORKDIR /build
-COPY scripts/web-build/package.json scripts/web-build/package-lock.json ./scripts/web-build/
-RUN npm ci --prefix scripts/web-build --ignore-scripts --no-audit --no-fund
-COPY scripts/web-build/build.mjs ./scripts/web-build/
+COPY scripts/web-build/*.mjs ./scripts/web-build/
 COPY commonplace/web/static/ ./commonplace/web/static/
 RUN node scripts/web-build/build.mjs
 

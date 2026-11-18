@@ -1,4 +1,4 @@
-- **Owns:** The pinned web asset compiler and its deterministic manifest.
-- **Promises:** A clean install of esbuild 0.25.12 compiles shared module factories into one ESM entry per route, keeping other controllers behind dynamic imports. All route bundles reuse one runtime module cache. Filenames hash the exact emitted bytes; CSS retains the original order without imports.
-- **How it fails:** Unknown static dependencies fail the build. Import failures reject and may retry; a deferred closure cannot replace an evaluated module singleton. Source-relative styles retain their original absolute URL.
-- **Tests:** tests/test_web_bundle.py and tests/cold_bundle_browser.py.
+- **Owns:** The Node-only web asset compiler and its deterministic manifest.
+- **Promises:** Node built-ins compile isolated module factories into one ESM entry per route, keeping other controllers behind dynamic imports. Native V8 parsing and linking validate the supported immutable named bindings without running application code. All route bundles reuse one runtime module cache. Filenames hash exact emitted bytes; CSS retains its original order without imports.
+- **How it fails:** Unknown dependencies, mutable exported bindings, unsupported module forms and static cycles fail the build. Literal and comment contents survive compilation. Deferred closures cannot replace evaluated singletons; source-relative styles keep their original URL.
+- **Tests:** tests/test_web_bundle.py, tests/web_bundle_modules.mjs and tests/cold_bundle_browser.py.

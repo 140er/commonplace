@@ -134,24 +134,39 @@ the <2.5 s cold-start target, including static module loading and real rendering
 
 Production delivery and first paint (card #595)
 
-The production image adds an isolated Node 22.14.0 stage. It runs `npm ci
---prefix scripts/web-build --ignore-scripts --no-audit --no-fund` against the
-committed lock (esbuild 0.25.12), then `node scripts/web-build/build.mjs`.
-Only generated `commonplace/web/static/build/` output is copied into the Python
-runtime before its existing package installation. The wheel configuration explicitly retains these generated artifacts despite source-control ignores; a packaging regression test verifies the manifest and exact bundle bytes in the wheel. The runtime needs no Node.
-A developer can run the same two commands; without `build/manifest.json` the
-server retains the existing unbundled document and all 23 original stylesheet
-links. This deliberately preserves the Workbench source-link tests. The new
-build tests also require those exact styles in the same order within one CSS
-file, followed by optional route styles; there are no CSS imports. Both local
-variable fonts are preloaded and keep `font-display: swap`.
+#### Deploy note
+
+Build the production image from the repository with
+`docker build -f deploy/commonplace/Dockerfile .`. Its separate Node 22.14.0
+stage copies `scripts/web-build/*.mjs` and the static sources, then runs
+`node scripts/web-build/build.mjs`. There is no npm install, package lock or
+third-party JavaScript build dependency. The script enables Node's built-in V8
+module parser flag itself; callers need no extra flags. Only generated
+`commonplace/web/static/build/` output is copied into the Python runtime before
+its existing package installation. The runtime needs no Node. For a standalone
+wheel, run the same Node command before building the wheel; the wheel explicitly
+retains the generated assets despite source-control ignores. The offline wheel
+regression uses the existing Python build backend, declared in the development
+extra, directly: no installer or network runs inside the test.
+
+A clean checkout with Python and no manifest keeps the existing unbundled
+document and all 23 original stylesheet links. The production build is optional
+for development. This deliberately preserves the Workbench source-link tests.
+Build tests require those exact styles in the same order within one CSS file,
+followed by optional route styles; there are no CSS imports. Both local variable
+fonts are preloaded and keep `font-display: swap`.
 
 The server reads the manifest into the entry document. Its CSP-hashed module
 selector sees the URL fragment and imports one content-addressed entry containing
 the shell, rail and that route's controller set. Other screens remain dynamic
-imports. The small shared runtime compiles module factories with esbuild rather
-than rewriting JavaScript exports by hand; it evaluates each module once across
-route changes. Deferred closures register missing factories without replacing
+imports. The compiler uses Node built-ins only. It preserves literals and comments,
+wraps the known static graph in isolated factories, and rewrites relative module
+bindings and dynamic imports to the shared registry. V8 validates native module
+syntax, linking and exported names without executing application code. Named
+imports, const/function/class exports and named re-exports are supported; mutable
+exported bindings, static cycles and unsupported syntax stop the build. It does
+not minify or rename source identifiers. The shared runtime evaluates each module
+once across route changes. Deferred closures register missing factories without replacing
 live exports, so identity/people maps and component state stay shared. Paths in
 `import.meta.url` retain their source location. Generated JS and CSS use the
 existing content-fingerprint immutable cache policy; the document and development
@@ -185,7 +200,7 @@ A 401/403/404 evicts the retained board view; sign-out clears it. A cold
 board, matching in-session navigation and retaining the empty-workspace start
 screen when no board exists.
 
-Reproduction: install the locked build dependency and run the build above, then
+Reproduction: run `node scripts/web-build/build.mjs`, then
 `python -m tests.cold_bundle_browser --output /tmp/cold-small.json --samples 3
 --check` and the same command with `--cards 1000` for the large fixture. Use
 Playwright 1.65.2 and `PLAYWRIGHT_BROWSERS_PATH=~/.cache/ms-playwright`. Each run
@@ -201,15 +216,15 @@ Measured before/after medians on development base `60a7de90` and this change:
 
 | Route | Small requests | Small seconds | Large requests | Large seconds |
 | --- | ---: | ---: | ---: | ---: |
-| Home | 74 → 14 | 1.74 → 1.48 | 74 → 14 | 1.74 → 1.48 |
-| Bot | 74 → 18 | 1.84 → 1.61 | 74 → 18 | 1.84 → 1.59 |
-| Memory | 78 → 13 | 1.82 → 1.54 | 78 → 13 | 1.82 → 1.50 |
-| Card panel | 79 → 15 | 1.86 → 1.53 | 79 → 15 | 1.86 → 1.53 |
-| Board | 75 → 13 | 1.75 → 1.42 | 80 → 13 | 3.83 → 2.38 |
-| Settings | 79 → 23 | 1.88 → 1.56 | 79 → 23 | 1.86 → 1.57 |
+| Home | 74 → 14 | 1.74 → 1.60 | 74 → 14 | 1.74 → 1.58 |
+| Bot | 74 → 18 | 1.84 → 1.69 | 74 → 18 | 1.84 → 1.71 |
+| Memory | 78 → 13 | 1.82 → 1.60 | 78 → 13 | 1.82 → 1.58 |
+| Card panel | 79 → 15 | 1.86 → 1.61 | 79 → 15 | 1.86 → 1.62 |
+| Board | 75 → 13 | 1.75 → 1.53 | 80 → 13 | 3.83 → 2.28 |
+| Settings | 79 → 23 | 1.88 → 1.65 | 79 → 23 | 1.86 → 1.65 |
 
-The small fixture board revisit median is 208 → 34 ms. The original run replaced the tree three times; this change renders it once and keeps the same card node across the revisit.
+The small fixture board revisit median is 208 → 30 ms. The original run replaced the tree three times; this change renders it once and keeps the same card node across the revisit.
 
-The large fixture board revisit median is 2786 → 1798 ms. The original run replaced the tree three times; this change renders it once and keeps the same card node across the revisit.
+The large fixture board revisit median is 2786 → 728 ms. The original run replaced the tree three times; this change renders it once and keeps the same card node across the revisit.
 
 Three unchanged browser-free tests fail on the development source: five API reads before the board paint (budget two), two renders of an unchanged 1000-card board (budget one), and cold `#/board` resolving to `#/start`. All three pass on this change. The Chromium request budget also fails on development (74–80 requests, threshold below 40) and passes here. Production bundle 429, 503 and network failures retain the neutral retry message and recover through manual Retry in all three real-browser cases.

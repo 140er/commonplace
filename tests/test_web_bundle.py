@@ -16,13 +16,30 @@ from tests.test_commonplace_public_surface import request
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_builtin_module_compiler_preserves_literals_exports_and_lazy_state():
+    result = subprocess.run(
+        ["node", "--experimental-vm-modules", str(ROOT / "tests/web_bundle_modules.mjs")],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    source = tmp_path_factory.mktemp("bundle") / "static"
+    checkout = tmp_path_factory.mktemp("bundle")
+    source = checkout / "static"
+    # Run only committed compiler files from an isolated checkout. A developer's
+    # node_modules or npm cache must never hide a build-time dependency.
+    compiler = checkout / "scripts/web-build"
+    compiler.mkdir(parents=True)
+    for script in (ROOT / "scripts/web-build").glob("*.mjs"):
+        shutil.copy(script, compiler)
     shutil.copytree(STATIC, source, ignore=shutil.ignore_patterns("build"))
     for output in [source / "build", source / "again"]:
         result = subprocess.run(
-            ["node", str(ROOT / "scripts/web-build/build.mjs"), str(source), str(output)],
+            ["node", str(compiler / "build.mjs"), str(source), str(output)],
             capture_output=True,
             text=True,
             timeout=90,
@@ -118,8 +135,10 @@ def test_missing_manifest_retains_unbundled_development_entrypoint(tmp_path):
     assert html.count(b'rel="stylesheet"') == 23
 
 
-def test_wheel_contains_the_generated_manifest_and_exact_bundle_bytes(built, tmp_path):
+def test_wheel_contains_the_generated_manifest_and_exact_bundle_bytes(built, tmp_path, monkeypatch):
     from zipfile import ZipFile
+
+    from hatchling.build import build_wheel
 
     source, manifest = built
     for name in ("pyproject.toml", "README.md", ".gitignore", "mempalace/version.py"):
@@ -130,16 +149,16 @@ def test_wheel_contains_the_generated_manifest_and_exact_bundle_bytes(built, tmp
     shutil.copytree(source / "build", tmp_path / "commonplace/web/static/build")
     (tmp_path / "commonplace/__init__.py").write_text("")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, timeout=10)
-    result = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(tmp_path / "wheels")],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    with monkeypatch.context() as context:
+        context.chdir(tmp_path)
+        build_wheel("wheels")
     with ZipFile(next((tmp_path / "wheels").glob("*.whl"))) as wheel:
-        for name in ("manifest.json", manifest["css"], *manifest["routes"].values()):
+        for name in (
+            "manifest.json",
+            manifest["css"],
+            *manifest["routes"].values(),
+            *manifest["modules"].values(),
+        ):
             assert (
                 wheel.read("commonplace/web/static/build/" + name)
                 == (source / "build" / name).read_bytes()

@@ -1,10 +1,20 @@
 // Deterministic, route-sized ESM delivery. Factories share one module cache across
 // bundles, so a later dynamic import never creates another API/session singleton.
-import { transform } from 'esbuild';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
+
+// V8's native module parser validates the restricted compiler without loading
+// or executing application code. Node 22/24 still gates this API behind a flag.
+if (!vm.SourceTextModule) {
+  const child = spawnSync(process.execPath, ['--experimental-vm-modules', fileURLToPath(import.meta.url), ...process.argv.slice(2)], { stdio: 'inherit' });
+  if (child.error) throw child.error;
+  process.exit(child.status ?? 1);
+}
+const { compile, validate } = await import('./modules.mjs');
 
 const source = resolve(process.argv[2] || fileURLToPath(new URL('../../commonplace/web/static', import.meta.url)));
 const output = resolve(process.argv[3] || resolve(source, 'build'));
@@ -13,11 +23,9 @@ const files = (await readdir(source)).filter(name => name.endsWith('.js') && !['
 const modules = new Map();
 for (const name of files) {
   const input = await readFile(resolve(source, name), 'utf8');
-  const rewritten = input.replace(/\bimport\((['"])\.\/([^'"]+)\1\)/g, (_, quote, dependency) => `__import(${JSON.stringify(dependency)})`)
-    .replaceAll('import.meta.url', `new URL(${JSON.stringify('/app/' + name)}, location.href).href`);
-  const { code } = await transform(rewritten, { format: 'cjs', target: 'es2022', minify: true, charset: 'utf8', legalComments: 'none' });
-  modules.set(name, { code, dependencies: [...code.matchAll(/\brequire\(["']\.\/([^"']+)["']\)/g)].map(match => match[1]) });
+  modules.set(name, compile(name, input));
 }
+await validate(modules);
 function closure(entries, found = new Set()) {
   for (const name of entries) {
     if (found.has(name)) continue;

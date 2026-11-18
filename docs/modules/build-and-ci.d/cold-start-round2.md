@@ -1,4 +1,4 @@
-- **Owns:** Ignored local web dependency and generated asset directories.
-- **Promises:** Wheel packaging explicitly includes generated static build artifacts despite source-control ignores. Build dependencies and content-addressed output remain reproducible from committed sources and the package lock.
-- **How it fails:** An absent local dependency install makes the asset build fail explicitly; no generated bundles are committed.
+- **Owns:** Generated web asset retention and the offline wheel regression.
+- **Promises:** Wheel packaging explicitly includes generated static build artifacts despite source-control ignores. The compiler needs Node alone; the wheel regression calls the existing Python build backend from the development extra directly, without an installer, cache lookup or network.
+- **How it fails:** Unsupported source syntax fails the asset build. A missing generated manifest preserves unbundled development; a production wheel built after the documented Node command must retain every generated asset.
 - **Tests:** tests/test_web_bundle.py.
