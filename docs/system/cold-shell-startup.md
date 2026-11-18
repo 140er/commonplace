@@ -288,3 +288,69 @@ loads (6.2 and 6.4 s of five), which point to contention in the read on that hos
 nor the live card sizes; the project owner must still remeasure the live workspace
 after release. This change shortens the server read and removes the browser's
 off-screen work, which both grow with the card count.
+
+
+Cold board speed round 3 (card #604)
+
+After card #596 the live owner measurement was 2656 ms for the board on the large main
+workspace with the fixture profile (the other routes 1.64 to 1.73 s). Per-phase timings on
+the 1000-card, 20000-event fixture (`--orchestration`, 4x CPU, 100 ms latency, 1.25 MB/s)
+showed that the time was no longer in the card read or the render but in the serial chain
+before them. The five phases of one slug-less `#/board` load before this change, in ms from
+navigation start:
+
+| Phase | Start / end |
+| --- | ---: |
+| Stylesheet 324 KB, uncompressed | 117 / 556 |
+| Route bundle 411 KB, uncompressed, started only after the stylesheet finished | 598 / 1038 |
+| Identity read, after the bundle ran | 1133 / 1237 |
+| Board directory read, then (slug-less) the card read | 1367 / 1470, 1491 / 1867 |
+| Board markup set, key element after two frames | 1992, 2232 |
+
+Three changes remove most of that chain, none of which changes a payload field, a read's
+meaning or a write:
+
+1. **Text assets travel gzip-encoded.** The stylesheet and the bundles (735 KB together) are
+   served gzip-encoded when the browser asks (about 176 KB on the wire), with their own
+   validator, `Vary: Accept-Encoding` and the same immutable caching; the decoded bytes are
+   identical, and a browser that does not ask for gzip receives plain bytes. A reverse proxy
+   that already compresses is unaffected. The compressed form is computed once per content hash.
+2. **The bundle starts loading beside the stylesheet.** The inline module script that picks the
+   route bundle runs after the stylesheet, because a script after a pending stylesheet waits for
+   it. A small hashed inline script now runs before the stylesheet and adds a module preload for
+   the same bundle, so the two downloads overlap.
+3. **The route's first reads start with the document.** The same script starts the identity read
+   and, on a board route, the board directory and that project's card list. `api.js` takes each
+   such read once, for the matching plain GET only, within 15 seconds. A bare `#/board` uses the
+   saved project when exactly one is saved in the browser, and otherwise the first readable
+   board once the directory has arrived. A failed, refused, stale or already taken read is
+   dropped and the ordinary read runs, so sign-in (401), outages and permission errors behave as
+   before, and a taken read is a fresh response, never a stored value; every write still goes to
+   the network and server permissions still apply. A wrong guess costs one unused read, and
+   request counts before the key element are unchanged.
+
+Same-machine before and after, 1000 cards, five cold contexts per row, medians (the machine was
+shared and the fixture store sat on tmpfs, so absolute values differ from earlier tables):
+
+| Route | Requests before / after | Median ms before / after | All samples after (ms) |
+| --- | ---: | ---: | --- |
+| Home | 14 / 14 | 1602 / 813 | 809 to 827 |
+| Bot | 18 / 18 | 1700 / 937 | 926 to 982 |
+| Memory | 13 / 13 | 1615 / 822 | 806 to 826 |
+| Card panel | 15 / 15 | 1633 / 821 | 817 to 851 |
+| Board, slug-less `#/board` | 14 / 14 | 2232 / 1088 | 1080 to 1110 |
+| Board, slug-less, a project saved in the browser | 14 / 14 | 2206 / 1090 | 1068 to 1093 |
+| Board, `#/board/project` | 13 / 13 | 2096 / 1086 | 1028 to 1094 |
+| Board, a project saved in the browser, `#/board/project` | 13 / 13 | 2062 / 1047 | 1018 to 1134 |
+| Settings | 23 / 23 | 1734 / 922 | 911 to 942 |
+
+The board revisit median is 156 ms before and 157 ms after (160 / 161 with a saved project);
+the tree is still rendered once and the same card node is kept. After the change the card read
+finishes before the bundle has run, so the remaining time is bundle evaluation at 4x CPU, one
+render of the first screenful and the paint. The live host measured 2656 ms where this fixture
+measured 2232 ms for the earlier code, so the target below 2.5 s is met with margin on the
+fixture; the project owner must still remeasure five cold loads on the live workspace after
+release. Reproduce with `node scripts/web-build/build.mjs`, then `python -m
+tests.cold_bundle_browser --output /tmp/cold-large.json --cards 1000 --orchestration --check`,
+add `--saved-board` to remember the project as a returning browser does, and `--source-root
+<checkout of the previous source>` to measure the earlier revision.

@@ -1,0 +1,4 @@
+- **Owns:** `tests/test_early_reads.py`, `tests/early_reads_harness.mjs`, the CSP-hash check for the early script in `tests/test_web_bundle.py` and the saved-project option of `tests/cold_bundle_browser.py`.
+- **Promises:** The early-read tests run the shipped script and the shipped `api.js` in Node with a fake document and network, and the gzip tests read the built assets over loopback HTTP; the harness records the project the person last opened in the browser when asked (`--saved-board`).
+- **How it fails:** The browser harness needs Playwright and a built bundle and is not part of the affected-test set; the bundle test of the wheel needs the `hatchling` build backend from the development extra.
+- **Tests:** Run `tests/test_early_reads.py`, `tests/test_web_bundle.py`, `tests/test_cold_modules.py` and the documentation guards.

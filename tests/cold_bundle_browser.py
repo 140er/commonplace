@@ -13,6 +13,13 @@ from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 
+async def remember_project(page, hub, args):
+    """A returning person's browser remembers the last project (per workspace)."""
+    if args.saved_board:
+        key = json.dumps(f"cmmn.board.last.{hub.workspace}")
+        await page.add_init_script(f"localStorage.setItem({key}, 'project')")
+
+
 async def measure(args):
     from playwright.async_api import async_playwright
 
@@ -124,6 +131,7 @@ async def measure(args):
                                     ),
                                 )
                                 page.on("pageerror", lambda e, errors=errors: errors.append(str(e)))
+                                await remember_project(page, hub, args)
                                 await page.add_init_script(
                                     """(() => {
                                   window.boardRenders = 0;
@@ -305,6 +313,7 @@ if __name__ == "__main__":
     parser.add_argument("--cards", type=int, default=1)
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--orchestration", action="store_true")
+    parser.add_argument("--saved-board", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--recovery", action="store_true")
     asyncio.run(measure(parser.parse_args()))
