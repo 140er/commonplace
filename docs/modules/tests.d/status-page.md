@@ -1,0 +1,3 @@
+- **Tests:**
+
+  - `tests/test_status_page.py` runs `GET /api/status` against real hubs: sign-in and token refusal, no write path, every section explained on a fresh workspace, skill descriptions and scope (and no skill text), a member seeing only shared skills, no cross-workspace leak, owner-only bridge status with last-seen wording and no credentials, meetings off/on, a failing section not blanking the page, and cost totals, period, scope and unknown cost for an owner and a member. `tests/status_page.mjs` (run by `tests/test_status_page_ui.py`) covers the page rendering, escaping, unknown states and signed-out versus failed reads; `tests/test_status_page_browser.py` checks the Settings link and the page at desktop and phone widths.
