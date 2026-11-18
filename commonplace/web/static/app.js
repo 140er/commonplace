@@ -1314,7 +1314,8 @@ async function refresh({ background = false, events = [] } = {}) {
     // and subsequent card, list and memory reads retain their existing budgets.
     let paintDone;
     const painted = typeof requestAnimationFrame === "function" ? new Promise(resolve => { paintDone = resolve; }) : Promise.resolve();
-    const optionalRead = (path, options) => painted.then(() => afterPaint(() => read(path, options)));
+    const optionalRead = (path, options) => typeof requestAnimationFrame === "function"
+      ? painted.then(() => afterPaint(() => read(path, options))) : read(path, options);
     const ownerNeeds = state.me.can_admin === true ? (needsPage ? read("/api/needs-me", { optional: true }) : optionalRead("/api/needs-me", { optional: true, timeoutMs: 3000 })) : Promise.resolve(null);
     const ruleRead = state.base === "#/rules" ? read("/api/rules") : optionalRead("/api/rules/count", { timeoutMs: 3000 });
     const rosterRead = state.base.startsWith("#/bots") ? Promise.resolve(null) : optionalRead("/api/bots", { timeoutMs: 3000 });
