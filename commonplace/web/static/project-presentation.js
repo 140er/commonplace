@@ -93,7 +93,6 @@ export async function mountPanelEditor(host, { slug, project, api, e, current = 
   const path = `/api/projects/${encodeURIComponent(slug)}/panel`;
   const active = () => current() && host.isConnected;
   const editable = Boolean(project.can_edit_panel);
-  host.classList.add("project-presentation");
   host.innerHTML = '<p role="status">Loading the project panel…</p>';
   async function load() {
     let panel;
@@ -178,7 +177,6 @@ export async function mountCoordinator(host, { slug, project, api, e, current = 
   if (!host) return;
   const path = `/api/boards/${encodeURIComponent(slug)}`;
   const active = () => current() && host.isConnected;
-  host.classList.add("project-presentation");
   if (!project.can_configure) {
     const main = project.main || {};
     const line = main.source === "coordinator" && main.name ? `Coordinator: ${main.name}.` : PRESENT_COPY.coordNone;
