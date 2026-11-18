@@ -33,6 +33,7 @@ EXACT = {
     ("GET", "/api/holds"): "authenticated",
     ("GET", "/api/topology"): "authenticated",
     ("GET", "/api/costs"): "authenticated",
+    ("GET", "/api/status"): "authenticated",
     ("GET", "/api/settings/costs"): "authenticated",
     ("PUT", "/api/settings/costs"): "authenticated",
     **{(method, "/api/settings/budgets"): "authenticated" for method in ("GET", "PUT", "DELETE")},

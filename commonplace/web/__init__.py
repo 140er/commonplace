@@ -368,7 +368,7 @@ def install(gateway):
 
     from .. import capacity
     from ..topology import node_panel as topology_node
-    from . import admin, agents, goals, invites, task_types
+    from . import admin, agents, goals, invites, status, task_types
 
     admin.install(gateway)
     capacity.install(gateway)
@@ -376,6 +376,7 @@ def install(gateway):
     agents.install(gateway)
     task_types.install(gateway)
     goals.install(gateway)
+    status.install(gateway)
     topology_node.install(gateway)
 
     gateway.add_route("GET", "/app/login", login)

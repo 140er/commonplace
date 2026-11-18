@@ -1,0 +1,5 @@
+### Read-only capabilities and status page
+
+Decision: one read-only page, linked from Settings, shows what the workspace can do and how it is doing, instead of new controls. `GET /api/status` composes the readers the product already has (skill list with shares, owner-only bridge installs, the caller's own meeting status, `costs_summary`) and applies each one's existing owner and scope rule; it is for a signed-in person only. It adds no write path and no budget editing. The page is a standalone static document so it needs no new shell route.
+
+Honesty rules: every section that is empty, off, restricted or failed says why in plain words; an unknown answer is explained, never rendered empty. A bridge time is labelled "last seen" and is never presented as proof that a process is running. Costs state their period and scope (all runs for the owner, only readable projects otherwise) and keep unknown-cost runs apart from zero. Only a 401 on the identity call reads as signed out; a short bound or failure reads as a failed read with a retry.
