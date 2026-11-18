@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS run_ledger (
  input_tokens INTEGER, output_tokens INTEGER,
  cost_micros INTEGER, currency TEXT,
  reported_at TEXT,
- created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ source TEXT
 )
 """
 INDEXES = (
@@ -83,6 +84,9 @@ class ReportError(Exception):
 def ensure(conn):
     """Create the table and give every job that predates it a row. Autocommit connection."""
     conn.execute(TABLE)
+    # NULL is a card run; 'chat' is a chat-relay job (see chat_ledger). Added in place.
+    if "source" not in {row[1] for row in conn.execute("PRAGMA table_info(run_ledger)")}:
+        conn.execute("ALTER TABLE run_ledger ADD COLUMN source TEXT")
     for statement in INDEXES:
         conn.execute(statement)
     if conn.execute(_MISSING + " LIMIT 1").fetchone() is not None:
