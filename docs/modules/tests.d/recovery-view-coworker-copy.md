@@ -1,0 +1,4 @@
+- **Owns:** The assertion on the recovery view's not-offered note in `tests/orchstatus.mjs`.
+- **Promises:** The page case pins the visible sentence, which says "Coworker tools".
+- **How it fails:** A reworded note fails that page case and the Coworker copy guard.
+- **Tests:** Run `tests/test_orchstatus.py` and `tests/test_coworker_ui_copy.py`.

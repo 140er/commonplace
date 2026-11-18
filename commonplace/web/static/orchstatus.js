@@ -34,7 +34,7 @@ export const RECOVERY_COPY = Object.freeze({
   findingsCapped: "Only the newest are listed.",
   noOwner: "Nobody can acknowledge this one because no role owns it. It stays listed.",
   stepsNone: "No steps are recorded for the main role.",
-  notOffered: "Voiding a step, reassigning it and retiring an experiment are not offered on this page yet. The owner does those through the orchestrator tools.",
+  notOffered: "Voiding a step, reassigning it and retiring an experiment are not offered on this page yet. The owner does those through the Coworker tools.",
 });
 
 const plural = (n, one, many) => `${n >= LIST_CAP ? `${LIST_CAP}+` : n} ${n === 1 ? one : many}`;
