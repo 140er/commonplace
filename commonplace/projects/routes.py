@@ -32,6 +32,15 @@ def _person(gateway, h):
     return principal
 
 
+def _may_write(service, board):
+    """Whether this person may write the board: the rule the panel write route enforces."""
+    try:
+        service._write(board)
+    except ToolError:
+        return False
+    return True
+
+
 def _view(gateway, principal, board):
     service = BoardService(ToolContext(principal=principal, gateway=gateway))
     with service.store.connection() as conn:
@@ -58,6 +67,7 @@ def _view(gateway, principal, board):
         ],
         "escalation": rule.public() if rule is not None else None,
         "can_configure": principal.person and principal.role == "owner",
+        "can_edit_panel": _may_write(service, board),
     }
     from commonplace.runner import sessions
 

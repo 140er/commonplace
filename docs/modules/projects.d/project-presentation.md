@@ -1,0 +1,4 @@
+- **Owns:** `can_edit_panel` on the project read in `commonplace/projects/routes.py`, which reports whether this person passes the same board-write check the panel route enforces.
+- **Promises:** The panel and coordinator writes stay the existing panel route and board settings route; this adds no permission and the server still decides every write.
+- **How it fails:** A person without board-write authority gets `can_edit_panel: false` and the unchanged refusal from the panel route; a refused or failed write changes nothing.
+- **Tests:** `tests/test_project_presentation.py` checks who may edit, that a member cannot replace or clear the coordinator, and that a refused panel write keeps the stored panel.
