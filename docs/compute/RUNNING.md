@@ -64,6 +64,49 @@ enabling fixed-operation execution alone does not enable collection. Scope ceili
 charged permanently at intake, including unused or cancelled reservations.
 Unknown attempts retain their slots and never automatically recollect.
 
+## Provision a credential
+
+A gateway or target needs a credential reference (an id and a version) before it
+can be verified. Private keys are never typed into or shown by the web form: the
+form only lists the references that already exist and shows this step. Run it on
+the server, as the service user, from the repository. Use the workspace folder
+that holds `compute.sqlite3`, a wrapping-key path outside the data folder inside a
+private (0700) directory, the workspace and person IDs, the saved gateway ID and
+the SSH account. A target credential also needs `NODE_ID`; keep `NODE_ID = ""` for
+a gateway. Only the credential id and the public key are printed. The new
+credential starts pending, and activation stays a separate, explicit step.
+
+```sh
+uv run python - <<'PY'
+from pathlib import Path
+from commonplace.compute.credentials import (
+    CredentialBinding,
+    CredentialStore,
+    initialize_wrapping_key,
+)
+
+root = Path("WORKSPACE_DATA_DIR")
+database, key = root / "compute-credentials.sqlite3", Path("WRAPPING_KEY_FILE")
+NODE_ID = ""
+if database.exists():
+    store = CredentialStore(database, key, root, lambda *_: True)
+else:
+    if not key.exists():
+        initialize_wrapping_key(key, root, database_path=database)
+    store = CredentialStore.initialize(database, key, root, lambda *_: True)
+binding = CredentialBinding(
+    "WORKSPACE_ID", "PERSON_ID", "GATEWAY_ID", NODE_ID, "ACCOUNT", "PURPOSE", VERSION
+)
+made = store.generate(binding, object())
+store.close()
+print(made.credential_id, made.public_key)
+PY
+```
+
+The Compute management form then lists the reference (name, purpose, account,
+version and recorded state) so it can be selected. The list reads only those
+plain reference columns; it never opens the wrapping key or any key.
+
 ## Provision a script target
 
 One installer invocation replaces the manual operator prerequisites for the target

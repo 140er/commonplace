@@ -6,7 +6,7 @@ const source = name => readFileSync(new URL(`../commonplace/web/static/${name}.j
 const moduleURL = text => `data:text/javascript;base64,${Buffer.from(text).toString('base64')}`;
 const apiURL = moduleURL(source('api'));
 const load = name => import(moduleURL(source(name).replace(/(['"])\.\/api\.js\1/g, JSON.stringify(apiURL))));
-const { createCompute, computePayload, computeExecutionHTML } = await load('compute');
+const { createCompute, computePayload, computeExecutionHTML, provisionCommand } = await load('compute');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const clock = 1800000000;
 // All endpoints and key bytes here are synthetic. No fixture opens a socket.
@@ -23,9 +23,9 @@ const failure = (status, code) => Object.assign(new Error(code), { status, paylo
 
 // This intentionally narrow DOM fake runs the production controller. Requests
 // ignore AbortSignal to prove the response fences independently of cancellation.
-function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [], currentTime = clock } = {}) {
+function fixture({ passive = { discoveries: [], capabilities: { passive_discovery: false } }, scripts = [], credentials = { credentials: [], status: 'ready' }, currentTime = clock } = {}) {
   let html = '', user = { workspace: 'w-one', actor: 'user:u-one', can_admin: true }, hash = '#/compute', sequence = 0;
-  const listeners = new Map(), requests = [], boardsSeen = [];
+  const listeners = new Map(), requests = [], boardsSeen = [], copied = [], reads = [];
   const doc = new EventTarget(), events = new EventTarget(), confirmation = { checked: true };
   const host = {
     get innerHTML() { return html; }, set innerHTML(value) { html = value; },
@@ -34,13 +34,15 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
   };
   const api = (path, options = {}) => {
     if (path === "/api/compute/scripts" && !options.method) return Promise.resolve({ scripts: structuredClone(scripts) });
+    if (path === "/api/compute/credentials") reads.push(options);
+    if (path === "/api/compute/credentials" && !options.method) return credentials instanceof Error ? Promise.reject(credentials) : Promise.resolve(structuredClone(credentials));
     if (path === "/api/compute/discoveries" && !options.method) return Promise.resolve(structuredClone(passive));
     let yes, no;
     const promise = new Promise((resolve, reject) => { yes = resolve; no = reject; });
     const request = { path, options, settled: false, resolve(value) { request.settled = true; yes(structuredClone(value)); }, reject(error) { request.settled = true; no(error); } };
     requests.push(request); return promise;
   };
-  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => currentTime, requestId: () => `request-${++sequence}` });
+  const ui = createCompute({ mount: () => host, api, current: () => user, route: () => hash, onBoards: boards => boardsSeen.push(boards), doc, events, now: () => currentTime, requestId: () => `request-${++sequence}`, copy: text => { copied.push(text); return Promise.resolve(); } });
   const take = (path, method = 'GET') => {
     const request = requests.find(item => !item.taken && !item.settled && item.path === path && (item.options.method || 'GET') === method);
     assert.ok(request, `${method} ${path} was requested`); request.taken = true; return request;
@@ -56,7 +58,7 @@ function fixture({ passive = { discoveries: [], capabilities: { passive_discover
     take('/api/compute').resolve(data); take('/api/boards').resolve({ boards }); await flush();
   };
   const open = async (data, boards) => { ui.show(); await respond(data, boards); };
-  return { ui, host, doc, events, requests, listeners, boardsSeen, confirmation, take, click, toggleAdvanced, submit, input, open, respond, setUser(value) { user = value; }, setRoute(value) { hash = value; } };
+  return { ui, host, doc, events, requests, copied, reads, listeners, boardsSeen, confirmation, take, click, toggleAdvanced, submit, input, open, respond, setUser(value) { user = value; }, setRoute(value) { hash = value; } };
 }
 
 const cases = {
@@ -114,6 +116,82 @@ const cases = {
     f.click('gateway'); assert.doesNotMatch(f.host.innerHTML, /<img|<script>/);
     f.click('approve', 'e-one'); assert.doesNotMatch(f.host.innerHTML, /<img|<script>/);
     f.ui.stop();
+  },
+
+  async credentials() {
+    const refs = [
+      { id: 'cc_' + 'a'.repeat(32), purpose: 'gateway', account: 'fixture', version: 1, state: 'active', expires_at: clock + 9000 },
+      { id: 'cc_' + 'b'.repeat(32), purpose: 'gateway', account: 'fixture', version: 2, state: 'revoked', expires_at: clock + 9000 },
+      { id: 'cc_' + 'c'.repeat(32), purpose: 'target', account: 'worker', version: 1, state: 'pending', expires_at: clock + 9000 },
+      { id: 'cc_' + 'd'.repeat(32), purpose: 'gateway', account: 'other', version: 3, state: 'expired', expires_at: clock - 5 },
+    ];
+    const text = html => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    const doc = readFileSync(new URL('../docs/compute/RUNNING.md', import.meta.url), 'utf8');
+    const documented = doc.match(/```sh\n(uv run python - <<'PY'\n[\s\S]*?\nPY)\n```/)?.[1];
+    assert.ok(documented, 'the documented provisioning step exists');
+    // 1. A person SELECTS an existing reference; only the matching kind is offered, with plain labels.
+    const f = fixture({ credentials: { credentials: refs, status: 'ready' } }); await f.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] }));
+    assert.ok(f.reads.length === 1 && !f.reads[0].method && !f.reads[0].body, 'the list is one plain read');
+    f.click('gateway'); let html = f.host.innerHTML;
+    assert.match(html, /<select name="credential_choice"/);
+    assert.ok(html.includes(refs[0].id) && html.includes(refs[1].id) && html.includes(refs[3].id), 'gateway form offers gateway references');
+    assert.ok(!html.includes(refs[2].id), 'a target reference is not offered for a gateway');
+    assert.match(text(html), /version 1 · account fixture · Active/); assert.match(text(html), /Revoked/); assert.match(text(html), /Expired/);
+    assert.match(html, /name="credential_id"[^>]*>/, 'manual reference entry stays'); assert.match(html, /name="credential_version"/);
+    assert.doesNotMatch(html, /ssh-ed25519 AAAA|PRIVATE|type="password"|name="private_key"/);
+    // 2. Choosing fills the reference and version and withdraws the host-key acknowledgement.
+    f.input('credential_choice', refs[0].id);
+    html = f.host.innerHTML;
+    assert.match(html, new RegExp(`name="credential_id" type="text" value="${refs[0].id}"`)); assert.match(html, /name="credential_version" type="number" value="1"/);
+    assert.match(text(html), /is active and ready for verification/);
+    assert.doesNotMatch(html, /data-compute-provision/, 'a good choice needs no extra steps');
+    // 3. Verification is explained in plain words before the explicit consent, which is kept.
+    const at = needle => html.indexOf(needle);
+    assert.ok(at('does not connect to the machine') > 0 && at('does not connect to the machine') < at('name="pin_confirmed"'));
+    assert.match(text(html), /A separate verification step later checks/); assert.match(html, /name="pin_confirmed"[^>]*required/);
+    // 4. Missing / unusable references are named in plain words and offer the copyable next step.
+    f.input('credential_id', 'my-typed-key'); html = f.host.innerHTML;
+    assert.match(text(html), /No credential named my-typed-key exists in this workspace/); assert.match(html, /data-compute-provision/);
+    f.input('credential_id', refs[1].id); assert.match(text(f.host.innerHTML), /was revoked and can no longer be used/);
+    f.input('credential_id', refs[3].id); assert.match(text(f.host.innerHTML), /expired/);
+    f.input('credential_id', refs[2].id); assert.match(text(f.host.innerHTML), /is for a target, not a gateway/);
+    f.input('credential_id', refs[0].id); f.input('account', 'someone-else'); assert.match(text(f.host.innerHTML), /is for the account fixture, but this form uses someone-else/);
+    // 5. Manual entry still submits exactly the same payload as before.
+    f.input('credential_id', 'my-typed-key'); f.input('credential_version', '7');
+    const values = { ...gatewayValues(), credential_id: 'my-typed-key', credential_version: '7' };
+    f.submit('gateway', values); const create = f.take('/api/compute/gateways', 'POST');
+    assert.deepEqual(create.options.body, computePayload('gateway', values, { now: clock })); assert.equal(create.options.body.credential_id, 'my-typed-key');
+    f.ui.stop();
+    // 6. A target form offers target references only.
+    const t = fixture({ credentials: { credentials: refs, status: 'ready' } }); await t.open(inventory({ executions: [] })); t.click('node');
+    assert.ok(t.host.innerHTML.includes(refs[2].id) && !t.host.innerHTML.includes(refs[0].id)); t.ui.stop();
+    // 7. None exist: say so plainly and show a copyable step that is the documented one, with this form's values filled in.
+    const none = fixture({ credentials: { credentials: [], status: 'unprovisioned' } }); await none.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); none.click('gateway');
+    html = none.host.innerHTML; assert.match(text(html), /No credentials exist in this workspace yet/); assert.doesNotMatch(html, /<select name="credential_choice"/);
+    assert.match(html, /data-compute-provision/); assert.match(text(html), /not created in the browser, so no secret passes through this page/);
+    assert.match(html, /name="credential_id"/, 'manual entry remains when the list is empty');
+    none.input('account', 'fixture'); none.input('credential_version', '4');
+    const step = html.match(/data-compute-provision[^>]*>([\s\S]*?)<\/pre>/)?.[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    assert.equal(provisionCommand({ workspace: 'w-one' }), documented.replace('"WORKSPACE_ID"', '"w-one"'));
+    assert.equal(provisionCommand({}), documented, 'the unfilled step is the documented one, word for word');
+    assert.ok(step && step.includes('initialize_wrapping_key') && step.includes('"w-one"'), 'filled from this session');
+    none.click('copy-provision'); await flush(); assert.equal(none.copied.length, 1); assert.match(none.copied[0], /^uv run python - <<'PY'/); assert.match(none.copied[0], /\nPY$/);
+    assert.match(text(none.host.innerHTML), /Copied/);
+    const filled = provisionCommand({ workspace: 'w-one', purpose: 'target', account: 'fixture', version: '4', gateway: 'g-one' });
+    assert.ok(filled.includes('"fixture", "target", 4') && filled.includes('"g-one"') && filled.includes('NODE_ID = "TARGET_NODE_ID"'));
+    // Unsafe typed values never reach the copyable text.
+    const unsafe = provisionCommand({ workspace: 'w-one', account: 'x"; import os #', version: '1; boom', gateway: '"; exit()' });
+    assert.ok(!unsafe.includes('import os') && !unsafe.includes('boom') && !unsafe.includes('exit()') && unsafe.includes('"ACCOUNT"'));
+    assert.doesNotMatch(none.host.innerHTML, /ssh-ed25519 AAAA|PRIVATE|type="password"/); none.ui.stop();
+    // 8. A list that cannot be read, or a failed request, says so; saving by hand still works.
+    for (const down of [{ credentials: [], status: 'unavailable' }, Object.assign(new Error('x'), { status: 500, payload: { error: 'x' } })]) {
+      const g = fixture({ credentials: down }); await g.open(inventory({ gateways: [], nodes: [], scopes: [], executions: [] })); g.click('gateway');
+      assert.match(text(g.host.innerHTML), /The list of credentials could not be read/); assert.match(g.host.innerHTML, /name="credential_id"/); assert.match(g.host.innerHTML, /data-compute-provision/);
+      g.submit('gateway', gatewayValues()); assert.ok(g.take('/api/compute/gateways', 'POST')); g.ui.stop();
+    }
+    // 9. The list is advisory: a 403 on it is the same owner boundary as the rest.
+    const own = fixture({ credentials: Object.assign(new Error('x'), { status: 403, payload: { error: 'owner_required' } }) }); await own.open(inventory());
+    assert.match(own.host.innerHTML, /requires the current workspace owner/); own.ui.stop();
   },
 
   async payloads() {

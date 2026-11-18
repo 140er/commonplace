@@ -16,6 +16,12 @@ Public integration API:
   enrollment (30-day default). ``activate(id, binding, context)`` enables exactly
   that version; it neither replaces nor revokes other enrolled versions.
   ``revoke(id, binding, context)`` permanently disables local use.
+* ``list_credential_references(database_path, protected_data_root, workspace, *, now)``
+  is a read-only listing of non-secret reference columns (id, purpose, account,
+  version, recorded state, expiry) for one workspace. It never opens the wrapping
+  key, the encrypted key column or the public key, so it cannot return key
+  material. States are the recorded values, not authenticated; every use
+  rechecks them. Use it to let a person pick an existing reference.
 * ``acquire(id, binding, context)`` returns a nonserializable ``CredentialHandle``.
   Only ``internal_transport_private_bytes(handle)`` returns in-memory OpenSSH
   private bytes, after rechecking current authority, state, expiry and key files.
@@ -289,6 +295,93 @@ def initialize_wrapping_key(wrapping_key_path, protected_data_root, *, database_
     finally:
         if parent is not None:
             os.close(parent)
+
+
+_LIST_LIMIT = 100
+
+
+def list_credential_references(database_path, protected_data_root, workspace, *, now):
+    """Non-secret reference rows for one workspace: ``(status, rows)``.
+
+    Status is ``unprovisioned`` when no custody file exists, ``ready`` otherwise;
+    unsafe, foreign-owned or unreadable custody raises the fixed
+    ``credential_unavailable``. Only plaintext reference columns are selected.
+    """
+    try:
+        path, root = _path(database_path), _path(protected_data_root)
+        if not path.is_relative_to(root) or path == root or not isinstance(workspace, str):
+            raise ValueError
+        try:
+            directory = _open_directory(path.parent)
+        except FileNotFoundError:
+            return "unprovisioned", []
+        conn = fd = None
+        try:
+            try:
+                os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                return "unprovisioned", []
+            info = os.fstat(directory)
+            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise CredentialError("credential_unavailable")
+            try:
+                fd = os.open(
+                    path.name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                    dir_fd=directory,
+                )
+            except FileNotFoundError:
+                return "unprovisioned", []
+            _private_file(fd)
+            conn = sqlite3.connect(
+                f"file:/proc/self/fd/{directory}/{path.name}?mode=ro", uri=True, timeout=1
+            )
+            conn.execute("PRAGMA query_only=ON")
+            meta = conn.execute("SELECT format_version FROM compute_credential_meta").fetchall()
+            if meta != [(1,)]:
+                raise ValueError
+            found = conn.execute(
+                "SELECT credential_id, purpose, account, version, expires_at, state "
+                "FROM compute_credentials WHERE workspace=? "
+                "ORDER BY purpose, account, version, credential_id LIMIT ?",
+                (workspace, _LIST_LIMIT),
+            ).fetchall()
+        finally:
+            if conn is not None:
+                conn.close()
+            if fd is not None:
+                os.close(fd)
+            os.close(directory)
+        rows = []
+        for credential_id, purpose, account, version, expires_at, state in found:
+            if (
+                not isinstance(credential_id, str)
+                or not _CREDENTIAL_ID.fullmatch(credential_id)
+                or purpose not in ("gateway", "target")
+                or not isinstance(account, str)
+                or not _ACCOUNT.fullmatch(account)
+                or type(version) is not int
+                or state not in _STATES
+            ):
+                continue
+            expiry = _timestamp(expires_at)
+            if state != "revoked" and _timestamp(now) >= expiry:
+                state = "expired"
+            rows.append(
+                {
+                    "id": credential_id,
+                    "purpose": purpose,
+                    "account": account,
+                    "version": version,
+                    "state": state,
+                    "expires_at": expiry,
+                }
+            )
+        return "ready", rows
+    except CredentialError:
+        raise
+    except (ImportError, OSError, sqlite3.Error, ValueError):
+        raise CredentialError("credential_unavailable") from None
 
 
 class CredentialHandle:

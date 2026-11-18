@@ -47,6 +47,7 @@ from commonplace.control_db import ControlError, Principal
 from commonplace.extensions import ToolContext, ToolError
 from mempalace.sqlite_crypto import connect, row_factory
 
+from .credentials import CredentialError, list_credential_references
 from .fence import _attach_connection, _held
 from .protocol import (
     EnrolledRoute,
@@ -1035,6 +1036,26 @@ class Store:
                 },
                 "can_manage": True,
             }
+
+    def list_credentials(self, principal, *, session_hash):
+        """Reference-only credential list (id, purpose, account, version, state, expiry).
+
+        Reads only plaintext reference columns of the separate custody file; the
+        wrapping key, encrypted keys and public keys are never opened or returned.
+        """
+        with self.gateway.db._lock:
+            self._owner(principal, session_hash)
+        path = Path(self._path() if callable(self._path) else self._path)
+        try:
+            status, rows = list_credential_references(
+                path.parent / "compute-credentials.sqlite3",
+                path.parent,
+                self.workspace_id,
+                now=self._now(),
+            )
+        except CredentialError:
+            return {"credentials": [], "status": "unavailable"}
+        return {"credentials": rows, "status": status}
 
     def list_gateways(self, principal, *, session_hash):
         with self._transaction(principal, session_hash) as (conn, current):
